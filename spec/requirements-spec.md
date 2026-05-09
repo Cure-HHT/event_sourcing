@@ -93,7 +93,8 @@ B. The library SHALL ...
 - Each assertion MUST:
   - use SHALL,
   - express exactly one obligation,
-  - be independently decidable as true or false.
+  - be independently decidable as true or false,
+  - be self-contained — assertions MUST NOT contain cross-references to other requirements (cite related requirements in Rationale or in `Refines:` / `Satisfies:` metadata instead).
 - Assertion labels:
   - MUST be uppercase letters A–Z,
   - MUST be unique within the requirement,

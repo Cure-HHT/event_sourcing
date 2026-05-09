@@ -4,19 +4,19 @@
 
 ## Purpose
 
-The library makes the event log tamper-evident: any after-the-fact modification of a stored event SHALL be detectable by an independent observer who has access only to the stored log, the canonical-JSON serializer, and the chain-anchor convention. The audit story does not depend on trust in the storage backend; integrity is established cryptographically.
+The library makes the event log tamper-evident: any after-the-fact modification of a stored event is detectable by an independent observer who has access only to the stored log, the canonical-JSON serializer, and the chain-anchor convention. The audit story does not depend on trust in the storage backend; integrity is established cryptographically.
 
 This PRD pins the integrity contract. Structural append-only and ordering properties are specified separately in EVS-prd-event-log.
 
 ## Assertions
 
-A. Each event SHALL carry a cryptographic hash deterministically derived from the event's canonical-form content (per EVS-prd-canonical-json).
+A. Each event SHALL carry a cryptographic hash deterministically derived from the event's canonical-form content.
 
 B. Each event's hash SHALL chain to the predecessor in its chain, with each chain anchored to the deployment that originated it.
 
 C. The library SHALL provide an operation by which any holder of the stored log can recompute the chain from end to end and verify integrity, without privileged access.
 
-D. Hash and chain values SHALL be reproducible: any two observers running the same canonical-form serializer over the same stored events compute identical hashes.
+D. Hash and chain values SHALL be reproducible: any two observers running the same canonical-form serializer over the same stored events SHALL compute identical hashes.
 
 ## Rationale
 

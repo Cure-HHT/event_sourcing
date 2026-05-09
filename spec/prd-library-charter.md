@@ -50,7 +50,7 @@ This requirement is the top of the PRD hierarchy in this repo. Each headline ass
 - **D** (event flow) — refined by the destinations PRD (outbound) and the ingest PRD (inbound daisy-chain).
 - **E** (pure Dart) — refined by the portability PRD.
 - **F** (canonical form + provenance) — refined by the canonical-JSON and provenance PRDs (each a distinct package's charter).
-- **G** (regulatory alignment) — refined by the audit-trail PRD that maps each ALCOA+ attribute to a specific library obligation.
+- **G** (regulatory alignment) — refined by the regulatory-alignment PRD that maps each ALCOA+ attribute to a specific library obligation.
 
 This refinement section is non-normative and exists to orient readers; the binding obligations are the assertions above.
 

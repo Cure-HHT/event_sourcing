@@ -4,7 +4,7 @@
 
 ## Purpose
 
-When multiple event-sourcing deployments contribute events to the same aggregate — a participant editing on phone and tablet, a coordinator editing a participant's diary entry, a reverse-proxy collecting from many upstreams — the library SHALL determine which of those events are canonical for the aggregate. Canonicalization is governed by configurable rules expressed over event authorities, not over connection identities. The default rule preserves single-source semantics; multi-source semantics are activated by adding rules that admit additional authorities.
+When multiple event-sourcing deployments contribute events to the same aggregate — a participant editing on phone and tablet, a coordinator editing a participant's diary entry, a reverse-proxy collecting from many upstreams — the library determines which of those events are canonical for the aggregate. Canonicalization is governed by configurable rules expressed over event authorities, not over connection identities. The default rule preserves single-source semantics; multi-source semantics are activated by adding rules that admit additional authorities.
 
 This PRD specifies the rule grammar at PRD level. Specific authority schemes (per-user, per-role, per-coordinator) are configured per deployment via settings events on the same log.
 

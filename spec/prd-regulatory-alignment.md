@@ -12,7 +12,11 @@ This PRD does not assert that any particular consuming application is FDA-compli
 
 A. Every event SHALL record the time at which the originating action occurred.
 
-B. The library SHALL surface integrity violations discovered during normal operation, including hash-chain mismatch on stored-event read, canonicalization-rule conflict, and provenance verification failure.
+B. Hash-chain mismatch encountered during normal operation SHALL be surfaced as an integrity violation.
+
+C. Canonicalization-rule conflict encountered during normal operation SHALL be surfaced as an integrity violation.
+
+D. Provenance verification failure encountered during normal operation SHALL be surfaced as an integrity violation.
 
 ## Rationale
 
@@ -35,9 +39,9 @@ B. The library SHALL surface integrity violations discovered during normal opera
 The relevant clauses for the library's substrate role:
 
 - **§11.10(b) Records readable** — covered by EVS-prd-canonical-json (canonical JSON is human-decipherable).
-- **§11.10(c) Protection of records** — covered by EVS-prd-event-log A (append-only) + EVS-prd-hash-chain-integrity (tamper-evidence) + this PRD, B (integrity violation surfacing).
+- **§11.10(c) Protection of records** — covered by EVS-prd-event-log A (append-only) + EVS-prd-hash-chain-integrity (tamper-evidence) + this PRD, B–D (integrity-violation surfacing).
 - **§11.10(e) Audit trails (computer-generated, time-stamped)** — covered by EVS-prd-event-log + EVS-prd-action-dispatch C + this PRD, A (timestamps).
-- **§11.10(f) Operational system checks** — covered by this PRD, B (integrity violations are surfaced, not silently absorbed).
+- **§11.10(f) Operational system checks** — covered by this PRD, B–D (the three classes of integrity violation are surfaced).
 - **§11.10(g) Authority checks** — covered by EVS-prd-action-dispatch B + EVS-prd-permissions-as-events.
 
 Other 21 CFR Part 11 clauses (validation of systems §11.10(a), system documentation §11.10(k), persons qualified §11.10(i)) are process and SOP obligations on the consuming organization, not library obligations.
@@ -48,6 +52,6 @@ Timestamps are not strictly necessary for an event log to be a valid event log �
 
 ### Why integrity-violation surfacing is this PRD's obligation, not hash-chain-integrity's
 
-EVS-prd-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library does not silently absorb verification failures encountered during normal use. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does.
+EVS-prd-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library surfaces verification failures encountered during normal use, rather than absorbing them. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does. The three classes of failure are split into separate assertions (B, C, D) because each is independently testable: hash-chain mismatch is detected via the chain-verification path; canonicalization-rule conflict is detected by the rule-evaluation path; provenance verification failure is detected at the ingest boundary.
 
 *End* *Regulatory Alignment* | **Hash**: 00000000

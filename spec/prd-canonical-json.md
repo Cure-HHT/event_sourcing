@@ -4,7 +4,7 @@
 
 ## Purpose
 
-The `canonical_json_jcs` package provides RFC 8785 (JSON Canonicalization Scheme, JCS) serialization for Dart. Any two systems serializing the same logical Dart content SHALL produce identical UTF-8 byte sequences. This canonical form is the anchor of the library's tamper-evidence story: every event hash, signature, and cross-system comparison rests on it.
+The `canonical_json_jcs` package provides RFC 8785 (JSON Canonicalization Scheme, JCS) serialization for Dart. Any two systems serializing the same logical Dart content produce identical UTF-8 byte sequences. This canonical form is the anchor of the library's tamper-evidence story: every event hash, signature, and cross-system comparison rests on it.
 
 The package is intentionally narrow — it is a pure-Dart utility, dependency-free, and usable from any Cure-HHT component that needs canonical-form serialization without pulling the rest of the event-sourcing stack.
 

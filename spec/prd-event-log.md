@@ -14,7 +14,7 @@ A. The library SHALL persist events in an append-only, immutable log.
 
 B. The library SHALL preserve a stable total order over all stored events such that the relative position of any two events remains fixed for the lifetime of the log.
 
-C. The library SHALL preserve a stable per-aggregate order: events affecting the same aggregate appear in the order they were written, contiguously orderable within the global order.
+C. The library SHALL preserve per-aggregate-per-authority order: events for the same aggregate from the same authority appear in the order they were written by that authority.
 
 D. The library SHALL allow consumers to read events from the log in order, from any specified starting position.
 

@@ -18,7 +18,7 @@ C. The library SHALL extend an ingested event's provenance chain to record this 
 
 D. The library SHALL verify the hash-chain integrity of ingested events against the upstream chain before admitting them, rejecting any event whose chain does not verify.
 
-E. Ingested events SHALL participate in the local materializer and the local subscription primitives identically to locally-originated events, subject to the canonicalization rules specified in EVS-prd-multi-source-canonicalization.
+E. Ingested events SHALL participate in the local materializer and the local subscription primitives identically to locally-originated events.
 
 F. The ingest path SHALL be idempotent: re-presenting an event already admitted SHALL not duplicate it in the local log.
 
@@ -34,6 +34,6 @@ F. The ingest path SHALL be idempotent: re-presenting an event already admitted 
 
 **Why is ingest idempotent?** Cross-tier transports retry. The same upstream event may be presented at the ingest path many times (delivery retries, replay after restart, reconfiguration of upstream destinations). Idempotency on event identity (the upstream hash) makes retries safe and ensures the local log records each upstream event exactly once.
 
-**Why does ingest participate in canonicalization rules rather than being canonical by default?** Multi-source editing is the case where ingested events and locally-originated events both target the same aggregate. The library's resolution of "which events are canonical for this aggregate?" is governed by the canonicalization rules (EVS-prd-multi-source-canonicalization), which can be configured per aggregate or per aggregate type. Ingest doesn't presume canonicality; it presents the event for the rule to evaluate.
+**Why does ingest participate in canonicalization rules rather than being canonical by default?** Multi-source editing is the case where ingested events and locally-originated events both target the same aggregate. The library's resolution of "which events are canonical for this aggregate?" is governed by configurable canonicalization rules (the multi-source-canonicalization PRD specifies the rule grammar), which can be configured per aggregate or per aggregate type. Ingest doesn't presume canonicality; it presents the event for the rule to evaluate.
 
 *End* *Ingest Path* | **Hash**: 00000000
