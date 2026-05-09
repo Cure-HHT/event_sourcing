@@ -3,7 +3,7 @@
 # branch-protection ruleset's required context.
 #
 # Logic lives in the shared composite action at
-# Cure-HHT/hht_admin/.github/actions/validation-summary. This workflow
+# Cure-HHT/hht_workflows/.github/actions/validation-summary. This workflow
 # is just the trigger + job-name binding.
 #
 # Trigger types must mirror the underlying check workflows so this
@@ -32,4 +32,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: Cure-HHT/hht_admin/.github/actions/validation-summary@main
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary@main

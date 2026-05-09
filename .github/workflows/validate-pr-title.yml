@@ -2,7 +2,7 @@
 # to satisfy the org-level branch-protection ruleset's required context.
 #
 # Logic lives in the shared composite action at
-# Cure-HHT/hht_admin/.github/actions/validate-pr-title. This workflow
+# Cure-HHT/hht_workflows/.github/actions/validate-pr-title. This workflow
 # is just the trigger + job-name binding.
 
 name: Validate PR Title
@@ -24,4 +24,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - uses: Cure-HHT/hht_admin/.github/actions/validate-pr-title@main
+      - uses: Cure-HHT/hht_workflows/.github/actions/validate-pr-title@main
