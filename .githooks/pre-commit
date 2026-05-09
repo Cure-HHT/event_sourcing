@@ -1,0 +1,13 @@
+#!/bin/sh
+# Hook wrapper: invokes pre-commit framework's pre-commit stage.
+# Configured via .pre-commit-config.yaml at the repo root. Tracked in
+# version control; activated for this clone via:
+#   git config core.hooksPath .githooks
+# (run scripts/setup.sh once per clone).
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec pre-commit hook-impl \
+  --config=.pre-commit-config.yaml \
+  --hook-type=pre-commit \
+  --skip-on-missing-config \
+  --hook-dir "$HERE" \
+  -- "$@"

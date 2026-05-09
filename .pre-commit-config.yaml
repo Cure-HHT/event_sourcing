@@ -1,0 +1,49 @@
+# Pre-commit hooks for cure-hht/event_sourcing.
+#
+# Hook list mirrors cure-hht/hht_workflows (the canonical home for
+# Cure-HHT shared hook discipline) plus Dart-specific local hooks.
+#
+# Setup:
+#   scripts/setup.sh      # configures core.hooksPath and warms cache
+#
+# Manual run:
+#   pre-commit run --all-files
+
+default_stages: [pre-commit]
+
+repos:
+  # Universal hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+
+  # Secret scanning — same gitleaks version pinned in the org's CI.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.29.0
+    hooks:
+      - id: gitleaks
+
+  # Markdown linting — REQ specs and READMEs.
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.42.0
+    hooks:
+      - id: markdownlint
+        args: [--ignore, .github/]
+
+  # Dart formatting — local hook (no public pre-commit-hooks repo).
+  # Runs `dart format --set-exit-if-changed` against staged Dart files;
+  # fails the commit if any file is unformatted.
+  - repo: local
+    hooks:
+      - id: dart-format
+        name: dart format
+        entry: dart format --output=none --set-exit-if-changed
+        language: system
+        types: [dart]
+        # Excludes generated files; if any package adds .g.dart later, list it here.

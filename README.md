@@ -45,6 +45,24 @@ live in this repo's `docs/superpowers/` and in session memory.
 The single-source-per-aggregate-type invariant holds in v1; substrate
 machinery for multi-source is dormant until Phase II activates it.
 
+## Setup
+
+After cloning, run once per clone:
+
+```sh
+scripts/setup.sh
+```
+
+This sets `core.hooksPath = .githooks` (shared across all worktrees of
+the clone) and pre-populates the hook environments. Pre-commit
+framework runs hooks listed in `.pre-commit-config.yaml` on every
+commit and push. Hooks include trailing-whitespace / EOF / merge-conflict
+checks, gitleaks (secret scanning), markdownlint, and `dart format`.
+
+Requires `pre-commit` on PATH; if absent, the script prints install
+instructions (`pipx install pre-commit`, `brew install pre-commit`, or
+`pip install --user pre-commit`) and exits.
+
 ## Origin
 
 Extracted from [`cure-hht/hht_diary`](https://github.com/Cure-HHT/hht_diary)
