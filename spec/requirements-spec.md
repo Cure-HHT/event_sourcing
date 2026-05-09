@@ -125,6 +125,23 @@ class EventStore { ... }
 
 (Yes, the *test* keyword is `Verifies`; the *production code* keyword is `Implements`. The deprecation note above applies to REQ→REQ relationships in spec headers, not to code annotations.)
 
+### Verification Modes
+
+A requirement's assertions are verified by automated tests. Two complementary modes are recognized; both produce pass/fail results, both use the same `// Verifies:` annotation, and elspais does not distinguish them at scan time.
+
+**Behavioral verification.** The default. A test exercises the library's API with specific inputs, observes outputs, and asserts they match the assertion's claim. Most assertions are verified this way.
+
+**Structural / scan verification.** For assertions that constrain code structure rather than runtime behavior — e.g., "all calls to API X go through the allowlisted dispatcher", "no module outside the auth subsystem imports identity-provider clients", "the only writers to materialized table T are inside the materializer" — verification can take the form of a test that scans production source files for forbidden or required patterns and asserts the codebase obeys the rule. Scan tests are pass/fail like behavioral tests; they verify the structural commitments that PRDs make about how the library is composed (e.g., "single dispatch flow", "evaluated solely from event-derived projections", "rules are events, not callbacks").
+
+A scan test typically reads the source tree from the test's working directory, applies a regex or AST query against production files only (excluding the test files and any explicit allowlist), and asserts the result set is empty (forbidden pattern) or non-empty / equal (required pattern).
+
+```dart
+// Verifies: EVS-prd-action-dispatch-A
+test('only the dispatcher writes to the event log', () { ... });
+```
+
+The choice between behavioral and scan verification is made per assertion. Some assertions need both — a behavioral test for the runtime path and a scan test for the structural guarantee that no other path exists.
+
 ---
 
 ## Rationale Block (Optional, Non-Normative)

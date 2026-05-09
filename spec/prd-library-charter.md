@@ -16,7 +16,7 @@ B. The library SHALL deliver event and materialized-state updates reactively to 
 
 C. The library SHALL provide authorization-checked action dispatch in which both the authorization decision and the resulting state change are recorded as events in the same audit log.
 
-D. The library SHALL support multi-tier deployment from a single codebase, with each tier (originator, relay, controller) configured at composition time.
+D. The library SHALL support configurable event flow between deployments — outbound via destinations, and inbound via an ingest path that preserves upstream event identity and authority.
 
 E. The library SHALL be pure Dart, runnable on mobile, server, and desktop targets.
 
@@ -44,10 +44,10 @@ G. The library SHALL produce an audit trail aligned with FDA 21 CFR Part 11 and 
 
 This requirement is the top of the PRD hierarchy in this repo. Each headline assertion is refined by one or more downstream PRDs that make the obligation precise. The refining PRDs are introduced as the library's surface area is authored; expect roughly the following decomposition:
 
-- **A** (append-only, tamper-evident, replayable) — refined by PRDs covering event-log structure, hash-chain integrity, and deterministic materialization.
+- **A** (append-only, tamper-evident, replayable) — refined by PRDs covering event-log structure, hash-chain integrity, deterministic materialization, and multi-source canonicalization.
 - **B** (reactive delivery) — refined by the subscription-API PRD.
 - **C** (authorization-checked dispatch) — refined by the action-dispatch and permissions-as-events PRDs.
-- **D** (multi-tier deployment) — refined by the role-based composition PRD.
+- **D** (event flow) — refined by the destinations PRD (outbound) and the ingest PRD (inbound daisy-chain).
 - **E** (pure Dart) — refined by the portability PRD.
 - **F** (canonical form + provenance) — refined by the canonical-JSON and provenance PRDs (each a distinct package's charter).
 - **G** (regulatory alignment) — refined by the audit-trail PRD that maps each ALCOA+ attribute to a specific library obligation.
