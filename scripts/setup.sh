@@ -7,6 +7,10 @@
 
 set -e
 
+# Run from the repo root so `pre-commit install-hooks` finds
+# .pre-commit-config.yaml regardless of where the script was invoked.
+cd "$(git rev-parse --show-toplevel)"
+
 if ! command -v pre-commit >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 Error: pre-commit not found on PATH.
@@ -34,11 +38,12 @@ Setup complete:
   - core.hooksPath = .githooks
   - hook environments cached for first commit
 
-Hooks run on commit and push, in this clone and any of its worktrees.
-To bypass once (NOT recommended): commit with --no-verify.
-To run hooks manually against the whole tree: pre-commit run --all-files
+Hooks run on every commit (and gitleaks also on push), in this clone
+and any of its worktrees. To bypass once (NOT recommended): commit
+with --no-verify. To run hooks manually against the whole tree:
+pre-commit run --all-files
 
 Note: the dart-format hook expects `dart` on PATH (Flutter SDK or
-standalone Dart SDK). If you do not have Dart installed, the dart-format
-hook will fail until Dart is available.
+standalone Dart SDK). If you do not have Dart installed, the
+dart-format hook will fail until Dart is available.
 MSG

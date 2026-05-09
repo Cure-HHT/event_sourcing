@@ -56,8 +56,9 @@ scripts/setup.sh
 This sets `core.hooksPath = .githooks` (shared across all worktrees of
 the clone) and pre-populates the hook environments. Pre-commit
 framework runs hooks listed in `.pre-commit-config.yaml` on every
-commit and push. Hooks include trailing-whitespace / EOF / merge-conflict
-checks, gitleaks (secret scanning), markdownlint, and `dart format`.
+commit; gitleaks runs additionally on push. Hooks include
+trailing-whitespace / EOF / merge-conflict checks, gitleaks (secret
+scanning), markdownlint, and `dart format`.
 
 Requires `pre-commit` on PATH; if absent, the script prints install
 instructions (`pipx install pre-commit`, `brew install pre-commit`, or

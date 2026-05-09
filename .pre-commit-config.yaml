@@ -24,10 +24,13 @@ repos:
         args: [--maxkb=500]
 
   # Secret scanning — same gitleaks version pinned in the org's CI.
+  # Runs at both pre-commit (catch secrets while editing) and pre-push
+  # (last line of defence before they reach the remote).
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.29.0
     hooks:
       - id: gitleaks
+        stages: [pre-commit, pre-push]
 
   # Markdown linting — REQ specs and READMEs.
   - repo: https://github.com/igorshubovych/markdownlint-cli
