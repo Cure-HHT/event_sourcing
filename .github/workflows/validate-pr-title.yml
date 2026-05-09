@@ -1,0 +1,54 @@
+# Validate PR Title — emits a check named exactly "Validate PR Title"
+# to satisfy the org-level branch-protection ruleset
+# ("Organization - Main Branch Protection") on every Cure-HHT repo.
+#
+# CANONICAL HOME: cure-hht/hht_admin (this file).
+# Consumer repos copy this file as-is into their own
+# .github/workflows/. Keep changes here in sync with consumers.
+#
+# Squash-merge uses the PR title verbatim as the main-branch commit
+# subject, so this guards downstream traceability. Required format is
+#   [CUR-XXX] Description of changes
+# Dependabot-authored PRs may use the [Dependabot] prefix instead.
+
+name: Validate PR Title
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: validate-pr-title-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-pr-title:
+    name: Validate PR Title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          echo "PR #${PR_NUMBER}: ${PR_TITLE}"
+
+          if echo "$PR_TITLE" | grep -qE '\[CUR-[0-9]+\]|\[Dependabot\]'; then
+            echo "PR title contains accepted prefix ([CUR-XXX] or [Dependabot])"
+            exit 0
+          fi
+
+          echo "::error::PR title missing [CUR-XXX] reference"
+          echo ""
+          echo "Squash merge uses the PR title verbatim as the commit message."
+          echo "Required format: [CUR-XXX] Description of changes"
+          echo "(Dependabot-authored PRs may use the [Dependabot] prefix instead.)"
+          echo "Edit the PR title at: ${PR_URL}"
+          exit 1

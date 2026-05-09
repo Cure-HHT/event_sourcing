@@ -1,0 +1,247 @@
+# Validation Summary — aggregates all other workflow results into a
+# single required status check named "Validation Summary", to satisfy
+# the org-level branch-protection ruleset on every Cure-HHT repo.
+#
+# CANONICAL HOME: cure-hht/hht_admin (this file).
+# Consumer repos copy this file as-is into their own
+# .github/workflows/.
+#
+# Individual workflows are free to use `paths` filters and skip
+# entirely — Validation Summary treats skipped as OK. Pair this with
+# the per-concern named jobs validate-pr-title.yml + secrets-scan.yml,
+# which the same ruleset also requires.
+#
+# Trigger types must mirror the underlying workflows so this supervisor
+# re-evaluates on every event that re-fires its workers — notably
+# `edited`, which re-runs PR-title validation on PR title/body edits.
+# Without `edited` here, an edit can land a new validate-pr-title run
+# while the supervisor's prior SUCCESS still satisfies the ruleset.
+
+name: Validation Summary
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: validation-summary-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  checks: read
+  statuses: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  gate:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait for all checks and aggregate results
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "Validation Summary: Waiting for all checks on commit ${SHA:0:7}"
+          echo ""
+
+          # Fetch check runs with retry on rate limit (HTTP 403)
+          fetch_checks() {
+            local retries=3
+            local wait=30
+            for i in $(seq 1 $retries); do
+              RESULT=$(gh api "repos/${REPO}/commits/${SHA}/check-runs" \
+                --paginate \
+                --jq '.check_runs[] | {id: .id, name: .name, status: .status, conclusion: .conclusion, html_url: .html_url}' 2>&1) && {
+                echo "$RESULT"
+                return 0
+              }
+              if echo "$RESULT" | grep -qi "rate limit"; then
+                echo "::warning::API rate limit hit, backing off ${wait}s (retry $i/$retries)" >&2
+                sleep $wait
+                wait=$((wait * 2))
+              else
+                echo "::warning::API call failed: $RESULT" >&2
+                return 1
+              fi
+            done
+            return 1
+          }
+
+          MAX_ATTEMPTS=60   # 60 * 30s = 30 minutes
+          ATTEMPT=0
+
+          while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+
+            # Fetch all check runs for this commit
+            CHECKS=$(fetch_checks) || { echo "  Skipping poll (API error), will retry..."; sleep 30; continue; }
+
+            # Deduplicate check runs by name, keeping only the most recent (first) occurrence.
+            # The GitHub API returns check runs newest-first, so when a workflow is
+            # superseded (cancelled) and re-run, we only see the latest result.
+            CHECKS=$(echo "$CHECKS" | jq -sc 'group_by(.name) | map(.[0])[]')
+
+            # Count statuses (exclude ourselves)
+            TOTAL=0
+            COMPLETED=0
+            FAILED=0
+            FAILED_CHECK_NAMES=""
+            PENDING_NAMES=""
+            SUMMARY_ROWS=""
+
+            while IFS= read -r check; do
+              [ -z "$check" ] && continue
+              NAME=$(echo "$check" | jq -r '.name')
+              STATUS=$(echo "$check" | jq -r '.status')
+              CONCLUSION=$(echo "$check" | jq -r '.conclusion')
+              CHECK_ID=$(echo "$check" | jq -r '.id')
+              HTML_URL=$(echo "$check" | jq -r '.html_url // empty')
+
+              # Skip our own check
+              [ "$NAME" = "Validation Summary" ] && continue
+
+              TOTAL=$((TOTAL + 1))
+
+              if [ "$STATUS" = "completed" ]; then
+                if [ "$CONCLUSION" = "cancelled" ]; then
+                  # Treat cancelled as pending — gate waits for a re-run
+                  PENDING_NAMES="${PENDING_NAMES}\n  - ${NAME} (cancelled, awaiting re-run)"
+                elif [ "$CONCLUSION" = "failure" ]; then
+                  COMPLETED=$((COMPLETED + 1))
+                  FAILED=$((FAILED + 1))
+                  FAILED_CHECK_NAMES="${FAILED_CHECK_NAMES}, ${NAME}"
+
+                  # Fetch annotations from the failed check run for detailed error messages
+                  ANNOTATIONS=$(gh api "repos/${REPO}/check-runs/${CHECK_ID}/annotations" \
+                    --jq '[.[] | select(.annotation_level == "failure") | .message] | unique | .[]' 2>/dev/null || true)
+                  FAIL_DETAIL=""
+                  if [ -n "$ANNOTATIONS" ]; then
+                    FAIL_DETAIL=$(echo "$ANNOTATIONS" | grep -vE "Process completed with exit code|^Unexpected failure|^Failed during:" | head -3 | tr '\n' '; ' | sed 's/; $//')
+                  fi
+
+                  # Fallback: if no meaningful annotations, check which job step(s) failed
+                  if [ -z "$FAIL_DETAIL" ]; then
+                    FAILED_STEPS=$(gh api "repos/${REPO}/actions/jobs/${CHECK_ID}" \
+                      --jq '[.steps[] | select(.conclusion == "failure") | .name] | join(", ")' 2>/dev/null || true)
+                    if [ -n "$FAILED_STEPS" ]; then
+                      FAIL_DETAIL="Failed step(s): ${FAILED_STEPS}"
+                    fi
+                  fi
+                  printf -v _row '| :x: [%s](%s) | Failed | %s |\n' "$NAME" "$HTML_URL" "$FAIL_DETAIL"
+                  SUMMARY_ROWS="${SUMMARY_ROWS}${_row}"
+                else
+                  COMPLETED=$((COMPLETED + 1))
+                  printf -v _row '| :white_check_mark: %s | %s | |\n' "$NAME" "${CONCLUSION^}"
+                  SUMMARY_ROWS="${SUMMARY_ROWS}${_row}"
+                fi
+              else
+                PENDING_NAMES="${PENDING_NAMES}\n  - ${NAME} (${STATUS})"
+                printf -v _row '| :hourglass: %s | %s | |\n' "$NAME" "$STATUS"
+                SUMMARY_ROWS="${SUMMARY_ROWS}${_row}"
+              fi
+            done <<< "$CHECKS"
+
+            echo "Attempt ${ATTEMPT}/${MAX_ATTEMPTS}: ${COMPLETED}/${TOTAL} checks completed ($FAILED failed)"
+
+            # All checks completed — report results
+            if [ $TOTAL -gt 0 ] && [ $COMPLETED -eq $TOTAL ]; then
+              if [ $FAILED -gt 0 ]; then
+                echo ""
+                echo "FAILED: ${FAILED} check(s) failed (see PR comment for details)"
+                # Write step summary with full check status table
+                printf -v SUMMARY_BODY '## Validation Summary: %d of %d check(s) failed\n\n| Check | Status | Details |\n|-------|--------|---------|\n%s' "$FAILED" "$TOTAL" "$SUMMARY_ROWS"
+                echo "$SUMMARY_BODY" >> "$GITHUB_STEP_SUMMARY"
+                # Save for the PR comment step
+                echo "$SUMMARY_BODY" > /tmp/validation-summary.md
+                # Emit ::error:: annotation (visible in checks list)
+                echo "::error::Validation Summary: ${FAILED} check(s) failed:${FAILED_CHECK_NAMES}"
+                exit 1
+              fi
+              echo ""
+              echo "All ${TOTAL} checks passed (or were skipped)."
+              # Clean up any previous failure comment(s). Paginate so chatty PRs
+              # are fully scanned, and delete every match to converge on zero
+              # failure comments when the gate is green.
+              MARKER="<!-- validation-summary -->"
+              EXISTING_IDS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+                --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null || true)
+              if [ -n "$EXISTING_IDS" ]; then
+                DELETED=0
+                while IFS= read -r ID; do
+                  [ -z "$ID" ] && continue
+                  gh api "repos/${REPO}/issues/comments/${ID}" -X DELETE > /dev/null 2>&1 || true
+                  DELETED=$((DELETED + 1))
+                done <<< "$EXISTING_IDS"
+                echo "Cleaned up ${DELETED} previous Validation Summary failure comment(s)"
+              fi
+              exit 0
+            fi
+
+            # Still waiting — show what's pending
+            if [ -n "$PENDING_NAMES" ]; then
+              echo -e "  Waiting on:$PENDING_NAMES" | head -5
+            fi
+
+            sleep 30
+          done
+
+          echo ""
+          echo "TIMEOUT: Not all checks completed within 30 minutes."
+          echo "Pending checks:"
+          echo -e "$PENDING_NAMES"
+          printf -v SUMMARY_BODY '## Validation Summary: Timed out\n\n%d of %d checks completed. %d failed.\n\n| Check | Status | Details |\n|-------|--------|---------|\n%s' "$COMPLETED" "$TOTAL" "$FAILED" "$SUMMARY_ROWS"
+          echo "$SUMMARY_BODY" >> "$GITHUB_STEP_SUMMARY"
+          echo "$SUMMARY_BODY" > /tmp/validation-summary.md
+          ANNOTATION=$(echo -e "Validation Summary timed out. Checks still pending:\n${PENDING_NAMES}" | sed 's/$/%0A/' | tr -d '\n')
+          echo "::error::${ANNOTATION}"
+          exit 1
+
+      - name: Comment on PR with failure details
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f /tmp/validation-summary.md ]; then
+            echo "No summary file found, skipping comment"
+            exit 0
+          fi
+
+          MARKER="<!-- validation-summary -->"
+          SUMMARY_CONTENT=$(cat /tmp/validation-summary.md)
+          UPDATED="*Updated: $(date -u +%Y-%m-%dT%H:%M:%SZ) | [View full details](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})*"
+          printf -v BODY '%s\n%s\n\n%s' "$MARKER" "$SUMMARY_CONTENT" "$UPDATED"
+
+          # Find every Validation Summary comment (paginated) so chatty PRs are
+          # fully scanned. PATCH the first one to the new body and delete the
+          # rest, converging on a single comment.
+          EXISTING_IDS=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"${MARKER}\")) | .id" 2>/dev/null || true)
+
+          KEEP_ID=""
+          while IFS= read -r ID; do
+            [ -z "$ID" ] && continue
+            if [ -z "$KEEP_ID" ]; then
+              KEEP_ID="$ID"
+            else
+              gh api "repos/${REPO}/issues/comments/${ID}" -X DELETE > /dev/null 2>&1 || true
+            fi
+          done <<< "$EXISTING_IDS"
+
+          if [ -n "$KEEP_ID" ]; then
+            gh api "repos/${REPO}/issues/comments/${KEEP_ID}" \
+              -X PATCH -f body="$BODY" > /dev/null
+            echo "Updated existing Validation Summary comment"
+          else
+            gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$BODY" > /dev/null
+            echo "Posted new Validation Summary comment"
+          fi
