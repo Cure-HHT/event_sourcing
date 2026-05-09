@@ -1,0 +1,11 @@
+.dart_tool/
+.flutter-plugins-dependencies
+build/
+coverage/
+pubspec.lock
+
+# demo runtime
+tool/.demo-server.log
+tool/.demo-server.pid
+*.db
+**/*.install.uuid

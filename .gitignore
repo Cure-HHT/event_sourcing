@@ -1,0 +1,23 @@
+# IDE / OS
+.DS_Store
+.idea/
+*.iml
+*.swp
+.history
+.atom/
+.buildlog/
+.vscode/
+
+# Dart/Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+/build/
+/coverage/
+**/doc/api/
+
+# Libraries should not commit pubspec.lock per https://dart.dev/tools/pub/dependencies#lockfiles
+**/pubspec.lock
+
+# Local dev overrides — devs add these per-checkout for cross-package work.
+**/pubspec_overrides.yaml

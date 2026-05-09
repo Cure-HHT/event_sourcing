@@ -1,0 +1,318 @@
+/// Append-only datastore for FDA 21 CFR Part 11 compliant event sourcing.
+///
+/// This library provides offline-first event storage with automatic
+/// synchronization, conflict resolution, and audit trail support.
+///
+/// ## Features
+///
+/// - ✅ Sembast-based append-only event storage (cross-platform including web)
+/// - ✅ Offline queue with automatic sync
+/// - ✅ Conflict detection using version vectors
+/// - ✅ FDA 21 CFR Part 11 compliance (immutable audit trail)
+/// - ✅ Cryptographic hash chain for tamper detection
+/// - ✅ OpenTelemetry integration
+/// - ✅ Reactive state with Signals
+///
+/// ## Quick Start
+///
+/// ```dart
+/// import 'package:event_sourcing/event_sourcing.dart';
+///
+/// // Initialize the datastore
+/// await Datastore.initialize(
+///   config: DatastoreConfig.development(
+///     deviceId: 'device-123',
+///     userId: 'user-456',
+///   ),
+/// );
+///
+/// // Append an event
+/// final event = await Datastore.instance.repository.append(
+///   aggregateId: 'diary-entry-123',
+///   eventType: 'NosebleedRecorded',
+///   data: {'severity': 'mild', 'duration': 10},
+///   userId: 'user-456',
+///   deviceId: 'device-789',
+/// );
+///
+/// // Query events
+/// final events = await Datastore.instance.repository.getAllEvents();
+///
+/// // Watch sync status in UI
+/// Watch((context) {
+///   final depth = Datastore.instance.queueDepth.value;
+///   return Text('$depth events pending sync');
+/// });
+/// ```
+///
+/// ## Architecture
+///
+/// The datastore follows a three-layer architecture:
+///
+/// 1. **Domain Layer** (this package — value types)
+///    - Event definitions
+///    - Domain entities
+///    - Value objects
+///
+/// 2. **Infrastructure Layer** (this package)
+///    - Sembast storage (cross-platform: iOS, Android, Web, Desktop)
+///    - Event repository with append-only semantics
+///    - Sync engine
+///
+/// 3. **Application Layer** (clinical_diary app)
+///    - Commands and queries
+///    - Business logic
+///    - UI presentation
+///
+/// ## Platform Support
+///
+/// - iOS (sembast_io)
+/// - Android (sembast_io)
+/// - macOS (sembast_io)
+/// - Windows (sembast_io)
+/// - Linux (sembast_io)
+/// - Web (sembast_web with IndexedDB)
+///
+/// ## FDA Compliance
+///
+/// This datastore implements FDA 21 CFR Part 11 requirements:
+///
+/// - §11.10(e): Immutable audit trail (append-only storage)
+/// - §11.10(c): Sequence of operations (monotonic sequence numbers)
+/// - §11.50: Signature manifestations (SHA-256 hash chain)
+/// - §11.10(a): Validation (comprehensive testing)
+///
+/// ## Implementation Status
+///
+/// ✅ Configuration and DI setup
+/// ✅ Database layer (Sembast cross-platform)
+/// ✅ Event storage (append-only with hash chain)
+/// ⏳ Offline queue manager
+/// ⏳ Conflict detection (version vectors)
+/// ⏳ Query service
+/// ⏳ Sync engine
+///
+library;
+
+// Provenance types — re-export from the provenance package for convenience
+// (Phase 4.9, CUR-1154). ProvenanceEntry is exported so consumers of the
+// REQ-d00154-A `StoredEvent.originatorHop` getter have a name for the
+// returned type without depending on the provenance package directly.
+export 'package:provenance/provenance.dart' show BatchContext, ProvenanceEntry;
+
+// Actions module — trusted-boundary command/intent layer (formerly the
+// audited_actions package; merged into event_sourcing via Phase C of the
+// consolidation, CUR-1192).
+export 'src/actions/action.dart' show Action;
+export 'src/actions/action_context.dart' show ActionContext;
+export 'src/actions/action_dispatcher.dart' show ActionDispatcher;
+export 'src/actions/action_registry.dart' show ActionRegistry;
+export 'src/actions/authorization_decision.dart'
+    show AuthorizationDecision, Allow, Deny, DenyReason;
+export 'src/actions/authorization_policy.dart' show AuthorizationPolicy;
+export 'src/actions/bootstrap_audited_actions.dart'
+    show bootstrapAuditedActions;
+export 'src/actions/denial_events.dart'
+    show
+        denialUnknownAction,
+        denialParseDenied,
+        denialValidationDenied,
+        denialAuthorizationDenied,
+        denialExecutionFailed,
+        sanitizeErrorMessage;
+export 'src/actions/deny_all_authorization_policy.dart'
+    show DenyAllAuthorizationPolicy;
+export 'src/actions/dispatch_result.dart'
+    show
+        DispatchAuthorizationDenied,
+        DispatchExecutionFailed,
+        DispatchIdempotencyHit,
+        DispatchParseDenied,
+        DispatchResult,
+        DispatchSuccess,
+        DispatchUnknownAction,
+        DispatchValidationDenied;
+export 'src/actions/execution_result.dart' show ExecutionResult;
+export 'src/actions/idempotency.dart'
+    show defaultIdempotencyTtl, Idempotency, IdempotencyEntry;
+export 'src/actions/idempotency_errors.dart' show MissingIdempotencyKeyError;
+export 'src/actions/idempotency_store.dart'
+    show IdempotencyStore, InMemoryIdempotencyStore;
+export 'src/actions/permission.dart' show Permission;
+export 'src/actions/principal.dart'
+    show Principal, UserPrincipal, AnonymousPrincipal;
+export 'src/actions/scope_class.dart' show ScopeClass;
+
+// bootstrapAppendOnlyDatastore — single entry point for app main() to wire
+// the storage backend, EntryTypeRegistry, destinations, security context
+// store, and EventStore. Returns an AppendOnlyDatastore facade.
+export 'src/bootstrap.dart'
+    show AppendOnlyDatastore, bootstrapAppendOnlyDatastore;
+
+// Core configuration
+export 'src/core/config/datastore_config.dart';
+
+// Exceptions
+export 'src/core/errors/datastore_exception.dart';
+export 'src/core/errors/sync_exception.dart';
+
+// Destinations — per-destination routing contract (Phase 4, CUR-1154).
+// FakeDestination lives in test/test_support/ and is intentionally NOT
+// exported.
+export 'src/destinations/batch_envelope_metadata.dart'
+    show BatchEnvelopeMetadata;
+export 'src/destinations/destination.dart' show Destination;
+export 'src/destinations/destination_registry.dart' show DestinationRegistry;
+export 'src/destinations/destination_schedule.dart'
+    show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
+export 'src/destinations/subscription_filter.dart'
+    show SubscriptionFilter, SubscriptionPredicate;
+export 'src/destinations/wire_payload.dart' show WirePayload;
+
+// Entry Type Registry + EntryService.record — the legacy Phase 4.3 write
+// path. Phase 4.4 added EventStore (see `src/event_store.dart`) as the new
+// write API; `EntryService.record` remains for back-compat until Phase 5
+// cuts clinical_diary over.
+export 'src/entry_service.dart' show DeviceInfo, EntryService, SyncCycleTrigger;
+export 'src/entry_type_definition.dart' show EntryTypeDefinition;
+export 'src/entry_type_registry.dart' show EntryTypeRegistry;
+
+// EventDraft — input value type for Action.execute return value and
+// appendWithSecurity call (Phase 5, CUR-1192).
+export 'src/event_draft.dart' show EventDraft;
+export 'src/event_store.dart'
+    show EventStore, EventStoreSyncCycleTrigger, RetentionResult;
+
+// Ingest types — error types, result types, and chain verdict
+// (Phase 4.9, CUR-1154).
+export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
+export 'src/ingest/chain_verdict.dart'
+    show ChainFailure, ChainFailureKind, ChainVerdict;
+export 'src/ingest/ingest_errors.dart'
+    show
+        IngestChainBroken,
+        IngestDecodeFailure,
+        IngestEntryTypeVersionAhead,
+        IngestIdentityMismatch,
+        IngestLibFormatVersionAhead;
+export 'src/ingest/ingest_result.dart'
+    show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
+
+// Materialization layer — pluggable fold contract, concrete materializer
+// for diary_entries, entry-type-definition lookup, and the
+// disaster-recovery rebuild helpers (CUR-1154).
+// MapEntryTypeDefinitionLookup is intentionally NOT exported — it lives
+// under test/test_support/ so production code cannot depend on it.
+export 'src/materialization/diary_entries_materializer.dart'
+    show DiaryEntriesMaterializer;
+export 'src/materialization/entry_promoter.dart'
+    show EntryPromoter, identityPromoter;
+export 'src/materialization/entry_type_definition_lookup.dart'
+    show EntryTypeDefinitionLookup;
+export 'src/materialization/materializer.dart' show Materializer;
+export 'src/materialization/rebuild.dart'
+    show rebuildMaterializedView, rebuildView;
+
+// Permissions module — role-permission matrix, materialized via the event
+// log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
+export 'src/permissions/authorization_policy_bootstrap.dart'
+    show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
+export 'src/permissions/bootstrap_action_permissions.dart'
+    show bootstrapActionPermissions;
+export 'src/permissions/event_seed_applier.dart'
+    show EventSeedApplier, SeedApplyResult;
+export 'src/permissions/fail_safe_authorization_policy.dart'
+    show FailSafeAuthorizationPolicy;
+export 'src/permissions/in_memory_role_matrix_reader.dart'
+    show InMemoryRoleMatrixReader;
+export 'src/permissions/materialized_view_role_matrix_reader.dart'
+    show MaterializedViewRoleMatrixReader;
+export 'src/permissions/permission_granted_payload.dart'
+    show PermissionGrantedPayload;
+export 'src/permissions/permission_revoked_payload.dart'
+    show PermissionRevokedPayload;
+export 'src/permissions/permission_seed.dart' show PermissionSeed;
+export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
+export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
+export 'src/permissions/role_permission_grants_materializer.dart'
+    show RolePermissionGrantsMaterializer;
+export 'src/permissions/seed_validator.dart'
+    show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
+export 'src/permissions/snapshot_role_matrix_reader.dart'
+    show SnapshotRoleMatrixReader;
+export 'src/permissions/table_backed_authorization_policy.dart'
+    show TableBackedAuthorizationPolicy;
+export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;
+
+// Security module — Phase 4.4 Tasks 11-15: EventSecurityContext value
+// type, SecurityDetails caller input, SecurityRetentionPolicy sweeps,
+// SecurityContextStore read-only surface, sembast concrete impl, reserved
+// system entry types for redaction/compact/purge audit events.
+export 'src/security/event_security_context.dart' show EventSecurityContext;
+export 'src/security/security_context_store.dart'
+    show AuditRow, PagedAudit, SecurityContextStore;
+export 'src/security/security_details.dart' show SecurityDetails;
+export 'src/security/security_retention_policy.dart'
+    show SecurityRetentionPolicy;
+export 'src/security/sembast_security_context_store.dart'
+    show SembastSecurityContextStore;
+export 'src/security/system_entry_types.dart'
+    show
+        // Security-context lifecycle audits (Phase 4.4).
+        kSecurityContextCompactedEntryType,
+        kSecurityContextPurgedEntryType,
+        kSecurityContextRedactedEntryType,
+        // Destination-mutation audits (Phase 4.17).
+        kDestinationDeletedEntryType,
+        kDestinationEndDateSetEntryType,
+        kDestinationRegisteredEntryType,
+        kDestinationStartDateSetEntryType,
+        kDestinationWedgeRecoveredEntryType,
+        // Retention sweep audit (Phase 4.17).
+        kRetentionPolicyAppliedEntryType,
+        // Bootstrap registry-initialized audit (Phase 4.17 cross-phase
+        // I-1 fix).
+        kEntryTypeRegistryInitializedEntryType,
+        // Aggregates over all of the above.
+        kReservedSystemEntryTypeIds,
+        kSystemEntryTypes;
+
+// Storage layer — StorageBackend contract, SembastBackend concrete
+// implementation, and the value types that flow through the contract
+// (CUR-1154).
+export 'src/storage/append_result.dart' show AppendResult;
+export 'src/storage/attempt_result.dart' show AttemptResult;
+export 'src/storage/diary_entry.dart' show DiaryEntry;
+export 'src/storage/fifo_entry.dart' show EventIdRange, FifoEntry;
+export 'src/storage/final_status.dart' show FinalStatus;
+export 'src/storage/initiator.dart'
+    show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
+export 'src/storage/sembast_backend.dart'
+    show SembastBackend, SembastBackendTestSupport;
+export 'src/storage/send_result.dart'
+    show SendResult, SendOk, SendTransient, SendPermanent;
+export 'src/storage/source.dart' show Source;
+export 'src/storage/storage_backend.dart' show StorageBackend;
+export 'src/storage/storage_exception.dart'
+    show
+        StorageCorruptException,
+        StorageException,
+        StoragePermanentException,
+        StorageTransientException,
+        classifyStorageException;
+export 'src/storage/stored_event.dart' show StoredEvent;
+export 'src/storage/txn.dart' show Txn;
+export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
+
+// Sync — backoff curve, drain loop, and top-level orchestrator (Phase 4,
+// CUR-1154). Phase 5 wires triggers in clinical_diary that route into
+// SyncCycle.call().
+export 'src/sync/drain.dart' show ClockFn, drain;
+export 'src/sync/fill_batch.dart' show fillBatch;
+export 'src/sync/sync_cycle.dart' show SyncCycle;
+export 'src/sync/sync_policy.dart' show SyncPolicy;
+
+// TODO: Export additional services as implemented
+// export 'src/application/services/query_service.dart';
+// export 'src/application/services/conflict_resolver.dart';
+// export 'src/application/models/version_vector.dart';
