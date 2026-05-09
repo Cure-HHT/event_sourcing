@@ -1,6 +1,6 @@
-# EVS-prd-provenance: Provenance Chain Tracking
+# EVS-PRD-provenance: Provenance Chain Tracking
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 

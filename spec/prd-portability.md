@@ -1,6 +1,6 @@
-# EVS-prd-portability: Portability
+# EVS-PRD-portability: Portability
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -22,7 +22,7 @@ D. The library SHALL abstract platform-divergent capabilities (persistent storag
 
 **Why all Dart-supported runtimes?** Different parts of a deployment topology run on different platforms. A diary on a participant's phone (Flutter on iOS/Android), a portal accessed by clinicians in a browser (Flutter on web), a relay or EDC running in a server-side container (Dart VM) — all use the same library. Excluding any runtime forces a parallel codebase for that tier; the audit divergence costs of parallel codebases are exactly what the library exists to prevent.
 
-**Why identical observable behavior across platforms?** Cross-tier audit and verification rest on hashes computed from canonical-form serialization. If the same input produces different hashes on different platforms, the audit chain breaks at every cross-tier boundary, and integrity verification (per EVS-prd-hash-chain-integrity) becomes platform-dependent rather than universal. Identical behavior across runtimes is the property that makes hash-based verification meaningful end-to-end.
+**Why identical observable behavior across platforms?** Cross-tier audit and verification rest on hashes computed from canonical-form serialization. If the same input produces different hashes on different platforms, the audit chain breaks at every cross-tier boundary, and integrity verification (per EVS-PRD-hash-chain-integrity) becomes platform-dependent rather than universal. Identical behavior across runtimes is the property that makes hash-based verification meaningful end-to-end.
 
 **Why abstract platform-divergent capabilities?** Some capabilities genuinely differ across platforms — file-system storage on the Dart VM vs. IndexedDB on web vs. application-private directories on mobile; HTTP via dart:io on the VM vs. dart:html on web; notification delivery via push services on mobile vs. OS notifications on desktop vs. browser notifications on web. The library cannot pick any single platform's API without breaking the others. By defining Dart-side interfaces (storage, transport, notification) and accepting application-supplied implementations, the library stays platform-agnostic while letting consumers adapt to whatever their target environment provides.
 

@@ -1,10 +1,10 @@
-# EVS-prd-action-dispatch: Action Dispatch
+# EVS-PRD-action-dispatch: Action Dispatch
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
-Application-level operations enter the library through the action-dispatch flow. A principal submits an action describing what it wants to do; the library parses it, validates its shape, authorizes it against the closed-under-events trust model (EVS-prd-permissions-as-events), executes the application logic, and records the outcome in the event log. Whether the action succeeds or is rejected, the audit log records the decision.
+Application-level operations enter the library through the action-dispatch flow. A principal submits an action describing what it wants to do; the library parses it, validates its shape, authorizes it against the closed-under-events trust model (EVS-PRD-permissions-as-events), executes the application logic, and records the outcome in the event log. Whether the action succeeds or is rejected, the audit log records the decision.
 
 The dispatch flow is the only path by which consumer-initiated state changes reach the log. Direct event-append APIs are not exposed for consumer use; everything that ends up in the log goes through the same auditable pipeline.
 

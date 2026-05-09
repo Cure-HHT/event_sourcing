@@ -1,6 +1,6 @@
-# EVS-prd-regulatory-alignment: Regulatory Alignment
+# EVS-PRD-regulatory-alignment: Regulatory Alignment
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -24,25 +24,25 @@ D. Provenance verification failure encountered during normal operation SHALL be 
 
 | Attribute | What it requires | Where the library satisfies it |
 | --- | --- | --- |
-| **A**ttributable | Every record identifies who produced it. | EVS-prd-multi-source-canonicalization A — every event carries an authority identifier; EVS-prd-permissions-as-events — authority is event-defined. |
-| **L**egible | Records are readable by humans and machines. | EVS-prd-canonical-json — events serialize to canonical JSON, decipherable without library-specific tooling. |
+| **A**ttributable | Every record identifies who produced it. | EVS-PRD-multi-source-canonicalization A — every event carries an authority identifier; EVS-PRD-permissions-as-events — authority is event-defined. |
+| **L**egible | Records are readable by humans and machines. | EVS-PRD-canonical-json — events serialize to canonical JSON, decipherable without library-specific tooling. |
 | **C**ontemporaneous | Records reflect the time of the event. | This PRD, A — every event records the originating action's timestamp. |
-| **O**riginal | The audit log is the unaltered original record. | EVS-prd-event-log A — append-only and immutable; EVS-prd-hash-chain-integrity — modifications detectable. |
-| **A**ccurate | Records reflect what actually happened. | EVS-prd-action-dispatch B — validation precedes recording; EVS-prd-action-dispatch C — denial events record what was rejected and why. |
-| **C**omplete | Nothing is omitted from the audit trail. | EVS-prd-action-dispatch C — every dispatched action produces a recorded outcome (success or denial); EVS-prd-event-log A — events are never deleted. |
-| **C**onsistent | Records are in correct order. | EVS-prd-event-log B+C — total order across the log; per-aggregate order preserved. |
-| **E**nduring | Records survive over time. | EVS-prd-event-log A — append-only persistence; EVS-prd-destinations D — durable destination queues; EVS-prd-portability D — pluggable storage allows long-term retention configurations. |
-| **A**vailable | Records can be retrieved when needed. | EVS-prd-event-log D — read events from any starting position; EVS-prd-subscription — reactive delivery and filtered access; EVS-prd-materializer A — typed state derivation on demand. |
+| **O**riginal | The audit log is the unaltered original record. | EVS-PRD-event-log A — append-only and immutable; EVS-PRD-hash-chain-integrity — modifications detectable. |
+| **A**ccurate | Records reflect what actually happened. | EVS-PRD-action-dispatch B — validation precedes recording; EVS-PRD-action-dispatch C — denial events record what was rejected and why. |
+| **C**omplete | Nothing is omitted from the audit trail. | EVS-PRD-action-dispatch C — every dispatched action produces a recorded outcome (success or denial); EVS-PRD-event-log A — events are never deleted. |
+| **C**onsistent | Records are in correct order. | EVS-PRD-event-log B+C — total order across the log; per-aggregate order preserved. |
+| **E**nduring | Records survive over time. | EVS-PRD-event-log A — append-only persistence; EVS-PRD-destinations D — durable destination queues; EVS-PRD-portability D — pluggable storage allows long-term retention configurations. |
+| **A**vailable | Records can be retrieved when needed. | EVS-PRD-event-log D — read events from any starting position; EVS-PRD-subscription — reactive delivery and filtered access; EVS-PRD-materializer A — typed state derivation on demand. |
 
 ### FDA 21 CFR Part 11 cross-walk
 
 The relevant clauses for the library's substrate role:
 
-- **§11.10(b) Records readable** — covered by EVS-prd-canonical-json (canonical JSON is human-decipherable).
-- **§11.10(c) Protection of records** — covered by EVS-prd-event-log A (append-only) + EVS-prd-hash-chain-integrity (tamper-evidence) + this PRD, B–D (integrity-violation surfacing).
-- **§11.10(e) Audit trails (computer-generated, time-stamped)** — covered by EVS-prd-event-log + EVS-prd-action-dispatch C + this PRD, A (timestamps).
+- **§11.10(b) Records readable** — covered by EVS-PRD-canonical-json (canonical JSON is human-decipherable).
+- **§11.10(c) Protection of records** — covered by EVS-PRD-event-log A (append-only) + EVS-PRD-hash-chain-integrity (tamper-evidence) + this PRD, B–D (integrity-violation surfacing).
+- **§11.10(e) Audit trails (computer-generated, time-stamped)** — covered by EVS-PRD-event-log + EVS-PRD-action-dispatch C + this PRD, A (timestamps).
 - **§11.10(f) Operational system checks** — covered by this PRD, B–D (the three classes of integrity violation are surfaced).
-- **§11.10(g) Authority checks** — covered by EVS-prd-action-dispatch B + EVS-prd-permissions-as-events.
+- **§11.10(g) Authority checks** — covered by EVS-PRD-action-dispatch B + EVS-PRD-permissions-as-events.
 
 Other 21 CFR Part 11 clauses (validation of systems §11.10(a), system documentation §11.10(k), persons qualified §11.10(i)) are process and SOP obligations on the consuming organization, not library obligations.
 
@@ -52,6 +52,6 @@ Timestamps are not strictly necessary for an event log to be a valid event log �
 
 ### Why integrity-violation surfacing is this PRD's obligation, not hash-chain-integrity's
 
-EVS-prd-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library surfaces verification failures encountered during normal use, rather than absorbing them. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does. The three classes of failure are split into separate assertions (B, C, D) because each is independently testable: hash-chain mismatch is detected via the chain-verification path; canonicalization-rule conflict is detected by the rule-evaluation path; provenance verification failure is detected at the ingest boundary.
+EVS-PRD-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library surfaces verification failures encountered during normal use, rather than absorbing them. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does. The three classes of failure are split into separate assertions (B, C, D) because each is independently testable: hash-chain mismatch is detected via the chain-verification path; canonicalization-rule conflict is detected by the rule-evaluation path; provenance verification failure is detected at the ingest boundary.
 
 *End* *Regulatory Alignment* | **Hash**: 00000000

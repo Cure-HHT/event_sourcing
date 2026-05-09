@@ -1,6 +1,6 @@
-# EVS-dev-example: Example Requirement Title
+# EVS-DEV-example: Example Requirement Title
 
-**Level**: dev | **Status**: Draft | **Refines**: -
+**Level**: DEV | **Status**: Draft | **Refines**: -
 
 ## Assertions
 

@@ -1,12 +1,12 @@
-# EVS-prd-event-log: Event Log
+# EVS-PRD-event-log: Event Log
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
-The event log is the library's persistent record of every state-changing fact the application has produced. It is append-only, ordered, and immutable. Application state derives from it by replay through a materializer (see EVS-prd-materializer); audit, debugging, and cross-tier reconciliation read from it directly.
+The event log is the library's persistent record of every state-changing fact the application has produced. It is append-only, ordered, and immutable. Application state derives from it by replay through a materializer (see EVS-PRD-materializer); audit, debugging, and cross-tier reconciliation read from it directly.
 
-This PRD specifies the structural and ordering properties of the log. Tamper-evidence — the cryptographic property that detects modification of stored events — is specified separately (see EVS-prd-hash-chain-integrity).
+This PRD specifies the structural and ordering properties of the log. Tamper-evidence — the cryptographic property that detects modification of stored events — is specified separately (see EVS-PRD-hash-chain-integrity).
 
 ## Assertions
 
@@ -28,6 +28,6 @@ D. The library SHALL allow consumers to read events from the log in order, from 
 
 **Why replay from any position?** Two consumers of the same log have different needs: a fresh materializer rebuilds state from the start, an incremental subscriber resumes from its last-processed position, an auditor inspects a specific window. All three reduce to the same primitive: read in order from any starting point.
 
-**Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-prd-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
+**Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
 
 *End* *Event Log* | **Hash**: 00000000

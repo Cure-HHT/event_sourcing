@@ -1,6 +1,6 @@
-# EVS-prd-subscription: Subscription
+# EVS-PRD-subscription: Subscription
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 

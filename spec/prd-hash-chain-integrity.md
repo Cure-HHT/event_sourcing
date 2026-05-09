@@ -1,12 +1,12 @@
-# EVS-prd-hash-chain-integrity: Hash-Chain Integrity
+# EVS-PRD-hash-chain-integrity: Hash-Chain Integrity
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
 The library makes the event log tamper-evident: any after-the-fact modification of a stored event is detectable by an independent observer who has access only to the stored log, the canonical-JSON serializer, and the chain-anchor convention. The audit story does not depend on trust in the storage backend; integrity is established cryptographically.
 
-This PRD pins the integrity contract. Structural append-only and ordering properties are specified separately in EVS-prd-event-log.
+This PRD pins the integrity contract. Structural append-only and ordering properties are specified separately in EVS-PRD-event-log.
 
 ## Assertions
 
@@ -24,10 +24,10 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 **Why anchor the chain?** Without an anchor, two independently-started logs could be spliced. The anchor binds the chain to the deployment that produced it, so an event sequence cannot be moved between deployments without breaking integrity.
 
-**Why hash the canonical form, not the wire form?** Wire forms vary across platforms, library versions, and locales — JSON property order, Unicode normalization, numeric representation. A hash over the wire form would let a benign re-serialization look like tampering. Hashing the canonical form (per EVS-prd-canonical-json) gives observers on different platforms a single, reproducible value to compare.
+**Why hash the canonical form, not the wire form?** Wire forms vary across platforms, library versions, and locales — JSON property order, Unicode normalization, numeric representation. A hash over the wire form would let a benign re-serialization look like tampering. Hashing the canonical form (per EVS-PRD-canonical-json) gives observers on different platforms a single, reproducible value to compare.
 
 **Why third-party verifiability?** Regulatory audit cannot rest on trusting the system being audited. By making integrity verifiable from the log alone — no application code, no privileged credentials — the library separates "the system that produced the log" from "the system that verifies it", which is the property that lets a regulator independently confirm the audit trail.
 
-**Multiple chains per log.** A deployment that holds only locally-originated events has one chain, anchored to that deployment. A deployment that ingests events from upstream (per EVS-prd-ingest) also holds the chains of its upstreams — each chain remains anchored to its originating deployment. Verification is the union of per-chain verifications: each chain is verified against its own anchor, and ingested events are verified at the boundary against the upstream chain they came from.
+**Multiple chains per log.** A deployment that holds only locally-originated events has one chain, anchored to that deployment. A deployment that ingests events from upstream (per EVS-PRD-ingest) also holds the chains of its upstreams — each chain remains anchored to its originating deployment. Verification is the union of per-chain verifications: each chain is verified against its own anchor, and ingested events are verified at the boundary against the upstream chain they came from.
 
 *End* *Hash-Chain Integrity* | **Hash**: 00000000

@@ -1,6 +1,6 @@
-# EVS-prd-ingest: Ingest Path
+# EVS-PRD-ingest: Ingest Path
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -28,7 +28,7 @@ F. The ingest path SHALL be idempotent: re-presenting an event already admitted 
 
 **Why preserve upstream identity?** The upstream's hash chain is the cryptographic evidence for upstream content. Re-stamping events with this deployment's identity would invalidate that chain at the boundary; downstream verifiers would have to trust this deployment's re-statement instead of the upstream's original. Preserving identity end-to-end keeps each event independently verifiable from the originating authority forward.
 
-**Why extend the provenance chain rather than reset it?** Provenance answers "where has this event been?". Resetting at each hop loses the answer; extending records the transit so downstream observers see the full path. Section EVS-prd-provenance pins the chain semantics; this PRD pins that ingest is one of the operations that adds a hop.
+**Why extend the provenance chain rather than reset it?** Provenance answers "where has this event been?". Resetting at each hop loses the answer; extending records the transit so downstream observers see the full path. Section EVS-PRD-provenance pins the chain semantics; this PRD pins that ingest is one of the operations that adds a hop.
 
 **Why verify hash-chain integrity at ingest?** Ingest is the boundary between an external deployment's audit trail and this deployment's. Admitting an event whose chain doesn't verify would let upstream tampering propagate downstream. Verifying at the boundary catches it once, at the place that has both the upstream chain and the local trust anchor.
 

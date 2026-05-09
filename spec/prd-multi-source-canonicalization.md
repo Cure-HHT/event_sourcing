@@ -1,6 +1,6 @@
-# EVS-prd-multi-source-canonicalization: Multi-Source Canonicalization
+# EVS-PRD-multi-source-canonicalization: Multi-Source Canonicalization
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -28,7 +28,7 @@ F. A non-canonical event SHALL remain visible in the log and in subscriptions; t
 
 **Why is the default "originator authority is canonical"?** Single-source-per-aggregate is the safe default. A new aggregate's first event establishes who produced it; in the absence of any explicit rule admitting other authorities, only events from that originator are canonical. This guarantees that a deployment with no multi-source configuration behaves exactly like a single-source deployment — multi-source machinery is dormant until activated by rules.
 
-**Why are canonicalization rules events?** A rule that lives outside the log can change without record. If the rule that governs which events become canonical for an aggregate can be edited silently, the meaning of the audit log changes silently. By recording rule changes as events, the library guarantees that "what counted as canonical at time T" is reconstructable from the same evidence base as "what events existed at time T". This parallels the rationale in EVS-prd-materializer for materializer-rules-as-events.
+**Why are canonicalization rules events?** A rule that lives outside the log can change without record. If the rule that governs which events become canonical for an aggregate can be edited silently, the meaning of the audit log changes silently. By recording rule changes as events, the library guarantees that "what counted as canonical at time T" is reconstructable from the same evidence base as "what events existed at time T". This parallels the rationale in EVS-PRD-materializer for materializer-rules-as-events.
 
 **Why an explicit approval pattern?** Two distinct multi-editor scenarios reduce to the same primitive. (1) A participant edits the same diary entry on phone and tablet — both events are from the same authority (the participant), and the participant's own canonicalization rule auto-approves both. (2) A coordinator edits a participant's diary entry — the edit is from a different authority and is non-canonical until the participant submits an approval event. The approval pattern captures both: scenario (1) is the degenerate case where the approver and the editor are the same authority and the approval is implicit; scenario (2) is the explicit case where they differ and an approval event is required. One mechanism, two configurations.
 
