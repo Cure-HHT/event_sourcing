@@ -24,6 +24,8 @@ F. The library SHALL provide canonical-form serialization and provenance-chain t
 
 G. The library SHALL produce an audit trail aligned with FDA 21 CFR Part 11 and the ALCOA+ data-integrity attributes (Attributable, Legible, Contemporaneous, Original, Accurate; Complete, Consistent, Enduring, Available).
 
+H. The library SHALL maintain an enumerable set of trust-boundary interfaces. Every input that participates in state derivation but is not itself derivable from the event log SHALL pass through one of these named, pluggable, app-registered interfaces, or be explicitly identified as an unaudited boundary that future work will close. No new external input may participate in state derivation without expanding this enumeration.
+
 ## Rationale
 
 **Should you look at this library more closely?** If you are building a Dart application that must (a) produce an immutable audit trail of every state change, (b) reproduce its state exactly from that audit trail, (c) treat authorization as part of the same audit story rather than a separate IAM concern, (d) deploy across mobile clients and server tiers without maintaining parallel codebases, and (e) be defensible against a regulator who wants to verify the data-integrity story end-to-end — then yes.
@@ -38,6 +40,8 @@ G. The library SHALL produce an audit trail aligned with FDA 21 CFR Part 11 and 
 
 **Why companion libraries (`canonical_json_jcs`, `provenance`)?** Tamper-evidence requires byte-identical serialization across systems; provenance requires a structured chain travelling with each event. Both are concentrated in narrow, dependency-free, pure-Dart packages so that any other Cure-HHT component can share the same canonical-form and provenance contracts without pulling the full event-sourcing stack.
 
+**Why enumerate trust boundaries (assertion H)?** The library's central trust commitment is that state at any sequence is reconstructable from the event log under a known library version. That commitment only holds if the substrate doesn't quietly accept additional inputs that participate in state derivation. Enumerating the trust boundaries — a small, named set of pluggable interfaces (storage, outbound transport) plus any explicitly-acknowledged unaudited inputs (today: the caller-supplied `Principal`, pending future authentication-flow work) — makes the trust surface visible and review-gated. Any proposal to add a fourth trusted input is then a charter-level architectural change, not a quiet API addition. The enumeration itself is maintained in `CLAUDE.md`'s "Trust boundaries" section; downstream PRDs that introduce or modify a boundary interface refine assertion H.
+
 **Why no Ops-level requirements in this repo?** The library has no deployment, runtime monitoring, or operational surface of its own. Operational requirements *about* this library belong in the consuming application repos.
 
 ## Refinement
@@ -51,6 +55,7 @@ This requirement is the top of the PRD hierarchy in this repo. Each headline ass
 - **E** (pure Dart) — refined by the portability PRD.
 - **F** (canonical form + provenance) — refined by the canonical-JSON and provenance PRDs (each a distinct package's charter).
 - **G** (regulatory alignment) — refined by the regulatory-alignment PRD that maps each ALCOA+ attribute to a specific library obligation.
+- **H** (enumerable trust boundaries) — refined by the storage-backend interface (within event-log PRD), the destinations PRD (outbound transport boundary), and the permissions-as-events PRD (which closes the policy-evaluation boundary into the log). The third currently-trusted input — caller-supplied `Principal` accepted on faith — is documented in `CLAUDE.md`'s "Trust boundaries" section as a known incomplete boundary; closing it (an inbound authentication-attempt event flow plus an outbound `AuthenticationProvider` interface) is future work that will warrant its own PRD when authored.
 
 This refinement section is non-normative and exists to orient readers; the binding obligations are the assertions above.
 
