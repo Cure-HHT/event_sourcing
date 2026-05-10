@@ -7,7 +7,7 @@ import 'package:provenance/provenance.dart';
 /// Pure data — no Sembast or Flutter dependency on its shape — so it can
 /// travel through the `StorageBackend` contract without leaking backend
 /// details into the abstraction. Lives in `lib/src/storage/` alongside the
-/// other value types (`DiaryEntry`, `FifoEntry`, etc.).
+/// other storage value types (`FifoEntry`, etc.).
 // Implements: REQ-d00118-A — first-class entry_type field on the event record.
 // Implements: REQ-d00118-B — server_timestamp is NOT stored on the event;
 // the ingesting server is the sole authority on its own timestamp.
@@ -126,7 +126,7 @@ class StoredEvent {
     required DateTime clientTimestamp,
     required String eventHash,
     int key = 0,
-    String aggregateType = 'DiaryEntry',
+    String aggregateType = '_test',
     String eventType = 'finalized',
     int sequenceNumber = 0,
     Map<String, dynamic>? data,
@@ -170,11 +170,11 @@ class StoredEvent {
   /// ID of the aggregate this event belongs to.
   final String aggregateId;
 
-  /// Type of aggregate (e.g., 'DiaryEntry').
+  /// Type of aggregate (e.g., 'Order', 'Invoice').
   final String aggregateType;
 
-  /// Kind of patient-recorded or administered entry (e.g., 'epistaxis_event',
-  /// 'nose_hht_survey'). First-class per REQ-d00118-A.
+  /// Structural kind of the entry within its aggregate type (e.g.,
+  /// 'order_placed', 'invoice_paid'). First-class per REQ-d00118-A.
   final String entryType;
 
   /// Application schema version under which this event was authored.

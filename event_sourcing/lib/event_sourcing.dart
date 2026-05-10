@@ -1,96 +1,72 @@
-/// Append-only datastore for FDA 21 CFR Part 11 compliant event sourcing.
+/// Reactive, append-only event-sourcing substrate.
 ///
-/// This library provides offline-first event storage with automatic
-/// synchronization, conflict resolution, and audit trail support.
+/// Provides storage, sync, ingest, action dispatch, projections, and live
+/// subscriptions. Cross-platform (iOS, Android, macOS, Windows, Linux, Web).
 ///
-/// ## Features
+/// ## Key types
 ///
-/// - ✅ Sembast-based append-only event storage (cross-platform including web)
-/// - ✅ Offline queue with automatic sync
-/// - ✅ Conflict detection using version vectors
-/// - ✅ FDA 21 CFR Part 11 compliance (immutable audit trail)
-/// - ✅ Cryptographic hash chain for tamper detection
-/// - ✅ OpenTelemetry integration
-/// - ✅ Reactive state with Signals
+/// - `EventStore` — open, append, subscribe, close.
+/// - `EventDraft` — input value returned by `Action.execute`.
+/// - `StoredEvent` — immutable event record with hash-chain fields.
+/// - `ProjectionRegistry` — declarative view specs registered before open.
+/// - `PromoterRegistry` — entry-type promotion chains for schema migration.
+/// - `AggregateProjectionSpec` / `TableProjectionSpec` — view spec shapes.
+/// - `SubscriptionFilter` — filter by aggregate type, entry type, event type.
+/// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
+/// - `Update` — sealed stream element: `Snapshot`, `Delta`, `Tombstone`.
+/// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
 ///
-/// ## Quick Start
+/// ## Quick start
 ///
 /// ```dart
 /// import 'package:event_sourcing/event_sourcing.dart';
+/// import 'package:sembast/sembast_io.dart';
 ///
-/// // Initialize the datastore
-/// await Datastore.initialize(
-///   config: DatastoreConfig.development(
-///     deviceId: 'device-123',
-///     userId: 'user-456',
+/// // Build a projection registry before opening the store.
+/// final projections = ProjectionRegistry()
+///   ..register(AggregateProjectionSpec(
+///     viewName: 'invoices',
+///     aggregateType: 'Invoice',
+///     interest: SubscriptionFilter(aggregateTypes: {'Invoice'}),
+///     tombstoneEventTypes: {'invoice_cancelled'},
+///   ));
+///
+/// // Open the store (runs lib-version boot check).
+/// final db = await databaseFactoryIo.openDatabase('data.db');
+/// final store = await EventStore.open(
+///   storage: SembastBackend(db),
+///   projections: projections,
+/// );
+///
+/// // Append an event.
+/// await store.append(
+///   aggregateId: 'inv-001',
+///   aggregateType: 'Invoice',
+///   entryType: 'invoice_created',
+///   entryTypeVersion: 1,
+///   eventType: 'finalized',
+///   data: {'amount': 100},
+///   initiator: const UserInitiator('user-1'),
+/// );
+///
+/// // Subscribe to live view updates.
+/// final stream = store.subscribe<Map<String, Object?>>(
+///   SubscriptionFilter(aggregateTypes: {'Invoice'}),
+///   AggregateMode(
+///     viewName: 'invoices',
+///     mapper: (row) => row,
 ///   ),
 /// );
+/// await for (final update in stream) {
+///   switch (update) {
+///     case Snapshot(:final value): print('snapshot: $value');
+///     case Delta(:final value):    print('delta: $value');
+///     case Tombstone(:final aggregateId): print('deleted: $aggregateId');
+///   }
+/// }
 ///
-/// // Append an event
-/// final event = await Datastore.instance.repository.append(
-///   aggregateId: 'diary-entry-123',
-///   eventType: 'NosebleedRecorded',
-///   data: {'severity': 'mild', 'duration': 10},
-///   userId: 'user-456',
-///   deviceId: 'device-789',
-/// );
-///
-/// // Query events
-/// final events = await Datastore.instance.repository.getAllEvents();
-///
-/// // Watch sync status in UI
-/// Watch((context) {
-///   final depth = Datastore.instance.queueDepth.value;
-///   return Text('$depth events pending sync');
-/// });
+/// await store.close();
 /// ```
-///
-/// ## Architecture
-///
-/// The datastore follows a three-layer architecture:
-///
-/// 1. **Domain Layer** (this package — value types)
-///    - Event definitions
-///    - Domain entities
-///    - Value objects
-///
-/// 2. **Infrastructure Layer** (this package)
-///    - Sembast storage (cross-platform: iOS, Android, Web, Desktop)
-///    - Event repository with append-only semantics
-///    - Sync engine
-///
-/// 3. **Application Layer** (clinical_diary app)
-///    - Commands and queries
-///    - Business logic
-///    - UI presentation
-///
-/// ## Platform Support
-///
-/// - iOS (sembast_io)
-/// - Android (sembast_io)
-/// - macOS (sembast_io)
-/// - Windows (sembast_io)
-/// - Linux (sembast_io)
-/// - Web (sembast_web with IndexedDB)
-///
-/// ## FDA Compliance
-///
-/// This datastore implements FDA 21 CFR Part 11 requirements:
-///
-/// - §11.10(e): Immutable audit trail (append-only storage)
-/// - §11.10(c): Sequence of operations (monotonic sequence numbers)
-/// - §11.50: Signature manifestations (SHA-256 hash chain)
-/// - §11.10(a): Validation (comprehensive testing)
-///
-/// ## Implementation Status
-///
-/// ✅ Configuration and DI setup
-/// ✅ Database layer (Sembast cross-platform)
-/// ✅ Event storage (append-only with hash chain)
-/// ⏳ Offline queue manager
-/// ⏳ Conflict detection (version vectors)
-/// ⏳ Query service
-/// ⏳ Sync engine
 ///
 library;
 
@@ -214,6 +190,15 @@ export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 
+// Promoters — entry-type version promotion chains for schema migration.
+export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
+
+// Subscriptions — live-update stream primitives returned by
+// EventStore.subscribe<T>().
+export 'src/subscriptions/subscription_mode.dart'
+    show AggregateMode, Events, SubscriptionMode;
+export 'src/subscriptions/update.dart' show Delta, Snapshot, Tombstone, Update;
+
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
 export 'src/permissions/authorization_policy_bootstrap.dart'
@@ -314,8 +299,3 @@ export 'src/sync/drain.dart' show ClockFn, drain;
 export 'src/sync/fill_batch.dart' show fillBatch;
 export 'src/sync/sync_cycle.dart' show SyncCycle;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
-
-// TODO: Export additional services as implemented
-// export 'src/application/services/query_service.dart';
-// export 'src/application/services/conflict_resolver.dart';
-// export 'src/application/models/version_vector.dart';
