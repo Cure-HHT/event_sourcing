@@ -1150,9 +1150,7 @@ class EventStore {
         prev = event;
         continue;
       }
-      final provenance = (event.metadata['provenance'] as List<Object?>)
-          .cast<Map<String, Object?>>();
-      final lastEntry = provenance.last;
+      final lastEntry = _lastProvenanceEntry(event)!;
       final previousIngestHash = lastEntry['previous_ingest_hash'] as String?;
       final expected = prev?.eventHash;
       if (previousIngestHash != expected) {
@@ -1170,17 +1168,23 @@ class EventStore {
     return ChainVerdict(ok: failures.isEmpty, failures: failures);
   }
 
-  /// Extract the `ingest_sequence_number` from the last provenance entry of
-  /// [event], or `null` when the event was not ingest-stamped (i.e. an
-  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
-  /// to identify each event's position in Chain 2.
-  int? _ingestSeqOf(StoredEvent event) {
+  /// Extract the last provenance entry of [event] as a typed map, or `null`
+  /// when provenance is absent or empty. Shared by [_ingestSeqOf] and
+  /// [verifyIngestChain] to avoid duplicating the same map-shape navigation.
+  Map<String, Object?>? _lastProvenanceEntry(StoredEvent event) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List || provenanceRaw.isEmpty) return null;
     final last = provenanceRaw.last;
     if (last is! Map<String, Object?>) return null;
-    return last['ingest_sequence_number'] as int?;
+    return last;
   }
+
+  /// Extract the `ingest_sequence_number` from the last provenance entry of
+  /// [event], or `null` when the event was not ingest-stamped (i.e. an
+  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
+  /// to identify each event's position in Chain 2.
+  int? _ingestSeqOf(StoredEvent event) =>
+      _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
   /// verdict. Used by [ingestEvent] and [verifyEventChain].
