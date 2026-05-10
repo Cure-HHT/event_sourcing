@@ -705,4 +705,11 @@ abstract class StorageBackend {
     int limit = 50,
     String? cursor,
   });
+
+  // -------- Lifecycle --------
+
+  /// Close the backend and release all resources (reactive streams, database
+  /// connection). Not safe to call concurrently with an in-flight transaction.
+  /// Callers MUST await all outstanding operations before calling close.
+  Future<void> close();
 }

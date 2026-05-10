@@ -1052,4 +1052,6 @@ class _DelegatingBackend extends StorageBackend {
     limit: limit,
     cursor: cursor,
   );
+  @override
+  Future<void> close() => _inner.close();
 }

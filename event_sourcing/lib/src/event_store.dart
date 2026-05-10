@@ -9,6 +9,8 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
+import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -37,6 +39,26 @@ class RetentionResult {
   });
   final int compactedCount;
   final int purgedCount;
+}
+
+/// Thrown by [EventStore.open] when the event log was last processed by a
+/// newer version of the library than the current build, indicating that
+/// downgrading would risk data corruption.
+///
+/// Pass `allowDowngrade: true` to [EventStore.open] to bypass this check
+/// during development. **Do not use in production.**
+class DowngradeRefusedError extends Error {
+  DowngradeRefusedError(this.recordedVersion, this.currentVersion);
+
+  final String recordedVersion;
+  final String currentVersion;
+
+  @override
+  String toString() =>
+      'DowngradeRefusedError: log was processed by lib version '
+      '$recordedVersion which is newer than this build ($currentVersion). '
+      'Pass EventStore.open(allowDowngrade: true) to override '
+      '(development use only).';
 }
 
 /// Phase 4.4 write API. Serves both mobile widgets and portal callers via
@@ -72,6 +94,78 @@ class EventStore {
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
   final ClockFn? _clock;
   final Uuid _uuid;
+
+  /// Opens an [EventStore] against [storage] and performs the lib-version
+  /// boot check:
+  ///
+  /// - **First boot** (no version event in the log): appends a
+  ///   `lib_version_initialized` event recording [LibVersion.current].
+  /// - **Same version**: no-op — the log already records this version.
+  /// - **Upgrade** (recorded version < current): appends a
+  ///   `lib_version_changed` event recording the transition.
+  /// - **Downgrade** (recorded version > current): throws
+  ///   [DowngradeRefusedError] unless [allowDowngrade] is `true`.
+  ///
+  /// The returned [EventStore] holds only the [storage] backend and
+  /// substrate-level defaults. For a fully-configured store (with
+  /// [EntryTypeRegistry], [Source], materializers, etc.) use the
+  /// regular [EventStore] constructor after `open` has completed its
+  /// boot check.
+  // Implements: EVS-DEV-event-store-open — boot flow with lib-version check.
+  static Future<EventStore> open({
+    required StorageBackend storage,
+    bool allowDowngrade = false,
+  }) async {
+    final recorded = await VersionCheck.findMostRecent(storage);
+    if (recorded == null) {
+      // First boot — emit lib_version_initialized.
+      await _appendLibVersionEventToBackend(
+        storage,
+        LibVersionEvents.initialized,
+        <String, Object?>{
+          'version': LibVersion.current,
+          'initializedAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      );
+    } else {
+      final cmp = LibVersion.compare(
+        recorded.recordedVersion,
+        LibVersion.current,
+      );
+      if (cmp > 0 && !allowDowngrade) {
+        throw DowngradeRefusedError(
+          recorded.recordedVersion,
+          LibVersion.current,
+        );
+      } else if (cmp < 0) {
+        // Upgrade — emit lib_version_changed.
+        await _appendLibVersionEventToBackend(
+          storage,
+          LibVersionEvents.changed,
+          <String, Object?>{
+            'fromVersion': recorded.recordedVersion,
+            'toVersion': LibVersion.current,
+            'changedAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        );
+      }
+      // cmp == 0 or (cmp > 0 && allowDowngrade): no-op.
+    }
+    return EventStore(
+      backend: storage,
+      entryTypes: EntryTypeRegistry(),
+      source: const Source(
+        hopId: 'event_sourcing',
+        identifier: 'event_sourcing',
+        softwareVersion: LibVersion.current,
+      ),
+      securityContexts: _NullSecurityContextStore(),
+    );
+  }
+
+  /// Close the backend and release all resources. Delegates to
+  /// `backend.close()`. Not safe to call concurrently with in-flight work.
+  Future<void> close() => backend.close();
 
   DateTime _now() => (_clock ?? () => DateTime.now().toUtc())();
 
@@ -1138,4 +1232,124 @@ class EventStore {
     final event = StoredEvent.fromMap(recordMap, localSeq);
     await backend.appendEvent(txn, event);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers for EventStore.open
+// ---------------------------------------------------------------------------
+
+/// Fixed initiator used for substrate-emitted lib_version events.
+const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
+
+/// Hash input for lib_version events, mirroring the same field set used by
+/// [EventStore._eventHash].
+String _libVersionEventHash(Map<String, Object?> recordMap) {
+  final hashInput = <String, Object?>{
+    'event_id': recordMap['event_id'],
+    'aggregate_id': recordMap['aggregate_id'],
+    'entry_type': recordMap['entry_type'],
+    'event_type': recordMap['event_type'],
+    'sequence_number': recordMap['sequence_number'],
+    'data': recordMap['data'],
+    'initiator': recordMap['initiator'],
+    'flow_token': recordMap['flow_token'],
+    'client_timestamp': recordMap['client_timestamp'],
+    'previous_event_hash': recordMap['previous_event_hash'],
+    'metadata': recordMap['metadata'],
+  };
+  return sha256.convert(canonicalizeBytes(hashInput)).toString();
+}
+
+/// Append a substrate-emitted lib_version event directly to [backend].
+/// Bypasses [EventStore.appendInTxn] because lib_version events are not
+/// registered in any [EntryTypeRegistry] — they are substrate-internal
+/// bookkeeping records. Uses the same raw-record-map pattern as
+/// [EventStore.logRejectedBatch] and [EventStore._emitDuplicateReceivedInTxn].
+Future<void> _appendLibVersionEventToBackend(
+  StorageBackend backend,
+  String eventType,
+  Map<String, Object?> data,
+) async {
+  await backend.transaction<void>((txn) async {
+    final now = DateTime.now().toUtc();
+    final localSeq = await backend.nextSequenceNumber(txn);
+    final previousTailHash = await backend.readLatestEventHash(txn);
+    const uuid = Uuid();
+    final eventId = uuid.v4();
+
+    final provenance0 = ProvenanceEntry(
+      hop: 'event_sourcing',
+      receivedAt: now,
+      identifier: 'event_sourcing',
+      softwareVersion: LibVersion.current,
+    );
+
+    final recordMap = <String, Object?>{
+      'event_id': eventId,
+      'aggregate_id': '_lib',
+      'aggregate_type': '_lib',
+      'entry_type': eventType,
+      'entry_type_version': 1,
+      'lib_format_version': StoredEvent.currentLibFormatVersion,
+      'event_type': eventType,
+      'sequence_number': localSeq,
+      'data': data,
+      'metadata': <String, Object?>{
+        'provenance': <Map<String, Object?>>[provenance0.toJson()],
+      },
+      'initiator': _kLibVersionInitiator.toJson(),
+      'flow_token': null,
+      'client_timestamp': now.toIso8601String(),
+      'previous_event_hash': previousTailHash,
+    };
+    final eventHash = _libVersionEventHash(recordMap);
+    recordMap['event_hash'] = eventHash;
+    final event = StoredEvent.fromMap(recordMap, localSeq);
+    await backend.appendEvent(txn, event);
+  });
+}
+
+/// Stub [InternalSecurityContextStore] for use by the minimal [EventStore]
+/// returned by [EventStore.open]. The open-only [EventStore] is not intended
+/// for domain event writes; this stub satisfies the constructor contract
+/// without implementing any sidecar functionality.
+class _NullSecurityContextStore extends InternalSecurityContextStore {
+  @override
+  Future<EventSecurityContext?> read(String eventId) async => null;
+
+  @override
+  Future<PagedAudit> queryAudit({
+    Initiator? initiator,
+    String? flowToken,
+    String? ipAddress,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    String? cursor,
+  }) async => const PagedAudit(rows: <AuditRow>[]);
+
+  @override
+  Future<void> writeInTxn(Txn txn, EventSecurityContext row) async {}
+
+  @override
+  Future<EventSecurityContext?> readInTxn(Txn txn, String eventId) async =>
+      null;
+
+  @override
+  Future<void> deleteInTxn(Txn txn, String eventId) async {}
+
+  @override
+  Future<void> upsertInTxn(Txn txn, EventSecurityContext row) async {}
+
+  @override
+  Future<List<EventSecurityContext>> findUnredactedOlderThanInTxn(
+    Txn txn,
+    DateTime cutoff,
+  ) async => const <EventSecurityContext>[];
+
+  @override
+  Future<List<EventSecurityContext>> findOlderThanInTxn(
+    Txn txn,
+    DateTime cutoff,
+  ) async => const <EventSecurityContext>[];
 }

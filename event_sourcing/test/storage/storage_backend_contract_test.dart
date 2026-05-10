@@ -437,6 +437,8 @@ class _InMemoryBackend extends StorageBackend {
     int limit = 50,
     String? cursor,
   }) async => const PagedAudit(rows: <AuditRow>[]);
+  @override
+  Future<void> close() async {}
 }
 
 class _InMemoryTxn extends Txn {
