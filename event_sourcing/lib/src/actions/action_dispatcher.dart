@@ -89,7 +89,7 @@ class ActionDispatcher {
   }) async {
     // Stage 2: invocation_id (generated up front so denials can carry it).
     final invocationId = _uuid.v4();
-    final invocationMetadata = <String, dynamic>{
+    final invocationMetadata = <String, Object?>{
       'action_invocation_id': invocationId,
       'action_name': actionName,
     };
@@ -168,7 +168,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.validationDenied(err);
@@ -190,9 +190,7 @@ class ActionDispatcher {
           permission: decision.permission,
           principalActiveRole: principalActiveRole,
           denyReason: decision.reason,
-          actionInvocationMetadata: Map<String, dynamic>.from(
-            invocationMetadata,
-          ),
+          actionInvocationMetadata: invocationMetadata,
         );
         await _persistDenial(denial, ctx, flowToken: flowToken);
         return DispatchResult<Object?>.authorizationDenied(decision.permission);
@@ -212,7 +210,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.executionFailed(err);
@@ -242,7 +240,7 @@ class ActionDispatcher {
             aggregateId: draft.aggregateId,
             aggregateType: draft.aggregateType,
             eventType: draft.eventType,
-            data: Map<String, Object?>.from(draft.data),
+            data: draft.data,
             initiator: initiator,
             flowToken: draft.flowToken ?? flowToken,
             metadata: mergedMetadata,
@@ -263,7 +261,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.executionFailed(err);
@@ -330,12 +328,10 @@ class ActionDispatcher {
       aggregateId: draft.aggregateId,
       aggregateType: draft.aggregateType,
       eventType: draft.eventType,
-      data: Map<String, Object?>.from(draft.data),
+      data: draft.data,
       initiator: ctx.principal.toInitiator(),
       flowToken: draft.flowToken ?? flowToken,
-      metadata: draft.metadata == null
-          ? null
-          : Map<String, Object?>.from(draft.metadata!),
+      metadata: draft.metadata,
       security: ctx.security,
     );
   }

@@ -25,7 +25,7 @@ class IdempotencyEntry {
     required this.expiresAt,
   });
 
-  final Map<String, dynamic> resultJson;
+  final Map<String, Object?> resultJson;
   final List<String> emittedEventIds;
   final DateTime recordedAt;
   final DateTime expiresAt;

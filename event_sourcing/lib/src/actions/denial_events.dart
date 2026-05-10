@@ -43,7 +43,7 @@ String sanitizeErrorMessage(Object error) {
 EventDraft denialUnknownAction({
   required String invocationId,
   required String requestedName,
-  Map<String, dynamic>? actionInvocationMetadata,
+  Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
   aggregateType: _aggregateType,
@@ -58,7 +58,7 @@ EventDraft denialParseDenied({
   required String invocationId,
   required String actionName,
   required Object error,
-  Map<String, dynamic>? actionInvocationMetadata,
+  Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
   aggregateType: _aggregateType,
@@ -78,7 +78,7 @@ EventDraft denialValidationDenied({
   required String actionName,
   required Object error,
   String? fieldPath,
-  Map<String, dynamic>? actionInvocationMetadata,
+  Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
   aggregateType: _aggregateType,
@@ -107,7 +107,7 @@ EventDraft denialAuthorizationDenied({
   required Permission permission,
   String? principalActiveRole,
   DenyReason? denyReason,
-  Map<String, dynamic>? actionInvocationMetadata,
+  Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
   aggregateType: _aggregateType,
@@ -129,7 +129,7 @@ EventDraft denialExecutionFailed({
   required String invocationId,
   required String actionName,
   required Object error,
-  Map<String, dynamic>? actionInvocationMetadata,
+  Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
   aggregateType: _aggregateType,
