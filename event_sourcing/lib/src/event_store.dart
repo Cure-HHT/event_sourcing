@@ -330,11 +330,11 @@ class EventStore {
     AggregateMode<T> mode,
   ) {
     late StreamController<Update<T>> controller;
-    StreamSubscription<RowChange>? liveSub;
+    StreamSubscription<AggregateFoldChange>? liveSub;
 
     Future<void> start() async {
       // Buffer live changes that arrive while we read the snapshot.
-      final liveBuffer = <RowChange>[];
+      final liveBuffer = <AggregateFoldChange>[];
       liveSub = _subs
           .rowChanges(mode.viewName)
           .listen(liveBuffer.add, onDone: () => controller.close());
@@ -398,7 +398,7 @@ class EventStore {
   }
 
   Update<T>? _changeToUpdate<T>(
-    RowChange c,
+    AggregateFoldChange c,
     SubscriptionFilter filter,
     AggregateMode<T> mode,
   ) {
@@ -408,7 +408,7 @@ class EventStore {
       return Tombstone<T>(aggregateId: c.aggregateId, sequence: c.sequence);
     }
     return Delta<T>(
-      value: mode.mapper(c.value!),
+      value: mode.mapper(c.newValue!),
       sequence: c.sequence,
       cause: c.cause,
     );
@@ -483,14 +483,7 @@ class EventStore {
 
     if (event == null) return null;
     for (final change in rowChanges) {
-      _subs.publishRowChange(
-        viewName: change.viewName,
-        aggregateId: change.aggregateId,
-        value: change.newValue,
-        sequence: change.sequence,
-        cause: change.cause,
-        isTombstone: change.isTombstone,
-      );
+      _subs.publishRowChange(change);
     }
     unawaited(syncCycleTrigger?.call());
     return event;
