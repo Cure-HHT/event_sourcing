@@ -475,10 +475,12 @@ final rolePermissionsSpec = TableProjectionSpec(
   }),
   insertEventTypes: {EventTypeId('permission_granted')},
   removeEventTypes: {EventTypeId('permission_revoked')},
-  rowKey: CompositeKey(['payload.role', 'payload.permission', 'payload.scope']),
-  rowData: PayloadField('payload'),
+  rowKey: CompositeKey(['data.role', 'data.permission', 'data.scope']),
+  rowData: WholePayload(),
 );
 ```
+
+(Codebase note: `StoredEvent.data` IS the event's payload root. `CompositeKey` path segments starting with `data.` resolve into the data Map; `WholePayload()` returns the data Map verbatim as the row.)
 
 ### Stale REQ-d annotations
 
