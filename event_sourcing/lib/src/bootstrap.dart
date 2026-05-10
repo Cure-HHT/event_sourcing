@@ -73,6 +73,10 @@ class AppendOnlyDatastore {
 /// some (`viewName`, `entryType`) pair AND the supplied value differs, a
 /// [StateError] surfaces — bootstrap conflicts must be resolved by
 /// `rebuildView` rather than silently overwritten.
+///
+/// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
+/// lib-version boot check. Default `false` — production-correct behaviour
+/// is to refuse a downgrade. Pass `true` only during development / testing.
 // Implements: REQ-d00134-A (Phase 4.4) — single entry point; facade return.
 // Implements: REQ-d00134-B (Phase 4.4) — auto-register system entry types
 //   before caller-supplied types.
@@ -81,6 +85,8 @@ class AppendOnlyDatastore {
 // Implements: REQ-d00140-J — initial view target versions written before
 //   any event is appended; missing entries error; conflicts on existing
 //   storage error.
+// Implements: EVS-DEV-event-store-open — boot-version check fires through
+//   the production bootstrap path.
 Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required SembastBackend backend,
   required Source source,
@@ -89,7 +95,18 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required List<Materializer> materializers,
   required Map<String, Map<String, int>> initialViewTargetVersions,
   EventStoreSyncCycleTrigger? syncCycleTrigger,
+  bool allowDowngrade = false,
 }) async {
+  // --- Transitional two-step (Task 3 fix) ---
+  // EventStore.open runs the lib-version boot check (emits
+  // lib_version_initialized / lib_version_changed; refuses downgrade). It
+  // returns a half-configured EventStore that we immediately discard — only
+  // the side effect (the lib_version_* event append) matters here. The full
+  // production EventStore is assembled below with registries, source, and
+  // materializers. Task 16 will reorganize EventStore.open to accept those
+  // arguments and collapse this two-step into one.
+  await EventStore.open(storage: backend, allowDowngrade: allowDowngrade);
+
   final typeRegistry = EntryTypeRegistry();
   for (final defn in kSystemEntryTypes) {
     typeRegistry.register(defn);

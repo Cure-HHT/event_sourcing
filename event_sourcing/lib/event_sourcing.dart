@@ -181,7 +181,11 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 // appendWithSecurity call (Phase 5, CUR-1192).
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
-    show EventStore, EventStoreSyncCycleTrigger, RetentionResult;
+    show
+        DowngradeRefusedError,
+        EventStore,
+        EventStoreSyncCycleTrigger,
+        RetentionResult;
 
 // Ingest types — error types, result types, and chain verdict
 // (Phase 4.9, CUR-1154).
@@ -273,6 +277,9 @@ export 'src/security/system_entry_types.dart'
         // Bootstrap registry-initialized audit (Phase 4.17 cross-phase
         // I-1 fix).
         kEntryTypeRegistryInitializedEntryType,
+        // Substrate-internal lib-version boot events (Task 3 fix).
+        kLibVersionChangedEntryType,
+        kLibVersionInitializedEntryType,
         // Aggregates over all of the above.
         kReservedSystemEntryTypeIds,
         kSystemEntryTypes;

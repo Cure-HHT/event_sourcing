@@ -1,11 +1,11 @@
-// Verifies: REQ-d00154-D — all 10 reserved system entry types ship
+// Verifies: REQ-d00154-D — all 12 reserved system entry types ship
 //   materialize:false. Cross-aggregate stream events stay out of view-
 //   side projection on every install, on both the local-append path
 //   and the ingest path (the outer gate `def.materialize` short-
 //   circuits the materializer loop in `_appendInTxn` and
 //   `_ingestOneInTxn` before any materializer is consulted).
 //
-// Regression intent: a future refactor that flips one of the ten
+// Regression intent: a future refactor that flips one of the twelve
 //   `EntryTypeDefinition` records to `materialize: true` would silently
 //   start firing materializers on cross-aggregate stream events, which
 //   is out of scope for Phase 4.22. This test fails loudly if that
@@ -29,7 +29,7 @@ void main() {
     //   post-bootstrap so the test exercises the actual auto-registered
     //   `EntryTypeDefinition` instances rather than re-importing the
     //   internal `kSystemEntryTypes` list.
-    test('REQ-d00154-D: all 10 reserved system entry types have '
+    test('REQ-d00154-D: all 12 reserved system entry types have '
         'materialize:false', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'mat-false-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -46,15 +46,21 @@ void main() {
         );
 
         // The reserved id set is the canonical list of system entry
-        // types and SHALL be exactly 10. A change here implies a new
+        // types and SHALL be exactly 12. A change here implies a new
         // system entry type was added without flipping this assertion;
         // the test forces an explicit decision on whether the new id
         // also ships materialize:false.
+        //
+        // Count is 12: 10 original system audits + 2 substrate-internal
+        // lib-version boot events (lib_version_initialized,
+        // lib_version_changed) added in the Task 3 fix so that
+        // SubscriptionFilter correctly gates them behind
+        // includeSystemEvents:true.
         expect(
           kReservedSystemEntryTypeIds.length,
-          equals(10),
+          equals(12),
           reason:
-              'kReservedSystemEntryTypeIds is the canonical 10-element '
+              'kReservedSystemEntryTypeIds is the canonical 12-element '
               'set per REQ-d00154-D; adding a new system entry type '
               'requires updating this expectation explicitly.',
         );
