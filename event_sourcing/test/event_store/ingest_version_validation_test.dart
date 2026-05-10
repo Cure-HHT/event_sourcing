@@ -91,8 +91,6 @@ Future<AppendOnlyDatastore> _bootstrapWithRegistry({
       ),
     ],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
 }
 

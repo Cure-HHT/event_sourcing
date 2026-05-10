@@ -35,8 +35,6 @@ Future<EventStore> _bootstrap({
       ),
     ],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
   return ds.eventStore;
 }

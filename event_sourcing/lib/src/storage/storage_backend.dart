@@ -154,10 +154,10 @@ abstract class StorageBackend {
 
   // -------- Generic view storage (Phase 4.4) --------
   //
-  // Materializers read and write view rows via these methods. The view
-  // namespace is flat — one store per `viewName`, keyed on a caller-
+  // Projection fold interpreters read and write view rows via these methods.
+  // The view namespace is flat — one store per `viewName`, keyed on a caller-
   // supplied string. The backend does not own schema for view rows; the
-  // materializer and its readers interpret the row map. Reserved view
+  // fold interpreter and its readers interpret the row map. Reserved view
   // name: `security_context` (reserved for the sidecar store).
 
   /// Read one row from [viewName] by [key] inside [txn], or null when
@@ -198,8 +198,7 @@ abstract class StorageBackend {
   // -------- View target versions (Phase 4.19) --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by `Materializer.targetVersionFor`
-  /// per REQ-d00140-I+L.
+  /// if no entry has been registered. Used by [rebuildView] per REQ-d00140-I.
   // Implements: REQ-d00140-I.
   Future<int?> readViewTargetVersionInTxn(
     Txn txn,

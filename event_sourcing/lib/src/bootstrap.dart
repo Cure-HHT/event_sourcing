@@ -3,7 +3,6 @@ import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/materialization/materializer.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
@@ -57,9 +56,8 @@ class AppendOnlyDatastore {
 }
 
 /// Wire the storage backend, the `EntryTypeRegistry`, the initial set of
-/// `Destination`s, the security-context store, the `EventStore`, and the
-/// per-materializer initial `view_target_versions`. Returns an
-/// `AppendOnlyDatastore` facade the rest of the app reads through.
+/// `Destination`s, the security-context store, and the `EventStore`. Returns
+/// an `AppendOnlyDatastore` facade the rest of the app reads through.
 ///
 /// Reserved system entry types (security-context audit events) are
 /// auto-registered BEFORE the caller-supplied list. Id collision with a
@@ -67,13 +65,6 @@ class AppendOnlyDatastore {
 ///
 /// Destinations are registered sequentially, preserving fail-fast on id
 /// collision (REQ-d00134-D).
-///
-/// Initial view target versions: every entry in [materializers] MUST have
-/// a matching key in [initialViewTargetVersions]; otherwise [ArgumentError]
-/// is raised. When persisted storage already holds a target version for
-/// some (`viewName`, `entryType`) pair AND the supplied value differs, a
-/// [StateError] surfaces — bootstrap conflicts must be resolved by
-/// `rebuildView` rather than silently overwritten.
 ///
 /// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
 /// lib-version boot check. Default `false` — production-correct behaviour
@@ -83,9 +74,6 @@ class AppendOnlyDatastore {
 //   before caller-supplied types.
 // Implements: REQ-d00134-D (Phase 4.4) — caller id colliding with reserved
 //   id throws ArgumentError with "reserved" message.
-// Implements: REQ-d00140-J — initial view target versions written before
-//   any event is appended; missing entries error; conflicts on existing
-//   storage error.
 // Implements: EVS-DEV-event-store-open — boot-version check fires through
 //   the production bootstrap path.
 Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
@@ -93,8 +81,6 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required Source source,
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
-  required List<Materializer> materializers,
-  required Map<String, Map<String, int>> initialViewTargetVersions,
   ProjectionRegistry? projections,
   EventStoreSyncCycleTrigger? syncCycleTrigger,
   bool allowDowngrade = false,
@@ -124,50 +110,12 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
     typeRegistry.register(defn);
   }
 
-  // Initial view target versions are written before any event can be
-  // appended. Missing entry for a registered materializer fails loudly,
-  // and a stored value that disagrees with the supplied value also fails
-  // loudly (resolve via rebuildView).
-  await backend.transaction((txn) async {
-    for (final m in materializers) {
-      final supplied = initialViewTargetVersions[m.viewName];
-      if (supplied == null) {
-        throw ArgumentError(
-          'bootstrapAppendOnlyDatastore: no initialViewTargetVersions entry '
-          'for materializer "${m.viewName}". Every materializer needs a '
-          'target-version map covering its entry types.',
-        );
-      }
-      for (final entry in supplied.entries) {
-        final stored = await backend.readViewTargetVersionInTxn(
-          txn,
-          m.viewName,
-          entry.key,
-        );
-        if (stored != null && stored != entry.value) {
-          throw StateError(
-            'bootstrap conflict for (${m.viewName}, ${entry.key}): '
-            'stored target $stored, supplied ${entry.value}; '
-            'resolve via rebuildView.',
-          );
-        }
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          m.viewName,
-          entry.key,
-          entry.value,
-        );
-      }
-    }
-  });
-
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final eventStore = EventStore(
     backend: backend,
     entryTypes: typeRegistry,
     source: source,
     securityContexts: securityContexts,
-    materializers: materializers,
     projections: projections,
     syncCycleTrigger: syncCycleTrigger,
   );

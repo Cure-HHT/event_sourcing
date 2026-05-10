@@ -116,22 +116,27 @@ Future<_PaneRuntime> _bootstrapPane({
     bridge: bridge,
   );
 
+  // Projection spec for diary_entries view. AggregateProjectionSpec folds
+  // demo_note events (aggregateType 'DiaryEntry') into the diary_entries
+  // view. The tombstone event type deletes the row so the MATERIALIZED panel
+  // reflects deletions live. Button-press entry types are excluded by the
+  // interest filter (they use different aggregateTypes).
+  final diaryProjections = ProjectionRegistry()
+    ..register(
+      const AggregateProjectionSpec(
+        viewName: 'diary_entries',
+        aggregateType: 'DiaryEntry',
+        interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
+        tombstoneEventTypes: <String>{'tombstone'},
+      ),
+    );
+
   final datastore = await bootstrapAppendOnlyDatastore(
     backend: backend,
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      // DiaryEntriesMaterializer.appliesTo gates on aggregateType == 'DiaryEntry',
-      // so only demo_note (the sole entry type with aggregateType 'DiaryEntry'
-      // in the demo) needs a target version in the diary_entries view.
-      // Action-button entry types route through different aggregate types
-      // and never reach this materializer's promoter.
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
+    projections: diaryProjections,
   );
 
   final now = DateTime.now().toUtc();
@@ -240,15 +245,12 @@ Future<void> main() async {
     bridge: bridge,
   );
 
-  final entryTypeLookup = _RegistryLookup(mobile.datastore.entryTypes);
-
   runApp(
     DualDemoApp(
       top: DemoPaneConfig(
         datastore: mobile.datastore,
         backend: mobile.backend,
         appState: mobile.appState,
-        entryTypeLookup: entryTypeLookup,
         dbPath: mobile.dbPath,
         tickController: mobile.tick,
         policyNotifier: mobile.policyNotifier,
@@ -258,7 +260,6 @@ Future<void> main() async {
         datastore: portal.datastore,
         backend: portal.backend,
         appState: portal.appState,
-        entryTypeLookup: entryTypeLookup,
         dbPath: portal.dbPath,
         tickController: portal.tick,
         policyNotifier: portal.policyNotifier,
@@ -266,11 +267,4 @@ Future<void> main() async {
       ),
     ),
   );
-}
-
-class _RegistryLookup implements EntryTypeDefinitionLookup {
-  const _RegistryLookup(this.registry);
-  final EntryTypeRegistry registry;
-  @override
-  EntryTypeDefinition? lookup(String entryTypeId) => registry.byId(entryTypeId);
 }

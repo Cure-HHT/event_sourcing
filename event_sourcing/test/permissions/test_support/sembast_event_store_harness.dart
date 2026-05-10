@@ -43,8 +43,8 @@ Future<EventStore> buildInMemoryEventStore() async {
         name: 'Role-permission grant',
         widgetId: 'role_permission_grant_v1',
         widgetConfig: <String, Object?>{},
-        // materialize: false — projection is driven by the spec, not by
-        // the legacy Materializer.applyInTxn path.
+        // materialize: false — kept for compatibility; projection is driven
+        // by the registered ProjectionSpec (rolePermissionGrantsSpec).
         materialize: false,
       ),
     );

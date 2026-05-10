@@ -25,8 +25,6 @@ Future<EventStore> _bootstrap() async {
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
   return ds.eventStore;
 }

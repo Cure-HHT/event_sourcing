@@ -2,40 +2,6 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
-// Toy materializer used to exercise EventStore generic substrate behavior
-// without any diary-domain coupling. Folds events of any materialized entry
-// type into a 'toy_view' view keyed on aggregate_id, storing only the last
-// event_id. Enough to test materialize=false gating and view-row presence.
-class _ToyMaterializer extends Materializer {
-  const _ToyMaterializer();
-
-  @override
-  String get viewName => 'toy_view';
-
-  @override
-  bool appliesTo(StoredEvent event) => true;
-
-  @override
-  EntryPromoter get promoter => identityPromoter;
-
-  @override
-  Future<void> applyInTxn(
-    Txn txn,
-    StorageBackend backend, {
-    required StoredEvent event,
-    required Map<String, Object?> promotedData,
-    required EntryTypeDefinition def,
-    required List<StoredEvent> aggregateHistory,
-  }) async {
-    await backend.upsertViewRowInTxn(
-      txn,
-      viewName,
-      event.aggregateId,
-      <String, Object?>{'latest_event_id': event.eventId},
-    );
-  }
-}
-
 class _Fixture {
   _Fixture({
     required this.eventStore,
@@ -52,9 +18,24 @@ class _Fixture {
   final List<DateTime> syncCalls;
 }
 
+// Build an AggregateProjectionSpec that matches [entryTypeIds]. Used to
+// populate 'toy_view' for tests that verify view-row production.
+AggregateProjectionSpec _toyViewSpec(List<String> entryTypeIds) =>
+    AggregateProjectionSpec(
+      viewName: 'toy_view',
+      aggregateType: 'SampleAggregate',
+      interest: SubscriptionFilter(entryTypes: entryTypeIds),
+      tombstoneEventTypes: const <String>{},
+    );
+
 Future<_Fixture> _setup({
   List<EntryTypeDefinition>? defs,
   DateTime? now,
+
+  /// When true, the toy_view ProjectionSpec is registered so appended events
+  /// produce view rows. When false, no projection is registered (simulates
+  /// an entry type that should not produce rows).
+  bool registerProjection = true,
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'es-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -69,20 +50,21 @@ Future<_Fixture> _setup({
   for (final def in effectiveDefs) {
     registry.register(def);
   }
-  // Seed view_target_versions for toy_view.
-  await backend.transaction((txn) async {
-    for (final def in effectiveDefs) {
-      if (!def.materialize) continue;
-      await backend.writeViewTargetVersionInTxn(
-        txn,
-        'toy_view',
-        def.id,
-        def.registeredVersion,
-      );
-    }
-  });
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final syncCalls = <DateTime>[];
+
+  ProjectionRegistry? projections;
+  if (registerProjection) {
+    final materializableIds = effectiveDefs
+        .where((d) => d.materialize)
+        .map((d) => d.id)
+        .toList();
+    if (materializableIds.isNotEmpty) {
+      projections = ProjectionRegistry()
+        ..register(_toyViewSpec(materializableIds));
+    }
+  }
+
   final eventStore = EventStore(
     backend: backend,
     entryTypes: registry,
@@ -92,7 +74,7 @@ Future<_Fixture> _setup({
       softwareVersion: 'clinical_diary@1.0.0',
     ),
     securityContexts: securityContexts,
-    materializers: const [_ToyMaterializer()],
+    projections: projections,
     syncCycleTrigger: () async {
       syncCalls.add(DateTime.now());
     },
@@ -177,9 +159,11 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00140-C — def.materialize=false skips all materializers.
+    // Verifies: REQ-d00140-C — an entry type not covered by any ProjectionSpec
+    // interest filter produces no view row. In the declarative model this is
+    // expressed by simply not registering a ProjectionSpec for that entry type.
     test(
-      'REQ-d00140-C: materialize=false entry type produces no view row',
+      'REQ-d00140-C: entry type not in any ProjectionSpec produces no view row',
       () async {
         final fx = await _setup(
           defs: [
@@ -192,6 +176,7 @@ void main() {
               materialize: false,
             ),
           ],
+          registerProjection: false,
         );
         final ev = await fx.eventStore.append(
           entryType: 'non_materialized',

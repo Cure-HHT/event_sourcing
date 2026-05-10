@@ -96,24 +96,19 @@ class _DetailPanelState extends State<DetailPanel> {
     if (aggId != null) {
       return _AsyncJson(
         loader: () async {
-          final rows = await widget.backend.findEntries();
-          DiaryEntry? row;
+          // Read the aggregate's row from the diary_entries view.
+          // AggregateFold stores: aggregateId, latestEventId, updatedAt,
+          // firstEventTimestamp, sequence, plus event.data merged in.
+          final rows = await widget.backend.findViewRows('diary_entries');
+          Map<String, Object?>? row;
           for (final r in rows) {
-            if (r.entryId == aggId) {
-              row = r;
+            if ((r['aggregateId'] as String?) == aggId) {
+              row = r.cast<String, Object?>();
               break;
             }
           }
           if (row == null) return <String, Object?>{'error': 'not found'};
-          return <String, Object?>{
-            'entry_id': row.entryId,
-            'entry_type': row.entryType,
-            'is_complete': row.isComplete,
-            'is_deleted': row.isDeleted,
-            'updated_at': row.updatedAt.toIso8601String(),
-            'current_answers': row.currentAnswers,
-            'latest_event_id': row.latestEventId,
-          };
+          return row;
         },
       );
     }

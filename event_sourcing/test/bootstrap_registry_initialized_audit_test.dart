@@ -83,8 +83,6 @@ void main() {
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
 
         final audits = await _eventsOfType(
@@ -133,8 +131,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       final firstAudits = await _eventsOfType(
         backendA,
@@ -152,8 +148,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       final secondAudits = await _eventsOfType(
         backendB,
@@ -174,8 +168,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       // Reboot with a NEW entry type added — the registry map shape
@@ -186,8 +178,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       final audits = await _eventsOfType(
@@ -211,8 +201,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 1)],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       // Reboot with the SAME id but a bumped registeredVersion — the
@@ -224,8 +212,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 2)],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       final audits = await _eventsOfType(

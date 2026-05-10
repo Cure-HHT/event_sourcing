@@ -20,8 +20,23 @@ class MaterializedPanel extends StatefulWidget {
   State<MaterializedPanel> createState() => _MaterializedPanelState();
 }
 
+/// Raw row shape written by AggregateProjectionSpec into the diary_entries
+/// view. Fields are whatever demo_note event.data contains (merged via
+/// AggregateFold's deep-merge) plus the metadata stamp.
+class _ViewRow {
+  const _ViewRow({
+    required this.aggregateId,
+    required this.updatedAt,
+    required this.isDeleted,
+  });
+
+  final String aggregateId;
+  final DateTime updatedAt;
+  final bool isDeleted;
+}
+
 class _MaterializedPanelState extends State<MaterializedPanel> {
-  List<DiaryEntry> _rows = const <DiaryEntry>[];
+  List<_ViewRow> _rows = const <_ViewRow>[];
   Timer? _poll;
 
   @override
@@ -49,7 +64,25 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
 
   Future<void> _refresh() async {
     try {
-      final rows = await widget.backend.findEntries(entryType: 'demo_note');
+      // AggregateFold stamps 'aggregateId' and 'updatedAt' into every view row.
+      // Tombstone events delete the row, so presence means the aggregate is live.
+      final rawRows = await widget.backend.findViewRows('diary_entries');
+      final rows = <_ViewRow>[];
+      for (final raw in rawRows) {
+        final aggregateId = raw['aggregateId'] as String? ?? '';
+        final updatedAtStr = raw['updatedAt'] as String?;
+        final updatedAt = updatedAtStr != null
+            ? DateTime.tryParse(updatedAtStr) ?? DateTime(0)
+            : DateTime(0);
+        rows.add(
+          _ViewRow(
+            aggregateId: aggregateId,
+            updatedAt: updatedAt,
+            isDeleted:
+                false, // tombstone removes the row; presence means not deleted
+          ),
+        );
+      }
       if (!mounted) return;
       setState(() {
         _rows = rows;
@@ -62,7 +95,7 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
   @override
   Widget build(BuildContext context) {
     // Most-recent first: sort descending by updatedAt.
-    final sorted = <DiaryEntry>[..._rows]
+    final sorted = <_ViewRow>[..._rows]
       ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return Container(
       decoration: BoxDecoration(color: DemoColors.bg, border: demoBorder),
@@ -78,8 +111,10 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
               itemBuilder: (context, i) => _MaterializedRow(
                 row: sorted[i],
                 selected:
-                    widget.appState.selectedAggregateId == sorted[i].entryId,
-                onTap: () => widget.appState.selectAggregate(sorted[i].entryId),
+                    widget.appState.selectedAggregateId ==
+                    sorted[i].aggregateId,
+                onTap: () =>
+                    widget.appState.selectAggregate(sorted[i].aggregateId),
               ),
             ),
           ),
@@ -96,7 +131,7 @@ class _MaterializedRow extends StatelessWidget {
     required this.onTap,
   });
 
-  final DiaryEntry row;
+  final _ViewRow row;
   final bool selected;
   final VoidCallback onTap;
 
@@ -104,14 +139,9 @@ class _MaterializedRow extends StatelessWidget {
   Widget build(BuildContext context) {
     // UUIDv7 prefix is a timestamp, so entries minted close in time share
     // leading bytes. Tail (rand_b) is where the visual entropy lives.
-    final short = row.entryId.length >= 8
-        ? row.entryId.substring(row.entryId.length - 8)
-        : row.entryId;
-    final status = row.isDeleted
-        ? 'del'
-        : row.isComplete
-        ? 'ok '
-        : 'ptl';
+    final short = row.aggregateId.length >= 8
+        ? row.aggregateId.substring(row.aggregateId.length - 8)
+        : row.aggregateId;
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -120,7 +150,7 @@ class _MaterializedRow extends StatelessWidget {
           border: selected ? demoSelectedBorder : null,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Text('agg-$short [$status]', style: DemoText.body),
+        child: Text('agg-$short', style: DemoText.body),
       ),
     );
   }

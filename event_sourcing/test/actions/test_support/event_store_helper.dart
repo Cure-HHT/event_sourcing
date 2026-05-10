@@ -62,6 +62,5 @@ Future<EventStore> bootstrapTestEventStore() async {
       softwareVersion: 'event_sourcing_test@0.0.0',
     ),
     securityContexts: securityContexts,
-    materializers: const [],
   );
 }

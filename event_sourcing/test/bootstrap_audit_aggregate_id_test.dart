@@ -45,8 +45,6 @@ void main() {
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
 
         final all = await backend.findAllEvents();
@@ -90,8 +88,6 @@ void main() {
           source: sourceA,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
         final dbB = await factory.openDatabase('install-B.db');
         final backendB = SembastBackend(database: dbB);
@@ -100,8 +96,6 @@ void main() {
           source: sourceB,
           entryTypes: <EntryTypeDefinition>[_typeA()],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
         final allA = await backendA.findAllEvents();
         final allB = await backendB.findAllEvents();

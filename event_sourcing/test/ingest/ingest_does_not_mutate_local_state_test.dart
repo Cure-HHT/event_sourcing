@@ -73,8 +73,6 @@ Future<_Fixture> _bootstrapDatastore({
     ),
     entryTypes: entryTypes,
     destinations: destinations,
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
   return _Fixture(datastore: datastore, backend: backend);
 }

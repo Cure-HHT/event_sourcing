@@ -50,8 +50,6 @@ void main() {
           source: _source,
           entryTypes: [_defn('demo_note')],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
         expect(ds.eventStore, isA<EventStore>());
         expect(ds.entryTypes, isA<EntryTypeRegistry>());
@@ -69,8 +67,6 @@ void main() {
         source: _source,
         entryTypes: [_defn('demo_note')],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       expect(ds.entryTypes.isRegistered('security_context_redacted'), isTrue);
       expect(ds.entryTypes.isRegistered('security_context_compacted'), isTrue);
@@ -86,8 +82,6 @@ void main() {
           source: _source,
           entryTypes: [_defn('security_context_redacted')],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsA(
           isA<ArgumentError>().having(
@@ -113,8 +107,6 @@ void main() {
         source: _source,
         entryTypes: types,
         destinations: dests,
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       // 2 caller-supplied + 12 system = 14 total
@@ -146,8 +138,6 @@ void main() {
           source: _source,
           entryTypes: types,
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsArgumentError,
       );
@@ -166,8 +156,6 @@ void main() {
           source: _source,
           entryTypes: types,
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsA(isA<StateError>()),
       );
@@ -178,8 +166,6 @@ void main() {
         source: _source,
         entryTypes: types,
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
       expect(ds.entryTypes.isRegistered('red_button'), isTrue);
@@ -198,8 +184,6 @@ void main() {
           source: _source,
           entryTypes: const [],
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsArgumentError,
       );
@@ -222,8 +206,6 @@ void main() {
             source: _source,
             entryTypes: const [],
             destinations: dests,
-            materializers: const <Materializer>[],
-            initialViewTargetVersions: const <String, Map<String, int>>{},
           ),
           throwsArgumentError,
         );
@@ -248,8 +230,6 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       final result = await VersionCheck.findMostRecent(backend);
       expect(result, isNotNull);
@@ -290,8 +270,6 @@ void main() {
             source: _source,
             entryTypes: const <EntryTypeDefinition>[],
             destinations: const <Destination>[],
-            materializers: const <Materializer>[],
-            initialViewTargetVersions: const <String, Map<String, int>>{},
           ),
           throwsA(isA<DowngradeRefusedError>()),
         );
@@ -329,8 +307,6 @@ void main() {
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
           allowDowngrade: true,
         );
         expect(ds.eventStore, isA<EventStore>());

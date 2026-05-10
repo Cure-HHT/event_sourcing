@@ -199,18 +199,20 @@ export 'src/ingest/ingest_errors.dart'
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Materialization layer — pluggable fold contract, entry-type-definition
-// lookup, and the parameterized rebuild helper (CUR-1154, CUR-1317).
-// DiaryEntriesMaterializer and rebuildMaterializedView are deleted (Task 21
-// extraction-debt cleanup); hht_diary will author its own materializer.
+// Materialization layer — parameterized rebuild helper (CUR-1317 Task 22/23).
+// The legacy Materializer/EntryPromoter abstractions are removed (Task 22);
+// projections now use the declarative ProjectionSpec/PromoterRegistry model.
 // MapEntryTypeDefinitionLookup is intentionally NOT exported — it lives
 // under test/test_support/ so production code cannot depend on it.
-export 'src/materialization/entry_promoter.dart'
-    show EntryPromoter, identityPromoter;
-export 'src/materialization/entry_type_definition_lookup.dart'
-    show EntryTypeDefinitionLookup;
-export 'src/materialization/materializer.dart' show Materializer;
 export 'src/materialization/rebuild.dart' show rebuildView;
+
+// Projections — declarative view specs and the registry that holds them.
+// Callers create AggregateProjectionSpec / TableProjectionSpec values,
+// register them in a ProjectionRegistry, and pass the registry to
+// bootstrapAppendOnlyDatastore or directly to EventStore.
+export 'src/projections/projection_spec.dart'
+    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
+export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).

@@ -11,7 +11,6 @@ import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
-import 'package:event_sourcing/src/materialization/materializer.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
@@ -87,7 +86,6 @@ class EventStore {
     required this.entryTypes,
     required this.source,
     required this.securityContexts,
-    this.materializers = const <Materializer>[],
     this.syncCycleTrigger,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
@@ -104,16 +102,19 @@ class EventStore {
   final EntryTypeRegistry entryTypes;
   final Source source;
   final InternalSecurityContextStore securityContexts;
-  final List<Materializer> materializers;
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
   final ProjectionInterpreter _interpreter;
 
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
-  /// supplied directly on the constructor). Used by [rebuildView] (Plan Task 23)
-  /// to apply promoter chains during replay. Not consumed by [append] today —
-  /// promotion happens at the entry-type-version layer in the existing
-  /// materializer flow.
+  /// supplied directly on the constructor). Used by [rebuildView] (Task 23)
+  /// to apply promoter chains during replay.
   final PromoterRegistry _promoters;
+
+  /// Exposes the projection registry for [rebuildView] (Task 23).
+  ProjectionRegistry get projections => _interpreter.registry;
+
+  /// Exposes the promoter registry for [rebuildView] (Task 23).
+  PromoterRegistry get promoters => _promoters;
 
   final ClockFn? _clock;
   final Uuid _uuid;
@@ -746,29 +747,6 @@ class EventStore {
       await securityContexts.writeInTxn(txn, row);
     }
 
-    if (def.materialize) {
-      for (final m in materializers) {
-        if (!m.appliesTo(event)) continue;
-        // Implements: REQ-d00140-G+H — promoter invoked before applyInTxn,
-        //   even when fromVersion == toVersion. A throw rolls back the txn.
-        final target = await m.targetVersionFor(txn, backend, event.entryType);
-        final promoted = m.promoter(
-          entryType: event.entryType,
-          fromVersion: event.entryTypeVersion,
-          toVersion: target,
-          data: event.data,
-        );
-        await m.applyInTxn(
-          txn,
-          backend,
-          event: event,
-          promotedData: promoted,
-          def: def,
-          aggregateHistory: List<StoredEvent>.unmodifiable(aggregateHistory),
-        );
-      }
-    }
-
     return event;
   }
 
@@ -982,41 +960,17 @@ class EventStore {
     // 6. Persist via the same path as origin appends.
     await backend.appendEvent(txn, updatedEvent);
 
-    // 7. Fire materializers symmetric with the local-append path.
-    // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path materializer
-    //   loop runs with the same gates as the local-append loop
-    //   (`def.materialize` outer gate + `m.appliesTo(event)` inner gate),
-    //   inside the same transaction as `appendEvent`. System entry types
-    //   ship `materialize: false` (REQ-d00154-D) so the outer gate
-    //   short-circuits before any materializer is consulted. A
-    //   materializer or promoter throw propagates out of `_ingestOneInTxn`
-    //   and rolls back the entire ingest transaction (REQ-d00145-A
-    //   all-or-nothing batch atomicity preserved).
-    final def = entryTypes.byId(updatedEvent.entryType);
-    if (def != null && def.materialize) {
-      for (final m in materializers) {
-        if (!m.appliesTo(updatedEvent)) continue;
-        final target = await m.targetVersionFor(
-          txn,
-          backend,
-          updatedEvent.entryType,
-        );
-        final promoted = m.promoter(
-          entryType: updatedEvent.entryType,
-          fromVersion: updatedEvent.entryTypeVersion,
-          toVersion: target,
-          data: updatedEvent.data,
-        );
-        await m.applyInTxn(
-          txn,
-          backend,
-          event: updatedEvent,
-          promotedData: promoted,
-          def: def,
-          aggregateHistory: List<StoredEvent>.unmodifiable(aggregateHistory),
-        );
-      }
-    }
+    // 7. Fire the projection interpreter symmetric with the local-append path.
+    // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path projection
+    //   interpreter runs inside the same transaction as `appendEvent`, applying
+    //   all registered ProjectionSpecs whose interest filter matches the event.
+    //   A throw propagates out of `_ingestOneInTxn` and rolls back the entire
+    //   ingest transaction (REQ-d00145-A all-or-nothing batch atomicity).
+    await _interpreter.applyEvent(
+      txn: txn,
+      backend: backend,
+      event: updatedEvent,
+    );
 
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,

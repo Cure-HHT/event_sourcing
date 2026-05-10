@@ -41,8 +41,6 @@ void main() {
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
 
         // The reserved id set is the canonical list of system entry

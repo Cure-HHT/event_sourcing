@@ -30,7 +30,6 @@ class TopActionBar extends StatefulWidget {
   const TopActionBar({
     required this.datastore,
     required this.backend,
-    required this.entryTypesLookup,
     required this.appState,
     required this.onResetAll,
     super.key,
@@ -38,7 +37,6 @@ class TopActionBar extends StatefulWidget {
 
   final AppendOnlyDatastore datastore;
   final SembastBackend backend;
-  final EntryTypeDefinitionLookup entryTypesLookup;
   final AppState appState;
   final Future<void> Function() onResetAll;
 
@@ -256,14 +254,15 @@ class _TopActionBarState extends State<TopActionBar> {
           label: 'Rebuild view',
           onTap: () async {
             try {
-              final count = await rebuildMaterializedView(
-                widget.backend,
-                widget.entryTypesLookup,
+              final count = await rebuildView(
+                store: widget.datastore.eventStore,
+                viewName: 'diary_entries',
+                targetVersionByEntryType: const <String, int>{'demo_note': 1},
               );
               if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Rebuilt $count aggregates')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('Rebuilt $count events')));
             } catch (e) {
               if (!mounted) return;
               ScaffoldMessenger.of(

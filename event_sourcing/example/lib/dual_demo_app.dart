@@ -18,7 +18,6 @@ class DemoPaneConfig {
     required this.datastore,
     required this.backend,
     required this.appState,
-    required this.entryTypeLookup,
     required this.dbPath,
     required this.tickController,
     required this.policyNotifier,
@@ -28,7 +27,6 @@ class DemoPaneConfig {
   final AppendOnlyDatastore datastore;
   final SembastBackend backend;
   final AppState appState;
-  final EntryTypeDefinitionLookup entryTypeLookup;
   final String dbPath;
   final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -115,7 +113,6 @@ class _DualDemoAppState extends State<DualDemoApp> {
       datastore: cfg.datastore,
       backend: cfg.backend,
       appState: cfg.appState,
-      entryTypeLookup: cfg.entryTypeLookup,
       dbPath: cfg.dbPath,
       tickController: cfg.tickController,
       policyNotifier: cfg.policyNotifier,
