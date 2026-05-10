@@ -776,12 +776,12 @@ class EventStore {
     //   Multiple entry types may share an aggregate (REQ-d00154-D system
     //   events under source.identifier); dedupe scopes per entry_type so
     //   each emission stream is treated independently.
-    final aggregateHistory = await backend.findEventsForAggregateInTxn(
-      txn,
-      aggregateId,
-    );
     StoredEvent? prior;
     if (dedupeByContent) {
+      final aggregateHistory = await backend.findEventsForAggregateInTxn(
+        txn,
+        aggregateId,
+      );
       for (var i = aggregateHistory.length - 1; i >= 0; i--) {
         if (aggregateHistory[i].entryType == entryType) {
           prior = aggregateHistory[i];
