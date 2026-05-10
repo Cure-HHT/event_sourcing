@@ -6,14 +6,17 @@ class ProjectionRegistry {
 
   void register(ProjectionSpec spec) {
     if (_sealed) {
-      throw StateError(
-        'ProjectionRegistry: cannot register "${spec.viewName}" after seal()',
+      throw ArgumentError.value(
+        spec.viewName,
+        'spec.viewName',
+        'ProjectionRegistry: cannot register after seal()',
       );
     }
     if (_byView.containsKey(spec.viewName)) {
-      throw StateError(
-        'ProjectionRegistry: duplicate registration for viewName '
-        '"${spec.viewName}"',
+      throw ArgumentError.value(
+        spec.viewName,
+        'spec.viewName',
+        'ProjectionRegistry: duplicate registration for viewName',
       );
     }
     _byView[spec.viewName] = spec;

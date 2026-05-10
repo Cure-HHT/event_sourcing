@@ -9,13 +9,18 @@ class PromoterRegistry {
 
   void register(PromoterSpec spec) {
     if (_sealed) {
-      throw StateError('PromoterRegistry: cannot register after seal()');
+      throw ArgumentError.value(
+        '(${spec.viewName}, ${spec.entryType}, v${spec.fromVersion})',
+        'spec',
+        'PromoterRegistry: cannot register after seal()',
+      );
     }
     final k = _key(spec.viewName, spec.entryType, spec.fromVersion);
     if (_byKey.containsKey(k)) {
-      throw StateError(
-        'PromoterRegistry: duplicate registration for '
+      throw ArgumentError.value(
         '(${spec.viewName}, ${spec.entryType}, v${spec.fromVersion})',
+        'spec',
+        'PromoterRegistry: duplicate registration',
       );
     }
     _byKey[k] = spec;

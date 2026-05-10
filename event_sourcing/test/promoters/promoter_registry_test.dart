@@ -60,13 +60,13 @@ void main() {
     test('register throws on duplicate (view, entry, fromVersion)', () {
       final reg = PromoterRegistry();
       reg.register(_spec(1, 2));
-      expect(() => reg.register(_spec(1, 2)), throwsStateError);
+      expect(() => reg.register(_spec(1, 2)), throwsArgumentError);
     });
 
     test('register after seal throws', () {
       final reg = PromoterRegistry();
       reg.seal();
-      expect(() => reg.register(_spec(1, 2)), throwsStateError);
+      expect(() => reg.register(_spec(1, 2)), throwsArgumentError);
     });
   });
 }

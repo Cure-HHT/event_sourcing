@@ -35,14 +35,14 @@ void main() {
     test('register throws on duplicate viewName', () {
       final reg = ProjectionRegistry();
       reg.register(_spec('a'));
-      expect(() => reg.register(_spec('a')), throwsStateError);
+      expect(() => reg.register(_spec('a')), throwsArgumentError);
     });
 
     test('register after seal() throws', () {
       final reg = ProjectionRegistry();
       reg.register(_spec('a'));
       reg.seal();
-      expect(() => reg.register(_spec('b')), throwsStateError);
+      expect(() => reg.register(_spec('b')), throwsArgumentError);
     });
   });
 }
