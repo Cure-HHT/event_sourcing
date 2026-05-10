@@ -321,10 +321,16 @@ class EventStore {
 
   /// Builds a live [AggregateMode] stream via a [StreamController].
   ///
-  /// Atomic snapshot-then-attach: opens a buffered live listener FIRST
+  /// Atomic snapshot-then-attach: opens a single live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and the live-stream attach. The [StreamController] is
-  /// closed when the subscriber cancels, preventing infinite blocking.
+  /// snapshot read and forward-mode delivery. A [_replayDone] flag
+  /// inside the listener routes events to the buffer during snapshot
+  /// read and directly to the output controller after it. This avoids
+  /// the cancel+re-subscribe race that the prior implementation had
+  /// between buffer-drain and forward-mode attach.
+  ///
+  /// The [StreamController] is closed when the subscriber cancels,
+  /// preventing infinite blocking.
   Stream<Update<T>> _subscribeAggregate<T>(
     SubscriptionFilter filter,
     AggregateMode<T> mode,
@@ -333,11 +339,21 @@ class EventStore {
     StreamSubscription<AggregateFoldChange>? liveSub;
 
     Future<void> start() async {
-      // Buffer live changes that arrive while we read the snapshot.
+      // Open ONE subscription that lasts the lifetime of this stream.
+      // During the snapshot phase events go to liveBuffer; after
+      // _replayDone is set they go directly to controller.
+      var replayDone = false;
       final liveBuffer = <AggregateFoldChange>[];
-      liveSub = _subs
-          .rowChanges(mode.viewName)
-          .listen(liveBuffer.add, onDone: () => controller.close());
+
+      liveSub = _subs.rowChanges(mode.viewName).listen((change) {
+        if (controller.isClosed) return;
+        if (!replayDone) {
+          liveBuffer.add(change);
+        } else {
+          final u = _changeToUpdate<T>(change, filter, mode);
+          if (u != null) controller.add(u);
+        }
+      }, onDone: () => controller.close());
 
       // Snapshot read
       final aggregateIds = mode.aggregates;
@@ -367,22 +383,15 @@ class EventStore {
         }
       }
 
-      // Drain buffered live changes that arrived during snapshot read.
+      // Drain buffered live changes that arrived during snapshot read,
+      // then flip the flag so subsequent arrivals go direct.
       for (final change in liveBuffer) {
         if (controller.isClosed) return;
         final u = _changeToUpdate<T>(change, filter, mode);
         if (u != null) controller.add(u);
       }
       liveBuffer.clear();
-
-      // Swap buffered listener to forward mode.
-      await liveSub!.cancel();
-      if (controller.isClosed) return;
-      liveSub = _subs.rowChanges(mode.viewName).listen((change) {
-        if (controller.isClosed) return;
-        final u = _changeToUpdate<T>(change, filter, mode);
-        if (u != null) controller.add(u);
-      }, onDone: () => controller.close());
+      replayDone = true;
     }
 
     controller = StreamController<Update<T>>(
