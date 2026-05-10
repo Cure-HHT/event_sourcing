@@ -85,6 +85,52 @@ Phase II work.
 - **Single-source-per-aggregate-type today.** Multi-source machinery
   exists in design but is dormant in v1; Phase II activates it.
 
+## Trust boundaries
+
+The substrate trusts a small, enumerable set of inputs without
+auditing them. Anything outside this list must be derivable from the
+event log; any new trust dependency is a load-bearing change requiring
+the same deliberation as a new architectural commitment.
+
+The currently-trusted inputs are:
+
+- **`StorageBackend` implementation.** Pluggable interface registered
+  at composition time. Trusted for data persistence integrity:
+  correct reads/writes, transaction atomicity, durability. The
+  reference sembast implementation lives in
+  `event_sourcing/lib/src/storage/`. Alternative backends (IndexedDB,
+  Postgres, etc.) are app-supplied; each is the trusted persistence
+  layer for that deployment.
+- **`Destination` outbound transport.** Per-destination delivery
+  transport (HTTP, WebSocket, file, etc.) supplied by the app at
+  composition time. Trusted for transport-layer correctness and
+  for honouring the FIFO queue's delivery semantics. The substrate
+  does not verify that the transport delivered the event to its
+  remote endpoint correctly; only that the FIFO queue advanced.
+- **Caller-supplied `Principal` on action submissions and event
+  metadata.** Currently accepted on faith: the substrate does not
+  authenticate the `Principal` claimed in an `ActionSubmission`,
+  nor the `initiator` recorded on appended events. The calling
+  application is trusted to supply correct identity. **This is a
+  known incomplete boundary** — the substrate has no inbound
+  authentication flow (no `authentication_attempted` event type)
+  and no outbound `AuthenticationProvider` pluggable interface, so
+  identity claims live entirely outside the closed-under-events
+  guarantee. Closing this gap is future work; not in scope for
+  Phase I.
+
+Everything else — projection rules (`ProjectionSpec`), promoter rules
+(`PromoterSpec`), policy logic (in-lib for v1, see Architectural
+Commitments), event payloads, hash chains, library version, action
+outcomes — is derivable from the log under one of the trusted
+backends above.
+
+When proposing changes, treat any new external dependency
+(callbacks, host-supplied evaluators, app-injected logic that
+participates in fold or policy decisions) as a trust-boundary
+expansion that requires explicit architectural review. The trust
+surface is meant to stay enumerated.
+
 ## Requirement traceability
 
 Every formal requirement in this repo has an ID of the form:
