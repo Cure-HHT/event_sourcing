@@ -106,31 +106,6 @@ abstract class StorageBackend {
     int? limit,
   });
 
-  /// Reactive event stream. See REQ-d00149.
-  ///
-  /// Returns a broadcast Stream that, on subscribe, first emits every
-  /// event in the log with `sequence_number > afterSequence` (or every
-  /// event when `afterSequence` is null) in ascending order, then
-  /// transitions to live emission of events appended or ingested while
-  /// the subscription is open. Multiple subscribers receive identical
-  /// sequences. The stream closes when the backend is closed; calling
-  /// this method after close SHALL throw `StateError`.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00149-E) — broadcast deduplication is the
-  /// coordination mechanism, applicable to any `StorageBackend`
-  /// implementation.
-  ///
-  /// **Do not call `pause()` on the returned subscription.** The
-  /// underlying broadcast stream is lossy under pause — events emitted
-  /// while a subscription is paused are dropped, not buffered (Dart
-  /// broadcast contract). If a consumer needs to throttle, do the work
-  /// asynchronously inside `onData` (return a Future, await internally),
-  /// or cancel and re-subscribe with `afterSequence:` to replay-then-live
-  /// from the last known sequence.
-  // Implements: REQ-d00149-A+B+C+D+E.
-  Stream<StoredEvent> watchEvents({int? afterSequence});
-
   /// Reserve-and-increment the per-device sequence counter within [txn] and
   /// return the reserved value.
   ///
@@ -347,53 +322,6 @@ abstract class StorageBackend {
     int? afterSequenceInQueue,
     int? limit,
   });
-
-  /// Reactive snapshot stream of a destination's FIFO. See REQ-d00150.
-  ///
-  /// Emits the current queue snapshot on subscribe and on every
-  /// mutation to the destination's FIFO. Snapshots are
-  /// `List<FifoEntry>` ordered by `sequence_in_queue` ascending.
-  /// Multiple subscribers per destination receive identical sequences.
-  /// The stream closes when the backend is closed; calling this method
-  /// after close SHALL throw `StateError`.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00150-E, ref REQ-d00149-E).
-  ///
-  /// **Do not call `pause()` on the returned subscription.** The
-  /// underlying broadcast stream is lossy under pause — snapshot
-  /// emissions for FIFO mutations that occur while a subscription is
-  /// paused are dropped, not buffered (Dart broadcast contract). If a
-  /// consumer needs to throttle, do the work asynchronously inside
-  /// `onData`, or cancel and re-subscribe (the new subscription emits a
-  /// fresh snapshot via `listFifoEntries` on attach, recovering current
-  /// state in one read).
-  // Implements: REQ-d00150-A+B+C+D+E.
-  Stream<List<FifoEntry>> watchFifo(String destinationId);
-
-  /// Reactive snapshot stream of a materialized view by name. See
-  /// REQ-d00153.
-  ///
-  /// Emits the current view rows on subscribe and on every mutation to
-  /// any row in [viewName] (upsert / delete / clear). Snapshots are
-  /// `List<Map<String, Object?>>` matching `findViewRows(viewName)` — no
-  /// implicit ordering; consumers that need a deterministic order sort
-  /// in the view layer. Multiple subscribers per view receive identical
-  /// sequences. The stream closes when the backend is closed; calling
-  /// this method after close SHALL throw `StateError`.
-  ///
-  /// Cross-view isolation: a mutation on view A SHALL NOT trigger an
-  /// emission to a `watchView(B)` subscriber.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00153-E, ref REQ-d00149-E).
-  ///
-  /// **Do not call `pause()` on the returned subscription.** Same
-  /// semantics as [watchEvents] / [watchFifo]: emissions during pause
-  /// are dropped, not buffered. Cancel and re-subscribe to recover
-  /// current state via a fresh `findViewRows` snapshot on attach.
-  // Implements: REQ-d00153-A+B+C+D+E.
-  Stream<List<Map<String, Object?>>> watchView(String viewName);
 
   /// Append [attempt] to the `attempts[]` list of the entry identified by
   /// `(destinationId, entryId)`. Does not change `final_status`.

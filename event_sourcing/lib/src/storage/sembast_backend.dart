@@ -402,7 +402,8 @@ class SembastBackend extends StorageBackend {
   //      snapshot read and the live attach.
   // Close on the backend's `_eventsController` propagates via
   // `onDone`. The per-call controller closes via `controller.close()`.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<StoredEvent> watchEvents({int? afterSequence}) {
     if (_eventsController.isClosed) {
       throw StateError(
@@ -1152,7 +1153,8 @@ class SembastBackend extends StorageBackend {
   // carry typed `FifoEntry` (REQ-d00150-B) — no raw maps leak.
   // Close on the backend's `_fifoChangesController` propagates via
   // `onDone`. The per-call controller closes via `controller.close()`.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<List<FifoEntry>> watchFifo(String destinationId) {
     if (_fifoChangesController.isClosed) {
       throw StateError(
@@ -1214,7 +1216,8 @@ class SembastBackend extends StorageBackend {
   // cross-view isolation enforced by the viewName filter; broadcast so
   // multiple subscribers per view share a single upstream subscription;
   // close-aware via _viewChangesController's onDone propagation.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<List<Map<String, Object?>>> watchView(String viewName) {
     if (_viewChangesController.isClosed) {
       throw StateError(

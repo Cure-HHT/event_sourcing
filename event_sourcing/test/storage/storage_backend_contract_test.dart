@@ -404,17 +404,8 @@ class _InMemoryBackend extends StorageBackend {
   Future<StoredEvent?> findEventById(String eventId) =>
       throw UnimplementedError();
   @override
-  Stream<StoredEvent> watchEvents({int? afterSequence}) =>
-      const Stream<StoredEvent>.empty();
-  @override
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
       throw UnimplementedError();
-  @override
-  Stream<List<FifoEntry>> watchFifo(String destinationId) =>
-      const Stream<List<FifoEntry>>.empty();
-  @override
-  Stream<List<Map<String, Object?>>> watchView(String viewName) =>
-      const Stream<List<Map<String, Object?>>>.empty();
   @override
   Future<PagedAudit> queryAudit({
     Initiator? initiator,
