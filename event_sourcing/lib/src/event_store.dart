@@ -340,7 +340,7 @@ class EventStore {
           .listen(liveBuffer.add, onDone: () => controller.close());
 
       // Snapshot read
-      final aggregateIds = filter.aggregates;
+      final aggregateIds = mode.aggregates;
       if (aggregateIds == null) {
         final rows = await backend.findViewRows(mode.viewName);
         for (final row in rows) {
@@ -402,7 +402,7 @@ class EventStore {
     SubscriptionFilter filter,
     AggregateMode<T> mode,
   ) {
-    final aggSet = filter.aggregates;
+    final aggSet = mode.aggregates;
     if (aggSet != null && !aggSet.contains(c.aggregateId)) return null;
     if (c.isTombstone) {
       return Tombstone<T>(aggregateId: c.aggregateId, sequence: c.sequence);

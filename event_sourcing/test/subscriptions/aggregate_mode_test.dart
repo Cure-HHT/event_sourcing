@@ -82,10 +82,11 @@ void main() {
       final updates = <Update<_DiaryEntry?>>[];
       final sub = store
           .subscribe(
-            SubscriptionFilter(aggregates: const {'never-created'}),
+            const SubscriptionFilter(),
             AggregateMode<_DiaryEntry?>(
               viewName: 'diary_entries',
               mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+              aggregates: const {'never-created'},
             ),
           )
           .listen(updates.add);
@@ -109,10 +110,11 @@ void main() {
       final updates = <Update<_DiaryEntry?>>[];
       final sub = store
           .subscribe(
-            SubscriptionFilter(aggregates: const {'e1'}),
+            const SubscriptionFilter(),
             AggregateMode<_DiaryEntry?>(
               viewName: 'diary_entries',
               mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+              aggregates: const {'e1'},
             ),
           )
           .listen(updates.add);
@@ -155,10 +157,11 @@ void main() {
     final updates = <Update<_DiaryEntry?>>[];
     final sub = store
         .subscribe(
-          SubscriptionFilter(aggregates: const {'e1'}),
+          const SubscriptionFilter(),
           AggregateMode<_DiaryEntry?>(
             viewName: 'diary_entries',
             mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            aggregates: const {'e1'},
           ),
         )
         .listen(updates.add);
@@ -179,10 +182,11 @@ void main() {
     final updates = <Update<_DiaryEntry?>>[];
     final sub = store
         .subscribe(
-          SubscriptionFilter(aggregates: const {'e1'}),
+          const SubscriptionFilter(),
           AggregateMode<_DiaryEntry?>(
             viewName: 'diary_entries',
             mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            aggregates: const {'e1'},
           ),
         )
         .listen(updates.add);

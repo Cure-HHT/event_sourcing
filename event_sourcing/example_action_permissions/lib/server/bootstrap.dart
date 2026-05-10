@@ -176,43 +176,23 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'help_request',
     registeredVersion: 1,
     name: 'Help Request',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
-  EntryTypeDefinition(
-    id: 'demo_note',
-    registeredVersion: 1,
-    name: 'Demo Note',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
-  ),
+  EntryTypeDefinition(id: 'demo_note', registeredVersion: 1, name: 'Demo Note'),
   EntryTypeDefinition(
     id: 'green_button_press',
     registeredVersion: 1,
     name: 'Green Button Press',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
   EntryTypeDefinition(
     id: 'blue_button_press',
     registeredVersion: 1,
     name: 'Blue Button Press',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
-  EntryTypeDefinition(
-    id: 'red_alarm',
-    registeredVersion: 1,
-    name: 'Red Alarm',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
-  ),
+  EntryTypeDefinition(id: 'red_alarm', registeredVersion: 1, name: 'Red Alarm'),
   EntryTypeDefinition(
     id: 'user_provisioned',
     registeredVersion: 1,
     name: 'User Provisioned',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
   // Permissions module emits these via EventSeedApplier on bootstrap.
   // The role_permission_grants view is projected by rolePermissionGrantsSpec
@@ -221,15 +201,11 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'role_permission_grant',
     registeredVersion: 1,
     name: 'Role-Permission Grant',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
   // The dispatcher emits one of these for every denial stage.
   EntryTypeDefinition(
     id: 'action_denial',
     registeredVersion: 1,
     name: 'Action Denial',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
 ];
