@@ -48,8 +48,6 @@ const EntryTypeDefinition _demoNoteDef = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: 1,
   name: 'Demo Note',
-  widgetId: 'w',
-  widgetConfig: <String, Object?>{},
 );
 
 Future<_Fixture> _bootstrapDatastore({

@@ -7,30 +7,25 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('AggregateProjectionSpec', () {
-    test(
-      'exposes viewName, interest, aggregateType, tombstones, derivations',
-      () {
-        final spec = AggregateProjectionSpec(
-          viewName: 'diary_entries',
-          aggregateType: 'DiaryEntry',
-          interest: SubscriptionFilter(aggregateTypes: const {'DiaryEntry'}),
-          tombstoneEventTypes: const {'tombstone'},
-          derivedFields: const [
-            DerivedField(
-              'effective_date',
-              DottedPathLookup(
-                'answers.date_of_event',
-                fallback: FirstEventTimestamp(),
-              ),
+    test('exposes viewName, interest, tombstones, derivations', () {
+      final spec = AggregateProjectionSpec(
+        viewName: 'diary_entries',
+        interest: SubscriptionFilter(aggregateTypes: const {'DiaryEntry'}),
+        tombstoneEventTypes: const {'tombstone'},
+        derivedFields: const [
+          DerivedField(
+            'effective_date',
+            DottedPathLookup(
+              'answers.date_of_event',
+              fallback: FirstEventTimestamp(),
             ),
-          ],
-        );
-        expect(spec.viewName, 'diary_entries');
-        expect(spec.aggregateType, 'DiaryEntry');
-        expect(spec.tombstoneEventTypes, {'tombstone'});
-        expect(spec.derivedFields, hasLength(1));
-      },
-    );
+          ),
+        ],
+      );
+      expect(spec.viewName, 'diary_entries');
+      expect(spec.tombstoneEventTypes, {'tombstone'});
+      expect(spec.derivedFields, hasLength(1));
+    });
   });
 
   group('TableProjectionSpec', () {

@@ -86,8 +86,6 @@ Future<AppendOnlyDatastore> _bootstrapWithRegistry({
         id: 'demo_note',
         registeredVersion: registeredVersion,
         name: 'demo_note',
-        widgetId: 'w',
-        widgetConfig: const <String, Object?>{},
       ),
     ],
     destinations: const <Destination>[],

@@ -30,8 +30,6 @@ Future<EventStore> _bootstrap({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     ],
     destinations: const <Destination>[],

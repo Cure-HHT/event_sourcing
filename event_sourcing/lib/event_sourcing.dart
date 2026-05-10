@@ -26,7 +26,6 @@
 /// final projections = ProjectionRegistry()
 ///   ..register(AggregateProjectionSpec(
 ///     viewName: 'invoices',
-///     aggregateType: 'Invoice',
 ///     interest: SubscriptionFilter(aggregateTypes: {'Invoice'}),
 ///     tombstoneEventTypes: {'invoice_cancelled'},
 ///   ));

@@ -21,13 +21,8 @@ const _source = Source(
   softwareVersion: '0.0.0-test',
 );
 
-EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'w',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _simpleDef(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 Future<
   ({EventStore store, SembastBackend backend, SembastSecurityContextStore sc})

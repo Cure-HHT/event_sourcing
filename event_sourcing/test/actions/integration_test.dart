@@ -117,8 +117,6 @@ Future<EventStore> _bootstrapStore() async {
       id: 'user_invitation',
       registeredVersion: 1,
       name: 'User invitation',
-      widgetId: 'user_invitation_v1',
-      widgetConfig: <String, Object?>{},
       materialize: false,
     ),
   );

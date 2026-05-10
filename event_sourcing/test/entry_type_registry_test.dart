@@ -3,14 +3,8 @@ import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Minimal fixture: two distinct `EntryTypeDefinition`s with unique ids.
-EntryTypeDefinition _defn(String id, {String widgetId = 'epistaxis_form_v1'}) =>
-    EntryTypeDefinition(
-      id: id,
-      registeredVersion: 1,
-      name: 'Defn $id',
-      widgetId: widgetId,
-      widgetConfig: const <String, Object?>{},
-    );
+EntryTypeDefinition _defn(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: 'Defn $id');
 
 void main() {
   group('EntryTypeRegistry', () {

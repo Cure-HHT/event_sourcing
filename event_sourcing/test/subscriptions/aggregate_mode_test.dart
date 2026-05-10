@@ -35,15 +35,12 @@ Future<EventStore> _open() async {
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     );
   final projections = ProjectionRegistry()
     ..register(
       AggregateProjectionSpec(
         viewName: 'diary_entries',
-        aggregateType: 'DiaryEntry',
         interest: const SubscriptionFilter(aggregateTypes: {'DiaryEntry'}),
         tombstoneEventTypes: const {'tombstone'},
       ),

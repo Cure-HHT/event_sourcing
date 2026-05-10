@@ -34,16 +34,12 @@ EntryTypeDefinition _typeA({int version = 1}) => EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: version,
   name: 'Demo Note',
-  widgetId: 'widget-demo_note',
-  widgetConfig: const <String, Object?>{},
 );
 
 EntryTypeDefinition _typeB() => const EntryTypeDefinition(
   id: 'red_button',
   registeredVersion: 1,
   name: 'Red Button',
-  widgetId: 'widget-red_button',
-  widgetConfig: <String, Object?>{},
 );
 
 /// Open a `SembastBackend` against a path-keyed in-memory database via

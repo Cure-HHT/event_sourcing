@@ -19,8 +19,6 @@ Future<EventStore> _bootstrap() async {
         id: 'demo_note',
         registeredVersion: 5,
         name: 'demo_note',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     ],
     destinations: const <Destination>[],

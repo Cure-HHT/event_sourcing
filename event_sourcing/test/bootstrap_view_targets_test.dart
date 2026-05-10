@@ -26,8 +26,6 @@ const EntryTypeDefinition _demoNote = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: 1,
   name: 'demo_note',
-  widgetId: 'w',
-  widgetConfig: <String, Object?>{},
 );
 
 void main() {

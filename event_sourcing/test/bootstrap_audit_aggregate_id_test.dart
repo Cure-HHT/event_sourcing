@@ -22,8 +22,6 @@ EntryTypeDefinition _typeA() => const EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: 1,
   name: 'Demo Note',
-  widgetId: 'widget-demo_note',
-  widgetConfig: <String, Object?>{},
 );
 
 void main() {

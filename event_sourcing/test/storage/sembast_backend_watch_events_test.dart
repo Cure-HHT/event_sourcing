@@ -144,8 +144,6 @@ void main() {
               id: 'epistaxis_event',
               registeredVersion: 1,
               name: 'Epistaxis Event',
-              widgetId: 'w',
-              widgetConfig: <String, Object?>{},
             ),
           );
         final secCtx = SembastSecurityContextStore(backend: backend);

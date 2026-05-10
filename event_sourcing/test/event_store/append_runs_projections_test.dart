@@ -29,7 +29,6 @@ void main() {
       ..register(
         AggregateProjectionSpec(
           viewName: 'diary_entries',
-          aggregateType: 'DiaryEntry',
           interest: const SubscriptionFilter(aggregateTypes: {'DiaryEntry'}),
           tombstoneEventTypes: const {'tombstone'},
         ),
@@ -41,8 +40,6 @@ void main() {
           id: 'epistaxis_event',
           registeredVersion: 1,
           name: 'Epistaxis Event',
-          widgetId: 'w',
-          widgetConfig: <String, Object?>{},
         ),
       );
 

@@ -21,13 +21,7 @@ Future<EventStore> _openStore() async {
   final backend = SembastBackend(database: db);
   final entryTypes = EntryTypeRegistry()
     ..register(
-      const EntryTypeDefinition(
-        id: 'X',
-        registeredVersion: 1,
-        name: 'X',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
-      ),
+      const EntryTypeDefinition(id: 'X', registeredVersion: 1, name: 'X'),
     );
   return EventStore.open(
     storage: backend,

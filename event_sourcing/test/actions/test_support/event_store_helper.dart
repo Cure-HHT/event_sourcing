@@ -34,8 +34,6 @@ Future<EventStore> bootstrapTestEventStore() async {
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        widgetId: 'action_denial_v1',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -45,8 +43,6 @@ Future<EventStore> bootstrapTestEventStore() async {
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        widgetId: 'greeting_v1',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );

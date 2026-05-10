@@ -23,7 +23,6 @@ class _Fixture {
 AggregateProjectionSpec _toyViewSpec(List<String> entryTypeIds) =>
     AggregateProjectionSpec(
       viewName: 'toy_view',
-      aggregateType: 'SampleAggregate',
       interest: SubscriptionFilter(entryTypes: entryTypeIds),
       tombstoneEventTypes: const <String>{},
     );
@@ -89,13 +88,8 @@ Future<_Fixture> _setup({
   );
 }
 
-EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'w',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _simpleDef(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 void main() {
   group('EventStore.append', () {
@@ -171,8 +165,6 @@ void main() {
               id: 'non_materialized',
               registeredVersion: 1,
               name: 'Non-Mat',
-              widgetId: 'w',
-              widgetConfig: <String, Object?>{},
               materialize: false,
             ),
           ],

@@ -21,13 +21,8 @@ const Source _source = Source(
   softwareVersion: 'v',
 );
 
-EntryTypeDefinition _defn(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'widget-$id',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _defn(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 /// Destination that throws on the first read of [id]. Used to abort the
 /// destination loop at a deterministic point.

@@ -24,7 +24,6 @@ StoredEvent _ev(
 }) => StoredEvent.synthetic(
   eventId: 'e-$aggId-$type-${ts?.microsecondsSinceEpoch ?? 0}',
   aggregateId: aggId,
-  aggregateType: 'DiaryEntry',
   entryType: 'epistaxis_event',
   eventType: type,
   initiator: const UserInitiator('u'),
@@ -36,7 +35,6 @@ StoredEvent _ev(
 
 final _spec = AggregateProjectionSpec(
   viewName: 'diary_entries',
-  aggregateType: 'DiaryEntry',
   interest: SubscriptionFilter(aggregateTypes: const {'DiaryEntry'}),
   tombstoneEventTypes: const {'tombstone'},
   derivedFields: const [

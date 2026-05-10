@@ -35,8 +35,6 @@ Future<EventStore> buildInMemoryEventStore() async {
         id: kRolePermissionGrantEntryType,
         registeredVersion: 1,
         name: 'Role-permission grant',
-        widgetId: 'role_permission_grant_v1',
-        widgetConfig: <String, Object?>{},
         // materialize: false — kept for compatibility; projection is driven
         // by the registered ProjectionSpec (rolePermissionGrantsSpec).
         materialize: false,

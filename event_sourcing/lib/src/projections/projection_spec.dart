@@ -14,13 +14,11 @@ class AggregateProjectionSpec extends ProjectionSpec {
   final String viewName;
   @override
   final SubscriptionFilter interest;
-  final String aggregateType;
   final Set<String> tombstoneEventTypes;
   final List<DerivedField> derivedFields;
 
   const AggregateProjectionSpec({
     required this.viewName,
-    required this.aggregateType,
     required this.interest,
     required this.tombstoneEventTypes,
     this.derivedFields = const [],

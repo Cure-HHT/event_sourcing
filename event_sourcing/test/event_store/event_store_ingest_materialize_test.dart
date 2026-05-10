@@ -21,7 +21,6 @@ import 'package:uuid/uuid.dart';
 
 const _kToyViewSpec = AggregateProjectionSpec(
   viewName: 'toy_view',
-  aggregateType: 'SampleAggregate',
   interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
   tombstoneEventTypes: <String>{'tombstone'},
 );
@@ -43,8 +42,6 @@ const EntryTypeDefinition _demoNoteDef = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: 1,
   name: 'Demo Note',
-  widgetId: 'w',
-  widgetConfig: <String, Object?>{},
 );
 
 Future<_Fixture> _openDatastore({
