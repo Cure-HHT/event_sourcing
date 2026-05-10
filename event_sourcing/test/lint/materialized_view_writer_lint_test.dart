@@ -9,17 +9,16 @@ import 'package:flutter_test/flutter_test.dart';
 /// log. Writes must flow through `DiaryEntriesMaterializer.foldPure` inside either the
 /// disaster-recovery rebuild (`rebuildMaterializedView`) or the online write
 /// path (Phase 5's `EntryService.record`). Any other production code that
-/// calls `StorageBackend.upsertEntry` or `StorageBackend.clearViewInTxn`
+/// calls `StorageBackend.upsertEntry`
 /// bypasses the fold and breaks the invariant that running
 /// `rebuildMaterializedView` would produce the same state.
 ///
 /// The test walks every `.dart` file under `apps/**/lib/` and flags any
-/// invocation of either method in a file outside [_allowlist]. The allowlist
+/// invocation of this method outside [_allowlist]. The allowlist
 /// is kept in this file on purpose: adding a new legitimate writer requires
 /// touching this test, which is the review choke-point.
 
-/// Files allowed to invoke `StorageBackend.upsertEntry` or clear the
-/// `diary_entries` view via `StorageBackend.clearViewInTxn`. Paths are
+/// Files allowed to invoke `StorageBackend.upsertEntry`. Paths are
 /// POSIX-style and repo-relative.
 ///
 /// Adding an entry here is a deliberate assertion that the named file is a
