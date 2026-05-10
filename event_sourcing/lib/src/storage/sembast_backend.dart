@@ -10,7 +10,6 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -86,8 +85,6 @@ class SembastBackend extends StorageBackend {
       .store(_eventStoreName);
   final StoreRef<String, Object?> _backendStateStore =
       StoreRef<String, Object?>('backend_state');
-  final StoreRef<String, Map<String, Object?>> _entriesStore =
-      stringMapStoreFactory.store('diary_entries');
   // Backend-private mirror of the `security_context` sembast store so
   // [queryAudit] can join against the event log without reaching into a
   // separate store object. The sembast `StoreRef` is just a typed name
@@ -655,65 +652,6 @@ class SembastBackend extends StorageBackend {
         _fifoChangesController.add(destinationId);
       }
     });
-  }
-
-  // -------- diary_entries --------
-
-  /// Whole-row replace into `diary_entries` keyed on `entry.entryId`
-  /// (REQ-d00117-D). Sembast's `record(key).put(...)` semantic IS a
-  /// whole-row replace; no partial merge is possible through this path.
-  // Implements: REQ-d00117-D — whole-row replace, not partial merge.
-  @override
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry) async {
-    final t = _requireValidTxn(txn);
-    await _entriesStore
-        .record(entry.entryId)
-        .put(t._sembastTxn, entry.toJson());
-  }
-
-  /// Query `diary_entries` with optional filters, all combined with logical
-  /// AND. Rows whose `effective_date` is null are excluded from any query
-  /// that specifies [dateFrom] or [dateTo]; pass null for both date
-  /// parameters to include null-date rows.
-  @override
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  }) async {
-    final db = _database();
-    final filters = <Filter>[];
-    if (entryType != null) {
-      filters.add(Filter.equals('entry_type', entryType));
-    }
-    if (isComplete != null) {
-      filters.add(Filter.equals('is_complete', isComplete));
-    }
-    if (isDeleted != null) {
-      filters.add(Filter.equals('is_deleted', isDeleted));
-    }
-    // ISO 8601 strings compare lexicographically in date order when they
-    // share the same offset, which ours do (all UTC or all with an
-    // explicit offset). Nulls are excluded because `null` fails any
-    // lexicographic comparison against a String in Sembast.
-    if (dateFrom != null) {
-      filters.add(
-        Filter.greaterThanOrEquals(
-          'effective_date',
-          dateFrom.toIso8601String(),
-        ),
-      );
-    }
-    if (dateTo != null) {
-      filters.add(
-        Filter.lessThanOrEquals('effective_date', dateTo.toIso8601String()),
-      );
-    }
-    final finder = filters.isEmpty ? null : Finder(filter: Filter.and(filters));
-    final records = await _entriesStore.find(db, finder: finder);
-    return records.map((r) => DiaryEntry.fromJson(r.value)).toList();
   }
 
   // -------- Generic view storage (Phase 4.4) --------

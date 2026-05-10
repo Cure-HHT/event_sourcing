@@ -5,7 +5,7 @@ part of 'sembast_backend.dart';
 /// reach for these — every read/write need has a typed `StorageBackend`
 /// method (`readFifoHead`, `readFifoRow`, `listFifoEntries`,
 /// `findEventById`, `findEventsForAggregate`, `findAllEvents`,
-/// `findEntries`, `findViewRows`, `queryAudit`, etc.).
+/// `findViewRows`, `queryAudit`, etc.).
 ///
 /// Tests use these to (a) inspect raw store contents that have no
 /// public API equivalent (e.g., asserting the on-disk shape of a FIFO

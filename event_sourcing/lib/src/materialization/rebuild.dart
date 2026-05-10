@@ -1,7 +1,5 @@
-import 'package:event_sourcing/src/materialization/diary_entries_materializer.dart';
 import 'package:event_sourcing/src/materialization/entry_type_definition_lookup.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
@@ -11,93 +9,6 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// regardless of total log size. Chosen to amortize find-query overhead while
 /// keeping peak memory modest on mobile and tolerable on server-scale logs.
 const int _rebuildChunkSize = 500;
-
-/// Rebuild the `diary_entries` materialized view from the append-only event
-/// log. Disaster-recovery helper — folds events directly through
-/// `DiaryEntriesMaterializer.foldPure` using each event's own `data` as the
-/// promoted payload (identity promotion).
-///
-/// Streams events ordered by `sequence_number` in fixed-size chunks of
-/// [_rebuildChunkSize], folding each event into a per-aggregate accumulator
-/// (using each aggregate's first-seen `client_timestamp` as the
-/// `firstEventTimestamp` fallback). Clears the `diary_entries` store at the
-/// start of the transaction and upserts the final per-aggregate rows at the
-/// end — all inside one `StorageBackend.transaction` so the clear, the folds,
-/// and the upserts are one atomic step.
-///
-/// Concurrency: Sembast serializes transaction bodies, so a concurrent
-/// `appendEvent` transaction runs either entirely before or entirely after
-/// this rebuild's body — never interleaved.
-///
-/// Memory profile: O(chunk_size + distinct_aggregates × row_size), not
-/// O(total_events).
-///
-/// Returns the number of distinct aggregate_ids materialized.
-///
-/// Throws [StateError] if the event log references an `entry_type` that is
-/// not registered in [lookup].
-// Implements: REQ-d00121-G+H — disaster-recovery rebuild; replaces view from
-// event log in one transaction, returns count of aggregates processed.
-Future<int> rebuildMaterializedView(
-  StorageBackend backend,
-  EntryTypeDefinitionLookup lookup,
-) async {
-  return backend.transaction<int>((txn) async {
-    // Clear first so prior cache contents can never be read back as input to
-    // the rebuild (REQ-d00121-G). The clear only commits if the whole
-    // rebuild commits — a mid-rebuild failure rolls everything back together.
-    await backend.clearViewInTxn(txn, 'diary_entries');
-
-    final byAggregate = <String, DiaryEntry>{};
-    final firstTsByAggregate = <String, DateTime>{};
-
-    int? lastSeq;
-    while (true) {
-      final chunk = await backend.findAllEventsInTxn(
-        txn,
-        afterSequence: lastSeq,
-        limit: _rebuildChunkSize,
-      );
-      if (chunk.isEmpty) break;
-
-      for (final event in chunk) {
-        final def = lookup.lookup(event.entryType);
-        if (def == null) {
-          throw StateError(
-            'rebuildMaterializedView: unknown entry_type '
-            '"${event.entryType}" on event ${event.eventId} '
-            '(aggregate ${event.aggregateId}, seq '
-            '${event.sequenceNumber}). The event log references a type '
-            'that is not in the registry; this is a data-integrity '
-            'failure.',
-          );
-        }
-        final firstTs = firstTsByAggregate.putIfAbsent(
-          event.aggregateId,
-          () => event.clientTimestamp,
-        );
-        byAggregate[event.aggregateId] = DiaryEntriesMaterializer.foldPure(
-          previous: byAggregate[event.aggregateId],
-          event: event,
-          // Identity promotion for the legacy disaster-recovery path.
-          // The parameterized rebuildView is the version-aware entry point.
-          promotedData: event.data,
-          def: def,
-          firstEventTimestamp: firstTs,
-        );
-      }
-
-      if (chunk.length < _rebuildChunkSize) break;
-      lastSeq = chunk.last.sequenceNumber;
-    }
-
-    for (final row in byAggregate.values) {
-      await backend.upsertEntry(txn, row);
-    }
-
-    return byAggregate.length;
-  });
-}
 
 /// Rebuild exactly one view by replaying the event log through
 /// [materializer]. Clears the view AND the view's `view_target_versions`

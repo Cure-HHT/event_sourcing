@@ -4,7 +4,6 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -255,17 +254,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<int> nextSequenceNumber(Txn txn) => throw UnimplementedError();
   @override
   Future<int> readSequenceCounter() => throw UnimplementedError();
-  @override
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry) =>
-      throw UnimplementedError();
-  @override
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  }) => throw UnimplementedError();
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,

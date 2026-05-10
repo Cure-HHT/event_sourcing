@@ -169,11 +169,8 @@ export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
 export 'src/destinations/wire_payload.dart' show WirePayload;
 
-// Entry Type Registry + EntryService.record — the legacy Phase 4.3 write
-// path. Phase 4.4 added EventStore (see `src/event_store.dart`) as the new
-// write API; `EntryService.record` remains for back-compat until Phase 5
-// cuts clinical_diary over.
-export 'src/entry_service.dart' show DeviceInfo, EntryService, SyncCycleTrigger;
+// Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
+// consumed by the materializer and EventStore registry.
 export 'src/entry_type_definition.dart' show EntryTypeDefinition;
 export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 
@@ -202,20 +199,18 @@ export 'src/ingest/ingest_errors.dart'
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Materialization layer — pluggable fold contract, concrete materializer
-// for diary_entries, entry-type-definition lookup, and the
-// disaster-recovery rebuild helpers (CUR-1154).
+// Materialization layer — pluggable fold contract, entry-type-definition
+// lookup, and the parameterized rebuild helper (CUR-1154, CUR-1317).
+// DiaryEntriesMaterializer and rebuildMaterializedView are deleted (Task 21
+// extraction-debt cleanup); hht_diary will author its own materializer.
 // MapEntryTypeDefinitionLookup is intentionally NOT exported — it lives
 // under test/test_support/ so production code cannot depend on it.
-export 'src/materialization/diary_entries_materializer.dart'
-    show DiaryEntriesMaterializer;
 export 'src/materialization/entry_promoter.dart'
     show EntryPromoter, identityPromoter;
 export 'src/materialization/entry_type_definition_lookup.dart'
     show EntryTypeDefinitionLookup;
 export 'src/materialization/materializer.dart' show Materializer;
-export 'src/materialization/rebuild.dart'
-    show rebuildMaterializedView, rebuildView;
+export 'src/materialization/rebuild.dart' show rebuildView;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
@@ -289,7 +284,6 @@ export 'src/security/system_entry_types.dart'
 // (CUR-1154).
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
-export 'src/storage/diary_entry.dart' show DiaryEntry;
 export 'src/storage/fifo_entry.dart' show EventIdRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'

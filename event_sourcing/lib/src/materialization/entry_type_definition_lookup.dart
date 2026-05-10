@@ -5,8 +5,8 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 ///
 /// The materializer consumes this to obtain `effective_date_path`,
 /// `widget_id`, and other per-type metadata while folding events into
-/// `DiaryEntry` rows. Keeping the lookup behind an abstract interface lets
-/// tests substitute an in-memory map (`MapEntryTypeDefinitionLookup` under
+/// view rows. Keeping the lookup behind an abstract interface lets tests
+/// substitute an in-memory map (`MapEntryTypeDefinitionLookup` under
 /// `test/test_support/`) and lets production code inject the sponsor's
 /// compile-time registry without coupling the materializer to either.
 ///

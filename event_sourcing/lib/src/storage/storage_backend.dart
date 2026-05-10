@@ -4,7 +4,6 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -22,16 +21,15 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 /// The contract is deliberately Dart-pure: no Sembast or postgres types leak
 /// into the interface, so either backend can be swapped in without changing
 /// callers. Writes are grouped into [transaction] bodies to guarantee
-/// atomicity across the four logical stores (event log, diary_entries view,
+/// atomicity across the four logical stores (event log, generic view store,
 /// per-destination FIFOs, backend_state KV).
 // Implements: REQ-d00117-A — transaction atomicity.
 // Implements: REQ-d00117-C — appendEvent co-atomic with sequence counter.
-// Implements: REQ-d00117-D — upsertEntry whole-row replace.
 // Implements: REQ-d00117-E — enqueueFifo initial state.
 // Implements: REQ-d00117-F — backend_state KV store for schema_version and
 // sequence counter (not 'metadata').
 // Implements: REQ-d00140-F — generic view-row read/write via readViewRowInTxn
-// / clearViewInTxn (diary-specific clearEntries and readEntryInTxn removed).
+// / clearViewInTxn.
 abstract class StorageBackend {
   const StorageBackend();
 
@@ -58,9 +56,8 @@ abstract class StorageBackend {
 
   /// Events for one aggregate, read within [txn] so the result reflects
   /// writes already staged in the same transaction body. Sorted by
-  /// `sequence_number` ascending. Used by callers (e.g., `EntryService`)
-  /// that need hash-chain / no-op-detection reads to be coherent with
-  /// the same-transaction append.
+  /// `sequence_number` ascending. Used by callers that need hash-chain /
+  /// no-op-detection reads to be coherent with the same-transaction append.
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
     Txn txn,
     String aggregateId,
@@ -101,7 +98,7 @@ abstract class StorageBackend {
   /// the log in fixed-size chunks instead of materializing the whole log in
   /// memory.
   ///
-  /// Used by `rebuildMaterializedView` so the event snapshot folded into the
+  /// Used by `rebuildView` so the event snapshot folded into the
   /// cache is coherent with the clear+upsert done under the same transaction.
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
@@ -155,31 +152,13 @@ abstract class StorageBackend {
   /// when no event has been appended yet. Non-transactional, read-only.
   Future<int> readSequenceCounter();
 
-  // -------- Materialized view --------
-
-  /// Whole-row replace into `diary_entries` keyed on `entry.entryId`. Not a
-  /// partial merge: every column in [entry] overwrites the previous row.
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry);
-
-  /// Query `diary_entries` with optional filters; all filters are combined
-  /// with logical AND. Returned order is unspecified — callers that need a
-  /// deterministic order SHALL sort the result themselves.
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  });
-
   // -------- Generic view storage (Phase 4.4) --------
   //
   // Materializers read and write view rows via these methods. The view
   // namespace is flat — one store per `viewName`, keyed on a caller-
   // supplied string. The backend does not own schema for view rows; the
   // materializer and its readers interpret the row map. Reserved view
-  // names: `diary_entries` (owned by `DiaryEntriesMaterializer`) and
-  // `security_context` (reserved for the sidecar store).
+  // name: `security_context` (reserved for the sidecar store).
 
   /// Read one row from [viewName] by [key] inside [txn], or null when
   /// the row is absent.

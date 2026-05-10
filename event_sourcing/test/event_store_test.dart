@@ -2,6 +2,40 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+// Toy materializer used to exercise EventStore generic substrate behavior
+// without any diary-domain coupling. Folds events of any materialized entry
+// type into a 'toy_view' view keyed on aggregate_id, storing only the last
+// event_id. Enough to test materialize=false gating and view-row presence.
+class _ToyMaterializer extends Materializer {
+  const _ToyMaterializer();
+
+  @override
+  String get viewName => 'toy_view';
+
+  @override
+  bool appliesTo(StoredEvent event) => true;
+
+  @override
+  EntryPromoter get promoter => identityPromoter;
+
+  @override
+  Future<void> applyInTxn(
+    Txn txn,
+    StorageBackend backend, {
+    required StoredEvent event,
+    required Map<String, Object?> promotedData,
+    required EntryTypeDefinition def,
+    required List<StoredEvent> aggregateHistory,
+  }) async {
+    await backend.upsertViewRowInTxn(
+      txn,
+      viewName,
+      event.aggregateId,
+      <String, Object?>{'latest_event_id': event.eventId},
+    );
+  }
+}
+
 class _Fixture {
   _Fixture({
     required this.eventStore,
@@ -27,9 +61,7 @@ Future<_Fixture> _setup({
   );
   final backend = SembastBackend(database: db);
   final registry = EntryTypeRegistry();
-  // Auto-register every reserved system entry type (security-context
-  // lifecycle plus REQ-d00129-J/K/L/M and REQ-d00138-H per-sweep audit)
-  // so direct EventStore tests don't have to enumerate them by hand.
+  // Auto-register every reserved system entry type.
   for (final defn in kSystemEntryTypes) {
     registry.register(defn);
   }
@@ -37,15 +69,13 @@ Future<_Fixture> _setup({
   for (final def in effectiveDefs) {
     registry.register(def);
   }
-  // Seed view_target_versions for diary_entries so the materializer's
-  // default targetVersionFor resolves the entry types we plan to append.
-  // (Unit-style EventStore tests bypass bootstrapAppendOnlyDatastore.)
+  // Seed view_target_versions for toy_view.
   await backend.transaction((txn) async {
     for (final def in effectiveDefs) {
       if (!def.materialize) continue;
       await backend.writeViewTargetVersionInTxn(
         txn,
-        'diary_entries',
+        'toy_view',
         def.id,
         def.registeredVersion,
       );
@@ -62,7 +92,7 @@ Future<_Fixture> _setup({
       softwareVersion: 'clinical_diary@1.0.0',
     ),
     securityContexts: securityContexts,
-    materializers: const [DiaryEntriesMaterializer(promoter: identityPromoter)],
+    materializers: const [_ToyMaterializer()],
     syncCycleTrigger: () async {
       syncCalls.add(DateTime.now());
     },
@@ -97,7 +127,7 @@ void main() {
           entryType: 'epistaxis_event',
           entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {
             'answers': {'severity': 'mild'},
@@ -119,7 +149,7 @@ void main() {
         entryType: 'epistaxis_event',
         entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {'answers': {}},
         initiator: const UserInitiator('u1'),
@@ -138,7 +168,7 @@ void main() {
         entryType: 'epistaxis_event',
         entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {'answers': {}},
         initiator: const UserInitiator('u1'),
@@ -167,14 +197,14 @@ void main() {
           entryType: 'non_materialized',
           entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
         );
         expect(ev, isNotNull);
         final viewRow = await fx.backend.transaction(
-          (txn) async => fx.backend.readViewRowInTxn(txn, 'diary_entries', 'a'),
+          (txn) async => fx.backend.readViewRowInTxn(txn, 'toy_view', 'a'),
         );
         expect(viewRow, isNull);
         await fx.backend.close();
@@ -188,7 +218,7 @@ void main() {
           entryType: 'weather_report',
           entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -206,7 +236,7 @@ void main() {
         entryType: 'epistaxis_event',
         entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {
           'answers': {'x': 1},
@@ -219,7 +249,7 @@ void main() {
         entryType: 'epistaxis_event',
         entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {
           'answers': {'x': 1},
@@ -244,7 +274,7 @@ void main() {
           entryType: 'epistaxis_event',
           entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -334,7 +364,7 @@ void main() {
           entryType: 'epistaxis_event',
           entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),

@@ -2,6 +2,39 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+// Toy materializer used in place of DiaryEntriesMaterializer to verify the
+// generic bootstrap initial-view-target-version contract without any
+// diary-domain coupling. Maintains a 'toy_view' keyed on aggregate_id.
+class _ToyMaterializer extends Materializer {
+  const _ToyMaterializer();
+
+  @override
+  String get viewName => 'toy_view';
+
+  @override
+  bool appliesTo(StoredEvent event) => true;
+
+  @override
+  EntryPromoter get promoter => identityPromoter;
+
+  @override
+  Future<void> applyInTxn(
+    Txn txn,
+    StorageBackend backend, {
+    required StoredEvent event,
+    required Map<String, Object?> promotedData,
+    required EntryTypeDefinition def,
+    required List<StoredEvent> aggregateHistory,
+  }) async {
+    await backend.upsertViewRowInTxn(
+      txn,
+      viewName,
+      event.aggregateId,
+      <String, Object?>{'latest_event_id': event.eventId},
+    );
+  }
+}
+
 Future<SembastBackend> _openBackend() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'bvt-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -34,19 +67,14 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
       final stored = await backend.transaction<int?>(
-        (txn) async => backend.readViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-        ),
+        (txn) async =>
+            backend.readViewTargetVersionInTxn(txn, 'toy_view', 'demo_note'),
       );
       expect(stored, 1);
     });
@@ -61,9 +89,7 @@ void main() {
           source: _source,
           entryTypes: const <EntryTypeDefinition>[_demoNote],
           destinations: const <Destination>[],
-          materializers: <Materializer>[
-            const DiaryEntriesMaterializer(promoter: identityPromoter),
-          ],
+          materializers: <Materializer>[const _ToyMaterializer()],
           initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsArgumentError,
@@ -79,11 +105,9 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
       // Re-bootstrap with a different version for the same entry type.
@@ -93,11 +117,9 @@ void main() {
           source: _source,
           entryTypes: const <EntryTypeDefinition>[_demoNote],
           destinations: const <Destination>[],
-          materializers: <Materializer>[
-            const DiaryEntriesMaterializer(promoter: identityPromoter),
-          ],
+          materializers: <Materializer>[const _ToyMaterializer()],
           initialViewTargetVersions: const <String, Map<String, int>>{
-            'diary_entries': <String, int>{'demo_note': 2},
+            'toy_view': <String, int>{'demo_note': 2},
           },
         ),
         throwsStateError,
@@ -113,11 +135,9 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
       // Second bootstrap with the same value.
@@ -126,19 +146,14 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
       final stored = await backend.transaction<int?>(
-        (txn) async => backend.readViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-        ),
+        (txn) async =>
+            backend.readViewTargetVersionInTxn(txn, 'toy_view', 'demo_note'),
       );
       expect(stored, 1);
     });
@@ -154,20 +169,15 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
-      await ds.setViewTargetVersion('diary_entries', 'late_arrival', 3);
+      await ds.setViewTargetVersion('toy_view', 'late_arrival', 3);
       final stored = await backend.transaction<int?>(
-        (txn) async => backend.readViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'late_arrival',
-        ),
+        (txn) async =>
+            backend.readViewTargetVersionInTxn(txn, 'toy_view', 'late_arrival'),
       );
       expect(stored, 3);
     });
@@ -180,20 +190,15 @@ void main() {
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
-        materializers: <Materializer>[
-          const DiaryEntriesMaterializer(promoter: identityPromoter),
-        ],
+        materializers: <Materializer>[const _ToyMaterializer()],
         initialViewTargetVersions: const <String, Map<String, int>>{
-          'diary_entries': <String, int>{'demo_note': 1},
+          'toy_view': <String, int>{'demo_note': 1},
         },
       );
-      await ds.setViewTargetVersion('diary_entries', 'demo_note', 5);
+      await ds.setViewTargetVersion('toy_view', 'demo_note', 5);
       final stored = await backend.transaction<int?>(
-        (txn) async => backend.readViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-        ),
+        (txn) async =>
+            backend.readViewTargetVersionInTxn(txn, 'toy_view', 'demo_note'),
       );
       expect(stored, 5);
     });
