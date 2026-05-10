@@ -76,6 +76,7 @@ class AggregateFold {
     next['latestEventId'] = event.eventId;
     next['updatedAt'] = event.clientTimestamp.toUtc().toIso8601String();
     next['firstEventTimestamp'] = firstEventTimestamp.toUtc().toIso8601String();
+    next['sequence'] = event.sequenceNumber;
 
     for (final df in spec.derivedFields) {
       next[df.fieldName] = df.computation.resolve(

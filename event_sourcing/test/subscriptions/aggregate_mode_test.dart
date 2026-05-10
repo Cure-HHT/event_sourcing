@@ -143,6 +143,41 @@ void main() {
     },
   );
 
+  test('snapshot sequence reflects latest folded event sequence', () async {
+    final store = await _open();
+    await _append(store, 'e1', 'finalized', {
+      'answers': {'q1': 'yes'},
+    });
+    final stored2 = await store.append(
+      entryType: 'epistaxis_event',
+      entryTypeVersion: 1,
+      aggregateId: 'e1',
+      aggregateType: 'DiaryEntry',
+      eventType: 'checkpoint',
+      data: {
+        'answers': {'q2': 'no'},
+      },
+      initiator: const UserInitiator('u'),
+    );
+
+    final updates = <Update<_DiaryEntry?>>[];
+    final sub = store
+        .subscribe(
+          SubscriptionFilter(aggregates: const {'e1'}),
+          AggregateMode<_DiaryEntry?>(
+            viewName: 'diary_entries',
+            mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+          ),
+        )
+        .listen(updates.add);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+    expect((updates.first as Snapshot).sequence, stored2!.sequenceNumber);
+    await sub.cancel();
+    await store.close();
+  });
+
   test('tombstone produces Tombstone update for active subscribers', () async {
     final store = await _open();
     await _append(store, 'e1', 'finalized', {
