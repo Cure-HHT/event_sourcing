@@ -372,6 +372,21 @@ class SembastBackend extends StorageBackend {
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
   }
 
+  @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) async* {
+    final db = _database();
+    final finder = Finder(
+      filter: eventTypes != null
+          ? Filter.inList('event_type', eventTypes.toList())
+          : null,
+      sortOrders: [SortOrder('sequence_number', false)],
+    );
+    final records = await _eventStore.find(db, finder: finder);
+    for (final r in records) {
+      yield StoredEvent.fromMap(r.value, r.key);
+    }
+  }
+
   // Implements: REQ-d00149-A+B+C+D+E — replay-then-live with race-safe
   // live-filter via held-cursor; broadcast; close-aware.
   //

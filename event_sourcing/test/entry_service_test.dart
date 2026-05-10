@@ -1026,6 +1026,9 @@ class _DelegatingBackend extends StorageBackend {
   Stream<StoredEvent> watchEvents({int? afterSequence}) =>
       _inner.watchEvents(afterSequence: afterSequence);
   @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
+      _inner.readEventsReverse(eventTypes: eventTypes);
+  @override
   Stream<List<FifoEntry>> watchFifo(String destinationId) =>
       _inner.watchFifo(destinationId);
   @override

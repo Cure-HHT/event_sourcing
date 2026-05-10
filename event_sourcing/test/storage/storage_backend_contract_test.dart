@@ -419,6 +419,9 @@ class _InMemoryBackend extends StorageBackend {
   Stream<StoredEvent> watchEvents({int? afterSequence}) =>
       const Stream<StoredEvent>.empty();
   @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
+      throw UnimplementedError();
+  @override
   Stream<List<FifoEntry>> watchFifo(String destinationId) =>
       const Stream<List<FifoEntry>>.empty();
   @override

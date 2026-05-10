@@ -650,6 +650,21 @@ abstract class StorageBackend {
     int afterSequenceInQueue,
   );
 
+  // -------- Reverse event scan --------
+
+  /// Reverse stream of stored events, optionally filtered to a set of
+  /// event types. Emits events in descending `sequence_number` order.
+  ///
+  /// Used by lifecycle scans that need to terminate on the first match
+  /// without paging through the entire log. Consumers that only need the
+  /// single most-recent match SHOULD `await for` and `break` (or return)
+  /// on the first event.
+  ///
+  /// When [eventTypes] is supplied only events whose `event_type` is
+  /// contained in the set are emitted; when null no type filtering is
+  /// applied.
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes});
+
   // -------- Audit query (REQ-d00151) --------
 
   /// Cross-store audit query joining the event log with the security-
