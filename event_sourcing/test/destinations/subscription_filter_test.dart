@@ -47,7 +47,7 @@ void main() {
 
     // Verifies: REQ-d00122-F — eventTypes allow-list filters by event_type.
     test('REQ-d00122-F: eventTypes allow-list selects by event_type', () {
-      const f = SubscriptionFilter(eventTypes: ['finalized']);
+      const f = SubscriptionFilter(eventTypes: {'finalized'});
       expect(f.matches(_mkEvent(eventType: 'finalized')), isTrue);
       expect(f.matches(_mkEvent(eventType: 'checkpoint')), isFalse);
       expect(f.matches(_mkEvent(eventType: 'tombstone')), isFalse);
@@ -57,7 +57,7 @@ void main() {
     test('REQ-d00122-F: entryTypes AND eventTypes — both must match', () {
       const f = SubscriptionFilter(
         entryTypes: ['epistaxis_event'],
-        eventTypes: ['finalized'],
+        eventTypes: {'finalized'},
       );
       expect(
         f.matches(
@@ -92,9 +92,9 @@ void main() {
       );
     });
 
-    test('REQ-d00122-F: empty eventTypes list matches nothing '
+    test('REQ-d00122-F: empty eventTypes set matches nothing '
         '(distinct from null)', () {
-      const emptyEventTypes = SubscriptionFilter(eventTypes: []);
+      const emptyEventTypes = SubscriptionFilter(eventTypes: {});
       expect(emptyEventTypes.matches(_mkEvent()), isFalse);
       expect(
         emptyEventTypes.matches(_mkEvent(eventType: 'tombstone')),
@@ -136,7 +136,7 @@ void main() {
     test('REQ-d00122-F: all three constraints compose (AND)', () {
       final f = SubscriptionFilter(
         entryTypes: const ['epistaxis_event'],
-        eventTypes: const ['finalized'],
+        eventTypes: const {'finalized'},
         predicate: (event) => event.aggregateId == 'agg-1',
       );
       final match = _mkEvent(

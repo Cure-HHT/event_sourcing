@@ -7,7 +7,7 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 
 /// Predicate that selects which events are enqueued to a Destination.
 ///
-/// Composes the system-event opt-in plus three optional user-event
+/// Composes the system-event opt-in plus four optional user-event
 /// constraints, combined with logical AND:
 ///
 /// 1. [includeSystemEvents] — opt-in for events whose `entryType` is in
@@ -22,7 +22,11 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 ///    and never consult this list.
 /// 3. [eventTypes] — allow-list over `event.event_type` with the same
 ///    null-vs-empty semantics as [entryTypes].
-/// 4. [predicate] — optional escape-hatch function consulted only after
+/// 4. [aggregateTypes] — allow-list over `event.aggregateType`. `null`
+///    means "any aggregate type"; an empty set means "no aggregate types
+///    match". Used by projection specs to restrict intake to a specific
+///    aggregate family.
+/// 5. [predicate] — optional escape-hatch function consulted only after
 ///    the allow-lists pass. Returns `true` for the event to match.
 ///
 /// A filter with no constraints matches every user event and (since
@@ -40,6 +44,7 @@ class SubscriptionFilter {
   const SubscriptionFilter({
     this.entryTypes,
     this.eventTypes,
+    this.aggregateTypes,
     this.predicate,
     this.includeSystemEvents = false,
   });
@@ -51,8 +56,12 @@ class SubscriptionFilter {
   final List<String>? entryTypes;
 
   /// Allow-list over `event.event_type`. `null` = match all event types;
-  /// `[]` = match no event types.
-  final List<String>? eventTypes;
+  /// an empty set = match no event types.
+  final Set<String>? eventTypes;
+
+  /// Allow-list over `event.aggregateType`. `null` = match all aggregate
+  /// types; an empty set = match no aggregate types.
+  final Set<String>? aggregateTypes;
 
   /// Escape-hatch consulted after the allow-lists pass. `null` means
   /// "no additional filtering"; a non-null predicate must return `true`
@@ -103,6 +112,11 @@ class SubscriptionFilter {
     }
     final eventTypes = this.eventTypes;
     if (eventTypes != null && !eventTypes.contains(event.eventType)) {
+      return false;
+    }
+    final aggregateTypes = this.aggregateTypes;
+    if (aggregateTypes != null &&
+        !aggregateTypes.contains(event.aggregateType)) {
       return false;
     }
     final predicate = this.predicate;
