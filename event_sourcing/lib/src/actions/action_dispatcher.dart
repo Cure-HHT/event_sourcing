@@ -20,6 +20,7 @@ import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:uuid/uuid.dart';
 
 /// Runs every untrusted-ingress action through the standard 10-stage
@@ -221,6 +222,7 @@ class ActionDispatcher {
     // Stage 8: atomic persist of all events in one transaction.
     // Implements: REQ-d00168-I
     final emittedEventIds = <String>[];
+    final committedEvents = <StoredEvent>[];
     final initiator = ctx.principal.toInitiator();
     final security = executionResult.securityDetailsOverride ?? ctx.security;
     try {
@@ -249,9 +251,16 @@ class ActionDispatcher {
           );
           if (stored != null) {
             emittedEventIds.add(stored.eventId);
+            committedEvents.add(stored);
           }
         }
       });
+      // Notify subscription engine after the transaction commits so that
+      // EventStore.subscribe<T>(filter, Events()) listeners receive these
+      // events. Projection interpreter already ran inside appendInTxn.
+      for (final committed in committedEvents) {
+        events.publishAppended(committed);
+      }
     } on Object catch (err) {
       // Transaction rolled back by Sembast; emit a separate execution_failed
       // denial event AFTER the rollback so it is durably persisted.

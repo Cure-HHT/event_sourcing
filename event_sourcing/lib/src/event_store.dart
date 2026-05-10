@@ -203,6 +203,19 @@ class EventStore {
     await backend.close();
   }
 
+  /// Notify the subscription engine that [event] was committed to the backend
+  /// inside an external transaction (e.g. the [ActionDispatcher]'s multi-event
+  /// Stage 8 batch). Callers that use [appendInTxn] directly MUST call this
+  /// once per committed event after their transaction succeeds, so that
+  /// [subscribe] listeners receive the same delivery they would from the
+  /// public [append] method.
+  ///
+  /// Does NOT fire the projection interpreter (that fires inside
+  /// [appendInTxn] during the transaction). Does NOT trigger the sync cycle.
+  void publishAppended(StoredEvent event) {
+    _subs.publishEvent(event);
+  }
+
   /// Subscribe to live updates. For [Events] mode: delivers a [Delta] for
   /// every event appended after this call (pre-existing history is NOT
   /// replayed). For [AggregateMode]: delivers an initial [Snapshot] per
