@@ -73,6 +73,7 @@ class AggregateFold {
     final merged = _deepMerge(prior, event.data);
 
     final next = Map<String, Object?>.from(merged);
+    next['aggregateId'] = event.aggregateId;
     next['latestEventId'] = event.eventId;
     next['updatedAt'] = event.clientTimestamp.toUtc().toIso8601String();
     next['firstEventTimestamp'] = firstEventTimestamp.toUtc().toIso8601String();

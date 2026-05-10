@@ -1,5 +1,8 @@
-import 'package:event_sourcing/src/materialization/entry_type_definition_lookup.dart';
-import 'package:event_sourcing/src/materialization/materializer.dart';
+import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
+import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
@@ -10,50 +13,53 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// keeping peak memory modest on mobile and tolerable on server-scale logs.
 const int _rebuildChunkSize = 500;
 
-/// Rebuild exactly one view by replaying the event log through
-/// [materializer]. Clears the view AND the view's `view_target_versions`
-/// rows, writes the supplied [targetVersionByEntryType], then calls
-/// `materializer.applyInTxn` (after invoking `materializer.promoter`) for
-/// every event where `materializer.appliesTo(event)` returns true. Events
-/// whose `EntryTypeDefinition.materialize == false` are skipped. Runs in
-/// one backend transaction.
+/// Rebuild exactly one view by replaying the event log through the registered
+/// [ProjectionSpec] for [viewName] on [store]. Clears the view AND the view's
+/// `view_target_versions` rows, writes the supplied [targetVersionByEntryType],
+/// then applies the promoter chain (from [store.promoters]) and dispatches to
+/// the appropriate fold interpreter ([AggregateFold] / [TableFold]) for every
+/// event whose entry type is in [targetVersionByEntryType] and whose
+/// [store.projections] spec's `interest` matches. Runs in one backend
+/// transaction.
 ///
 /// Strict-superset rule: every entry-type already present in the stored
-/// `view_target_versions` for `materializer.viewName` MUST appear in
+/// `view_target_versions` for [viewName] MUST appear in
 /// [targetVersionByEntryType]; otherwise [ArgumentError] is thrown before
 /// any clear or write. New entry types may be added (superset). An event
-/// in the log whose `entry_type` is not in [targetVersionByEntryType] also
-/// raises [ArgumentError] — every materialized event needs a target
-/// version to promote toward.
+/// in the log whose `entry_type` is not in [targetVersionByEntryType] is
+/// skipped (it is not subject to this view's fold).
 ///
 /// Returns the number of events processed. Idempotent — running twice on
 /// the same log with the same map produces the same view rows.
-// Implements: REQ-d00140-D — rebuildView per-view, idempotent; materializer-
-//   parameterized replay; strict-superset target-version map.
-// Implements: REQ-d00140-C — materialize=false on the entry type skips
-//   this materializer entirely.
-// Implements: REQ-d00140-G+H — promoter invoked before applyInTxn during
-//   replay, even when fromVersion == toVersion.
+// Implements: REQ-d00140-D — rebuildView per-view, idempotent; declarative
+//   ProjectionSpec replay; strict-superset target-version map.
 // Implements: REQ-d00140-I — view_target_versions cleared and rewritten
 //   atomically with the view rebuild.
-Future<int> rebuildView(
-  Materializer materializer,
-  StorageBackend backend,
-  EntryTypeDefinitionLookup lookup, {
+Future<int> rebuildView({
+  required EventStore store,
+  required String viewName,
   required Map<String, int> targetVersionByEntryType,
 }) async {
+  final spec = store.projections.lookup(viewName);
+  if (spec == null) {
+    throw StateError(
+      'rebuildView: no ProjectionSpec registered under "$viewName" in '
+      'store.projections. Register the spec before calling rebuildView.',
+    );
+  }
+  final backend = store.backend;
   return backend.transaction<int>((txn) async {
     // Strict-superset check BEFORE any destructive write.
     final existing = await backend.readAllViewTargetVersionsInTxn(
       txn,
-      materializer.viewName,
+      viewName,
     );
     for (final entry in existing.entries) {
       if (!targetVersionByEntryType.containsKey(entry.key)) {
         throw ArgumentError(
           'rebuildView: targetVersionByEntryType is not a strict superset '
           'of the existing view_target_versions for view '
-          '"${materializer.viewName}". Missing existing entry type '
+          '"$viewName". Missing existing entry type '
           '"${entry.key}" (stored target ${entry.value}). '
           'Partial rebuilds are not allowed; supply every existing entry '
           'type plus any new ones.',
@@ -61,20 +67,13 @@ Future<int> rebuildView(
       }
     }
 
-    await backend.clearViewInTxn(txn, materializer.viewName);
-    await backend.clearViewTargetVersionsInTxn(txn, materializer.viewName);
+    await backend.clearViewInTxn(txn, viewName);
+    await backend.clearViewTargetVersionsInTxn(txn, viewName);
     for (final e in targetVersionByEntryType.entries) {
-      await backend.writeViewTargetVersionInTxn(
-        txn,
-        materializer.viewName,
-        e.key,
-        e.value,
-      );
+      await backend.writeViewTargetVersionInTxn(txn, viewName, e.key, e.value);
     }
 
-    final historyByAggregate = <String, List<StoredEvent>>{};
     var processed = 0;
-
     int? lastSeq;
     while (true) {
       final chunk = await backend.findAllEventsInTxn(
@@ -85,49 +84,42 @@ Future<int> rebuildView(
       if (chunk.isEmpty) break;
 
       for (final event in chunk) {
-        final def = lookup.lookup(event.entryType);
-        if (def == null) {
-          throw StateError(
-            'rebuildView: unknown entry_type "${event.entryType}" on '
-            'event ${event.eventId} (aggregate ${event.aggregateId}, '
-            'seq ${event.sequenceNumber}).',
-          );
-        }
-        if (!def.materialize) {
-          continue;
-        }
-        if (!materializer.appliesTo(event)) {
-          continue;
-        }
-        final target = targetVersionByEntryType[event.entryType];
-        if (target == null) {
-          throw ArgumentError(
-            'rebuildView: event ${event.eventId} (entry_type '
-            '"${event.entryType}", seq ${event.sequenceNumber}) has no '
-            'target version in targetVersionByEntryType. Every event '
-            'subject to this materializer needs a target version.',
-          );
-        }
-        final promoted = materializer.promoter(
+        if (!spec.interest.matches(event)) continue;
+        final tgt = targetVersionByEntryType[event.entryType];
+        if (tgt == null) continue;
+
+        final promoted = PromoterExecutor.promote(
+          registry: store.promoters,
+          viewName: viewName,
           entryType: event.entryType,
           fromVersion: event.entryTypeVersion,
-          toVersion: target,
-          data: event.data,
+          toVersion: tgt,
+          payload: event.data,
+          firstEventTimestamp: event.clientTimestamp,
         );
-        final history = historyByAggregate.putIfAbsent(
-          event.aggregateId,
-          () => <StoredEvent>[],
-        );
-        await materializer.applyInTxn(
-          txn,
-          backend,
-          event: event,
-          promotedData: promoted,
-          def: def,
-          aggregateHistory: List<StoredEvent>.unmodifiable(history),
-        );
-        history.add(event);
-        processed += 1;
+
+        // Rebuild applies the promoted payload via a synthetic event whose
+        // data field is replaced with the promoted map. We use copyWith-style
+        // construction since StoredEvent is immutable.
+        final promotedEvent = _withData(event, promoted);
+
+        switch (spec) {
+          case AggregateProjectionSpec():
+            await AggregateFold.applyEvent(
+              txn: txn,
+              backend: backend,
+              spec: spec,
+              event: promotedEvent,
+            );
+          case TableProjectionSpec():
+            await TableFold.applyEvent(
+              txn: txn,
+              backend: backend,
+              spec: spec,
+              event: promotedEvent,
+            );
+        }
+        processed++;
       }
 
       if (chunk.length < _rebuildChunkSize) break;
@@ -136,4 +128,29 @@ Future<int> rebuildView(
 
     return processed;
   });
+}
+
+/// Returns a copy of [event] with [data] replaced by [newData].
+///
+/// Used by [rebuildView] to thread promoted payloads through the fold
+/// interpreters without modifying the in-memory original.
+StoredEvent _withData(StoredEvent event, Map<String, Object?> newData) {
+  return StoredEvent(
+    key: event.key,
+    eventId: event.eventId,
+    aggregateId: event.aggregateId,
+    aggregateType: event.aggregateType,
+    entryType: event.entryType,
+    entryTypeVersion: event.entryTypeVersion,
+    libFormatVersion: event.libFormatVersion,
+    eventType: event.eventType,
+    sequenceNumber: event.sequenceNumber,
+    data: newData,
+    metadata: event.metadata,
+    initiator: event.initiator,
+    clientTimestamp: event.clientTimestamp,
+    eventHash: event.eventHash,
+    flowToken: event.flowToken,
+    previousEventHash: event.previousEventHash,
+  );
 }
