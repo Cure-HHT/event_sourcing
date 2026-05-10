@@ -238,8 +238,8 @@ export 'src/permissions/permission_revoked_payload.dart'
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
 export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
-export 'src/permissions/role_permission_grants_materializer.dart'
-    show RolePermissionGrantsMaterializer;
+export 'src/permissions/role_permission_grants_spec.dart'
+    show rolePermissionGrantsSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/snapshot_role_matrix_reader.dart'

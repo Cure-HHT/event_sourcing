@@ -4,6 +4,7 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
@@ -94,6 +95,7 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required List<Destination> destinations,
   required List<Materializer> materializers,
   required Map<String, Map<String, int>> initialViewTargetVersions,
+  ProjectionRegistry? projections,
   EventStoreSyncCycleTrigger? syncCycleTrigger,
   bool allowDowngrade = false,
 }) async {
@@ -166,6 +168,7 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
     source: source,
     securityContexts: securityContexts,
     materializers: materializers,
+    projections: projections,
     syncCycleTrigger: syncCycleTrigger,
   );
 

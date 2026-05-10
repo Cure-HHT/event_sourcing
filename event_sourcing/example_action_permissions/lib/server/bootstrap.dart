@@ -13,6 +13,8 @@ import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:action_permissions_demo/server/user_directory_seed_applier.dart';
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/role_permission_grants_spec.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:meta/meta.dart';
 import 'package:sembast/sembast_io.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -72,10 +74,14 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final directoryMaterializer = UserDirectoryMaterializer(directory: directory);
   final registry = buildDemoActionRegistry(directory: directory);
 
-  // 2. Bootstrap the append-only datastore. Materializers wired here are
-  //    RolePermissionGrants (for the matrix) and the directory adapter (for
-  //    the in-memory user directory). Every entry type the demo writes
-  //    must be registered up front; missing registrations fail at append.
+  // 2. Bootstrap the append-only datastore. The role_permission_grants view
+  //    is now driven by rolePermissionGrantsSpec (TableProjectionSpec) via
+  //    the ProjectionRegistry. The directory adapter materializer is still
+  //    registered via the legacy Materializer path for the in-memory
+  //    UserDirectory. Every entry type the demo writes must be registered
+  //    up front; missing registrations fail at append.
+  final demoProjections = ProjectionRegistry()
+    ..register(rolePermissionGrantsSpec);
   final datastore = await bootstrapAppendOnlyDatastore(
     backend: backend,
     source: Source(
@@ -86,11 +92,10 @@ Future<DemoServerComponents> bootstrapDemoServer({
     entryTypes: _demoEntryTypes,
     destinations: const <Destination>[],
     materializers: <Materializer>[
-      const RolePermissionGrantsMaterializer(),
       _DirectoryMaterializerAdapter(directoryMaterializer),
     ],
+    projections: demoProjections,
     initialViewTargetVersions: const <String, Map<String, int>>{
-      'role_permission_grants': <String, int>{'role_permission_grant': 1},
       'user_directory': <String, int>{'user_provisioned': 1},
     },
   );
@@ -231,8 +236,9 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     widgetId: 'none',
     widgetConfig: <String, Object?>{},
   ),
-  // Permissions module emits these via EventSeedApplier on bootstrap and
-  // the matrix materializer folds them into role_permission_grants.
+  // Permissions module emits these via EventSeedApplier on bootstrap.
+  // The role_permission_grants view is projected by rolePermissionGrantsSpec
+  // (TableProjectionSpec) registered in the ProjectionRegistry.
   EntryTypeDefinition(
     id: 'role_permission_grant',
     registeredVersion: 1,
