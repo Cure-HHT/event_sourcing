@@ -449,7 +449,7 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
-    List<AggregateFoldChange> rowChanges = const [];
+    List<AggregateFoldChange> rowChanges = <AggregateFoldChange>[];
     final event = await _runInTxnWithPublish<StoredEvent?>((
       txn,
       collector,
