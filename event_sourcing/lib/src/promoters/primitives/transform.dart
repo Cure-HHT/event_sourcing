@@ -19,7 +19,7 @@ class RenameField extends TransformPrimitive {
     Map<String, Object?> input, {
     DateTime? firstEventTimestamp,
   }) {
-    if (!input.containsKey(from)) return Map.unmodifiable(input);
+    if (!input.containsKey(from)) return input;
     if (input.containsKey(to)) {
       throw StateError(
         'RenameField($from -> $to): target field "$to" already present',
@@ -41,7 +41,7 @@ class DefaultField extends TransformPrimitive {
     Map<String, Object?> input, {
     DateTime? firstEventTimestamp,
   }) {
-    if (input.containsKey(fieldName)) return Map.unmodifiable(input);
+    if (input.containsKey(fieldName)) return input;
     final next = Map<String, Object?>.from(input);
     next[fieldName] = defaultValue;
     return Map.unmodifiable(next);
@@ -57,7 +57,7 @@ class DropField extends TransformPrimitive {
     Map<String, Object?> input, {
     DateTime? firstEventTimestamp,
   }) {
-    if (!input.containsKey(fieldName)) return Map.unmodifiable(input);
+    if (!input.containsKey(fieldName)) return input;
     final next = Map<String, Object?>.from(input)..remove(fieldName);
     return Map.unmodifiable(next);
   }
