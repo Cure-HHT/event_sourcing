@@ -16,6 +16,85 @@
 
 ---
 
+## Phase 0 — StorageBackend genericization (prerequisite)
+
+### Task 0: Rename diary-flavoured `StorageBackend` view methods to generic `view`-prefixed equivalents
+
+**Why this comes first:** the 2026-05-10 audit identified that the existing `StorageBackend` exposes diary-named view-row methods (e.g., `readEntryInTxn`) that the new substrate fold interpreter (Phase D, Task 13) needs to call generically. Without this rename, Task 13's aggregate-fold interpreter cannot compile against the backend interface. The other view-row methods (`upsertViewRowInTxn`, `deleteViewRowInTxn`, `findViewRowsInTxn`, `clearViewInTxn`) are already generic and unchanged.
+
+**Files:**
+
+- Modify: `event_sourcing/lib/src/storage/storage_backend.dart` — rename diary-flavoured method(s) to generic `readViewRowInTxn(viewName, rowId)` form
+- Modify: `event_sourcing/lib/src/storage/sembast_backend.dart` — rename the implementation
+- Modify: every call site of the renamed method(s) — sweep with grep
+- Modify: any test that references the old method name(s)
+
+- [ ] **Step 1: Identify the methods to rename**
+
+Run:
+
+```bash
+grep -nE 'readEntryInTxn|clearEntries\b' event_sourcing/lib/src/storage/storage_backend.dart event_sourcing/lib/src/storage/sembast_backend.dart
+```
+
+Capture every diary-named view-row method on the abstract `StorageBackend` and its sembast implementation. Per the audit, at minimum `readEntryInTxn` is one such; surface any others.
+
+- [ ] **Step 2: Sweep all call sites of those methods**
+
+Run:
+
+```bash
+grep -rn 'readEntryInTxn\|clearEntries\b' event_sourcing/lib event_sourcing/test
+```
+
+Capture the full call-site list. Most will be in materializer / rebuild / entry-service code — some of which Task 21 deletes outright. Note which call sites survive Task 21 vs which get deleted.
+
+- [ ] **Step 3: Rename in the abstract `StorageBackend`**
+
+In `event_sourcing/lib/src/storage/storage_backend.dart`, rename `readEntryInTxn(txn, aggregateId)` to `readViewRowInTxn(txn, viewName, rowId)`. The new signature takes the view name as a parameter so it works for any view, not just `diary_entries`.
+
+```dart
+/// Reads a single row from a materialized view by row key. Returns
+/// null when the row is absent. Used by the substrate's projection
+/// interpreter (and by direct ad-hoc queries from authorization
+/// policies that bypass subscribe<T>).
+Future<Map<String, Object?>?> readViewRowInTxn(
+  Txn txn,
+  String viewName,
+  String rowId,
+);
+```
+
+If `clearEntries` (or other diary-named methods) exist, rename to `clearViewInTxn(viewName)` etc. Match the same generic shape.
+
+- [ ] **Step 4: Update `SembastBackend` implementation**
+
+In `event_sourcing/lib/src/storage/sembast_backend.dart`, rename the implementation to match the new signature. The body changes from a hardcoded `'diary_entries'` store reference to using the supplied `viewName` parameter — same lookup logic, parameterised store name.
+
+- [ ] **Step 5: Update every surviving call site**
+
+For each call site identified in Step 2 that survives Task 21, replace `backend.readEntryInTxn(txn, aggregateId)` with `backend.readViewRowInTxn(txn, viewName, aggregateId)`. The view name is whatever view the caller is reading from (e.g., `'diary_entries'` for the legacy diary path that's about to be deleted; `spec.viewName` for the new ProjectionInterpreter).
+
+- [ ] **Step 6: Update tests that reference the old names**
+
+Same sweep on `event_sourcing/test/`. Tests that exercise the storage backend directly need the new method name; tests that go through higher-level APIs (e.g., the diary materializer test) may not need changes if they don't touch the backend method directly.
+
+- [ ] **Step 7: Run full suite to verify the rename is complete**
+
+Run: `cd event_sourcing && flutter test`
+Expected: PASS — every test that previously called the diary-named method now calls the generic equivalent.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add event_sourcing/lib/src/storage/storage_backend.dart \
+        event_sourcing/lib/src/storage/sembast_backend.dart \
+        event_sourcing/lib/  event_sourcing/test/  # for swept call sites
+git commit -m "[CUR-1317] Genericize StorageBackend view-row methods (readEntryInTxn → readViewRowInTxn)"
+```
+
+---
+
 ## Phase A — Library version foundation
 
 ### Task 1: Define library version constant + version event payload types
@@ -2944,7 +3023,9 @@ git commit -m "[CUR-1317] subscribe<T> AggregateMode<T> with snapshot + deltas +
 
 ## Phase F — Migration of existing materializers + rebuildView
 
-### Task 20: Migrate `RolePermissionGrants` to `TableProjectionSpec`; delete legacy materializer
+### Task 20: Migrate `RolePermissionGrants` to `TableProjectionSpec` (substrate's policy mechanism)
+
+**Framing:** `RolePermissionGrants` is **the substrate's policy projection**, not a reference implementation. Per Architectural Commitment 4 in the spec (Permission policy is substrate code), `event_sourcing/lib/src/permissions/` ships exactly one policy mechanism in v1; alternative policy models require library extension, not app-side replacement. This task migrates the existing untyped materializer to the new declarative `TableProjectionSpec` form while preserving its substrate-mandated status.
 
 **Files:**
 
@@ -3021,109 +3102,99 @@ git commit -m "[CUR-1317] Migrate RolePermissionGrants to TableProjectionSpec; r
 
 ---
 
-### Task 21: Migrate `DiaryEntries` to `AggregateProjectionSpec` + DiaryEntry promoter chain
+### Task 21: Delete diary-domain code from the lib
 
-**Files:**
+**Framing:** the 2026-05-10 audit identified that `DiaryEntry`, `DiaryEntriesMaterializer`, the `rebuildMaterializedView()` diary-specific helper, `EntryService`, and ~25 tests are kick-start extraction debt — domain-specific code that should live in `hht_diary`, not in this domain-neutral substrate. This task removes that debt outright. `hht_diary` will author its own `diaryEntriesSpec` (and any associated `PromoterSpec`s) against the lib's `ProjectionRegistry` when it adopts the new lib pin (Phase III in the README's roadmap). **No diary code is moved into a new in-lib location** — the lib gets out of the diary business entirely.
 
-- Create: `event_sourcing/lib/src/diary/diary_entries_spec.dart`
-- Create: `event_sourcing/lib/src/diary/diary_entry_promoter_specs.dart`
-- Modify: every site that constructs `DiaryEntriesMaterializer` or `DiaryEntryPromoter`
-- Delete: `event_sourcing/lib/src/materialization/diary_entries_materializer.dart` and related promoter Dart files (`entry_promoter.dart`'s diary-specific implementations)
-- Rewrite: `event_sourcing/test/materialization/diary_entries_materializer_test.dart` → `event_sourcing/test/diary/diary_entries_spec_test.dart`
+**Files (all to be deleted from this lib):**
 
-- [ ] **Step 1: Author the projection spec**
+- `event_sourcing/lib/src/storage/diary_entry.dart` — `DiaryEntry` row type
+- `event_sourcing/lib/src/materialization/diary_entries_materializer.dart` — diary fold logic
+- `event_sourcing/lib/src/entry_service.dart` — legacy diary write path
+- `event_sourcing/lib/src/materialization/rebuild.dart` — only the `rebuildMaterializedView()` function (the parameterized `rebuildView()` in the same file is generic; it survives and is rewired in Task 23)
+- `event_sourcing/test/materialization/diary_entries_materializer_test.dart`
+- `event_sourcing/test/materialization/entry_promoter_test.dart` (diary-promoter-flavoured tests; the abstract `EntryPromoter` itself goes in Task 22)
+- `event_sourcing/test/entry_service_test.dart` (if present; verify by grep)
+- Any other diary-tainted test the audit surfaces
 
-```dart
-// event_sourcing/lib/src/diary/diary_entries_spec.dart
-import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
-import 'package:event_sourcing/src/projections/projection_spec.dart';
-import 'package:event_sourcing/src/projections/subscription_filter.dart';
+**Files (modify):**
 
-final diaryEntriesSpec = AggregateProjectionSpec(
-  viewName: 'diary_entries',
-  aggregateType: 'DiaryEntry',
-  interest: SubscriptionFilter(aggregateTypes: const {'DiaryEntry'}),
-  tombstoneEventTypes: const {'tombstone'},
-  derivedFields: const [
-    DerivedField(
-      'effective_date',
-      DottedPathLookup(
-        'answers.date_of_event',
-        fallback: FirstEventTimestamp(),
-      ),
-    ),
-  ],
-);
-```
+- `event_sourcing/lib/event_sourcing.dart` — remove the `export 'src/storage/diary_entry.dart' show DiaryEntry;` and `export 'src/materialization/diary_entries_materializer.dart' show DiaryEntriesMaterializer;` lines (per audit findings, lines ~206 and ~285 of that file)
+- `event_sourcing/lib/src/materialization/rebuild.dart` — keep `rebuildView`; delete `rebuildMaterializedView` and any helpers that only the deleted function used
 
-- [ ] **Step 2: Author promoter specs for each diary entry-type/version transition that exists in the wild**
+- [ ] **Step 1: Confirm the deletion list against the live codebase**
 
-Inspect existing `EntryPromoter` subclasses to identify each `(entryType, fromVersion, toVersion)` tuple in use. For each, author a `PromoterSpec` composing the equivalent `RenameField`/`DefaultField`/`DropField`/`DeriveField` primitives. If any existing promoter performs logic outside the available primitives, add the missing primitive in a follow-up commit (per Append-Only Primitives discipline) or annotate as blocked and surface to the user.
-
-```dart
-// event_sourcing/lib/src/diary/diary_entry_promoter_specs.dart
-import 'package:event_sourcing/src/promoters/primitives/transform.dart';
-import 'package:event_sourcing/src/promoters/promoter_spec.dart';
-
-const epistaxisV1ToV2 = PromoterSpec(
-  viewName: 'diary_entries',
-  entryType: 'epistaxis_event',
-  fromVersion: 1,
-  toVersion: 2,
-  transforms: [
-    // Replace with actual transforms based on existing EntryPromoter logic.
-    DefaultField(fieldName: 'language', defaultValue: 'en'),
-  ],
-);
-
-// Add additional PromoterSpec consts for every existing transition.
-const allDiaryPromoterSpecs = <PromoterSpec>[
-  epistaxisV1ToV2,
-  // ...
-];
-```
-
-- [ ] **Step 3: Rewrite the diary_entries test against the new spec**
-
-Reuse fixtures from `diary_entries_materializer_test.dart` but:
-
-- Construct `EventStore.open(projections: ProjectionRegistry()..register(diaryEntriesSpec), promoters: PromoterRegistry()..register(epistaxisV1ToV2)..register(...))`
-- Append events; read rows via `backend.readViewRow('diary_entries', aggregateId)`
-- Cover: finalized merges answers, checkpoint merges answers, null-as-clear semantics, tombstone deletes row, effective_date derivation, latestEventId stamping
-
-- [ ] **Step 4: Run the new test to verify it passes**
-
-Run: `cd event_sourcing && flutter test test/diary/diary_entries_spec_test.dart`
-Expected: PASS.
-
-- [ ] **Step 5: Replace every construction site of `DiaryEntriesMaterializer` and old `EntryPromoter`**
-
-Run: `grep -rn 'DiaryEntriesMaterializer\|DiaryEntryPromoter' event_sourcing/`
-Swap each for the spec + registry registrations.
-
-- [ ] **Step 6: Delete the old materializer files**
+Run:
 
 ```bash
-git rm event_sourcing/lib/src/materialization/diary_entries_materializer.dart
-git rm event_sourcing/test/materialization/diary_entries_materializer_test.dart
-git rm event_sourcing/test/materialization/entry_promoter_test.dart
+grep -rn 'class DiaryEntry\b\|DiaryEntriesMaterializer\b\|EntryService\b\|rebuildMaterializedView\b' event_sourcing/lib event_sourcing/test
 ```
 
-(Keep `entry_promoter.dart` for now — it defines the abstract `EntryPromoter` class which is removed in Task 22.)
+Cross-check against the audit's tainted-files list. Surface anything new (the kick-start may have left additional diary-flavoured files the audit didn't catch). If a file references `DiaryEntry` only via test fixtures and the test is exercising substrate behaviour (e.g., a storage-backend test that happens to use `DiaryEntry` as a sample row), it's a candidate for genericization in Step 4 rather than deletion.
 
-- [ ] **Step 7: Run full suite**
+- [ ] **Step 2: Delete the public API exports**
+
+In `event_sourcing/lib/event_sourcing.dart`, remove the two `export` lines for `DiaryEntry` and `DiaryEntriesMaterializer`. Run `cd event_sourcing && flutter analyze` afterwards to surface every consumer that imported these symbols via the public API; those consumers are about to break (which is correct — they're either tests being rewritten in this task or hht_diary code that will resurface during Phase III adoption, not lib code).
+
+- [ ] **Step 3: Delete the tainted lib files**
+
+```bash
+cd event_sourcing/event_sourcing
+git rm lib/src/storage/diary_entry.dart \
+       lib/src/materialization/diary_entries_materializer.dart \
+       lib/src/entry_service.dart
+```
+
+For `lib/src/materialization/rebuild.dart`: edit to remove only the `rebuildMaterializedView()` function and any private helpers it exclusively uses; keep the file (and `rebuildView()`).
+
+- [ ] **Step 4: Triage the ~25 diary-tainted tests**
+
+Run: `grep -rln 'DiaryEntry\|DiaryEntriesMaterializer' event_sourcing/test`
+
+For each tainted test, classify into one of:
+
+- **Substrate behaviour test that happens to use diary fixtures** → rewrite using a small toy in-test materializer (the `LightsMaterializer` pattern from `event_sourcing/example/` is a good template). Example targets: storage-backend contract tests, generic materializer-behaviour tests.
+- **Pure diary-domain test** → delete from this lib. It will be reauthored in `hht_diary` against the new `diaryEntriesSpec` when hht_diary adopts the new lib pin. Don't try to preserve it; greenfield discipline (see memory).
+- **Test that exercises the `RolePermissionGrants` path through the diary materializer** → rewrite to exercise the same path through the substrate's projection interpreter directly, with no diary references.
+
+For each rewrite, the rule is: the test verifies a *substrate property* (atomicity, fold determinism, hash chain, version migration, etc.), so the test should construct the smallest possible domain-neutral fixture that exercises that property. Toy fixtures > diary fixtures.
+
+- [ ] **Step 5: Delete the pure-domain tests**
+
+```bash
+git rm event_sourcing/test/materialization/diary_entries_materializer_test.dart \
+       event_sourcing/test/materialization/entry_promoter_test.dart
+# plus any others identified in step 4 as pure-domain
+```
+
+- [ ] **Step 6: Commit the rewritten substrate-behaviour tests**
+
+After Step 4's rewrites land, run `cd event_sourcing && flutter test` to confirm they pass against the substrate without any diary references.
+
+- [ ] **Step 7: Sweep remaining call sites of deleted symbols**
+
+```bash
+grep -rn 'DiaryEntry\|DiaryEntriesMaterializer\|EntryService\|rebuildMaterializedView' event_sourcing/
+```
+
+Expected: no matches. Any matches indicate code that depended on the deleted symbols and now needs either deletion or replacement with substrate-generic equivalents.
+
+- [ ] **Step 8: Run the full suite**
 
 Run: `cd event_sourcing && flutter test`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+Run: `cd event_sourcing && flutter analyze`
+Expected: no errors. Warnings about unused imports in `event_sourcing.dart` are acceptable if they reflect imports that became unused after the export removals; clean those up.
+
+- [ ] **Step 9: Commit**
 
 ```bash
-git add event_sourcing/lib/src/diary/ \
-        event_sourcing/test/diary/ \
-        event_sourcing/lib/  # for construction-site swaps
-git commit -m "[CUR-1317] Migrate DiaryEntries to AggregateProjectionSpec + PromoterSpec chain"
+git add event_sourcing/
+git commit -m "[CUR-1317] Delete diary-domain code from event_sourcing lib (extraction debt cleanup)"
 ```
+
+The commit message should note that hht_diary will author its own spec when it adopts the new lib pin, and that the audit findings are recorded in `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md` Section 6.
 
 ---
 
@@ -3179,12 +3250,12 @@ git commit -m "[CUR-1317] Remove legacy Materializer abstract class and EntryPro
 
 **Files:**
 
-- Modify: `event_sourcing/lib/src/materialization/rebuild.dart`
-- Modify: `event_sourcing/test/materialization/rebuild_test.dart`
+- Modify: `event_sourcing/lib/src/materialization/rebuild.dart` — only the parameterized `rebuildView()` function remains by this point (the diary-specific `rebuildMaterializedView()` was deleted in Task 21)
+- Modify: `event_sourcing/test/materialization/rebuild_test.dart` — rewrite against the substrate's projection interpreter using a toy in-test materializer (the file's existing diary-flavoured fixtures should have been genericized in Task 21 step 4; this task verifies that and adapts the harness to the new `rebuildView` signature)
 
 - [ ] **Step 1: Update `rebuild_test.dart` to operate against ProjectionSpecs**
 
-Adapt the existing tests to construct an `EventStore.open` with a populated `ProjectionRegistry`, append a known event sequence, then call `rebuildView('diary_entries')`. Assert that the resulting view rows match what the spec's fold mechanics would produce against the same event sequence. Cover: full clear-and-replay, atomicity (failure mid-rebuild rolls back), per-entryType target-version map.
+Adapt the existing tests to construct an `EventStore.open` with a populated `ProjectionRegistry`, append a known event sequence, then call `rebuildView` against a registered spec. Use a toy in-test materializer (e.g., the `LightsMaterializer`-style projection from `example/`) — no diary references should remain in the test file by this point. Assert that the resulting view rows match what the spec's fold mechanics would produce against the same event sequence. Cover: full clear-and-replay, atomicity (failure mid-rebuild rolls back), per-entryType target-version map.
 
 - [ ] **Step 2: Implement the new `rebuildView`**
 
@@ -3266,12 +3337,16 @@ After every task above is completed, verify against the spec:
 
 **Spec coverage check:**
 
+- Spec § Architectural Commitment 1 (Projections closed under events) → Tasks 9, 13, 14, 16 (substrate, no author code)
+- Spec § Architectural Commitment 2 (Library primitives append-only) → Tasks 4-8 (initial primitive catalogue)
+- Spec § Architectural Commitment 3 (Library version recorded in log) → Tasks 1, 2, 3
+- Spec § Architectural Commitment 4 (Permission policy is substrate code) → Task 20 (RolePermissionGrants migration as substrate-mandated policy mechanism, not reference impl)
 - Spec § "Closed set of shapes" → Tasks 9 (ProjectionSpec types), 13 (Aggregate fold), 14 (Table fold)
 - Spec § "Per-shape fold mechanics — AggregateProjectionSpec" → Task 13
 - Spec § "Per-shape fold mechanics — TableProjectionSpec" → Task 14
 - Spec § "Library-supplied derivation primitives" → Task 5
 - Spec § "Library-supplied row extractors" → Tasks 6, 7
-- Spec § "Storage shape" → Verified by Tasks 13, 14 writing Map rows directly
+- Spec § "Storage shape" → Task 0 (genericization rename) + verified by Tasks 13, 14 writing Map rows directly
 - Spec § "Registration" → Tasks 11, 12
 - Spec § "Specs as events (closing the loop)" → Phase II hook; not implemented in Phase I (per spec)
 - Spec § Promoter model → Tasks 8, 10, 12, 15
@@ -3286,15 +3361,27 @@ After every task above is completed, verify against the spec:
 - Spec § Library-version events → Task 1 (constants), Task 2 (scan), Task 3 (boot flow)
 - Spec § Bootstrap flow → Task 3
 - Spec § EventStore.open composition → Tasks 3, 16
-- Spec § Greenfield migration → Tasks 20, 21, 22, 23
+- Spec § "What is removed (lib-level)" → legacy substrate interfaces in Tasks 21-22; diary-domain code in Task 21
+- Spec § "What is migrated (stays in lib, new shape)" → Task 20 (RolePermissionGrants → TableProjectionSpec)
+- Spec § "What carries over" — `StorageBackend` view-row methods after rename → Task 0
+- Spec § "What hht_diary takes on" → out of scope of this lib; documented as Phase III follow-up
 
 **Final pass:**
 
 - [ ] Run full test suite: `cd event_sourcing && flutter test`
 - [ ] Run analyzer: `cd event_sourcing && flutter analyze`
 - [ ] Verify no remaining `// Implements: REQ-d{NNNNN}` annotations in the new files (only `// Implements: EVS-DEV-*` annotations belong here; legacy refs removed with deleted code).
+- [ ] Verify `event_sourcing/lib/event_sourcing.dart` no longer exports any diary types (`DiaryEntry`, `DiaryEntriesMaterializer`).
+- [ ] Verify `grep -rn 'DiaryEntry\|DiaryEntriesMaterializer\|EntryService' event_sourcing/lib event_sourcing/test` returns no matches.
 
-## Out of scope (follow-up plan needed)
+## Out of scope (follow-up plans needed)
 
-- Track 8 from the spec — migration of `event_sourcing/example/` and `event_sourcing/example_action_permissions/` from `watchEvents`/`watchView`/`watchFifo` to `subscribe<T>`. Once this plan completes, the legacy backend-layer methods can be considered for removal in a follow-up plan that also migrates the demo apps.
-- Authoring of `EVS-DEV-*` requirements in `spec/` for each implemented component. Per CLAUDE.md these land alongside code; this plan's task descriptions identify what each implementation satisfies, but the actual `spec/dev-*.md` files should be authored by the implementing engineer alongside each task's commit. Update this plan to add explicit "author EVS-DEV-foo" steps if reviewers prefer them surfaced in the plan rather than treated as implicit.
+- **Track 8 from the spec** — migration of `event_sourcing/example/` and `event_sourcing/example_action_permissions/` from `watchEvents`/`watchView`/`watchFifo` to `subscribe<T>`. Once this plan completes, the legacy backend-layer methods can be considered for removal in a follow-up plan that also migrates the demo apps.
+- **hht_diary adoption (Phase III in the README's roadmap)** — once this plan lands, hht_diary is responsible for:
+  - moving `DiaryEntry` (or its successor) into its own codebase
+  - authoring its `diaryEntriesSpec` (`AggregateProjectionSpec`) against the lib's `ProjectionRegistry`
+  - authoring its `PromoterSpec`s for any diary entry-type schema evolution
+  - re-implementing its write path on top of `EventStore.append` (replacing the deleted `EntryService.record`)
+  - reauthoring the diary-specific tests against the new spec form
+  - bumping the lib pin in `clinical_diary/pubspec.yaml` to a tag that includes this plan's output
+- **Authoring of `EVS-DEV-*` requirements in `spec/`** for each implemented component. Per CLAUDE.md these land alongside code; this plan's task descriptions identify what each implementation satisfies, but the actual `spec/dev-*.md` files should be authored by the implementing engineer alongside each task's commit. Update this plan to add explicit "author EVS-DEV-foo" steps if reviewers prefer them surfaced in the plan rather than treated as implicit.

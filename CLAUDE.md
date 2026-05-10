@@ -36,26 +36,52 @@ These were brainstormed and committed during the CUR-1192 / CUR-1317
 sessions in `hht_diary`. They survive the extraction and shape Phase I /
 Phase II work.
 
-- **In-library materializer.** Reconciliation/canonicalization rules
-  live in this lib, configured via auditable settings events; no host-
-  application callbacks. Deterministic and replayable.
+- **Domain-neutral lib.** This repo is a substrate. It must not ship
+  domain types (e.g., `DiaryEntry`), domain materializers, or domain-
+  specific event-type names. Diary code in the lib today is kick-start
+  extraction debt being removed in CUR-1317; downstream consumers like
+  `hht_diary` author their own `ProjectionSpec`s and register them
+  against the lib's `ProjectionRegistry`.
+- **Declarative projections (no author-supplied fold).** Materialized
+  views are computed by the substrate from declarative `ProjectionSpec`
+  data (Aggregate, Table shapes); promoters are declarative
+  `PromoterSpec` data composing library-supplied transformation
+  primitives. No host-application callbacks; no per-materializer fold
+  code. Library primitives are append-only (semantics frozen once
+  shipped; bug fixes ship as new primitive names).
+- **Permission policy is substrate code.** `AuthorizationPolicy`
+  cannot be app-supplied without breaking closed-under-events for
+  action outcomes. v1 ships exactly one policy mechanism — the
+  role/permission/scope model in `event_sourcing/lib/src/permissions/`.
+  Alternative policy models require library extension (same Append-
+  Only Primitives discipline as projections), not app-side replacement.
+- **Library version recorded in the log.** Substrate emits
+  `lib_version_initialized` on first boot under a new lib version and
+  `lib_version_changed` on subsequent transitions. Downgrades are
+  refused by default. State at sequence N is reconstructable from
+  `(events, projection_specs, promoter_specs, lib_version)` — all in
+  the log.
 - **Originator-of-first-event bootstrap authority.** The single fixed
   rule: whoever appends the first event for an aggregate is the initial
   canonicalization authority. Terminates rule recursion at deployment
   infrastructure.
 - **Closed-under-events trust model.** Permissions/role-assignment data
-  are events in the same log; the materializer queries its own
-  projections; external systems integrate at ingest, not at
-  evaluation-time.
+  are events in the same log; the substrate's projection interpreter
+  reads its own outputs; external systems integrate at ingest, not at
+  evaluation-time. Action outcomes (success vs `authorization_denied`)
+  are reproducible from the log + lib version.
 - **Notifications vs DataInvalidation are separate.** They share the
   substrate but not the interface. Notifications target humans;
   DataInvalidation targets software. Multi-editor work likely subsumes
   DataInvalidation.
-- **Reactive substrate intent.** Ingest-always + watermark + filters +
-  at-least-once delivery + per-aggregate-per-Source ordering. Phase I
-  realizes this with a unified `subscribe<T>(filter, mode)` primitive
-  and a typed `Materializer<T>`. The earlier `watchEvents` /
-  `watchView` / `watchFifo` decomposition is abandoned.
+- **Reactive substrate intent.** Ingest-always + filters + at-least-
+  once delivery + per-aggregate-per-Source ordering. Phase I realizes
+  this with a unified `subscribe<T>(filter, mode)` primitive (modes:
+  `Events`, `AggregateMode<T>`; `View<T>` deferred) and the declarative
+  projection interpreter described above. Cross-process resume /
+  persistent watermark lives in `Destination`, not `subscribe<T>`. The
+  earlier `watchEvents` / `watchView` / `watchFifo` decomposition is
+  abandoned.
 - **Single-source-per-aggregate-type today.** Multi-source machinery
   exists in design but is dormant in v1; Phase II activates it.
 
@@ -63,7 +89,7 @@ Phase II work.
 
 Every formal requirement in this repo has an ID of the form:
 
-```
+```text
 EVS-{TYPE}-{name}
 ```
 
@@ -113,14 +139,28 @@ packages today.
 ## Reading the design specs
 
 The design layer between PRDs and DEV-level requirements lives in
-`docs/superpowers/specs/`. Phase I has one spec:
+`docs/superpowers/specs/`. Phase I has two specs:
 
 - `docs/superpowers/specs/2026-05-09-substrate-and-materializer-design.md`
-  — pins the substrate's component model, the unified `subscribe<T>`
-  primitive, the typed `Materializer<T>`, the event log and hash-chain
-  layout, the action-dispatch flow, the ingest path, and the Phase I
-  implementation order. DEV-level requirements (`EVS-DEV-*`) are
-  authored alongside the code that satisfies them.
+  — the original Phase I overview. Pins the substrate's component
+  model, the event log and hash-chain layout, the action-dispatch flow,
+  the ingest path, and the storage abstraction. **Partially superseded:**
+  the "Subscribe primitive", "Materializer", "Filter, query, and the
+  closed-set rule", and "Multi-source readiness" sections are
+  superseded by the spec below.
+- `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md`
+  — the authoritative spec for the projection model (declarative
+  `ProjectionSpec` shapes interpreted by the substrate), the promoter
+  model (declarative `PromoterSpec` composing library-supplied
+  transformation primitives), the `subscribe<T>` primitive, and the
+  library-version lifecycle. Embodies the "Domain-neutral lib",
+  "Declarative projections", "Permission policy is substrate code", and
+  "Library version recorded in the log" commitments above.
+
+The implementation plan that turns these specs into working code is at
+`docs/superpowers/plans/2026-05-09-projections-and-subscribe-implementation.md`.
+DEV-level requirements (`EVS-DEV-*`) are authored alongside the code
+that satisfies them per the plan's task structure.
 
 Subsequent design specs land here as design work demands — for example,
 when Phase II's multi-source canonicalization rule grammar needs

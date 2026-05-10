@@ -54,6 +54,20 @@ Once a primitive ships under a name with given semantics, those semantics are fr
 
 The substrate emits `lib_version_initialized` on first boot under a given library version and `lib_version_changed` on every subsequent version transition. These events are part of the log, so an auditor replaying the log can determine which library version processed any given event range. Downgrades are refused by default to prevent silent state divergence.
 
+### 4. Permission policy is substrate code
+
+The `ActionDispatcher` consults `AuthorizationPolicy.decide(principal, context)` at stage 6 of the dispatch pipeline; the decision affects the action's outcome event (success vs `authorization_denied`). For action outcomes to remain reconstructable from the log alone, the policy logic must be either (a) in the lib (covered by `lib_version`) or (b) declarative data (a `PolicySpec` interpreted by lib code, same shape as `ProjectionSpec`). **App-supplied policy code is not permitted** — it would introduce an unaudited dependency that breaks closed-under-events for action outcomes.
+
+**v1 commitment:** the lib ships exactly **one** policy mechanism — the role/permission/scope model in `event_sourcing/lib/src/permissions/`. This is **substrate-mandated**, not a "reference implementation": the directory is not opt-out-able, and apps wanting different policy semantics require library extension (same Append-Only Primitives discipline as projection shapes), not app-side replacement. Phase II/III may promote to a declarative `PolicySpec` layer if a real second policy model emerges; the v1 mechanism becomes a single PolicySpec preset under that promotion.
+
+The reconstructability formula extends naturally:
+
+```text
+state(N) = f(events, projection_specs, promoter_specs, policy_specs_or_inlib_policy, lib_version)
+```
+
+In v1, `policy_specs_or_inlib_policy` is the in-lib code at the recorded `lib_version`. In a future Position 2, it would be the registered `PolicySpec` (data) interpreted by lib code at `lib_version`.
+
 ## Section 1 — Projection model
 
 ### Closed set of shapes
@@ -420,51 +434,32 @@ Registries are mutable until `EventStore.open` returns; immutable thereafter. Ph
 
 ## Section 6 — Migration from existing code (greenfield)
 
-This libify pass is greenfield: no backwards-compatibility shims, no legacy interfaces preserved alongside new ones, no migration adapters. The existing materializer interface is replaced outright.
+This libify pass is greenfield: no backwards-compatibility shims, no legacy interfaces preserved alongside new ones, no migration adapters. The existing materializer interface is replaced outright. Domain-tainted code is **deleted from the lib**, not migrated within the lib.
 
-### What is removed
+### Background — kick-start extraction debt
+
+When CUR-1317 split this lib out of `cure-hht/hht_diary` on 2026-05-08, several domain-specific files came along that should have stayed in `hht_diary`. The 2026-05-10 audit catalogued them. This pass extracts them.
+
+### What is removed (lib-level)
+
+**Substrate-generic legacy interfaces** (replaced by the declarative model in this spec):
 
 - `Materializer` abstract class with `appliesTo(event)` predicate, `applyInTxn(txn, backend, ...)`, `targetVersionFor(...)`.
 - `EntryPromoter` interface with `promote(payload, fromVersion, toVersion)`.
 - The `MaterializerRules` placeholder (Phase II rule grammar arrives as `register_*` settings events directly).
-- Per-materializer subclasses: `DiaryEntriesMaterializer`, `RolePermissionGrantsMaterializer`.
 
-### What replaces them
+**Diary-domain code** (extraction debt; belongs in `hht_diary`, not in this lib):
 
-- `ProjectionSpec` instances — one per view, declarative.
-- `PromoterSpec` instances — one per (view, entryType, version transition), declarative.
-- Library-supplied `Merge.applyDelta`, `DerivedFieldComputation`, `RowKeyExtractor`, `RowDataExtractor`, `TransformPrimitive` catalogues.
-- Substrate's per-shape fold interpreter — implements the fold mechanics for `AggregateProjectionSpec` and `TableProjectionSpec`.
+- `event_sourcing/lib/src/storage/diary_entry.dart` — `DiaryEntry` row type.
+- `event_sourcing/lib/src/materialization/diary_entries_materializer.dart` — diary fold logic with hardcoded `finalized` / `checkpoint` / `tombstone` event types.
+- `event_sourcing/lib/src/materialization/rebuild.dart`'s `rebuildMaterializedView()` function — diary-specific. The parameterized `rebuildView()` in the same file is generic and stays (rewired to interpret `ProjectionSpec`).
+- `event_sourcing/lib/src/entry_service.dart` — legacy diary write path; `EventStore.append` is the substrate-generic replacement.
+- Public-API exports of `DiaryEntry` and `DiaryEntriesMaterializer` from `event_sourcing/lib/event_sourcing.dart`.
+- ~25 test files that import diary types; substrate-flavoured ones are rewritten using a small toy in-test materializer; pure-domain ones are removed (and are reauthored in `hht_diary` against its own spec when it adopts the new lib pin).
 
-### What carries over
+### What is migrated (stays in lib, new shape)
 
-- `EventStore.append` atomicity contract (event + projection updates in one transaction).
-- `StorageBackend` view-row methods (`readViewRowInTxn`, `upsertViewRowInTxn`, `deleteViewRowInTxn`, `findViewRowsInTxn`, `clearViewInTxn`).
-- `view_target_versions` table for per-(view, entryType) target version.
-- `rebuildView` operation semantics (clear + replay), now interpreting ProjectionSpecs.
-
-### Existing materializers re-expressed
-
-`DiaryEntriesMaterializer` becomes:
-
-```dart
-final diaryEntriesSpec = AggregateProjectionSpec(
-  viewName: 'diary_entries',
-  aggregateType: 'DiaryEntry',
-  interest: SubscriptionFilter(aggregateTypes: {AggregateType('DiaryEntry')}),
-  tombstoneEventTypes: {EventTypeId('tombstone')},
-  derivedFields: [
-    DerivedField(
-      'effective_date',
-      DottedPathLookup('answers.date_of_event', fallback: FirstEventTimestamp()),
-    ),
-  ],
-);
-```
-
-The `is_complete` flag (today derived from `event.eventType` being `finalized` vs `checkpoint`) becomes a payload field on those events: writers include `is_complete: true | false` in the payload, and the generic merge folds it like any other field. This is a domain-side change to event authoring, not substrate logic.
-
-`RolePermissionGrantsMaterializer` becomes:
+`RolePermissionGrants` — the substrate's policy projection (per Architectural Commitment 4) — becomes a declarative `TableProjectionSpec`:
 
 ```dart
 final rolePermissionsSpec = TableProjectionSpec(
@@ -482,9 +477,37 @@ final rolePermissionsSpec = TableProjectionSpec(
 
 (Codebase note: `StoredEvent.data` IS the event's payload root. `CompositeKey` path segments starting with `data.` resolve into the data Map; `WholePayload()` returns the data Map verbatim as the row.)
 
+This is **the substrate's policy mechanism**, not a reference implementation. See Architectural Commitment 4.
+
+### What replaces the legacy substrate interfaces
+
+- `ProjectionSpec` instances — one per view, declarative.
+- `PromoterSpec` instances — one per (view, entryType, version transition), declarative.
+- Library-supplied `Merge.applyDelta`, `DerivedFieldComputation`, `RowKeyExtractor`, `RowDataExtractor`, `TransformPrimitive` catalogues.
+- Substrate's per-shape fold interpreter — implements the fold mechanics for `AggregateProjectionSpec` and `TableProjectionSpec`.
+
+### What carries over
+
+- `EventStore.append` atomicity contract (event + projection updates in one transaction).
+- `StorageBackend` view-row methods, **after a one-time genericization rename**: the existing diary-named `readEntryInTxn` (and any other diary-named view accessor) is renamed to a generic `readViewRowInTxn(viewName, rowId)` form. Other view methods (`upsertViewRowInTxn`, `deleteViewRowInTxn`, `findViewRowsInTxn`, `clearViewInTxn`) are already generic and unchanged.
+- `view_target_versions` table for per-(view, entryType) target version.
+- `rebuildView` operation semantics (clear + replay), now interpreting ProjectionSpecs.
+
+### What hht_diary takes on
+
+When `hht_diary` adopts the new lib pin (Phase III in the README's roadmap), it authors:
+
+- Its own `DiaryEntry` type — moved out of this lib's `storage/`.
+- Its own `diaryEntriesSpec` (`AggregateProjectionSpec`) — registered against the lib's `ProjectionRegistry` at app boot.
+- Its own `PromoterSpec`s for diary entry-type schema evolution.
+- Its own write-path code (`EntryService.record` equivalent), composed on top of `EventStore.append`.
+- Its own diary-flavoured tests.
+
+This lib never needs to know about diaries again.
+
 ### Stale REQ-d annotations
 
-The 1,894 existing `REQ-d{NNNNN}` annotations covering the removed materializer machinery are deleted alongside the code that bore them. New annotations reference `EVS-DEV-*` requirements authored alongside the new substrate code.
+The 1,894 existing `REQ-d{NNNNN}` annotations covering removed code are deleted alongside the code that bore them. New annotations reference `EVS-DEV-*` requirements authored alongside the new substrate code.
 
 ## Section 7 — Phase II hooks
 
