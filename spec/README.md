@@ -24,9 +24,10 @@ If it explains *how to do something* or *why a decision was made*, it belongs in
 
 ## Levels
 
-This repo uses two requirement levels:
+This repo uses three requirement levels:
 
-- **PRD** (`EVS-prd-...`) — product-level obligations: what the library provides to its consumers.
-- **DEV** (`EVS-dev-...`) — implementation obligations: how the library realizes the PRDs.
+- **PRD** (`EVS-PRD-...`) — product-level obligations: what the library provides to its consumers.
+- **OPS** (`EVS-OPS-...`) — operational obligations: release management, deployment of derived artifacts, secret rotation, and similar operational concerns that pertain to the library itself (not to consuming applications).
+- **DEV** (`EVS-DEV-...`) — implementation obligations: how the library realizes the PRDs and OPS requirements.
 
-Operations level is intentionally not used here. The library is pure-Dart with no deployment or runtime-ops surface; ops obligations live in the consuming application repos (e.g. `cure-hht/hht_diary`).
+The component name (the kebab-case slug after the level) is **stable**: once a requirement has been authored under a given name, renaming it is a breaking change to any reference in code, tests, results, and other requirements.

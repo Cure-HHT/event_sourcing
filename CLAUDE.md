@@ -18,11 +18,14 @@ This repo was extracted from `cure-hht/hht_diary` on 2026-05-08
   `example/` and `example_action_permissions/`.
 - `canonical_json_jcs/` — JCS (RFC 8785).
 - `provenance/` — append-only provenance chain types.
-- `spec/` — formal requirements (REQ-d numbers carried over from
-  hht_diary; same `dev-event-sourcing*.md` files).
-- `docs/superpowers/specs/` — design specs for the libraries
-  (audited-actions, action-permissions, action-permissions-demo).
-- `docs/superpowers/plans/` — implementation plans for the same.
+- `spec/` — formal requirements in EVS namespace (PRD level today;
+  OPS and DEV land alongside implementation work). See
+  `spec/requirements-spec.md` for the canonical grammar and
+  `spec/README.md` for the directory layout.
+- `docs/superpowers/specs/` — design specs that elaborate the PRDs
+  into mechanism-level decisions ahead of implementation.
+- `docs/superpowers/plans/` — implementation plans that reference the
+  specs.
 
 The path-deps inside `event_sourcing/pubspec.yaml` point at
 `../canonical_json_jcs` and `../provenance` — siblings at repo root.
@@ -58,23 +61,46 @@ Phase II work.
 
 ## Requirement traceability
 
-REQ-d numbers from hht_diary's `dev-event-sourcing*.md` come along on
-extraction (no renumbering). New work cuts new REQ-d numbers in this
-repo's `spec/`. See hht_diary's `spec/INDEX.md` for the existing range
-and conventions.
+Every formal requirement in this repo has an ID of the form:
 
-Do NOT migrate REQ-d00179 / REQ-d00180 — they were claimed in a now-
-superseded substrate spec on the `CUR-1192-actions-demo` branch and
-have been retired. Phase I redrafts and claims its own numbers.
+```
+EVS-{TYPE}-{name}
+```
 
-## Conventions inherited from hht_diary
+Where `TYPE ∈ {PRD, OPS, DEV}` (uppercase) and `name` is a kebab-case
+slug describing the requirement subject. Examples:
 
-- Branch naming: `feature/`, `fix/`, `release/`. Never commit to `main`.
-- Commit messages: free-form (no enforced CUR/REQ format on commits).
-- PR titles: include the upstream Linear ticket reference if applicable
-  (`[CUR-NNNN]`); this repo doesn't yet have its own Linear team.
-- Spec/INDEX maintenance via the `elspais` MCP if/when this repo gets
-  its own elspais workspace; until then, treat REQ refs as plain text.
+- `EVS-PRD-event-store`
+- `EVS-OPS-secret-rotation`
+- `EVS-DEV-provenance-entry-schema`
+
+The full grammar — including assertion labels, `Refines:` /
+`Satisfies:` metadata, and verification modes — lives in
+`spec/requirements-spec.md`.
+
+**Names are stable.** Once a requirement is authored under a given
+component name, renaming it is a **breaking change** to every
+reference: `// Verifies:` annotations in tests, `// Implements:`
+annotations in production code, `Refines:` and `Satisfies:` metadata
+in other requirements, and Rationale prose. A rename therefore
+requires a coordinated sweep of all references at the same time as
+the rename itself, and should be called out explicitly in the commit
+that performs it. Treat the policy the same as a breaking change to a
+published API: rare, deliberate, and worth a sentence of
+justification.
+
+Code annotations from the kick-start commit reference the legacy
+`REQ-d{NNNNN}` IDs from `hht_diary`. Those references are stale and
+will be re-bound to `EVS-DEV-{name}` IDs as DEV-level requirements are
+authored alongside implementation work. Until then, treat the legacy
+references as historical pointers.
+
+## Conventions
+
+- **Branch naming**: `CUR-NNNN-{kebab-slug}` — Linear ticket reference plus a short kebab-case description of the change. No user prefix; no slashes. Examples: `CUR-1317-pre-commit`, `CUR-1317-req-naming`.
+- **Commit messages**: free-form (no enforced CUR/REQ format on commits).
+- **PR titles**: must include the Linear ticket reference (`[CUR-NNNN]`). The org-level branch-protection ruleset enforces this; the squash-merge commit on `main` uses the PR title verbatim.
+- **Spec/INDEX maintenance**: via the `elspais` MCP. The repo's `.elspais.toml` is set up under namespace `EVS` with named-component IDs (no numeric assignment); regeneration of `spec/INDEX.md` is automated.
 
 ## What downstream consumers see
 

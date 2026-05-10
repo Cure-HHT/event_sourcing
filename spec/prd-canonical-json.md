@@ -1,6 +1,6 @@
-# EVS-prd-canonical-json: Canonical JSON Serialization
+# EVS-PRD-canonical-json: Canonical JSON Serialization
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 

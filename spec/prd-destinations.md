@@ -1,12 +1,12 @@
-# EVS-prd-destinations: Destinations
+# EVS-PRD-destinations: Destinations
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
 A destination is a configurable outbound channel through which a deployment delivers selected events to another system. The other system may be another event-sourcing deployment (e.g., a sponsor's data store, an EDC), a passive sink (e.g., a webhook), or a notification service (e.g., a push-notification gateway). The library handles event selection, ordering, durability, and hand-off; the actual transit is performed by a configurable per-destination delivery mechanism.
 
-The library treats destinations as a write-side concern only. Inbound flow from another event-sourcing deployment is specified separately in EVS-prd-ingest.
+The library treats destinations as a write-side concern only. Inbound flow from another event-sourcing deployment is specified separately in EVS-PRD-ingest.
 
 ## Assertions
 

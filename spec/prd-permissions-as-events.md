@@ -1,12 +1,12 @@
-# EVS-prd-permissions-as-events: Permissions as Events
+# EVS-PRD-permissions-as-events: Permissions as Events
 
-**Level**: prd | **Status**: Draft | **Refines**: EVS-prd-library-charter
+**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
 The library treats authorization data as part of the audit log: permission grants, role assignments, and policy decisions are themselves events. The library's authorization machinery reads the projections of those events to make decisions; it does not consult any authority outside the log at decision time. The audit story for "what did the system do?" and the audit story for "what was X allowed to do?" rest on the same log and the same materializer.
 
-This PRD pins the trust model. The action-dispatch flow that consumes this trust model is specified separately in EVS-prd-action-dispatch.
+This PRD pins the trust model. The action-dispatch flow that consumes this trust model is specified separately in EVS-PRD-action-dispatch.
 
 ## Assertions
 

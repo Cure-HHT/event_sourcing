@@ -29,9 +29,9 @@ name = "Cure-HHT Event Sourcing Library"
 #   assertion — optional A–Z label (or A+B+C... multi-assertion)
 #
 # Examples:
-#   EVS-prd-event-store
-#   EVS-dev-provenance-entry-schema-G
-#   EVS-dev-canonical-json
+#   EVS-PRD-event-store
+#   EVS-DEV-provenance-entry-schema-G
+#   EVS-OPS-secret-rotation
 
 [id-patterns]
 canonical = "{namespace}-{level.letter}-{component}"
@@ -65,22 +65,27 @@ separator = "-"
 
 # Requirement-level definitions
 #
-# This repo uses two levels: prd and dev.
-# Ops level is intentionally not used — the library is pure-Dart with
-# no deployment / runtime-ops surface; ops obligations live in
-# consuming app repos (e.g. cure-hht/hht_diary).
+# Three levels: PRD (product obligations), OPS (operational
+# obligations — release management, deployment of derived artifacts,
+# secret rotation, etc.), and DEV (implementation obligations).
 
-[levels.prd]
+[levels.PRD]
 rank = 1
-letter = "prd"
+letter = "PRD"
 display_name = "Product"
-implements = ["prd"]
+implements = ["PRD"]
 
-[levels.dev]
+[levels.OPS]
 rank = 2
-letter = "dev"
+letter = "OPS"
+display_name = "Operations"
+implements = ["OPS", "PRD"]
+
+[levels.DEV]
+rank = 3
+letter = "DEV"
 display_name = "Development"
-implements = ["dev", "prd"]
+implements = ["DEV", "OPS", "PRD"]
 
 # File scanning configuration
 

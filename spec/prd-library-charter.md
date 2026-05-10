@@ -1,6 +1,6 @@
-# EVS-prd-library-charter: Library Charter
+# EVS-PRD-library-charter: Library Charter
 
-**Level**: prd | **Status**: Draft | **Refines**: -
+**Level**: PRD | **Status**: Draft | **Refines**: -
 
 ## Purpose
 
