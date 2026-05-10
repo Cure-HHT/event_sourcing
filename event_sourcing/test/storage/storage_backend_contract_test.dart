@@ -259,8 +259,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> upsertEntry(Txn txn, DiaryEntry entry) =>
       throw UnimplementedError();
   @override
-  Future<void> clearEntries(Txn txn) => throw UnimplementedError();
-  @override
   Future<List<DiaryEntry>> findEntries({
     String? entryType,
     bool? isComplete,
@@ -268,9 +266,6 @@ class _InMemoryBackend extends StorageBackend {
     DateTime? dateFrom,
     DateTime? dateTo,
   }) => throw UnimplementedError();
-  @override
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId) =>
-      throw UnimplementedError();
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,

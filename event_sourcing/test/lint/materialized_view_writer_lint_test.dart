@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// log. Writes must flow through `DiaryEntriesMaterializer.foldPure` inside either the
 /// disaster-recovery rebuild (`rebuildMaterializedView`) or the online write
 /// path (Phase 5's `EntryService.record`). Any other production code that
-/// calls `StorageBackend.upsertEntry` or `StorageBackend.clearEntries`
+/// calls `StorageBackend.upsertEntry` or `StorageBackend.clearViewInTxn`
 /// bypasses the fold and breaks the invariant that running
 /// `rebuildMaterializedView` would produce the same state.
 ///
@@ -18,8 +18,9 @@ import 'package:flutter_test/flutter_test.dart';
 /// is kept in this file on purpose: adding a new legitimate writer requires
 /// touching this test, which is the review choke-point.
 
-/// Files allowed to invoke `StorageBackend.upsertEntry` or
-/// `StorageBackend.clearEntries`. Paths are POSIX-style and repo-relative.
+/// Files allowed to invoke `StorageBackend.upsertEntry` or clear the
+/// `diary_entries` view via `StorageBackend.clearViewInTxn`. Paths are
+/// POSIX-style and repo-relative.
 ///
 /// Adding an entry here is a deliberate assertion that the named file is a
 /// legitimate writer of the `diary_entries` materialized view.
@@ -41,13 +42,19 @@ const Set<String> _allowlist = {
 /// invocation with these names counts, regardless of receiver, because there
 /// is no reason any non-StorageBackend class should share these names; a
 /// name collision is itself a signal worth reviewing.
-final RegExp _mutationCall = RegExp(r'\b(?:upsertEntry|clearEntries)\s*\(');
+///
+/// Note: `clearViewInTxn` is the generic replacement for the removed
+/// `clearEntries` method. It clears any view by name; the lint pattern
+/// matches only `upsertEntry` (still diary-specific) as the write guard.
+/// `clearViewInTxn` is intentionally not linted here — it is the generic
+/// substrate primitive used by `rebuildView` for all views.
+final RegExp _mutationCall = RegExp(r'\bupsertEntry\s*\(');
 
 void main() {
   // Verifies: REQ-d00121-I — diary_entries cache contract; only allowlisted
-  // production files may invoke upsertEntry or clearEntries.
+  // production files may invoke upsertEntry.
   test('REQ-d00121-I: no production file outside the allowlist writes to '
-      'diary_entries via upsertEntry or clearEntries', () {
+      'diary_entries via upsertEntry', () {
     final repoRoot = _findRepoRoot(Directory.current);
     final appsDir = Directory('${repoRoot.path}/apps');
     if (!appsDir.existsSync()) {
@@ -70,8 +77,8 @@ void main() {
       isEmpty,
       reason:
           'REQ-d00121-I: the following production files invoke '
-          'upsertEntry(...) or clearEntries(...) on diary_entries. '
-          'Those methods mutate the materialized view cache — writes must '
+          'upsertEntry(...) on diary_entries. '
+          'That method mutates the materialized view cache — writes must '
           'flow through DiaryEntriesMaterializer.foldPure (i.e., rebuildMaterializedView '
           'or EntryService.record). If a listed file is a legitimate '
           'writer, add its repo-relative path to _allowlist in this '

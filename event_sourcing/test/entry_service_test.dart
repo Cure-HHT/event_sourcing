@@ -810,9 +810,6 @@ class _DelegatingBackend extends StorageBackend {
       _inner.upsertEntry(txn, entry);
 
   @override
-  Future<void> clearEntries(Txn txn) => _inner.clearEntries(txn);
-
-  @override
   Future<List<DiaryEntry>> findEntries({
     String? entryType,
     bool? isComplete,
@@ -826,10 +823,6 @@ class _DelegatingBackend extends StorageBackend {
     dateFrom: dateFrom,
     dateTo: dateTo,
   );
-
-  @override
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId) =>
-      _inner.readEntryInTxn(txn, entryId);
 
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(

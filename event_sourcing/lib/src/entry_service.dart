@@ -5,6 +5,7 @@ import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/materialization/diary_entries_materializer.dart';
+import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -194,7 +195,12 @@ class EntryService {
         txn,
         aggregateId,
       );
-      final priorRow = await backend.readEntryInTxn(txn, aggregateId);
+      final priorRaw = await backend.readViewRowInTxn(
+        txn,
+        'diary_entries',
+        aggregateId,
+      );
+      final priorRow = priorRaw != null ? DiaryEntry.fromJson(priorRaw) : null;
 
       if (aggregateHistory.isNotEmpty && priorRow != null) {
         final priorEvent = aggregateHistory.last;

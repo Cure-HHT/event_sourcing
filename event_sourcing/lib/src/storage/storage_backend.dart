@@ -30,6 +30,8 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 // Implements: REQ-d00117-E — enqueueFifo initial state.
 // Implements: REQ-d00117-F — backend_state KV store for schema_version and
 // sequence counter (not 'metadata').
+// Implements: REQ-d00140-F — generic view-row read/write via readViewRowInTxn
+// / clearViewInTxn (diary-specific clearEntries and readEntryInTxn removed).
 abstract class StorageBackend {
   const StorageBackend();
 
@@ -159,12 +161,6 @@ abstract class StorageBackend {
   /// partial merge: every column in [entry] overwrites the previous row.
   Future<void> upsertEntry(Txn txn, DiaryEntry entry);
 
-  /// Remove every row from `diary_entries`. Used by
-  /// `rebuildMaterializedView` to replace the cache in one transaction
-  /// step; not intended as a runtime operation. The event log is
-  /// untouched.
-  Future<void> clearEntries(Txn txn);
-
   /// Query `diary_entries` with optional filters; all filters are combined
   /// with logical AND. Returned order is unspecified — callers that need a
   /// deterministic order SHALL sort the result themselves.
@@ -175,13 +171,6 @@ abstract class StorageBackend {
     DateTime? dateFrom,
     DateTime? dateTo,
   });
-
-  /// Read a single `diary_entries` row by `entryId` within [txn] so
-  /// in-transaction callers (e.g., `EntryService.record` folding the
-  /// materializer's `priorRow` lookup into the same transaction as the
-  /// append + upsert) see writes staged earlier in the same body.
-  /// Returns null when the row does not exist.
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId);
 
   // -------- Generic view storage (Phase 4.4) --------
   //

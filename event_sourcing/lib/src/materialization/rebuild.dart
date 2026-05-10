@@ -46,7 +46,7 @@ Future<int> rebuildMaterializedView(
     // Clear first so prior cache contents can never be read back as input to
     // the rebuild (REQ-d00121-G). The clear only commits if the whole
     // rebuild commits — a mid-rebuild failure rolls everything back together.
-    await backend.clearEntries(txn);
+    await backend.clearViewInTxn(txn, 'diary_entries');
 
     final byAggregate = <String, DiaryEntry>{};
     final firstTsByAggregate = <String, DateTime>{};

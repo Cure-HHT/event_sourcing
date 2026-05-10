@@ -656,15 +656,6 @@ class SembastBackend extends StorageBackend {
         .put(t._sembastTxn, entry.toJson());
   }
 
-  /// Delete every row from `diary_entries` inside [txn].
-  // Implements: REQ-d00121-G — rebuild replaces the cache without reading
-  // prior contents.
-  @override
-  Future<void> clearEntries(Txn txn) async {
-    final t = _requireValidTxn(txn);
-    await _entriesStore.delete(t._sembastTxn);
-  }
-
   /// Query `diary_entries` with optional filters, all combined with logical
   /// AND. Rows whose `effective_date` is null are excluded from any query
   /// that specifies [dateFrom] or [dateTo]; pass null for both date
@@ -708,14 +699,6 @@ class SembastBackend extends StorageBackend {
     final finder = filters.isEmpty ? null : Finder(filter: Filter.and(filters));
     final records = await _entriesStore.find(db, finder: finder);
     return records.map((r) => DiaryEntry.fromJson(r.value)).toList();
-  }
-
-  @override
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId) async {
-    final t = _requireValidTxn(txn);
-    final raw = await _entriesStore.record(entryId).get(t._sembastTxn);
-    if (raw == null) return null;
-    return DiaryEntry.fromJson(raw);
   }
 
   // -------- Generic view storage (Phase 4.4) --------
