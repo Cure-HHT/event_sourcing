@@ -110,21 +110,21 @@ ref. During active Phase I/II development, devs override locally with
 gitignored in `hht_diary`. No other consumer depends directly on these
 packages today.
 
-## Reading the plans/specs
+## Reading the design specs
 
-Three concentric scopes:
+The design layer between PRDs and DEV-level requirements lives in
+`docs/superpowers/specs/`. Phase I has one spec:
 
-- **Library itself**: `docs/superpowers/specs/2026-04-22-events-and-actions-libs-design.md`
-  + plan `2026-04-22-audited-actions-library.md`.
-- **Permissions**: spec `2026-04-23-action-permissions-design.md`
-  + plan `2026-05-06-action-permissions-library.md`.
-- **Demo / e2e exercise**: spec `2026-05-06-action-permissions-demo-design.md`
-  + plan `2026-05-06-action-permissions-demo.md`.
+- `docs/superpowers/specs/2026-05-09-substrate-and-materializer-design.md`
+  — pins the substrate's component model, the unified `subscribe<T>`
+  primitive, the typed `Materializer<T>`, the event log and hash-chain
+  layout, the action-dispatch flow, the ingest path, and the Phase I
+  implementation order. DEV-level requirements (`EVS-DEV-*`) are
+  authored alongside the code that satisfies them.
 
-The Phase I substrate-and-materializer redesign spec hasn't been written
-yet — when it lands it goes in `docs/superpowers/specs/`. That spec
-re-anchors on the unified `subscribe<T>` API (not Phase 4.12's three
-named methods).
+Subsequent design specs land here as design work demands — for example,
+when Phase II's multi-source canonicalization rule grammar needs
+pinning, that gets its own spec.
 
 ## License
 
