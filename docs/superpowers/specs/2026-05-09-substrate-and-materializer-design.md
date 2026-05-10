@@ -1,8 +1,10 @@
 # Substrate and Materializer Design
 
 **Phase**: I
-**Status**: Draft (Phase I implementation target)
+**Status**: Draft (Phase I implementation target — partially superseded)
 **Last updated**: 2026-05-09
+
+> **Superseded:** The "Subscribe primitive", "Materializer", "Filter, query, and the closed-set rule", and "Multi-source readiness (Phase II hooks)" sections of this document are superseded by `2026-05-09-projections-and-subscribe-design.md`. Notably, the typed `Materializer<T>` contract sketched here is replaced by declarative `ProjectionSpec` shapes; the three-mode subscription (`Events` / `View<T>` / `AggregateMode<T>`) is narrowed to two for Phase I (`Events`, `AggregateMode<T>`); `View<T>` is deferred. This document remains authoritative for the EventStore log layout, action dispatch, ingest, storage abstraction, and the overall component model.
 
 ## Scope
 
