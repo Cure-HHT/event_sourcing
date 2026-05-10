@@ -105,5 +105,27 @@ void main() {
       );
       expect(row, isNull);
     });
+
+    test(
+      'remove event on nonexistent row returns null (no spurious tombstone)',
+      () async {
+        final backend = await _backend();
+        AggregateFoldChange? result;
+        await backend.transaction((txn) async {
+          result = await TableFold.applyEvent(
+            txn: txn,
+            backend: backend,
+            spec: _spec,
+            event: _ev('permission_revoked', {
+              'role': 'admin',
+              'permission': 'users.invite',
+              'scope': 'site',
+            }),
+          );
+        });
+        // Row never existed — no tombstone should be emitted.
+        expect(result, isNull);
+      },
+    );
   });
 }

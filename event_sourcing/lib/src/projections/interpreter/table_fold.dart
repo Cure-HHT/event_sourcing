@@ -32,10 +32,20 @@ class TableFold {
     }
     if (spec.removeEventTypes.contains(event.eventType)) {
       final key = spec.rowKey.extract(event);
-      await backend.deleteViewRowInTxn(txn, spec.viewName, key.toString());
+      final keyStr = key.toString();
+      // Only emit a tombstone change when the row actually existed; a
+      // remove event targeting a nonexistent row is a silent no-op so
+      // subscribers never receive a spurious Tombstone<T>.
+      final priorRow = await backend.readViewRowInTxn(
+        txn,
+        spec.viewName,
+        keyStr,
+      );
+      if (priorRow == null) return null;
+      await backend.deleteViewRowInTxn(txn, spec.viewName, keyStr);
       return AggregateFoldChange(
         viewName: spec.viewName,
-        aggregateId: key.toString(),
+        aggregateId: keyStr,
         newValue: null,
         sequence: event.sequenceNumber,
         cause: event.eventType,
