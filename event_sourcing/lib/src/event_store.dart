@@ -12,6 +12,9 @@ import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
+import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -81,9 +84,13 @@ class EventStore {
     required this.securityContexts,
     this.materializers = const <Materializer>[],
     this.syncCycleTrigger,
+    ProjectionRegistry? projections,
     ClockFn? clock,
     Uuid? uuid,
-  }) : _clock = clock,
+  }) : _interpreter = ProjectionInterpreter(
+         projections ?? ProjectionRegistry(),
+       ),
+       _clock = clock,
        _uuid = uuid ?? const Uuid();
 
   final StorageBackend backend;
@@ -92,6 +99,7 @@ class EventStore {
   final InternalSecurityContextStore securityContexts;
   final List<Materializer> materializers;
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
+  final ProjectionInterpreter _interpreter;
   final ClockFn? _clock;
   final Uuid _uuid;
 
@@ -115,6 +123,8 @@ class EventStore {
   static Future<EventStore> open({
     required StorageBackend storage,
     bool allowDowngrade = false,
+    ProjectionRegistry? projections,
+    PromoterRegistry? promoters,
   }) async {
     final recorded = await VersionCheck.findMostRecent(storage);
     if (recorded == null) {
@@ -151,6 +161,9 @@ class EventStore {
       }
       // cmp == 0 or (cmp > 0 && allowDowngrade): no-op.
     }
+    final effectiveProjections = projections ?? ProjectionRegistry();
+    effectiveProjections.seal();
+    (promoters ?? PromoterRegistry()).seal();
     return EventStore(
       backend: storage,
       entryTypes: EntryTypeRegistry(),
@@ -160,6 +173,7 @@ class EventStore {
         softwareVersion: LibVersion.current,
       ),
       securityContexts: _NullSecurityContextStore(),
+      projections: effectiveProjections,
     );
   }
 
@@ -203,7 +217,7 @@ class EventStore {
     bool dedupeByContent = false,
   }) async {
     final event = await backend.transaction<StoredEvent?>((txn) async {
-      return appendInTxn(
+      final stored = await appendInTxn(
         txn,
         entryType: entryType,
         entryTypeVersion: entryTypeVersion,
@@ -219,6 +233,14 @@ class EventStore {
         changeReason: changeReason,
         dedupeByContent: dedupeByContent,
       );
+      if (stored != null) {
+        await _interpreter.applyEvent(
+          txn: txn,
+          backend: backend,
+          event: stored,
+        );
+      }
+      return stored;
     });
 
     if (event == null) return null;
