@@ -85,11 +85,13 @@ class EventStore {
     this.materializers = const <Materializer>[],
     this.syncCycleTrigger,
     ProjectionRegistry? projections,
+    PromoterRegistry? promoters,
     ClockFn? clock,
     Uuid? uuid,
   }) : _interpreter = ProjectionInterpreter(
          projections ?? ProjectionRegistry(),
        ),
+       _promoters = promoters ?? PromoterRegistry(),
        _clock = clock,
        _uuid = uuid ?? const Uuid();
 
@@ -100,6 +102,14 @@ class EventStore {
   final List<Materializer> materializers;
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
   final ProjectionInterpreter _interpreter;
+
+  /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
+  /// supplied directly on the constructor). Used by [rebuildView] (Plan Task 23)
+  /// to apply promoter chains during replay. Not consumed by [append] today —
+  /// promotion happens at the entry-type-version layer in the existing
+  /// materializer flow.
+  final PromoterRegistry _promoters;
+
   final ClockFn? _clock;
   final Uuid _uuid;
 
@@ -163,7 +173,8 @@ class EventStore {
     }
     final effectiveProjections = projections ?? ProjectionRegistry();
     effectiveProjections.seal();
-    (promoters ?? PromoterRegistry()).seal();
+    final effectivePromoters = promoters ?? PromoterRegistry();
+    effectivePromoters.seal();
     return EventStore(
       backend: storage,
       entryTypes: EntryTypeRegistry(),
@@ -174,6 +185,7 @@ class EventStore {
       ),
       securityContexts: _NullSecurityContextStore(),
       projections: effectiveProjections,
+      promoters: effectivePromoters,
     );
   }
 
