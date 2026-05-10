@@ -149,8 +149,8 @@ void main() {
             ),
           );
         final secCtx = SembastSecurityContextStore(backend: backend);
-        final destStore = EventStore(
-          backend: backend,
+        final destStore = await EventStore.openForTest(
+          storage: backend,
           entryTypes: registry,
           source: destSource,
           securityContexts: secCtx,
@@ -162,8 +162,8 @@ void main() {
         );
         final origBackend = SembastBackend(database: origDb);
         final origSecCtx = SembastSecurityContextStore(backend: origBackend);
-        final origStore = EventStore(
-          backend: origBackend,
+        final origStore = await EventStore.openForTest(
+          storage: origBackend,
           entryTypes: registry,
           source: const Source(
             hopId: 'mobile-device',

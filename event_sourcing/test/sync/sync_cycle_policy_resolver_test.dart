@@ -23,7 +23,7 @@ _bootstrap() async {
   final backend = await _openBackend(
     'sync-cycle-resolver-${DateTime.now().microsecondsSinceEpoch}.db',
   );
-  final deps = buildAuditedRegistryDeps(backend);
+  final deps = await buildAuditedRegistryDeps(backend);
   final registry = DestinationRegistry(
     backend: backend,
     eventStore: deps.eventStore,

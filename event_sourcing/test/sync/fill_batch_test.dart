@@ -564,7 +564,7 @@ void main() {
       // backend so the wedge-recovery audit emission has somewhere to
       // land. The destination is registered + scheduled to satisfy the
       // registry's pre-mutation invariants without re-running fillBatch.
-      final deps = buildAuditedRegistryDeps(backend);
+      final deps = await buildAuditedRegistryDeps(backend);
       final wedgeRecoveryRegistry = DestinationRegistry(
         backend: backend,
         eventStore: deps.eventStore,

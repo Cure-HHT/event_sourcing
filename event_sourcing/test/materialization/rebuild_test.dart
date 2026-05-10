@@ -32,10 +32,9 @@ Future<EventStore> _openStore() async {
     'rebuild-$_dbCounter.db',
   );
   final backend = SembastBackend(database: db);
-  // Use EventStore.open to seed the lib-version event; pass the toy registry.
   final proj = ProjectionRegistry()..register(_kAggSpec);
-  return EventStore(
-    backend: backend,
+  return EventStore.openForTest(
+    storage: backend,
     entryTypes: EntryTypeRegistry(),
     source: const Source(
       hopId: 'test',
@@ -136,8 +135,8 @@ void main() {
       );
       final backend = SembastBackend(database: db);
       // EventStore with empty ProjectionRegistry — no 'toy_view' spec.
-      final store = EventStore(
-        backend: backend,
+      final store = await EventStore.openForTest(
+        storage: backend,
         entryTypes: EntryTypeRegistry(),
         source: const Source(
           hopId: 'test',

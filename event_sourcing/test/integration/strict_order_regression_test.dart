@@ -189,7 +189,7 @@ void main() {
       // historical-replay branch (REQ-d00129-D) sees zero candidates
       // and does not pre-enqueue anything: we want every FIFO row on
       // `secondary` to be produced by the fillBatch path under test.
-      final deps = buildAuditedRegistryDeps(backend);
+      final deps = await buildAuditedRegistryDeps(backend);
       final registry = DestinationRegistry(
         backend: backend,
         eventStore: deps.eventStore,

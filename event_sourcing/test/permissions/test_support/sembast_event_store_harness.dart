@@ -29,12 +29,6 @@ Future<EventStore> buildInMemoryEventStore() async {
   );
   final backend = SembastBackend(database: db);
 
-  // Phase I dual-path: EventStore.open runs the lib-version boot check
-  // (emits lib_version_initialized) into the raw backend, then we
-  // construct a fully-configured EventStore below with the projection
-  // registry and entry types. The open-returned store is discarded.
-  await EventStore.open(storage: backend);
-
   final typeRegistry = EntryTypeRegistry()
     ..register(
       const EntryTypeDefinition(
@@ -51,8 +45,8 @@ Future<EventStore> buildInMemoryEventStore() async {
 
   final projections = ProjectionRegistry()..register(rolePermissionGrantsSpec);
 
-  return EventStore(
-    backend: backend,
+  return EventStore.open(
+    storage: backend,
     entryTypes: typeRegistry,
     source: const Source(
       hopId: 'test-server',

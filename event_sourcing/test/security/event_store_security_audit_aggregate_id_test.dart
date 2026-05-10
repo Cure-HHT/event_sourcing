@@ -59,8 +59,8 @@ Future<_Fixture> _setup({DateTime? now}) async {
   }
   registry.register(_simpleDef('epistaxis_event'));
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: _source,
     securityContexts: securityContexts,

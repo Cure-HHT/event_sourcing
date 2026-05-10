@@ -35,8 +35,8 @@ Future<SembastBackend> _openBackend(String path) async {
 /// `ArgumentError` at the registry's pre-I/O validation step, which
 /// surfaces synchronously inside the surrounding `backend.transaction`
 /// and rolls it back.
-DestinationRegistry _buildBrokenRegistry(SembastBackend backend) {
-  final deps = buildAuditedRegistryDeps(
+Future<DestinationRegistry> _buildBrokenRegistry(SembastBackend backend) async {
+  final deps = await buildAuditedRegistryDeps(
     backend,
     auditEntryTypeOverride: const <EntryTypeDefinition>[],
   );
@@ -53,12 +53,12 @@ DestinationRegistry _buildBrokenRegistry(SembastBackend backend) {
 /// but omit the entry type the mutation under test would emit. The
 /// setup mutations succeed, then the mutation under test fails inside
 /// its txn, rolling back the underlying schedule/FIFO write.
-DestinationRegistry _buildPartialRegistry(
+Future<DestinationRegistry> _buildPartialRegistry(
   SembastBackend backend, {
   required Iterable<String> allowed,
-}) {
+}) async {
   final allowedSet = allowed.toSet();
-  final deps = buildAuditedRegistryDeps(
+  final deps = await buildAuditedRegistryDeps(
     backend,
     auditEntryTypeOverride: kSystemEntryTypes
         .where((d) => allowedSet.contains(d.id))
@@ -87,7 +87,7 @@ void main() {
     test(
       'addDestination: audit failure rolls back the schedule write',
       () async {
-        final registry = _buildBrokenRegistry(backend);
+        final registry = await _buildBrokenRegistry(backend);
         final dest = FakeDestination(id: 'atomic');
 
         await expectLater(
@@ -112,7 +112,7 @@ void main() {
     // surrounding `backend.transaction` rolls back the schedule write;
     // afterwards `schedule.startDate` is still null.
     test('setStartDate: audit failure rolls back the schedule write', () async {
-      final registry = _buildPartialRegistry(
+      final registry = await _buildPartialRegistry(
         backend,
         allowed: const <String>{kDestinationRegisteredEntryType},
       );
@@ -161,7 +161,7 @@ void main() {
     test(
       'deleteDestination: audit failure rolls back FIFO + schedule drop',
       () async {
-        final registry = _buildPartialRegistry(
+        final registry = await _buildPartialRegistry(
           backend,
           allowed: const <String>{
             kDestinationRegisteredEntryType,

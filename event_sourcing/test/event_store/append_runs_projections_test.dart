@@ -8,7 +8,6 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
-import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
@@ -26,9 +25,6 @@ void main() {
   test('appended event produces projection row via interpreter', () async {
     final backend = await _backend();
 
-    // Run the lib-version boot check.
-    await EventStore.open(storage: backend);
-
     final projections = ProjectionRegistry()
       ..register(
         AggregateProjectionSpec(
@@ -38,7 +34,6 @@ void main() {
           tombstoneEventTypes: const {'tombstone'},
         ),
       );
-    projections.seal();
 
     final entryTypes = EntryTypeRegistry()
       ..register(
@@ -51,8 +46,8 @@ void main() {
         ),
       );
 
-    final store = EventStore(
-      backend: backend,
+    final store = await EventStore.open(
+      storage: backend,
       entryTypes: entryTypes,
       source: const Source(
         hopId: 'test',

@@ -85,16 +85,6 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   EventStoreSyncCycleTrigger? syncCycleTrigger,
   bool allowDowngrade = false,
 }) async {
-  // --- Transitional two-step (Task 3 fix) ---
-  // EventStore.open runs the lib-version boot check (emits
-  // lib_version_initialized / lib_version_changed; refuses downgrade). It
-  // returns a half-configured EventStore that we immediately discard — only
-  // the side effect (the lib_version_* event append) matters here. The full
-  // production EventStore is assembled below with registries, source, and
-  // materializers. Task 16 will reorganize EventStore.open to accept those
-  // arguments and collapse this two-step into one.
-  await EventStore.open(storage: backend, allowDowngrade: allowDowngrade);
-
   final typeRegistry = EntryTypeRegistry();
   for (final defn in kSystemEntryTypes) {
     typeRegistry.register(defn);
@@ -111,13 +101,14 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   }
 
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.open(
+    storage: backend,
     entryTypes: typeRegistry,
     source: source,
     securityContexts: securityContexts,
     projections: projections,
     syncCycleTrigger: syncCycleTrigger,
+    allowDowngrade: allowDowngrade,
   );
 
   final destinationRegistry = DestinationRegistry(

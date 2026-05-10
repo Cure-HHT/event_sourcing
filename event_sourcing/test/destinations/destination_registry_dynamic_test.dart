@@ -26,7 +26,7 @@ void main() {
     setUp(() async {
       dbCounter += 1;
       backend = await _openBackend('registry-dynamic-$dbCounter.db');
-      final deps = buildAuditedRegistryDeps(backend);
+      final deps = await buildAuditedRegistryDeps(backend);
       registry = DestinationRegistry(
         backend: backend,
         eventStore: deps.eventStore,
@@ -382,7 +382,7 @@ void main() {
 
         // Simulate a process restart: construct a new registry over the
         // same backend, re-run bootstrap's addDestination call.
-        final restartedDeps = buildAuditedRegistryDeps(backend);
+        final restartedDeps = await buildAuditedRegistryDeps(backend);
         final restarted = DestinationRegistry(
           backend: backend,
           eventStore: restartedDeps.eventStore,

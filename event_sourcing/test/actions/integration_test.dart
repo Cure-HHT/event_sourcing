@@ -100,7 +100,9 @@ ActionContext _ctx() => ActionContext(
     activeRole: 'admin',
   ),
   security: const SecurityDetails(),
-  requestStartedAt: DateTime.parse('2026-05-07T10:00:00Z'),
+  // Use DateTime.now() so the 24-hour idempotency TTL does not expire
+  // during the test run regardless of when the test is executed.
+  requestStartedAt: DateTime.now().toUtc(),
 );
 
 // ---------------------------------------------------------------------------

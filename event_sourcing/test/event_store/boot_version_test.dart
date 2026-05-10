@@ -3,14 +3,23 @@
 //   on same-version reboot, emits lib_version_changed on upgrade, refuses
 //   to start on downgrade (unless allowDowngrade: true).
 
+import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
+import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
+import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+const _kTestSource = Source(
+  hopId: 'boot-version-test',
+  identifier: 'boot-version-test',
+  softwareVersion: '0.0.0-test',
+);
 
 Future<SembastBackend> _openBackend() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -62,7 +71,12 @@ void main() {
   group('EventStore.open boot version flow', () {
     test('emits lib_version_initialized on first boot', () async {
       final backend = await _openBackend();
-      final store = await EventStore.open(storage: backend);
+      final store = await EventStore.open(
+        storage: backend,
+        entryTypes: EntryTypeRegistry(),
+        source: _kTestSource,
+        securityContexts: SembastSecurityContextStore(backend: backend),
+      );
       final result = await VersionCheck.findMostRecent(backend);
       expect(result?.recordedVersion, LibVersion.current);
       expect(result?.eventType, LibVersionEvents.initialized);
@@ -71,9 +85,21 @@ void main() {
 
     test('no-op when recorded version equals current', () async {
       final backend = await _openBackend();
-      await EventStore.open(storage: backend); // first boot writes init
+      // first boot writes init
+      await EventStore.open(
+        storage: backend,
+        entryTypes: EntryTypeRegistry(),
+        source: _kTestSource,
+        securityContexts: SembastSecurityContextStore(backend: backend),
+      );
       final beforeSecond = await VersionCheck.findMostRecent(backend);
-      await EventStore.open(storage: backend); // second boot at same version
+      // second boot at same version
+      await EventStore.open(
+        storage: backend,
+        entryTypes: EntryTypeRegistry(),
+        source: _kTestSource,
+        securityContexts: SembastSecurityContextStore(backend: backend),
+      );
       final afterSecond = await VersionCheck.findMostRecent(backend);
       expect(afterSecond?.sequenceNumber, beforeSecond?.sequenceNumber);
     });
@@ -86,7 +112,12 @@ void main() {
         version: '0.3.0',
         eventType: LibVersionEvents.initialized,
       );
-      final store = await EventStore.open(storage: backend);
+      final store = await EventStore.open(
+        storage: backend,
+        entryTypes: EntryTypeRegistry(),
+        source: _kTestSource,
+        securityContexts: SembastSecurityContextStore(backend: backend),
+      );
       final result = await VersionCheck.findMostRecent(backend);
       expect(result?.eventType, LibVersionEvents.changed);
       expect(result?.recordedVersion, LibVersion.current);
@@ -102,7 +133,12 @@ void main() {
         eventType: LibVersionEvents.initialized,
       );
       expect(
-        () => EventStore.open(storage: backend),
+        () => EventStore.open(
+          storage: backend,
+          entryTypes: EntryTypeRegistry(),
+          source: _kTestSource,
+          securityContexts: SembastSecurityContextStore(backend: backend),
+        ),
         throwsA(isA<DowngradeRefusedError>()),
       );
     });
@@ -116,6 +152,9 @@ void main() {
       );
       final store = await EventStore.open(
         storage: backend,
+        entryTypes: EntryTypeRegistry(),
+        source: _kTestSource,
+        securityContexts: SembastSecurityContextStore(backend: backend),
         allowDowngrade: true,
       );
       // No new lib_version event should be emitted on downgrade — the existing

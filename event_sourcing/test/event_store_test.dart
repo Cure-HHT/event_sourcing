@@ -65,8 +65,8 @@ Future<_Fixture> _setup({
     }
   }
 
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: const Source(
       hopId: 'mobile-device',

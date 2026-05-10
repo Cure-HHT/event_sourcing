@@ -19,8 +19,6 @@ Future<EventStore> _openStore() async {
     'em-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
-  await EventStore.open(storage: backend);
-
   final entryTypes = EntryTypeRegistry()
     ..register(
       const EntryTypeDefinition(
@@ -31,9 +29,8 @@ Future<EventStore> _openStore() async {
         widgetConfig: <String, Object?>{},
       ),
     );
-
-  return EventStore(
-    backend: backend,
+  return EventStore.open(
+    storage: backend,
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'test',

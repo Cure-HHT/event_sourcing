@@ -43,8 +43,8 @@ _setup({DateTime? now}) async {
   }
   registry.register(_simpleDef('test_event'));
   final sc = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: _source,
     securityContexts: sc,

@@ -29,8 +29,6 @@ Future<EventStore> _open() async {
     'am-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
-  await EventStore.open(storage: backend);
-
   final entryTypes = EntryTypeRegistry()
     ..register(
       const EntryTypeDefinition(
@@ -41,7 +39,6 @@ Future<EventStore> _open() async {
         widgetConfig: <String, Object?>{},
       ),
     );
-
   final projections = ProjectionRegistry()
     ..register(
       AggregateProjectionSpec(
@@ -51,10 +48,8 @@ Future<EventStore> _open() async {
         tombstoneEventTypes: const {'tombstone'},
       ),
     );
-  projections.seal();
-
-  return EventStore(
-    backend: backend,
+  return EventStore.open(
+    storage: backend,
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'test',

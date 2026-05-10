@@ -53,8 +53,8 @@ Future<EventStore> bootstrapTestEventStore() async {
 
   final securityContexts = SembastSecurityContextStore(backend: backend);
 
-  return EventStore(
-    backend: backend,
+  return EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: const Source(
       hopId: 'test-server',
