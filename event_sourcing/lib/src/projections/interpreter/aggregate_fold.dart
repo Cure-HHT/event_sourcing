@@ -1,4 +1,5 @@
 // event_sourcing/lib/src/projections/interpreter/aggregate_fold.dart
+import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -70,7 +71,7 @@ class AggregateFold {
         ? DateTime.parse(prior['firstEventTimestamp'] as String)
         : event.clientTimestamp;
 
-    final merged = _deepMerge(prior, event.data);
+    final merged = Merge.applyDeepDelta(prior, event.data);
 
     final next = Map<String, Object?>.from(merged);
     next['aggregateId'] = event.aggregateId;
@@ -101,35 +102,5 @@ class AggregateFold {
       cause: event.eventType,
       isTombstone: false,
     );
-  }
-
-  /// Recursively merges [delta] into [prior] with null-as-clear semantics.
-  ///
-  /// When both [prior] and [delta] have a Map value for the same key, the
-  /// merge recurses into that nested map (so inner keys absent from the delta
-  /// are preserved). When the delta value is non-null and non-Map, it
-  /// overwrites. When the delta value is null, the key is cleared (set to
-  /// null) in the result. Keys absent from the delta are preserved unchanged.
-  static Map<String, Object?> _deepMerge(
-    Map<String, Object?> prior,
-    Map<String, Object?> delta,
-  ) {
-    final result = Map<String, Object?>.from(prior);
-    for (final key in delta.keys) {
-      final deltaVal = delta[key];
-      final priorVal = prior[key];
-      if (deltaVal is Map<String, Object?> &&
-          priorVal is Map<String, Object?>) {
-        result[key] = _deepMerge(priorVal, deltaVal);
-      } else if (deltaVal is Map && priorVal is Map) {
-        result[key] = _deepMerge(
-          Map<String, Object?>.from(priorVal as Map),
-          Map<String, Object?>.from(deltaVal as Map),
-        );
-      } else {
-        result[key] = deltaVal;
-      }
-    }
-    return result;
   }
 }
