@@ -36,6 +36,25 @@ import 'package:uuid/uuid.dart';
 /// Fire-and-forget trigger into `SyncCycle.call()`.
 typedef EventStoreSyncCycleTrigger = Future<void> Function();
 
+/// Accumulates [StoredEvent]s appended inside a single transaction so that
+/// [EventStore._runInTxnWithPublish] can publish them all to the subscription
+/// bus after the transaction commits. Callers that use [EventStore.appendInTxn]
+/// directly inside their own transaction MUST pass a [PublishCollector] and
+/// use [EventStore.runTransaction] so that subscribers receive delivery.
+///
+/// The type lives in `lib/src/` and is intentionally not re-exported from the
+/// package barrel: external consumers interact with the event store through the
+/// public [EventStore] API and never construct a collector directly. Only
+/// intra-package callers (e.g. [DestinationRegistry]) that open their own
+/// transaction via [EventStore.runTransaction] see this type.
+class PublishCollector {
+  final List<StoredEvent> _events = <StoredEvent>[];
+
+  void add(StoredEvent event) => _events.add(event);
+
+  List<StoredEvent> get events => List<StoredEvent>.unmodifiable(_events);
+}
+
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
 /// the compact and purge sweeps.
 // Implements: REQ-d00138-B+C+E+F — retention-sweep return type.
@@ -203,17 +222,36 @@ class EventStore {
     await backend.close();
   }
 
-  /// Notify the subscription engine that [event] was committed to the backend
-  /// inside an external transaction (e.g. the [ActionDispatcher]'s multi-event
-  /// Stage 8 batch). Callers that use [appendInTxn] directly MUST call this
-  /// once per committed event after their transaction succeeds, so that
-  /// [subscribe] listeners receive the same delivery they would from the
-  /// public [append] method.
+  /// Run [body] inside a single `backend.transaction`, collecting every
+  /// [StoredEvent] that [appendInTxn] records during [body]'s execution.
+  /// After the transaction commits successfully, all collected events are
+  /// published to the subscription bus in append order so [subscribe]
+  /// listeners receive the same delivery they would from the public [append]
+  /// method.
   ///
-  /// Does NOT fire the projection interpreter (that fires inside
-  /// [appendInTxn] during the transaction). Does NOT trigger the sync cycle.
-  void publishAppended(StoredEvent event) {
-    _subs.publishEvent(event);
+  /// External callers (e.g. [DestinationRegistry]) that need to open their
+  /// own transaction and call [appendInTxn] SHOULD use this method instead
+  /// of [backend.transaction] directly to ensure subscription delivery.
+  ///
+  /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
+  /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
+  Future<T> runTransaction<T>(
+    Future<T> Function(Txn txn, PublishCollector collector) body,
+  ) async {
+    return _runInTxnWithPublish(body);
+  }
+
+  /// Internal helper: wraps a [backend.transaction] call with a
+  /// [PublishCollector] and publishes all collected events after commit.
+  Future<T> _runInTxnWithPublish<T>(
+    Future<T> Function(Txn txn, PublishCollector collector) body,
+  ) async {
+    final collector = PublishCollector();
+    final result = await backend.transaction<T>((txn) => body(txn, collector));
+    for (final event in collector.events) {
+      _subs.publishEvent(event);
+    }
+    return result;
   }
 
   /// Subscribe to live updates. For [Events] mode: delivers a [Delta] for
@@ -363,9 +401,13 @@ class EventStore {
     bool dedupeByContent = false,
   }) async {
     List<AggregateFoldChange> rowChanges = const [];
-    final event = await backend.transaction<StoredEvent?>((txn) async {
+    final event = await _runInTxnWithPublish<StoredEvent?>((
+      txn,
+      collector,
+    ) async {
       final stored = await appendInTxn(
         txn,
+        collector: collector,
         entryType: entryType,
         entryTypeVersion: entryTypeVersion,
         aggregateId: aggregateId,
@@ -391,7 +433,6 @@ class EventStore {
     });
 
     if (event == null) return null;
-    _subs.publishEvent(event);
     for (final change in rowChanges) {
       _subs.publishRowChange(
         viewName: change.viewName,
@@ -434,7 +475,7 @@ class EventStore {
     required String reason,
     required Initiator redactedBy,
   }) async {
-    await backend.transaction<void>((txn) async {
+    await _runInTxnWithPublish<void>((txn, collector) async {
       final existing = await securityContexts.readInTxn(txn, eventId);
       if (existing == null) {
         throw ArgumentError.value(
@@ -454,6 +495,7 @@ class EventStore {
       //   data.subject_event_id.
       await appendInTxn(
         txn,
+        collector: collector,
         entryType: kSecurityContextRedactedEntryType,
         entryTypeVersion: entryTypes
             .byId(kSecurityContextRedactedEntryType)!
@@ -496,7 +538,10 @@ class EventStore {
     final compactCutoff = now.subtract(p.fullRetention);
     final purgeCutoff = compactCutoff.subtract(p.truncatedRetention);
 
-    final result = await backend.transaction<RetentionResult>((txn) async {
+    final result = await _runInTxnWithPublish<RetentionResult>((
+      txn,
+      collector,
+    ) async {
       final compactCandidates = await securityContexts
           .findUnredactedOlderThanInTxn(txn, compactCutoff);
       for (final row in compactCandidates) {
@@ -519,6 +564,7 @@ class EventStore {
         //   aggregate.
         await appendInTxn(
           txn,
+          collector: collector,
           entryType: kSecurityContextCompactedEntryType,
           entryTypeVersion: entryTypes
               .byId(kSecurityContextCompactedEntryType)!
@@ -548,6 +594,7 @@ class EventStore {
         //   aggregate.
         await appendInTxn(
           txn,
+          collector: collector,
           entryType: kSecurityContextPurgedEntryType,
           entryTypeVersion: entryTypes
               .byId(kSecurityContextPurgedEntryType)!
@@ -577,6 +624,7 @@ class EventStore {
       //   aggregate.
       await appendInTxn(
         txn,
+        collector: collector,
         entryType: kRetentionPolicyAppliedEntryType,
         entryTypeVersion: entryTypes
             .byId(kRetentionPolicyAppliedEntryType)!
@@ -640,6 +688,11 @@ class EventStore {
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate.
+  ///
+  /// When [collector] is non-null, the persisted event is recorded into it
+  /// so the surrounding [_runInTxnWithPublish] / [runTransaction] call can
+  /// publish it to the subscription bus after commit. Callers that open their
+  /// own transaction via [runTransaction] MUST pass their collector here.
   // Implements: REQ-d00141-B (delegated transactional half).
   Future<StoredEvent?> appendInTxn(
     Txn txn, {
@@ -656,6 +709,7 @@ class EventStore {
     required String? checkpointReason,
     required String? changeReason,
     required bool dedupeByContent,
+    PublishCollector? collector,
   }) async {
     _validateAppendInputs(
       entryType: entryType,
@@ -760,6 +814,7 @@ class EventStore {
       await securityContexts.writeInTxn(txn, row);
     }
 
+    collector?.add(event);
     return event;
   }
 
@@ -807,8 +862,13 @@ class EventStore {
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
   // Implements: REQ-d00145-G+I+J+K.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
-    return backend.transaction((txn) async {
-      return _ingestOneInTxn(txn, incoming, batchContext: null);
+    return _runInTxnWithPublish((txn, collector) async {
+      return _ingestOneInTxn(
+        txn,
+        incoming,
+        batchContext: null,
+        collector: collector,
+      );
     });
   }
 
@@ -834,7 +894,7 @@ class EventStore {
     final wireBytesHash = sha256.convert(bytes).toString();
     final outcomes = <PerEventIngestOutcome>[];
 
-    await backend.transaction((txn) async {
+    await _runInTxnWithPublish<void>((txn, collector) async {
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
         final storedEvent = StoredEvent.fromMap(
@@ -873,6 +933,7 @@ class EventStore {
           txn,
           storedEvent,
           batchContext: batchContext,
+          collector: collector,
         );
         outcomes.add(outcome);
       }
@@ -891,6 +952,7 @@ class EventStore {
     Txn txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
+    PublishCollector? collector,
   }) async {
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
@@ -919,6 +981,7 @@ class EventStore {
           subjectEventId: incoming.eventId,
           subjectEventHashOnRecord: existing.eventHash,
           batchContext: batchContext,
+          collector: collector,
         );
         return PerEventIngestOutcome(
           eventId: incoming.eventId,
@@ -972,6 +1035,7 @@ class EventStore {
 
     // 6. Persist via the same path as origin appends.
     await backend.appendEvent(txn, updatedEvent);
+    collector?.add(updatedEvent);
 
     // 7. Fire the projection interpreter symmetric with the local-append path.
     // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path projection
@@ -1319,6 +1383,7 @@ class EventStore {
     required String subjectEventId,
     required String subjectEventHashOnRecord,
     required BatchContext? batchContext,
+    PublishCollector? collector,
   }) async {
     final now = _now();
     final auditAggregateId = 'ingest-audit:${source.hopId}';
@@ -1364,6 +1429,7 @@ class EventStore {
     recordMap['event_hash'] = eventHash;
     final event = StoredEvent.fromMap(recordMap, localSeq);
     await backend.appendEvent(txn, event);
+    collector?.add(event);
   }
 }
 

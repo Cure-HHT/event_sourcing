@@ -106,12 +106,13 @@ class DestinationRegistry {
     // atomically with the audit emission.
     final persisted = await backend.readSchedule(destination.id);
     final resolved = persisted ?? const DestinationSchedule();
-    await backend.transaction((txn) async {
+    await _eventStore.runTransaction((txn, collector) async {
       if (persisted == null) {
         await backend.writeScheduleTxn(txn, destination.id, resolved);
       }
       await _emitDestinationAuditInTxn(
         txn,
+        collector,
         entryType: kDestinationRegisteredEntryType,
         data: <String, Object?>{
           'id': destination.id,
@@ -249,7 +250,7 @@ class DestinationRegistry {
     // record() serializes behind this transaction and walks candidates
     // strictly past the advanced fill_cursor (or the unchanged cursor,
     // for gap replay).
-    await backend.transaction((txn) async {
+    await _eventStore.runTransaction((txn, collector) async {
       await backend.writeScheduleTxn(txn, id, updated);
 
       if (priorStartDate == null) {
@@ -288,6 +289,7 @@ class DestinationRegistry {
 
       await _emitDestinationAuditInTxn(
         txn,
+        collector,
         entryType: kDestinationStartDateSetEntryType,
         data: <String, Object?>{
           'id': id,
@@ -370,10 +372,11 @@ class DestinationRegistry {
       result = SetEndDateResult.applied;
     }
 
-    await backend.transaction((txn) async {
+    await _eventStore.runTransaction((txn, collector) async {
       await backend.writeScheduleTxn(txn, id, updated);
       await _emitDestinationAuditInTxn(
         txn,
+        collector,
         entryType: kDestinationEndDateSetEntryType,
         data: <String, Object?>{
           'id': id,
@@ -427,11 +430,12 @@ class DestinationRegistry {
         'per-destination opt-in (REQ-d00129-H).',
       );
     }
-    await backend.transaction((txn) async {
+    await _eventStore.runTransaction((txn, collector) async {
       await backend.deleteFifoStoreTxn(txn, id);
       await backend.deleteScheduleTxn(txn, id);
       await _emitDestinationAuditInTxn(
         txn,
+        collector,
         entryType: kDestinationDeletedEntryType,
         data: <String, Object?>{'id': id, 'allow_hard_delete': true},
         initiator: initiator,
@@ -503,7 +507,7 @@ class DestinationRegistry {
     final targetLastSeq = head.eventIdRange.lastSeq;
     final targetSeqInQueue = head.sequenceInQueue;
 
-    return backend.transaction((txn) async {
+    return _eventStore.runTransaction((txn, collector) async {
       await backend.setFinalStatusTxn(
         txn,
         destinationId,
@@ -525,6 +529,7 @@ class DestinationRegistry {
       );
       await _emitDestinationAuditInTxn(
         txn,
+        collector,
         entryType: kDestinationWedgeRecoveredEntryType,
         data: <String, Object?>{
           'id': destinationId,
@@ -568,7 +573,8 @@ class DestinationRegistry {
   //   data.id so callers can still query "all audits about destination
   //   X" by filtering on entry_type AND data.id.
   Future<void> _emitDestinationAuditInTxn(
-    Txn txn, {
+    Txn txn,
+    PublishCollector collector, {
     required String entryType,
     required Map<String, Object?> data,
     required Initiator initiator,
@@ -576,6 +582,7 @@ class DestinationRegistry {
     final def = _eventStore.entryTypes.byId(entryType);
     await _eventStore.appendInTxn(
       txn,
+      collector: collector,
       entryType: entryType,
       entryTypeVersion: def?.registeredVersion ?? 0,
       aggregateId: _eventStore.source.identifier,
