@@ -14,7 +14,11 @@ import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
+import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -112,6 +116,7 @@ class EventStore {
 
   final ClockFn? _clock;
   final Uuid _uuid;
+  final SubscriptionEngine _subs = SubscriptionEngine();
 
   /// Opens an [EventStore] against [storage] and performs the lib-version
   /// boot check:
@@ -189,9 +194,98 @@ class EventStore {
     );
   }
 
-  /// Close the backend and release all resources. Delegates to
-  /// `backend.close()`. Not safe to call concurrently with in-flight work.
-  Future<void> close() => backend.close();
+  /// Close the backend and subscription engine, releasing all resources.
+  /// Not safe to call concurrently with in-flight work.
+  Future<void> close() async {
+    await _subs.close();
+    await backend.close();
+  }
+
+  /// Subscribe to live updates. For [Events] mode: delivers a [Delta] for
+  /// every event appended after this call (pre-existing history is NOT
+  /// replayed). For [AggregateMode]: delivers an initial [Snapshot] per
+  /// matching aggregate then [Delta] / [Tombstone] updates as events land.
+  Stream<Update<T>> subscribe<T>(
+    SubscriptionFilter filter,
+    SubscriptionMode<T> mode,
+  ) {
+    switch (mode) {
+      case Events():
+        return _subs.events(filter) as Stream<Update<T>>;
+      case AggregateMode<T>():
+        return _subscribeAggregate<T>(filter, mode);
+    }
+  }
+
+  /// Async* generator for [AggregateMode] subscribe.
+  ///
+  /// Atomic snapshot-then-attach: opens a buffered live listener FIRST
+  /// (before reading the snapshot) so no changes are lost between the
+  /// snapshot read and the live-stream attach.
+  Stream<Update<T>> _subscribeAggregate<T>(
+    SubscriptionFilter filter,
+    AggregateMode<T> mode,
+  ) async* {
+    // Buffer live changes that arrive while we read the snapshot.
+    final liveBuffer = <RowChange>[];
+    final liveSub = _subs.rowChanges(mode.viewName).listen(liveBuffer.add);
+    try {
+      // Snapshot read
+      final aggregateIds = filter.aggregates;
+      if (aggregateIds == null) {
+        // All rows in the view (no per-aggregate narrowing)
+        final rows = await backend.findViewRows(mode.viewName);
+        for (final row in rows) {
+          yield Snapshot<T>(
+            value: mode.mapper(row),
+            sequence: (row['sequence'] as int?) ?? 0,
+          );
+        }
+      } else {
+        for (final aggId in aggregateIds) {
+          final row = await backend.transaction(
+            (txn) => backend.readViewRowInTxn(txn, mode.viewName, aggId),
+          );
+          yield Snapshot<T>(
+            value: row == null ? null : mode.mapper(row),
+            sequence: (row?['sequence'] as int?) ?? 0,
+          );
+        }
+      }
+
+      // Drain buffered live changes that arrived during snapshot read.
+      for (final change in liveBuffer) {
+        final u = _changeToUpdate<T>(change, filter, mode);
+        if (u != null) yield u;
+      }
+      liveBuffer.clear();
+
+      // Attach to live stream proper.
+      await for (final change in _subs.rowChanges(mode.viewName)) {
+        final u = _changeToUpdate<T>(change, filter, mode);
+        if (u != null) yield u;
+      }
+    } finally {
+      await liveSub.cancel();
+    }
+  }
+
+  Update<T>? _changeToUpdate<T>(
+    RowChange c,
+    SubscriptionFilter filter,
+    AggregateMode<T> mode,
+  ) {
+    final aggSet = filter.aggregates;
+    if (aggSet != null && !aggSet.contains(c.aggregateId)) return null;
+    if (c.isTombstone) {
+      return Tombstone<T>(aggregateId: c.aggregateId, sequence: c.sequence);
+    }
+    return Delta<T>(
+      value: mode.mapper(c.value!),
+      sequence: c.sequence,
+      cause: c.cause,
+    );
+  }
 
   DateTime _now() => (_clock ?? () => DateTime.now().toUtc())();
 
@@ -256,6 +350,7 @@ class EventStore {
     });
 
     if (event == null) return null;
+    _subs.publishEvent(event);
     unawaited(syncCycleTrigger?.call());
     return event;
   }

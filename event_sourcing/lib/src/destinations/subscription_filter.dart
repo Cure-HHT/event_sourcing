@@ -45,6 +45,7 @@ class SubscriptionFilter {
     this.entryTypes,
     this.eventTypes,
     this.aggregateTypes,
+    this.aggregates,
     this.predicate,
     this.includeSystemEvents = false,
   });
@@ -62,6 +63,12 @@ class SubscriptionFilter {
   /// Allow-list over `event.aggregateType`. `null` = match all aggregate
   /// types; an empty set = match no aggregate types.
   final Set<String>? aggregateTypes;
+
+  /// Allow-list over specific aggregate IDs for projection subscriptions.
+  /// `null` = all aggregates; a non-null set restricts snapshot and delta
+  /// delivery to only those aggregate IDs. Not used by [matches]; consulted
+  /// by the subscribe substrate when building the aggregate-mode snapshot.
+  final Set<String>? aggregates;
 
   /// Escape-hatch consulted after the allow-lists pass. `null` means
   /// "no additional filtering"; a non-null predicate must return `true`
