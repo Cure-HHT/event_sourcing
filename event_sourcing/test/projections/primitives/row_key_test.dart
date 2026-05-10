@@ -49,5 +49,48 @@ void main() {
         throwsStateError,
       );
     });
+
+    // Dual-path behaviour: a path whose first segment is NOT a recognised root
+    // ('data', 'aggregateId', 'eventType') falls through to the default case,
+    // which sets root=event.data and keeps ALL segments as the navigation path.
+    // This means 'answers.q1' and 'data.answers.q1' are equivalent — both
+    // resolve to event.data['answers']['q1']. The following tests document and
+    // pin this behaviour so readers and future maintainers are not surprised.
+    test(
+      'shorthand path without data. prefix resolves inside event.data',
+      () async {
+        // 'answers.q1' is the shorthand form; 'data.answers.q1' is the
+        // explicit form. Both must reach the same value.
+        const shorthand = CompositeKey(['answers.q1']);
+        const explicit = CompositeKey(['data.answers.q1']);
+        final event = _event(
+          data: {
+            'answers': {'q1': 'yes'},
+          },
+        );
+        expect(shorthand.extract(event), 'yes');
+        expect(explicit.extract(event), 'yes');
+        // Confirm the two forms produce identical composite keys.
+        expect(shorthand.extract(event), explicit.extract(event));
+      },
+    );
+
+    test('aggregateId path returns event.aggregateId', () {
+      const k = CompositeKey(['aggregateId']);
+      expect(k.extract(_event(aggregateId: 'agg-xyz')), 'agg-xyz');
+    });
+
+    test('eventType path returns event.eventType', () {
+      const k = CompositeKey(['eventType']);
+      expect(k.extract(_event()), 'permission_granted');
+    });
+
+    test('composite key mixes aggregateId, eventType, and data paths', () {
+      const k = CompositeKey(['aggregateId', 'eventType', 'data.role']);
+      expect(
+        k.extract(_event(aggregateId: 'a1', data: {'role': 'owner'})),
+        'a1|permission_granted|owner',
+      );
+    });
   });
 }
