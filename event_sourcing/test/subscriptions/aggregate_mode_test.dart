@@ -1,0 +1,171 @@
+import 'package:event_sourcing/src/entry_type_definition.dart';
+import 'package:event_sourcing/src/entry_type_registry.dart';
+import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
+import 'package:event_sourcing/src/projections/subscription_filter.dart';
+import 'package:event_sourcing/src/promoters/promoter_registry.dart';
+import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
+import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/sembast_backend.dart';
+import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
+import 'package:event_sourcing/src/subscriptions/update.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
+
+class _DiaryEntry {
+  final String entryId;
+  final Map<String, Object?> answers;
+  _DiaryEntry({required this.entryId, required this.answers});
+  static _DiaryEntry fromMap(Map<String, Object?> m) => _DiaryEntry(
+    entryId: m['latestEventId'] as String? ?? '_',
+    answers: (m['answers'] as Map?)?.cast<String, Object?>() ?? {},
+  );
+}
+
+Future<EventStore> _open() async {
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'am-${DateTime.now().microsecondsSinceEpoch}.db',
+  );
+  final backend = SembastBackend(database: db);
+  await EventStore.open(storage: backend);
+
+  final entryTypes = EntryTypeRegistry()
+    ..register(
+      const EntryTypeDefinition(
+        id: 'epistaxis_event',
+        registeredVersion: 1,
+        name: 'Epistaxis Event',
+        widgetId: 'w',
+        widgetConfig: <String, Object?>{},
+      ),
+    );
+
+  final projections = ProjectionRegistry()
+    ..register(
+      AggregateProjectionSpec(
+        viewName: 'diary_entries',
+        aggregateType: 'DiaryEntry',
+        interest: const SubscriptionFilter(aggregateTypes: {'DiaryEntry'}),
+        tombstoneEventTypes: const {'tombstone'},
+      ),
+    );
+  projections.seal();
+
+  return EventStore(
+    backend: backend,
+    entryTypes: entryTypes,
+    source: const Source(
+      hopId: 'test',
+      identifier: 'test-instance',
+      softwareVersion: '0.0.0-test',
+    ),
+    securityContexts: SembastSecurityContextStore(backend: backend),
+    projections: projections,
+    promoters: PromoterRegistry(),
+  );
+}
+
+Future<void> _append(
+  EventStore store,
+  String aggId,
+  String type, [
+  Map<String, Object?>? data,
+]) => store.append(
+  entryType: 'epistaxis_event',
+  entryTypeVersion: 1,
+  aggregateId: aggId,
+  aggregateType: 'DiaryEntry',
+  eventType: type,
+  data: data ?? const <String, Object?>{},
+  initiator: const UserInitiator('u'),
+);
+
+void main() {
+  test(
+    'snapshot for not-yet-existing aggregate emits null-value Snapshot',
+    () async {
+      final store = await _open();
+      final updates = <Update<_DiaryEntry?>>[];
+      final sub = store
+          .subscribe(
+            SubscriptionFilter(aggregates: const {'never-created'}),
+            AggregateMode<_DiaryEntry?>(
+              viewName: 'diary_entries',
+              mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            ),
+          )
+          .listen(updates.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(updates.length, 1);
+      expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+      expect((updates.first as Snapshot).value, isNull);
+      await sub.cancel();
+      await store.close();
+    },
+  );
+
+  test(
+    'snapshot for existing aggregate carries current state; subsequent appends emit Delta',
+    () async {
+      final store = await _open();
+      await _append(store, 'e1', 'finalized', {
+        'answers': {'q1': 'yes'},
+      });
+
+      final updates = <Update<_DiaryEntry?>>[];
+      final sub = store
+          .subscribe(
+            SubscriptionFilter(aggregates: const {'e1'}),
+            AggregateMode<_DiaryEntry?>(
+              viewName: 'diary_entries',
+              mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            ),
+          )
+          .listen(updates.add);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Snapshot delivered
+      expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+      expect((updates.first as Snapshot).value, isNotNull);
+
+      await _append(store, 'e1', 'checkpoint', {
+        'answers': {'q2': 'no'},
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(updates.any((u) => u is Delta<_DiaryEntry?>), isTrue);
+      final delta = updates.whereType<Delta<_DiaryEntry?>>().last;
+      expect(delta.value!.answers, {'q1': 'yes', 'q2': 'no'});
+      await sub.cancel();
+      await store.close();
+    },
+  );
+
+  test('tombstone produces Tombstone update for active subscribers', () async {
+    final store = await _open();
+    await _append(store, 'e1', 'finalized', {
+      'answers': {'q1': 'yes'},
+    });
+
+    final updates = <Update<_DiaryEntry?>>[];
+    final sub = store
+        .subscribe(
+          SubscriptionFilter(aggregates: const {'e1'}),
+          AggregateMode<_DiaryEntry?>(
+            viewName: 'diary_entries',
+            mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+          ),
+        )
+        .listen(updates.add);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    await _append(store, 'e1', 'tombstone');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(updates.any((u) => u is Tombstone<_DiaryEntry?>), isTrue);
+    await sub.cancel();
+    await store.close();
+  });
+}

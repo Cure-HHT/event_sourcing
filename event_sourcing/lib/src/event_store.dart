@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/materialization/materializer.dart';
+import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
@@ -217,57 +218,82 @@ class EventStore {
     }
   }
 
-  /// Async* generator for [AggregateMode] subscribe.
+  /// Builds a live [AggregateMode] stream via a [StreamController].
   ///
   /// Atomic snapshot-then-attach: opens a buffered live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and the live-stream attach.
+  /// snapshot read and the live-stream attach. The [StreamController] is
+  /// closed when the subscriber cancels, preventing infinite blocking.
   Stream<Update<T>> _subscribeAggregate<T>(
     SubscriptionFilter filter,
     AggregateMode<T> mode,
-  ) async* {
-    // Buffer live changes that arrive while we read the snapshot.
-    final liveBuffer = <RowChange>[];
-    final liveSub = _subs.rowChanges(mode.viewName).listen(liveBuffer.add);
-    try {
+  ) {
+    late StreamController<Update<T>> controller;
+    StreamSubscription<RowChange>? liveSub;
+
+    Future<void> start() async {
+      // Buffer live changes that arrive while we read the snapshot.
+      final liveBuffer = <RowChange>[];
+      liveSub = _subs
+          .rowChanges(mode.viewName)
+          .listen(liveBuffer.add, onDone: () => controller.close());
+
       // Snapshot read
       final aggregateIds = filter.aggregates;
       if (aggregateIds == null) {
-        // All rows in the view (no per-aggregate narrowing)
         final rows = await backend.findViewRows(mode.viewName);
         for (final row in rows) {
-          yield Snapshot<T>(
-            value: mode.mapper(row),
-            sequence: (row['sequence'] as int?) ?? 0,
+          if (controller.isClosed) return;
+          controller.add(
+            Snapshot<T>(
+              value: mode.mapper(row),
+              sequence: (row['sequence'] as int?) ?? 0,
+            ),
           );
         }
       } else {
         for (final aggId in aggregateIds) {
+          if (controller.isClosed) return;
           final row = await backend.transaction(
             (txn) => backend.readViewRowInTxn(txn, mode.viewName, aggId),
           );
-          yield Snapshot<T>(
-            value: row == null ? null : mode.mapper(row),
-            sequence: (row?['sequence'] as int?) ?? 0,
+          controller.add(
+            Snapshot<T>(
+              value: row == null ? null : mode.mapper(row),
+              sequence: (row?['sequence'] as int?) ?? 0,
+            ),
           );
         }
       }
 
       // Drain buffered live changes that arrived during snapshot read.
       for (final change in liveBuffer) {
+        if (controller.isClosed) return;
         final u = _changeToUpdate<T>(change, filter, mode);
-        if (u != null) yield u;
+        if (u != null) controller.add(u);
       }
       liveBuffer.clear();
 
-      // Attach to live stream proper.
-      await for (final change in _subs.rowChanges(mode.viewName)) {
+      // Swap buffered listener to forward mode.
+      await liveSub!.cancel();
+      if (controller.isClosed) return;
+      liveSub = _subs.rowChanges(mode.viewName).listen((change) {
+        if (controller.isClosed) return;
         final u = _changeToUpdate<T>(change, filter, mode);
-        if (u != null) yield u;
-      }
-    } finally {
-      await liveSub.cancel();
+        if (u != null) controller.add(u);
+      }, onDone: () => controller.close());
     }
+
+    controller = StreamController<Update<T>>(
+      onListen: () => start(),
+      onCancel: () async {
+        await liveSub?.cancel();
+        liveSub = null;
+        if (!controller.isClosed) await controller.close();
+      },
+    );
+
+    return controller.stream;
   }
 
   Update<T>? _changeToUpdate<T>(
@@ -322,6 +348,7 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
+    List<AggregateFoldChange> rowChanges = const [];
     final event = await backend.transaction<StoredEvent?>((txn) async {
       final stored = await appendInTxn(
         txn,
@@ -340,7 +367,7 @@ class EventStore {
         dedupeByContent: dedupeByContent,
       );
       if (stored != null) {
-        await _interpreter.applyEvent(
+        rowChanges = await _interpreter.applyEvent(
           txn: txn,
           backend: backend,
           event: stored,
@@ -351,6 +378,16 @@ class EventStore {
 
     if (event == null) return null;
     _subs.publishEvent(event);
+    for (final change in rowChanges) {
+      _subs.publishRowChange(
+        viewName: change.viewName,
+        aggregateId: change.aggregateId,
+        value: change.newValue,
+        sequence: change.sequence,
+        cause: change.cause,
+        isTombstone: change.isTombstone,
+      );
+    }
     unawaited(syncCycleTrigger?.call());
     return event;
   }

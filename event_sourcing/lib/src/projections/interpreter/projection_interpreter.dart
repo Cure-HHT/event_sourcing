@@ -11,29 +11,38 @@ class ProjectionInterpreter {
   final ProjectionRegistry registry;
   ProjectionInterpreter(this.registry);
 
-  Future<void> applyEvent({
+  /// Apply [event] to all matching projection specs inside [txn].
+  /// Returns the list of [AggregateFoldChange] records from every spec
+  /// that produced a change; null results (e.g. tombstone of non-existent
+  /// row) are excluded. The caller uses this list for post-commit subscriber
+  /// notification via [SubscriptionEngine.publishRowChange].
+  Future<List<AggregateFoldChange>> applyEvent({
     required Txn txn,
     required StorageBackend backend,
     required StoredEvent event,
   }) async {
+    final changes = <AggregateFoldChange>[];
     for (final spec in registry.all()) {
       if (!spec.interest.matches(event)) continue;
+      AggregateFoldChange? change;
       switch (spec) {
         case AggregateProjectionSpec():
-          await AggregateFold.applyEvent(
+          change = await AggregateFold.applyEvent(
             txn: txn,
             backend: backend,
             spec: spec,
             event: event,
           );
         case TableProjectionSpec():
-          await TableFold.applyEvent(
+          change = await TableFold.applyEvent(
             txn: txn,
             backend: backend,
             spec: spec,
             event: event,
           );
       }
+      if (change != null) changes.add(change);
     }
+    return changes;
   }
 }

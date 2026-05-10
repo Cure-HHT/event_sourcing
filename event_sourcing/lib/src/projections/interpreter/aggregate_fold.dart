@@ -4,6 +4,26 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/txn.dart';
 
+/// Change record returned by [AggregateFold.applyEvent] and
+/// [TableFold.applyEvent]. Collected by [ProjectionInterpreter.applyEvent]
+/// and returned to [EventStore.append] for post-commit subscriber notification.
+class AggregateFoldChange {
+  final String viewName;
+  final String aggregateId;
+  final Map<String, Object?>? newValue; // null = tombstoned
+  final int sequence;
+  final String cause;
+  final bool isTombstone;
+  AggregateFoldChange({
+    required this.viewName,
+    required this.aggregateId,
+    required this.newValue,
+    required this.sequence,
+    required this.cause,
+    required this.isTombstone,
+  });
+}
+
 class AggregateFold {
   /// Applies one [event] to its aggregate row under [spec], inside [txn].
   /// Implements the AggregateProjectionSpec fold mechanics:
@@ -12,15 +32,32 @@ class AggregateFold {
   /// - apply derived fields,
   /// - stamp metadata,
   /// - delete row if event.eventType is in spec.tombstoneEventTypes.
-  static Future<void> applyEvent({
+  ///
+  /// Returns an [AggregateFoldChange] describing the mutation for subscriber
+  /// notification, or `null` when the event was a tombstone for a row that
+  /// did not exist (no change occurred).
+  static Future<AggregateFoldChange?> applyEvent({
     required Txn txn,
     required StorageBackend backend,
     required AggregateProjectionSpec spec,
     required StoredEvent event,
   }) async {
     if (spec.tombstoneEventTypes.contains(event.eventType)) {
+      final existing = await backend.readViewRowInTxn(
+        txn,
+        spec.viewName,
+        event.aggregateId,
+      );
       await backend.deleteViewRowInTxn(txn, spec.viewName, event.aggregateId);
-      return;
+      if (existing == null) return null; // nothing to report
+      return AggregateFoldChange(
+        viewName: spec.viewName,
+        aggregateId: event.aggregateId,
+        newValue: null,
+        sequence: event.sequenceNumber,
+        cause: event.eventType,
+        isTombstone: true,
+      );
     }
     final priorRaw = await backend.readViewRowInTxn(
       txn,
@@ -47,11 +84,20 @@ class AggregateFold {
       );
     }
 
+    final immutableNext = Map<String, Object?>.unmodifiable(next);
     await backend.upsertViewRowInTxn(
       txn,
       spec.viewName,
       event.aggregateId,
-      Map<String, Object?>.unmodifiable(next),
+      immutableNext,
+    );
+    return AggregateFoldChange(
+      viewName: spec.viewName,
+      aggregateId: event.aggregateId,
+      newValue: immutableNext,
+      sequence: event.sequenceNumber,
+      cause: event.eventType,
+      isTombstone: false,
     );
   }
 
