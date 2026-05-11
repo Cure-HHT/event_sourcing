@@ -53,7 +53,7 @@ const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
 /// events are the CQRS discriminator JNY-02 walks through the EVENTS
 /// panel.
 const Map<String, String> demoAggregateTypeByEntryTypeId = <String, String>{
-  'demo_note': 'DiaryEntry',
+  'demo_note': 'Note',
   'red_button_pressed': 'RedButtonPressed',
   'green_button_pressed': 'GreenButtonPressed',
   'blue_button_pressed': 'BlueButtonPressed',

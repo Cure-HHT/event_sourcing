@@ -131,7 +131,7 @@ Future<void> _appendDemoNote(_Pane pane, String aggregateId) async {
     entryType: 'demo_note',
     entryTypeVersion: 1,
     aggregateId: aggregateId,
-    aggregateType: 'DiaryEntry',
+    aggregateType: 'Note',
     eventType: 'finalized',
     data: const <String, Object?>{
       'answers': <String, Object?>{'title': 't', 'body': 'b'},

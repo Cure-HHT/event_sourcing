@@ -18,7 +18,7 @@ void main() {
 
   group('action-button entry types (RED / GREEN / BLUE)', () {
     // Verifies: EntryTypeDefinition schema + JNY-02 CQRS discriminator —
-    //   each action-button type has its own id and a non-'DiaryEntry'
+    //   each action-button type has its own id and a non-'Note'
     //   aggregate type stored separately in demoAggregateTypeByEntryTypeId
     //   (EntryTypeDefinition itself carries no aggregateType field).
     test('redButtonType.id == "red_button_pressed"', () {
@@ -33,11 +33,11 @@ void main() {
   });
 
   group('demoAggregateTypeByEntryTypeId (CQRS discriminator for JNY-02)', () {
-    // Verifies: JNY-02 — action-button events carry a non-'DiaryEntry'
+    // Verifies: JNY-02 — action-button events carry a non-'Note'
     //   aggregate_type so the materializer skips them and the events
     //   panel shows them with variant aggregate_type.
-    test('demo_note maps to "DiaryEntry"', () {
-      expect(demoAggregateTypeByEntryTypeId['demo_note'], 'DiaryEntry');
+    test('demo_note maps to "Note"', () {
+      expect(demoAggregateTypeByEntryTypeId['demo_note'], 'Note');
     });
     test('red_button_pressed maps to "RedButtonPressed"', () {
       expect(
@@ -57,14 +57,14 @@ void main() {
         'BlueButtonPressed',
       );
     });
-    test('all three action-button aggregate types are != "DiaryEntry"', () {
+    test('all three action-button aggregate types are != "Note"', () {
       const actionIds = <String>[
         'red_button_pressed',
         'green_button_pressed',
         'blue_button_pressed',
       ];
       for (final id in actionIds) {
-        expect(demoAggregateTypeByEntryTypeId[id], isNot('DiaryEntry'));
+        expect(demoAggregateTypeByEntryTypeId[id], isNot('Note'));
       }
     });
   });
