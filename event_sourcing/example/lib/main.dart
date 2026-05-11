@@ -116,15 +116,15 @@ Future<_PaneRuntime> _bootstrapPane({
     bridge: bridge,
   );
 
-  // Projection spec for diary_entries view. AggregateProjectionSpec folds
-  // demo_note events (aggregateType 'DiaryEntry') into the diary_entries
-  // view. The tombstone event type deletes the row so the MATERIALIZED panel
+  // Projection spec for notes view. AggregateProjectionSpec folds
+  // demo_note events (aggregateType 'Note') into the notes view.
+  // The tombstone event type deletes the row so the MATERIALIZED panel
   // reflects deletions live. Button-press entry types are excluded by the
   // interest filter (they use different aggregateTypes).
   final diaryProjections = ProjectionRegistry()
     ..register(
       const AggregateProjectionSpec(
-        viewName: 'diary_entries',
+        viewName: 'notes',
         interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
         tombstoneEventTypes: <String>{'tombstone'},
       ),

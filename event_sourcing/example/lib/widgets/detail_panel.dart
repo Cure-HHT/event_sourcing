@@ -96,10 +96,10 @@ class _DetailPanelState extends State<DetailPanel> {
     if (aggId != null) {
       return _AsyncJson(
         loader: () async {
-          // Read the aggregate's row from the diary_entries view.
+          // Read the aggregate's row from the notes view.
           // AggregateFold stores: aggregateId, latestEventId, updatedAt,
           // firstEventTimestamp, sequence, plus event.data merged in.
-          final rows = await widget.backend.findViewRows('diary_entries');
+          final rows = await widget.backend.findViewRows('notes');
           Map<String, Object?>? row;
           for (final r in rows) {
             if ((r['aggregateId'] as String?) == aggId) {

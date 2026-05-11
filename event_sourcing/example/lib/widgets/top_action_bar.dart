@@ -256,7 +256,7 @@ class _TopActionBarState extends State<TopActionBar> {
             try {
               final count = await rebuildView(
                 store: widget.datastore.eventStore,
-                viewName: 'diary_entries',
+                viewName: 'notes',
                 targetVersionByEntryType: const <String, int>{'demo_note': 1},
               );
               if (!mounted) return;

@@ -6,7 +6,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 // Validated by: JNY-01 (demo_note lifecycle), JNY-02 (CQRS via action
 // types' distinct aggregate types in demoAggregateTypeByEntryTypeId).
 
-/// Regular diary-like entry type. Materializes into `diary_entries` via
+/// Regular diary-like entry type. Materializes into the `notes` view via
 /// the `AggregateProjectionSpec` registered in `_bootstrapPane`.
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',

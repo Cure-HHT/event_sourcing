@@ -20,19 +20,23 @@ class MaterializedPanel extends StatefulWidget {
   State<MaterializedPanel> createState() => _MaterializedPanelState();
 }
 
-/// Raw row shape written by AggregateProjectionSpec into the diary_entries
-/// view. Fields are whatever demo_note event.data contains (merged via
+/// Raw row shape written by AggregateProjectionSpec into the notes view.
+/// Fields are whatever demo_note event.data contains (merged via
 /// AggregateFold's deep-merge) plus the metadata stamp.
 class _ViewRow {
   const _ViewRow({
     required this.aggregateId,
     required this.updatedAt,
-    required this.isDeleted,
+    required this.title,
   });
 
   final String aggregateId;
   final DateTime updatedAt;
-  final bool isDeleted;
+
+  /// Note title extracted from the `answers.title` field written by
+  /// the demo's Start / Complete action via `_collectAnswers`. Empty
+  /// when the operator left the title field blank.
+  final String title;
 }
 
 class _MaterializedPanelState extends State<MaterializedPanel> {
@@ -66,7 +70,9 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
     try {
       // AggregateFold stamps 'aggregateId' and 'updatedAt' into every view row.
       // Tombstone events delete the row, so presence means the aggregate is live.
-      final rawRows = await widget.backend.findViewRows('diary_entries');
+      // The demo_note action also deep-merges event.data which carries
+      // answers.title — extracted here so the panel can show meaningful labels.
+      final rawRows = await widget.backend.findViewRows('notes');
       final rows = <_ViewRow>[];
       for (final raw in rawRows) {
         final aggregateId = raw['aggregateId'] as String? ?? '';
@@ -74,12 +80,14 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
         final updatedAt = updatedAtStr != null
             ? DateTime.tryParse(updatedAtStr) ?? DateTime(0)
             : DateTime(0);
+        // Dig out title from the answers map merged in by AggregateFold.
+        final answers = raw['answers'] as Map<Object?, Object?>?;
+        final title = answers?['title'] as String? ?? '';
         rows.add(
           _ViewRow(
             aggregateId: aggregateId,
             updatedAt: updatedAt,
-            isDeleted:
-                false, // tombstone removes the row; presence means not deleted
+            title: title,
           ),
         );
       }
@@ -142,6 +150,11 @@ class _MaterializedRow extends StatelessWidget {
     final short = row.aggregateId.length >= 8
         ? row.aggregateId.substring(row.aggregateId.length - 8)
         : row.aggregateId;
+    // Show title when present; fall back to the UUID tail so the row is
+    // never blank. Overflow ellipsis prevents wrapping in the narrow column.
+    final label = row.title.isNotEmpty
+        ? '${row.title}  (…$short)'
+        : 'agg-$short';
     return InkWell(
       onTap: onTap,
       child: Container(
@@ -150,7 +163,11 @@ class _MaterializedRow extends StatelessWidget {
           border: selected ? demoSelectedBorder : null,
         ),
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        child: Text('agg-$short', style: DemoText.body),
+        child: Text(
+          label,
+          style: DemoText.body,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
     );
   }
