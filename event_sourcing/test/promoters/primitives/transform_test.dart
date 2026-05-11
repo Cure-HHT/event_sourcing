@@ -1,6 +1,5 @@
 // event_sourcing/test/promoters/primitives/transform_test.dart
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
-import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -54,19 +53,6 @@ void main() {
       const t = DropField(fieldName: 'missing');
       final result = t.apply(const {'kept': 2});
       expect(result, {'kept': 2});
-    });
-  });
-
-  group('DeriveField', () {
-    test('computes new field via derivation primitive', () {
-      const t = DeriveField(
-        fieldName: 'echo',
-        from: DottedPathLookup('source', fallback: ConstantValue('NA')),
-      );
-      final result = t.apply(const {
-        'source': 'hello',
-      }, firstEventTimestamp: DateTime.utc(2026, 1, 1));
-      expect(result['echo'], 'hello');
     });
   });
 

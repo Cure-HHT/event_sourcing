@@ -1,6 +1,4 @@
 // event_sourcing/lib/src/promoters/primitives/transform.dart
-import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
-
 sealed class TransformPrimitive {
   const TransformPrimitive();
   Map<String, Object?> apply(
@@ -59,26 +57,6 @@ class DropField extends TransformPrimitive {
   }) {
     if (!input.containsKey(fieldName)) return input;
     final next = Map<String, Object?>.from(input)..remove(fieldName);
-    return Map.unmodifiable(next);
-  }
-}
-
-class DeriveField extends TransformPrimitive {
-  final String fieldName;
-  final DerivedFieldComputation from;
-  const DeriveField({required this.fieldName, required this.from});
-
-  @override
-  Map<String, Object?> apply(
-    Map<String, Object?> input, {
-    DateTime? firstEventTimestamp,
-  }) {
-    final next = Map<String, Object?>.from(input);
-    next[fieldName] = from.resolve(
-      rowState: input,
-      firstEventTimestamp:
-          firstEventTimestamp ?? DateTime.fromMillisecondsSinceEpoch(0),
-    );
     return Map.unmodifiable(next);
   }
 }
