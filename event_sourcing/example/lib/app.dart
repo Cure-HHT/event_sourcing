@@ -230,7 +230,10 @@ class _DemoPaneState extends State<DemoPane> {
       _divider('events', fallback: 280),
       SizedBox(
         width: _widthOf('audit', fallback: 320),
-        child: AuditPanel(backend: widget.backend),
+        child: AuditPanel(
+          backend: widget.backend,
+          eventStore: widget.datastore.eventStore,
+        ),
       ),
       _divider('audit', fallback: 320),
       for (final dest in widget.appState.destinations) ...<Widget>[

@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 /// Demonstrates the typed cross-store audit query (`StorageBackend.queryAudit`,
 /// REQ-d00151). Renders one row per `(event, securityContext)` pair returned
 /// by the join, with an optional `flow_token` filter. Re-queries on every
-/// `watchEvents` arrival so the list stays live without a polling timer.
+/// event arrival so the list stays live without a polling timer.
 ///
 /// Empty-state in the stock demo: the panel is empty until events are
 /// recorded with `SecurityDetails`. Flip the `sec ctx` toggle on the top
@@ -16,9 +16,14 @@ import 'package:flutter/material.dart';
 /// the toggle OFF do not write a security_context sidecar row and so do
 /// not appear in the join.
 class AuditPanel extends StatefulWidget {
-  const AuditPanel({required this.backend, super.key});
+  const AuditPanel({
+    required this.backend,
+    required this.eventStore,
+    super.key,
+  });
 
   final StorageBackend backend;
+  final EventStore eventStore;
 
   @override
   State<AuditPanel> createState() => _AuditPanelState();
@@ -26,7 +31,7 @@ class AuditPanel extends StatefulWidget {
 
 class _AuditPanelState extends State<AuditPanel> {
   PagedAudit? _page;
-  StreamSubscription<StoredEvent>? _eventsSub;
+  StreamSubscription<Update<StoredEvent>>? _eventsSub;
   String? _flowTokenFilter;
   final TextEditingController _filterController = TextEditingController();
 
@@ -36,10 +41,15 @@ class _AuditPanelState extends State<AuditPanel> {
     _refresh();
     // Re-query on every event arrival — keeps the audit list live without
     // its own polling timer (mirrors event_stream_panel's pattern).
-    _eventsSub = widget.backend.watchEvents().listen((_) {
-      if (!mounted) return;
-      _refresh();
-    });
+    _eventsSub = widget.eventStore
+        .subscribe<StoredEvent>(
+          const SubscriptionFilter(includeSystemEvents: true),
+          const Events(),
+        )
+        .listen((_) {
+          if (!mounted) return;
+          _refresh();
+        });
   }
 
   @override
@@ -57,7 +67,7 @@ class _AuditPanelState extends State<AuditPanel> {
         _page = page;
       });
     } catch (_) {
-      // Non-fatal: next watchEvents tick retries.
+      // Non-fatal: next event tick retries.
     }
   }
 

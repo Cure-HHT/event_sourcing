@@ -17,8 +17,8 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
     entryTypes.register(defn);
   }
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'mobile-device',

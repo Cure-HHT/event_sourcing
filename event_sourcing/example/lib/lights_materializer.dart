@@ -5,9 +5,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// press flips the corresponding light's `is_on` state and stamps
 /// `last_toggled_at`.
 ///
-/// Used by the example's `LightsPanel` to demonstrate `watchView` —
-/// rendering changes are driven by the view writes, without any
-/// panel-side polling or event-stream filtering.
+/// Used by the example's `LightsPanel` — rendering changes are driven by
+/// the view writes, with the panel re-fetching via [StorageBackend.findViewRows]
+/// on every event subscription delta.
 ///
 /// View row shape (one per color, keyed by color name):
 ///
@@ -15,10 +15,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// {'color': 'red', 'is_on': true, 'last_toggled_at': '2026-04-25T...'}
 /// ```
 ///
-/// This is a standalone fold helper (not a Materializer subclass). Call
-/// [LightsMaterializer.applyEvent] after appending a button-press event
-/// to update the view, or [LightsMaterializer.applyInTxn] from within
-/// a backend transaction.
+/// This is a standalone fold helper. Call [LightsMaterializer.applyInTxn]
+/// from within a backend transaction after appending a button-press event
+/// to update the view.
 class LightsMaterializer {
   const LightsMaterializer();
 
