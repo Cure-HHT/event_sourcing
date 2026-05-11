@@ -205,8 +205,9 @@ type `X` whose `view_target_versions[viewName, X]` is below
 `entryTypes.byId(X).registeredVersion`:
 
 1. `chain = promoters.chain(viewName, entryType=X, from=stored_target, to=registeredVersion)`.
-2. `affectedAggregateIds = backend.findAggregateIdsWithEventType(X)` (new
-   backend method — or equivalent indexed query against the event store).
+2. `affectedAggregateIds = backend.findAllEvents(entryType: X).map((e) => e.aggregateId).toSet()`,
+   using the entry-type filter added to `findAllEvents` (see "Generalized
+   event query" below).
 3. For each `aggregateId` in `affectedAggregateIds`:
    - Read the view row for `(viewName, aggregateId)`. Skip if absent
      (tombstoned).
@@ -223,6 +224,57 @@ that a mid-promotion crash rolls back cleanly and the next boot retries.
 
 The snapshot ≡ replay equivalence makes step 7's TransformChain application
 correct without iterating events. This is the cheap-by-design move.
+
+### Generalized event query
+
+Snapshot promotion needs to know "which aggregates have ever produced an
+event of entry type `X`?" Rather than adding a narrow helper for that single
+case, this design generalizes the existing `StorageBackend.findAllEvents`
+read primitive with two additional optional filters:
+
+```dart
+Future<List<StoredEvent>> findAllEvents({
+  int? afterSequence,
+  int? limit,
+  String? originatorHopId,
+  String? originatorIdentifier,
+  String? entryType,                  // new
+  DateTime? clientTimestampStart,     // new — inclusive lower bound
+  DateTime? clientTimestampEnd,       // new — inclusive upper bound
+});
+```
+
+Semantics: all supplied filters compose with AND. Existing callers that
+omit the new filters see unchanged behavior. The transactional
+`findAllEventsInTxn` gets the same parameter additions.
+
+The wider rationale: this is a generally-useful query primitive that
+substrate consumers will reach for whenever the audit-stream UX gets richer
+than "show me the global log in order." Concrete consumer cases include:
+
+- "Show me every event of type `entry_recorded` in the last 30 days."
+- "Audit all `permission_granted` events between 2026-05-01 and 2026-05-31."
+- "Investigation: every event of type `action_denial` produced by this
+  install (originator filter) of type X (entry-type filter) in the
+  incident window (timestamp filter)."
+
+Adding the parameters to the single existing primitive keeps the substrate
+surface compact while making these queries trivial to express. Phase II
+multi-source filtering composes on top of this without further changes.
+
+The `StorageBackend` interface is deliberately backend-agnostic. Concrete
+implementations will need index work to keep the filtered query under-load
+on real datasets — composite indexes on `entry_type` and
+`client_timestamp` for SQL backends, equivalent secondary-index work for
+the sembast reference impl, etc. Filter-translation is naturally a SQL
+`WHERE ... AND ...` for SQL-shaped backends; the substrate's API does not
+prescribe how. Backend portability is its own concern and is captured
+separately in the roadmap.
+
+A thin `EventStore.find(...)` wrapper that exposes the same parameters
+without forcing callers to reach for the backend directly is a candidate
+expose-point but not strictly required by this design — `EventStore`
+already has `backend` accessible to internal use.
 
 ### Downgrade refusal
 
@@ -317,6 +369,10 @@ would be load-bearing, so we just pay for the query at boot.
   `registeredVersion` is below the highest `view_target_versions` value.
 - **Unit:** `DeriveField` group removed from `transform_test.dart`; remaining
   primitives' tests pass unchanged.
+- **Unit:** new tests for the extended `findAllEvents` filters:
+  `entryType`-only, `clientTimestampStart`/`clientTimestampEnd`-only,
+  combined-filter AND semantics, existing filter axes still honored, empty
+  result when no events match.
 - **Integration:** both example apps' bootstrap and golden-path actions
   exercised end-to-end with the new substrate-stamped version; no behavioral
   regression.
@@ -347,16 +403,17 @@ Existing affected requirements requiring revision or supersedure:
 
 ## Open implementation questions (small)
 
-- `backend.findAggregateIdsWithEventType(X)` is a new query. The sembast
-  reference backend can serve it via the existing event store with a filter
-  predicate; performance characteristics on large logs are acceptable
-  because it runs only when a version bump is detected (rare). Worth
-  benchmarking on the example_action_permissions integration test scale to
-  confirm.
-- Whether the boot-time snapshot promotion should emit one audit event per
-  `(viewName, X)` pair or one rolled-up event per boot. Per-pair has higher
-  audit fidelity; rolled-up is less log clutter. Recommend per-pair, but
-  flag for review.
+- Each `StorageBackend` implementation will need index work to keep the
+  extended `findAllEvents` query (entry-type + timestamp range) responsive
+  on large logs. Concrete index strategy is per-backend and per-deployment
+  work, not pinned by this design. Snapshot promotion at boot is rare;
+  audit-stream UX queries may be frequent — the index choice is driven by
+  the latter. Backend portability and SQL-side translation are tracked
+  separately in the roadmap.
+- Whether to ship a thin `EventStore.find(...)` wrapper around the
+  generalized `findAllEvents` query, or leave callers to reach for
+  `store.backend.findAllEvents(...)`. Lightweight question; the
+  implementation plan can decide based on call-site ergonomics.
 
 ## References
 
