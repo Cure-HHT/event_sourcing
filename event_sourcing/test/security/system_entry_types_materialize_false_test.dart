@@ -1,11 +1,11 @@
-// Verifies: REQ-d00154-D — all 12 reserved system entry types ship
+// Verifies: REQ-d00154-D — all reserved system entry types ship
 //   materialize:false. Cross-aggregate stream events stay out of view-
 //   side projection on every install, on both the local-append path
 //   and the ingest path (the outer gate `def.materialize` short-
 //   circuits the materializer loop in `_appendInTxn` and
 //   `_ingestOneInTxn` before any materializer is consulted).
 //
-// Regression intent: a future refactor that flips one of the twelve
+// Regression intent: a future refactor that flips one of the reserved
 //   `EntryTypeDefinition` records to `materialize: true` would silently
 //   start firing materializers on cross-aggregate stream events, which
 //   is out of scope for Phase 4.22. This test fails loudly if that
@@ -29,7 +29,7 @@ void main() {
     //   post-bootstrap so the test exercises the actual auto-registered
     //   `EntryTypeDefinition` instances rather than re-importing the
     //   internal `kSystemEntryTypes` list.
-    test('REQ-d00154-D: all 12 reserved system entry types have '
+    test('REQ-d00154-D: all reserved system entry types have '
         'materialize:false', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'mat-false-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -44,21 +44,24 @@ void main() {
         );
 
         // The reserved id set is the canonical list of system entry
-        // types and SHALL be exactly 12. A change here implies a new
+        // types and SHALL be exactly 14. A change here implies a new
         // system entry type was added without flipping this assertion;
         // the test forces an explicit decision on whether the new id
         // also ships materialize:false.
         //
-        // Count is 12: 10 original system audits + 2 substrate-internal
+        // Count is 14: 10 original system audits + 2 substrate-internal
         // lib-version boot events (lib_version_initialized,
         // lib_version_changed) added in the Task 3 fix so that
         // SubscriptionFilter correctly gates them behind
-        // includeSystemEvents:true.
+        // includeSystemEvents:true + 2 added by CUR-1317 entry-type-
+        // version-substrate-owned work (ingest-audit covering raw-path
+        // ingest-audit callers, and view_snapshot_promoted emitted by
+        // the boot-time snapshot-promotion pass).
         expect(
           kReservedSystemEntryTypeIds.length,
-          equals(12),
+          equals(14),
           reason:
-              'kReservedSystemEntryTypeIds is the canonical 12-element '
+              'kReservedSystemEntryTypeIds is the canonical 14-element '
               'set per REQ-d00154-D; adding a new system entry type '
               'requires updating this expectation explicitly.',
         );
@@ -86,6 +89,36 @@ void main() {
       } finally {
         await backend.close();
       }
+    });
+
+    test('kSystemEntryTypes registers ingest-audit at version 1, '
+        'non-materializing', () {
+      final byId = {for (final d in kSystemEntryTypes) d.id: d};
+      expect(
+        byId.containsKey('ingest-audit'),
+        isTrue,
+        reason:
+            'ingest-audit must be a registered system entry type so the '
+            'raw-path ingest-audit callers can read registeredVersion from '
+            'the registry instead of hardcoding.',
+      );
+      expect(byId['ingest-audit']!.registeredVersion, 1);
+      expect(byId['ingest-audit']!.materialize, isFalse);
+    });
+
+    test('kSystemEntryTypes registers view_snapshot_promoted at version 1, '
+        'non-materializing', () {
+      final byId = {for (final d in kSystemEntryTypes) d.id: d};
+      expect(
+        byId.containsKey('view_snapshot_promoted'),
+        isTrue,
+        reason:
+            'view_snapshot_promoted is emitted by the boot-time '
+            'snapshot-promotion pass and must be in the registry to be '
+            'append-stampable under the new substrate-owned version model.',
+      );
+      expect(byId['view_snapshot_promoted']!.registeredVersion, 1);
+      expect(byId['view_snapshot_promoted']!.materialize, isFalse);
     });
   });
 }

@@ -63,6 +63,16 @@ const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 //   internal and must not be admitted to destinations as user events.
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
+/// Reserved id for the raw-path ingest-audit event emitted by
+/// `EventStore.logRejectedBatch` and `_emitDuplicateReceivedInTxn`.
+/// Registered here so the raw-path callers can read
+/// `registeredVersion` from the registry instead of hardcoding.
+const String kIngestAuditEntryType = 'ingest-audit';
+
+/// Reserved id for the boot-time view-snapshot-promotion audit event
+/// emitted by the snapshot-promotion pass.
+const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
+
 /// Reserved set of ids. `bootstrapAppendOnlyDatastore` auto-registers
 /// these BEFORE iterating the caller-supplied entry-type list. A
 /// caller-supplied id colliding with one of these throws `ArgumentError`
@@ -86,14 +96,19 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kEntryTypeRegistryInitializedEntryType,
   kLibVersionInitializedEntryType,
   kLibVersionChangedEntryType,
+  kIngestAuditEntryType,
+  kViewSnapshotPromotedEntryType,
 };
 
-/// The twelve reserved system entry-type definitions covering security-
+/// The reserved system entry-type definitions covering security-
 /// context lifecycle events (redacted / compacted / purged), config-
 /// change audit events (destination registration / start_date / end_date /
 /// deletion / wedge recovery, plus retention-policy-applied per-sweep),
-/// the bootstrap registry-initialized audit, and the substrate-internal
-/// lib-version boot events (initialized / changed). All have
+/// the bootstrap registry-initialized audit, the substrate-internal
+/// lib-version boot events (initialized / changed), the raw-path
+/// `ingest-audit` event (covering `logRejectedBatch` and
+/// `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
+/// audit emitted by the boot-time snapshot-promotion pass. All have
 /// `materialize: false` so they never hit any view; they exist only to
 /// stamp an immutable event_log row for every covered mutation.
 ///
@@ -186,6 +201,18 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     id: kLibVersionChangedEntryType,
     registeredVersion: 1,
     name: 'Lib Version Changed',
+    materialize: false,
+  ),
+  EntryTypeDefinition(
+    id: kIngestAuditEntryType,
+    registeredVersion: 1,
+    name: 'Ingest Audit',
+    materialize: false,
+  ),
+  EntryTypeDefinition(
+    id: kViewSnapshotPromotedEntryType,
+    registeredVersion: 1,
+    name: 'View Snapshot Promoted',
     materialize: false,
   ),
 ];

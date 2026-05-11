@@ -256,9 +256,10 @@ void main() {
 
       try {
         // Snapshot receiver's entry-type registry pre-ingest. The set
-        // is exactly the 12 reserved system entry types
-        // auto-registered by bootstrap (10 original system audits +
-        // 2 substrate-internal lib-version boot events).
+        // is exactly the reserved system entry types auto-registered by
+        // bootstrap (10 original system audits + 2 substrate-internal
+        // lib-version boot events + 2 added by the entry-type-version-
+        // substrate-owned work: ingest-audit and view_snapshot_promoted).
         final preIds = receiver.datastore.entryTypes
             .all()
             .map((d) => d.id)
@@ -274,8 +275,8 @@ void main() {
           preIds.length,
           equals(kReservedSystemEntryTypeIds.length),
           reason:
-              'sanity: receiver registry contains exactly the 12 '
-              'reserved system entry types pre-ingest',
+              'sanity: receiver registry contains exactly the reserved '
+              'system entry types pre-ingest',
         );
 
         // Read originator's bootstrap-emitted audit.
