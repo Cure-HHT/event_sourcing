@@ -183,56 +183,72 @@ class _FifoPanelState extends State<FifoPanel> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          Text(widget.destination.id.toUpperCase(), style: DemoText.header),
-          Text(
-            formatBadge,
-            style: TextStyle(
-              color: widget.destination.serializesNatively
-                  ? DemoColors.green
-                  : DemoColors.accent,
-              fontFamily: 'monospace',
-              fontSize: 12,
+          // Controls section: scrollable so the card never overflows when
+          // the pane height is small (e.g. both panes share the screen).
+          SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Text(
+                  widget.destination.id.toUpperCase(),
+                  style: DemoText.header,
+                ),
+                Text(
+                  formatBadge,
+                  style: TextStyle(
+                    color: widget.destination.serializesNatively
+                        ? DemoColors.green
+                        : DemoColors.accent,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+                Text(
+                  _scheduleLabel(),
+                  style: const TextStyle(
+                    color: DemoColors.accent,
+                    fontFamily: 'monospace',
+                    fontSize: 14,
+                  ),
+                ),
+                if (showStartEditor) _startDateEditor(),
+                _endDateEditor(),
+                if (demo != null) _connectionDropdown(demo),
+                if (demo != null) _latencySlider(demo),
+                if (demo != null)
+                  _sliderRow(
+                    label: 'batch size',
+                    value: demo.batchSize.value.toDouble(),
+                    min: 1,
+                    max: 12,
+                    onChanged: (v) => demo.batchSize.value = v.round(),
+                  ),
+                if (demo != null)
+                  _sliderRow(
+                    label: 'accumulate (s)',
+                    value: demo.maxAccumulateTimeN.value.inSeconds.toDouble(),
+                    min: 0,
+                    max: 20,
+                    onChanged: (v) => demo.maxAccumulateTimeN.value = Duration(
+                      seconds: v.round(),
+                    ),
+                  ),
+                _opsDrawer(),
+                if (_banner != null)
+                  Container(
+                    padding: const EdgeInsets.all(4),
+                    color: DemoColors.accent,
+                    child: Text(
+                      _banner!,
+                      style: const TextStyle(
+                        color: DemoColors.bg,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
-          Text(
-            _scheduleLabel(),
-            style: const TextStyle(
-              color: DemoColors.accent,
-              fontFamily: 'monospace',
-              fontSize: 14,
-            ),
-          ),
-          if (showStartEditor) _startDateEditor(),
-          _endDateEditor(),
-          if (demo != null) _connectionDropdown(demo),
-          if (demo != null) _latencySlider(demo),
-          if (demo != null)
-            _sliderRow(
-              label: 'batch size',
-              value: demo.batchSize.value.toDouble(),
-              min: 1,
-              max: 12,
-              onChanged: (v) => demo.batchSize.value = v.round(),
-            ),
-          if (demo != null)
-            _sliderRow(
-              label: 'accumulate (s)',
-              value: demo.maxAccumulateTimeN.value.inSeconds.toDouble(),
-              min: 0,
-              max: 20,
-              onChanged: (v) =>
-                  demo.maxAccumulateTimeN.value = Duration(seconds: v.round()),
-            ),
-          _opsDrawer(),
-          if (_banner != null)
-            Container(
-              padding: const EdgeInsets.all(4),
-              color: DemoColors.accent,
-              child: Text(
-                _banner!,
-                style: const TextStyle(color: DemoColors.bg, fontSize: 12),
-              ),
-            ),
           Expanded(child: _rowList()),
         ],
       ),

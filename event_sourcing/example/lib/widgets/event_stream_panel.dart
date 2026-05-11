@@ -145,6 +145,7 @@ class _EventRow extends StatelessWidget {
           '$originBadge #${event.sequenceNumber} ${event.eventType} '
           '${event.aggregateType} $shortAgg',
           style: DemoText.body,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
     );
