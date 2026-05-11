@@ -203,6 +203,18 @@ class _InMemoryBackend extends StorageBackend {
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
   }) async {
+    if (afterSequence != null ||
+        limit != null ||
+        originatorHopId != null ||
+        originatorIdentifier != null ||
+        entryType != null ||
+        clientTimestampStart != null ||
+        clientTimestampEnd != null) {
+      throw UnimplementedError(
+        '_InMemoryBackend.findAllEvents does not implement filter parameters; '
+        'this fake is scoped to REQ-d00117-A+B (transaction atomicity).',
+      );
+    }
     final sorted = _events.values.toList()
       ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
     return sorted;
@@ -227,6 +239,15 @@ class _InMemoryBackend extends StorageBackend {
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
   }) async {
+    if (entryType != null ||
+        clientTimestampStart != null ||
+        clientTimestampEnd != null) {
+      throw UnimplementedError(
+        '_InMemoryBackend.findAllEventsInTxn does not implement entry-type '
+        'or client-timestamp filters; this fake is scoped to '
+        'REQ-d00117-A+B (transaction atomicity).',
+      );
+    }
     _assertOwnValid(txn)._check();
     final staged = _staged!;
     var sorted = staged.values.toList()
