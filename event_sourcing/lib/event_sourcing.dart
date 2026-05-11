@@ -174,14 +174,13 @@ export 'src/ingest/ingest_errors.dart'
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Materialization layer — parameterized rebuild helper (CUR-1317 Task 22/23).
-// The legacy Materializer/EntryPromoter abstractions are removed (Task 22);
-// projections now use the declarative ProjectionSpec/PromoterRegistry model.
-// MapEntryTypeDefinitionLookup is intentionally NOT exported — it lives
-// under test/test_support/ so production code cannot depend on it.
-export 'src/materialization/rebuild.dart' show rebuildView;
-
-// Projections — declarative view specs and the registry that holds them.
+// Projections — declarative view specs, the registry that holds them, and
+// the parameterized rebuild helper. The legacy Materializer/EntryPromoter
+// abstractions are removed (CUR-1317 Task 22); projections now use the
+// declarative ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
+// is intentionally NOT exported — it lives under test/test_support/ so
+// production code cannot depend on it.
+export 'src/projections/rebuild.dart' show rebuildView;
 // Callers create AggregateProjectionSpec / TableProjectionSpec values,
 // register them in a ProjectionRegistry, and pass the registry to
 // bootstrapAppendOnlyDatastore or directly to EventStore.
