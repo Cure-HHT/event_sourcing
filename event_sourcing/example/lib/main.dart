@@ -125,7 +125,6 @@ Future<_PaneRuntime> _bootstrapPane({
     ..register(
       const AggregateProjectionSpec(
         viewName: 'diary_entries',
-        aggregateType: 'DiaryEntry',
         interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
         tombstoneEventTypes: <String>{'tombstone'},
       ),

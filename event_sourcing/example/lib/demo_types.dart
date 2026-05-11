@@ -6,26 +6,19 @@ import 'package:event_sourcing/event_sourcing.dart';
 // Validated by: JNY-01 (demo_note lifecycle), JNY-02 (CQRS via action
 // types' distinct aggregate types in demoAggregateTypeByEntryTypeId).
 
-/// Regular diary-like entry type. Materializes into `diary_entries`; its
-/// `effective_date_path = 'date'` tells the materializer to read the
-/// effective date out of `event.data.answers['date']` when present.
+/// Regular diary-like entry type. Materializes into `diary_entries` via
+/// the `AggregateProjectionSpec` registered in `_bootstrapPane`.
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: 1,
   name: 'Demo note',
-  widgetId: 'demo_note_widget_v1',
-  widgetConfig: <String, Object?>{},
-  effectiveDatePath: 'date',
 );
 
-/// Red-button action event. `effectiveDatePath: null` — no answer-derived
-/// date; action is point-in-time.
+/// Red-button action event. Point-in-time; no materialized view row.
 const EntryTypeDefinition redButtonType = EntryTypeDefinition(
   id: 'red_button_pressed',
   registeredVersion: 1,
   name: 'Red button pressed',
-  widgetId: 'action_button_v1',
-  widgetConfig: <String, Object?>{},
 );
 
 /// Green-button action event.
@@ -33,8 +26,6 @@ const EntryTypeDefinition greenButtonType = EntryTypeDefinition(
   id: 'green_button_pressed',
   registeredVersion: 1,
   name: 'Green button pressed',
-  widgetId: 'action_button_v1',
-  widgetConfig: <String, Object?>{},
 );
 
 /// Blue-button action event.
@@ -42,8 +33,6 @@ const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
   id: 'blue_button_pressed',
   registeredVersion: 1,
   name: 'Blue button pressed',
-  widgetId: 'action_button_v1',
-  widgetConfig: <String, Object?>{},
 );
 
 /// Full demo entry-type set. Passed as `entryTypes:` to
