@@ -273,25 +273,38 @@ class SembastBackend extends StorageBackend {
   }
 
   // Implements: REQ-d00154-C — Dart-side AND filter on
-  // provenance[0].hopId / provenance[0].identifier. Filter runs on the
-  // already-loaded list rather than as a sembast query because the
-  // provenance entries live inside the JSON-encoded `metadata` blob and
+  // provenance[0].hopId / provenance[0].identifier. The originator filter
+  // runs on the already-loaded list rather than as a sembast query because
+  // the provenance entries live inside the JSON-encoded `metadata` blob and
   // sembast finders do not project across nested array elements; for a
   // mobile-scale event log, in-memory filtering after the
-  // `afterSequence` / `limit` slice is well-bounded and matches the
-  // straightforward semantic.
+  // `afterSequence` / `limit` / `entry_type` / `client_timestamp` slice is
+  // well-bounded and matches the straightforward semantic.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  // client-timestamp filters land as sembast Filter predicates on the
+  // top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
+  // strings sort lexicographically in the same order as their underlying
+  // instants, so greater/less-than-or-equals against
+  // `clientTimestampStart.toUtc().toIso8601String()` reproduces the
+  // intended chronological bound).
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     final db = _database();
     final finder = Finder(
-      filter: afterSequence != null
-          ? Filter.greaterThan('sequence_number', afterSequence)
-          : null,
+      filter: _composeFindAllEventsFilter(
+        afterSequence: afterSequence,
+        entryType: entryType,
+        clientTimestampStart: clientTimestampStart,
+        clientTimestampEnd: clientTimestampEnd,
+      ),
       sortOrders: [SortOrder('sequence_number')],
       limit: limit,
     );
@@ -313,6 +326,47 @@ class SembastBackend extends StorageBackend {
       }
       return true;
     }).toList();
+  }
+
+  /// Build the sembast `Filter` for `findAllEvents` /
+  /// `findAllEventsInTxn` from the supplied optional predicates. Returns
+  /// `null` when no predicates are supplied (Finder treats `null` filter
+  /// as "match all"). When exactly one predicate is supplied it is
+  /// returned directly; multiple predicates compose via `Filter.and`.
+  // Implements: EVS-DEV-find-all-events-extended-filters — shared filter
+  // composition for the two findAllEvents variants.
+  Filter? _composeFindAllEventsFilter({
+    required int? afterSequence,
+    required String? entryType,
+    required DateTime? clientTimestampStart,
+    required DateTime? clientTimestampEnd,
+  }) {
+    final filters = <Filter>[];
+    if (afterSequence != null) {
+      filters.add(Filter.greaterThan('sequence_number', afterSequence));
+    }
+    if (entryType != null) {
+      filters.add(Filter.equals('entry_type', entryType));
+    }
+    if (clientTimestampStart != null) {
+      filters.add(
+        Filter.greaterThanOrEquals(
+          'client_timestamp',
+          clientTimestampStart.toUtc().toIso8601String(),
+        ),
+      );
+    }
+    if (clientTimestampEnd != null) {
+      filters.add(
+        Filter.lessThanOrEquals(
+          'client_timestamp',
+          clientTimestampEnd.toUtc().toIso8601String(),
+        ),
+      );
+    }
+    if (filters.isEmpty) return null;
+    if (filters.length == 1) return filters.single;
+    return Filter.and(filters);
   }
 
   /// Reserve-and-increment the sequence counter within [txn]. Phase-2
@@ -349,19 +403,29 @@ class SembastBackend extends StorageBackend {
     return records.first.value['event_hash'] as String?;
   }
 
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  // client-timestamp filters on the transactional variant. Same shape as
+  // the non-transactional `findAllEvents` (shared via
+  // `_composeFindAllEventsFilter`).
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     final t = _requireValidTxn(txn);
     final records = await _eventStore.find(
       t._sembastTxn,
       finder: Finder(
-        filter: afterSequence != null
-            ? Filter.greaterThan('sequence_number', afterSequence)
-            : null,
+        filter: _composeFindAllEventsFilter(
+          afterSequence: afterSequence,
+          entryType: entryType,
+          clientTimestampStart: clientTimestampStart,
+          clientTimestampEnd: clientTimestampEnd,
+        ),
         sortOrders: [SortOrder('sequence_number')],
         limit: limit,
       ),

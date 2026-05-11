@@ -64,8 +64,9 @@ abstract class StorageBackend {
   );
 
   /// All events, optionally sliced by `afterSequence` (exclusive) and
-  /// `limit`, and optionally filtered by originator identity. Returned in
-  /// `sequence_number` order.
+  /// `limit`, and optionally filtered by originator identity, entry type,
+  /// and client-timestamp range. All supplied filters compose with AND.
+  /// Returned in `sequence_number` order.
   ///
   /// [originatorHopId] matches `provenance[0].hopId` — the hop class of
   /// the originator (e.g. `'mobile-device'`, `'portal-server'`).
@@ -73,12 +74,24 @@ abstract class StorageBackend {
   /// originator's install identity. When both are supplied results SHALL
   /// match both (AND semantics); when neither is supplied no originator
   /// filtering is applied.
+  ///
+  /// [entryType] matches the event's `entry_type` exactly.
+  /// [clientTimestampStart] / [clientTimestampEnd] are inclusive bounds on
+  /// `event.client_timestamp` (compared in UTC).
+  ///
+  /// Concrete backends are expected to translate these filters to whatever
+  /// query mechanism they support (indexed predicate, WHERE clause, etc.).
   // Implements: REQ-d00154-C — originator filters on findAllEvents.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  //   client-timestamp filters on findAllEvents.
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   });
 
   /// Event hash of the highest-sequence-number event currently in the log,
@@ -98,12 +111,23 @@ abstract class StorageBackend {
   /// the log in fixed-size chunks instead of materializing the whole log in
   /// memory.
   ///
+  /// Also optionally filtered by [entryType] (exact match on `entry_type`)
+  /// and [clientTimestampStart] / [clientTimestampEnd] (inclusive bounds on
+  /// `client_timestamp`, compared in UTC). All supplied filters compose with
+  /// AND. Concrete backends translate these to whatever query mechanism they
+  /// support.
+  ///
   /// Used by `rebuildView` so the event snapshot folded into the
   /// cache is coherent with the clear+upsert done under the same transaction.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  //   client-timestamp filters on findAllEventsInTxn.
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   });
 
   /// Reserve-and-increment the per-device sequence counter within [txn] and

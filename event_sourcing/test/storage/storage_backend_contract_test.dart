@@ -199,6 +199,9 @@ class _InMemoryBackend extends StorageBackend {
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     final sorted = _events.values.toList()
       ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
@@ -220,6 +223,9 @@ class _InMemoryBackend extends StorageBackend {
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     _assertOwnValid(txn)._check();
     final staged = _staged!;
