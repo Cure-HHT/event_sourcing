@@ -61,10 +61,13 @@ Phase II work.
   refused by default. State at sequence N is reconstructable from
   `(events, projection_specs, promoter_specs, lib_version)` — all in
   the log.
-- **Originator-of-first-event bootstrap authority.** The single fixed
-  rule: whoever appends the first event for an aggregate is the initial
-  canonicalization authority. Terminates rule recursion at deployment
-  infrastructure.
+- **Originator-of-first-event canonicalization convention.** A Layer-2
+  convention (see Epistemic layers): whoever appends the first event
+  for an aggregate is treated as the initial canonicalization authority
+  for that aggregate. Terminates rule recursion at deployment
+  infrastructure. Phase II's multi-source rule grammar may add
+  settings-event-driven overrides; the originator-of-first-event
+  convention itself remains the substrate's default.
 - **Closed-under-events trust model.** Permissions/role-assignment data
   are events in the same log; the substrate's projection interpreter
   reads its own outputs; external systems integrate at ingest, not at
@@ -84,6 +87,76 @@ Phase II work.
   abandoned.
 - **Single-source-per-aggregate-type today.** Multi-source machinery
   exists in design but is dormant in v1; Phase II activates it.
+
+## Epistemic layers
+
+The substrate makes two kinds of claims, and the distinction is
+load-bearing. Confusing them leads consumers to either over-trust the
+library's defaults or to abandon the substrate when they need a
+different interpretation than it ships.
+
+**Layer 1 — Facts (objective, cryptographic / structural).** These are
+the substrate's hard guarantees. They are tamper-evident and absolute:
+
+- The event at sequence N has hash H
+- The hash chain from genesis to N is intact
+- The provenance entries say the event passed through hops A → B → C
+  with attribution to initiators I₁, I₂, I₃ at times t₁, t₂, t₃
+- The append of this event was atomic with its row writes inside the
+  same transaction
+- Per-aggregate-per-Source order is preserved
+
+ALCOA+ alignment lives entirely at this layer. The cryptographic and
+structural facts are what regulators can be defended against.
+
+**Layer 2 — Conventions (subjective, library-provided defaults).**
+These are the library's chosen *interpretations* of the event stream.
+They are useful defaults, not unique truths:
+
+- A "tombstone" event type deletes the row (the substrate could equally
+  preserve the row with a marker, or hide-not-delete)
+- Missing keys in a delta preserve prior; present-null clears (the
+  substrate could equally treat null as absent)
+- Whoever appends the first event for an aggregate is the canonical
+  authority for that aggregate (the substrate could equally require
+  out-of-band canonicalization assignment)
+- A projection produces one row per aggregate, materialized via
+  generic merge (the substrate could equally produce per-event rows or
+  derived-only views)
+- "Version" is a monotonically-bumped integer per entry type (the
+  substrate could equally use content-hash-as-version)
+
+The library bundles these as primitives because most consumers want
+them, but they don't carry the same epistemic weight as Layer 1.
+Applications that want different interpretations build them on top of
+Layer 1 facts — by subscribing to raw events and computing app-side
+state, or eventually by registering alternative convention sets shipped
+as new library primitives under the Append-Only Primitives discipline.
+
+**What this means for the substrate's other commitments:**
+
+- The **closed-under-events trust model** is precisely scoped: state
+  *under the Layer 2 conventions* is reconstructable from the event log
+  under a known library version. It does not claim the conventions are
+  universally correct.
+- The **declarative projection model** ships one Layer 2 materialization
+  per registered `ProjectionSpec`. Applications needing different
+  materializations build them on top of `subscribe<T>(_, Events())` or
+  `EventStore.read(...)` — and that's an expected, supported pattern,
+  not a fallback.
+- **Append-Only Primitives discipline** applies to Layer 2 conventions
+  too. Once a convention ships under a name with given semantics, those
+  semantics are frozen; alternative behaviour is a new primitive, not
+  a re-interpretation of an existing one.
+
+When proposing new library primitives, code comments, or PRD assertions,
+be explicit about which layer the claim sits at. "The library SHALL
+preserve hash-chain integrity" is Layer 1 and absolute. "The library
+SHALL treat tombstone event types as row deletions" is Layer 2 and
+should read more like "The library's default `AggregateProjectionSpec`
+interpretation TREATS event types in `tombstoneEventTypes` as row
+deletions." The same precision applied to existing surfaces is part of
+the ongoing authoring discipline (charter assertion I).
 
 ## Trust boundaries
 
