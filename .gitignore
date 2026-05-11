@@ -13,8 +13,32 @@
 .flutter-plugins
 .flutter-plugins-dependencies
 /build/
+**/build/
 /coverage/
+**/coverage/
 **/doc/api/
+
+# Flutter desktop/mobile auto-generated plugin glue
+# (regenerated on flutter pub get; do not commit)
+**/linux/flutter/ephemeral/
+**/linux/flutter/generated_plugin_registrant.cc
+**/linux/flutter/generated_plugin_registrant.h
+**/linux/flutter/generated_plugins.cmake
+**/macos/Flutter/ephemeral/
+**/macos/Flutter/GeneratedPluginRegistrant.swift
+**/windows/flutter/ephemeral/
+**/windows/flutter/generated_plugin_registrant.cc
+**/windows/flutter/generated_plugin_registrant.h
+**/windows/flutter/generated_plugins.cmake
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/Flutter.podspec
+**/ios/Runner/GeneratedPluginRegistrant.h
+**/ios/Runner/GeneratedPluginRegistrant.m
+**/android/local.properties
+**/android/.gradle/
+
+# Dart compiled-binary outputs (dart build cli)
+**/build/cli/
 
 # Libraries should not commit pubspec.lock per https://dart.dev/tools/pub/dependencies#lockfiles
 **/pubspec.lock
