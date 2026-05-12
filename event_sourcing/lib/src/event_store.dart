@@ -1370,7 +1370,9 @@ class EventStore {
         aggregateId: 'ingest-audit:${source.hopId}',
         aggregateType: 'ingest-audit',
         entryType: 'ingest-audit',
-        entryTypeVersion: 1,
+        entryTypeVersion: entryTypes
+            .byId(kIngestAuditEntryType)!
+            .registeredVersion,
         eventType: 'ingest.batch_rejected',
         data: <String, Object?>{
           'wire_bytes': base64Encode(bytes),
@@ -1421,7 +1423,9 @@ class EventStore {
       aggregateId: 'ingest-audit:${source.hopId}',
       aggregateType: 'ingest-audit',
       entryType: 'ingest-audit',
-      entryTypeVersion: 1,
+      entryTypeVersion: entryTypes
+          .byId(kIngestAuditEntryType)!
+          .registeredVersion,
       eventType: 'ingest.duplicate_received',
       data: <String, Object?>{
         'subject_event_id': subjectEventId,
@@ -1524,10 +1528,18 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
 
 /// Append a substrate-emitted lib_version event directly to [backend].
 ///
-/// Bypasses [EventStore.appendInTxn] because lib_version events are not
-/// registered in any [EntryTypeRegistry] — they are substrate-internal
-/// bookkeeping records. Delegates to [_appendRawInternalEventInTxn] for
-/// the actual record-assembly and hashing.
+/// Bypasses [EventStore.appendInTxn] because lib_version events are
+/// appended from inside [EventStore.open] BEFORE the [EventStore]
+/// instance exists, so we cannot reach the registry through it. The
+/// hardcoded `entryTypeVersion: 1` here is the one documented exception
+/// to the substrate-stamps-registeredVersion-from-the-registry rule
+/// (see EVS-DEV-append-stamps-registered-version). If
+/// `kLibVersionInitializedEntryType` / `kLibVersionChangedEntryType`
+/// ever bump their `registeredVersion` in `kSystemEntryTypes`, this
+/// constant must move in lockstep.
+///
+/// Delegates to [_appendRawInternalEventInTxn] for the actual
+/// record-assembly and hashing.
 Future<void> _appendLibVersionEventToBackend(
   StorageBackend backend,
   String eventType,
