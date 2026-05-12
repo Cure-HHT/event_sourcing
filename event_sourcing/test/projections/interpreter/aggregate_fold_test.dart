@@ -1,4 +1,10 @@
 // event_sourcing/test/projections/interpreter/aggregate_fold_test.dart
+//
+// Verifies: EVS-PRD-materializer/A — AggregateFold provides the fold engine
+//   that the library's materializer uses for AggregateProjectionSpec views.
+// Verifies: EVS-PRD-materializer/B — merge + metadata-stamp + derived-field
+//   sequence is a pure function of (prior, event); tests confirm first-event
+//   creation, incremental merge, and tombstone deletion are deterministic.
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';

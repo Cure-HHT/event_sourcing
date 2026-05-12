@@ -1,4 +1,9 @@
 // event_sourcing/test/projections/interpreter/table_fold_test.dart
+//
+// Verifies: EVS-PRD-materializer/A — TableFold provides the fold engine
+//   that the library's materializer uses for TableProjectionSpec views.
+// Verifies: EVS-PRD-materializer/B — upsert-on-insert, delete-on-remove,
+//   and silent-no-op-on-missing-row are deterministic; tests confirm each.
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';

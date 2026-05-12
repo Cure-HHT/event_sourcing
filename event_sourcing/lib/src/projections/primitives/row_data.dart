@@ -1,4 +1,11 @@
 // event_sourcing/lib/src/projections/primitives/row_data.dart
+//
+// Implements: EVS-PRD-materializer/A — RowDataExtractor (WholePayload,
+//   PayloadField, SelectedFields) are library-supplied primitives that the
+//   TableProjectionSpec fold uses to extract row data from an event; they
+//   are part of the library's materializer rule set.
+// Implements: EVS-PRD-materializer/B — each extractor is a pure function of
+//   the StoredEvent; same input always yields same output.
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
 sealed class RowDataExtractor {

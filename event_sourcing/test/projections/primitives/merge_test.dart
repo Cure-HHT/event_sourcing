@@ -1,4 +1,11 @@
 // event_sourcing/test/projections/primitives/merge_test.dart
+//
+// Verifies: EVS-PRD-materializer/A — Merge.applyDelta and
+//   Merge.applyDeepDelta are library-supplied materializer primitives.
+// Verifies: EVS-PRD-materializer/B — both methods are pure functions; tests
+//   confirm deterministic behavior for null-as-clear, absent-preserves,
+//   nested-map recursion, defensive Map<dynamic,dynamic> branch, and
+//   empty-delta/prior edge cases.
 import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:flutter_test/flutter_test.dart';
 

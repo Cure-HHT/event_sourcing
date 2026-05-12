@@ -1,4 +1,11 @@
 // event_sourcing/test/projections/primitives/row_key_test.dart
+//
+// Verifies: EVS-PRD-materializer/A — AggregateIdKey and CompositeKey are
+//   library-supplied materializer primitives (row key extractors for
+//   TableProjectionSpec).
+// Verifies: EVS-PRD-materializer/B — key extraction is a pure function of
+//   the StoredEvent; tests confirm deterministic extraction, composite
+//   joining, shorthand path equivalence, and error on missing path.
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';

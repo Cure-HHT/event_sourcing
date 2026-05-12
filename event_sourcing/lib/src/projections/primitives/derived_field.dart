@@ -1,4 +1,12 @@
 // event_sourcing/lib/src/projections/primitives/derived_field.dart
+//
+// Implements: EVS-PRD-materializer/A — DerivedField / DerivedFieldComputation
+//   are library-supplied materializer primitives that compute additional
+//   typed fields on each aggregate row as part of the AggregateProjectionSpec
+//   fold.
+// Implements: EVS-PRD-materializer/B — all computation paths (DottedPathLookup,
+//   ConstantValue, FirstEventTimestamp) are pure functions of (rowState,
+//   firstEventTimestamp); no non-deterministic inputs are present.
 
 sealed class FallbackValue {
   const FallbackValue();

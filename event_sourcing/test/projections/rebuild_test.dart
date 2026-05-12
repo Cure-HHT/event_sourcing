@@ -1,4 +1,11 @@
-//   ProjectionSpec replay; strict-superset target-version map.
+// Verifies: EVS-PRD-materializer/A — rebuildView replays the event log
+//   through a registered ProjectionSpec to reconstruct a view from scratch;
+//   it is a library-supplied materializer helper.
+// Verifies: EVS-PRD-materializer/B — rebuild is deterministic and idempotent;
+//   tests confirm identical rows across two consecutive rebuilds on the same
+//   log, as well as cross-chunk correctness for large logs.
+//
+// ProjectionSpec replay; strict-superset target-version map.
 //
 // Rewritten in Task 22 (CUR-1317) to use the new rebuildView(store:, viewName:,
 // targetVersionByEntryType:) signature backed by ProjectionSpec +
