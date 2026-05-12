@@ -111,7 +111,9 @@ class EventStore {
     ClockFn? clock,
     Uuid? uuid,
   }) : _interpreter = ProjectionInterpreter(
-         projections ?? ProjectionRegistry(),
+         projections: projections ?? ProjectionRegistry(),
+         promoters: promoters ?? PromoterRegistry(),
+         entryTypes: entryTypes,
        ),
        _promoters = promoters ?? PromoterRegistry(),
        _clock = clock,
