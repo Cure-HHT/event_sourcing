@@ -40,8 +40,17 @@ void _defaultLogSink(String message) {
 
 /// Concrete Sembast-backed implementation of [StorageBackend].
 ///
+/// The reference implementation for Dart VM / Flutter mobile / Flutter desktop
+/// / Flutter web. Satisfies the portability contract by keeping all
+/// Sembast-specific code behind this class; callers see only `StorageBackend`.
+///
 /// Opens a single Sembast database at `path` via `databaseFactory`. The
 /// database hosts four logical stores:
+// Implements: EVS-PRD-portability/D — reference platform-divergent storage
+//   implementation; app supplies databaseFactory per platform.
+// Implements: EVS-PRD-event-log/A — append-only event log in 'events' store.
+// Implements: EVS-PRD-event-log/B — stable total order via sequence counter in
+//   backend_state; monotonic; never reset.
 ///
 /// - `events` — append-only event log, keyed by Sembast auto-increment int.
 /// - `diary_entries` — materialized view, keyed by `entry_id` (string).
@@ -212,8 +221,9 @@ class SembastBackend extends StorageBackend {
   /// silently accepting an out-of-range value.
   // (advance owned by nextSequenceNumber; appendEvent consumes the
   // reservation).
-  // Implements: REQ-p00004-A+B — append-only event, hash chain stamped by
-  // caller and persisted verbatim.
+  // Implements: EVS-PRD-event-log/A — persists event to append-only log.
+  // Implements: EVS-PRD-event-log/B — sequence number stamped by caller from
+  //   nextSequenceNumber; persisted verbatim preserving total order.
   @override
   Future<AppendResult> appendEvent(Txn txn, StoredEvent event) async {
     final t = _requireValidTxn(txn);
@@ -274,13 +284,15 @@ class SembastBackend extends StorageBackend {
   // mobile-scale event log, in-memory filtering after the
   // `afterSequence` / `limit` / `entry_type` / `client_timestamp` slice is
   // well-bounded and matches the straightforward semantic.
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  // client-timestamp filters land as sembast Filter predicates on the
-  // top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
-  // strings sort lexicographically in the same order as their underlying
-  // instants, so greater/less-than-or-equals against
-  // `clientTimestampStart.toUtc().toIso8601String()` reproduces the
-  // intended chronological bound).
+  // Implements: EVS-PRD-event-log/D — read all events in order from any
+  //   starting position, optionally sliced.
+  // Implements: EVS-DEV-find-all-events-extended-filters/A — entryType +
+  //   clientTimestampStart + clientTimestampEnd optional named parameters.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — AND-composition;
+  //   entry-type and client-timestamp filters land as sembast Filter predicates
+  //   on the top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
+  //   strings sort lexicographically in chronological order so
+  //   greaterThanOrEquals / lessThanOrEquals reproduce the intended bounds).
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
@@ -327,8 +339,9 @@ class SembastBackend extends StorageBackend {
   /// `null` when no predicates are supplied (Finder treats `null` filter
   /// as "match all"). When exactly one predicate is supplied it is
   /// returned directly; multiple predicates compose via `Filter.and`.
-  // Implements: EVS-DEV-find-all-events-extended-filters — shared filter
-  // composition for the two findAllEvents variants.
+  // Implements: EVS-DEV-find-all-events-extended-filters/D — single shared
+  //   helper (_composeFindAllEventsFilter) used by both in-transaction and
+  //   out-of-transaction code paths.
   Filter? _composeFindAllEventsFilter({
     required int? afterSequence,
     required String? entryType,
@@ -396,10 +409,13 @@ class SembastBackend extends StorageBackend {
     return records.first.value['event_hash'] as String?;
   }
 
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  // client-timestamp filters on the transactional variant. Same shape as
-  // the non-transactional `findAllEvents` (shared via
-  // `_composeFindAllEventsFilter`).
+  // Implements: EVS-PRD-event-log/D — read events in order from any position
+  //   (transactional variant; includes staged writes from same txn body).
+  // Implements: EVS-DEV-find-all-events-extended-filters/B — same three
+  //   optional parameters with same semantics; shared via
+  //   _composeFindAllEventsFilter.
+  // Implements: EVS-DEV-find-all-events-extended-filters/D — same shared
+  //   helper reused here.
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {

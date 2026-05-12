@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-portability/D — FIFO persistence methods (enqueueFifo,
+//   readFifoHead, listFifoEntries, appendAttempt, markFinal, fill-cursor
+//   read/write, anyFifoWedged/wedgedFifos, deleteNullRowsAfterSequenceInQueue)
+//   are part of the StorageBackend abstraction contract.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';

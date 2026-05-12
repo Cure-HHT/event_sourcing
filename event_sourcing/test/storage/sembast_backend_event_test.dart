@@ -1,3 +1,11 @@
+// Verifies: EVS-PRD-event-log/A — append-only writes commit atomically;
+//   rolled-back txn leaves log unchanged.
+// Verifies: EVS-PRD-event-log/B — sequence counter is monotonic across
+//   transactions; nextSequenceNumber reserve-and-increment contract.
+// Verifies: EVS-PRD-event-log/C — findEventsForAggregate returns events sorted
+//   by sequence_number, isolating per-aggregate order.
+// Verifies: EVS-PRD-event-log/D — findAllEvents + findAllEventsInTxn read in
+//   order from any starting position (afterSequence + limit).
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-event-log/D — findEventById / findEventByIdInTxn read a
+//   single event by id from the unified log; null when absent; used by
+//   ingest idempotency check.
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';

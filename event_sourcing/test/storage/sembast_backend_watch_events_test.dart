@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-event-log/D — watchEvents emits events in
+//   sequence_number order from any starting position; replay + live merge
+//   delivers all committed events without gaps.
+// Verifies: EVS-PRD-portability/D — watchEvents is a SembastBackend-specific
+//   reactive surface built on top of the abstract StorageBackend contract.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

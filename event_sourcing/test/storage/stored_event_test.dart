@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-event-log/A — StoredEvent fields are immutable; fromMap/
+//   toMap round-trips preserve every field; malformed records throw
+//   FormatException.
+// Verifies: EVS-PRD-portability/C — toMap/fromMap produce identical results
+//   regardless of platform; pure-Dart serialisation.
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:flutter_test/flutter_test.dart';

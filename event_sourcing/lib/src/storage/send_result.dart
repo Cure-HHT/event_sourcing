@@ -12,9 +12,8 @@
 /// per-destination judgment — default categorization is `2xx -> SendOk`,
 /// `5xx/network -> SendTransient`, `4xx -> SendPermanent`, with
 /// destination-level carve-outs possible (see design doc §8.1, §11.1).
-// Implements: REQ-p01001-L — three-category send outcome classification
-// so the drain loop can make retry vs. wedge decisions without destination-
-// specific knowledge.
+// Implements: EVS-PRD-portability/C — pure Dart sealed type; platform-
+//   independent; no platform-specific imports.
 sealed class SendResult {
   const SendResult();
 }

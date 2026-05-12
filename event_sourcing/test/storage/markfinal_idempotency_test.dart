@@ -1,4 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-portability/D — markFinal idempotency and one-way
+//   transition rule are part of the StorageBackend FIFO contract; the
+//   at-least-once drain loop depends on idempotent markFinal(same status).
 
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';

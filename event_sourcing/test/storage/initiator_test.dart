@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-event-log/A — Initiator is part of the immutable event
+//   record; JSON round-trip preserves all variants.
+// Verifies: EVS-PRD-portability/C — sealed enum JSON serialisation is
+//   platform-independent.
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:flutter_test/flutter_test.dart';
 

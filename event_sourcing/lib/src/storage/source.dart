@@ -16,6 +16,9 @@
 /// role class are distinct originators — discrimination on
 /// `EventStore.isLocallyOriginated` compares
 /// `identifier`, not `hopId`.
+// Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order; Source
+//   identifies the authority whose events must stay ordered within an aggregate.
+// Implements: EVS-PRD-portability/C — pure Dart value; no platform dependency.
 //   'portal-server' as well-known values; others permitted.
 //   no runtime validation at this type.
 //   identity; library does not validate format; caller obligation to

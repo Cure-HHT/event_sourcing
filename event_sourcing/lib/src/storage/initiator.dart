@@ -3,6 +3,10 @@
 /// of actor — human user, automation service, or pre-auth anonymous flow —
 /// so downstream audit and filtering can reason about causation without
 /// guessing.
+// Implements: EVS-PRD-event-log/A — part of the immutable event record;
+//   stamped once at append and never mutated.
+// Implements: EVS-PRD-portability/C — pure Dart sealed type; serialises
+//   identically on every Dart-supported runtime.
 // required fields with FormatException.
 sealed class Initiator {
   const Initiator();

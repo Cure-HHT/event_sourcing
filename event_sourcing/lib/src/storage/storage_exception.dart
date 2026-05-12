@@ -14,6 +14,9 @@ import 'package:sembast/sembast.dart';
 ///   denied, closed state, bad argument); requires caller / operator action.
 /// * `StorageCorruptException` — data-integrity violated (decode failure,
 ///   hash-chain mismatch); requires intervention and usually a rebuild.
+// Implements: EVS-PRD-portability/D — part of the platform-agnostic
+//   StorageBackend abstraction; hides backend-specific error types behind this
+//   sealed hierarchy so callers need not import Sembast or IO packages.
 // subclasses; exhaustive pattern-matching enforced at compile time.
 sealed class StorageException implements Exception {
   const StorageException(this.message, this.cause, this.stackTrace);

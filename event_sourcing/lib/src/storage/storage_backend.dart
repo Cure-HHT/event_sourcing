@@ -23,6 +23,9 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 /// callers. Writes are grouped into [transaction] bodies to guarantee
 /// atomicity across the four logical stores (event log, generic view store,
 /// per-destination FIFOs, backend_state KV).
+// Implements: EVS-PRD-portability/D — platform-divergent persistent storage
+//   abstracted behind this Dart-side interface; the consuming application
+//   supplies the concrete implementation per platform.
 // sequence counter (not 'metadata').
 // / clearViewInTxn.
 abstract class StorageBackend {
@@ -44,15 +47,20 @@ abstract class StorageBackend {
   /// counter. Both writes land atomically inside [txn]. Returns an
   /// [AppendResult] carrying the sequence number that was stamped on the
   /// event and the event hash that was persisted.
+  // Implements: EVS-PRD-event-log/A — append to the append-only, immutable log.
+  // Implements: EVS-PRD-event-log/B — stable total order via sequence counter.
   Future<AppendResult> appendEvent(Txn txn, StoredEvent event);
 
   /// Events for one aggregate, sorted by `sequence_number` ascending.
+  // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position.
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId);
 
   /// Events for one aggregate, read within [txn] so the result reflects
   /// writes already staged in the same transaction body. Sorted by
   /// `sequence_number` ascending. Used by callers that need hash-chain /
   /// no-op-detection reads to be coherent with the same-transaction append.
+  // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
     Txn txn,
     String aggregateId,
@@ -76,8 +84,10 @@ abstract class StorageBackend {
   ///
   /// Concrete backends are expected to translate these filters to whatever
   /// query mechanism they support (indexed predicate, WHERE clause, etc.).
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  //   client-timestamp filters on findAllEvents.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position.
+  // Implements: EVS-DEV-find-all-events-extended-filters/A — entryType,
+  //   clientTimestampStart, clientTimestampEnd optional named parameters.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — filters AND-compose.
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
@@ -113,8 +123,11 @@ abstract class StorageBackend {
   ///
   /// Used by `rebuildView` so the event snapshot folded into the
   /// cache is coherent with the clear+upsert done under the same transaction.
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  //   client-timestamp filters on findAllEventsInTxn.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position
+  //   (transactional variant; result reflects staged writes in same txn).
+  // Implements: EVS-DEV-find-all-events-extended-filters/B — same three
+  //   optional parameters with same semantics on the transactional variant.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — filters AND-compose.
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,

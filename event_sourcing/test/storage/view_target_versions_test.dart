@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-portability/D — view-target-version persistence is part
+//   of the StorageBackend abstraction; round-trip, null-on-unknown, readAll,
+//   clear, and cross-view isolation are the contractual behaviours.
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

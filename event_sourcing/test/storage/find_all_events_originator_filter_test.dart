@@ -1,9 +1,10 @@
-// IMPLEMENTS REQUIREMENTS:
-//                 originatorIdentifier optional named parameters; both
-//                 nullable; AND'd together when both supplied; each filters
-//                 on the corresponding field of provenance[0].
-//
-// the assertion ID `-C` at the start of each test description.
+// Verifies: EVS-DEV-find-all-events-extended-filters/C — originatorHopId and
+//   originatorIdentifier optional named parameters; both nullable; AND'd
+//   together when both supplied; each filters on the corresponding field of
+//   provenance[0] (hopId maps to provenance[0].hop; identifier maps to
+//   provenance[0].identifier).
+// Verifies: EVS-PRD-event-log/D — originator-filtered reads still return
+//   events in sequence_number order.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

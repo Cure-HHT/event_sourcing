@@ -1,7 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
-//                 StateError on empty provenance.
-//
-// the assertion ID `-A` at the start of each test description.
+// Verifies: EVS-PRD-event-log/C — originatorHop exposes provenance[0] for
+//   per-aggregate-per-authority discrimination; StateError on missing/empty
+//   provenance signals a malformed event record.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-portability/D — StorageBackend interface is implementable
+//   by any concrete backend; contract test uses a pure in-memory double.
+// Verifies: EVS-PRD-event-log/A — successful transaction body commits all
+//   writes atomically; thrown exception rolls back all writes.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';

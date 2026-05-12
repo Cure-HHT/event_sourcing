@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-portability/D — generic view-storage methods are part of
+//   the StorageBackend abstraction; projection fold interpreter reads/writes
+//   view rows without coupling to a specific backend.
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
