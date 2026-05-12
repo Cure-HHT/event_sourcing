@@ -1,3 +1,12 @@
+// Verifies: EVS-PRD-subscription/B — the library delivers subscription
+//   updates reactively as new events are ingested; ALL event-appending paths
+//   (clearSecurityContext, applyRetentionPolicy, and internal txn helpers)
+//   notify the subscription bus, not only the public EventStore.append path.
+//
+// Verifies: EVS-PRD-regulatory-alignment/B — integrity violations (security-
+//   context redaction audit, retention-policy sweep audit) are surfaced as
+//   events in the log and delivered to subscribers, not silently absorbed.
+//
 // Verifies that all event-appending paths notify the subscription bus, not
 // only the public EventStore.append path.
 //

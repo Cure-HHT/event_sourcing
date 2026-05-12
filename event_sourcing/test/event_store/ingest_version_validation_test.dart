@@ -1,3 +1,10 @@
+// Verifies: EVS-PRD-ingest/D — ingest verifies event integrity before
+//   admitting events, rejecting any event whose lib_format_version or
+//   entry_type_version is ahead of the receiver's known versions;
+//   EVS-DEV-ingest-promotes-before-fold/A — version-ahead events cannot be
+//   promoted (no inverse chain exists), so the batch is rejected with a typed
+//   error before any log write; validation order is lib-ahead before
+//   entry-type-ahead.
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';

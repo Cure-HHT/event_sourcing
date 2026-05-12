@@ -1,3 +1,8 @@
+// Verifies: EVS-DEV-append-stamps-registered-version/A — substrate stamps
+//   entry_type_version from the registry's registeredVersion on every local
+//   append; also verifies that lib_format_version is stamped from
+//   StoredEvent.currentLibFormatVersion (EVS-PRD-event-log/A: immutable
+//   log record carries all version metadata at write-time).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -28,7 +33,7 @@ Future<EventStore> _bootstrap() async {
 
 void main() {
   group('EventStore.append stamps version fields', () {
-    // Verifies: EVS-DEV-append-stamps-registered-version — substrate stamps
+    // Verifies: EVS-DEV-append-stamps-registered-version/A — substrate stamps
     // entry_type_version from the registry's registeredVersion.
     test('entry_type_version is stamped from the registry', () async {
       final es = await _bootstrap();

@@ -1,6 +1,7 @@
-// Verifies: EVS-DEV-append-stamps-registered-version — EventStore.append
-// stamps the registry's registeredVersion on every appended event. Callers
-// no longer pass entryTypeVersion.
+// Verifies: EVS-DEV-append-stamps-registered-version/A/C — EventStore.append
+// stamps the registry's registeredVersion on every appended event (A), and
+// the entryTypeVersion parameter does not appear on the public signature so
+// callers cannot override the registry-derived value (C).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -1,7 +1,8 @@
-//   ingested events into materialized views identically to local-appended
-//   events. The projection interpreter on the ingest path is symmetric with
-//   the interpreter on the append path (same gates, same atomicity, same
-//   throw-rolls-back semantics). Closes Phase 4.9 design spec §398.
+// Verifies: EVS-PRD-ingest/E — the ingest path projects ingested events into
+//   materialized views identically to local-appended events. The projection
+//   interpreter on the ingest path is symmetric with the interpreter on the
+//   append path (same gates, same atomicity, same throw-rolls-back semantics).
+//   Closes Phase 4.9 design spec §398.
 //
 // Rewritten in Task 22 (CUR-1317) to use ProjectionSpec / ProjectionRegistry
 // instead of the deleted Materializer/EntryPromoter abstractions. The substrate

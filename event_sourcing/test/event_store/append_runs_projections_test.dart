@@ -1,6 +1,7 @@
-// Verifies: EVS-DEV-event-store-open — appending an event with a registered
+// Verifies: EVS-DEV-event-store-open/E — appending an event with a registered
 //   ProjectionRegistry causes the matching AggregateFold to run inside the
-//   same transaction, producing a view row that is readable after commit.
+//   same transaction as the event-log write, producing a view row that is
+//   readable after commit.
 
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
