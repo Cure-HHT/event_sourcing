@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-subscription.A (sealed mode variants declare the two
+//   subscription kinds: filtered event stream via Events, filtered materialized
+//   state via AggregateMode<T>)
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
 sealed class SubscriptionMode<T> {

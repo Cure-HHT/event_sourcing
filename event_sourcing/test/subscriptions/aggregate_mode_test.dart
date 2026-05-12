@@ -1,3 +1,12 @@
+// Verifies: EVS-PRD-subscription.A (AggregateMode delivers filtered
+//   materialized state: Snapshot for existing aggregate, null Snapshot for
+//   absent aggregate, Delta for subsequent appends, Tombstone on deletion)
+// Verifies: EVS-PRD-subscription.B (Delta arrives reactively after append;
+//   Tombstone arrives reactively after tombstone event)
+// Verifies: EVS-PRD-subscription.C (snapshot sequence reflects max folded
+//   event sequence; Delta sequence monotonically advances)
+// Verifies: EVS-PRD-subscription.D (every matching append after subscribe
+//   produces a Delta; no updates dropped)
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
