@@ -1,3 +1,4 @@
+// Verifies: EVS-DEV-view-target-versions-seeding
 // Tests for AppendOnlyDatastore.setViewTargetVersion.
 //
 // The legacy initialViewTargetVersions / materializers bootstrap parameters

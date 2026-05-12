@@ -1,3 +1,4 @@
+// Verifies: EVS-PRD-destinations/C/D/F
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';

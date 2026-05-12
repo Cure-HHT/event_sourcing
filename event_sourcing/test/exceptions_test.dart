@@ -1,5 +1,4 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-p00006: Offline-First Data Entry
+// Verifies: EVS-PRD-library-charter/A
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

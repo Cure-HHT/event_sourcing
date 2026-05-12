@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-library-charter/A
+// Verifies: EVS-PRD-event-log/A/B/C/D
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

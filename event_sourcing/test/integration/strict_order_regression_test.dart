@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-event-log/B/C
+// Verifies: EVS-PRD-destinations/C/D
 // Regression test for "continue past exhausted".
 //
 // The Phase 4.6 demo surfaced that an exhausted head row did not block a

@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-library-charter
+// Implements: EVS-PRD-auth-session
+// Implements: EVS-PRD-action-submitter
+// Implements: EVS-PRD-view-subscriber
+// Implements: EVS-PRD-permission-snapshot-source
 /// Substrate-agnostic action submission, view subscription, permission
 /// snapshots, and credential lifecycle for apps built on `event_sourcing`.
 ///

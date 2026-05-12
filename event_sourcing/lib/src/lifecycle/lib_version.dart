@@ -1,3 +1,4 @@
+// Implements: EVS-DEV-event-store-open/B/C/D
 /// Substrate-level library version metadata. The version is recorded in
 /// the event log via `lib_version_initialized` and `lib_version_changed`
 /// events; the boot flow refuses to start when the log was last processed

@@ -1,3 +1,5 @@
+// Verifies: EVS-DEV-ingest-promotes-before-fold/A/B
+// Verifies: EVS-DEV-snapshot-promotion-on-open/B/D
 // event_sourcing/test/promoters/promoter_executor_test.dart
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';

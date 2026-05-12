@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-materializer/A
+// Verifies: EVS-DEV-ingest-promotes-before-fold/C
+// Verifies: EVS-DEV-snapshot-promotion-on-open/B
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_spec.dart';
 import 'package:flutter_test/flutter_test.dart';

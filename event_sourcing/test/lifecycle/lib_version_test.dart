@@ -1,3 +1,4 @@
+// Verifies: EVS-DEV-event-store-open/B/C/D
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 
