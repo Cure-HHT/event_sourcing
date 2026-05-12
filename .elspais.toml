@@ -29,7 +29,7 @@ name = "Cure-HHT Event Sourcing Library"
 #   assertion — optional A–Z label (or A/B/C... multi-assertion)
 #
 # Examples:
-#   EVS-PRD-event-store
+#   EVS-PRD-event-log
 #   EVS-DEV-provenance-entry-schema/G
 #   EVS-OPS-secret-rotation
 
