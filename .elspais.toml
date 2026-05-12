@@ -175,3 +175,21 @@ skip_dirs = []
 [scanning.docs]
 directories = ["docs"]
 file_patterns = ["*.md"]
+
+# Requirement-status semantics
+#
+# Default elspais behaviour treats `Draft` as `provisional` (excluded
+# from coverage tallies). For CUR-1317 the whole spec set is still in
+# Draft — promoting requirements to Active is part of the post-Phase-I
+# stabilization pass, not yet done. Until then we want coverage metrics
+# to reflect the Draft surface so authoring progress is visible.
+#
+# Move `Draft` into `active`. `Proposed` stays provisional (genuinely
+# tentative requirements still excluded). Aspirational and retired
+# semantics unchanged.
+
+[rules.format.status_roles]
+active = ["Active", "Draft"]
+provisional = ["Proposed"]
+aspirational = ["Roadmap", "Future", "Idea"]
+retired = ["Deprecated", "Superseded", "Rejected"]
