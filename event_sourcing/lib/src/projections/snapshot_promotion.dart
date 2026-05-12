@@ -188,11 +188,7 @@ Future<void> promoteViewSnapshots({
         // Apply transform chain to the row state.
         var promotedRow = Map<String, Object?>.from(row);
         for (final pspec in chain) {
-          promotedRow = TransformChain.applyAll(
-            pspec.transforms,
-            promotedRow,
-            firstEventTimestamp: firstEventTimestamp,
-          );
+          promotedRow = TransformChain.applyAll(pspec.transforms, promotedRow);
         }
         if (spec is AggregateProjectionSpec) {
           // Re-run derivedFields over the promoted row.

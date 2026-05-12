@@ -33,7 +33,6 @@ void main() {
       fromVersion: 1,
       toVersion: 3,
       payload: const {'old': 'value'},
-      firstEventTimestamp: DateTime.utc(2026, 1, 1),
     );
     expect(result, {'final': 'value'});
   });
@@ -47,7 +46,6 @@ void main() {
       fromVersion: 2,
       toVersion: 2,
       payload: const {'a': 1},
-      firstEventTimestamp: DateTime.utc(2026, 1, 1),
     );
     expect(result, {'a': 1});
   });

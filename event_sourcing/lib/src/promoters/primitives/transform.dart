@@ -1,10 +1,7 @@
 // event_sourcing/lib/src/promoters/primitives/transform.dart
 sealed class TransformPrimitive {
   const TransformPrimitive();
-  Map<String, Object?> apply(
-    Map<String, Object?> input, {
-    DateTime? firstEventTimestamp,
-  });
+  Map<String, Object?> apply(Map<String, Object?> input);
 }
 
 class RenameField extends TransformPrimitive {
@@ -13,10 +10,7 @@ class RenameField extends TransformPrimitive {
   const RenameField({required this.from, required this.to});
 
   @override
-  Map<String, Object?> apply(
-    Map<String, Object?> input, {
-    DateTime? firstEventTimestamp,
-  }) {
+  Map<String, Object?> apply(Map<String, Object?> input) {
     if (!input.containsKey(from)) return input;
     if (input.containsKey(to)) {
       throw StateError(
@@ -35,10 +29,7 @@ class DefaultField extends TransformPrimitive {
   const DefaultField({required this.fieldName, required this.defaultValue});
 
   @override
-  Map<String, Object?> apply(
-    Map<String, Object?> input, {
-    DateTime? firstEventTimestamp,
-  }) {
+  Map<String, Object?> apply(Map<String, Object?> input) {
     if (input.containsKey(fieldName)) return input;
     final next = Map<String, Object?>.from(input);
     next[fieldName] = defaultValue;
@@ -51,10 +42,7 @@ class DropField extends TransformPrimitive {
   const DropField({required this.fieldName});
 
   @override
-  Map<String, Object?> apply(
-    Map<String, Object?> input, {
-    DateTime? firstEventTimestamp,
-  }) {
+  Map<String, Object?> apply(Map<String, Object?> input) {
     if (!input.containsKey(fieldName)) return input;
     final next = Map<String, Object?>.from(input)..remove(fieldName);
     return Map.unmodifiable(next);
@@ -64,12 +52,11 @@ class DropField extends TransformPrimitive {
 class TransformChain {
   static Map<String, Object?> applyAll(
     List<TransformPrimitive> chain,
-    Map<String, Object?> input, {
-    required DateTime firstEventTimestamp,
-  }) {
+    Map<String, Object?> input,
+  ) {
     var current = input;
     for (final t in chain) {
-      current = t.apply(current, firstEventTimestamp: firstEventTimestamp);
+      current = t.apply(current);
     }
     return current;
   }

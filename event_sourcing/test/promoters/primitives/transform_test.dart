@@ -62,9 +62,7 @@ void main() {
         RenameField(from: 'a', to: 'b'),
         DefaultField(fieldName: 'c', defaultValue: 3),
       ];
-      final result = TransformChain.applyAll(chain, const {
-        'a': 1,
-      }, firstEventTimestamp: DateTime.utc(2026, 1, 1));
+      final result = TransformChain.applyAll(chain, const {'a': 1});
       expect(result, {'b': 1, 'c': 3});
     });
   });

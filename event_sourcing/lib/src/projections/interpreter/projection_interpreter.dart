@@ -62,7 +62,6 @@ class ProjectionInterpreter {
           fromVersion: event.entryTypeVersion,
           toVersion: registeredVersion,
           payload: event.data,
-          firstEventTimestamp: event.clientTimestamp,
         );
         eventForFold = event.withData(promotedData);
       }

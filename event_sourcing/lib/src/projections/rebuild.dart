@@ -95,7 +95,6 @@ Future<int> rebuildView({
           fromVersion: event.entryTypeVersion,
           toVersion: tgt,
           payload: event.data,
-          firstEventTimestamp: event.clientTimestamp,
         );
 
         // Rebuild applies the promoted payload via a synthetic event whose

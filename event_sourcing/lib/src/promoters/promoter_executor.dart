@@ -10,7 +10,6 @@ class PromoterExecutor {
     required int fromVersion,
     required int toVersion,
     required Map<String, Object?> payload,
-    required DateTime firstEventTimestamp,
   }) {
     final chain = registry.chain(
       viewName: viewName,
@@ -20,11 +19,7 @@ class PromoterExecutor {
     );
     var current = Map<String, Object?>.unmodifiable(payload);
     for (final spec in chain) {
-      current = TransformChain.applyAll(
-        spec.transforms,
-        current,
-        firstEventTimestamp: firstEventTimestamp,
-      );
+      current = TransformChain.applyAll(spec.transforms, current);
     }
     return current;
   }
