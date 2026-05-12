@@ -1,3 +1,4 @@
+// Implements: EVS-PRD-library-charter/D
 import 'package:event_sourcing/src/core/errors/datastore_exception.dart';
 
 /// Exception thrown when synchronization operations fail.
