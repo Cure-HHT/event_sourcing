@@ -30,7 +30,11 @@ abstract interface class ViewSource {
   /// - [mapper]: applied to each row's `Map<String, Object?>` to
   ///   produce typed values.
   /// - [filter]: optional `SubscriptionFilter` on entry/event/aggregate
-  ///   types (matches the substrate's filter semantics).
+  ///   types. The filter is applied during replay (snapshot phase); for
+  ///   live `Delta` emissions after `EndOfReplay`, only [aggregates]
+  ///   narrowing is honored — `SubscriptionFilter.entryTypes` is not
+  ///   consulted on the live path. Use [aggregates] to scope live
+  ///   delivery to specific aggregate IDs.
   /// - [aggregates]: optional allow-list of aggregate IDs to scope
   ///   delivery (substrate's `AggregateMode.aggregates`).
   ///
