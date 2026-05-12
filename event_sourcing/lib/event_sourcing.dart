@@ -209,7 +209,8 @@ export 'src/promoters/primitives/transform.dart'
 // EventStore.subscribe<T>().
 export 'src/subscriptions/subscription_mode.dart'
     show AggregateMode, Events, SubscriptionMode;
-export 'src/subscriptions/update.dart' show Delta, Snapshot, Tombstone, Update;
+export 'src/subscriptions/update.dart'
+    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
