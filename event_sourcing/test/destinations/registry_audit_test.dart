@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-destinations/A/D — verifies that every DestinationRegistry
+// mutation (addDestination, setStartDate, setEndDate, deactivateDestination,
+// deleteDestination, tombstoneAndRefill) emits a system audit event in the
+// same transaction as the mutation (D), and that the audit carries the
+// correct configuration fields (A).
 // Tests for the in-transaction config-change audit emissions added in
 // Phase 4.17c-g. Every registry mutation method (addDestination,
 // setStartDate, setEndDate, deactivateDestination, deleteDestination,

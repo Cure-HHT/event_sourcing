@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/C/D — exercises runHistoricalReplay via
+// setStartDate: events matching a destination's filter are enqueued in FIFO
+// order (C), replay runs in the same transaction so batches survive restart
+// without duplication (D).
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';

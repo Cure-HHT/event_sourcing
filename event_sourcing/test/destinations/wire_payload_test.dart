@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/E — exercises WirePayload: the byte-level
+// transport type produced by an app-supplied destination's transform;
+// verifies equality, defensive copy, and field access.
 import 'dart:typed_data';
 
 import 'package:event_sourcing/src/destinations/wire_payload.dart';

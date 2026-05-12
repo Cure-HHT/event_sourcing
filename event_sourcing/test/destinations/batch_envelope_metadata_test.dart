@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/E — exercises BatchEnvelopeMetadata: the
+// library-native batch format for destinations that serializesNatively;
+// verifies round-trip serialization and deterministic re-encoding at drain.
 import 'dart:convert';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';

@@ -1,3 +1,12 @@
+// Verifies: EVS-PRD-destinations/B (per-destination filter — events not
+//   matching destination.filter are skipped; cursor advances past them;
+//   system events are admitted only when includeSystemEvents is true)
+// Verifies: EVS-PRD-destinations/C (FIFO order — fill_cursor advances to
+//   batch.last.sequenceNumber on enqueue; canAddToBatch batching preserves
+//   sequence order; maxAccumulateTime hold keeps a lone event re-evaluable)
+// Verifies: EVS-PRD-destinations/D (durable queue — enqueue and cursor
+//   advance run inside one transaction; idempotent repeat calls do not
+//   double-enqueue; post-tombstoneAndRefill recovery re-promotes in one pass)
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';

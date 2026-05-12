@@ -1,3 +1,11 @@
+// Implements: EVS-PRD-destinations/C (FIFO order — each cycle runs fillBatch
+//   then drain per destination so events are promoted into the queue and
+//   shipped in the order they were appended)
+// Implements: EVS-PRD-destinations/E (pluggable delivery — SyncCycle drives
+//   drain() which calls Destination.send, the application-supplied transport)
+// Implements: EVS-PRD-destinations/F (dynamic registration — registry.all() is
+//   called per cycle so destinations added or removed since the last cycle are
+//   reflected in the current run without restart)
 import 'dart:developer' as developer;
 
 import 'package:event_sourcing/src/destinations/destination.dart';

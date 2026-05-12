@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-destinations/B/E — Destination abstract interface:
+// declares the per-destination event-selection filter (B) and the
+// app-supplied delivery implementation contract (transform + send, E).
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';

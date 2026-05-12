@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-destinations/A/D — verifies that every destination
+// mutation audit (add, setStartDate, setEndDate, delete, tombstoneAndRefill)
+// stamps aggregateId = source.identifier so the per-install audit stream is
+// a single hash-chained system aggregate (A) persisted atomically with the
+// mutation (D).
 // Verifies the system-aggregate consolidation rule for destination
 // mutation audits: every reserved-system audit emitted by
 // DestinationRegistry SHALL stamp `aggregateId = source.identifier`

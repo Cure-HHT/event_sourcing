@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-destinations/B (per-destination filter — fillBatch
+//   evaluates destination.filter.matches on every candidate event and skips
+//   non-matching events, advancing the cursor past them)
+// Implements: EVS-PRD-destinations/C (FIFO order — events are enqueued in
+//   sequence_number order; the cursor advance to batch.last.sequenceNumber
+//   preserves ordering for subsequent drain calls)
+// Implements: EVS-PRD-destinations/D (durable queue — enqueue and
+//   fill_cursor advance run inside a single StorageBackend transaction so
+//   the FIFO state is crash-consistent across restarts)
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';

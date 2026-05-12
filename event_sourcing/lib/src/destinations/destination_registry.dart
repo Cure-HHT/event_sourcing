@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-destinations/A/D/F — DestinationRegistry: configures
+// destinations on a deployment (A), persists schedules so state survives
+// restart (D), and supports dynamic add/deactivate/delete over the
+// operating lifetime (F).
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';

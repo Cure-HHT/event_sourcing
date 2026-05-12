@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/A/D/F — exercises the full dynamic lifecycle
+// of DestinationRegistry: dormant-seed on add (A), schedule persistence and
+// cold-restart recovery (D), and monotonic-backward setStartDate + gap-replay
+// semantics supporting dynamic re-configuration (F).
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';

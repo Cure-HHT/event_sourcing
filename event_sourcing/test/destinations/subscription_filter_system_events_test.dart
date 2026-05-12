@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/B — exercises the system-events opt-in of
+// SubscriptionFilter: includeSystemEvents=false rejects all system entry
+// types (default, so app destinations don't accidentally admit audit events);
+// includeSystemEvents=true admits them bypassing the entryTypes allow-list.
 // dispatches system entry types through the opt-in flag, bypassing the
 // entryTypes allow-list. User entry types continue to use entryTypes.
 // opt in via SubscriptionFilter.includeSystemEvents.

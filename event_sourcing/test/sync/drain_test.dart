@@ -1,3 +1,10 @@
+// Verifies: EVS-PRD-destinations/C (FIFO order — drain attempts rows in
+//   sequence_in_queue order; SendOk advances to the next head; a wedged head
+//   halts the pass; trail rows are never sent ahead of a wedged head)
+// Verifies: EVS-PRD-destinations/D (durable queue — drain reads from
+//   StorageBackend; queued rows survive across drain call boundaries)
+// Verifies: EVS-PRD-destinations/E (pluggable delivery — every test calls
+//   drain() via FakeDestination.send, the application-supplied transport)
 import 'dart:convert';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';

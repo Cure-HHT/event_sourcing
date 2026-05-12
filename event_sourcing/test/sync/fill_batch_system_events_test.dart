@@ -1,9 +1,9 @@
-// driven entirely by SubscriptionFilter.matches via the
-// includeSystemEvents flag. fillBatch holds no hard-drop guard against
-// reserved system entry types; that decision lives on the destination's
-// filter.
-// that opt in (e.g. forensic / audit-mirroring destinations) and are
-// not visible to destinations that do not.
+// Verifies: EVS-PRD-destinations/B (per-destination filter — system-event
+//   admission is driven entirely by SubscriptionFilter.matches via the
+//   includeSystemEvents flag; fillBatch holds no hard-drop guard against
+//   reserved system entry types; that decision lives on the destination's
+//   filter so audit-mirroring destinations that opt in receive system events
+//   and destinations that do not are unaffected)
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/B — exercises SubscriptionFilter semantics:
+// allow-list matching by entry_type and event_type (null vs empty distinction),
+// predicate escape-hatch, AND composition, and default match-all behavior.
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
