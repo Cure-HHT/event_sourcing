@@ -1,4 +1,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
+import 'package:event_sourcing/src/lifecycle/version_check.dart';
+import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -17,13 +21,8 @@ const Source _source = Source(
   softwareVersion: 'v',
 );
 
-EntryTypeDefinition _defn(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'widget-$id',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _defn(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 /// Destination that throws on the first read of [id]. Used to abort the
 /// destination loop at a deterministic point.
@@ -46,8 +45,6 @@ void main() {
           source: _source,
           entryTypes: [_defn('demo_note')],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
         expect(ds.eventStore, isA<EventStore>());
         expect(ds.entryTypes, isA<EntryTypeRegistry>());
@@ -65,8 +62,6 @@ void main() {
         source: _source,
         entryTypes: [_defn('demo_note')],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       expect(ds.entryTypes.isRegistered('security_context_redacted'), isTrue);
       expect(ds.entryTypes.isRegistered('security_context_compacted'), isTrue);
@@ -82,8 +77,6 @@ void main() {
           source: _source,
           entryTypes: [_defn('security_context_redacted')],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsA(
           isA<ArgumentError>().having(
@@ -109,12 +102,10 @@ void main() {
         source: _source,
         entryTypes: types,
         destinations: dests,
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
-      // 2 caller-supplied + 10 system = 12 total
-      expect(ds.entryTypes.all(), hasLength(12));
+      // 2 caller-supplied + 14 system = 16 total
+      expect(ds.entryTypes.all(), hasLength(16));
       expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
       expect(ds.entryTypes.isRegistered('red_button'), isTrue);
       expect(ds.destinations.all(), hasLength(2));
@@ -142,8 +133,6 @@ void main() {
           source: _source,
           entryTypes: types,
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsArgumentError,
       );
@@ -162,8 +151,6 @@ void main() {
           source: _source,
           entryTypes: types,
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsA(isA<StateError>()),
       );
@@ -174,8 +161,6 @@ void main() {
         source: _source,
         entryTypes: types,
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
       expect(ds.entryTypes.isRegistered('red_button'), isTrue);
@@ -194,8 +179,6 @@ void main() {
           source: _source,
           entryTypes: const [],
           destinations: dests,
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         ),
         throwsArgumentError,
       );
@@ -218,13 +201,110 @@ void main() {
             source: _source,
             entryTypes: const [],
             destinations: dests,
-            materializers: const <Materializer>[],
-            initialViewTargetVersions: const <String, Map<String, int>>{},
           ),
           throwsArgumentError,
         );
         expect(await backend.readSchedule('first'), isNotNull);
         expect(await backend.readSchedule('second'), isNotNull);
+      },
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // Boot-version check fires through the production bootstrap path
+  // Verifies: EVS-DEV-event-store-open (via bootstrapAppendOnlyDatastore) —
+  //   the production entry point routes through EventStore.open so the
+  //   lib-version check fires in real app boots, not only in direct
+  //   EventStore.open calls.
+  // -------------------------------------------------------------------------
+  group('bootstrapAppendOnlyDatastore routes through EventStore.open', () {
+    test('emits lib_version_initialized on first bootstrap', () async {
+      final backend = await _openBackend();
+      await bootstrapAppendOnlyDatastore(
+        backend: backend,
+        source: _source,
+        entryTypes: const <EntryTypeDefinition>[],
+        destinations: const <Destination>[],
+      );
+      final result = await VersionCheck.findMostRecent(backend);
+      expect(result, isNotNull);
+      expect(result!.recordedVersion, LibVersion.current);
+      expect(result.eventType, LibVersionEvents.initialized);
+    });
+
+    test(
+      'throws DowngradeRefusedError when log was written by a newer lib',
+      () async {
+        final backend = await _openBackend();
+        // Simulate a future-version boot by directly appending a synthetic
+        // lib_version_initialized event with version 99.0.0.
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent.synthetic(
+              eventId: 'synth-future-$seq',
+              aggregateId: '_lib',
+              aggregateType: '_lib',
+              entryType: LibVersionEvents.initialized,
+              eventType: LibVersionEvents.initialized,
+              sequenceNumber: seq,
+              eventHash: 'h-$seq',
+              initiator: const AutomationInitiator(service: 'event_sourcing'),
+              clientTimestamp: DateTime.utc(2026, 5, 9),
+              data: <String, dynamic>{
+                'version': '99.0.0',
+                'initializedAt': '2026-05-09T00:00:00Z',
+              },
+            ),
+          );
+        });
+        await expectLater(
+          bootstrapAppendOnlyDatastore(
+            backend: backend,
+            source: _source,
+            entryTypes: const <EntryTypeDefinition>[],
+            destinations: const <Destination>[],
+          ),
+          throwsA(isA<DowngradeRefusedError>()),
+        );
+      },
+    );
+
+    test(
+      'allowDowngrade: true bypasses downgrade refusal in bootstrap path',
+      () async {
+        final backend = await _openBackend();
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent.synthetic(
+              eventId: 'synth-future-$seq',
+              aggregateId: '_lib',
+              aggregateType: '_lib',
+              entryType: LibVersionEvents.initialized,
+              eventType: LibVersionEvents.initialized,
+              sequenceNumber: seq,
+              eventHash: 'h-$seq',
+              initiator: const AutomationInitiator(service: 'event_sourcing'),
+              clientTimestamp: DateTime.utc(2026, 5, 9),
+              data: <String, dynamic>{
+                'version': '99.0.0',
+                'initializedAt': '2026-05-09T00:00:00Z',
+              },
+            ),
+          );
+        });
+        // allowDowngrade: true — should succeed despite 99.0.0 recorded version.
+        final ds = await bootstrapAppendOnlyDatastore(
+          backend: backend,
+          source: _source,
+          entryTypes: const <EntryTypeDefinition>[],
+          destinations: const <Destination>[],
+          allowDowngrade: true,
+        );
+        expect(ds.eventStore, isA<EventStore>());
       },
     );
   });

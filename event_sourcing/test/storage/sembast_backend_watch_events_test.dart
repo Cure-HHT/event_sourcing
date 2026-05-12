@@ -18,7 +18,7 @@ Future<StoredEvent> _appendEvent(
       key: 0,
       eventId: eventId,
       aggregateId: aggregateId,
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: 1,
       libFormatVersion: 1,
@@ -144,13 +144,11 @@ void main() {
               id: 'epistaxis_event',
               registeredVersion: 1,
               name: 'Epistaxis Event',
-              widgetId: 'w',
-              widgetConfig: <String, Object?>{},
             ),
           );
         final secCtx = SembastSecurityContextStore(backend: backend);
-        final destStore = EventStore(
-          backend: backend,
+        final destStore = await EventStore.openForTest(
+          storage: backend,
           entryTypes: registry,
           source: destSource,
           securityContexts: secCtx,
@@ -162,8 +160,8 @@ void main() {
         );
         final origBackend = SembastBackend(database: origDb);
         final origSecCtx = SembastSecurityContextStore(backend: origBackend);
-        final origStore = EventStore(
-          backend: origBackend,
+        final origStore = await EventStore.openForTest(
+          storage: origBackend,
           entryTypes: registry,
           source: const Source(
             hopId: 'mobile-device',
@@ -175,9 +173,8 @@ void main() {
         try {
           final origEvent = await origStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-watch-1',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{
               'answers': {'q': 'a'},

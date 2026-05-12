@@ -31,16 +31,21 @@ class EventStreamPanel extends StatefulWidget {
 
 class _EventStreamPanelState extends State<EventStreamPanel> {
   List<StoredEvent> _events = const <StoredEvent>[];
-  StreamSubscription<StoredEvent>? _eventsSub;
+  StreamSubscription<Update<StoredEvent>>? _eventsSub;
 
   @override
   void initState() {
     super.initState();
     widget.appState.addListener(_onAppState);
-    _eventsSub = widget.backend.watchEvents().listen((_) {
-      if (!mounted) return;
-      _refresh();
-    });
+    _eventsSub = widget.eventStore
+        .subscribe<StoredEvent>(
+          const SubscriptionFilter(includeSystemEvents: true),
+          const Events(),
+        )
+        .listen((_) {
+          if (!mounted) return;
+          _refresh();
+        });
     _refresh();
   }
 
@@ -140,6 +145,7 @@ class _EventRow extends StatelessWidget {
           '$originBadge #${event.sequenceNumber} ${event.eventType} '
           '${event.aggregateType} $shortAgg',
           style: DemoText.body,
+          overflow: TextOverflow.ellipsis,
         ),
       ),
     );

@@ -7,12 +7,13 @@ import 'package:provenance/provenance.dart';
 /// Pure data — no Sembast or Flutter dependency on its shape — so it can
 /// travel through the `StorageBackend` contract without leaking backend
 /// details into the abstraction. Lives in `lib/src/storage/` alongside the
-/// other value types (`DiaryEntry`, `FifoEntry`, etc.).
+/// other storage value types (`FifoEntry`, etc.).
 // Implements: REQ-d00118-A — first-class entry_type field on the event record.
 // Implements: REQ-d00118-B — server_timestamp is NOT stored on the event;
 // the ingesting server is the sole authority on its own timestamp.
 // Implements: REQ-d00118-E — entry_type_version int field on the event record,
-// caller-supplied to EventStore.append.
+// stamped by the substrate from EntryTypeDefinition.registeredVersion on every
+// local append; preserved verbatim on ingested events.
 // Implements: REQ-d00118-F — lib_format_version int field on the event record,
 // stamped by the lib from currentLibFormatVersion.
 // Implements: REQ-d00135-C — top-level user_id replaced by initiator; no
@@ -126,7 +127,7 @@ class StoredEvent {
     required DateTime clientTimestamp,
     required String eventHash,
     int key = 0,
-    String aggregateType = 'DiaryEntry',
+    String aggregateType = '_test',
     String eventType = 'finalized',
     int sequenceNumber = 0,
     Map<String, dynamic>? data,
@@ -170,16 +171,22 @@ class StoredEvent {
   /// ID of the aggregate this event belongs to.
   final String aggregateId;
 
-  /// Type of aggregate (e.g., 'DiaryEntry').
+  /// Type of aggregate (e.g., 'Order', 'Invoice').
   final String aggregateType;
 
-  /// Kind of patient-recorded or administered entry (e.g., 'epistaxis_event',
-  /// 'nose_hht_survey'). First-class per REQ-d00118-A.
+  /// Structural kind of the entry within its aggregate type (e.g.,
+  /// 'order_placed', 'invoice_paid'). First-class per REQ-d00118-A.
   final String entryType;
 
   /// Application schema version under which this event was authored.
-  /// Caller-supplied to `EventStore.append`. Preserved verbatim across the
-  /// wire and receiver ingest.
+  ///
+  /// Stamped by the substrate from `EntryTypeDefinition.registeredVersion`
+  /// on every local append (the caller does not choose it). Preserved
+  /// verbatim on ingested events — reflects the originating install's
+  /// registry at the time of append. Ingest-side promotion (in
+  /// `ProjectionInterpreter`) and boot-time snapshot promotion (in
+  /// `EventStore.open`) read this field to decide whether the event needs
+  /// to be lifted to a newer version before fold.
   // Implements: REQ-d00118-E.
   final int entryTypeVersion;
 
@@ -247,6 +254,32 @@ class StoredEvent {
       );
     }
     return ProvenanceEntry.fromJson(Map<String, Object?>.from(first));
+  }
+
+  /// Returns a copy of this event with [newData] replacing [data]. All
+  /// other fields are preserved. Used by the substrate's promoter
+  /// machinery (rebuildView and ProjectionInterpreter) to thread a
+  /// promoted payload through the fold interpreters without modifying the
+  /// in-memory original or rebuilding the event hash chain.
+  StoredEvent withData(Map<String, Object?> newData) {
+    return StoredEvent(
+      key: key,
+      eventId: eventId,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      entryType: entryType,
+      entryTypeVersion: entryTypeVersion,
+      libFormatVersion: libFormatVersion,
+      eventType: eventType,
+      sequenceNumber: sequenceNumber,
+      data: newData,
+      metadata: metadata,
+      initiator: initiator,
+      clientTimestamp: clientTimestamp,
+      eventHash: eventHash,
+      flowToken: flowToken,
+      previousEventHash: previousEventHash,
+    );
   }
 
   /// Convert to a map for storage/serialization.

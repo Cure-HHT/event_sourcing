@@ -25,8 +25,6 @@ Future<EventStore> _bootstrap() async {
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
   return ds.eventStore;
 }
@@ -52,7 +50,6 @@ void main() {
           aggregateId: aggId,
           aggregateType: 'system_thing',
           entryType: kEntryTypeRegistryInitializedEntryType,
-          entryTypeVersion: 1,
           eventType: 'finalized',
           data: data,
           initiator: initiator,
@@ -64,7 +61,6 @@ void main() {
           aggregateId: aggId,
           aggregateType: 'system_thing',
           entryType: kEntryTypeRegistryInitializedEntryType,
-          entryTypeVersion: 1,
           eventType: 'finalized',
           data: data,
           initiator: initiator,
@@ -91,7 +87,6 @@ void main() {
         aggregateId: aggId,
         aggregateType: 'system_thing',
         entryType: kDestinationRegisteredEntryType,
-        entryTypeVersion: 1,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -107,7 +102,6 @@ void main() {
         aggregateId: aggId,
         aggregateType: 'system_thing',
         entryType: kEntryTypeRegistryInitializedEntryType,
-        entryTypeVersion: 1,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -129,7 +123,6 @@ void main() {
         aggregateId: aggId,
         aggregateType: 'system_thing',
         entryType: kEntryTypeRegistryInitializedEntryType,
-        entryTypeVersion: 1,
         eventType: 'finalized',
         data: data,
         initiator: initiator,

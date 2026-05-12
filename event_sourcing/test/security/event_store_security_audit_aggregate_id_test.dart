@@ -40,13 +40,8 @@ class _Fixture {
   final SembastSecurityContextStore securityContexts;
 }
 
-EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'w',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _simpleDef(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 Future<_Fixture> _setup({DateTime? now}) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -59,8 +54,8 @@ Future<_Fixture> _setup({DateTime? now}) async {
   }
   registry.register(_simpleDef('epistaxis_event'));
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: _source,
     securityContexts: securityContexts,
@@ -88,9 +83,8 @@ void main() {
           final fx = await _setup();
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -141,9 +135,8 @@ void main() {
           // within 90 + 365) so a compact emission lands.
           final evCompact = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -164,9 +157,8 @@ void main() {
           // 365 days) so a purge emission lands.
           final evPurge = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'b',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -213,9 +205,8 @@ void main() {
           final fx = await _setup(now: DateTime.utc(2030, 1, 1));
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),

@@ -19,12 +19,6 @@ Future<AppendOnlyDatastore> _bootstrapPortal(String path) async {
     ),
     entryTypes: allDemoEntryTypes,
     destinations: const <Destination>[],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
   );
 }
 

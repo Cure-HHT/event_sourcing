@@ -34,16 +34,12 @@ EntryTypeDefinition _typeA({int version = 1}) => EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: version,
   name: 'Demo Note',
-  widgetId: 'widget-demo_note',
-  widgetConfig: const <String, Object?>{},
 );
 
 EntryTypeDefinition _typeB() => const EntryTypeDefinition(
   id: 'red_button',
   registeredVersion: 1,
   name: 'Red Button',
-  widgetId: 'widget-red_button',
-  widgetConfig: <String, Object?>{},
 );
 
 /// Open a `SembastBackend` against a path-keyed in-memory database via
@@ -83,8 +79,6 @@ void main() {
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
           destinations: const <Destination>[],
-          materializers: const <Materializer>[],
-          initialViewTargetVersions: const <String, Map<String, int>>{},
         );
 
         final audits = await _eventsOfType(
@@ -133,8 +127,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       final firstAudits = await _eventsOfType(
         backendA,
@@ -152,8 +144,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
       final secondAudits = await _eventsOfType(
         backendB,
@@ -174,8 +164,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       // Reboot with a NEW entry type added — the registry map shape
@@ -186,8 +174,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       final audits = await _eventsOfType(
@@ -211,8 +197,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 1)],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       // Reboot with the SAME id but a bumped registeredVersion — the
@@ -224,8 +208,6 @@ void main() {
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 2)],
         destinations: const <Destination>[],
-        materializers: const <Materializer>[],
-        initialViewTargetVersions: const <String, Map<String, int>>{},
       );
 
       final audits = await _eventsOfType(

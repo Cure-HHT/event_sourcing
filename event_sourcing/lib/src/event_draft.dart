@@ -24,7 +24,7 @@ class EventDraft {
   final String aggregateType;
   final String entryType;
   final String eventType;
-  final Map<String, dynamic> data;
+  final Map<String, Object?> data;
   final String? flowToken;
-  final Map<String, dynamic>? metadata;
+  final Map<String, Object?>? metadata;
 }

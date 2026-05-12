@@ -37,8 +37,6 @@ Future<_Fixture> _openStore({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     )
     ..register(
@@ -46,8 +44,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -56,8 +52,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -66,14 +60,12 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: Source(
       hopId: hopId,
@@ -143,9 +135,8 @@ void main() {
         for (var i = 0; i < 3; i++) {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-recon-$i',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: <String, Object?>{
               'answers': <String, Object?>{'idx': i},
@@ -231,9 +222,8 @@ void main() {
       try {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-hash-check',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -298,9 +288,8 @@ void main() {
         for (var i = 0; i < n; i++) {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-fullrecon-$i',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: <String, Object?>{
               'answers': <String, Object?>{'idx': i},

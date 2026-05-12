@@ -106,12 +106,6 @@ Future<_PaneHandle> _mkPane({
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
   );
 
   final now = DateTime.now().toUtc();
@@ -145,13 +139,6 @@ Future<_PaneHandle> _mkPane({
   );
 }
 
-class _EntryTypeLookup implements EntryTypeDefinitionLookup {
-  const _EntryTypeLookup(this.registry);
-  final EntryTypeRegistry registry;
-  @override
-  EntryTypeDefinition? lookup(String entryTypeId) => registry.byId(entryTypeId);
-}
-
 Future<({_PaneHandle mobile, _PaneHandle portal, Widget app})> _setupDualApp({
   required String testId,
 }) async {
@@ -178,14 +165,12 @@ Future<({_PaneHandle mobile, _PaneHandle portal, Widget app})> _setupDualApp({
   // resetAll(), which our tests never invoke. The field is non-nullable, so
   // we supply a no-op timer that fires once far in the future.
   final dummyTick = Timer(const Duration(days: 365), () {});
-  final lookup = _EntryTypeLookup(mobile.datastore.entryTypes);
 
   final app = DualDemoApp(
     top: DemoPaneConfig(
       datastore: mobile.datastore,
       backend: mobile.backend,
       appState: mobile.appState,
-      entryTypeLookup: lookup,
       dbPath: 'mobile-$testId.db',
       tickController: dummyTick,
       paneLabel: 'MOBILE',
@@ -195,7 +180,6 @@ Future<({_PaneHandle mobile, _PaneHandle portal, Widget app})> _setupDualApp({
       datastore: portal.datastore,
       backend: portal.backend,
       appState: portal.appState,
-      entryTypeLookup: lookup,
       dbPath: 'portal-$testId.db',
       tickController: dummyTick,
       paneLabel: 'PORTAL',

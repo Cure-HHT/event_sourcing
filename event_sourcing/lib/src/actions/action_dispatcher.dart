@@ -8,6 +8,7 @@
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
+import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show Deny;
 import 'package:event_sourcing/src/actions/authorization_policy.dart';
@@ -81,15 +82,16 @@ class ActionDispatcher {
   ///             `expiresAt = ctx.requestStartedAt + action.idempotencyTtl`.
   ///   Stage 10 — return `DispatchResult.success(result, emittedEventIds)`.
   Future<DispatchResult<Object?>> dispatch(
-    String actionName,
-    Map<String, Object?> rawInput,
-    ActionContext ctx, {
-    String? idempotencyKey,
-    String? flowToken,
-  }) async {
+    ActionSubmission submission,
+    ActionContext ctx,
+  ) async {
+    final actionName = submission.actionName;
+    final rawInput = submission.rawInput;
+    final idempotencyKey = submission.idempotencyKey;
+    final flowToken = submission.flowToken;
     // Stage 2: invocation_id (generated up front so denials can carry it).
     final invocationId = _uuid.v4();
-    final invocationMetadata = <String, dynamic>{
+    final invocationMetadata = <String, Object?>{
       'action_invocation_id': invocationId,
       'action_name': actionName,
     };
@@ -168,7 +170,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.validationDenied(err);
@@ -190,9 +192,7 @@ class ActionDispatcher {
           permission: decision.permission,
           principalActiveRole: principalActiveRole,
           denyReason: decision.reason,
-          actionInvocationMetadata: Map<String, dynamic>.from(
-            invocationMetadata,
-          ),
+          actionInvocationMetadata: invocationMetadata,
         );
         await _persistDenial(denial, ctx, flowToken: flowToken);
         return DispatchResult<Object?>.authorizationDenied(decision.permission);
@@ -212,7 +212,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.executionFailed(err);
@@ -224,7 +224,10 @@ class ActionDispatcher {
     final initiator = ctx.principal.toInitiator();
     final security = executionResult.securityDetailsOverride ?? ctx.security;
     try {
-      await events.backend.transaction<void>((txn) async {
+      // runTransaction wraps backend.transaction and publishes all collected
+      // events to the subscription bus after commit, so subscribers receive
+      // delivery without a manual publishAppended loop.
+      await events.runTransaction((txn, collector) async {
         for (final draft in executionResult.events) {
           final mergedMetadata = <String, Object?>{
             ...?draft.metadata,
@@ -233,12 +236,12 @@ class ActionDispatcher {
           };
           final stored = await events.appendInTxn(
             txn,
+            collector: collector,
             entryType: draft.entryType,
-            entryTypeVersion: 1,
             aggregateId: draft.aggregateId,
             aggregateType: draft.aggregateType,
             eventType: draft.eventType,
-            data: Map<String, Object?>.from(draft.data),
+            data: draft.data,
             initiator: initiator,
             flowToken: draft.flowToken ?? flowToken,
             metadata: mergedMetadata,
@@ -259,7 +262,7 @@ class ActionDispatcher {
         invocationId: invocationId,
         actionName: action.name,
         error: err,
-        actionInvocationMetadata: Map<String, dynamic>.from(invocationMetadata),
+        actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
       return DispatchResult<Object?>.executionFailed(err);
@@ -309,12 +312,9 @@ class ActionDispatcher {
   }
 
   /// Persists a denial event through [events]. Single event, atomic by
-  /// virtue of EventStore.append's own transaction.
-  ///
-  /// `entryTypeVersion` is hardcoded to 1 for now; consumers must
-  /// register the `action_denial` entry type at version 1. When the
-  /// dispatcher's host-bootstrap helper lands (plan-1 Task 22), this
-  /// hardcoding gets reviewed.
+  /// virtue of EventStore.append's own transaction. The substrate stamps
+  /// `entry_type_version` from the registry's `registeredVersion` for
+  /// `draft.entryType`; the caller does not supply it.
   Future<void> _persistDenial(
     EventDraft draft,
     ActionContext ctx, {
@@ -322,16 +322,13 @@ class ActionDispatcher {
   }) async {
     await events.append(
       entryType: draft.entryType,
-      entryTypeVersion: 1,
       aggregateId: draft.aggregateId,
       aggregateType: draft.aggregateType,
       eventType: draft.eventType,
-      data: Map<String, Object?>.from(draft.data),
+      data: draft.data,
       initiator: ctx.principal.toInitiator(),
       flowToken: draft.flowToken ?? flowToken,
-      metadata: draft.metadata == null
-          ? null
-          : Map<String, Object?>.from(draft.metadata!),
+      metadata: draft.metadata,
       security: ctx.security,
     );
   }

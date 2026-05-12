@@ -40,8 +40,6 @@ Future<_Fixture> _openStore({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     )
     ..register(
@@ -49,8 +47,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -59,8 +55,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -69,14 +63,12 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: Source(
       hopId: hopId,
@@ -110,9 +102,8 @@ void main() {
         // 1. Originate an event.
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {
             'answers': {'severity': 'mild'},
@@ -181,9 +172,8 @@ void main() {
         try {
           final original = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-2',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {'answers': {}},
             initiator: const UserInitiator('u1'),
@@ -212,18 +202,16 @@ void main() {
         // Originate two distinct events.
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-seq1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
         );
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-seq2',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),

@@ -9,49 +9,78 @@ import 'package:flutter/material.dart';
 /// Each light's `is_on` state is toggled on every press of its
 /// corresponding button (RED / GREEN / BLUE in the top action bar).
 ///
-/// Subscribes to `backend.watchView('rgb_lights')` (REQ-d00153) so the
-/// rendering re-runs only when the view's rows actually change — no
-/// timer, no event-stream filter at the panel layer. Demonstrates the
-/// reactive read primitive end-to-end: button press → event appended →
-/// `LightsMaterializer.applyInTxn` toggles the row → view-mutation
-/// post-commit fires `_viewChangesController.add('rgb_lights')` → this
-/// panel's stream subscription re-fetches and re-renders.
+/// Subscribes via `eventStore.subscribe<StoredEvent>(...)` in `Events` mode
+/// so the panel re-fetches view rows whenever any event lands — no timer,
+/// no legacy `watchView` poll. Demonstrates the reactive read primitive
+/// end-to-end: button press → event appended → `LightsMaterializer.applyInTxn`
+/// toggles the row → subscription delta fires → panel re-fetches and re-renders.
 class LightsPanel extends StatefulWidget {
-  const LightsPanel({required this.backend, super.key});
+  const LightsPanel({
+    required this.backend,
+    required this.eventStore,
+    super.key,
+  });
 
   final StorageBackend backend;
+  final EventStore eventStore;
 
   @override
   State<LightsPanel> createState() => _LightsPanelState();
 }
 
 class _LightsPanelState extends State<LightsPanel> {
-  StreamSubscription<List<Map<String, Object?>>>? _viewSub;
+  StreamSubscription<Update<StoredEvent>>? _eventsSub;
   Map<String, _LightState> _state = const <String, _LightState>{};
 
   @override
   void initState() {
     super.initState();
-    _viewSub = widget.backend.watchView(LightsMaterializer.viewKey).listen((
-      rows,
-    ) {
+    _refresh();
+    // Re-fetch view rows on every event arrival (including button-press
+    // events that trigger LightsMaterializer). No view-level subscription
+    // is needed because rgb_lights is populated by a custom in-transaction
+    // fold rather than a ProjectionRegistry spec.
+    _eventsSub = widget.eventStore
+        .subscribe<StoredEvent>(
+          const SubscriptionFilter(
+            entryTypes: <String>[
+              'red_button_pressed',
+              'green_button_pressed',
+              'blue_button_pressed',
+            ],
+          ),
+          const Events(),
+        )
+        .listen((_) {
+          if (!mounted) return;
+          _refresh();
+        });
+  }
+
+  @override
+  void dispose() {
+    _eventsSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    try {
+      final rows = await widget.backend.findViewRows(
+        LightsMaterializer.viewKey,
+      );
       if (!mounted) return;
       setState(() {
         _state = <String, _LightState>{
-          for (final row in rows)
+          for (final Map<String, Object?> row in rows)
             row['color']! as String: _LightState(
               isOn: (row['is_on'] as bool?) ?? false,
               lastToggledAt: row['last_toggled_at'] as String?,
             ),
         };
       });
-    });
-  }
-
-  @override
-  void dispose() {
-    _viewSub?.cancel();
-    super.dispose();
+    } catch (_) {
+      // Non-fatal; next event tick retries.
+    }
   }
 
   @override
@@ -76,7 +105,7 @@ class _LightsPanelState extends State<LightsPanel> {
           const Text(
             'press RED / GREEN / BLUE in the\n'
             'action bar to toggle the matching\n'
-            'light. driven by watchView, not poll.',
+            'light. driven by subscribe, not poll.',
             style: TextStyle(
               color: DemoColors.pending,
               fontFamily: DemoText.fontFamilyMonospace,

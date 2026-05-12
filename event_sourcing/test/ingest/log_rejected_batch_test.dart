@@ -34,49 +34,22 @@ Future<_Fixture> _openStore({
     'rejected-batch-$_dbCounter.db',
   );
   final backend = SembastBackend(database: db);
-  final registry = EntryTypeRegistry()
-    ..register(
-      const EntryTypeDefinition(
-        id: 'epistaxis_event',
-        registeredVersion: 1,
-        name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: 1,
-        name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
-        materialize: false,
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: 1,
-        name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
-        materialize: false,
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: 1,
-        name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
-        materialize: false,
-      ),
-    );
+  final registry = EntryTypeRegistry();
+  // Auto-register every reserved system entry type (includes
+  // `ingest-audit`, security-context lifecycle entry types, etc.).
+  for (final defn in kSystemEntryTypes) {
+    registry.register(defn);
+  }
+  registry.register(
+    const EntryTypeDefinition(
+      id: 'epistaxis_event',
+      registeredVersion: 1,
+      name: 'Epistaxis Event',
+    ),
+  );
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: Source(
       hopId: hopId,

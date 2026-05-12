@@ -22,7 +22,7 @@ abstract class IdempotencyStore {
     required String actionName,
     required String principalId,
     required String key,
-    required Map<String, dynamic> resultJson,
+    required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
   });
@@ -58,12 +58,12 @@ class InMemoryIdempotencyStore implements IdempotencyStore {
     required String actionName,
     required String principalId,
     required String key,
-    required Map<String, dynamic> resultJson,
+    required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
   }) async {
     _entries[_composite(actionName, principalId, key)] = IdempotencyEntry(
-      resultJson: Map<String, dynamic>.unmodifiable(resultJson),
+      resultJson: Map<String, Object?>.unmodifiable(resultJson),
       emittedEventIds: List<String>.unmodifiable(emittedEventIds),
       recordedAt: DateTime.now(),
       expiresAt: expiresAt,

@@ -10,7 +10,6 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -86,8 +85,6 @@ class SembastBackend extends StorageBackend {
       .store(_eventStoreName);
   final StoreRef<String, Object?> _backendStateStore =
       StoreRef<String, Object?>('backend_state');
-  final StoreRef<String, Map<String, Object?>> _entriesStore =
-      stringMapStoreFactory.store('diary_entries');
   // Backend-private mirror of the `security_context` sembast store so
   // [queryAudit] can join against the event log without reaching into a
   // separate store object. The sembast `StoreRef` is just a typed name
@@ -276,25 +273,38 @@ class SembastBackend extends StorageBackend {
   }
 
   // Implements: REQ-d00154-C — Dart-side AND filter on
-  // provenance[0].hopId / provenance[0].identifier. Filter runs on the
-  // already-loaded list rather than as a sembast query because the
-  // provenance entries live inside the JSON-encoded `metadata` blob and
+  // provenance[0].hopId / provenance[0].identifier. The originator filter
+  // runs on the already-loaded list rather than as a sembast query because
+  // the provenance entries live inside the JSON-encoded `metadata` blob and
   // sembast finders do not project across nested array elements; for a
   // mobile-scale event log, in-memory filtering after the
-  // `afterSequence` / `limit` slice is well-bounded and matches the
-  // straightforward semantic.
+  // `afterSequence` / `limit` / `entry_type` / `client_timestamp` slice is
+  // well-bounded and matches the straightforward semantic.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  // client-timestamp filters land as sembast Filter predicates on the
+  // top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
+  // strings sort lexicographically in the same order as their underlying
+  // instants, so greater/less-than-or-equals against
+  // `clientTimestampStart.toUtc().toIso8601String()` reproduces the
+  // intended chronological bound).
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     final db = _database();
     final finder = Finder(
-      filter: afterSequence != null
-          ? Filter.greaterThan('sequence_number', afterSequence)
-          : null,
+      filter: _composeFindAllEventsFilter(
+        afterSequence: afterSequence,
+        entryType: entryType,
+        clientTimestampStart: clientTimestampStart,
+        clientTimestampEnd: clientTimestampEnd,
+      ),
       sortOrders: [SortOrder('sequence_number')],
       limit: limit,
     );
@@ -316,6 +326,47 @@ class SembastBackend extends StorageBackend {
       }
       return true;
     }).toList();
+  }
+
+  /// Build the sembast `Filter` for `findAllEvents` /
+  /// `findAllEventsInTxn` from the supplied optional predicates. Returns
+  /// `null` when no predicates are supplied (Finder treats `null` filter
+  /// as "match all"). When exactly one predicate is supplied it is
+  /// returned directly; multiple predicates compose via `Filter.and`.
+  // Implements: EVS-DEV-find-all-events-extended-filters — shared filter
+  // composition for the two findAllEvents variants.
+  Filter? _composeFindAllEventsFilter({
+    required int? afterSequence,
+    required String? entryType,
+    required DateTime? clientTimestampStart,
+    required DateTime? clientTimestampEnd,
+  }) {
+    final filters = <Filter>[];
+    if (afterSequence != null) {
+      filters.add(Filter.greaterThan('sequence_number', afterSequence));
+    }
+    if (entryType != null) {
+      filters.add(Filter.equals('entry_type', entryType));
+    }
+    if (clientTimestampStart != null) {
+      filters.add(
+        Filter.greaterThanOrEquals(
+          'client_timestamp',
+          clientTimestampStart.toUtc().toIso8601String(),
+        ),
+      );
+    }
+    if (clientTimestampEnd != null) {
+      filters.add(
+        Filter.lessThanOrEquals(
+          'client_timestamp',
+          clientTimestampEnd.toUtc().toIso8601String(),
+        ),
+      );
+    }
+    if (filters.isEmpty) return null;
+    if (filters.length == 1) return filters.single;
+    return Filter.and(filters);
   }
 
   /// Reserve-and-increment the sequence counter within [txn]. Phase-2
@@ -352,24 +403,49 @@ class SembastBackend extends StorageBackend {
     return records.first.value['event_hash'] as String?;
   }
 
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  // client-timestamp filters on the transactional variant. Same shape as
+  // the non-transactional `findAllEvents` (shared via
+  // `_composeFindAllEventsFilter`).
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
     final t = _requireValidTxn(txn);
     final records = await _eventStore.find(
       t._sembastTxn,
       finder: Finder(
-        filter: afterSequence != null
-            ? Filter.greaterThan('sequence_number', afterSequence)
-            : null,
+        filter: _composeFindAllEventsFilter(
+          afterSequence: afterSequence,
+          entryType: entryType,
+          clientTimestampStart: clientTimestampStart,
+          clientTimestampEnd: clientTimestampEnd,
+        ),
         sortOrders: [SortOrder('sequence_number')],
         limit: limit,
       ),
     );
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
+  }
+
+  @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) async* {
+    final db = _database();
+    final finder = Finder(
+      filter: eventTypes != null
+          ? Filter.inList('event_type', eventTypes.toList())
+          : null,
+      sortOrders: [SortOrder('sequence_number', false)],
+    );
+    final records = await _eventStore.find(db, finder: finder);
+    for (final r in records) {
+      yield StoredEvent.fromMap(r.value, r.key);
+    }
   }
 
   // Implements: REQ-d00149-A+B+C+D+E — replay-then-live with race-safe
@@ -390,7 +466,8 @@ class SembastBackend extends StorageBackend {
   //      snapshot read and the live attach.
   // Close on the backend's `_eventsController` propagates via
   // `onDone`. The per-call controller closes via `controller.close()`.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<StoredEvent> watchEvents({int? afterSequence}) {
     if (_eventsController.isClosed) {
       throw StateError(
@@ -640,82 +717,6 @@ class SembastBackend extends StorageBackend {
         _fifoChangesController.add(destinationId);
       }
     });
-  }
-
-  // -------- diary_entries --------
-
-  /// Whole-row replace into `diary_entries` keyed on `entry.entryId`
-  /// (REQ-d00117-D). Sembast's `record(key).put(...)` semantic IS a
-  /// whole-row replace; no partial merge is possible through this path.
-  // Implements: REQ-d00117-D — whole-row replace, not partial merge.
-  @override
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry) async {
-    final t = _requireValidTxn(txn);
-    await _entriesStore
-        .record(entry.entryId)
-        .put(t._sembastTxn, entry.toJson());
-  }
-
-  /// Delete every row from `diary_entries` inside [txn].
-  // Implements: REQ-d00121-G — rebuild replaces the cache without reading
-  // prior contents.
-  @override
-  Future<void> clearEntries(Txn txn) async {
-    final t = _requireValidTxn(txn);
-    await _entriesStore.delete(t._sembastTxn);
-  }
-
-  /// Query `diary_entries` with optional filters, all combined with logical
-  /// AND. Rows whose `effective_date` is null are excluded from any query
-  /// that specifies [dateFrom] or [dateTo]; pass null for both date
-  /// parameters to include null-date rows.
-  @override
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  }) async {
-    final db = _database();
-    final filters = <Filter>[];
-    if (entryType != null) {
-      filters.add(Filter.equals('entry_type', entryType));
-    }
-    if (isComplete != null) {
-      filters.add(Filter.equals('is_complete', isComplete));
-    }
-    if (isDeleted != null) {
-      filters.add(Filter.equals('is_deleted', isDeleted));
-    }
-    // ISO 8601 strings compare lexicographically in date order when they
-    // share the same offset, which ours do (all UTC or all with an
-    // explicit offset). Nulls are excluded because `null` fails any
-    // lexicographic comparison against a String in Sembast.
-    if (dateFrom != null) {
-      filters.add(
-        Filter.greaterThanOrEquals(
-          'effective_date',
-          dateFrom.toIso8601String(),
-        ),
-      );
-    }
-    if (dateTo != null) {
-      filters.add(
-        Filter.lessThanOrEquals('effective_date', dateTo.toIso8601String()),
-      );
-    }
-    final finder = filters.isEmpty ? null : Finder(filter: Filter.and(filters));
-    final records = await _entriesStore.find(db, finder: finder);
-    return records.map((r) => DiaryEntry.fromJson(r.value)).toList();
-  }
-
-  @override
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId) async {
-    final t = _requireValidTxn(txn);
-    final raw = await _entriesStore.record(entryId).get(t._sembastTxn);
-    if (raw == null) return null;
-    return DiaryEntry.fromJson(raw);
   }
 
   // -------- Generic view storage (Phase 4.4) --------
@@ -1216,7 +1217,8 @@ class SembastBackend extends StorageBackend {
   // carry typed `FifoEntry` (REQ-d00150-B) — no raw maps leak.
   // Close on the backend's `_fifoChangesController` propagates via
   // `onDone`. The per-call controller closes via `controller.close()`.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<List<FifoEntry>> watchFifo(String destinationId) {
     if (_fifoChangesController.isClosed) {
       throw StateError(
@@ -1278,7 +1280,8 @@ class SembastBackend extends StorageBackend {
   // cross-view isolation enforced by the viewName filter; broadcast so
   // multiple subscribers per view share a single upstream subscription;
   // close-aware via _viewChangesController's onDone propagation.
-  @override
+  // Not on the StorageBackend abstract surface — SembastBackend-specific.
+  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<List<Map<String, Object?>>> watchView(String viewName) {
     if (_viewChangesController.isClosed) {
       throw StateError(

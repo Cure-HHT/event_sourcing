@@ -1,96 +1,76 @@
-/// Append-only datastore for FDA 21 CFR Part 11 compliant event sourcing.
+/// Reactive, append-only event-sourcing substrate.
 ///
-/// This library provides offline-first event storage with automatic
-/// synchronization, conflict resolution, and audit trail support.
+/// Provides storage, sync, ingest, action dispatch, projections, and live
+/// subscriptions. Cross-platform (iOS, Android, macOS, Windows, Linux, Web).
 ///
-/// ## Features
+/// ## Key types
 ///
-/// - ✅ Sembast-based append-only event storage (cross-platform including web)
-/// - ✅ Offline queue with automatic sync
-/// - ✅ Conflict detection using version vectors
-/// - ✅ FDA 21 CFR Part 11 compliance (immutable audit trail)
-/// - ✅ Cryptographic hash chain for tamper detection
-/// - ✅ OpenTelemetry integration
-/// - ✅ Reactive state with Signals
+/// - `EventStore` — open, append, subscribe, close.
+/// - `EventDraft` — input value returned by `Action.execute`.
+/// - `StoredEvent` — immutable event record with hash-chain fields.
+/// - `ProjectionRegistry` — declarative view specs registered before open.
+/// - `PromoterRegistry` — entry-type promotion chains for schema migration.
+/// - `AggregateProjectionSpec` / `TableProjectionSpec` — view spec shapes.
+/// - `SubscriptionFilter` — filter by aggregate type, entry type, event type.
+/// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
+/// - `Update` — sealed stream element: `Snapshot`, `EndOfReplay`, `Delta`, `Tombstone`.
+/// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
+/// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
+///   entry type's `registeredVersion` is below its stored target.
 ///
-/// ## Quick Start
+/// ## Quick start
 ///
 /// ```dart
 /// import 'package:event_sourcing/event_sourcing.dart';
+/// import 'package:sembast/sembast_io.dart';
 ///
-/// // Initialize the datastore
-/// await Datastore.initialize(
-///   config: DatastoreConfig.development(
-///     deviceId: 'device-123',
-///     userId: 'user-456',
+/// // Build a projection registry before opening the store.
+/// final projections = ProjectionRegistry()
+///   ..register(AggregateProjectionSpec(
+///     viewName: 'invoices',
+///     interest: SubscriptionFilter(aggregateTypes: {'Invoice'}),
+///     tombstoneEventTypes: {'invoice_cancelled'},
+///   ));
+///
+/// // Open the store (runs lib-version boot check).
+/// final db = await databaseFactoryIo.openDatabase('data.db');
+/// final store = await EventStore.open(
+///   storage: SembastBackend(db),
+///   projections: projections,
+/// );
+///
+/// // Append an event. The substrate stamps entry_type_version from
+/// // the registry's registeredVersion for 'invoice_created'.
+/// await store.append(
+///   aggregateId: 'inv-001',
+///   aggregateType: 'Invoice',
+///   entryType: 'invoice_created',
+///   eventType: 'finalized',
+///   data: {'amount': 100},
+///   initiator: const UserInitiator('user-1'),
+/// );
+///
+/// // Subscribe to live view updates.
+/// final stream = store.subscribe<Map<String, Object?>>(
+///   SubscriptionFilter(aggregateTypes: {'Invoice'}),
+///   AggregateMode(
+///     viewName: 'invoices',
+///     mapper: (row) => row,
 ///   ),
 /// );
+/// await for (final update in stream) {
+///   switch (update) {
+///     case Snapshot(:final value):    print('snapshot: $value');
+///     case EndOfReplay(:final sequence):
+///       print('replay complete at sequence $sequence');
+///     case Delta(:final value):       print('delta: $value');
+///     case Tombstone(:final aggregateId):
+///       print('deleted: $aggregateId');
+///   }
+/// }
 ///
-/// // Append an event
-/// final event = await Datastore.instance.repository.append(
-///   aggregateId: 'diary-entry-123',
-///   eventType: 'NosebleedRecorded',
-///   data: {'severity': 'mild', 'duration': 10},
-///   userId: 'user-456',
-///   deviceId: 'device-789',
-/// );
-///
-/// // Query events
-/// final events = await Datastore.instance.repository.getAllEvents();
-///
-/// // Watch sync status in UI
-/// Watch((context) {
-///   final depth = Datastore.instance.queueDepth.value;
-///   return Text('$depth events pending sync');
-/// });
+/// await store.close();
 /// ```
-///
-/// ## Architecture
-///
-/// The datastore follows a three-layer architecture:
-///
-/// 1. **Domain Layer** (this package — value types)
-///    - Event definitions
-///    - Domain entities
-///    - Value objects
-///
-/// 2. **Infrastructure Layer** (this package)
-///    - Sembast storage (cross-platform: iOS, Android, Web, Desktop)
-///    - Event repository with append-only semantics
-///    - Sync engine
-///
-/// 3. **Application Layer** (clinical_diary app)
-///    - Commands and queries
-///    - Business logic
-///    - UI presentation
-///
-/// ## Platform Support
-///
-/// - iOS (sembast_io)
-/// - Android (sembast_io)
-/// - macOS (sembast_io)
-/// - Windows (sembast_io)
-/// - Linux (sembast_io)
-/// - Web (sembast_web with IndexedDB)
-///
-/// ## FDA Compliance
-///
-/// This datastore implements FDA 21 CFR Part 11 requirements:
-///
-/// - §11.10(e): Immutable audit trail (append-only storage)
-/// - §11.10(c): Sequence of operations (monotonic sequence numbers)
-/// - §11.50: Signature manifestations (SHA-256 hash chain)
-/// - §11.10(a): Validation (comprehensive testing)
-///
-/// ## Implementation Status
-///
-/// ✅ Configuration and DI setup
-/// ✅ Database layer (Sembast cross-platform)
-/// ✅ Event storage (append-only with hash chain)
-/// ⏳ Offline queue manager
-/// ⏳ Conflict detection (version vectors)
-/// ⏳ Query service
-/// ⏳ Sync engine
 ///
 library;
 
@@ -107,6 +87,7 @@ export 'src/actions/action.dart' show Action;
 export 'src/actions/action_context.dart' show ActionContext;
 export 'src/actions/action_dispatcher.dart' show ActionDispatcher;
 export 'src/actions/action_registry.dart' show ActionRegistry;
+export 'src/actions/action_submission.dart' show ActionSubmission;
 export 'src/actions/authorization_decision.dart'
     show AuthorizationDecision, Allow, Deny, DenyReason;
 export 'src/actions/authorization_policy.dart' show AuthorizationPolicy;
@@ -169,11 +150,8 @@ export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
 export 'src/destinations/wire_payload.dart' show WirePayload;
 
-// Entry Type Registry + EntryService.record — the legacy Phase 4.3 write
-// path. Phase 4.4 added EventStore (see `src/event_store.dart`) as the new
-// write API; `EntryService.record` remains for back-compat until Phase 5
-// cuts clinical_diary over.
-export 'src/entry_service.dart' show DeviceInfo, EntryService, SyncCycleTrigger;
+// Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
+// consumed by the materializer and EventStore registry.
 export 'src/entry_type_definition.dart' show EntryTypeDefinition;
 export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 
@@ -181,7 +159,12 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 // appendWithSecurity call (Phase 5, CUR-1192).
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
-    show EventStore, EventStoreSyncCycleTrigger, RetentionResult;
+    show
+        DowngradeRefusedError,
+        EntryTypeVersionDowngradeError,
+        EventStore,
+        EventStoreSyncCycleTrigger,
+        RetentionResult;
 
 // Ingest types — error types, result types, and chain verdict
 // (Phase 4.9, CUR-1154).
@@ -198,20 +181,37 @@ export 'src/ingest/ingest_errors.dart'
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Materialization layer — pluggable fold contract, concrete materializer
-// for diary_entries, entry-type-definition lookup, and the
-// disaster-recovery rebuild helpers (CUR-1154).
-// MapEntryTypeDefinitionLookup is intentionally NOT exported — it lives
-// under test/test_support/ so production code cannot depend on it.
-export 'src/materialization/diary_entries_materializer.dart'
-    show DiaryEntriesMaterializer;
-export 'src/materialization/entry_promoter.dart'
-    show EntryPromoter, identityPromoter;
-export 'src/materialization/entry_type_definition_lookup.dart'
-    show EntryTypeDefinitionLookup;
-export 'src/materialization/materializer.dart' show Materializer;
-export 'src/materialization/rebuild.dart'
-    show rebuildMaterializedView, rebuildView;
+// Projections — declarative view specs, the registry that holds them, and
+// the parameterized rebuild helper. The legacy Materializer/EntryPromoter
+// abstractions are removed (CUR-1317 Task 22); projections now use the
+// declarative ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
+// is intentionally NOT exported — it lives under test/test_support/ so
+// production code cannot depend on it.
+export 'src/projections/rebuild.dart' show rebuildView;
+// Callers create AggregateProjectionSpec / TableProjectionSpec values,
+// register them in a ProjectionRegistry, and pass the registry to
+// bootstrapAppendOnlyDatastore or directly to EventStore.
+export 'src/projections/projection_spec.dart'
+    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
+export 'src/projections/projection_registry.dart' show ProjectionRegistry;
+
+// Promoters — entry-type version promotion chains for schema migration.
+export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
+export 'src/promoters/promoter_spec.dart' show PromoterSpec;
+export 'src/promoters/primitives/transform.dart'
+    show
+        DefaultField,
+        DropField,
+        RenameField,
+        TransformChain,
+        TransformPrimitive;
+
+// Subscriptions — live-update stream primitives returned by
+// EventStore.subscribe<T>().
+export 'src/subscriptions/subscription_mode.dart'
+    show AggregateMode, Events, SubscriptionMode;
+export 'src/subscriptions/update.dart'
+    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
@@ -234,8 +234,8 @@ export 'src/permissions/permission_revoked_payload.dart'
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
 export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
-export 'src/permissions/role_permission_grants_materializer.dart'
-    show RolePermissionGrantsMaterializer;
+export 'src/permissions/role_permission_grants_spec.dart'
+    show rolePermissionGrantsSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/snapshot_role_matrix_reader.dart'
@@ -273,6 +273,9 @@ export 'src/security/system_entry_types.dart'
         // Bootstrap registry-initialized audit (Phase 4.17 cross-phase
         // I-1 fix).
         kEntryTypeRegistryInitializedEntryType,
+        // Substrate-internal lib-version boot events (Task 3 fix).
+        kLibVersionChangedEntryType,
+        kLibVersionInitializedEntryType,
         // Aggregates over all of the above.
         kReservedSystemEntryTypeIds,
         kSystemEntryTypes;
@@ -282,7 +285,6 @@ export 'src/security/system_entry_types.dart'
 // (CUR-1154).
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
-export 'src/storage/diary_entry.dart' show DiaryEntry;
 export 'src/storage/fifo_entry.dart' show EventIdRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'
@@ -311,8 +313,3 @@ export 'src/sync/drain.dart' show ClockFn, drain;
 export 'src/sync/fill_batch.dart' show fillBatch;
 export 'src/sync/sync_cycle.dart' show SyncCycle;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
-
-// TODO: Export additional services as implemented
-// export 'src/application/services/query_service.dart';
-// export 'src/application/services/conflict_resolver.dart';
-// export 'src/application/models/version_vector.dart';

@@ -99,12 +99,6 @@ Future<_Pane> _mkPane({
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
   );
 
   final now = DateTime.now().toUtc();
@@ -135,9 +129,8 @@ Future<_Pane> _mkPane({
 Future<void> _appendDemoNote(_Pane pane, String aggregateId) async {
   await pane.datastore.eventStore.append(
     entryType: 'demo_note',
-    entryTypeVersion: 1,
     aggregateId: aggregateId,
-    aggregateType: 'DiaryEntry',
+    aggregateType: 'Note',
     eventType: 'finalized',
     data: const <String, Object?>{
       'answers': <String, Object?>{'title': 't', 'body': 'b'},

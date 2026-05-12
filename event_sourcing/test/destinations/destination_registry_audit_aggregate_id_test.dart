@@ -43,8 +43,6 @@ Future<AppendOnlyDatastore> _bootstrap(SembastBackend backend) {
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
 }
 

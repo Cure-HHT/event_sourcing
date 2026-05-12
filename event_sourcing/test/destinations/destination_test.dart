@@ -102,7 +102,7 @@ StoredEvent _mkEvent(String eventId) => StoredEvent(
   key: 1,
   eventId: eventId,
   aggregateId: 'agg-1',
-  aggregateType: 'DiaryEntry',
+  aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: 1,
   libFormatVersion: 1,

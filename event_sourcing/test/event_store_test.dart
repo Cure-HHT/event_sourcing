@@ -18,18 +18,30 @@ class _Fixture {
   final List<DateTime> syncCalls;
 }
 
+// Build an AggregateProjectionSpec that matches [entryTypeIds]. Used to
+// populate 'toy_view' for tests that verify view-row production.
+AggregateProjectionSpec _toyViewSpec(List<String> entryTypeIds) =>
+    AggregateProjectionSpec(
+      viewName: 'toy_view',
+      interest: SubscriptionFilter(entryTypes: entryTypeIds),
+      tombstoneEventTypes: const <String>{},
+    );
+
 Future<_Fixture> _setup({
   List<EntryTypeDefinition>? defs,
   DateTime? now,
+
+  /// When true, the toy_view ProjectionSpec is registered so appended events
+  /// produce view rows. When false, no projection is registered (simulates
+  /// an entry type that should not produce rows).
+  bool registerProjection = true,
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'es-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
   final registry = EntryTypeRegistry();
-  // Auto-register every reserved system entry type (security-context
-  // lifecycle plus REQ-d00129-J/K/L/M and REQ-d00138-H per-sweep audit)
-  // so direct EventStore tests don't have to enumerate them by hand.
+  // Auto-register every reserved system entry type.
   for (final defn in kSystemEntryTypes) {
     registry.register(defn);
   }
@@ -37,24 +49,23 @@ Future<_Fixture> _setup({
   for (final def in effectiveDefs) {
     registry.register(def);
   }
-  // Seed view_target_versions for diary_entries so the materializer's
-  // default targetVersionFor resolves the entry types we plan to append.
-  // (Unit-style EventStore tests bypass bootstrapAppendOnlyDatastore.)
-  await backend.transaction((txn) async {
-    for (final def in effectiveDefs) {
-      if (!def.materialize) continue;
-      await backend.writeViewTargetVersionInTxn(
-        txn,
-        'diary_entries',
-        def.id,
-        def.registeredVersion,
-      );
-    }
-  });
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final syncCalls = <DateTime>[];
-  final eventStore = EventStore(
-    backend: backend,
+
+  ProjectionRegistry? projections;
+  if (registerProjection) {
+    final materializableIds = effectiveDefs
+        .where((d) => d.materialize)
+        .map((d) => d.id)
+        .toList();
+    if (materializableIds.isNotEmpty) {
+      projections = ProjectionRegistry()
+        ..register(_toyViewSpec(materializableIds));
+    }
+  }
+
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: const Source(
       hopId: 'mobile-device',
@@ -62,7 +73,7 @@ Future<_Fixture> _setup({
       softwareVersion: 'clinical_diary@1.0.0',
     ),
     securityContexts: securityContexts,
-    materializers: const [DiaryEntriesMaterializer(promoter: identityPromoter)],
+    projections: projections,
     syncCycleTrigger: () async {
       syncCalls.add(DateTime.now());
     },
@@ -77,13 +88,8 @@ Future<_Fixture> _setup({
   );
 }
 
-EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
-  id: id,
-  registeredVersion: 1,
-  name: id,
-  widgetId: 'w',
-  widgetConfig: const <String, Object?>{},
-);
+EntryTypeDefinition _simpleDef(String id) =>
+    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
 
 void main() {
   group('EventStore.append', () {
@@ -95,9 +101,8 @@ void main() {
         final fx = await _setup();
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {
             'answers': {'severity': 'mild'},
@@ -117,9 +122,8 @@ void main() {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {'answers': {}},
         initiator: const UserInitiator('u1'),
@@ -136,9 +140,8 @@ void main() {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {'answers': {}},
         initiator: const UserInitiator('u1'),
@@ -147,9 +150,11 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00140-C — def.materialize=false skips all materializers.
+    // Verifies: REQ-d00140-C — an entry type not covered by any ProjectionSpec
+    // interest filter produces no view row. In the declarative model this is
+    // expressed by simply not registering a ProjectionSpec for that entry type.
     test(
-      'REQ-d00140-C: materialize=false entry type produces no view row',
+      'REQ-d00140-C: entry type not in any ProjectionSpec produces no view row',
       () async {
         final fx = await _setup(
           defs: [
@@ -157,24 +162,22 @@ void main() {
               id: 'non_materialized',
               registeredVersion: 1,
               name: 'Non-Mat',
-              widgetId: 'w',
-              widgetConfig: <String, Object?>{},
               materialize: false,
             ),
           ],
+          registerProjection: false,
         );
         final ev = await fx.eventStore.append(
           entryType: 'non_materialized',
-          entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
         );
         expect(ev, isNotNull);
         final viewRow = await fx.backend.transaction(
-          (txn) async => fx.backend.readViewRowInTxn(txn, 'diary_entries', 'a'),
+          (txn) async => fx.backend.readViewRowInTxn(txn, 'toy_view', 'a'),
         );
         expect(viewRow, isNull);
         await fx.backend.close();
@@ -186,9 +189,8 @@ void main() {
       await expectLater(
         fx.eventStore.append(
           entryType: 'weather_report',
-          entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -204,9 +206,8 @@ void main() {
       final fxA = await _setup(now: DateTime.utc(2026, 4, 22));
       final evA = await fxA.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {
           'answers': {'x': 1},
@@ -217,9 +218,8 @@ void main() {
       final fxB = await _setup(now: DateTime.utc(2026, 4, 22));
       final evB = await fxB.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'SampleAggregate',
         eventType: 'finalized',
         data: const {
           'answers': {'x': 1},
@@ -242,9 +242,8 @@ void main() {
         final fx = await _setup();
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -332,9 +331,8 @@ void main() {
         // window but within 90+365 so it is compacted, not purged).
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'SampleAggregate',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),

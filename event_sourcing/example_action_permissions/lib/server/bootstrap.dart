@@ -72,10 +72,12 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final directoryMaterializer = UserDirectoryMaterializer(directory: directory);
   final registry = buildDemoActionRegistry(directory: directory);
 
-  // 2. Bootstrap the append-only datastore. Materializers wired here are
-  //    RolePermissionGrants (for the matrix) and the directory adapter (for
-  //    the in-memory user directory). Every entry type the demo writes
-  //    must be registered up front; missing registrations fail at append.
+  // 2. Bootstrap the append-only datastore. The role_permission_grants view
+  //    is driven by rolePermissionGrantsSpec (TableProjectionSpec) via the
+  //    ProjectionRegistry. Every entry type the demo writes must be
+  //    registered up front; missing registrations fail at append.
+  final demoProjections = ProjectionRegistry()
+    ..register(rolePermissionGrantsSpec);
   final datastore = await bootstrapAppendOnlyDatastore(
     backend: backend,
     source: Source(
@@ -85,16 +87,31 @@ Future<DemoServerComponents> bootstrapDemoServer({
     ),
     entryTypes: _demoEntryTypes,
     destinations: const <Destination>[],
-    materializers: <Materializer>[
-      const RolePermissionGrantsMaterializer(),
-      _DirectoryMaterializerAdapter(directoryMaterializer),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'role_permission_grants': <String, int>{'role_permission_grant': 1},
-      'user_directory': <String, int>{'user_provisioned': 1},
-    },
+    projections: demoProjections,
   );
   final eventStore = datastore.eventStore;
+
+  // 2b. Wire the in-memory UserDirectory to the substrate's reactive stream.
+  //     The subscribe<StoredEvent> call delivers a Delta for every
+  //     user_provisioned event appended after this point. Seed-time
+  //     population is handled synchronously by UserDirectorySeedApplier
+  //     (see step 4 below), so no timing window exists between the listener
+  //     attach and the first seed append.
+  eventStore
+      .subscribe<StoredEvent>(
+        const SubscriptionFilter(
+          entryTypes: <String>['user_provisioned'],
+          eventTypes: <String>{'user_provisioned'},
+        ),
+        const Events(),
+      )
+      .listen((update) {
+        // Events()-mode subscriptions never emit Snapshot/EndOfReplay/Tombstone;
+        // we only act on Delta. Any future variants are intentionally ignored.
+        if (update is Delta<StoredEvent>) {
+          directoryMaterializer.applyDirect(update.value.data);
+        }
+      });
 
   // 3. Apply the role-permission matrix YAML seed. Returns either
   //    PolicyReady(policy) or PolicyFailSafe(errors); on FailSafe the
@@ -123,7 +140,6 @@ Future<DemoServerComponents> bootstrapDemoServer({
   for (final payload in pending) {
     await eventStore.append(
       entryType: 'user_provisioned',
-      entryTypeVersion: 1,
       aggregateType: 'user_directory',
       aggregateId: payload['userId']! as String,
       eventType: 'user_provisioned',
@@ -151,38 +167,6 @@ Future<DemoServerComponents> bootstrapDemoServer({
   );
 }
 
-/// Adapter so the demo's [UserDirectoryMaterializer] plugs into the
-/// `event_sourcing` `Materializer` protocol. Filters by aggregateType and
-/// forwards the `user_provisioned` payload to `UserDirectory.upsert`.
-class _DirectoryMaterializerAdapter extends Materializer {
-  const _DirectoryMaterializerAdapter(this._directoryMaterializer);
-
-  final UserDirectoryMaterializer _directoryMaterializer;
-
-  @override
-  String get viewName => 'user_directory';
-
-  @override
-  bool appliesTo(StoredEvent event) =>
-      event.aggregateType == 'user_directory' &&
-      event.eventType == 'user_provisioned';
-
-  @override
-  EntryPromoter get promoter => identityPromoter;
-
-  @override
-  Future<void> applyInTxn(
-    Txn txn,
-    StorageBackend backend, {
-    required StoredEvent event,
-    required Map<String, Object?> promotedData,
-    required EntryTypeDefinition def,
-    required List<StoredEvent> aggregateHistory,
-  }) async {
-    _directoryMaterializer.applyDirect(promotedData);
-  }
-}
-
 /// All entry types the demo writes through the EventStore. Every entry
 /// type the actions emit (or that the dispatcher emits as denial events,
 /// or that the seed appliers emit) must appear here so the EntryTypeRegistry
@@ -193,59 +177,36 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'help_request',
     registeredVersion: 1,
     name: 'Help Request',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
-  EntryTypeDefinition(
-    id: 'demo_note',
-    registeredVersion: 1,
-    name: 'Demo Note',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
-  ),
+  EntryTypeDefinition(id: 'demo_note', registeredVersion: 1, name: 'Demo Note'),
   EntryTypeDefinition(
     id: 'green_button_press',
     registeredVersion: 1,
     name: 'Green Button Press',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
   EntryTypeDefinition(
     id: 'blue_button_press',
     registeredVersion: 1,
     name: 'Blue Button Press',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
-  EntryTypeDefinition(
-    id: 'red_alarm',
-    registeredVersion: 1,
-    name: 'Red Alarm',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
-  ),
+  EntryTypeDefinition(id: 'red_alarm', registeredVersion: 1, name: 'Red Alarm'),
   EntryTypeDefinition(
     id: 'user_provisioned',
     registeredVersion: 1,
     name: 'User Provisioned',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
-  // Permissions module emits these via EventSeedApplier on bootstrap and
-  // the matrix materializer folds them into role_permission_grants.
+  // Permissions module emits these via EventSeedApplier on bootstrap.
+  // The role_permission_grants view is projected by rolePermissionGrantsSpec
+  // (TableProjectionSpec) registered in the ProjectionRegistry.
   EntryTypeDefinition(
     id: 'role_permission_grant',
     registeredVersion: 1,
     name: 'Role-Permission Grant',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
   // The dispatcher emits one of these for every denial stage.
   EntryTypeDefinition(
     id: 'action_denial',
     registeredVersion: 1,
     name: 'Action Denial',
-    widgetId: 'none',
-    widgetConfig: <String, Object?>{},
   ),
 ];

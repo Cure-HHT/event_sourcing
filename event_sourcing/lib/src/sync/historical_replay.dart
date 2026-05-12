@@ -56,11 +56,10 @@ const _uuidGen = Uuid();
 ///   does not apply. The final trailing batch flushes even if it is a
 ///   single event.
 ///
-/// No `EntryPromoter` is invoked here. Historical replay promotes events
-/// from the log into the destination's outbound FIFO, not into a
-/// materialized view. The receiving destination is responsible for any
-/// version translation it needs to perform on the wire (REQ-d00140-G
-/// scopes the promoter to materializer folds, not destination transforms).
+/// No promoter is invoked here. Historical replay promotes events from the
+/// log into the destination's outbound FIFO, not into a materialized view.
+/// The receiving destination is responsible for any version translation it
+/// needs to perform on the wire.
 // Implements: REQ-d00129-D — setStartDate(past) triggers historical
 // replay synchronously in the same transaction as the schedule write.
 // Implements: REQ-d00130-A — single-transaction walk of event_log from
@@ -271,8 +270,8 @@ Future<void> runHistoricalReplay(
 /// serializes behind the transaction that persists the new schedule and
 /// runs gap replay, so it never observes a half-applied gap window.
 ///
-/// No `EntryPromoter` is invoked here — gap replay promotes events from
-/// the log into the destination's FIFO, not into a materialized view.
+/// No promoter is invoked here — gap replay promotes events from the log
+/// into the destination's FIFO, not into a materialized view.
 // Implements: REQ-d00129-C — backward movement of startDate triggers a
 //   gap replay over [newStartDate, oldStartDate) in the same transaction
 //   as the schedule write.

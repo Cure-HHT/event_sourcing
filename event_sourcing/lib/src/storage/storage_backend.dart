@@ -4,7 +4,6 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -22,14 +21,15 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 /// The contract is deliberately Dart-pure: no Sembast or postgres types leak
 /// into the interface, so either backend can be swapped in without changing
 /// callers. Writes are grouped into [transaction] bodies to guarantee
-/// atomicity across the four logical stores (event log, diary_entries view,
+/// atomicity across the four logical stores (event log, generic view store,
 /// per-destination FIFOs, backend_state KV).
 // Implements: REQ-d00117-A — transaction atomicity.
 // Implements: REQ-d00117-C — appendEvent co-atomic with sequence counter.
-// Implements: REQ-d00117-D — upsertEntry whole-row replace.
 // Implements: REQ-d00117-E — enqueueFifo initial state.
 // Implements: REQ-d00117-F — backend_state KV store for schema_version and
 // sequence counter (not 'metadata').
+// Implements: REQ-d00140-F — generic view-row read/write via readViewRowInTxn
+// / clearViewInTxn.
 abstract class StorageBackend {
   const StorageBackend();
 
@@ -56,17 +56,17 @@ abstract class StorageBackend {
 
   /// Events for one aggregate, read within [txn] so the result reflects
   /// writes already staged in the same transaction body. Sorted by
-  /// `sequence_number` ascending. Used by callers (e.g., `EntryService`)
-  /// that need hash-chain / no-op-detection reads to be coherent with
-  /// the same-transaction append.
+  /// `sequence_number` ascending. Used by callers that need hash-chain /
+  /// no-op-detection reads to be coherent with the same-transaction append.
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
     Txn txn,
     String aggregateId,
   );
 
   /// All events, optionally sliced by `afterSequence` (exclusive) and
-  /// `limit`, and optionally filtered by originator identity. Returned in
-  /// `sequence_number` order.
+  /// `limit`, and optionally filtered by originator identity, entry type,
+  /// and client-timestamp range. All supplied filters compose with AND.
+  /// Returned in `sequence_number` order.
   ///
   /// [originatorHopId] matches `provenance[0].hopId` — the hop class of
   /// the originator (e.g. `'mobile-device'`, `'portal-server'`).
@@ -74,12 +74,24 @@ abstract class StorageBackend {
   /// originator's install identity. When both are supplied results SHALL
   /// match both (AND semantics); when neither is supplied no originator
   /// filtering is applied.
+  ///
+  /// [entryType] matches the event's `entry_type` exactly.
+  /// [clientTimestampStart] / [clientTimestampEnd] are inclusive bounds on
+  /// `event.client_timestamp` (compared in UTC).
+  ///
+  /// Concrete backends are expected to translate these filters to whatever
+  /// query mechanism they support (indexed predicate, WHERE clause, etc.).
   // Implements: REQ-d00154-C — originator filters on findAllEvents.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  //   client-timestamp filters on findAllEvents.
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   });
 
   /// Event hash of the highest-sequence-number event currently in the log,
@@ -99,38 +111,24 @@ abstract class StorageBackend {
   /// the log in fixed-size chunks instead of materializing the whole log in
   /// memory.
   ///
-  /// Used by `rebuildMaterializedView` so the event snapshot folded into the
+  /// Also optionally filtered by [entryType] (exact match on `entry_type`)
+  /// and [clientTimestampStart] / [clientTimestampEnd] (inclusive bounds on
+  /// `client_timestamp`, compared in UTC). All supplied filters compose with
+  /// AND. Concrete backends translate these to whatever query mechanism they
+  /// support.
+  ///
+  /// Used by `rebuildView` so the event snapshot folded into the
   /// cache is coherent with the clear+upsert done under the same transaction.
+  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
+  //   client-timestamp filters on findAllEventsInTxn.
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   });
-
-  /// Reactive event stream. See REQ-d00149.
-  ///
-  /// Returns a broadcast Stream that, on subscribe, first emits every
-  /// event in the log with `sequence_number > afterSequence` (or every
-  /// event when `afterSequence` is null) in ascending order, then
-  /// transitions to live emission of events appended or ingested while
-  /// the subscription is open. Multiple subscribers receive identical
-  /// sequences. The stream closes when the backend is closed; calling
-  /// this method after close SHALL throw `StateError`.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00149-E) — broadcast deduplication is the
-  /// coordination mechanism, applicable to any `StorageBackend`
-  /// implementation.
-  ///
-  /// **Do not call `pause()` on the returned subscription.** The
-  /// underlying broadcast stream is lossy under pause — events emitted
-  /// while a subscription is paused are dropped, not buffered (Dart
-  /// broadcast contract). If a consumer needs to throttle, do the work
-  /// asynchronously inside `onData` (return a Future, await internally),
-  /// or cancel and re-subscribe with `afterSequence:` to replay-then-live
-  /// from the last known sequence.
-  // Implements: REQ-d00149-A+B+C+D+E.
-  Stream<StoredEvent> watchEvents({int? afterSequence});
 
   /// Reserve-and-increment the per-device sequence counter within [txn] and
   /// return the reserved value.
@@ -153,44 +151,13 @@ abstract class StorageBackend {
   /// when no event has been appended yet. Non-transactional, read-only.
   Future<int> readSequenceCounter();
 
-  // -------- Materialized view --------
-
-  /// Whole-row replace into `diary_entries` keyed on `entry.entryId`. Not a
-  /// partial merge: every column in [entry] overwrites the previous row.
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry);
-
-  /// Remove every row from `diary_entries`. Used by
-  /// `rebuildMaterializedView` to replace the cache in one transaction
-  /// step; not intended as a runtime operation. The event log is
-  /// untouched.
-  Future<void> clearEntries(Txn txn);
-
-  /// Query `diary_entries` with optional filters; all filters are combined
-  /// with logical AND. Returned order is unspecified — callers that need a
-  /// deterministic order SHALL sort the result themselves.
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  });
-
-  /// Read a single `diary_entries` row by `entryId` within [txn] so
-  /// in-transaction callers (e.g., `EntryService.record` folding the
-  /// materializer's `priorRow` lookup into the same transaction as the
-  /// append + upsert) see writes staged earlier in the same body.
-  /// Returns null when the row does not exist.
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId);
-
   // -------- Generic view storage (Phase 4.4) --------
   //
-  // Materializers read and write view rows via these methods. The view
-  // namespace is flat — one store per `viewName`, keyed on a caller-
+  // Projection fold interpreters read and write view rows via these methods.
+  // The view namespace is flat — one store per `viewName`, keyed on a caller-
   // supplied string. The backend does not own schema for view rows; the
-  // materializer and its readers interpret the row map. Reserved view
-  // names: `diary_entries` (owned by `DiaryEntriesMaterializer`) and
-  // `security_context` (reserved for the sidecar store).
+  // fold interpreter and its readers interpret the row map. Reserved view
+  // name: `security_context` (reserved for the sidecar store).
 
   /// Read one row from [viewName] by [key] inside [txn], or null when
   /// the row is absent.
@@ -230,8 +197,7 @@ abstract class StorageBackend {
   // -------- View target versions (Phase 4.19) --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by `Materializer.targetVersionFor`
-  /// per REQ-d00140-I+L.
+  /// if no entry has been registered. Used by [rebuildView] per REQ-d00140-I.
   // Implements: REQ-d00140-I.
   Future<int?> readViewTargetVersionInTxn(
     Txn txn,
@@ -380,53 +346,6 @@ abstract class StorageBackend {
     int? afterSequenceInQueue,
     int? limit,
   });
-
-  /// Reactive snapshot stream of a destination's FIFO. See REQ-d00150.
-  ///
-  /// Emits the current queue snapshot on subscribe and on every
-  /// mutation to the destination's FIFO. Snapshots are
-  /// `List<FifoEntry>` ordered by `sequence_in_queue` ascending.
-  /// Multiple subscribers per destination receive identical sequences.
-  /// The stream closes when the backend is closed; calling this method
-  /// after close SHALL throw `StateError`.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00150-E, ref REQ-d00149-E).
-  ///
-  /// **Do not call `pause()` on the returned subscription.** The
-  /// underlying broadcast stream is lossy under pause — snapshot
-  /// emissions for FIFO mutations that occur while a subscription is
-  /// paused are dropped, not buffered (Dart broadcast contract). If a
-  /// consumer needs to throttle, do the work asynchronously inside
-  /// `onData`, or cancel and re-subscribe (the new subscription emits a
-  /// fresh snapshot via `listFifoEntries` on attach, recovering current
-  /// state in one read).
-  // Implements: REQ-d00150-A+B+C+D+E.
-  Stream<List<FifoEntry>> watchFifo(String destinationId);
-
-  /// Reactive snapshot stream of a materialized view by name. See
-  /// REQ-d00153.
-  ///
-  /// Emits the current view rows on subscribe and on every mutation to
-  /// any row in [viewName] (upsert / delete / clear). Snapshots are
-  /// `List<Map<String, Object?>>` matching `findViewRows(viewName)` — no
-  /// implicit ordering; consumers that need a deterministic order sort
-  /// in the view layer. Multiple subscribers per view receive identical
-  /// sequences. The stream closes when the backend is closed; calling
-  /// this method after close SHALL throw `StateError`.
-  ///
-  /// Cross-view isolation: a mutation on view A SHALL NOT trigger an
-  /// emission to a `watchView(B)` subscriber.
-  ///
-  /// Consumers SHALL share a single `StorageBackend` instance per
-  /// backing storage (REQ-d00153-E, ref REQ-d00149-E).
-  ///
-  /// **Do not call `pause()` on the returned subscription.** Same
-  /// semantics as [watchEvents] / [watchFifo]: emissions during pause
-  /// are dropped, not buffered. Cancel and re-subscribe to recover
-  /// current state via a fresh `findViewRows` snapshot on attach.
-  // Implements: REQ-d00153-A+B+C+D+E.
-  Stream<List<Map<String, Object?>>> watchView(String viewName);
 
   /// Append [attempt] to the `attempts[]` list of the entry identified by
   /// `(destinationId, entryId)`. Does not change `final_status`.
@@ -661,6 +580,21 @@ abstract class StorageBackend {
     int afterSequenceInQueue,
   );
 
+  // -------- Reverse event scan --------
+
+  /// Reverse stream of stored events, optionally filtered to a set of
+  /// event types. Emits events in descending `sequence_number` order.
+  ///
+  /// Used by lifecycle scans that need to terminate on the first match
+  /// without paging through the entire log. Consumers that only need the
+  /// single most-recent match SHOULD `await for` and `break` (or return)
+  /// on the first event.
+  ///
+  /// When [eventTypes] is supplied only events whose `event_type` is
+  /// contained in the set are emitted; when null no type filtering is
+  /// applied.
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes});
+
   // -------- Audit query (REQ-d00151) --------
 
   /// Cross-store audit query joining the event log with the security-
@@ -701,4 +635,11 @@ abstract class StorageBackend {
     int limit = 50,
     String? cursor,
   });
+
+  // -------- Lifecycle --------
+
+  /// Close the backend and release all resources (reactive streams, database
+  /// connection). Not safe to call concurrently with an in-flight transaction.
+  /// Callers MUST await all outstanding operations before calling close.
+  Future<void> close();
 }

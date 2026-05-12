@@ -34,7 +34,6 @@ class DemoAppRoot extends StatefulWidget {
     required this.datastore,
     required this.backend,
     required this.appState,
-    required this.entryTypeLookup,
     required this.dbPath,
     required this.tickController,
     super.key,
@@ -43,7 +42,6 @@ class DemoAppRoot extends StatefulWidget {
   final AppendOnlyDatastore datastore;
   final SembastBackend backend;
   final AppState appState;
-  final EntryTypeDefinitionLookup entryTypeLookup;
   final String dbPath;
   final Timer tickController;
 
@@ -83,7 +81,6 @@ class _DemoAppRootState extends State<DemoAppRoot> {
               datastore: widget.datastore,
               backend: widget.backend,
               appState: widget.appState,
-              entryTypeLookup: widget.entryTypeLookup,
               dbPath: widget.dbPath,
               tickController: widget.tickController,
               policyNotifier: _policyNotifier,
@@ -105,7 +102,6 @@ class DemoPane extends StatefulWidget {
     required this.datastore,
     required this.backend,
     required this.appState,
-    required this.entryTypeLookup,
     required this.dbPath,
     required this.tickController,
     required this.policyNotifier,
@@ -116,7 +112,6 @@ class DemoPane extends StatefulWidget {
   final AppendOnlyDatastore datastore;
   final SembastBackend backend;
   final AppState appState;
-  final EntryTypeDefinitionLookup entryTypeLookup;
   final String dbPath;
   final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -169,7 +164,6 @@ class _DemoPaneState extends State<DemoPane> {
         TopActionBar(
           datastore: widget.datastore,
           backend: widget.backend,
-          entryTypesLookup: widget.entryTypeLookup,
           appState: widget.appState,
           onResetAll: resetAll,
         ),
@@ -236,7 +230,10 @@ class _DemoPaneState extends State<DemoPane> {
       _divider('events', fallback: 280),
       SizedBox(
         width: _widthOf('audit', fallback: 320),
-        child: AuditPanel(backend: widget.backend),
+        child: AuditPanel(
+          backend: widget.backend,
+          eventStore: widget.datastore.eventStore,
+        ),
       ),
       _divider('audit', fallback: 320),
       for (final dest in widget.appState.destinations) ...<Widget>[

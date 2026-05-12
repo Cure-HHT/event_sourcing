@@ -51,7 +51,7 @@ class SyntheticBatchBuilder {
     int originSequenceNumber = 1001,
     String aggregateId = 'remote-aggregate-1',
     String entryType = 'demo_note',
-    String aggregateType = 'DiaryEntry',
+    String aggregateType = 'Note',
     String userId = 'remote-user-1',
     Map<String, Object?>? answers,
   }) {

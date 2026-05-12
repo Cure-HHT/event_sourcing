@@ -24,7 +24,7 @@ StoredEvent _eventWithOrigin({
   key: 0,
   eventId: eventId,
   aggregateId: 'agg-$eventId',
-  aggregateType: 'DiaryEntry',
+  aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: 1,
   libFormatVersion: 1,

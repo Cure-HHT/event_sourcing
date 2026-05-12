@@ -34,8 +34,6 @@ Future<EventStore> bootstrapTestEventStore() async {
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        widgetId: 'action_denial_v1',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -45,16 +43,14 @@ Future<EventStore> bootstrapTestEventStore() async {
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        widgetId: 'greeting_v1',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
 
   final securityContexts = SembastSecurityContextStore(backend: backend);
 
-  return EventStore(
-    backend: backend,
+  return EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: const Source(
       hopId: 'test-server',
@@ -62,6 +58,5 @@ Future<EventStore> bootstrapTestEventStore() async {
       softwareVersion: 'event_sourcing_test@0.0.0',
     ),
     securityContexts: securityContexts,
-    materializers: const [],
   );
 }

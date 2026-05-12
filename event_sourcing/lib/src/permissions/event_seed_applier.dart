@@ -70,7 +70,6 @@ class EventSeedApplier {
       }
       await eventStore.append(
         entryType: 'role_permission_grant',
-        entryTypeVersion: 1,
         aggregateType: 'role_permission_grant',
         aggregateId: id,
         eventType: 'permission_granted',

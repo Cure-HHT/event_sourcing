@@ -38,7 +38,7 @@ Future<StoredEvent> _appendEvent(
       key: 0,
       eventId: eventId,
       aggregateId: aggregateId,
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: entryType,
       entryTypeVersion: 1,
       libFormatVersion: 1,
@@ -86,7 +86,7 @@ void main() {
       setUp(() async {
         dbCounter += 1;
         backend = await _openBackend('historical-replay-$dbCounter.db');
-        final deps = buildAuditedRegistryDeps(backend);
+        final deps = await buildAuditedRegistryDeps(backend);
         registry = DestinationRegistry(
           backend: backend,
           eventStore: deps.eventStore,

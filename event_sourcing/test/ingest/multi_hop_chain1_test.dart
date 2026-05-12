@@ -46,8 +46,6 @@ Future<_Fixture> _openStore({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     )
     ..register(
@@ -55,8 +53,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -65,8 +61,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -75,14 +69,12 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: Source(
       hopId: hopId,
@@ -141,9 +133,8 @@ void main() {
             // Hop 0: A originates two events.
             final eA1 = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-3hop-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {
                 'answers': {'q': 'a1'},
@@ -152,9 +143,8 @@ void main() {
             );
             final eA2 = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-3hop-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'checkpoint',
               data: const {
                 'answers': {'q': 'a2'},
@@ -299,9 +289,8 @@ void main() {
           try {
             final eA = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-4hop',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {
                 'answers': {'q': 'a'},

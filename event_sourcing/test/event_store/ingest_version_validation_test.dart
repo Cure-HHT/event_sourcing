@@ -32,7 +32,7 @@ Uint8List _envelope({
   final eventMap = <String, Object?>{
     'event_id': eventId,
     'aggregate_id': 'remote-aggregate-1',
-    'aggregate_type': 'DiaryEntry',
+    'aggregate_type': 'note',
     'entry_type': entryType,
     'entry_type_version': entryTypeVersion,
     'lib_format_version': libFormatVersion,
@@ -86,13 +86,9 @@ Future<AppendOnlyDatastore> _bootstrapWithRegistry({
         id: 'demo_note',
         registeredVersion: registeredVersion,
         name: 'demo_note',
-        widgetId: 'w',
-        widgetConfig: const <String, Object?>{},
       ),
     ],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
 }
 

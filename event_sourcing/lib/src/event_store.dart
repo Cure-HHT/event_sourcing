@@ -9,7 +9,17 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
-import 'package:event_sourcing/src/materialization/materializer.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
+import 'package:event_sourcing/src/lifecycle/version_check.dart';
+import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
+import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
+import 'package:event_sourcing/src/projections/subscription_filter.dart';
+import 'package:event_sourcing/src/promoters/promoter_registry.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
+import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -27,6 +37,25 @@ import 'package:uuid/uuid.dart';
 /// Fire-and-forget trigger into `SyncCycle.call()`.
 typedef EventStoreSyncCycleTrigger = Future<void> Function();
 
+/// Accumulates [StoredEvent]s appended inside a single transaction so that
+/// [EventStore._runInTxnWithPublish] can publish them all to the subscription
+/// bus after the transaction commits. Callers that use [EventStore.appendInTxn]
+/// directly inside their own transaction MUST pass a [PublishCollector] and
+/// use [EventStore.runTransaction] so that subscribers receive delivery.
+///
+/// The type lives in `lib/src/` and is intentionally not re-exported from the
+/// package barrel: external consumers interact with the event store through the
+/// public [EventStore] API and never construct a collector directly. Only
+/// intra-package callers (e.g. [DestinationRegistry]) that open their own
+/// transaction via [EventStore.runTransaction] see this type.
+class PublishCollector {
+  final List<StoredEvent> _events = <StoredEvent>[];
+
+  void add(StoredEvent event) => _events.add(event);
+
+  List<StoredEvent> get events => List<StoredEvent>.unmodifiable(_events);
+}
+
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
 /// the compact and purge sweeps.
 // Implements: REQ-d00138-B+C+E+F — retention-sweep return type.
@@ -37,6 +66,54 @@ class RetentionResult {
   });
   final int compactedCount;
   final int purgedCount;
+}
+
+/// Thrown by [EventStore.open] when the event log was last processed by a
+/// newer version of the library than the current build, indicating that
+/// downgrading would risk data corruption.
+///
+/// Pass `allowDowngrade: true` to [EventStore.open] to bypass this check
+/// during development. **Do not use in production.**
+class DowngradeRefusedError extends Error {
+  DowngradeRefusedError(this.recordedVersion, this.currentVersion);
+
+  final String recordedVersion;
+  final String currentVersion;
+
+  @override
+  String toString() =>
+      'DowngradeRefusedError: log was processed by lib version '
+      '$recordedVersion which is newer than this build ($currentVersion). '
+      'Pass EventStore.open(allowDowngrade: true) to override '
+      '(development use only).';
+}
+
+/// Thrown by [EventStore.open] when any registered entry type's
+/// `registeredVersion` is below the highest value recorded for that
+/// entry type across the local `view_target_versions` store. The lib
+/// has no `DemotionSpec` mechanism in Phase I; the only resolution is
+/// to pin a lib build whose registry's `registeredVersion` is at least
+/// as high as the stored target. See
+/// docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md.
+class EntryTypeVersionDowngradeError extends Error {
+  EntryTypeVersionDowngradeError({
+    required this.entryType,
+    required this.fromVersion,
+    required this.toVersion,
+  });
+
+  final String entryType;
+  final int fromVersion;
+  final int toVersion;
+
+  @override
+  String toString() =>
+      'EntryTypeVersionDowngradeError: entry type "$entryType" was '
+      'previously folded at registeredVersion=$fromVersion (stored in '
+      'view_target_versions), but the current registry has '
+      'registeredVersion=$toVersion. Phase I refuses entry-type '
+      'downgrade unconditionally. Pin a lib build with '
+      'registeredVersion >= $fromVersion for "$entryType".';
 }
 
 /// Phase 4.4 write API. Serves both mobile widgets and portal callers via
@@ -52,26 +129,431 @@ class RetentionResult {
 // Implements: REQ-d00141-C — per-field arguments directly, no EventDraft.
 // Implements: REQ-d00141-D — permission-blind.
 class EventStore {
-  EventStore({
+  EventStore._({
     required this.backend,
     required this.entryTypes,
     required this.source,
     required this.securityContexts,
-    this.materializers = const <Materializer>[],
     this.syncCycleTrigger,
+    ProjectionRegistry? projections,
+    PromoterRegistry? promoters,
     ClockFn? clock,
     Uuid? uuid,
-  }) : _clock = clock,
+  }) : _interpreter = ProjectionInterpreter(
+         projections: projections ?? ProjectionRegistry(),
+         promoters: promoters ?? PromoterRegistry(),
+         entryTypes: entryTypes,
+       ),
+       _promoters = promoters ?? PromoterRegistry(),
+       _clock = clock,
        _uuid = uuid ?? const Uuid();
 
   final StorageBackend backend;
   final EntryTypeRegistry entryTypes;
   final Source source;
   final InternalSecurityContextStore securityContexts;
-  final List<Materializer> materializers;
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
+  final ProjectionInterpreter _interpreter;
+
+  /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
+  /// supplied directly on the constructor). Used by [rebuildView] (Task 23)
+  /// to apply promoter chains during replay.
+  final PromoterRegistry _promoters;
+
+  /// Exposes the projection registry for [rebuildView] (Task 23).
+  ProjectionRegistry get projections => _interpreter.registry;
+
+  /// Exposes the promoter registry for [rebuildView] (Task 23).
+  PromoterRegistry get promoters => _promoters;
+
   final ClockFn? _clock;
   final Uuid _uuid;
+  final SubscriptionEngine _subs = SubscriptionEngine();
+
+  /// Opens an [EventStore] against [storage] and performs the lib-version
+  /// boot check:
+  ///
+  /// - **First boot** (no version event in the log): appends a
+  ///   `lib_version_initialized` event recording [LibVersion.current].
+  /// - **Same version**: no-op — the log already records this version.
+  /// - **Upgrade** (recorded version < current): appends a
+  ///   `lib_version_changed` event recording the transition.
+  /// - **Downgrade** (recorded version > current): throws
+  ///   [DowngradeRefusedError] unless [allowDowngrade] is `true`.
+  ///
+  /// This is the single production entry point. All required collaborators
+  /// ([entryTypes], [source], [securityContexts]) must be supplied; the
+  /// returned store is fully configured and ready for use.
+  // Implements: EVS-DEV-event-store-open — boot flow with lib-version check.
+  static Future<EventStore> open({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required Source source,
+    required InternalSecurityContextStore securityContexts,
+    ProjectionRegistry? projections,
+    PromoterRegistry? promoters,
+    EventStoreSyncCycleTrigger? syncCycleTrigger,
+    ClockFn? clock,
+    Uuid? uuid,
+    bool allowDowngrade = false,
+  }) async {
+    await _runBootVersionCheck(storage, allowDowngrade: allowDowngrade);
+    final effectiveProjections = projections ?? ProjectionRegistry();
+    effectiveProjections.seal();
+    final effectivePromoters = promoters ?? PromoterRegistry();
+    effectivePromoters.seal();
+    await _runBootSnapshotPromotionPass(
+      storage: storage,
+      entryTypes: entryTypes,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+    );
+    return EventStore._(
+      backend: storage,
+      entryTypes: entryTypes,
+      source: source,
+      securityContexts: securityContexts,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+      syncCycleTrigger: syncCycleTrigger,
+      clock: clock,
+      uuid: uuid,
+    );
+  }
+
+  /// Opens an [EventStore] without running the lib-version boot check.
+  ///
+  /// Intended for **tests only** — use [EventStore.open] in production code.
+  /// Skipping the boot check means no `lib_version_initialized` event is
+  /// appended, which keeps sequence numbers predictable for tests that assert
+  /// on raw sequence values.
+  ///
+  /// The snapshot-promotion boot pass (entry-type downgrade refusal,
+  /// view_target_versions seeding, and snapshot promotion) still runs here:
+  /// on a greenfield log it's a no-op (no view rows, no stored target
+  /// versions), and tests that exercise version evolution want it to fire.
+  static Future<EventStore> openForTest({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required Source source,
+    required InternalSecurityContextStore securityContexts,
+    ProjectionRegistry? projections,
+    PromoterRegistry? promoters,
+    EventStoreSyncCycleTrigger? syncCycleTrigger,
+    ClockFn? clock,
+    Uuid? uuid,
+  }) async {
+    final effectiveProjections = projections ?? ProjectionRegistry();
+    effectiveProjections.seal();
+    final effectivePromoters = promoters ?? PromoterRegistry();
+    effectivePromoters.seal();
+    await _runBootSnapshotPromotionPass(
+      storage: storage,
+      entryTypes: entryTypes,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+    );
+    return EventStore._(
+      backend: storage,
+      entryTypes: entryTypes,
+      source: source,
+      securityContexts: securityContexts,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+      syncCycleTrigger: syncCycleTrigger,
+      clock: clock,
+      uuid: uuid,
+    );
+  }
+
+  /// Runs the three boot-time entry-type-version helpers in fixed order
+  /// inside a single backend transaction:
+  ///
+  ///   1. [assertNoEntryTypeDowngrade] — refuse boot if any entry type's
+  ///      `registeredVersion` is below the highest stored
+  ///      `view_target_versions` value.
+  ///   2. [seedViewTargetVersions] — write a `view_target_versions` row
+  ///      at the current `registeredVersion` for every (viewName, entry
+  ///      type matched by the projection's interest filter) pair that
+  ///      doesn't already have one.
+  ///   3. [promoteViewSnapshots] — for each pair where the stored target
+  ///      lags the registry, apply the registered promoter chain to the
+  ///      affected view rows, update `view_target_versions`, and emit
+  ///      one `view_snapshot_promoted` audit event per promoted pair via
+  ///      [_appendViewSnapshotPromotedAuditInTxn].
+  ///
+  /// All three run inside a single [backend.transaction] so a mid-pass
+  /// crash rolls back atomically and the next boot retries from a clean
+  /// state.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal,
+  //   EVS-DEV-view-target-versions-seeding,
+  //   EVS-DEV-snapshot-promotion-on-open.
+  static Future<void> _runBootSnapshotPromotionPass({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required ProjectionRegistry projections,
+    required PromoterRegistry promoters,
+  }) async {
+    await storage.transaction((txn) async {
+      await assertNoEntryTypeDowngrade(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        entryTypes: entryTypes,
+      );
+      await seedViewTargetVersions(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        entryTypes: entryTypes,
+      );
+      await promoteViewSnapshots(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        promoters: promoters,
+        entryTypes: entryTypes,
+        now: DateTime.now().toUtc(),
+        emitAudit:
+            ({
+              required String viewName,
+              required String entryType,
+              required int fromVersion,
+              required int toVersion,
+              required int rowsPromoted,
+            }) async {
+              await _appendViewSnapshotPromotedAuditInTxn(
+                txn,
+                storage,
+                entryTypes,
+                viewName: viewName,
+                entryType: entryType,
+                fromVersion: fromVersion,
+                toVersion: toVersion,
+                rowsPromoted: rowsPromoted,
+              );
+            },
+      );
+    });
+  }
+
+  /// Runs the lib-version boot check against [storage].
+  ///
+  /// - First boot: appends `lib_version_initialized`.
+  /// - Upgrade: appends `lib_version_changed`.
+  /// - Downgrade: throws [DowngradeRefusedError] unless
+  ///   [allowDowngrade] is `true`.
+  /// - Same version: no-op.
+  static Future<void> _runBootVersionCheck(
+    StorageBackend storage, {
+    bool allowDowngrade = false,
+  }) async {
+    final recorded = await VersionCheck.findMostRecent(storage);
+    if (recorded == null) {
+      await _appendLibVersionEventToBackend(
+        storage,
+        LibVersionEvents.initialized,
+        <String, Object?>{
+          'version': LibVersion.current,
+          'initializedAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      );
+    } else {
+      final cmp = LibVersion.compare(
+        recorded.recordedVersion,
+        LibVersion.current,
+      );
+      if (cmp > 0 && !allowDowngrade) {
+        throw DowngradeRefusedError(
+          recorded.recordedVersion,
+          LibVersion.current,
+        );
+      } else if (cmp < 0) {
+        await _appendLibVersionEventToBackend(
+          storage,
+          LibVersionEvents.changed,
+          <String, Object?>{
+            'fromVersion': recorded.recordedVersion,
+            'toVersion': LibVersion.current,
+            'changedAt': DateTime.now().toUtc().toIso8601String(),
+          },
+        );
+      }
+      // cmp == 0 or (cmp > 0 && allowDowngrade): no-op.
+    }
+  }
+
+  /// Close the backend and subscription engine, releasing all resources.
+  /// Not safe to call concurrently with in-flight work.
+  Future<void> close() async {
+    await _subs.close();
+    await backend.close();
+  }
+
+  /// Run [body] inside a single `backend.transaction`, collecting every
+  /// [StoredEvent] that [appendInTxn] records during [body]'s execution.
+  /// After the transaction commits successfully, all collected events are
+  /// published to the subscription bus in append order so [subscribe]
+  /// listeners receive the same delivery they would from the public [append]
+  /// method.
+  ///
+  /// External callers (e.g. [DestinationRegistry]) that need to open their
+  /// own transaction and call [appendInTxn] SHOULD use this method instead
+  /// of [backend.transaction] directly to ensure subscription delivery.
+  ///
+  /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
+  /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
+  Future<T> runTransaction<T>(
+    Future<T> Function(Txn txn, PublishCollector collector) body,
+  ) async {
+    return _runInTxnWithPublish(body);
+  }
+
+  /// Internal helper: wraps a [backend.transaction] call with a
+  /// [PublishCollector] and publishes all collected events after commit.
+  Future<T> _runInTxnWithPublish<T>(
+    Future<T> Function(Txn txn, PublishCollector collector) body,
+  ) async {
+    final collector = PublishCollector();
+    final result = await backend.transaction<T>((txn) => body(txn, collector));
+    for (final event in collector.events) {
+      _subs.publishEvent(event);
+    }
+    return result;
+  }
+
+  /// Subscribe to live updates. For [Events] mode: delivers a [Delta] for
+  /// every event appended after this call (pre-existing history is NOT
+  /// replayed). For [AggregateMode]: delivers an initial [Snapshot] per
+  /// matching aggregate then [Delta] / [Tombstone] updates as events land.
+  Stream<Update<T>> subscribe<T>(
+    SubscriptionFilter filter,
+    SubscriptionMode<T> mode,
+  ) {
+    switch (mode) {
+      case Events():
+        return _subs.events(filter) as Stream<Update<T>>;
+      case AggregateMode<T>():
+        return _subscribeAggregate<T>(filter, mode);
+    }
+  }
+
+  /// Builds a live [AggregateMode] stream via a [StreamController].
+  ///
+  /// Atomic snapshot-then-attach: opens a single live listener FIRST
+  /// (before reading the snapshot) so no changes are lost between the
+  /// snapshot read and forward-mode delivery. A [_replayDone] flag
+  /// inside the listener routes events to the buffer during snapshot
+  /// read and directly to the output controller after it. This avoids
+  /// the cancel+re-subscribe race that the prior implementation had
+  /// between buffer-drain and forward-mode attach.
+  ///
+  /// The [StreamController] is closed when the subscriber cancels,
+  /// preventing infinite blocking.
+  Stream<Update<T>> _subscribeAggregate<T>(
+    SubscriptionFilter filter,
+    AggregateMode<T> mode,
+  ) {
+    late StreamController<Update<T>> controller;
+    StreamSubscription<AggregateFoldChange>? liveSub;
+
+    Future<void> start() async {
+      // Open ONE subscription that lasts the lifetime of this stream.
+      // During the snapshot phase events go to liveBuffer; after
+      // _replayDone is set they go directly to controller.
+      var replayDone = false;
+      var maxSequenceSeen = 0;
+      final liveBuffer = <AggregateFoldChange>[];
+
+      liveSub = _subs.rowChanges(mode.viewName).listen((change) {
+        if (controller.isClosed) return;
+        if (!replayDone) {
+          liveBuffer.add(change);
+        } else {
+          final u = _changeToUpdate<T>(change, filter, mode);
+          if (u != null) {
+            if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+            controller.add(u);
+          }
+        }
+      }, onDone: () => controller.close());
+
+      // Snapshot read
+      final aggregateIds = mode.aggregates;
+      if (aggregateIds == null) {
+        final rows = await backend.findViewRows(mode.viewName);
+        for (final row in rows) {
+          if (controller.isClosed) return;
+          final seq = (row['sequence'] as int?) ?? 0;
+          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
+          controller.add(Snapshot<T>(value: mode.mapper(row), sequence: seq));
+        }
+      } else {
+        for (final aggId in aggregateIds) {
+          if (controller.isClosed) return;
+          final row = await backend.transaction(
+            (txn) => backend.readViewRowInTxn(txn, mode.viewName, aggId),
+          );
+          final seq = (row?['sequence'] as int?) ?? 0;
+          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
+          controller.add(
+            Snapshot<T>(
+              value: row == null ? null : mode.mapper(row),
+              sequence: seq,
+            ),
+          );
+        }
+      }
+
+      // Drain buffered live changes that arrived during snapshot read.
+      for (final change in liveBuffer) {
+        if (controller.isClosed) return;
+        final u = _changeToUpdate<T>(change, filter, mode);
+        if (u != null) {
+          if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+          controller.add(u);
+        }
+      }
+      liveBuffer.clear();
+
+      // Snapshot phase + buffer drain are complete. Emit EndOfReplay BEFORE
+      // flipping replayDone so the marker is ordered correctly relative to
+      // any deltas that arrive after this point.
+      if (!controller.isClosed) {
+        controller.add(EndOfReplay<T>(sequence: maxSequenceSeen));
+      }
+
+      replayDone = true;
+    }
+
+    controller = StreamController<Update<T>>(
+      onListen: () => start(),
+      onCancel: () async {
+        await liveSub?.cancel();
+        liveSub = null;
+        if (!controller.isClosed) await controller.close();
+      },
+    );
+
+    return controller.stream;
+  }
+
+  Update<T>? _changeToUpdate<T>(
+    AggregateFoldChange c,
+    SubscriptionFilter filter,
+    AggregateMode<T> mode,
+  ) {
+    final aggSet = mode.aggregates;
+    if (aggSet != null && !aggSet.contains(c.aggregateId)) return null;
+    if (c.isTombstone) {
+      return Tombstone<T>(aggregateId: c.aggregateId, sequence: c.sequence);
+    }
+    return Delta<T>(
+      value: mode.mapper(c.newValue!),
+      sequence: c.sequence,
+      cause: c.cause,
+    );
+  }
 
   DateTime _now() => (_clock ?? () => DateTime.now().toUtc())();
 
@@ -79,15 +561,18 @@ class EventStore {
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event.
   ///
-  /// The caller MUST supply [entryTypeVersion]; the lib stamps
-  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. Local
-  /// append does NOT validate [entryTypeVersion] against the registry — that
-  /// is performed at ingest per REQ-d00145-M.
-  // Implements: REQ-d00141-B — per-field append API; entryTypeVersion required.
+  /// The substrate stamps `entry_type_version` from the registry's
+  /// `EntryTypeDefinition.registeredVersion` for [entryType] and stamps
+  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. The
+  /// substrate is the single source of truth for both fields; callers do
+  /// not (and cannot) supply them. Ingest still validates
+  /// `entry_type_version` against the registry per REQ-d00145-M.
+  // Implements: REQ-d00141-B — per-field append API.
   // Implements: REQ-d00141-E — lib_format_version stamped from
   //   StoredEvent.currentLibFormatVersion on every append.
-  // Implements: REQ-d00141-F — append does NOT validate entryTypeVersion
-  //   against the registry.
+  // Implements: EVS-DEV-append-stamps-registered-version — substrate stamps
+  //   entry_type_version from registry.registeredVersion; callers no longer
+  //   pass the value.
   // Implements: REQ-d00135-C — initiator replaces userId.
   // Implements: REQ-d00136-A+E — flowToken nullable; hashed.
   // Implements: REQ-d00137-C — event + security row commit atomically.
@@ -95,7 +580,6 @@ class EventStore {
   //   skip honored; throw rolls back entire append.
   Future<StoredEvent?> append({
     required String entryType,
-    required int entryTypeVersion,
     required String aggregateId,
     required String aggregateType,
     required String eventType,
@@ -108,11 +592,15 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
-    final event = await backend.transaction<StoredEvent?>((txn) async {
-      return appendInTxn(
+    List<AggregateFoldChange> rowChanges = <AggregateFoldChange>[];
+    final event = await _runInTxnWithPublish<StoredEvent?>((
+      txn,
+      collector,
+    ) async {
+      final stored = await appendInTxn(
         txn,
+        collector: collector,
         entryType: entryType,
-        entryTypeVersion: entryTypeVersion,
         aggregateId: aggregateId,
         aggregateType: aggregateType,
         eventType: eventType,
@@ -125,9 +613,20 @@ class EventStore {
         changeReason: changeReason,
         dedupeByContent: dedupeByContent,
       );
+      if (stored != null) {
+        rowChanges = await _interpreter.applyEvent(
+          txn: txn,
+          backend: backend,
+          event: stored,
+        );
+      }
+      return stored;
     });
 
     if (event == null) return null;
+    for (final change in rowChanges) {
+      _subs.publishRowChange(change);
+    }
     unawaited(syncCycleTrigger?.call());
     return event;
   }
@@ -160,7 +659,7 @@ class EventStore {
     required String reason,
     required Initiator redactedBy,
   }) async {
-    await backend.transaction<void>((txn) async {
+    await _runInTxnWithPublish<void>((txn, collector) async {
       final existing = await securityContexts.readInTxn(txn, eventId);
       if (existing == null) {
         throw ArgumentError.value(
@@ -170,8 +669,6 @@ class EventStore {
         );
       }
       await securityContexts.deleteInTxn(txn, eventId);
-      // Implements: REQ-d00134-G — registry-sourced version stamp on the
-      //   security-context redaction audit.
       // Implements: REQ-d00138-D (revised: aggregateId=source.identifier),
       //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate; the redaction subject moves into
@@ -180,10 +677,8 @@ class EventStore {
       //   data.subject_event_id.
       await appendInTxn(
         txn,
+        collector: collector,
         entryType: kSecurityContextRedactedEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kSecurityContextRedactedEntryType)!
-            .registeredVersion,
         aggregateId: source.identifier,
         aggregateType: 'security_context',
         eventType: 'finalized',
@@ -222,7 +717,10 @@ class EventStore {
     final compactCutoff = now.subtract(p.fullRetention);
     final purgeCutoff = compactCutoff.subtract(p.truncatedRetention);
 
-    final result = await backend.transaction<RetentionResult>((txn) async {
+    final result = await _runInTxnWithPublish<RetentionResult>((
+      txn,
+      collector,
+    ) async {
       final compactCandidates = await securityContexts
           .findUnredactedOlderThanInTxn(txn, compactCutoff);
       for (final row in compactCandidates) {
@@ -238,17 +736,13 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        // Implements: REQ-d00134-G — registry-sourced version stamp on
-        //   the compact-sweep audit.
         // Implements: REQ-d00138-E (revised: aggregateId=source.identifier),
         //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
         await appendInTxn(
           txn,
+          collector: collector,
           entryType: kSecurityContextCompactedEntryType,
-          entryTypeVersion: entryTypes
-              .byId(kSecurityContextCompactedEntryType)!
-              .registeredVersion,
           aggregateId: source.identifier,
           aggregateType: 'security_context',
           eventType: 'finalized',
@@ -267,17 +761,13 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        // Implements: REQ-d00134-G — registry-sourced version stamp on
-        //   the purge-sweep audit.
         // Implements: REQ-d00138-F (revised: aggregateId=source.identifier),
         //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
         await appendInTxn(
           txn,
+          collector: collector,
           entryType: kSecurityContextPurgedEntryType,
-          entryTypeVersion: entryTypes
-              .byId(kSecurityContextPurgedEntryType)!
-              .registeredVersion,
           aggregateId: source.identifier,
           aggregateType: 'security_context',
           eventType: 'finalized',
@@ -296,17 +786,13 @@ class EventStore {
       }
       // Implements: REQ-d00138-H — per-sweep audit, always emitted (the
       // operator wants a retention timeline, not just non-empty sweeps).
-      // Implements: REQ-d00134-G — registry-sourced version stamp on
-      //   the per-sweep retention-policy-applied audit.
       // Implements: REQ-d00138-H (revised: aggregateId=source.identifier),
       //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate.
       await appendInTxn(
         txn,
+        collector: collector,
         entryType: kRetentionPolicyAppliedEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kRetentionPolicyAppliedEntryType)!
-            .registeredVersion,
         aggregateId: source.identifier,
         aggregateType: 'system_retention',
         eventType: 'finalized',
@@ -366,11 +852,15 @@ class EventStore {
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate.
+  ///
+  /// When [collector] is non-null, the persisted event is recorded into it
+  /// so the surrounding [_runInTxnWithPublish] / [runTransaction] call can
+  /// publish it to the subscription bus after commit. Callers that open their
+  /// own transaction via [runTransaction] MUST pass their collector here.
   // Implements: REQ-d00141-B (delegated transactional half).
   Future<StoredEvent?> appendInTxn(
     Txn txn, {
     required String entryType,
-    required int entryTypeVersion,
     required String aggregateId,
     required String aggregateType,
     required String eventType,
@@ -382,6 +872,7 @@ class EventStore {
     required String? checkpointReason,
     required String? changeReason,
     required bool dedupeByContent,
+    PublishCollector? collector,
   }) async {
     _validateAppendInputs(
       entryType: entryType,
@@ -390,6 +881,10 @@ class EventStore {
     );
 
     final def = entryTypes.byId(entryType)!;
+    // Implements: EVS-DEV-append-stamps-registered-version — substrate is
+    //   the single source of truth for entry_type_version on every append;
+    //   the value is read from the registry, not supplied by callers.
+    final entryTypeVersion = def.registeredVersion;
     final effectiveChangeReason = changeReason ?? 'initial';
 
     final now = _now();
@@ -406,12 +901,12 @@ class EventStore {
     //   Multiple entry types may share an aggregate (REQ-d00154-D system
     //   events under source.identifier); dedupe scopes per entry_type so
     //   each emission stream is treated independently.
-    final aggregateHistory = await backend.findEventsForAggregateInTxn(
-      txn,
-      aggregateId,
-    );
     StoredEvent? prior;
     if (dedupeByContent) {
+      final aggregateHistory = await backend.findEventsForAggregateInTxn(
+        txn,
+        aggregateId,
+      );
       for (var i = aggregateHistory.length - 1; i >= 0; i--) {
         if (aggregateHistory[i].entryType == entryType) {
           prior = aggregateHistory[i];
@@ -486,29 +981,7 @@ class EventStore {
       await securityContexts.writeInTxn(txn, row);
     }
 
-    if (def.materialize) {
-      for (final m in materializers) {
-        if (!m.appliesTo(event)) continue;
-        // Implements: REQ-d00140-G+H — promoter invoked before applyInTxn,
-        //   even when fromVersion == toVersion. A throw rolls back the txn.
-        final target = await m.targetVersionFor(txn, backend, event.entryType);
-        final promoted = m.promoter(
-          entryType: event.entryType,
-          fromVersion: event.entryTypeVersion,
-          toVersion: target,
-          data: event.data,
-        );
-        await m.applyInTxn(
-          txn,
-          backend,
-          event: event,
-          promotedData: promoted,
-          def: def,
-          aggregateHistory: List<StoredEvent>.unmodifiable(aggregateHistory),
-        );
-      }
-    }
-
+    collector?.add(event);
     return event;
   }
 
@@ -527,22 +1000,8 @@ class EventStore {
 
   // Implements: REQ-d00120-A+B (Phase 4.4 revised) — hash over the Phase
   // 4.4 identity-field set.
-  String _eventHash(Map<String, Object?> recordMap) {
-    final hashInput = <String, Object?>{
-      'event_id': recordMap['event_id'],
-      'aggregate_id': recordMap['aggregate_id'],
-      'entry_type': recordMap['entry_type'],
-      'event_type': recordMap['event_type'],
-      'sequence_number': recordMap['sequence_number'],
-      'data': recordMap['data'],
-      'initiator': recordMap['initiator'],
-      'flow_token': recordMap['flow_token'],
-      'client_timestamp': recordMap['client_timestamp'],
-      'previous_event_hash': recordMap['previous_event_hash'],
-      'metadata': recordMap['metadata'],
-    };
-    return sha256.convert(canonicalizeBytes(hashInput)).toString();
-  }
+  String _eventHash(Map<String, Object?> recordMap) =>
+      _canonicalEventHash(recordMap);
 
   // -----------------------------------------------------------------------
   // Destination-role (ingest) write path — Phase 4.9
@@ -556,8 +1015,13 @@ class EventStore {
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
   // Implements: REQ-d00145-G+I+J+K.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
-    return backend.transaction((txn) async {
-      return _ingestOneInTxn(txn, incoming, batchContext: null);
+    return _runInTxnWithPublish((txn, collector) async {
+      return _ingestOneInTxn(
+        txn,
+        incoming,
+        batchContext: null,
+        collector: collector,
+      );
     });
   }
 
@@ -583,7 +1047,7 @@ class EventStore {
     final wireBytesHash = sha256.convert(bytes).toString();
     final outcomes = <PerEventIngestOutcome>[];
 
-    await backend.transaction((txn) async {
+    await _runInTxnWithPublish<void>((txn, collector) async {
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
         final storedEvent = StoredEvent.fromMap(
@@ -622,6 +1086,7 @@ class EventStore {
           txn,
           storedEvent,
           batchContext: batchContext,
+          collector: collector,
         );
         outcomes.add(outcome);
       }
@@ -640,6 +1105,7 @@ class EventStore {
     Txn txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
+    PublishCollector? collector,
   }) async {
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
@@ -668,6 +1134,7 @@ class EventStore {
           subjectEventId: incoming.eventId,
           subjectEventHashOnRecord: existing.eventHash,
           batchContext: batchContext,
+          collector: collector,
         );
         return PerEventIngestOutcome(
           eventId: incoming.eventId,
@@ -721,42 +1188,19 @@ class EventStore {
 
     // 6. Persist via the same path as origin appends.
     await backend.appendEvent(txn, updatedEvent);
+    collector?.add(updatedEvent);
 
-    // 7. Fire materializers symmetric with the local-append path.
-    // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path materializer
-    //   loop runs with the same gates as the local-append loop
-    //   (`def.materialize` outer gate + `m.appliesTo(event)` inner gate),
-    //   inside the same transaction as `appendEvent`. System entry types
-    //   ship `materialize: false` (REQ-d00154-D) so the outer gate
-    //   short-circuits before any materializer is consulted. A
-    //   materializer or promoter throw propagates out of `_ingestOneInTxn`
-    //   and rolls back the entire ingest transaction (REQ-d00145-A
-    //   all-or-nothing batch atomicity preserved).
-    final def = entryTypes.byId(updatedEvent.entryType);
-    if (def != null && def.materialize) {
-      for (final m in materializers) {
-        if (!m.appliesTo(updatedEvent)) continue;
-        final target = await m.targetVersionFor(
-          txn,
-          backend,
-          updatedEvent.entryType,
-        );
-        final promoted = m.promoter(
-          entryType: updatedEvent.entryType,
-          fromVersion: updatedEvent.entryTypeVersion,
-          toVersion: target,
-          data: updatedEvent.data,
-        );
-        await m.applyInTxn(
-          txn,
-          backend,
-          event: updatedEvent,
-          promotedData: promoted,
-          def: def,
-          aggregateHistory: List<StoredEvent>.unmodifiable(aggregateHistory),
-        );
-      }
-    }
+    // 7. Fire the projection interpreter symmetric with the local-append path.
+    // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path projection
+    //   interpreter runs inside the same transaction as `appendEvent`, applying
+    //   all registered ProjectionSpecs whose interest filter matches the event.
+    //   A throw propagates out of `_ingestOneInTxn` and rolls back the entire
+    //   ingest transaction (REQ-d00145-A all-or-nothing batch atomicity).
+    await _interpreter.applyEvent(
+      txn: txn,
+      backend: backend,
+      event: updatedEvent,
+    );
 
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,
@@ -831,9 +1275,7 @@ class EventStore {
         prev = event;
         continue;
       }
-      final provenance = (event.metadata['provenance'] as List<Object?>)
-          .cast<Map<String, Object?>>();
-      final lastEntry = provenance.last;
+      final lastEntry = _lastProvenanceEntry(event)!;
       final previousIngestHash = lastEntry['previous_ingest_hash'] as String?;
       final expected = prev?.eventHash;
       if (previousIngestHash != expected) {
@@ -851,17 +1293,23 @@ class EventStore {
     return ChainVerdict(ok: failures.isEmpty, failures: failures);
   }
 
-  /// Extract the `ingest_sequence_number` from the last provenance entry of
-  /// [event], or `null` when the event was not ingest-stamped (i.e. an
-  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
-  /// to identify each event's position in Chain 2.
-  int? _ingestSeqOf(StoredEvent event) {
+  /// Extract the last provenance entry of [event] as a typed map, or `null`
+  /// when provenance is absent or empty. Shared by [_ingestSeqOf] and
+  /// [verifyIngestChain] to avoid duplicating the same map-shape navigation.
+  Map<String, Object?>? _lastProvenanceEntry(StoredEvent event) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List || provenanceRaw.isEmpty) return null;
     final last = provenanceRaw.last;
     if (last is! Map<String, Object?>) return null;
-    return last['ingest_sequence_number'] as int?;
+    return last;
   }
+
+  /// Extract the `ingest_sequence_number` from the last provenance entry of
+  /// [event], or `null` when the event was not ingest-stamped (i.e. an
+  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
+  /// to identify each event's position in Chain 2.
+  int? _ingestSeqOf(StoredEvent event) =>
+      _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
   /// verdict. Used by [ingestEvent] and [verifyEventChain].
@@ -1036,7 +1484,6 @@ class EventStore {
     await backend.transaction((txn) async {
       final now = _now();
       final wireBytesHash = sha256.convert(bytes).toString();
-      final auditAggregateId = 'ingest-audit:${source.hopId}';
       final localSeq = await backend.nextSequenceNumber(txn);
       final previousTailHash = await backend.readLatestEventHash(txn);
       final provenance0 = ProvenanceEntry(
@@ -1044,23 +1491,22 @@ class EventStore {
         receivedAt: now,
         identifier: source.identifier,
         softwareVersion: source.softwareVersion,
-        arrivalHash: null, // receiver-originated event — no wire arrival
+        arrivalHash: null,
         previousIngestHash: previousTailHash,
         ingestSequenceNumber: localSeq,
-        batchContext: null, // no decoded batch associated with a rejection
+        batchContext: null,
       );
-
-      final eventId = _uuid.v4();
-      final recordMap = <String, Object?>{
-        'event_id': eventId,
-        'aggregate_id': auditAggregateId,
-        'aggregate_type': 'ingest-audit',
-        'entry_type': 'ingest-audit',
-        'entry_type_version': 1,
-        'lib_format_version': StoredEvent.currentLibFormatVersion,
-        'event_type': 'ingest.batch_rejected',
-        'sequence_number': localSeq,
-        'data': <String, Object?>{
+      await _appendRawInternalEventInTxn(
+        txn,
+        backend,
+        aggregateId: 'ingest-audit:${source.hopId}',
+        aggregateType: 'ingest-audit',
+        entryType: 'ingest-audit',
+        entryTypeVersion: entryTypes
+            .byId(kIngestAuditEntryType)!
+            .registeredVersion,
+        eventType: 'ingest.batch_rejected',
+        data: <String, Object?>{
           'wire_bytes': base64Encode(bytes),
           'wire_format': wireFormat,
           'byte_length': bytes.length,
@@ -1069,18 +1515,12 @@ class EventStore {
           'failed_event_id': failedEventId,
           'error_detail': errorDetail,
         },
-        'metadata': <String, Object?>{
-          'provenance': <Map<String, Object?>>[provenance0.toJson()],
-        },
-        'initiator': const AutomationInitiator(service: 'ingest').toJson(),
-        'flow_token': null,
-        'client_timestamp': now.toIso8601String(),
-        'previous_event_hash': previousTailHash,
-      };
-      final eventHash = _eventHash(recordMap);
-      recordMap['event_hash'] = eventHash;
-      final event = StoredEvent.fromMap(recordMap, localSeq);
-      await backend.appendEvent(txn, event);
+        initiator: const AutomationInitiator(service: 'ingest'),
+        provenance0: provenance0,
+        localSeq: localSeq,
+        previousTailHash: previousTailHash,
+        uuid: _uuid,
+      );
     });
   }
 
@@ -1092,50 +1532,236 @@ class EventStore {
     required String subjectEventId,
     required String subjectEventHashOnRecord,
     required BatchContext? batchContext,
+    PublishCollector? collector,
   }) async {
     final now = _now();
-    final auditAggregateId = 'ingest-audit:${source.hopId}';
     // Reserve a fresh local sequence_number; under the unified store this
     // value is also the receiver-hop's ingest_sequence_number for Chain 2.
     final localSeq = await backend.nextSequenceNumber(txn);
     final previousTailHash = await backend.readLatestEventHash(txn);
-
     final provenance0 = ProvenanceEntry(
       hop: source.hopId,
       receivedAt: now,
       identifier: source.identifier,
       softwareVersion: source.softwareVersion,
-      arrivalHash: null, // receiver-originated event — no wire arrival
+      arrivalHash: null,
       previousIngestHash: previousTailHash,
       ingestSequenceNumber: localSeq,
       batchContext: batchContext,
     );
-
-    final eventId = _uuid.v4();
-    final recordMap = <String, Object?>{
-      'event_id': eventId,
-      'aggregate_id': auditAggregateId,
-      'aggregate_type': 'ingest-audit',
-      'entry_type': 'ingest-audit',
-      'entry_type_version': 1,
-      'lib_format_version': StoredEvent.currentLibFormatVersion,
-      'event_type': 'ingest.duplicate_received',
-      'sequence_number': localSeq,
-      'data': <String, Object?>{
+    await _appendRawInternalEventInTxn(
+      txn,
+      backend,
+      aggregateId: 'ingest-audit:${source.hopId}',
+      aggregateType: 'ingest-audit',
+      entryType: 'ingest-audit',
+      entryTypeVersion: entryTypes
+          .byId(kIngestAuditEntryType)!
+          .registeredVersion,
+      eventType: 'ingest.duplicate_received',
+      data: <String, Object?>{
         'subject_event_id': subjectEventId,
         'subject_event_hash_on_record': subjectEventHashOnRecord,
       },
-      'metadata': <String, Object?>{
-        'provenance': <Map<String, Object?>>[provenance0.toJson()],
-      },
-      'initiator': const AutomationInitiator(service: 'ingest').toJson(),
-      'flow_token': null,
-      'client_timestamp': now.toIso8601String(),
-      'previous_event_hash': previousTailHash,
-    };
-    final eventHash = _eventHash(recordMap);
-    recordMap['event_hash'] = eventHash;
-    final event = StoredEvent.fromMap(recordMap, localSeq);
-    await backend.appendEvent(txn, event);
+      initiator: const AutomationInitiator(service: 'ingest'),
+      provenance0: provenance0,
+      localSeq: localSeq,
+      previousTailHash: previousTailHash,
+      uuid: _uuid,
+      collector: collector,
+    );
   }
+}
+
+// ---------------------------------------------------------------------------
+// File-level private helpers
+// ---------------------------------------------------------------------------
+
+/// Fixed initiator used for substrate-emitted lib_version events.
+const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
+
+/// Canonical event hash used by every raw-record-map append site.
+///
+/// Extracts the 11-field identity set from [recordMap] and returns its
+/// SHA-256 as a hex string. Used by [EventStore._eventHash] (the normal
+/// append path) and [_appendLibVersionEventToBackend] (the substrate-
+/// internal boot path) — previously duplicated between
+/// `_eventHash` and `_libVersionEventHash`.
+// Implements: REQ-d00120-A+B — hash over the 11-field identity set.
+String _canonicalEventHash(Map<String, Object?> recordMap) {
+  final hashInput = <String, Object?>{
+    'event_id': recordMap['event_id'],
+    'aggregate_id': recordMap['aggregate_id'],
+    'entry_type': recordMap['entry_type'],
+    'event_type': recordMap['event_type'],
+    'sequence_number': recordMap['sequence_number'],
+    'data': recordMap['data'],
+    'initiator': recordMap['initiator'],
+    'flow_token': recordMap['flow_token'],
+    'client_timestamp': recordMap['client_timestamp'],
+    'previous_event_hash': recordMap['previous_event_hash'],
+    'metadata': recordMap['metadata'],
+  };
+  return sha256.convert(canonicalizeBytes(hashInput)).toString();
+}
+
+/// Build and append one substrate-internal event to [backend] inside [txn].
+///
+/// Encapsulates the ~25-line boilerplate shared by [EventStore.logRejectedBatch],
+/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventToBackend]:
+/// assemble the 14-key record map, hash it with [_canonicalEventHash], call
+/// [StorageBackend.appendEvent], and optionally record the event into [collector].
+///
+/// [provenance0] and [localSeq] / [previousTailHash] must be reserved by the
+/// caller before this function is invoked, so that the caller can incorporate
+/// them into provenance entries (e.g. Chain 2 fields) before passing them here.
+Future<StoredEvent> _appendRawInternalEventInTxn(
+  Txn txn,
+  StorageBackend backend, {
+  required String aggregateId,
+  required String aggregateType,
+  required String entryType,
+  required int entryTypeVersion,
+  required String eventType,
+  required Map<String, Object?> data,
+  required Initiator initiator,
+  required ProvenanceEntry provenance0,
+  required int localSeq,
+  required String? previousTailHash,
+  required Uuid uuid,
+  PublishCollector? collector,
+}) async {
+  final eventId = uuid.v4();
+  final recordMap = <String, Object?>{
+    'event_id': eventId,
+    'aggregate_id': aggregateId,
+    'aggregate_type': aggregateType,
+    'entry_type': entryType,
+    'entry_type_version': entryTypeVersion,
+    'lib_format_version': StoredEvent.currentLibFormatVersion,
+    'event_type': eventType,
+    'sequence_number': localSeq,
+    'data': data,
+    'metadata': <String, Object?>{
+      'provenance': <Map<String, Object?>>[provenance0.toJson()],
+    },
+    'initiator': initiator.toJson(),
+    'flow_token': null,
+    'client_timestamp': provenance0.receivedAt.toIso8601String(),
+    'previous_event_hash': previousTailHash,
+  };
+  final eventHash = _canonicalEventHash(recordMap);
+  recordMap['event_hash'] = eventHash;
+  final event = StoredEvent.fromMap(recordMap, localSeq);
+  await backend.appendEvent(txn, event);
+  collector?.add(event);
+  return event;
+}
+
+/// Append a substrate-emitted lib_version event directly to [backend].
+///
+/// Bypasses [EventStore.appendInTxn] because lib_version events are
+/// appended from inside [EventStore.open] BEFORE the [EventStore]
+/// instance exists, so we cannot reach the registry through it. The
+/// hardcoded `entryTypeVersion: 1` here is the one documented exception
+/// to the substrate-stamps-registeredVersion-from-the-registry rule
+/// (see EVS-DEV-append-stamps-registered-version). If
+/// `kLibVersionInitializedEntryType` / `kLibVersionChangedEntryType`
+/// ever bump their `registeredVersion` in `kSystemEntryTypes`, this
+/// constant must move in lockstep.
+///
+/// Delegates to [_appendRawInternalEventInTxn] for the actual
+/// record-assembly and hashing.
+Future<void> _appendLibVersionEventToBackend(
+  StorageBackend backend,
+  String eventType,
+  Map<String, Object?> data,
+) async {
+  await backend.transaction<void>((txn) async {
+    const uuid = Uuid();
+    final now = DateTime.now().toUtc();
+    final localSeq = await backend.nextSequenceNumber(txn);
+    final previousTailHash = await backend.readLatestEventHash(txn);
+    final provenance0 = ProvenanceEntry(
+      hop: 'event_sourcing',
+      receivedAt: now,
+      identifier: 'event_sourcing',
+      softwareVersion: LibVersion.current,
+    );
+    await _appendRawInternalEventInTxn(
+      txn,
+      backend,
+      aggregateId: '_lib',
+      aggregateType: '_lib',
+      entryType: eventType,
+      entryTypeVersion: 1,
+      eventType: eventType,
+      data: data,
+      initiator: _kLibVersionInitiator,
+      provenance0: provenance0,
+      localSeq: localSeq,
+      previousTailHash: previousTailHash,
+      uuid: uuid,
+    );
+  });
+}
+
+/// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
+///
+/// Called by [EventStore._runBootSnapshotPromotionPass] (via the
+/// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
+/// (viewName, entryType) pair that has been lifted to a new
+/// `registeredVersion`. Runs inside the same backend transaction as the
+/// row updates and `view_target_versions` write, so the promoted state
+/// and its audit event commit atomically.
+///
+/// Bypasses [EventStore.appendInTxn] because boot-time helpers run
+/// before the [EventStore] instance exists; uses the same raw-internal-
+/// append helper ([_appendRawInternalEventInTxn]) that
+/// [EventStore._emitDuplicateReceivedInTxn] and
+/// [_appendLibVersionEventToBackend] share.
+// Implements: EVS-DEV-snapshot-promotion-on-open — audit event emission.
+Future<void> _appendViewSnapshotPromotedAuditInTxn(
+  Txn txn,
+  StorageBackend backend,
+  EntryTypeRegistry entryTypes, {
+  required String viewName,
+  required String entryType,
+  required int fromVersion,
+  required int toVersion,
+  required int rowsPromoted,
+}) async {
+  const uuid = Uuid();
+  final now = DateTime.now().toUtc();
+  final localSeq = await backend.nextSequenceNumber(txn);
+  final previousTailHash = await backend.readLatestEventHash(txn);
+  final provenance0 = ProvenanceEntry(
+    hop: 'event_sourcing',
+    receivedAt: now,
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.current,
+  );
+  await _appendRawInternalEventInTxn(
+    txn,
+    backend,
+    aggregateId: '_lib',
+    aggregateType: '_lib',
+    entryType: kViewSnapshotPromotedEntryType,
+    entryTypeVersion: entryTypes
+        .byId(kViewSnapshotPromotedEntryType)!
+        .registeredVersion,
+    eventType: 'finalized',
+    data: <String, Object?>{
+      'viewName': viewName,
+      'entryType': entryType,
+      'fromVersion': fromVersion,
+      'toVersion': toVersion,
+      'rowsPromoted': rowsPromoted,
+    },
+    initiator: _kLibVersionInitiator,
+    provenance0: provenance0,
+    localSeq: localSeq,
+    previousTailHash: previousTailHash,
+    uuid: uuid,
+  );
 }

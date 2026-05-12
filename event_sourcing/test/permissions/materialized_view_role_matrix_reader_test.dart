@@ -23,7 +23,6 @@ void main() {
         );
         await eventStore.append(
           entryType: 'role_permission_grant',
-          entryTypeVersion: 1,
           aggregateType: 'role_permission_grant',
           aggregateId: 'admin:user.invite',
           eventType: 'permission_granted',
@@ -40,7 +39,6 @@ void main() {
       () async {
         await eventStore.append(
           entryType: 'role_permission_grant',
-          entryTypeVersion: 1,
           aggregateType: 'role_permission_grant',
           aggregateId: 'admin:user.invite',
           eventType: 'permission_granted',
@@ -53,7 +51,6 @@ void main() {
         );
         await eventStore.append(
           entryType: 'role_permission_grant',
-          entryTypeVersion: 1,
           aggregateType: 'role_permission_grant',
           aggregateId: 'admin:user.invite',
           eventType: 'permission_revoked',
@@ -74,7 +71,6 @@ void main() {
         for (final perm in <String>['user.invite', 'user.role.assign']) {
           await eventStore.append(
             entryType: 'role_permission_grant',
-            entryTypeVersion: 1,
             aggregateType: 'role_permission_grant',
             aggregateId: 'admin:$perm',
             eventType: 'permission_granted',

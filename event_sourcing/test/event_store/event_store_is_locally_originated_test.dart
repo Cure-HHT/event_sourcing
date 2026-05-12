@@ -30,13 +30,9 @@ Future<EventStore> _bootstrap({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     ],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[],
-    initialViewTargetVersions: const <String, Map<String, int>>{},
   );
   return ds.eventStore;
 }
@@ -49,9 +45,8 @@ void main() {
     final eventStore = await _bootstrap(identifier: 'install-A');
     final appended = await eventStore.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'agg-1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'finalized',
       data: const <String, Object?>{
         'answers': <String, Object?>{'severity': 'mild'},
@@ -75,9 +70,8 @@ void main() {
 
       final foreign = await foreignStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'agg-foreign',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'note',
         eventType: 'finalized',
         data: const <String, Object?>{
           'answers': <String, Object?>{'severity': 'mild'},

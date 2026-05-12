@@ -42,11 +42,11 @@ class AuditedRegistryDeps {
 /// truncated set so a specific audit append throws and rolls back the
 /// surrounding transaction. Default behavior (override null) is
 /// unchanged.
-AuditedRegistryDeps buildAuditedRegistryDeps(
+Future<AuditedRegistryDeps> buildAuditedRegistryDeps(
   SembastBackend backend, {
   List<EntryTypeDefinition> callerEntryTypes = const <EntryTypeDefinition>[],
   Iterable<EntryTypeDefinition>? auditEntryTypeOverride,
-}) {
+}) async {
   final entryTypes = EntryTypeRegistry();
   final auditEntryTypes = auditEntryTypeOverride ?? kSystemEntryTypes;
   for (final defn in auditEntryTypes) {
@@ -56,8 +56,8 @@ AuditedRegistryDeps buildAuditedRegistryDeps(
     entryTypes.register(defn);
   }
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final eventStore = EventStore(
-    backend: backend,
+  final eventStore = await EventStore.openForTest(
+    storage: backend,
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'mobile-device',

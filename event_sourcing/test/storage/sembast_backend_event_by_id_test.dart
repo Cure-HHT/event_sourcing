@@ -20,7 +20,7 @@ Future<StoredEvent> _appendEvent(
       key: 0,
       eventId: eventId,
       aggregateId: aggregateId,
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: 1,
       libFormatVersion: 1,

@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
   'event_id': 'e',
   'aggregate_id': 'a',
-  'aggregate_type': 'DiaryEntry',
+  'aggregate_type': 'note',
   'entry_type': 'epistaxis_event',
   'entry_type_version': 1,
   'lib_format_version': 1,
@@ -24,7 +24,7 @@ Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
 Map<String, Object?> _validEventMap() => <String, Object?>{
   'event_id': 'e-1',
   'aggregate_id': 'a-1',
-  'aggregate_type': 'DiaryEntry',
+  'aggregate_type': 'note',
   'entry_type': 'demo_note',
   'event_type': 'finalized',
   'sequence_number': 1,
@@ -189,6 +189,51 @@ void main() {
     // Verifies: REQ-d00141-E
     test('REQ-d00141-E: currentLibFormatVersion is 1', () {
       expect(StoredEvent.currentLibFormatVersion, 1);
+    });
+  });
+
+  group('StoredEvent.withData', () {
+    test('replaces only the data field; all other fields preserved', () {
+      final original = StoredEvent(
+        key: 1,
+        eventId: 'e1',
+        aggregateId: 'agg-1',
+        aggregateType: 'note',
+        entryType: 'note',
+        entryTypeVersion: 2,
+        libFormatVersion: 1,
+        eventType: 'finalized',
+        sequenceNumber: 42,
+        data: <String, dynamic>{'old_key': 'old_value'},
+        metadata: <String, dynamic>{'provenance': <Map<String, Object?>>[]},
+        initiator: const UserInitiator('u-1'),
+        clientTimestamp: DateTime.utc(2026, 1, 1),
+        eventHash: 'h1',
+        flowToken: null,
+        previousEventHash: null,
+      );
+
+      final promoted = original.withData(<String, Object?>{
+        'new_key': 'new_value',
+      });
+
+      expect(promoted.data, {'new_key': 'new_value'});
+      // All other fields preserved.
+      expect(promoted.key, original.key);
+      expect(promoted.eventId, original.eventId);
+      expect(promoted.aggregateId, original.aggregateId);
+      expect(promoted.aggregateType, original.aggregateType);
+      expect(promoted.entryType, original.entryType);
+      expect(promoted.entryTypeVersion, original.entryTypeVersion);
+      expect(promoted.libFormatVersion, original.libFormatVersion);
+      expect(promoted.eventType, original.eventType);
+      expect(promoted.sequenceNumber, original.sequenceNumber);
+      expect(promoted.metadata, original.metadata);
+      expect(promoted.initiator, original.initiator);
+      expect(promoted.clientTimestamp, original.clientTimestamp);
+      expect(promoted.eventHash, original.eventHash);
+      expect(promoted.flowToken, original.flowToken);
+      expect(promoted.previousEventHash, original.previousEventHash);
     });
   });
 }

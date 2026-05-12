@@ -54,7 +54,7 @@ void main() {
     setUp(() async {
       dbCounter += 1;
       backend = await _openBackend('sync-cycle-$dbCounter.db');
-      final deps = buildAuditedRegistryDeps(backend);
+      final deps = await buildAuditedRegistryDeps(backend);
       registry = DestinationRegistry(
         backend: backend,
         eventStore: deps.eventStore,

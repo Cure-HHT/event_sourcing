@@ -57,7 +57,7 @@ Future<StoredEvent> _appendEvent(
       key: 0,
       eventId: eventId,
       aggregateId: 'agg-1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: 1,
       libFormatVersion: 1,
@@ -113,7 +113,7 @@ _seedFifo(
   _HeadKind headKind = _HeadKind.pending,
   int trailCount = 0,
 }) async {
-  final deps = buildAuditedRegistryDeps(backend);
+  final deps = await buildAuditedRegistryDeps(backend);
   final registry = DestinationRegistry(
     backend: backend,
     eventStore: deps.eventStore,
@@ -512,7 +512,7 @@ void main() {
     test(
       'REQ-d00144-F: next fillBatch re-promotes target events AND trail events',
       () async {
-        final deps = buildAuditedRegistryDeps(backend);
+        final deps = await buildAuditedRegistryDeps(backend);
         final registry = DestinationRegistry(
           backend: backend,
           eventStore: deps.eventStore,

@@ -107,12 +107,6 @@ Future<_Pane> _mkPane({
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
   );
 
   final now = DateTime.now().toUtc();
@@ -147,7 +141,6 @@ Future<_Pane> _mkPane({
 Future<void> _appendButtonEvent(_Pane pane, String entryType) async {
   await pane.datastore.eventStore.append(
     entryType: entryType,
-    entryTypeVersion: 1,
     aggregateId: 'soak-${entryType.replaceAll('_', '-')}',
     aggregateType: demoAggregateTypeByEntryTypeId[entryType]!,
     eventType: 'finalized',

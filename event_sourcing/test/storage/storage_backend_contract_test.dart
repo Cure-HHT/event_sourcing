@@ -4,7 +4,6 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/diary_entry.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -138,7 +137,7 @@ StoredEvent _sampleEvent({required String eventId}) => StoredEvent(
   key: 0,
   eventId: eventId,
   aggregateId: 'agg-1',
-  aggregateType: 'DiaryEntry',
+  aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: 1,
   libFormatVersion: 1,
@@ -200,7 +199,22 @@ class _InMemoryBackend extends StorageBackend {
     int? limit,
     String? originatorHopId,
     String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
+    if (afterSequence != null ||
+        limit != null ||
+        originatorHopId != null ||
+        originatorIdentifier != null ||
+        entryType != null ||
+        clientTimestampStart != null ||
+        clientTimestampEnd != null) {
+      throw UnimplementedError(
+        '_InMemoryBackend.findAllEvents does not implement filter parameters; '
+        'this fake is scoped to REQ-d00117-A+B (transaction atomicity).',
+      );
+    }
     final sorted = _events.values.toList()
       ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
     return sorted;
@@ -221,7 +235,19 @@ class _InMemoryBackend extends StorageBackend {
     Txn txn, {
     int? afterSequence,
     int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
   }) async {
+    if (entryType != null ||
+        clientTimestampStart != null ||
+        clientTimestampEnd != null) {
+      throw UnimplementedError(
+        '_InMemoryBackend.findAllEventsInTxn does not implement entry-type '
+        'or client-timestamp filters; this fake is scoped to '
+        'REQ-d00117-A+B (transaction atomicity).',
+      );
+    }
     _assertOwnValid(txn)._check();
     final staged = _staged!;
     var sorted = staged.values.toList()
@@ -255,22 +281,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<int> nextSequenceNumber(Txn txn) => throw UnimplementedError();
   @override
   Future<int> readSequenceCounter() => throw UnimplementedError();
-  @override
-  Future<void> upsertEntry(Txn txn, DiaryEntry entry) =>
-      throw UnimplementedError();
-  @override
-  Future<void> clearEntries(Txn txn) => throw UnimplementedError();
-  @override
-  Future<List<DiaryEntry>> findEntries({
-    String? entryType,
-    bool? isComplete,
-    bool? isDeleted,
-    DateTime? dateFrom,
-    DateTime? dateTo,
-  }) => throw UnimplementedError();
-  @override
-  Future<DiaryEntry?> readEntryInTxn(Txn txn, String entryId) =>
-      throw UnimplementedError();
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,
@@ -421,14 +431,8 @@ class _InMemoryBackend extends StorageBackend {
   Future<StoredEvent?> findEventById(String eventId) =>
       throw UnimplementedError();
   @override
-  Stream<StoredEvent> watchEvents({int? afterSequence}) =>
-      const Stream<StoredEvent>.empty();
-  @override
-  Stream<List<FifoEntry>> watchFifo(String destinationId) =>
-      const Stream<List<FifoEntry>>.empty();
-  @override
-  Stream<List<Map<String, Object?>>> watchView(String viewName) =>
-      const Stream<List<Map<String, Object?>>>.empty();
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
+      throw UnimplementedError();
   @override
   Future<PagedAudit> queryAudit({
     Initiator? initiator,
@@ -439,6 +443,8 @@ class _InMemoryBackend extends StorageBackend {
     int limit = 50,
     String? cursor,
   }) async => const PagedAudit(rows: <AuditRow>[]);
+  @override
+  Future<void> close() async {}
 }
 
 class _InMemoryTxn extends Txn {

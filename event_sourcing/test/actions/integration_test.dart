@@ -100,7 +100,9 @@ ActionContext _ctx() => ActionContext(
     activeRole: 'admin',
   ),
   security: const SecurityDetails(),
-  requestStartedAt: DateTime.parse('2026-05-07T10:00:00Z'),
+  // Use DateTime.now() so the 24-hour idempotency TTL does not expire
+  // during the test run regardless of when the test is executed.
+  requestStartedAt: DateTime.now().toUtc(),
 );
 
 // ---------------------------------------------------------------------------
@@ -115,8 +117,6 @@ Future<EventStore> _bootstrapStore() async {
       id: 'user_invitation',
       registeredVersion: 1,
       name: 'User invitation',
-      widgetId: 'user_invitation_v1',
-      widgetConfig: <String, Object?>{},
       materialize: false,
     ),
   );
@@ -146,10 +146,12 @@ void main() {
 
         final ctx = _ctx();
         final result = await dispatcher.dispatch(
-          'invite_user',
-          const <String, Object?>{'email': 'alice@example.com'},
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: <String, Object?>{'email': 'alice@example.com'},
+            idempotencyKey: 'k1',
+          ),
           ctx,
-          idempotencyKey: 'k1',
         );
 
         // Result shape
@@ -205,10 +207,12 @@ void main() {
 
         // First dispatch — succeeds.
         final first = await dispatcher.dispatch(
-          'invite_user',
-          input,
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: input,
+            idempotencyKey: 'k1',
+          ),
           ctx,
-          idempotencyKey: 'k1',
         );
         expect(first, isA<DispatchSuccess<Object?>>());
 
@@ -217,10 +221,12 @@ void main() {
 
         // Second dispatch with the same key — must short-circuit.
         final second = await dispatcher.dispatch(
-          'invite_user',
-          input,
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: input,
+            idempotencyKey: 'k1',
+          ),
           ctx,
-          idempotencyKey: 'k1',
         );
 
         expect(second, isA<DispatchIdempotencyHit<Object?>>());
@@ -254,8 +260,10 @@ void main() {
 
         // Missing 'email' field → FormatException in parseInput.
         final result = await dispatcher.dispatch(
-          'invite_user',
-          const <String, Object?>{},
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: <String, Object?>{},
+          ),
           _ctx(),
         );
 
@@ -292,8 +300,10 @@ void main() {
 
         // 'not-an-email' passes parseInput but fails validate (no '@').
         final result = await dispatcher.dispatch(
-          'invite_user',
-          const <String, Object?>{'email': 'not-an-email'},
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: <String, Object?>{'email': 'not-an-email'},
+          ),
           _ctx(),
         );
 
@@ -325,8 +335,10 @@ void main() {
         );
 
         final result = await dispatcher.dispatch(
-          'invite_user',
-          const <String, Object?>{'email': 'alice@example.com'},
+          const ActionSubmission(
+            actionName: 'invite_user',
+            rawInput: <String, Object?>{'email': 'alice@example.com'},
+          ),
           _ctx(),
         );
 
@@ -361,10 +373,12 @@ void main() {
 
         // Dispatch without supplying an idempotencyKey.
         final result = await dispatcher.dispatch(
-          'required_key_invite',
-          const <String, Object?>{'email': 'alice@example.com'},
+          const ActionSubmission(
+            actionName: 'required_key_invite',
+            rawInput: <String, Object?>{'email': 'alice@example.com'},
+            // idempotencyKey intentionally omitted.
+          ),
           _ctx(),
-          // idempotencyKey intentionally omitted.
         );
 
         expect(result, isA<DispatchParseDenied<Object?>>());

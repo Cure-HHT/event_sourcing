@@ -74,8 +74,8 @@ touching callers.
 
 ## 2. Quick Start
 
-The smallest possible compile-and-run program: bootstrap, append one
-event, materialize it, read it back from the view.
+The smallest possible compile-and-run program: register a projection,
+bootstrap, append one event, read it back via the view subscription.
 
 ```dart
 import 'package:event_sourcing/event_sourcing.dart';
@@ -93,6 +93,15 @@ Future<void> main() async {
   final db = await newDatabaseFactoryMemory().openDatabase('demo.db');
   final backend = SembastBackend(database: db);
 
+  // Build a projection registry before bootstrap. AggregateProjectionSpec
+  // produces one view row per aggregate via the substrate's generic merge.
+  final projections = ProjectionRegistry()
+    ..register(const AggregateProjectionSpec(
+      viewName: 'notes',
+      interest: SubscriptionFilter(aggregateTypes: {'Note'}),
+      tombstoneEventTypes: {'note_tombstoned'},
+    ));
+
   final datastore = await bootstrapAppendOnlyDatastore(
     backend: backend,
     source: const Source(
@@ -102,19 +111,15 @@ Future<void> main() async {
     ),
     entryTypes: const <EntryTypeDefinition>[kNoteEntryType],
     destinations: const <Destination>[],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'note': 1},
-    },
+    projections: projections,
   );
 
+  // The substrate stamps entry_type_version from the registry's
+  // registeredVersion for 'note'.
   await datastore.eventStore.append(
     entryType: 'note',
-    entryTypeVersion: 1,
     aggregateId: 'note-1',
-    aggregateType: 'DiaryEntry',
+    aggregateType: 'Note',
     eventType: 'finalized',
     data: <String, Object?>{
       'answers': <String, Object?>{'title': 'Hello', 'body': 'World'},
@@ -122,16 +127,43 @@ Future<void> main() async {
     initiator: const UserInitiator('user-42'),
   );
 
-  final entries = await backend.findEntries(entryType: 'note');
-  print('view rows: ${entries.length}'); // -> 1
+  // Subscribe to live updates for the 'notes' view.
+  final stream = datastore.eventStore.subscribe<Map<String, Object?>>(
+    const SubscriptionFilter(aggregateTypes: {'Note'}),
+    AggregateMode<Map<String, Object?>>(
+      viewName: 'notes',
+      mapper: (row) => row,
+    ),
+  );
+  await for (final update in stream) {
+    switch (update) {
+      case Snapshot(:final value):     print('snapshot: $value');
+      case Delta(:final value):        print('delta: $value');
+      case Tombstone(:final aggregateId): print('deleted: $aggregateId');
+    }
+  }
 }
 ```
 
-The four registered system entry types not visible in this example
-(security-context, destination-mutation, retention, registry-init audits)
-are auto-registered by `bootstrapAppendOnlyDatastore` before the caller-
-supplied list. Their event-log rows appear automatically when the
-relevant operations happen — no caller action required.
+The reserved system entry types not visible in this example
+(security-context, destination-mutation, retention, registry-init audits,
+lib-version boot events) are auto-registered by
+`bootstrapAppendOnlyDatastore` before the caller-supplied list. Their
+event-log rows appear automatically when the relevant operations
+happen — no caller action required.
+
+> **Note.** Sections 3-10 below are partially out of date relative to
+> the current Phase I API surface. The legacy `Materializer`,
+> `EntryPromoter`, `findEntries`, `watchEvents`, `watchView`,
+> `watchFifo`, and `initialViewTargetVersions` abstractions referenced
+> there have been replaced by `ProjectionRegistry` with
+> `AggregateProjectionSpec` / `TableProjectionSpec`, by `PromoterRegistry`
+> with `PromoterSpec` and the transform primitives (`RenameField`,
+> `DefaultField`, `DropField`), and by the unified
+> `EventStore.subscribe<T>(filter, mode)` primitive. A broader README
+> sweep is tracked separately. For the authoritative API, see the
+> dartdoc on `lib/event_sourcing.dart` and the design spec at
+> `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md`.
 
 ---
 

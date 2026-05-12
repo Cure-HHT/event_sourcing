@@ -66,10 +66,12 @@ class DemoRoutes {
     );
 
     final result = await components.dispatcher.dispatch(
-      dReq.actionName,
-      dReq.rawInput,
+      ActionSubmission(
+        actionName: dReq.actionName,
+        rawInput: dReq.rawInput,
+        idempotencyKey: dReq.idempotencyKey,
+      ),
       ctx,
-      idempotencyKey: dReq.idempotencyKey,
     );
 
     final wireResponse = _toWireResponse(result, dReq.actionName);

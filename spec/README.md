@@ -31,3 +31,38 @@ This repo uses three requirement levels:
 - **DEV** (`EVS-DEV-...`) — implementation obligations: how the library realizes the PRDs and OPS requirements.
 
 The component name (the kebab-case slug after the level) is **stable**: once a requirement has been authored under a given name, renaming it is a breaking change to any reference in code, tests, results, and other requirements.
+
+---
+
+## File organization
+
+A `spec/` file MAY contain:
+
+- **One or more requirement blocks** — each is a complete `EVS-{TYPE}-{component}` requirement per the grammar in `requirements-spec.md`. elspais detects a requirement block by the `EVS-{TYPE}-{component}` pattern in the heading text, **not by heading depth** — `# EVS-PRD-foo`, `## EVS-PRD-foo`, and `### EVS-PRD-foo` are all valid markers.
+- **Remainder sections** — any heading that does not match the `EVS-{TYPE}-{component}` pattern is treated by elspais as non-normative prose. Use them for cross-system narrative, architecture orientation, decisions-rejected commentary, and reading-order guidance that wouldn't fit naturally inside any single requirement's Rationale.
+- **Mermaid diagrams** — render in any markdown-aware tool; treated as remainder content by elspais.
+- **Image links** — for renderers that display them inline (e.g., GitHub).
+
+Conventions (recommended, not enforced by elspais):
+
+- One file per design topic. `spec/prd-<topic>.md` if the file holds PRDs only; `spec/dev-<topic>.md` if it holds DEVs only; `spec/<topic>.md` if it mixes levels.
+- For multi-requirement files, treat the file as a "book with chapters": `#` is the file title; `##` is each chapter (some chapters are requirement blocks `## EVS-PRD-...`, others are remainder sections like `## Overview`); `###` are subsections within each chapter (`### Purpose`, `### Assertions`, `### Rationale`). This keeps the file passing default markdownlint MD025 (single H1) while keeping the requirement-block markers visually distinct from a third-level heading.
+- A topic file holding multiple requirement blocks SHOULD also have remainder chapters that orient a first-time reader (overview, architecture, reading order, decisions-rejected, open questions, future work).
+- Single-requirement files are also fine for narrowly-scoped requirements (the existing `prd-action-dispatch.md`, `prd-event-log.md`, etc., each have `#` as the requirement-block heading because they hold only one requirement).
+- **Cross-system narrative belongs in a remainder section of the spec/ file it contextualizes — NOT in a separate prose document.** Keep the source of truth singular.
+
+---
+
+## Lifecycle of a design spec
+
+Design ideas evolve through three stages:
+
+1. **Brainstorm.** Output goes to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. Prose-heavy. Captures the conversational design process, alternatives considered + rejected, and open questions. Transient scaffolding intended for reader and reviewer orientation, not for long-term residency.
+2. **Stabilize.** When the design has settled, author the corresponding `spec/<topic>.md` (or `spec/prd-<topic>.md`) containing the normative requirement blocks plus the cross-system narrative carried over as remainder sections (overview, architecture mermaid, decisions-rejected commentary, future work). The spec/ file is now the single authoritative source.
+3. **Archive.** The original brainstorm doc is deleted (or moved to `docs/archive/<year>/`). Its content has migrated; keeping it would be a DRY violation and risks drift.
+
+DEV-level requirements continue to be authored alongside code per CLAUDE.md "Requirement traceability". They MAY be added to the existing `spec/<topic>.md` as new requirement blocks, or split into a companion `spec/dev-<topic>.md` if the DEV bulk warrants it.
+
+Roadmap and time-evolving status documents (e.g., `docs/superpowers/specs/2026-05-11-roadmap.md`) are a different artifact from design specs and stay in `docs/superpowers/specs/`. They are not normative.
+
+Implementation plans live at `docs/superpowers/plans/YYYY-MM-DD-<topic>-implementation.md` and reference `spec/` requirement IDs.

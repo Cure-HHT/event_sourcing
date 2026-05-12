@@ -37,8 +37,6 @@ Future<_Fixture> _openStore({
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     )
     ..register(
@@ -46,8 +44,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -56,8 +52,6 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -66,14 +60,12 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: Source(
       hopId: hopId,
@@ -99,8 +91,6 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'epistaxis_event',
         registeredVersion: 1,
         name: 'Epistaxis Event',
-        widgetId: 'w',
-        widgetConfig: <String, Object?>{},
       ),
     )
     ..register(
@@ -108,8 +98,6 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -118,8 +106,6 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     )
@@ -128,14 +114,12 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        widgetId: '_system',
-        widgetConfig: <String, Object?>{},
         materialize: false,
       ),
     );
   final secCtx = SembastSecurityContextStore(backend: backend);
-  final store = EventStore(
-    backend: backend,
+  final store = await EventStore.openForTest(
+    storage: backend,
     entryTypes: registry,
     source: const Source(
       hopId: 'mobile-device',
@@ -148,9 +132,8 @@ Future<List<StoredEvent>> _originate(int count) async {
   for (var i = 0; i < count; i++) {
     final e = await store.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'agg-orig-$i-$_dbCounter',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'finalized',
       data: <String, Object?>{'index': i},
       initiator: const UserInitiator('u1'),
