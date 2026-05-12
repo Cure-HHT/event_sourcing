@@ -1,3 +1,10 @@
+// Implements: EVS-DEV-event-store-open/A — bootstrapAppendOnlyDatastore is the
+//   canonical production entry point that calls EventStore.open (the sole
+//   public constructor) before returning an AppendOnlyDatastore facade.
+// Implements: EVS-DEV-event-store-open/E — the lib-version boot check and
+//   snapshot-promotion pass both run inside EventStore.open's single
+//   transaction; bootstrap wires this path via allowDowngrade forwarding.
+
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
@@ -68,8 +75,6 @@ class AppendOnlyDatastore {
 /// is to refuse a downgrade. Pass `true` only during development / testing.
 //   before caller-supplied types.
 //   id throws ArgumentError with "reserved" message.
-// Implements: EVS-DEV-event-store-open — boot-version check fires through
-//   the production bootstrap path.
 Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required SembastBackend backend,
   required Source source,

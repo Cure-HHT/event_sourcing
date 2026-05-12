@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-library-charter — this barrel is the complete public
+//   surface of the library; exporting it constitutes the library's contract
+//   across all assertions (A–I) of the charter.
+
 /// Reactive, append-only event-sourcing substrate.
 ///
 /// Provides storage, sync, ingest, action dispatch, projections, and live

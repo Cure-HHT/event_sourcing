@@ -1,3 +1,36 @@
+// Implements: EVS-PRD-event-log/A — EventStore is the append-only, immutable
+//   log; append/appendInTxn are its sole write paths.
+// Implements: EVS-PRD-event-log/B — the storage backend preserves a stable
+//   total order; EventStore surfaces it via read/findAll/subscribe.
+// Implements: EVS-PRD-event-log/D — EventStore.read and subscribe both
+//   accept a starting sequence position for replay from any offset.
+// Implements: EVS-DEV-event-store-open/A — EventStore.open is the sole
+//   public constructor; EventStore._ is private and library-internal only.
+// Implements: EVS-DEV-event-store-open/B — open emits lib_version_initialized
+//   on first boot via _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/C — open emits lib_version_changed
+//   on version upgrade via _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/D — open throws DowngradeRefusedError
+//   on lib-version downgrade (unless allowDowngrade: true) via
+//   _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/E — both the version check and the
+//   snapshot-promotion pass run inside single backend.transaction calls in
+//   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
+// Implements: EVS-DEV-append-stamps-registered-version/A — append looks up
+//   entryTypes.byId(entryType).registeredVersion and stamps it on the event.
+// Implements: EVS-DEV-append-stamps-registered-version/B — appendInTxn
+//   applies the same registry-lookup stamping as append.
+// Implements: EVS-DEV-append-stamps-registered-version/C — entryTypeVersion
+//   does not appear on the public append/appendInTxn signatures.
+// Implements: EVS-DEV-snapshot-promotion-on-open — _runBootSnapshotPromotionPass
+//   promotes lagging view rows and emits view_snapshot_promoted audit events.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/A — EntryTypeVersionDowngradeError
+//   is thrown from open when registeredVersion < stored target version.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/B — assertNoEntryTypeDowngrade
+//   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/C — EntryTypeVersionDowngradeError
+//   carries entryType id, fromVersion, and toVersion for diagnostic logging.
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -179,7 +212,8 @@ class EventStore {
   /// This is the single production entry point. All required collaborators
   /// ([entryTypes], [source], [securityContexts]) must be supplied; the
   /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open — boot flow with lib-version check.
+  // Implements: EVS-DEV-event-store-open/A,B,C,D,E — sole public constructor;
+  //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
   static Future<EventStore> open({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -280,9 +314,10 @@ class EventStore {
   /// All three run inside a single [backend.transaction] so a mid-pass
   /// crash rolls back atomically and the next boot retries from a clean
   /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal,
-  //   EVS-DEV-view-target-versions-seeding,
-  //   EVS-DEV-snapshot-promotion-on-open.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A,B — refusal before any
+  //   mutation; EVS-DEV-snapshot-promotion-on-open/A,B,C — promote lagging
+  //   rows and emit view_snapshot_promoted; EVS-DEV-event-store-open/E —
+  //   all three steps run inside one storage.transaction.
   static Future<void> _runBootSnapshotPromotionPass({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,

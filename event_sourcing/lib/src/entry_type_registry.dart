@@ -1,3 +1,11 @@
+// Implements: EVS-PRD-event-log/A — EntryTypeRegistry is the substrate's
+//   authoritative mapping from entry_type id to EntryTypeDefinition; it
+//   enforces that every event appended to the append-only log corresponds
+//   to a known, registered entry type.
+// Implements: EVS-DEV-append-stamps-registered-version/A — byId(entryType)
+//   is the lookup path that EventStore.append calls to retrieve the
+//   registeredVersion it stamps on every appended event.
+
 import 'package:event_sourcing/src/entry_type_definition.dart';
 
 /// Process-wide registry mapping `entry_type` ids to `EntryTypeDefinition`.
