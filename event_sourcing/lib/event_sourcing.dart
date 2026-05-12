@@ -193,6 +193,14 @@ export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 
 // Promoters — entry-type version promotion chains for schema migration.
 export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
+export 'src/promoters/promoter_spec.dart' show PromoterSpec;
+export 'src/promoters/primitives/transform.dart'
+    show
+        DefaultField,
+        DropField,
+        RenameField,
+        TransformChain,
+        TransformPrimitive;
 
 // Subscriptions — live-update stream primitives returned by
 // EventStore.subscribe<T>().

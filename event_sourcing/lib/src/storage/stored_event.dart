@@ -12,7 +12,8 @@ import 'package:provenance/provenance.dart';
 // Implements: REQ-d00118-B — server_timestamp is NOT stored on the event;
 // the ingesting server is the sole authority on its own timestamp.
 // Implements: REQ-d00118-E — entry_type_version int field on the event record,
-// caller-supplied to EventStore.append.
+// stamped by the substrate from EntryTypeDefinition.registeredVersion on every
+// local append; preserved verbatim on ingested events.
 // Implements: REQ-d00118-F — lib_format_version int field on the event record,
 // stamped by the lib from currentLibFormatVersion.
 // Implements: REQ-d00135-C — top-level user_id replaced by initiator; no
@@ -178,8 +179,14 @@ class StoredEvent {
   final String entryType;
 
   /// Application schema version under which this event was authored.
-  /// Caller-supplied to `EventStore.append`. Preserved verbatim across the
-  /// wire and receiver ingest.
+  ///
+  /// Stamped by the substrate from `EntryTypeDefinition.registeredVersion`
+  /// on every local append (the caller does not choose it). Preserved
+  /// verbatim on ingested events — reflects the originating install's
+  /// registry at the time of append. Ingest-side promotion (in
+  /// `ProjectionInterpreter`) and boot-time snapshot promotion (in
+  /// `EventStore.open`) read this field to decide whether the event needs
+  /// to be lifted to a newer version before fold.
   // Implements: REQ-d00118-E.
   final int entryTypeVersion;
 
