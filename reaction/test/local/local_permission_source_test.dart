@@ -1,0 +1,150 @@
+import 'package:event_sourcing/event_sourcing.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:reaction/src/local/local_permission_source.dart';
+
+import 'test_support/reaction_test_harness.dart';
+
+void main() {
+  group('LocalPermissionSource', () {
+    late ReactionTestHarness harness;
+    late LocalPermissionSource source;
+
+    // Define the helper-permission for assertions.
+    const sayHello = Permission('say_hello', scope: ScopeClass.global);
+
+    setUp(() async {
+      harness = await ReactionTestHarness.open();
+      // Seed: 'greeter' role has 'say_hello'.
+      await _grantSayHelloToGreeterRole(harness);
+
+      source = LocalPermissionSource(
+        eventStore: harness.eventStore,
+        roleMatrixReader: harness.roleMatrixReader,
+      );
+    });
+
+    tearDown(() async {
+      await source.dispose();
+      await harness.close();
+    });
+
+    test('current is null before setActivePrincipal', () {
+      expect(source.current, isNull);
+    });
+
+    test(
+      'after setActivePrincipal(alice/greeter), current reflects greeter grants',
+      () async {
+        const alice = Principal.user(
+          userId: 'alice',
+          roles: {'greeter'},
+          activeRole: 'greeter',
+        );
+        source.setActivePrincipal(alice);
+
+        // Allow async recompute to settle.
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        final snapshot = source.current;
+        expect(snapshot, isNotNull);
+        expect(snapshot!.role, equals('greeter'));
+        expect(snapshot.grants, contains(sayHello));
+      },
+    );
+
+    test('setActivePrincipal(null) clears current to null', () async {
+      const alice = Principal.user(
+        userId: 'alice',
+        roles: {'greeter'},
+        activeRole: 'greeter',
+      );
+      source.setActivePrincipal(alice);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      expect(source.current, isNotNull);
+
+      source.setActivePrincipal(null);
+      // null-clear is synchronous; no need to wait.
+      expect(source.current, isNull);
+    });
+
+    test('stream emits when active principal changes', () async {
+      final events = <PermissionSnapshot?>[];
+      final sub = source.stream.listen(events.add);
+
+      // Alice has 'greeter' — should get a non-null snapshot with say_hello.
+      source.setActivePrincipal(
+        const Principal.user(
+          userId: 'alice',
+          roles: {'greeter'},
+          activeRole: 'greeter',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // Bob has 'nobody' role — no grants; snapshot has empty grants.
+      source.setActivePrincipal(
+        const Principal.user(userId: 'bob', roles: {}, activeRole: 'nobody'),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      // Explicit null-clear.
+      source.setActivePrincipal(null);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      // Expect at least 3 events.
+      expect(events.length, greaterThanOrEqualTo(3));
+      // alice's event: role='greeter', has say_hello.
+      final aliceEvt = events.firstWhere(
+        (e) => e != null && e.grants.contains(sayHello),
+        orElse: () => null,
+      );
+      expect(aliceEvt, isNotNull);
+      expect(aliceEvt!.role, equals('greeter'));
+      // null-clear event is present.
+      expect(events.last, isNull);
+
+      await sub.cancel();
+    });
+
+    test(
+      'stream emits current value to a late subscriber (snapshot-on-listen)',
+      () async {
+        const alice = Principal.user(
+          userId: 'alice',
+          roles: {'greeter'},
+          activeRole: 'greeter',
+        );
+        source.setActivePrincipal(alice);
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+
+        // Late subscriber comes after current is already set.
+        final firstEvent = source.stream.first;
+        await expectLater(
+          firstEvent,
+          completion(
+            predicate<PermissionSnapshot?>(
+              (s) => s != null && s.grants.contains(sayHello),
+            ),
+          ),
+        );
+      },
+    );
+  });
+}
+
+/// Seeds the harness's role-permission matrix with 'say_hello' granted to the
+/// 'greeter' role. Copied from local_action_submitter_test.dart.
+Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
+  const sayHelloPerm = Permission('say_hello', scope: ScopeClass.global);
+  const seed = PermissionSeed(
+    roles: {'greeter'},
+    grants: {
+      'greeter': {'say_hello'},
+    },
+  );
+  final applier = EventSeedApplier(
+    eventStore: harness.eventStore,
+    seedInitiator: const AutomationInitiator(service: 'reaction_test_seed'),
+  );
+  await applier.apply(seed, {sayHelloPerm});
+}
