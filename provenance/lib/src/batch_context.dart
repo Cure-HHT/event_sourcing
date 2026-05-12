@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-provenance assertion A (BatchContext is the value type
+//   that records batch membership in the ProvenanceEntry.batchContext field)
+// Implements: EVS-PRD-provenance assertion C (JSON serialization and
+//   deserialization of BatchContext without loss of information)
+
 /// Per-event record of batch membership for events received via
 /// `EventStore.ingestBatch`.
 ///

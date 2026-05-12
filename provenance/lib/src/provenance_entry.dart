@@ -1,3 +1,9 @@
+// Implements: EVS-PRD-provenance assertion A (immutable ProvenanceEntry value
+//   type with hop, receivedAt, identifier, softwareVersion, transformVersion
+//   and optional ingest/receiver fields)
+// Implements: EVS-PRD-provenance assertion C (JSON serialization and
+//   deserialization without loss of information)
+
 import 'package:provenance/src/batch_context.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.

@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-provenance assertion A (BatchContext value type: five
+//   required fields, value equality, fromJson validation)
+// Verifies: EVS-PRD-provenance assertion C (BatchContext JSON round-trip
+//   without loss of information)
+
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 

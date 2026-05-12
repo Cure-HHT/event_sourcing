@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-provenance assertion B (pure-functional append producing
+//   a new immutable chain without mutating the input)
+
 import 'package:provenance/src/provenance_entry.dart';
 
 /// Append a single [ProvenanceEntry] to the tail of a chain-of-custody.

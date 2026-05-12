@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-provenance assertion B (pure-functional append: input
+//   chain is not mutated; returned list is new and unmodifiable; entry is
+//   placed at the tail)
+
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
 

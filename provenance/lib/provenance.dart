@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-provenance assertion D (pure Dart, platform-independent)
+
 /// Chain-of-custody provenance types for cross-system event flow.
 ///
 /// See `spec/dev-event-sourcing-mobile.md`
