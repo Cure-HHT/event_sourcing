@@ -25,8 +25,8 @@ This document intentionally avoids workflow, tooling, or process guidance. Those
 
 Each requirement is uniquely identified by an ID of the form:
 
-```
-EVS-{TYPE}-{component}[-{assertion}]
+```text
+EVS-{TYPE}-{component}[/{assertion}]
 ```
 
 Where:
@@ -37,17 +37,17 @@ Where:
   - `OPS` = Operational Documentation — release management, deployment of derived artifacts, secret rotation, and similar operational concerns pertaining to the library itself.
   - `DEV` = Development Specification — how the library realizes the PRDs and OPS requirements.
 - `component` is a kebab-case noun describing the requirement subject. Should be short and specific. Examples: `event-store`, `provenance-entry-schema`, `canonical-json`.
-- `assertion` is an optional single-letter label `[A-Z]` for a specific Assertion within the requirement (see "Assertions" below). Multiple assertions in one reference use `+`: e.g. `EVS-DEV-event-store-A+B+C`.
+- `assertion` is an optional single-letter label `[A-Z]` for a specific Assertion within the requirement (see "Assertions" below). Multiple assertions in one reference use `/` as separator: e.g. `EVS-DEV-event-store/A/B/C`.
 
 Examples:
 
 - `EVS-PRD-event-store`
-- `EVS-DEV-provenance-entry-schema-G`
+- `EVS-DEV-provenance-entry-schema/G`
 - `EVS-OPS-secret-rotation`
 
 ### Names are stable
 
-Component names MUST be stable once a requirement is authored. Renaming a component is a **breaking change** to every reference of the requirement — assertion citations in tests (`// Verifies: EVS-DEV-event-store-G`), implementation annotations (`// Implements: EVS-DEV-event-store-A+B`), `Refines:` and `Satisfies:` metadata in other requirements, and Rationale prose. A rename therefore requires a coordinated sweep of all references at the same time as the rename itself.
+Component names MUST be stable once a requirement is authored. Renaming a component is a **breaking change** to every reference of the requirement — assertion citations in tests (`// Verifies: EVS-DEV-event-store/G`), implementation annotations (`// Implements: EVS-DEV-event-store/A/B`), `Refines:` and `Satisfies:` metadata in other requirements, and Rationale prose. A rename therefore requires a coordinated sweep of all references at the same time as the rename itself.
 
 The renaming policy is the same as for breaking changes to a published API: rare, deliberate, and called out in the commit that performs the rename. If you are tempted to rename a requirement to fix a "bad name", consider first whether a clearer Rationale or a redirect requirement (a new requirement that Refines the existing one with the better name) would serve.
 
@@ -113,20 +113,20 @@ B. The library SHALL ...
 Tests and other verification artifacts reference:
 
 - the entire requirement: `EVS-DEV-event-store`, or
-- a specific assertion: `EVS-DEV-event-store-F`, or
-- multiple assertions: `EVS-DEV-event-store-A+B+C`.
+- a specific assertion: `EVS-DEV-event-store/F`, or
+- multiple assertions: `EVS-DEV-event-store/A/B/C`.
 
 Per-test annotation format (Dart):
 
 ```dart
-// Verifies: EVS-DEV-event-store-F
+// Verifies: EVS-DEV-event-store/F
 test('appends an event with monotonic sequence', () { ... });
 ```
 
 Per-class implementation annotation format (Dart):
 
 ```dart
-// Implements: EVS-DEV-event-store-A+B+C — append + ordering invariants
+// Implements: EVS-DEV-event-store/A/B/C — append + ordering invariants
 class EventStore { ... }
 ```
 
@@ -143,7 +143,7 @@ A requirement's assertions are verified by automated tests. Two complementary mo
 A scan test typically reads the source tree from the test's working directory, applies a regex or AST query against production files only (excluding the test files and any explicit allowlist), and asserts the result set is empty (forbidden pattern) or non-empty / equal (required pattern).
 
 ```dart
-// Verifies: EVS-PRD-action-dispatch-A
+// Verifies: EVS-PRD-action-dispatch/A
 test('only the dispatcher writes to the event log', () { ... });
 ```
 

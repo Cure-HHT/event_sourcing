@@ -101,6 +101,11 @@ Phase II work.
 
 ## Epistemic layers
 
+> **Canonical source:** `spec/prd-library-charter.md`, "Epistemic
+> layers" section. The discussion is duplicated here for session-start
+> convenience because the distinction is load-bearing; update both
+> places together, and treat the spec as authoritative if they drift.
+
 The substrate makes two kinds of claims, and the distinction is
 load-bearing. Confusing them leads consumers to either over-trust the
 library's defaults or to abandon the substrate when they need a

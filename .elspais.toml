@@ -23,14 +23,14 @@ name = "Cure-HHT Event Sourcing Library"
 
 # Requirement ID format
 #
-# Canonical form: EVS-{level}-{component}[-{assertion}]
+# Canonical form: EVS-{level}-{component}[/{assertion}]
 #   level     — three-letter audience tag (`prd` or `dev`)
 #   component — kebab-case noun describing the requirement subject
-#   assertion — optional A–Z label (or A+B+C... multi-assertion)
+#   assertion — optional A–Z label (or A/B/C... multi-assertion)
 #
 # Examples:
 #   EVS-PRD-event-store
-#   EVS-DEV-provenance-entry-schema-G
+#   EVS-DEV-provenance-entry-schema/G
 #   EVS-OPS-secret-rotation
 
 [id-patterns]
@@ -42,18 +42,17 @@ prefix_optional = false
 short = "{level.letter}-{component}"
 
 [id-patterns.component]
-# `named` = kebab-case noun. `numeric` = NNNNN form (used by hht_diary
-# but rejected here in favor of human-meaningful component names).
-style = "named"
+# `kebab-case` = lowercase kebab-case component names (e.g. `library-charter`).
+# Built-in style; the regex is fixed and unambiguous against uppercase
+# assertion labels (`/A`, `/A/B/C`).
+style = "kebab-case"
 max_length = 64
-# pattern = ""  # alphanumeric style only
-# digits = 5    # numeric style only
-# leading_zeros = true
 
 [id-patterns.assertions]
 label_style = "uppercase"
 max_count = 26
-multi_separator = "+"
+separator = "/"
+multi_separator = "/"
 zero_pad = false
 
 [id-patterns.associated]
