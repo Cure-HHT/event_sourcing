@@ -87,6 +87,34 @@ class DowngradeRefusedError extends Error {
       '(development use only).';
 }
 
+/// Thrown by [EventStore.open] when any registered entry type's
+/// `registeredVersion` is below the highest value recorded for that
+/// entry type across the local `view_target_versions` store. The lib
+/// has no `DemotionSpec` mechanism in Phase I; the only resolution is
+/// to pin a lib build whose registry's `registeredVersion` is at least
+/// as high as the stored target. See
+/// docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md.
+class EntryTypeVersionDowngradeError extends Error {
+  EntryTypeVersionDowngradeError({
+    required this.entryType,
+    required this.fromVersion,
+    required this.toVersion,
+  });
+
+  final String entryType;
+  final int fromVersion;
+  final int toVersion;
+
+  @override
+  String toString() =>
+      'EntryTypeVersionDowngradeError: entry type "$entryType" was '
+      'previously folded at registeredVersion=$fromVersion (stored in '
+      'view_target_versions), but the current registry has '
+      'registeredVersion=$toVersion. Phase I refuses entry-type '
+      'downgrade unconditionally. Pin a lib build with '
+      'registeredVersion >= $fromVersion for "$entryType".';
+}
+
 /// Phase 4.4 write API. Serves both mobile widgets and portal callers via
 /// one `append` method that takes per-field arguments plus optional
 /// `SecurityDetails`. Replaces `EntryService.record` (REQ-d00141-A).

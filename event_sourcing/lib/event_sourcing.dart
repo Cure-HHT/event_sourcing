@@ -15,6 +15,8 @@
 /// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
 /// - `Update` — sealed stream element: `Snapshot`, `Delta`, `Tombstone`.
 /// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
+/// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
+///   entry type's `registeredVersion` is below its stored target.
 ///
 /// ## Quick start
 ///
@@ -155,6 +157,7 @@ export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
     show
         DowngradeRefusedError,
+        EntryTypeVersionDowngradeError,
         EventStore,
         EventStoreSyncCycleTrigger,
         RetentionResult;

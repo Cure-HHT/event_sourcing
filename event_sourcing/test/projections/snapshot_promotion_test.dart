@@ -145,4 +145,67 @@ void main() {
       },
     );
   });
+
+  group('assertNoEntryTypeDowngrade', () {
+    test('throws EntryTypeVersionDowngradeError when registry version '
+        'is below the highest stored view_target_versions value', () async {
+      final backend = await _openBackend();
+      final entryTypes = EntryTypeRegistry();
+      for (final defn in kSystemEntryTypes) {
+        entryTypes.register(defn);
+      }
+      entryTypes.register(
+        const EntryTypeDefinition(
+          id: 'note',
+          registeredVersion: 1, // downgrade!
+          name: 'Note',
+        ),
+      );
+      final projections = ProjectionRegistry()..register(_kNotesSpec);
+
+      // Simulate: an earlier boot had note at registeredVersion=3 and
+      // promoted the view to that target.
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 3);
+      });
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await assertNoEntryTypeDowngrade(
+            txn: txn,
+            backend: backend,
+            projections: projections,
+            entryTypes: entryTypes,
+          );
+        }),
+        throwsA(
+          isA<EntryTypeVersionDowngradeError>()
+              .having((e) => e.entryType, 'entryType', 'note')
+              .having((e) => e.fromVersion, 'fromVersion', 3)
+              .having((e) => e.toVersion, 'toVersion', 1),
+        ),
+      );
+    });
+
+    test('no-op when every entry type registeredVersion >= stored', () async {
+      final backend = await _openBackend();
+      final entryTypes = _registry(); // note at 3, lights at 1
+      final projections = ProjectionRegistry()..register(_kNotesSpec);
+
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
+      });
+
+      // No throw; the registry's note is at 3, stored is 1 (lag, not
+      // downgrade).
+      await backend.transaction((txn) async {
+        await assertNoEntryTypeDowngrade(
+          txn: txn,
+          backend: backend,
+          projections: projections,
+          entryTypes: entryTypes,
+        );
+      });
+    });
+  });
 }
