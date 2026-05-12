@@ -50,3 +50,20 @@ repos:
         language: system
         types: [dart]
         # Excludes generated files; if any package adds .g.dart later, list it here.
+
+  # elspais checks — requirements-traceability validation. Runs at
+  # pre-push only (the full graph scan is too slow for pre-commit).
+  # `--lenient` exits 0 on warnings (e.g., unlinked files, coverage
+  # gaps) but non-zero on hard errors (broken references, format
+  # violations, retired-ref citations). Treat the warnings as a
+  # backlog: opportunistic annotation work tightens the surface
+  # without blocking unrelated pushes.
+  - repo: local
+    hooks:
+      - id: elspais-checks
+        name: elspais checks
+        entry: elspais checks --lenient
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
