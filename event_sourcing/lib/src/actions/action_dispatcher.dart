@@ -8,6 +8,7 @@
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
+import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show Deny;
 import 'package:event_sourcing/src/actions/authorization_policy.dart';
@@ -81,12 +82,13 @@ class ActionDispatcher {
   ///             `expiresAt = ctx.requestStartedAt + action.idempotencyTtl`.
   ///   Stage 10 — return `DispatchResult.success(result, emittedEventIds)`.
   Future<DispatchResult<Object?>> dispatch(
-    String actionName,
-    Map<String, Object?> rawInput,
-    ActionContext ctx, {
-    String? idempotencyKey,
-    String? flowToken,
-  }) async {
+    ActionSubmission submission,
+    ActionContext ctx,
+  ) async {
+    final actionName = submission.actionName;
+    final rawInput = submission.rawInput;
+    final idempotencyKey = submission.idempotencyKey;
+    final flowToken = submission.flowToken;
     // Stage 2: invocation_id (generated up front so denials can carry it).
     final invocationId = _uuid.v4();
     final invocationMetadata = <String, Object?>{

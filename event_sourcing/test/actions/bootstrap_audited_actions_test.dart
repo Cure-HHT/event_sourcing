@@ -22,8 +22,10 @@ void main() {
 
         // Smoke test: dispatcher handles an unknown action name correctly.
         final result = await dispatcher.dispatch(
-          'nope',
-          const <String, Object?>{},
+          const ActionSubmission(
+            actionName: 'nope',
+            rawInput: <String, Object?>{},
+          ),
           ActionContext(
             principal: const Principal.user(
               userId: 'u',
