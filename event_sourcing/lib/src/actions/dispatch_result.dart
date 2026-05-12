@@ -1,4 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-action-dispatch/B (sealed outcome type covering every pipeline stage result)
+// Implements: EVS-PRD-action-dispatch/C (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
+// Implements: EVS-PRD-action-dispatch/D (DispatchIdempotencyHit is returned on cache hit: same outcome, no new event emitted)
 
 import 'package:event_sourcing/src/actions/permission.dart';
 

@@ -1,5 +1,4 @@
-// IMPLEMENTS REQUIREMENTS:
-//   replay protection; in-memory impl for tests and early development.
+// Implements: EVS-PRD-action-dispatch/D (IdempotencyStore is the pluggable cache: lookup hit → same outcome; record stores the result after successful dispatch)
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 

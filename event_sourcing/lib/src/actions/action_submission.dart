@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-action-dispatch/A (value type that carries a principal's action submission into the dispatch flow)
+
 /// The complete input to one [ActionDispatcher.dispatch] call.
 ///
 /// Bundles the action name, raw input, and optional idempotency/flow

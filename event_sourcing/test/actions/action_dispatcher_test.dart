@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts principal-submitted actions)
+// Verifies: EVS-PRD-action-dispatch/B (stages 1–10 in order: lookup, invocation_id, parse, idempotency, validate, authorize, execute, persist, record, return)
+// Verifies: EVS-PRD-action-dispatch/C (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
+// Verifies: EVS-PRD-action-dispatch/D (idempotency cache hit short-circuits; DispatchIdempotencyHit returned; no new events appended)
 // Uses flutter_test (not package:test) because EventStore depends on
 // Sembast, which requires the Flutter test binding to run in this package.
 // All other tests in event_sourcing/ that touch EventStore use flutter_test

@@ -1,9 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
-//   This file implements all 10 stages:
-//     1 (lookup), 2 (invocation_id), 3 (parse), 4 (idempotency check),
-//     5 (validate), 6 (authorize), 7 (execute), 8 (atomic multi-event persist),
-//     9 (record idempotency -D),
-//     10 (return success).
+// Implements: EVS-PRD-action-dispatch/A (accepts actions submitted by principals)
+// Implements: EVS-PRD-action-dispatch/B (parse → validate → authorize → execute → record, in that order)
+// Implements: EVS-PRD-action-dispatch/C (every dispatch produces a recorded outcome: success events or denial event)
+// Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
+// Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
+// Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';

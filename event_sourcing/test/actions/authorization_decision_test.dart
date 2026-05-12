@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/B (AuthorizationDecision sealed type: Allow falls through; Deny short-circuits with permission + reason)
+// Verifies: EVS-PRD-permissions-as-events/B (decision type is the output of isPermitted, which evaluates from event-derived projections)
+
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_class.dart';

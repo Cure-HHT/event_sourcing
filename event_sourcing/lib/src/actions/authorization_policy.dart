@@ -1,6 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
-//   isPermitted (per-dispatch authorization) and permissionsFor
-//   (session-start snapshot generation).
+// Implements: EVS-PRD-action-dispatch/B (authorize stage pluggable interface: isPermitted called once per declared permission)
+// Implements: EVS-PRD-permissions-as-events/B (concrete impls evaluate decisions from event-derived projections only)
+// Implements: EVS-PRD-library-charter/H (trust-boundary interface: AuthorizationPolicy is the named, registered policy surface)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/permission.dart';

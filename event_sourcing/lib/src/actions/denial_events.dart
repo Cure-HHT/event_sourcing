@@ -1,7 +1,5 @@
-// IMPLEMENTS REQUIREMENTS:
-//   dispatcher uses to construct EventDraft instances for each denial
-//   stage. Sanitization strips stack traces, file paths,
-//   and likely-input-echoes before the message lands in the audit log.
+// Implements: EVS-PRD-action-dispatch/C (denial event factories that record the outcome for every failed dispatch stage)
+// Implements: EVS-PRD-action-dispatch/B (one factory per stage: unknown-action, parse, validate, authorize, execute)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;

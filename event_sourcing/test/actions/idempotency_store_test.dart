@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/D (InMemoryIdempotencyStore: record → lookup returns cached entry; miss → null; expired → null; sweepExpired removes past entries)
+
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:test/test.dart';
 

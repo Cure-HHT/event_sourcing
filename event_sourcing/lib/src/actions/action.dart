@@ -1,7 +1,5 @@
-// IMPLEMENTS REQUIREMENTS:
-//   every audited command implements. Pure parseInput/validate; effectful
-//   execute returns events for atomic persistence.
-//   24-hour default.
+// Implements: EVS-PRD-action-dispatch/A (action interface that dispatch accepts)
+// Implements: EVS-PRD-action-dispatch/B (defines the parse/validate/execute stages)
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/execution_result.dart';

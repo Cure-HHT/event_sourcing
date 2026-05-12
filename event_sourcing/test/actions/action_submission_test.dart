@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/A (ActionSubmission value type carries actionName, rawInput, idempotencyKey, flowToken into dispatch)
+
 import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:test/test.dart';
 

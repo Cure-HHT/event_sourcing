@@ -1,7 +1,6 @@
-// Convenience scaffolding (not bound to a REQ): a deny-all
-// AuthorizationPolicy used as a test fixture and as a placeholder
-// during early app bootstrap. Production deployments wire
-// TableBackedAuthorizationPolicy from the permissions module.
+// Implements: EVS-PRD-action-dispatch/B (satisfies the AuthorizationPolicy interface contract required by the authorize stage)
+// Note: DenyAllAuthorizationPolicy is a test fixture and bootstrap placeholder — not the production policy.
+// Production deployments wire TableBackedAuthorizationPolicy (EVS-PRD-permissions-as-events/B).
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/authorization_policy.dart';

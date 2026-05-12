@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-action-dispatch/B (sealed DispatchResult variants cover every pipeline stage)
+// Verifies: EVS-PRD-action-dispatch/C (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
+// Verifies: EVS-PRD-action-dispatch/D (DispatchIdempotencyHit carries cachedResult + priorEmittedEventIds)
+
 import 'package:event_sourcing/src/actions/dispatch_result.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_class.dart';

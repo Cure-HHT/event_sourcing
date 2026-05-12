@@ -1,3 +1,5 @@
+// Test support: shared in-memory EventStore factory used by action dispatcher tests.
+// Verifies: EVS-PRD-action-dispatch/C (provides the EventStore into which denial and success events are recorded during dispatch tests)
 // In-memory EventStore bootstrap helper shared across actions test files.
 //
 // Uses flutter_test (not package:test) because EventStore depends on

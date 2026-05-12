@@ -1,5 +1,4 @@
-// IMPLEMENTS REQUIREMENTS:
-//   value type used by IdempotencyStore implementations.
+// Implements: EVS-PRD-action-dispatch/D (Idempotency enum declares the per-action policy; IdempotencyEntry carries the cached outcome)
 
 /// Per-action declaration of how the dispatcher treats `idempotencyKey`.
 ///

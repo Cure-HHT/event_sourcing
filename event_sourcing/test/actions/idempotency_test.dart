@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/D (Idempotency enum has three policy variants; IdempotencyEntry is the cached outcome; defaultIdempotencyTtl is 24h)
+
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:test/test.dart';
 

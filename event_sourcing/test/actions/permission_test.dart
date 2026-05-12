@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-action-dispatch/B (Permission is the unit checked in the authorize stage; name-based equality; scope field accessible)
+// Verifies: EVS-PRD-permissions-as-events/A (Permission names are the subjects of permission-grant events; equality by name is the log-identity contract)
+// Verifies: EVS-PRD-permissions-as-events/B (Permission is passed to isPermitted for evaluation from event-derived projections)
+
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';

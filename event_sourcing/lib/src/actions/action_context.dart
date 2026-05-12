@@ -1,5 +1,5 @@
-// IMPLEMENTS REQUIREMENTS:
-//   and passed through every stage.
+// Implements: EVS-PRD-action-dispatch/A (carries per-dispatch caller context through every stage)
+// Implements: EVS-PRD-library-charter/H (Principal is the acknowledged-unaudited trust input)
 
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
