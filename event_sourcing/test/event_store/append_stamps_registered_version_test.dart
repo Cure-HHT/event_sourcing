@@ -63,8 +63,8 @@ void main() {
       'throws on unregistered entry type (existing behavior preserved)',
       () async {
         final store = await _openStore();
-        expect(
-          () async => store.append(
+        await expectLater(
+          store.append(
             entryType: 'not_registered',
             aggregateId: 'agg-1',
             aggregateType: 'whatever',
