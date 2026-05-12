@@ -102,7 +102,6 @@ void main() {
         // 1. Originate an event.
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -173,7 +172,6 @@ void main() {
         try {
           final original = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-2',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -204,7 +202,6 @@ void main() {
         // Originate two distinct events.
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-seq1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -213,7 +210,6 @@ void main() {
         );
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-seq2',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',

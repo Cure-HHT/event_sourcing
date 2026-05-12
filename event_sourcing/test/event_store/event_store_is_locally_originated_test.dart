@@ -45,7 +45,6 @@ void main() {
     final eventStore = await _bootstrap(identifier: 'install-A');
     final appended = await eventStore.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'agg-1',
       aggregateType: 'DiaryEntry',
       eventType: 'finalized',
@@ -71,7 +70,6 @@ void main() {
 
       final foreign = await foreignStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'agg-foreign',
         aggregateType: 'DiaryEntry',
         eventType: 'finalized',

@@ -96,7 +96,6 @@ void main() {
         // Originate event.
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -154,7 +153,6 @@ void main() {
         try {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-dup2',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -196,7 +194,6 @@ void main() {
       try {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup3',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -238,7 +235,6 @@ void main() {
         // 1. Originate an event.
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup-chain-verify',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -298,7 +294,6 @@ void main() {
       try {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup4',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',

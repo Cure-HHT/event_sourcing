@@ -123,7 +123,6 @@ void main() {
           // 1. Originate 3 events.
           final e1 = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch1',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -134,7 +133,6 @@ void main() {
           );
           final e2 = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch2',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -145,7 +143,6 @@ void main() {
           );
           final e3 = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch3',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -262,7 +259,6 @@ void main() {
       try {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-single-batch',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -320,7 +316,6 @@ void main() {
         // 1. Originate 3 events.
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup-batch-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -331,7 +326,6 @@ void main() {
         );
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup-batch-2',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -340,7 +334,6 @@ void main() {
         );
         final e3 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-dup-batch-3',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -429,7 +422,6 @@ void main() {
         // 1. Originate e1 and pre-ingest it at destination.
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-mismatch-batch-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -452,7 +444,6 @@ void main() {
         // 3. Originate two new events.
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-mismatch-batch-2',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -461,7 +452,6 @@ void main() {
         );
         final e3 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-mismatch-batch-3',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',

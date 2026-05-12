@@ -71,7 +71,6 @@ void main() {
         // Append a user event with security details so a context row exists.
         final ev = await store.append(
           entryType: 'test_event',
-          entryTypeVersion: 1,
           aggregateId: 'a1',
           aggregateType: 'Test',
           eventType: 'created',
@@ -130,7 +129,6 @@ void main() {
         // Seed a compact-window row.
         final evCompact = await store.append(
           entryType: 'test_event',
-          entryTypeVersion: 1,
           aggregateId: 'c1',
           aggregateType: 'Test',
           eventType: 'created',
@@ -152,7 +150,6 @@ void main() {
         // Seed a purge-window row.
         final evPurge = await store.append(
           entryType: 'test_event',
-          entryTypeVersion: 1,
           aggregateId: 'p1',
           aggregateType: 'Test',
           eventType: 'created',

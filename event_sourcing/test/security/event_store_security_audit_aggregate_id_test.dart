@@ -83,7 +83,6 @@ void main() {
           final fx = await _setup();
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -136,7 +135,6 @@ void main() {
           // within 90 + 365) so a compact emission lands.
           final evCompact = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -159,7 +157,6 @@ void main() {
           // 365 days) so a purge emission lands.
           final evPurge = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'b',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -208,7 +205,6 @@ void main() {
           final fx = await _setup(now: DateTime.utc(2030, 1, 1));
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'a',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',

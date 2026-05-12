@@ -133,7 +133,6 @@ void main() {
             // Hop 0: A originates two events.
             final eA1 = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-3hop-1',
               aggregateType: 'DiaryEntry',
               eventType: 'finalized',
@@ -144,7 +143,6 @@ void main() {
             );
             final eA2 = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-3hop-1',
               aggregateType: 'DiaryEntry',
               eventType: 'checkpoint',
@@ -291,7 +289,6 @@ void main() {
           try {
             final eA = await originatorA.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-4hop',
               aggregateType: 'DiaryEntry',
               eventType: 'finalized',

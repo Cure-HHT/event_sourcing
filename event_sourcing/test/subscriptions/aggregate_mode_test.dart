@@ -66,7 +66,6 @@ Future<void> _append(
   Map<String, Object?>? data,
 ]) => store.append(
   entryType: 'epistaxis_event',
-  entryTypeVersion: 1,
   aggregateId: aggId,
   aggregateType: 'DiaryEntry',
   eventType: type,
@@ -144,7 +143,6 @@ void main() {
     });
     final stored2 = await store.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'e1',
       aggregateType: 'DiaryEntry',
       eventType: 'checkpoint',

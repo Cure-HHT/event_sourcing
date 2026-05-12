@@ -37,12 +37,12 @@
 ///   projections: projections,
 /// );
 ///
-/// // Append an event.
+/// // Append an event. The substrate stamps entry_type_version from
+/// // the registry's registeredVersion for 'invoice_created'.
 /// await store.append(
 ///   aggregateId: 'inv-001',
 ///   aggregateType: 'Invoice',
 ///   entryType: 'invoice_created',
-///   entryTypeVersion: 1,
 ///   eventType: 'finalized',
 ///   data: {'amount': 100},
 ///   initiator: const UserInitiator('user-1'),

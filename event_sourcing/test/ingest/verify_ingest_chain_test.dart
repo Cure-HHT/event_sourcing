@@ -132,7 +132,6 @@ Future<List<StoredEvent>> _originate(int count) async {
   for (var i = 0; i < count; i++) {
     final e = await store.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'agg-orig-$i-$_dbCounter',
       aggregateType: 'DiaryEntry',
       eventType: 'finalized',

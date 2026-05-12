@@ -137,7 +137,6 @@ void main() {
           // A originates eA1, eA2 under aggregate aggA.
           final eA1 = await originatorA.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggA',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -148,7 +147,6 @@ void main() {
           );
           final eA2 = await originatorA.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggA',
             aggregateType: 'DiaryEntry',
             eventType: 'checkpoint',
@@ -161,7 +159,6 @@ void main() {
           // B originates eB1, eB2 under aggregate aggB.
           final eB1 = await originatorB.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggB',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -172,7 +169,6 @@ void main() {
           );
           final eB2 = await originatorB.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggB',
             aggregateType: 'DiaryEntry',
             eventType: 'checkpoint',
@@ -321,7 +317,6 @@ void main() {
           // A originates eA1, eA2.
           final eA1 = await originatorA.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggA-batch',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -332,7 +327,6 @@ void main() {
           );
           final eA2 = await originatorA.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggA-batch',
             aggregateType: 'DiaryEntry',
             eventType: 'checkpoint',
@@ -345,7 +339,6 @@ void main() {
           // B originates eB1, eB2.
           final eB1 = await originatorB.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggB-batch',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -356,7 +349,6 @@ void main() {
           );
           final eB2 = await originatorB.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'aggB-batch',
             aggregateType: 'DiaryEntry',
             eventType: 'checkpoint',

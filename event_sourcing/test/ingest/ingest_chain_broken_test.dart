@@ -110,7 +110,6 @@ void main() {
         // 1. Originate.
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-chain',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',

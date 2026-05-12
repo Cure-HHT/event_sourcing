@@ -101,7 +101,6 @@ void main() {
         final fx = await _setup();
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
           aggregateType: 'SampleAggregate',
           eventType: 'finalized',
@@ -123,7 +122,6 @@ void main() {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
         aggregateType: 'SampleAggregate',
         eventType: 'finalized',
@@ -142,7 +140,6 @@ void main() {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
         aggregateType: 'SampleAggregate',
         eventType: 'finalized',
@@ -172,7 +169,6 @@ void main() {
         );
         final ev = await fx.eventStore.append(
           entryType: 'non_materialized',
-          entryTypeVersion: 1,
           aggregateId: 'a',
           aggregateType: 'SampleAggregate',
           eventType: 'finalized',
@@ -193,7 +189,6 @@ void main() {
       await expectLater(
         fx.eventStore.append(
           entryType: 'weather_report',
-          entryTypeVersion: 1,
           aggregateId: 'a',
           aggregateType: 'SampleAggregate',
           eventType: 'finalized',
@@ -211,7 +206,6 @@ void main() {
       final fxA = await _setup(now: DateTime.utc(2026, 4, 22));
       final evA = await fxA.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
         aggregateType: 'SampleAggregate',
         eventType: 'finalized',
@@ -224,7 +218,6 @@ void main() {
       final fxB = await _setup(now: DateTime.utc(2026, 4, 22));
       final evB = await fxB.eventStore.append(
         entryType: 'epistaxis_event',
-        entryTypeVersion: 1,
         aggregateId: 'a',
         aggregateType: 'SampleAggregate',
         eventType: 'finalized',
@@ -249,7 +242,6 @@ void main() {
         final fx = await _setup();
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
           aggregateType: 'SampleAggregate',
           eventType: 'finalized',
@@ -339,7 +331,6 @@ void main() {
         // window but within 90+365 so it is compacted, not purged).
         final ev = await fx.eventStore.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'a',
           aggregateType: 'SampleAggregate',
           eventType: 'finalized',

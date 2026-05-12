@@ -57,7 +57,6 @@ void main() {
 
     await store.append(
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
       aggregateId: 'e1',
       aggregateType: 'DiaryEntry',
       eventType: 'finalized',

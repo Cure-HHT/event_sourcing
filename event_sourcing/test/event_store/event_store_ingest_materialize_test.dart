@@ -114,7 +114,6 @@ void main() {
           // Originate an event on the sender; it materializes locally.
           final original = await orig.datastore.eventStore.append(
             entryType: 'demo_note',
-            entryTypeVersion: 1,
             aggregateId: 'agg-ingest-1',
             aggregateType: 'SampleAggregate',
             eventType: 'finalized',
@@ -176,7 +175,6 @@ void main() {
         try {
           final e1 = await orig.datastore.eventStore.append(
             entryType: 'demo_note',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch-A',
             aggregateType: 'SampleAggregate',
             eventType: 'finalized',
@@ -187,7 +185,6 @@ void main() {
           );
           final e2 = await orig.datastore.eventStore.append(
             entryType: 'demo_note',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch-B',
             aggregateType: 'SampleAggregate',
             eventType: 'finalized',
@@ -198,7 +195,6 @@ void main() {
           );
           final e3 = await orig.datastore.eventStore.append(
             entryType: 'demo_note',
-            entryTypeVersion: 1,
             aggregateId: 'agg-batch-C',
             aggregateType: 'SampleAggregate',
             eventType: 'finalized',

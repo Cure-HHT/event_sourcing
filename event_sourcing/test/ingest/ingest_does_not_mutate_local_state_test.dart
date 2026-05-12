@@ -387,7 +387,6 @@ void main() {
         );
         await originator.datastore.eventStore.append(
           entryType: 'demo_note',
-          entryTypeVersion: 1,
           aggregateId: 'agg-orig-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',

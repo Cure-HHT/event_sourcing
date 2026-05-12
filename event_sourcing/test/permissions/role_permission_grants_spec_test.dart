@@ -28,7 +28,6 @@ void main() {
         );
         await eventStore.append(
           entryType: kRolePermissionGrantEntryType,
-          entryTypeVersion: 1,
           aggregateType: 'role_permission_grant',
           aggregateId: 'admin:user.invite',
           eventType: 'permission_granted',
@@ -55,7 +54,6 @@ void main() {
       // First insert.
       await eventStore.append(
         entryType: kRolePermissionGrantEntryType,
-        entryTypeVersion: 1,
         aggregateType: 'role_permission_grant',
         aggregateId: 'admin:user.invite',
         eventType: 'permission_granted',
@@ -70,7 +68,6 @@ void main() {
       // Then revoke.
       await eventStore.append(
         entryType: kRolePermissionGrantEntryType,
-        entryTypeVersion: 1,
         aggregateType: 'role_permission_grant',
         aggregateId: 'admin:user.invite',
         eventType: 'permission_revoked',
@@ -97,7 +94,6 @@ void main() {
       // aggregateTypes: {'role_permission_grant'}).
       await eventStore.append(
         entryType: kRolePermissionGrantEntryType,
-        entryTypeVersion: 1,
         aggregateType: 'some_other_aggregate_type',
         aggregateId: 'unrelated:aggregate',
         eventType: 'permission_granted',
@@ -126,7 +122,6 @@ void main() {
       // Insert twice — second append goes to the same aggregateId.
       await eventStore.append(
         entryType: kRolePermissionGrantEntryType,
-        entryTypeVersion: 1,
         aggregateType: 'role_permission_grant',
         aggregateId: aggregateId,
         eventType: 'permission_granted',
@@ -135,7 +130,6 @@ void main() {
       );
       await eventStore.append(
         entryType: kRolePermissionGrantEntryType,
-        entryTypeVersion: 1,
         aggregateType: 'role_permission_grant',
         aggregateId: aggregateId,
         eventType: 'permission_granted',

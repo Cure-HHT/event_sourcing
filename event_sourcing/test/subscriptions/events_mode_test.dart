@@ -45,7 +45,6 @@ void main() {
 
       Future<void> append(String aggId, String type) => store.append(
         entryType: 'X',
-        entryTypeVersion: 1,
         aggregateId: aggId,
         aggregateType: 'X',
         eventType: type,

@@ -546,10 +546,6 @@ class DestinationRegistry {
   }
 
   /// Emit a system audit event for a destination mutation inside [txn].
-  /// Reads `entryTypeVersion` from the registry's
-  /// `EntryTypeDefinition.registered_version` so any future schema bump
-  /// updates emission and registration in lockstep — the registry is the
-  /// authoritative source of truth for system entry-type versions.
   ///
   /// The aggregate is stamped as `source.identifier` (the install UUID)
   /// / `system_destination` / `finalized`; the destination identity
@@ -559,14 +555,10 @@ class DestinationRegistry {
   /// checkpoint, or change reason. dedupeByContent is left off because
   /// each destination mutation records a distinct timeline entry.
   ///
-  /// When [entryType] is NOT registered on the underlying [EventStore],
-  /// the helper still calls into `appendInTxn` so the standard
-  /// `_validateAppendInputs` ArgumentError surfaces inside the
-  /// surrounding transaction (rolling back any prior writes). The fall-
-  /// back `entryTypeVersion: 0` is never persisted — the validation
-  /// throws first.
-  // Implements: REQ-d00134-G — registry-sourced version stamp on every
-  //   destination-mutation audit emission.
+  /// `entry_type_version` is stamped by the substrate from the registry's
+  /// `registeredVersion` for [entryType]; if [entryType] is not registered,
+  /// `appendInTxn`'s `_validateAppendInputs` raises an `ArgumentError`
+  /// inside the surrounding transaction (rolling back any prior writes).
   // Implements: REQ-d00129-J+K+L+M+N (revised: aggregateId=source.identifier),
   //   REQ-d00144-G (revised), REQ-d00154-D — system events use the
   //   install UUID as their aggregate; destination identity moves into
@@ -579,12 +571,10 @@ class DestinationRegistry {
     required Map<String, Object?> data,
     required Initiator initiator,
   }) async {
-    final def = _eventStore.entryTypes.byId(entryType);
     await _eventStore.appendInTxn(
       txn,
       collector: collector,
       entryType: entryType,
-      entryTypeVersion: def?.registeredVersion ?? 0,
       aggregateId: _eventStore.source.identifier,
       aggregateType: 'system_destination',
       eventType: 'finalized',

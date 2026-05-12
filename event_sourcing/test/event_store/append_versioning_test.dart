@@ -29,14 +29,14 @@ Future<EventStore> _bootstrap() async {
 void main() {
   group('REQ-d00141-B,E: EventStore.append stamps version fields', () {
     // Verifies: REQ-d00141-B
+    // Verifies: EVS-DEV-append-stamps-registered-version — substrate stamps
+    // entry_type_version from the registry's registeredVersion.
     test(
-      'REQ-d00141-B: caller-supplied entry_type_version is stamped verbatim',
+      'REQ-d00141-B: entry_type_version is stamped from the registry',
       () async {
         final es = await _bootstrap();
         final stored = await es.append(
           entryType: 'demo_note',
-          entryTypeVersion:
-              3, // caller picks 3 even though registry registers 5
           aggregateId: 'a-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -44,7 +44,8 @@ void main() {
           initiator: const UserInitiator('u-1'),
         );
         expect(stored, isNotNull);
-        expect(stored!.entryTypeVersion, 3);
+        // Registry says registeredVersion=5; substrate stamps that, not 1.
+        expect(stored!.entryTypeVersion, 5);
       },
     );
 
@@ -55,7 +56,6 @@ void main() {
         final es = await _bootstrap();
         final stored = await es.append(
           entryType: 'demo_note',
-          entryTypeVersion: 5,
           aggregateId: 'a-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -67,24 +67,11 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00141-F
-    test(
-      'REQ-d00141-F: append does NOT validate entryTypeVersion against registry',
-      () async {
-        // Registry says registeredVersion=5; caller passes 99. append should accept.
-        final es = await _bootstrap();
-        final stored = await es.append(
-          entryType: 'demo_note',
-          entryTypeVersion: 99,
-          aggregateId: 'a-1',
-          aggregateType: 'DiaryEntry',
-          eventType: 'finalized',
-          data: const <String, Object?>{'answers': <String, Object?>{}},
-          initiator: const UserInitiator('u-1'),
-        );
-        expect(stored, isNotNull);
-        expect(stored!.entryTypeVersion, 99);
-      },
-    );
+    // Note: the former REQ-d00141-F test ("append does NOT validate
+    // entryTypeVersion against registry") has been deleted. Under the new
+    // contract the substrate stamps entry_type_version from the registry's
+    // registeredVersion, so there is no caller-supplied value to validate;
+    // ingest-time entry_type_version-vs-registry validation is still
+    // verified by test/event_store/ingest_version_validation_test.dart.
   });
 }

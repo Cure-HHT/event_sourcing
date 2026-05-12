@@ -113,7 +113,6 @@ void main() {
             // 1. Originate e1 and pre-ingest it at destination.
             final e1 = await orig.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-caller-comp-1',
               aggregateType: 'DiaryEntry',
               eventType: 'finalized',
@@ -225,7 +224,6 @@ void main() {
             // 1. Pre-ingest a clean e1.
             final e1 = await orig.store.append(
               entryType: 'epistaxis_event',
-              entryTypeVersion: 1,
               aggregateId: 'agg-chain2-link-1',
               aggregateType: 'DiaryEntry',
               eventType: 'finalized',

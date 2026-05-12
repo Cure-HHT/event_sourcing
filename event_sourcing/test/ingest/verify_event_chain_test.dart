@@ -95,7 +95,6 @@ void main() {
         // 1. Originate an event.
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-verify-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -137,7 +136,6 @@ void main() {
         try {
           final original = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-tamper-1',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -203,7 +201,6 @@ void main() {
       try {
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-nothrow-1',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -258,7 +255,6 @@ void main() {
         try {
           final event = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-origin-only',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',

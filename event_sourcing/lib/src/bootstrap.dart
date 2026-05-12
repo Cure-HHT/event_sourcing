@@ -122,8 +122,6 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   //   after EventStore construction and before destination registration.
   //   dedupeByContent: same-state reboots no-op; a schema bump (added
   //   entry type or registeredVersion bump) emits a new event.
-  // Implements: REQ-d00134-G — entryTypeVersion read from the registry
-  //   (registry is the source of truth for system entry-type versions).
   // Implements: REQ-d00154-D — system events use the install UUID as
   //   their aggregate so each install has a single per-installation
   //   hash-chained system aggregate spanning bootstrap, destination
@@ -132,10 +130,8 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   for (final defn in typeRegistry.all()) {
     registryStateMap[defn.id] = defn.registeredVersion;
   }
-  final initDef = typeRegistry.byId(kEntryTypeRegistryInitializedEntryType)!;
   await eventStore.append(
     entryType: kEntryTypeRegistryInitializedEntryType,
-    entryTypeVersion: initDef.registeredVersion,
     aggregateId: source.identifier,
     aggregateType: 'system_registry',
     eventType: 'finalized',

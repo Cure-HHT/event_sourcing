@@ -126,7 +126,8 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 // Implements: REQ-d00144-G — wedge recovery audit entry type.
 // Implements: REQ-d00138-H — retention policy applied audit entry type.
 // Implements: REQ-d00134-E+F+G — bootstrap registry-initialized audit
-//   entry type; system audits read entryTypeVersion from the registry.
+//   entry type; the substrate stamps entry_type_version from the registry's
+//   registeredVersion on every append.
 // Implements: EVS-DEV-event-store-open — lib-version boot events registered
 //   here so byId() returns non-null and SubscriptionFilter gates them
 //   correctly, even though they are appended raw (bypassing the registry).

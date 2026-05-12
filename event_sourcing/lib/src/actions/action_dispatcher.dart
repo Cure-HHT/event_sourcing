@@ -236,7 +236,6 @@ class ActionDispatcher {
             txn,
             collector: collector,
             entryType: draft.entryType,
-            entryTypeVersion: 1,
             aggregateId: draft.aggregateId,
             aggregateType: draft.aggregateType,
             eventType: draft.eventType,
@@ -311,12 +310,9 @@ class ActionDispatcher {
   }
 
   /// Persists a denial event through [events]. Single event, atomic by
-  /// virtue of EventStore.append's own transaction.
-  ///
-  /// `entryTypeVersion` is hardcoded to 1 for now; consumers must
-  /// register the `action_denial` entry type at version 1. When the
-  /// dispatcher's host-bootstrap helper lands (plan-1 Task 22), this
-  /// hardcoding gets reviewed.
+  /// virtue of EventStore.append's own transaction. The substrate stamps
+  /// `entry_type_version` from the registry's `registeredVersion` for
+  /// `draft.entryType`; the caller does not supply it.
   Future<void> _persistDenial(
     EventDraft draft,
     ActionContext ctx, {
@@ -324,7 +320,6 @@ class ActionDispatcher {
   }) async {
     await events.append(
       entryType: draft.entryType,
-      entryTypeVersion: 1,
       aggregateId: draft.aggregateId,
       aggregateType: draft.aggregateType,
       eventType: draft.eventType,

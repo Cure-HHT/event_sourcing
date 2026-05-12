@@ -65,7 +65,6 @@ void main() {
         // Manually grant something the seed will not contain.
         await eventStore.append(
           entryType: 'role_permission_grant',
-          entryTypeVersion: 1,
           aggregateType: 'role_permission_grant',
           aggregateId: 'admin:user.invite',
           eventType: 'permission_granted',

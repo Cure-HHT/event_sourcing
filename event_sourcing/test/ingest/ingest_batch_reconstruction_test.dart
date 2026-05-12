@@ -135,7 +135,6 @@ void main() {
         for (var i = 0; i < 3; i++) {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-recon-$i',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -223,7 +222,6 @@ void main() {
       try {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-hash-check',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
@@ -290,7 +288,6 @@ void main() {
         for (var i = 0; i < n; i++) {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-fullrecon-$i',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',

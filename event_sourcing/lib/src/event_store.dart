@@ -429,15 +429,18 @@ class EventStore {
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event.
   ///
-  /// The caller MUST supply [entryTypeVersion]; the lib stamps
-  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. Local
-  /// append does NOT validate [entryTypeVersion] against the registry — that
-  /// is performed at ingest per REQ-d00145-M.
-  // Implements: REQ-d00141-B — per-field append API; entryTypeVersion required.
+  /// The substrate stamps `entry_type_version` from the registry's
+  /// `EntryTypeDefinition.registeredVersion` for [entryType] and stamps
+  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. The
+  /// substrate is the single source of truth for both fields; callers do
+  /// not (and cannot) supply them. Ingest still validates
+  /// `entry_type_version` against the registry per REQ-d00145-M.
+  // Implements: REQ-d00141-B — per-field append API.
   // Implements: REQ-d00141-E — lib_format_version stamped from
   //   StoredEvent.currentLibFormatVersion on every append.
-  // Implements: REQ-d00141-F — append does NOT validate entryTypeVersion
-  //   against the registry.
+  // Implements: EVS-DEV-append-stamps-registered-version — substrate stamps
+  //   entry_type_version from registry.registeredVersion; callers no longer
+  //   pass the value.
   // Implements: REQ-d00135-C — initiator replaces userId.
   // Implements: REQ-d00136-A+E — flowToken nullable; hashed.
   // Implements: REQ-d00137-C — event + security row commit atomically.
@@ -445,7 +448,6 @@ class EventStore {
   //   skip honored; throw rolls back entire append.
   Future<StoredEvent?> append({
     required String entryType,
-    required int entryTypeVersion,
     required String aggregateId,
     required String aggregateType,
     required String eventType,
@@ -467,7 +469,6 @@ class EventStore {
         txn,
         collector: collector,
         entryType: entryType,
-        entryTypeVersion: entryTypeVersion,
         aggregateId: aggregateId,
         aggregateType: aggregateType,
         eventType: eventType,
@@ -536,8 +537,6 @@ class EventStore {
         );
       }
       await securityContexts.deleteInTxn(txn, eventId);
-      // Implements: REQ-d00134-G — registry-sourced version stamp on the
-      //   security-context redaction audit.
       // Implements: REQ-d00138-D (revised: aggregateId=source.identifier),
       //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate; the redaction subject moves into
@@ -548,9 +547,6 @@ class EventStore {
         txn,
         collector: collector,
         entryType: kSecurityContextRedactedEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kSecurityContextRedactedEntryType)!
-            .registeredVersion,
         aggregateId: source.identifier,
         aggregateType: 'security_context',
         eventType: 'finalized',
@@ -608,8 +604,6 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        // Implements: REQ-d00134-G — registry-sourced version stamp on
-        //   the compact-sweep audit.
         // Implements: REQ-d00138-E (revised: aggregateId=source.identifier),
         //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
@@ -617,9 +611,6 @@ class EventStore {
           txn,
           collector: collector,
           entryType: kSecurityContextCompactedEntryType,
-          entryTypeVersion: entryTypes
-              .byId(kSecurityContextCompactedEntryType)!
-              .registeredVersion,
           aggregateId: source.identifier,
           aggregateType: 'security_context',
           eventType: 'finalized',
@@ -638,8 +629,6 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        // Implements: REQ-d00134-G — registry-sourced version stamp on
-        //   the purge-sweep audit.
         // Implements: REQ-d00138-F (revised: aggregateId=source.identifier),
         //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
@@ -647,9 +636,6 @@ class EventStore {
           txn,
           collector: collector,
           entryType: kSecurityContextPurgedEntryType,
-          entryTypeVersion: entryTypes
-              .byId(kSecurityContextPurgedEntryType)!
-              .registeredVersion,
           aggregateId: source.identifier,
           aggregateType: 'security_context',
           eventType: 'finalized',
@@ -668,8 +654,6 @@ class EventStore {
       }
       // Implements: REQ-d00138-H — per-sweep audit, always emitted (the
       // operator wants a retention timeline, not just non-empty sweeps).
-      // Implements: REQ-d00134-G — registry-sourced version stamp on
-      //   the per-sweep retention-policy-applied audit.
       // Implements: REQ-d00138-H (revised: aggregateId=source.identifier),
       //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate.
@@ -677,9 +661,6 @@ class EventStore {
         txn,
         collector: collector,
         entryType: kRetentionPolicyAppliedEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kRetentionPolicyAppliedEntryType)!
-            .registeredVersion,
         aggregateId: source.identifier,
         aggregateType: 'system_retention',
         eventType: 'finalized',
@@ -748,7 +729,6 @@ class EventStore {
   Future<StoredEvent?> appendInTxn(
     Txn txn, {
     required String entryType,
-    required int entryTypeVersion,
     required String aggregateId,
     required String aggregateType,
     required String eventType,
@@ -769,6 +749,10 @@ class EventStore {
     );
 
     final def = entryTypes.byId(entryType)!;
+    // Implements: EVS-DEV-append-stamps-registered-version — substrate is
+    //   the single source of truth for entry_type_version on every append;
+    //   the value is read from the registry, not supplied by callers.
+    final entryTypeVersion = def.registeredVersion;
     final effectiveChangeReason = changeReason ?? 'initial';
 
     final now = _now();

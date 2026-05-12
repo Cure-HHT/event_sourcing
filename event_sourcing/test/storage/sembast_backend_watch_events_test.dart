@@ -173,7 +173,6 @@ void main() {
         try {
           final origEvent = await origStore.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-watch-1',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',

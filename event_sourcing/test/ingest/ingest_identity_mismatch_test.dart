@@ -95,7 +95,6 @@ void main() {
           // 1. Originate an event and ingest it.
           final e1 = await orig.store.append(
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
             aggregateId: 'agg-mismatch',
             aggregateType: 'DiaryEntry',
             eventType: 'finalized',
@@ -149,7 +148,6 @@ void main() {
       try {
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
           aggregateId: 'agg-mismatch2',
           aggregateType: 'DiaryEntry',
           eventType: 'finalized',
