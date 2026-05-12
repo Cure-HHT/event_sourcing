@@ -1,9 +1,3 @@
-<!-- markdownlint-disable MD025 -->
-<!-- This file follows the multi-requirement-per-file convention pinned in
-     spec/README.md "File organization": each `# EVS-...` heading is a
-     normative requirement block recognized by elspais. Other `#` headings
-     are remainder sections (non-normative prose). -->
-
 # Reaction — cross-process event-sourced UI for Cure-HHT
 
 This file pins the PRD-level obligations for two new sibling packages:
@@ -13,7 +7,7 @@ This file pins the PRD-level obligations for two new sibling packages:
 
 Plus the substrate addition the wire requires (an `EndOfReplay<T>` variant on `Update<T>`).
 
-The six normative requirements below appear as standalone `EVS-PRD-...` blocks. Cross-system narrative (overview, architecture, decisions rejected, open questions, future work, migration story) lives in the remainder sections at the top and bottom of this file.
+The six normative requirements below appear as `## EVS-PRD-...` blocks. Cross-system narrative (overview, architecture, decisions rejected, open questions, future work, migration story) lives in the other `##` chapters of this file. elspais detects requirement blocks by the `EVS-{TYPE}-{component}` pattern in the heading text, not by heading depth — so the file reads as a book with chapters, some of which happen to be normative.
 
 ## Overview
 
@@ -77,17 +71,17 @@ The PRDs below are best read in this order on first contact, because each later 
 5. `EVS-PRD-cross-process-event-transport` — the wire envelope shared by the Remote impls of the three above.
 6. `EVS-PRD-reaction-widget-contract` — the Flutter widget layer that consumes all four interfaces.
 
-# EVS-PRD-auth-session: Auth Session
+## EVS-PRD-auth-session: Auth Session
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
 
-## Purpose
+### Purpose
 
 Consumer code needs a uniform way to manage credential lifecycle and access the validated `Principal`, regardless of whether the credential was minted by an in-process bootstrap (mobile install UUID) or by a remote authentication flow (portal Firebase ID token). The `AuthSession` interface owns the credential, surfaces its status, and exposes the validated `Principal` for downstream interfaces (`ActionSubmitter`, `ViewSource`, `PermissionSource`) to consult.
 
 Credential format is opaque to `reaction`. The library does not parse JWTs, validate signatures, or know what claims mean. Validation lives in a pluggable `PrincipalAuthValidator` mounted on the server side; the consumer supplies the validator that matches their deployment.
 
-## Assertions
+### Assertions
 
 A. The library SHALL define an `AuthSession` interface that exposes the current `AuthStatus` synchronously, a `Stream<AuthStatus>` of status updates, a `setCredential(String?)` mutator, and a `Principal? get principal` getter that returns the validated `Principal` when authenticated.
 
@@ -103,7 +97,7 @@ F. The library SHALL ship a `TrustingAuthValidator` reference implementation tha
 
 G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which Principal downstream interfaces (`ActionSubmitter`, `ViewSource`, `PermissionSource`) operate against.
 
-## Rationale
+### Rationale
 
 **Why a separate interface for auth, distinct from `PermissionSource`?** Authentication ("who are you and can you prove it") and authorization ("what are you allowed to do") are different concerns at different layers. The substrate's `permissions-as-events` PRD already pins authorization mechanics; auth is the wire-boundary credential concern that feeds it. Conflating them in one interface would force consumers who only need credential management to drag in the permission-projection machinery, and vice versa.
 
@@ -119,15 +113,15 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 *End* *Auth Session* | **Hash**: 00000000
 
-# EVS-PRD-action-submitter: Action Submitter
+## EVS-PRD-action-submitter: Action Submitter
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-action-dispatch, EVS-PRD-library-charter
 
-## Purpose
+### Purpose
 
 Consumer code (especially Flutter widgets) needs a uniform way to submit an `ActionSubmission` and receive a `DispatchResult`, regardless of whether the submission is dispatched in-process by an `ActionDispatcher` or via a remote transport. The `ActionSubmitter` interface is the substrate-agnostic seam; Local and Remote implementations are bound at composition time.
 
-## Assertions
+### Assertions
 
 A. The library SHALL define an `ActionSubmitter` interface whose `submit(ActionSubmission)` method returns a `Future<DispatchResult>`.
 
@@ -139,7 +133,7 @@ D. The `RemoteActionSubmitter` SHALL include the bearer credential from the co-m
 
 E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be source-identical regardless of whether a `LocalActionSubmitter` or `RemoteActionSubmitter` is composed at runtime.
 
-## Rationale
+### Rationale
 
 **Why a single Future return rather than a streamed lifecycle?** The substrate's dispatch pipeline (parse → validate → authorize → execute → record) is atomic and synchronous; there is no intermediate state for the caller to observe. The widget-side `ActionState` lifecycle (`Idle` → `Submitting` → `Success` / `Denied` / `Failed`) is the *widget's* state machine — `ActionBuilder` calls `submit()` and tracks the `Future`'s lifecycle. Putting that lifecycle into the interface itself would push widget concerns into a layer that is also consumed by non-widget code (e.g., direct programmatic submission from a CLI or a server-side admin script).
 
@@ -151,15 +145,15 @@ E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be s
 
 *End* *Action Submitter* | **Hash**: 00000000
 
-# EVS-PRD-view-subscriber: View Subscriber
+## EVS-PRD-view-subscriber: View Subscriber
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-subscription, EVS-PRD-library-charter
 
-## Purpose
+### Purpose
 
 Consumer code needs a uniform way to subscribe to view rows and receive the substrate's `Update<T>` stream, regardless of whether the rows live in an in-process `EventStore` (mobile, Use 1) or are streamed from a remote portal server (web, Use 2). The `ViewSource` interface is the substrate-agnostic seam; Local and Remote implementations differ only in where the rows come from.
 
-## Assertions
+### Assertions
 
 A. The library SHALL define a `ViewSource` interface whose `watch<T>` method returns `Stream<Update<T>>` for a given `(viewName, mapper, filter, aggregates)`.
 
@@ -169,7 +163,7 @@ C. The library SHALL ship a `RemoteViewSource` implementation that consumes the 
 
 D. Consumer code that depends only on the `ViewSource` interface SHALL be source-identical regardless of whether a `LocalViewSource` or `RemoteViewSource` is composed at runtime.
 
-## Rationale
+### Rationale
 
 **Why does the interface return the substrate's existing `Update<T>` type, rather than wrap it?** The substrate's `Update<T>` already has the four variants the consumer needs (`Snapshot`, `Delta`, `Tombstone`, `EndOfReplay`) with the right semantics. Wrapping it in a parallel `ReactionUpdate<T>` would introduce a translation layer that adds nothing — and would obligate the library to keep the wrapper in sync with substrate changes forever. Reusing `Update<T>` directly means the substrate's contract IS the consumer's contract.
 
@@ -179,15 +173,15 @@ D. Consumer code that depends only on the `ViewSource` interface SHALL be source
 
 *End* *View Subscriber* | **Hash**: 00000000
 
-# EVS-PRD-permission-snapshot-source: Permission Snapshot Source
+## EVS-PRD-permission-snapshot-source: Permission Snapshot Source
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-permissions-as-events, EVS-PRD-library-charter
 
-## Purpose
+### Purpose
 
 Consumer code needs to gate UI affordances on whether the active `Principal` holds a given permission, and to react when the permission set changes (because the active `Principal` changed, or because grants were modified). The `PermissionSource` interface exposes the substrate's per-`Principal` `PermissionSnapshot` to widget code via a synchronous getter and a `Stream` of updates.
 
-## Assertions
+### Assertions
 
 A. The library SHALL define a `PermissionSource` interface that exposes the current `PermissionSnapshot` for the active `Principal` (synchronous getter, nullable) and a `Stream<PermissionSnapshot?>` of snapshot updates.
 
@@ -199,7 +193,7 @@ D. The active `Principal` SHALL be sourced from a co-mounted `AuthSession`; `Per
 
 E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re-emit the corresponding snapshot on its stream.
 
-## Rationale
+### Rationale
 
 **Why a separate interface from `ViewSource` if the underlying mechanism is just a projection subscription?** The per-`Principal` scoping and the synchronous "current snapshot" getter are operationally distinct from a generic view subscription. Widget code that asks "can the current user do X?" should not have to thread mapper functions and view names through every call site; a focused interface gives a tight, high-frequency API for the gating use case while delegating the underlying wire mechanism to the same machinery.
 
@@ -209,15 +203,15 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 *End* *Permission Snapshot Source* | **Hash**: 00000000
 
-# EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
+## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-subscription, EVS-PRD-library-charter
 
-## Purpose
+### Purpose
 
 When `reaction` is configured for cross-process operation, the substrate's `Update<T>` reactive stream is delivered faithfully to the remote consumer via JSON-serialized WebSocket envelopes, and action submissions are delivered via HTTP POST. The wire transport is a faithful relay of the substrate's in-process semantics; it does not introduce a new epistemic layer and does not weaken any of the substrate's ordering or atomicity guarantees.
 
-## Assertions
+### Assertions
 
 A. The library SHALL define JSON wire envelopes for each `Update<T>` variant (`Snapshot`, `Delta`, `Tombstone`, `EndOfReplay`) such that round-trip codec preserves all fields.
 
@@ -233,7 +227,7 @@ F. Action submission over HTTP POST SHALL carry the bearer credential from the r
 
 G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SHALL apply the same Layer-2 conventions as the sender.
 
-## Rationale
+### Rationale
 
 **Why JSON rather than a binary protocol?** The wire serves Flutter web clients (where Dart compiles to JavaScript) and pure-Dart server endpoints. JSON has zero-cost ergonomics in both environments, plays nicely with browser dev-tools, and matches the existing portal's transport format. Binary protocols (protobuf, MessagePack) would be a premature optimization at the expected portal-UI scale of ~1–20 concurrent users.
 
@@ -247,15 +241,15 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 
 *End* *Cross-Process Event Transport* | **Hash**: 00000000
 
-# EVS-PRD-reaction-widget-contract: Reaction Widget Contract
+## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
 **Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-snapshot-source, EVS-PRD-auth-session
 
-## Purpose
+### Purpose
 
 Flutter widget code consuming `reaction`'s four interfaces SHALL be substrate-agnostic; the same widget composition SHALL work whether bound to Local or Remote implementations. The library provides Builder primitives for full control plus pre-built sugar widgets for the common case, an `InheritedWidget` to thread the four interfaces down the tree, and an imperative side-effect widget for "react to a view change without rebuilding" patterns.
 
-## Assertions
+### Assertions
 
 A. The widget library SHALL provide an `InheritedWidget` (`ReActionScope`) that threads the four library interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`) down the widget tree, accessible via `ReActionScope.of(context)`.
 
@@ -269,7 +263,7 @@ E. Action-submission widgets SHALL generate a UUID v4 idempotency key at first s
 
 F. The widget library SHALL be source-organized so that no widget references the substrate's storage backend, dispatcher, or projection registry directly; all substrate access SHALL flow through `reaction`'s four interfaces.
 
-## Rationale
+### Rationale
 
 **Why a two-tier API (Builder primitive + sugar widget) instead of one or the other?** Builder-only is verbose for the 80% common case (every action button becomes a 5-line `switch (state)` block). Sugar-only is opinionated and cannot accommodate non-standard UX (a multi-stage progress, a custom denied-message animation, a contextual confirmation dialog). The two-tier approach mirrors Flutter's own pattern: `StreamBuilder`/`FutureBuilder` are primitives, `ListView` and `GridView` are sugar built on top. Consumers who need control go to the primitive; consumers who don't, don't.
 
@@ -283,7 +277,7 @@ F. The widget library SHALL be source-organized so that no widget references the
 
 *End* *Reaction Widget Contract* | **Hash**: 00000000
 
-# Decisions and alternatives rejected
+## Decisions and alternatives rejected
 
 These shaped the design but live nowhere in the assertions above; they are recorded here so that future authors do not re-litigate them without surfacing new evidence.
 
@@ -303,7 +297,7 @@ These shaped the design but live nowhere in the assertions above; they are recor
 
 **Why not use `dedupeByContent` for action-widget idempotency?** Different layer, different problem. `dedupeByContent` is a payload-equality optimization at event-append time; action idempotency is a request-correlation contract at dispatch entry. The substrate's existing `IdempotencyPolicy` per-action with `IdempotencyStore` keyed on `(principalId, idempotencyKey)` is exactly the right tool for the widget case.
 
-# Open questions
+## Open questions
 
 These are tracked here for resolution during implementation; resolution should land as new assertions or as Rationale updates to the affected PRDs.
 
@@ -313,7 +307,7 @@ These are tracked here for resolution during implementation; resolution should l
 4. **Custom-route registration ergonomics.** `reaction`'s shelf server lets consumers register additional routes (login, linking-code onboarding) outside the standard `reaction` flow; those routes bypass auth-validator middleware. The exact API for this — `server.addCustomRoute(...)` vs exposing the `Router` for direct mutation — is an implementation detail.
 5. **`JwtAuthValidator` reference implementation.** Whether to ship a JWT validator alongside `TrustingAuthValidator` is deferred; pluggable seam exists from day one regardless.
 
-# Future work
+## Future work
 
 These are explicitly out of scope for v1 but anticipated as natural extensions:
 
@@ -323,7 +317,7 @@ These are explicitly out of scope for v1 but anticipated as natural extensions:
 - **Connection-state observability** on `Remote*` impls (`Stream<ConnectionState>`) — for "Reconnecting…" UX. Defer to v1.1.
 - **View pagination / cursor-based row delivery** — defer until large-view scale demands it.
 
-# Migration story (hht_diary portal)
+## Migration story (hht_diary portal)
 
 `reaction` adoption in the existing `cure-hht/hht_diary/apps/sponsor-portal/` portal is a substantial but bounded refactor, not a wholesale rewrite. Recorded here so that authoring `reaction` keeps the migration path concrete.
 
