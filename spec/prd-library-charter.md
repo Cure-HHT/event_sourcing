@@ -1,6 +1,6 @@
 # EVS-PRD-library-charter: Library Charter
 
-**Level**: PRD | **Status**: Draft | **Refines**: -
+**Level**: prd | **Status**: Draft | **Refines**: -
 
 ## Purpose
 
@@ -44,24 +44,40 @@ I. The library SHALL distinguish, in documentation and code, between substrate g
 
 **Why enumerate trust boundaries (assertion H)?** The library's central trust commitment is that state at any sequence is reconstructable from the event log under a known library version. That commitment only holds if the substrate doesn't quietly accept additional inputs that participate in state derivation. Enumerating the trust boundaries — a small, named set of pluggable interfaces (storage, outbound transport) plus any explicitly-acknowledged unaudited inputs (today: the caller-supplied `Principal`, pending future authentication-flow work) — makes the trust surface visible and review-gated. Any proposal to add a fourth trusted input is then a charter-level architectural change, not a quiet API addition. The enumeration itself is maintained in `CLAUDE.md`'s "Trust boundaries" section; downstream PRDs that introduce or modify a boundary interface refine assertion H.
 
-**Why distinguish facts from conventions (assertion I)?** The library's most-load-bearing claims — append-only ordering, hash-chain integrity, provenance attribution, transaction atomicity — are cryptographic or structural facts that the substrate makes true and detects tampering on. But the library also ships default *interpretations* of the event stream: tombstone-as-row-deletion, null-as-clear merge semantics, originator-of-first-event as canonical authority, one-row-per-aggregate materialization. These are useful conventions, not unique truths; an application processing the same event log under different conventions can produce a different (but equally valid) materialization. Conflating the two layers misleads consumers about what the substrate is actually claiming — and consumers who reasonably want a different materialization may believe they need to abandon the substrate rather than build on top of its facts with different conventions. Pinning the distinction explicitly preserves the substrate's epistemic honesty: it can be relied on for the facts; the conventions are defaults, not impositions. Practically, the library's closed-under-events guarantee is precisely scoped — *state under Layer-2 conventions* is reconstructable from the log — rather than overclaiming that the conventions themselves are substrate-mandated. The layer split is maintained in `CLAUDE.md`'s "Epistemic layers" section and is the authoring discipline that surfaces shipping a Layer-2 convention must follow.
+**Why distinguish facts from conventions (assertion I)?** The library's most-load-bearing claims — append-only ordering, hash-chain integrity, provenance attribution, transaction atomicity — are cryptographic or structural facts that the substrate makes true and detects tampering on. But the library also ships default *interpretations* of the event stream: tombstone-as-row-deletion, null-as-clear merge semantics, originator-of-first-event as canonical authority, one-row-per-aggregate materialization. These are useful conventions, not unique truths; an application processing the same event log under different conventions can produce a different (but equally valid) materialization. Conflating the two layers misleads consumers about what the substrate is actually claiming — and consumers who reasonably want a different materialization may believe they need to abandon the substrate rather than build on top of its facts with different conventions. Pinning the distinction explicitly preserves the substrate's epistemic honesty: it can be relied on for the facts; the conventions are defaults, not impositions. Practically, the library's closed-under-events guarantee is precisely scoped — *state under Layer-2 conventions* is reconstructable from the log — rather than overclaiming that the conventions themselves are substrate-mandated. The full discussion of the two layers, with examples and implications for other charter assertions, is in the "Epistemic layers" section below; it is the authoring discipline that surfaces shipping a Layer-2 convention must follow.
 
 **Why no Ops-level requirements in this repo?** The library has no deployment, runtime monitoring, or operational surface of its own. Operational requirements *about* this library belong in the consuming application repos.
 
-## Refinement
+## Epistemic layers
 
-This requirement is the top of the PRD hierarchy in this repo. Each headline assertion is refined by one or more downstream PRDs that make the obligation precise. The refining PRDs are introduced as the library's surface area is authored; expect roughly the following decomposition:
+This section is the canonical statement of the Layer 1 / Layer 2 distinction that assertion I obliges. The substrate makes two kinds of claims, and the distinction is load-bearing. Confusing them leads consumers to either over-trust the library's defaults or to abandon the substrate when they need a different interpretation than it ships.
 
-- **A** (append-only, tamper-evident, replayable) — refined by PRDs covering event-log structure, hash-chain integrity, deterministic materialization, and multi-source canonicalization.
-- **B** (reactive delivery) — refined by the subscription-API PRD.
-- **C** (authorization-checked dispatch) — refined by the action-dispatch and permissions-as-events PRDs.
-- **D** (event flow) — refined by the destinations PRD (outbound) and the ingest PRD (inbound daisy-chain).
-- **E** (pure Dart) — refined by the portability PRD.
-- **F** (canonical form + provenance) — refined by the canonical-JSON and provenance PRDs (each a distinct package's charter).
-- **G** (regulatory alignment) — refined by the regulatory-alignment PRD that maps each ALCOA+ attribute to a specific library obligation.
-- **H** (enumerable trust boundaries) — refined by the storage-backend interface (within event-log PRD), the destinations PRD (outbound transport boundary), and the permissions-as-events PRD (which closes the policy-evaluation boundary into the log). The third currently-trusted input — caller-supplied `Principal` accepted on faith — is documented in `CLAUDE.md`'s "Trust boundaries" section as a known incomplete boundary; closing it (an inbound authentication-attempt event flow plus an outbound `AuthenticationProvider` interface) is future work that will warrant its own PRD when authored.
-- **I** (facts vs conventions) — cross-cutting authoring discipline; not refined by a single downstream PRD. Realized in `CLAUDE.md`'s "Epistemic layers" section and surfaced in every PRD that ships a Layer-2 convention (e.g., the materializer PRD's tombstone semantics, the canonical-JSON PRD's merge semantics) by naming the convention as one. Downstream PRDs that propose a new substrate-level *fact* MUST justify why it belongs at Layer 1; those that ship a new convention SHOULD name it explicitly as such.
+**Layer 1 — Facts (objective, cryptographic / structural).** These are the substrate's hard guarantees. They are tamper-evident and absolute:
 
-This refinement section is non-normative and exists to orient readers; the binding obligations are the assertions above.
+- The event at sequence N has hash H.
+- The hash chain from genesis to N is intact.
+- The provenance entries say the event passed through hops A -> B -> C with attribution to initiators I1, I2, I3 at times t1, t2, t3.
+- The append of this event was atomic with its row writes inside the same transaction.
+- Per-aggregate-per-Source order is preserved.
 
-*End* *Library Charter* | **Hash**: 00000000
+ALCOA+ alignment (assertion G) lives entirely at this layer. The cryptographic and structural facts are what regulators can be defended against.
+
+**Layer 2 — Conventions (subjective, library-provided defaults).** These are the library's chosen *interpretations* of the event stream. They are useful defaults, not unique truths:
+
+- A "tombstone" event type deletes the row (the substrate could equally preserve the row with a marker, or hide-not-delete).
+- Missing keys in a delta preserve prior; present-null clears (the substrate could equally treat null as absent).
+- Whoever appends the first event for an aggregate is the canonical authority for that aggregate (the substrate could equally require out-of-band canonicalization assignment).
+- A projection produces one row per aggregate, materialized via generic merge (the substrate could equally produce per-event rows or derived-only views).
+- "Version" is a monotonically-bumped integer per entry type (the substrate could equally use content-hash-as-version).
+
+The library bundles these as primitives because most consumers want them, but they don't carry the same epistemic weight as Layer 1. Applications that want different interpretations build them on top of Layer 1 facts — by subscribing to raw events and computing app-side state, or eventually by registering alternative convention sets shipped as new library primitives under the Append-Only Primitives discipline.
+
+**Implications for other charter assertions.**
+
+- The **closed-under-events trust model** (assertion C, refined by the permissions-as-events PRD) is precisely scoped: state *under the Layer 2 conventions* is reconstructable from the event log under a known library version. It does not claim the conventions are universally correct.
+- The **declarative projection model** (refining assertion A) ships one Layer 2 materialization per registered `ProjectionSpec`. Applications needing different materializations build them on top of `subscribe<T>(_, Events())` or `EventStore.read(...)` — and that is an expected, supported pattern, not a fallback.
+- **Append-Only Primitives discipline** applies to Layer 2 conventions too. Once a convention ships under a name with given semantics, those semantics are frozen; alternative behaviour is a new primitive, not a re-interpretation of an existing one.
+
+**Authoring guidance.** When proposing new library primitives, code comments, or PRD assertions, be explicit about which layer the claim sits at. "The library SHALL preserve hash-chain integrity" is Layer 1 and absolute. "The library SHALL treat tombstone event types as row deletions" is Layer 2 and should read more like "The library's default `AggregateProjectionSpec` interpretation TREATS event types in `tombstoneEventTypes` as row deletions." Applying the same precision to existing surfaces is part of the ongoing authoring discipline that assertion I imposes.
+
+*End* *Library Charter* | **Hash**: 6b89020b
