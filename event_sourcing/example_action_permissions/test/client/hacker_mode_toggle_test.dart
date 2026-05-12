@@ -1,5 +1,5 @@
 // test/client/hacker_mode_toggle_test.dart
-// Verifies: EVS-PRD-permissions-as-events/client-permission-gating
+// Verifies: EVS-PRD-permissions-as-events/B
 // (Hacker mode bypasses client-side gating for demo/test purposes.)
 import 'package:action_permissions_demo/client/hacker_mode_toggle.dart';
 import 'package:flutter/material.dart';

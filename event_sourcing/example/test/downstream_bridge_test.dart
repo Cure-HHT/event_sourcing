@@ -1,6 +1,6 @@
-// Verifies: EVS-PRD-destinations/destination-send-result
-// Verifies: EVS-PRD-ingest/ingest-wire-format-validation
-// Verifies: EVS-PRD-ingest/ingest-version-ahead-rejection
+// Verifies: EVS-PRD-destinations/E
+// Verifies: EVS-PRD-ingest/D
+// Verifies: EVS-PRD-ingest/D
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';

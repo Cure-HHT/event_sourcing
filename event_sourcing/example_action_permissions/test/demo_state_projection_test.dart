@@ -1,6 +1,6 @@
 // test/demo_state_projection_test.dart
-// Verifies: EVS-PRD-permissions-as-events/permission-matrix-projection
-// Verifies: EVS-PRD-event-log/event-recording
+// Verifies: EVS-PRD-permissions-as-events/B/C
+// Verifies: EVS-PRD-event-log/A/C
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:flutter_test/flutter_test.dart';

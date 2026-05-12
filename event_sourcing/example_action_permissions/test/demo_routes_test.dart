@@ -1,7 +1,7 @@
 // test/demo_routes_test.dart
-// Verifies: EVS-PRD-action-dispatch/dispatch-endpoint
-// Verifies: EVS-PRD-permissions-as-events/authorization-enforcement
-// Verifies: EVS-PRD-event-log/event-recording
+// Verifies: EVS-PRD-action-dispatch/A
+// Verifies: EVS-PRD-permissions-as-events/B
+// Verifies: EVS-PRD-event-log/A/C
 // the dispatcher and returns the correct wire shape.
 import 'dart:convert';
 

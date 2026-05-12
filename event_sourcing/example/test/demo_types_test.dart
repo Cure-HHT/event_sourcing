@@ -1,5 +1,5 @@
-// Verifies: EVS-PRD-event-log/entry-type-registration
-// Verifies: EVS-PRD-event-log/entry-type-version
+// Verifies: EVS-PRD-event-log/A
+// Verifies: EVS-PRD-event-log/A
 import 'package:event_sourcing_datastore_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 

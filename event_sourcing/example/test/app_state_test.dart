@@ -1,6 +1,6 @@
-// Verifies: EVS-PRD-destinations/destination-registry-persistence
-// Verifies: EVS-PRD-destinations/destination-contract
-// Verifies: EVS-PRD-library-charter/demo-app-composition
+// Verifies: EVS-PRD-destinations/D/F
+// Verifies: EVS-PRD-destinations/A/E
+// Verifies: EVS-PRD-library-charter/D/E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/app_state.dart';
 import 'package:event_sourcing_datastore_demo/demo_destination.dart';

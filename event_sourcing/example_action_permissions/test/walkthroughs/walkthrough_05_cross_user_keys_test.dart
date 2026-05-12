@@ -1,6 +1,6 @@
 // test/walkthroughs/walkthrough_05_cross_user_keys_test.dart
-// Verifies: EVS-PRD-action-dispatch/idempotency-store-principal-isolation
-// Verifies: EVS-PRD-event-log/event-recording
+// Verifies: EVS-PRD-action-dispatch/D
+// Verifies: EVS-PRD-event-log/A/C
 //
 // so two different principals can use the same idempotency key without
 // collision.

@@ -1,6 +1,6 @@
 // test/walkthroughs/walkthrough_06_identity_decoupling_test.dart
-// Verifies: EVS-PRD-event-log/initiator-attribution
-// Verifies: EVS-PRD-action-dispatch/dispatch-happy-path
+// Verifies: EVS-PRD-event-log/A/B
+// Verifies: EVS-PRD-action-dispatch/A/C
 //
 // initiator userId AND role distinctly so audit can correlate by either.
 

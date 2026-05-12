@@ -1,6 +1,6 @@
 // test/action_catalog_test.dart
-// Verifies: EVS-PRD-action-dispatch/action-registry-completeness
-// Verifies: EVS-PRD-permissions-as-events/permission-declaration
+// Verifies: EVS-PRD-action-dispatch/A
+// Verifies: EVS-PRD-permissions-as-events/A
 import 'package:action_permissions_demo/server/action_catalog.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:flutter_test/flutter_test.dart';

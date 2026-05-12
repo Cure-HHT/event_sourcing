@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-permissions-as-events/user-directory-seeding
+// Verifies: EVS-PRD-permissions-as-events/A/C
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:action_permissions_demo/server/user_directory_seed_applier.dart';

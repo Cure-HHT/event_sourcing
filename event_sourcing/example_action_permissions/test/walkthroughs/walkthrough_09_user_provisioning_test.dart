@@ -1,8 +1,8 @@
 // test/walkthroughs/walkthrough_09_user_provisioning_test.dart
-// Verifies: EVS-PRD-permissions-as-events/user-provisioning
-// Verifies: EVS-PRD-action-dispatch/dispatch-happy-path
-// Verifies: EVS-PRD-permissions-as-events/authorization-enforcement
-// Verifies: EVS-PRD-event-log/event-recording
+// Verifies: EVS-PRD-permissions-as-events/A/B
+// Verifies: EVS-PRD-action-dispatch/A/C
+// Verifies: EVS-PRD-permissions-as-events/B
+// Verifies: EVS-PRD-event-log/A/C
 //
 //           projects user_provisioned events into the in-memory directory
 //           inside the EventStore transaction;

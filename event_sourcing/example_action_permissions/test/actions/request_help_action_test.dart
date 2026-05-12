@@ -1,5 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/action-lifecycle
-// Verifies: EVS-PRD-permissions-as-events/global-scope-enforcement
+// Verifies: EVS-PRD-action-dispatch/A/B/C
+// Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/actions/request_help_action.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

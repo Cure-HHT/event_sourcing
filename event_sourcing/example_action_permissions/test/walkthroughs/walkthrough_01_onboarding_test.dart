@@ -1,6 +1,6 @@
 // test/walkthroughs/walkthrough_01_onboarding_test.dart
-// Verifies: EVS-PRD-permissions-as-events/principal-resolution
-// Verifies: EVS-PRD-permissions-as-events/permission-snapshot
+// Verifies: EVS-PRD-permissions-as-events/B
+// Verifies: EVS-PRD-permissions-as-events/B/C
 //
 // permissionsFor) — session-start endpoint shape.
 

@@ -1,5 +1,5 @@
 // test/client/app_smoke_test.dart
-// Verifies: EVS-PRD-action-dispatch/client-shell-integration
+// Verifies: EVS-PRD-action-dispatch/A
 // (Smoke test: dual-pane shell renders both panes without throwing.)
 import 'package:action_permissions_demo/client/app.dart';
 import 'package:flutter_test/flutter_test.dart';

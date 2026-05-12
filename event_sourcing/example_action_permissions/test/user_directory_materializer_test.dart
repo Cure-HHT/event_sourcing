@@ -1,5 +1,5 @@
 // test/user_directory_materializer_test.dart
-// Verifies: EVS-PRD-permissions-as-events/user-directory-materializer
+// Verifies: EVS-PRD-permissions-as-events/B/C
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:event_sourcing/event_sourcing.dart' show UserPrincipal;
