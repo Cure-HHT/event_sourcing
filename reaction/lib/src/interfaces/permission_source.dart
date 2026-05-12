@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-permission-snapshot-source — defines the
+// PermissionSource transport-agnostic interface, including its
+// snapshot-on-listen contract on the stream getter.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

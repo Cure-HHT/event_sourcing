@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-auth-session — AuthStatus is a sealed type with
+// exactly three variants (Authenticated, NotAuthenticated, Expired).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';

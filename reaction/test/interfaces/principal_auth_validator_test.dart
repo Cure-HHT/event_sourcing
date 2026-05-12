@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-auth-session — PrincipalAuthValidator interface
+// contract: authenticate() returns the Principal on success or
+// throws AuthenticationDenied on rejection.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';

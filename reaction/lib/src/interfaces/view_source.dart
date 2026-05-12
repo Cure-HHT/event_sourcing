@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-view-subscriber — defines the ViewSource
+// transport-agnostic interface over the substrate's subscribe<T>
+// AggregateMode primitive.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

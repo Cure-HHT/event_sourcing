@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-view-subscriber — LocalViewSource honors the
+// ViewSource interface: emits Snapshot/EndOfReplay/Delta/Tombstone
+// updates, applies the mapper, and respects the aggregates filter.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

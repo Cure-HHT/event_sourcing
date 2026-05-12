@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-action-submitter — defines the ActionSubmitter
+// transport-agnostic interface and its TransportException type.
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Submits an [ActionSubmission] for dispatch through the substrate's

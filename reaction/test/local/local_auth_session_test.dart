@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-auth-session — LocalAuthSession honors the
+// AuthSession interface (current/stream/setCredential/principal),
+// the AuthStatus sealed-type contract, and the rule that the active
+// Principal flows through.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';

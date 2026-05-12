@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-auth-session — defines the
+// PrincipalAuthValidator interface and the credential-format-opaque
+// rule (validator decides what the credential string means).
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Validates an opaque credential string from the wire (HTTP header

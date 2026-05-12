@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-auth-session — defines the AuthSession
+// interface, its AuthStatus sealed type, and the rule that the
+// active Principal flows from here into downstream interfaces.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

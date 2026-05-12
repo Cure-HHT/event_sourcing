@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-action-submitter — idempotency-key generator
+// for action submissions (UUID v4 default via Uuid4 impl).
 import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
 

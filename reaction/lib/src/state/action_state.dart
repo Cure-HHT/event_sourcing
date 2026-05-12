@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-reaction-widget-contract — widget-side
+// submission state machine (sealed type with Idle/Submitting/
+// Success/Denied/Failed variants).
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Widget-side submission state machine. Used by `ActionBuilder` in

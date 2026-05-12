@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-view-subscriber — in-process ViewSource impl:
+// delegates to EventStore.subscribe<T> with AggregateMode<T>.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

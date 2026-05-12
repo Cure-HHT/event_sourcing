@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-auth-session — in-process AuthSession impl:
+// credential string used directly as UserPrincipal.userId
+// (mobile-install case); status flips between Authenticated and
+// NotAuthenticated; never transitions to Expired (no credential
+// lifetime in-process).
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
