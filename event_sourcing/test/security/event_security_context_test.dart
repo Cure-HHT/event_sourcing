@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-regulatory-alignment/A — recordedAt round-trips correctly
+//   through toJson/fromJson, preserving the ALCOA+ Contemporaneous timestamp.
+// Verifies: EVS-PRD-regulatory-alignment — applyTruncation correctly reduces
+//   PII fields (IP, UA, geo) per SecurityRetentionPolicy defaults, exercising
+//   the retention compact path that satisfies §11.10(c) protection-of-records.
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -9,6 +9,13 @@
 //   start firing materializers on cross-aggregate stream events, which
 //   is out of scope for Phase 4.22. This test fails loudly if that
 //   happens.
+//
+// Verifies: EVS-PRD-event-log/A — all reserved system entry types have
+//   materialize:false, ensuring audit events never corrupt view-side state.
+// Verifies: EVS-DEV-event-store-open/B,C — lib_version_initialized and
+//   lib_version_changed are registered in kSystemEntryTypes so byId() returns
+//   non-null and SubscriptionFilter correctly gates them behind
+//   includeSystemEvents:true.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

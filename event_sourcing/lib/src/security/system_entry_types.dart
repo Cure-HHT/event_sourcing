@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-event-log/A — every reserved system id corresponds to
+//   an audit event appended to the immutable log for each substrate mutation;
+//   no reserved entry type has materialize:true, so they never corrupt views.
+// Implements: EVS-PRD-regulatory-alignment/A — security-context and
+//   retention audit events carry timestamps (via EventStore.append), satisfying
+//   the ALCOA+ Contemporaneous obligation for substrate-emitted records.
+// Implements: EVS-DEV-event-store-open/B,C — kLibVersionInitializedEntryType
+//   and kLibVersionChangedEntryType are the boot-version event types emitted
+//   by EventStore.open on first boot and on version transitions respectively.
 import 'package:event_sourcing/src/entry_type_definition.dart';
 
 /// Reserved id for the per-event security-context redaction audit event.
@@ -45,14 +54,16 @@ const String kEntryTypeRegistryInitializedEntryType =
 /// Reserved id for the substrate-level lib-version-initialized event.
 /// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
 /// `_appendLibVersionEventToBackend` on first boot.
-// Implements: EVS-DEV-event-store-open — boot-version events are substrate-
-//   internal and must not be admitted to destinations as user events.
+// Implements: EVS-DEV-event-store-open/B — defines the entry-type id for the
+//   first-boot lib-version event; boot-version events are substrate-internal
+//   and must not be admitted to destinations as user events.
 const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 
 /// Reserved id for the substrate-level lib-version-changed event.
 /// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
 /// `_appendLibVersionEventToBackend` on upgrade.
-// Implements: EVS-DEV-event-store-open — boot-version events are substrate-
+// Implements: EVS-DEV-event-store-open/C — defines the entry-type id for the
+//   version-transition lib-version event; boot-version events are substrate-
 //   internal and must not be admitted to destinations as user events.
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
@@ -116,9 +127,9 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 // compact / purge audit events.
 //   entry type; the substrate stamps entry_type_version from the registry's
 //   registeredVersion on every append.
-// Implements: EVS-DEV-event-store-open — lib-version boot events registered
-//   here so byId() returns non-null and SubscriptionFilter gates them
-//   correctly, even though they are appended raw (bypassing the registry).
+// Implements: EVS-DEV-event-store-open/B,C — lib-version boot events
+//   registered here so byId() returns non-null and SubscriptionFilter gates
+//   them correctly, even though they are appended raw (bypassing the registry).
 const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
   EntryTypeDefinition(
     id: kSecurityContextRedactedEntryType,

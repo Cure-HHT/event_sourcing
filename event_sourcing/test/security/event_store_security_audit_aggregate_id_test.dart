@@ -7,6 +7,11 @@
 // aggregate spanning bootstrap, destination registry, and security /
 // retention audits.
 //
+// Verifies: EVS-PRD-event-log/A — audit events are appended to the immutable
+//   log for every covered substrate mutation (redact, compact, purge, sweep).
+// Verifies: EVS-PRD-regulatory-alignment/A — retention and redaction audit
+//   events carry timestamps, satisfying the ALCOA+ Contemporaneous obligation.
+//
 //   security_context_redacted; subject_event_id moves to data field).
 //   security_context_compacted).
 //   security_context_purged).
