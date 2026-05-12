@@ -1,7 +1,8 @@
-// Verifies: EVS-PRD-action-submitter — LocalActionSubmitter honors
-// the ActionSubmitter interface, surfaces dispatch outcomes as
-// DispatchResult variants, and throws TransportException on
-// unauthenticated submissions.
+// Verifies: EVS-PRD-action-submitter/B — LocalActionSubmitter
+// delegates to an in-process ActionDispatcher.dispatch and surfaces
+// every DispatchResult variant (success, parse failure, auth denial,
+// idempotency hit) to the caller. Also exercises the
+// TransportException-on-no-Principal precondition path.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/action_submitter.dart';

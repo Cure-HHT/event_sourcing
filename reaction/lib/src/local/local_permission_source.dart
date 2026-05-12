@@ -1,8 +1,11 @@
-// Implements: EVS-PRD-permission-snapshot-source — in-process
-// PermissionSource impl: subscribes to the role_permission_grants
-// view, builds PermissionSnapshot from the active Principal's
-// activeRole via RoleMatrixReader.grantsForRole. Stream honors
-// snapshot-on-listen via per-listener forwarding.
+// Implements: EVS-PRD-permission-snapshot-source/B/E —
+// LocalPermissionSource derives the snapshot from the substrate's
+// RolePermissionGrants projection (B), and re-fetches + re-emits when
+// the active Principal changes via setActivePrincipal (E).
+// Subscribes to the role_permission_grants view; builds
+// PermissionSnapshot from the active Principal's activeRole via
+// RoleMatrixReader.grantsForRole. Stream honors snapshot-on-listen
+// via per-listener forwarding.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

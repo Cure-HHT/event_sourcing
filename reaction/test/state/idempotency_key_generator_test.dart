@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-action-submitter — Uuid4IdempotencyKeyGenerator
-// emits UUID v4 keys, and the IdempotencyKeyGenerator interface
-// admits deterministic stub replacements for tests.
+// Verifies: EVS-PRD-reaction-widget-contract/E —
+// Uuid4IdempotencyKeyGenerator emits UUID v4 keys (the format the
+// widget library is required to use), and the IdempotencyKeyGenerator
+// interface admits deterministic stub replacements for tests
+// (supporting the consumer-override path in assertion E).
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/state/idempotency_key_generator.dart';
 

@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-reaction-widget-contract — ActionState sealed
+// Verifies: EVS-PRD-reaction-widget-contract/C — ActionState sealed
 // type covers the 5 widget-side submission states (Idle/Submitting/
-// Success/Denied/Failed) and supports exhaustive switching.
+// Success/Denied/Failed) that ActionBuilder exposes to the caller-
+// supplied builder, with exhaustive switching enforced by the sealed
+// hierarchy.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/state/action_state.dart';

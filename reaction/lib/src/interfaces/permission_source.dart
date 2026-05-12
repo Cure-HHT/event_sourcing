@@ -1,6 +1,8 @@
-// Implements: EVS-PRD-permission-snapshot-source — defines the
-// PermissionSource transport-agnostic interface, including its
-// snapshot-on-listen contract on the stream getter.
+// Implements: EVS-PRD-permission-snapshot-source/A/D — defines the
+// PermissionSource interface (A: current synchronous getter +
+// Stream<PermissionSnapshot?> + dispose) and the rule that the active
+// Principal is sourced from a co-mounted AuthSession, with no
+// principal mutator on this interface (D).
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

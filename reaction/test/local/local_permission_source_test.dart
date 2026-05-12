@@ -1,7 +1,9 @@
-// Verifies: EVS-PRD-permission-snapshot-source — LocalPermissionSource
-// honors the PermissionSource interface: current/stream getters,
-// dispose, snapshot-on-listen contract, and reactive recompute on
-// active-Principal changes + underlying-view emissions.
+// Verifies: EVS-PRD-permission-snapshot-source/B/E —
+// LocalPermissionSource derives the snapshot from the substrate's
+// RolePermissionGrants projection (B), and re-fetches + re-emits when
+// the active Principal changes via setActivePrincipal (E). Also
+// exercises the current/stream getters, dispose, and the
+// snapshot-on-listen contract documented in the interface.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/local/local_permission_source.dart';

@@ -1,6 +1,6 @@
-// Implements: EVS-PRD-view-subscriber — defines the ViewSource
-// transport-agnostic interface over the substrate's subscribe<T>
-// AggregateMode primitive.
+// Implements: EVS-PRD-view-subscriber/A — defines the ViewSource
+// interface whose watch<T> returns Stream<Update<T>> for a given
+// (viewName, mapper, filter, aggregates).
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

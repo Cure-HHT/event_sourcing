@@ -1,6 +1,7 @@
-// Implements: EVS-PRD-reaction-widget-contract — widget-side
-// submission state machine (sealed type with Idle/Submitting/
-// Success/Denied/Failed variants).
+// Implements: EVS-PRD-reaction-widget-contract/C — ActionState is
+// the sealed state machine the widget library's ActionBuilder
+// primitive exposes to caller-supplied builders for rendering
+// (Idle/Submitting/Success/Denied/Failed).
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Widget-side submission state machine. Used by `ActionBuilder` in
