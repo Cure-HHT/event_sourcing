@@ -90,9 +90,11 @@ void main() {
           )
           .listen(updates.add);
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(updates.length, 1);
+      // 1 Snapshot + 1 EndOfReplay marker (post-snapshot, pre-deltas).
+      expect(updates.length, 2);
       expect(updates.first, isA<Snapshot<_Note?>>());
       expect((updates.first as Snapshot).value, isNull);
+      expect(updates[1], isA<EndOfReplay<_Note?>>());
       await sub.cancel();
       await store.close();
     },

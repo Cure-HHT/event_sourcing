@@ -462,6 +462,7 @@ class EventStore {
       // During the snapshot phase events go to liveBuffer; after
       // _replayDone is set they go directly to controller.
       var replayDone = false;
+      var maxSequenceSeen = 0;
       final liveBuffer = <AggregateFoldChange>[];
 
       liveSub = _subs.rowChanges(mode.viewName).listen((change) {
@@ -470,7 +471,10 @@ class EventStore {
           liveBuffer.add(change);
         } else {
           final u = _changeToUpdate<T>(change, filter, mode);
-          if (u != null) controller.add(u);
+          if (u != null) {
+            if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+            controller.add(u);
+          }
         }
       }, onDone: () => controller.close());
 
@@ -480,12 +484,9 @@ class EventStore {
         final rows = await backend.findViewRows(mode.viewName);
         for (final row in rows) {
           if (controller.isClosed) return;
-          controller.add(
-            Snapshot<T>(
-              value: mode.mapper(row),
-              sequence: (row['sequence'] as int?) ?? 0,
-            ),
-          );
+          final seq = (row['sequence'] as int?) ?? 0;
+          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
+          controller.add(Snapshot<T>(value: mode.mapper(row), sequence: seq));
         }
       } else {
         for (final aggId in aggregateIds) {
@@ -493,23 +494,35 @@ class EventStore {
           final row = await backend.transaction(
             (txn) => backend.readViewRowInTxn(txn, mode.viewName, aggId),
           );
+          final seq = (row?['sequence'] as int?) ?? 0;
+          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
           controller.add(
             Snapshot<T>(
               value: row == null ? null : mode.mapper(row),
-              sequence: (row?['sequence'] as int?) ?? 0,
+              sequence: seq,
             ),
           );
         }
       }
 
-      // Drain buffered live changes that arrived during snapshot read,
-      // then flip the flag so subsequent arrivals go direct.
+      // Drain buffered live changes that arrived during snapshot read.
       for (final change in liveBuffer) {
         if (controller.isClosed) return;
         final u = _changeToUpdate<T>(change, filter, mode);
-        if (u != null) controller.add(u);
+        if (u != null) {
+          if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+          controller.add(u);
+        }
       }
       liveBuffer.clear();
+
+      // Snapshot phase + buffer drain are complete. Emit EndOfReplay BEFORE
+      // flipping replayDone so the marker is ordered correctly relative to
+      // any deltas that arrive after this point.
+      if (!controller.isClosed) {
+        controller.add(EndOfReplay<T>(sequence: maxSequenceSeen));
+      }
+
       replayDone = true;
     }
 
