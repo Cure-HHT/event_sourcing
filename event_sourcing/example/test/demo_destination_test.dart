@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/destination-contract
+// Verifies: EVS-PRD-destinations/destination-filter
+// Verifies: EVS-PRD-destinations/destination-batch-and-transform
+// Verifies: EVS-PRD-destinations/destination-send-result
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

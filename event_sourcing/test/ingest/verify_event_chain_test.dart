@@ -1,4 +1,11 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyEventChain provides the
+//   operation by which any holder recomputes and confirms Chain 1 integrity
+//   without privileged access; returns a non-throwing ChainVerdict
+// Verifies: EVS-PRD-hash-chain-integrity/A — arrival_hash mismatch is detected
+//   and reported as ChainFailureKind.arrivalHashMismatch in the verdict
+// Verifies: EVS-PRD-ingest/D — chain verification at the ingest boundary;
+//   verifyEventChain is the post-admission audit counterpart to the
+//   pre-admission check performed by ingestEvent
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

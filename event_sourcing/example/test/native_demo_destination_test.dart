@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-destinations/destination-send-result
+// Verifies: EVS-PRD-destinations/destination-contract
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';

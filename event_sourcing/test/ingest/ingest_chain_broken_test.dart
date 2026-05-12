@@ -1,5 +1,8 @@
-// IMPLEMENTS REQUIREMENTS:
-//                  with hopIndex equal to the tampered position.
+// Verifies: EVS-PRD-ingest/D — chain verification rejects an event with a
+//   tampered arrival_hash; IngestChainBroken is thrown with hopIndex equal
+//   to the tampered position; no side effects land (transaction rolls back)
+// Verifies: EVS-PRD-hash-chain-integrity/C — chain integrity is verifiable
+//   by any holder; tampering is detected at the ingest boundary
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

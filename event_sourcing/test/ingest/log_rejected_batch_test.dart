@@ -1,4 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-ingest/A — logRejectedBatch records an ingest.batch_rejected
+//   audit event in the ingest-audit aggregate for forensic observability
+// Verifies: EVS-PRD-ingest/D — rejection audit captures wire_bytes, wire_format,
+//   reason, failed_event_id, and error_detail for post-hoc chain diagnosis
+// Verifies: EVS-PRD-hash-chain-integrity/B — Chain 2 previous_ingest_hash on
+//   consecutive rejection audit events forms a consistent chain
 
 import 'dart:convert';
 import 'dart:typed_data';

@@ -1,4 +1,13 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-ingest/A — ingestEvent and ingestBatch admit events from
+//   multiple independent originators into a single local log
+// Verifies: EVS-PRD-ingest/B — originator identity preserved per event
+//   (aggregateId, sequenceNumber, arrival_hash, origin_sequence_number)
+// Verifies: EVS-PRD-ingest/C — Chain 2 ingest_sequence_number and
+//   previous_ingest_hash thread monotonically across interleaved originators
+// Verifies: EVS-PRD-hash-chain-integrity/B — verifyIngestChain and
+//   verifyEventChain return ok=true over a multi-originator log
+// Verifies: EVS-PRD-ingest/E — locally-ingested events from distinct
+//   originators participate in the same Chain 2 (unified ingest sequence)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

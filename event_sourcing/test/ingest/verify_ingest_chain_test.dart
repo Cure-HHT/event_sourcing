@@ -1,4 +1,12 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyIngestChain provides the
+//   operation by which any holder recomputes Chain 2 integrity end-to-end
+//   without privileged access; returns ChainVerdict, not throws
+// Verifies: EVS-PRD-hash-chain-integrity/B — previous_ingest_hash tampering is
+//   detected at the exact sequence position, reported as
+//   ChainFailureKind.previousIngestHashMismatch
+// Verifies: EVS-PRD-ingest/C — Chain 2 thread (ingest_sequence_number +
+//   previous_ingest_hash) is verifiable across a bounded range via
+//   fromSequenceNumber / toSequenceNumber parameters
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

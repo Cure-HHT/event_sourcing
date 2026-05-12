@@ -1,4 +1,10 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-ingest/B — upstream identity preserved across multi-hop
+//   chains; hop entries identify each originator and relay correctly
+// Verifies: EVS-PRD-ingest/C — each relay appends its own provenance entry;
+//   provenance grows by one entry per hop (length 3 for A->B->C, 4 for A->B->D->C)
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyEventChain walks all hops
+//   (including the k>1 ingest_sequence_number substitution branch) and returns
+//   ok=true across a 3-hop and a 4-hop chain
 //
 // Regression coverage for the hop-mapping logic in `_verifyChainOn`:
 // the recompute-at-hop-k-1 path uses

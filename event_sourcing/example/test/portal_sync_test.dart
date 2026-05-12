@@ -1,5 +1,7 @@
-// IMPLEMENTS REQUIREMENTS:
-
+// Verifies: EVS-PRD-destinations/destination-fifo-delivery
+// Verifies: EVS-PRD-destinations/destination-send-result
+// Verifies: EVS-PRD-ingest/ingest-source-isolation
+// Verifies: EVS-PRD-provenance/provenance-hop-chain
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/demo_destination.dart';
 import 'package:event_sourcing_datastore_demo/demo_knobs.dart';

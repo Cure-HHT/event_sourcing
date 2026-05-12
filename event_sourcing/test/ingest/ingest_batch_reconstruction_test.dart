@@ -1,5 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
-//                 auditors to associate events with their originating batch.
+// Verifies: EVS-PRD-ingest/B — upstream identity preserved; batch reconstruction
+//   (strip receiver hop + restore arrival_hash) yields the original wire bytes
+// Verifies: EVS-PRD-ingest/C — batch_context on each stored event enables
+//   reconstruction of the originating batch envelope for auditors
+// Verifies: EVS-PRD-hash-chain-integrity/D — JCS encoding is stable across
+//   the sembast storage round-trip (reconstructed sha256 == batchWireBytesHash)
 
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';

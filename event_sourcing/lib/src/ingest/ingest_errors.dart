@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-ingest/A — ingest path existence; these exceptions are
+//   the typed error surface of the ingest path
+// Implements: EVS-PRD-ingest/D — IngestChainBroken reports hash-chain
+//   verification failure at the ingest boundary
+// Implements: EVS-PRD-ingest/F — IngestIdentityMismatch is thrown (not
+//   silently duplicated) when a re-presented event's hash differs, preserving
+//   idempotency semantics (identical re-presentations are safe; divergent
+//   re-presentations are rejected)
+
 /// Thrown by `EventStore.ingestBatch` / `ingestEvent` / `BatchEnvelope.decode`
 /// when the input bytes cannot be parsed as a well-formed `esd/batch@1`
 /// envelope (malformed JSON, wrong shape, unsupported format version,

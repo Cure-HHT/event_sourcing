@@ -1,5 +1,7 @@
-// IMPLEMENTS REQUIREMENTS:
-
+// Verifies: EVS-PRD-destinations/destination-fifo-delivery
+// Verifies: EVS-PRD-destinations/destination-fifo-wedge
+// Verifies: EVS-PRD-ingest/ingest-event-count-parity
+// Verifies: EVS-PRD-provenance/provenance-hop-chain
 import 'dart:async';
 import 'dart:math';
 

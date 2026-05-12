@@ -1,4 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
+// Verifies: EVS-PRD-ingest/F — idempotency: identity-mismatching re-present
+//   rolls back entirely; original stored event is not overwritten
+// Verifies: EVS-PRD-ingest/D — IngestIdentityMismatch thrown when incoming
+//   hash diverges from stored arrival hash
+// Verifies: EVS-PRD-hash-chain-integrity/B — Chain 2 previous_ingest_hash
+//   on the rejection audit event links back to the pre-ingest stored hash
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

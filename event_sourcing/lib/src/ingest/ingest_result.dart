@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-ingest/F — idempotency: IngestOutcome.duplicate
+//   distinguishes a safe re-presentation from a new admission; the stored
+//   subject is not mutated on duplicate
+// Implements: EVS-PRD-ingest/A — ingest path result types (IngestBatchResult
+//   is the return value of EventStore.ingestBatch)
+// Implements: EVS-PRD-ingest/C — PerEventIngestOutcome.resultHash carries the
+//   hash of the event as stored after the receiver's provenance hop was appended,
+//   enabling callers to thread Chain 2 linkage checks
+
 /// Outcome of a single subject event's processing inside `ingestBatch` or
 /// `ingestEvent`.
 enum IngestOutcome {
