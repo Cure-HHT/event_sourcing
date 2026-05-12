@@ -13,7 +13,7 @@
 /// - `AggregateProjectionSpec` / `TableProjectionSpec` — view spec shapes.
 /// - `SubscriptionFilter` — filter by aggregate type, entry type, event type.
 /// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
-/// - `Update` — sealed stream element: `Snapshot`, `Delta`, `Tombstone`.
+/// - `Update` — sealed stream element: `Snapshot`, `EndOfReplay`, `Delta`, `Tombstone`.
 /// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
 /// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
 ///   entry type's `registeredVersion` is below its stored target.
@@ -60,9 +60,12 @@
 /// );
 /// await for (final update in stream) {
 ///   switch (update) {
-///     case Snapshot(:final value): print('snapshot: $value');
-///     case Delta(:final value):    print('delta: $value');
-///     case Tombstone(:final aggregateId): print('deleted: $aggregateId');
+///     case Snapshot(:final value):    print('snapshot: $value');
+///     case EndOfReplay(:final sequence):
+///       print('replay complete at sequence $sequence');
+///     case Delta(:final value):       print('delta: $value');
+///     case Tombstone(:final aggregateId):
+///       print('deleted: $aggregateId');
 ///   }
 /// }
 ///
