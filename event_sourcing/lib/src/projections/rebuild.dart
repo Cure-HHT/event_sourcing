@@ -101,7 +101,7 @@ Future<int> rebuildView({
         // Rebuild applies the promoted payload via a synthetic event whose
         // data field is replaced with the promoted map. We use copyWith-style
         // construction since StoredEvent is immutable.
-        final promotedEvent = _withData(event, promoted);
+        final promotedEvent = event.withData(promoted);
 
         switch (spec) {
           case AggregateProjectionSpec():
@@ -128,29 +128,4 @@ Future<int> rebuildView({
 
     return processed;
   });
-}
-
-/// Returns a copy of [event] with [data] replaced by [newData].
-///
-/// Used by [rebuildView] to thread promoted payloads through the fold
-/// interpreters without modifying the in-memory original.
-StoredEvent _withData(StoredEvent event, Map<String, Object?> newData) {
-  return StoredEvent(
-    key: event.key,
-    eventId: event.eventId,
-    aggregateId: event.aggregateId,
-    aggregateType: event.aggregateType,
-    entryType: event.entryType,
-    entryTypeVersion: event.entryTypeVersion,
-    libFormatVersion: event.libFormatVersion,
-    eventType: event.eventType,
-    sequenceNumber: event.sequenceNumber,
-    data: newData,
-    metadata: event.metadata,
-    initiator: event.initiator,
-    clientTimestamp: event.clientTimestamp,
-    eventHash: event.eventHash,
-    flowToken: event.flowToken,
-    previousEventHash: event.previousEventHash,
-  );
 }

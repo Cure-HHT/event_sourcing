@@ -249,6 +249,32 @@ class StoredEvent {
     return ProvenanceEntry.fromJson(Map<String, Object?>.from(first));
   }
 
+  /// Returns a copy of this event with [newData] replacing [data]. All
+  /// other fields are preserved. Used by the substrate's promoter
+  /// machinery (rebuildView and ProjectionInterpreter) to thread a
+  /// promoted payload through the fold interpreters without modifying the
+  /// in-memory original or rebuilding the event hash chain.
+  StoredEvent withData(Map<String, Object?> newData) {
+    return StoredEvent(
+      key: key,
+      eventId: eventId,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      entryType: entryType,
+      entryTypeVersion: entryTypeVersion,
+      libFormatVersion: libFormatVersion,
+      eventType: eventType,
+      sequenceNumber: sequenceNumber,
+      data: newData,
+      metadata: metadata,
+      initiator: initiator,
+      clientTimestamp: clientTimestamp,
+      eventHash: eventHash,
+      flowToken: flowToken,
+      previousEventHash: previousEventHash,
+    );
+  }
+
   /// Convert to a map for storage/serialization.
   Map<String, dynamic> toMap() {
     return {
