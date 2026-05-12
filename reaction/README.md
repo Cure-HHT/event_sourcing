@@ -3,7 +3,10 @@
 Substrate-agnostic action submission, view subscription, permission
 snapshots, and credential lifecycle for apps built on `event_sourcing`.
 
-Pure Dart. The Flutter widget library `reaction_widgets` sits on top.
+Pure Dart at runtime; the Flutter widget library `reaction_widgets`
+sits on top. Note: the test harness transitively requires the
+Flutter SDK (via `event_sourcing`'s Sembast test binding), even
+though the package itself imports no Flutter at runtime.
 
 See `spec/prd-reaction.md` (in the parent repo) for the architectural
 spec.
