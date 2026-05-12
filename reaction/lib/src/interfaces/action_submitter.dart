@@ -1,43 +1,5 @@
 import 'package:event_sourcing/event_sourcing.dart';
 
-/// A request to dispatch one action. Bundles the dispatcher's call
-/// arguments into a single value so the [ActionSubmitter] contract is
-/// uniform across in-process and remote transports.
-///
-/// The submitter implementation constructs the substrate's
-/// `ActionContext` from its co-mounted [AuthSession] (Local) or from
-/// the server-side validated credential (Remote) — the active
-/// [Principal] is NOT carried on this struct. The credential header
-/// for Remote submissions is attached by the [ActionSubmitter] impl
-/// itself, not threaded through this submission.
-class ActionSubmission {
-  /// The registered name of the action to dispatch (e.g. `'submit_note'`).
-  /// Matches what `ActionRegistry.lookup` accepts.
-  final String actionName;
-
-  /// The raw input the dispatcher's Stage 3 (parse) consumes. Shape is
-  /// per-action and verified by the registered action's `parseInput`.
-  final Map<String, Object?> rawInput;
-
-  /// Idempotency key per the registered action's `IdempotencyPolicy`.
-  /// `null` is valid when the action's policy is `none` or `optional`.
-  /// For policy `required`, omitting the key causes the dispatcher to
-  /// return a `parse_denied` outcome.
-  final String? idempotencyKey;
-
-  /// Optional cross-action correlation token. The dispatcher stamps it
-  /// onto every emitted event's metadata so downstream audit can trace
-  /// related actions across a single user flow.
-  final String? flowToken;
-
-  const ActionSubmission({
-    required this.actionName,
-    required this.rawInput,
-    this.idempotencyKey,
-    this.flowToken,
-  });
-}
-
 /// Submits an [ActionSubmission] for dispatch through the substrate's
 /// parse → validate → authorize → execute → record pipeline and returns
 /// the [DispatchResult].
