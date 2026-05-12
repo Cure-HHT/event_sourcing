@@ -1,8 +1,6 @@
 // lib/src/permissions/table_backed_authorization_policy.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-A (isPermitted with scope-precondition check before matrix
 //   lookup),
-//   REQ-d00176-B (permissionsFor filters by session preconditions).
 
 import 'package:event_sourcing/event_sourcing.dart';
 

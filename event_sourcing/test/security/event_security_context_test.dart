@@ -28,8 +28,7 @@ void main() {
       expect(EventSecurityContext.fromJson(ctx.toJson()), ctx);
     });
 
-    // Verifies: REQ-d00138-B — compact sweep truncation rules.
-    test('REQ-d00138-B: applyTruncation drops UA, truncates IPv4 last octet, '
+    test('applyTruncation drops UA, truncates IPv4 last octet, '
         'keeps geo by default', () {
       final ctx = EventSecurityContext(
         eventId: 'e',
@@ -46,7 +45,7 @@ void main() {
       expect(truncated.geoRegion, 'NY');
     });
 
-    test('REQ-d00138-B: IPv6 truncation keeps first 3 groups when enabled', () {
+    test('IPv6 truncation keeps first 3 groups when enabled', () {
       final ctx = EventSecurityContext(
         eventId: 'e',
         recordedAt: DateTime.utc(2026, 4, 22),

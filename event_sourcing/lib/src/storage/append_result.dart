@@ -1,7 +1,6 @@
 /// Return value from `StorageBackend.appendEvent`, identifying the
 /// sequence number that was advanced and the tamper-detection hash stamped
 /// on the new event record.
-// Implements: REQ-d00117-C — appendEvent co-advances the event log and the
 // sequence counter inside the same transaction; callers receive both values
 // in this single result.
 class AppendResult {

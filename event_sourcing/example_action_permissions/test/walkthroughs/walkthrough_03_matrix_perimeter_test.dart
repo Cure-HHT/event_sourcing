@@ -1,9 +1,5 @@
 // test/walkthroughs/walkthrough_03_matrix_perimeter_test.dart
 //
-// Verifies: REQ-d00168-G (authorize stage emits authorization_denied),
-//           REQ-d00171-A (denial event carries permission_denied + role),
-//           REQ-d00172-A (scope-class precondition denials),
-//           REQ-d00176-A (TableBackedAuthorizationPolicy decision rules).
 //
 // Per-test fresh server so denial-event counts are deterministic.
 

@@ -1,7 +1,5 @@
-// Verifies: REQ-d00128-J — SubscriptionFilter.includeSystemEvents
 // dispatches system entry types through the opt-in flag, bypassing the
 // entryTypes allow-list. User entry types continue to use entryTypes.
-// Verifies: REQ-d00154-F — system events flow to destinations that
 // opt in via SubscriptionFilter.includeSystemEvents.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,18 +34,16 @@ StoredEvent _userEvent(String entryType) => _mkEvent(entryType: entryType);
 
 void main() {
   group('SubscriptionFilter.includeSystemEvents', () {
-    // Verifies: REQ-d00128-J — default false rejects system events
     // regardless of entryTypes content.
-    test('REQ-d00128-J: includeSystemEvents=false rejects system events '
+    test('includeSystemEvents=false rejects system events '
         'regardless of entryTypes', () {
       const f = SubscriptionFilter(entryTypes: ['demo_note']);
       expect(f.includeSystemEvents, isFalse);
       expect(f.matches(_systemEvent()), isFalse);
     });
 
-    // Verifies: REQ-d00128-J — when true, system entry types bypass
     // entryTypes (an empty list does not exclude them).
-    test('REQ-d00128-J: includeSystemEvents=true admits system events even '
+    test('includeSystemEvents=true admits system events even '
         'with empty entryTypes', () {
       const f = SubscriptionFilter(
         entryTypes: <String>[],
@@ -56,10 +52,9 @@ void main() {
       expect(f.matches(_systemEvent()), isTrue);
     });
 
-    // Verifies: REQ-d00128-J — opting in to system events does not
     // override entryTypes for user events; user events still use the
     // allow-list.
-    test('REQ-d00128-J: includeSystemEvents=true still applies entryTypes '
+    test('includeSystemEvents=true still applies entryTypes '
         'for user events', () {
       const f = SubscriptionFilter(
         entryTypes: ['demo_note'],
@@ -69,16 +64,14 @@ void main() {
       expect(f.matches(_userEvent('red_button_pressed')), isFalse);
     });
 
-    // Verifies: REQ-d00128-J — the default value of the flag is false.
-    test('REQ-d00128-J: default includeSystemEvents is false', () {
+    test('default includeSystemEvents is false', () {
       const f = SubscriptionFilter(entryTypes: ['demo_note']);
       expect(f.includeSystemEvents, isFalse);
     });
 
-    // Verifies: REQ-d00154-F — every reserved system entry type is
     // gated by the same flag (the flag is keyed off the reserved set,
     // not a single id).
-    test('REQ-d00154-F: includeSystemEvents=true admits every reserved '
+    test('includeSystemEvents=true admits every reserved '
         'system entry type', () {
       const f = SubscriptionFilter(includeSystemEvents: true);
       for (final id in kReservedSystemEntryTypeIds) {

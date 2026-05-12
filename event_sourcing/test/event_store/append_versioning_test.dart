@@ -27,47 +27,39 @@ Future<EventStore> _bootstrap() async {
 }
 
 void main() {
-  group('REQ-d00141-B,E: EventStore.append stamps version fields', () {
-    // Verifies: REQ-d00141-B
+  group('EventStore.append stamps version fields', () {
     // Verifies: EVS-DEV-append-stamps-registered-version — substrate stamps
     // entry_type_version from the registry's registeredVersion.
-    test(
-      'REQ-d00141-B: entry_type_version is stamped from the registry',
-      () async {
-        final es = await _bootstrap();
-        final stored = await es.append(
-          entryType: 'demo_note',
-          aggregateId: 'a-1',
-          aggregateType: 'note',
-          eventType: 'finalized',
-          data: const <String, Object?>{'answers': <String, Object?>{}},
-          initiator: const UserInitiator('u-1'),
-        );
-        expect(stored, isNotNull);
-        // Registry says registeredVersion=5; substrate stamps that, not 1.
-        expect(stored!.entryTypeVersion, 5);
-      },
-    );
+    test('entry_type_version is stamped from the registry', () async {
+      final es = await _bootstrap();
+      final stored = await es.append(
+        entryType: 'demo_note',
+        aggregateId: 'a-1',
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: const <String, Object?>{'answers': <String, Object?>{}},
+        initiator: const UserInitiator('u-1'),
+      );
+      expect(stored, isNotNull);
+      // Registry says registeredVersion=5; substrate stamps that, not 1.
+      expect(stored!.entryTypeVersion, 5);
+    });
 
-    // Verifies: REQ-d00141-E
-    test(
-      'REQ-d00141-E: lib_format_version stamped from currentLibFormatVersion',
-      () async {
-        final es = await _bootstrap();
-        final stored = await es.append(
-          entryType: 'demo_note',
-          aggregateId: 'a-1',
-          aggregateType: 'note',
-          eventType: 'finalized',
-          data: const <String, Object?>{'answers': <String, Object?>{}},
-          initiator: const UserInitiator('u-1'),
-        );
-        expect(stored, isNotNull);
-        expect(stored!.libFormatVersion, StoredEvent.currentLibFormatVersion);
-      },
-    );
+    test('lib_format_version stamped from currentLibFormatVersion', () async {
+      final es = await _bootstrap();
+      final stored = await es.append(
+        entryType: 'demo_note',
+        aggregateId: 'a-1',
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: const <String, Object?>{'answers': <String, Object?>{}},
+        initiator: const UserInitiator('u-1'),
+      );
+      expect(stored, isNotNull);
+      expect(stored!.libFormatVersion, StoredEvent.currentLibFormatVersion);
+    });
 
-    // Note: the former REQ-d00141-F test ("append does NOT validate
+    // Note: the former -F test ("append does NOT validate
     // entryTypeVersion against registry") has been deleted. Under the new
     // contract the substrate stamps entry_type_version from the registry's
     // registeredVersion, so there is no caller-supplied value to validate;

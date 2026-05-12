@@ -1,4 +1,3 @@
-// Verifies: REQ-d00175 (seed-applier diff logic, applied to directory)
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:action_permissions_demo/server/user_directory_seed_applier.dart';
@@ -16,7 +15,7 @@ users:
 
 void main() {
   group('UserDirectorySeedApplier', () {
-    test('REQ-d00175: applies all seed entries to empty directory', () {
+    test('applies all seed entries to empty directory', () {
       final dir = UserDirectory();
       final mat = UserDirectoryMaterializer(directory: dir);
       final emitted = <Map<String, Object?>>[];
@@ -31,7 +30,7 @@ void main() {
       expect(dir.contains('green-user-1'), isTrue);
     });
 
-    test('REQ-d00175: skips entries already present in directory (diff)', () {
+    test('skips entries already present in directory (diff)', () {
       final dir = UserDirectory();
       dir.upsert(userId: 'admin-user', role: 'Admin', activeSite: null);
       final mat = UserDirectoryMaterializer(directory: dir);
@@ -46,7 +45,7 @@ void main() {
       expect(emitted.first['userId'], 'green-user-1');
     });
 
-    test('REQ-d00175: emit and applyDirect see the same payload', () {
+    test('emit and applyDirect see the same payload', () {
       final dir = UserDirectory();
       final mat = UserDirectoryMaterializer(directory: dir);
       final emitted = <Map<String, Object?>>[];

@@ -1,11 +1,10 @@
 // test/permissions/yaml_seed_loader_test.dart
-// Verifies: REQ-d00175-A (YAML schema parsing).
 import 'package:event_sourcing/src/permissions/yaml_seed_loader.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('YamlSeedLoader', () {
-    test('REQ-d00175-A: parses well-formed seed', () {
+    test('parses well-formed seed', () {
       const yaml = '''
 roles:
   - patient
@@ -30,7 +29,7 @@ grants:
       expect(seed.grants['admin'], isEmpty);
     });
 
-    test('REQ-d00175-A: throws on missing roles key', () {
+    test('throws on missing roles key', () {
       const yaml = 'grants: {}';
       expect(
         () => YamlSeedLoader().loadFromString(yaml),
@@ -38,7 +37,7 @@ grants:
       );
     });
 
-    test('REQ-d00175-A: throws on missing grants key', () {
+    test('throws on missing grants key', () {
       const yaml = 'roles: [admin]';
       expect(
         () => YamlSeedLoader().loadFromString(yaml),

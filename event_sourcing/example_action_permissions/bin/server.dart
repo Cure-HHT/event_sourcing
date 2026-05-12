@@ -1,6 +1,5 @@
 // bin/server.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167 (Bootstrap) — process entry composes everything.
 
 import 'dart:io';
 

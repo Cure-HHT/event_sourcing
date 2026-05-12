@@ -1,6 +1,5 @@
 // lib/src/permissions/permission_revoked_payload.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00174-B (event payload shape for permission_revoked).
 
 import 'package:meta/meta.dart';
 

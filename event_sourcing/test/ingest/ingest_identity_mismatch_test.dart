@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-D: identity-mismatch throws IngestIdentityMismatch;
 //                  transaction rolls back — no side effects.
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -80,7 +79,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — identity mismatch (REQ-d00145-D)', () {
+  group('EventStore.ingestEvent — identity mismatch', () {
     test(
       'same event_id but different event_hash throws IngestIdentityMismatch',
       () async {

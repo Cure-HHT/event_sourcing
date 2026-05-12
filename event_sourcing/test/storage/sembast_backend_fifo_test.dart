@@ -79,21 +79,17 @@ void main() {
       expect(head.sequenceInQueue, enqueued.sequenceInQueue);
     });
 
-    // Verifies: REQ-d00128-A — an empty batch is rejected at enqueueFifo
     // rather than silently producing a zero-event row.
-    test(
-      'REQ-d00128-A: enqueueFifo rejects an empty batch with ArgumentError',
-      () async {
-        await expectLater(
-          backend.enqueueFifo(
-            'primary',
-            const [],
-            wirePayload: wirePayloadJson(const {'k': 'v'}),
-          ),
-          throwsArgumentError,
-        );
-      },
-    );
+    test('enqueueFifo rejects an empty batch with ArgumentError', () async {
+      await expectLater(
+        backend.enqueueFifo(
+          'primary',
+          const [],
+          wirePayload: wirePayloadJson(const {'k': 'v'}),
+        ),
+        throwsArgumentError,
+      );
+    });
 
     // Verifies: Task 6.5 — two enqueues with the same eventId succeed and
     // produce rows with distinct v4-UUID entry_ids. The backend mints a
@@ -138,10 +134,9 @@ void main() {
 
     // -------- enqueueFifoTxn — native vs 3rd-party wire-format branch --------
 
-    // Verifies: REQ-d00119-B+K + REQ-d00152-B+E — when nativeEnvelope is
     // supplied, the row is persisted with envelope_metadata set,
     // wire_payload null, and wire_format = BatchEnvelope.wireFormat.
-    test('REQ-d00119-B+K: enqueueFifo with nativeEnvelope persists '
+    test('enqueueFifo with nativeEnvelope persists '
         'envelope_metadata and nulls wire_payload', () async {
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
@@ -158,7 +153,7 @@ void main() {
       expect(
         head!.wirePayload,
         isNull,
-        reason: 'native enqueue MUST null wire_payload (REQ-d00119-B)',
+        reason: 'native enqueue MUST null wire_payload',
       );
       expect(head.envelopeMetadata, isNotNull);
       expect(head.envelopeMetadata!.batchId, 'batch-x');
@@ -170,15 +165,14 @@ void main() {
       expect(
         head.transformVersion,
         isNull,
-        reason: 'native rows carry no transform_version (REQ-d00152-E)',
+        reason: 'native rows carry no transform_version',
       );
     });
 
-    // Verifies: REQ-d00119-B + REQ-d00152-B+E — when wirePayload is
     // supplied, the bytes are decoded into a JSON-Map wirePayload
     // (verbatim hand-back to Destination.send) and envelopeMetadata is
     // null.
-    test('REQ-d00119-B: enqueueFifo with wirePayload stores '
+    test('enqueueFifo with wirePayload stores '
         'wire_payload, envelope_metadata is null', () async {
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       // 3rd-party shape: a JSON Map payload encoded to UTF-8 bytes.
@@ -198,15 +192,13 @@ void main() {
       expect(
         head.envelopeMetadata,
         isNull,
-        reason:
-            '3rd-party rows MUST NOT carry envelope_metadata (REQ-d00119-K)',
+        reason: '3rd-party rows MUST NOT carry envelope_metadata',
       );
       expect(head.wireFormat, 'application/json');
     });
 
-    // Verifies: REQ-d00152-B+E — supplying both payload shapes
     // (wirePayload AND nativeEnvelope) is rejected with ArgumentError.
-    test('REQ-d00152-B+E: enqueueFifo rejects supplying both wirePayload '
+    test('enqueueFifo rejects supplying both wirePayload '
         'and nativeEnvelope', () async {
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
@@ -227,10 +219,9 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00152-B+E — supplying neither payload shape is
     // rejected with ArgumentError; the FIFO row demands one (and only
     // one) payload column to be set.
-    test('REQ-d00152-B+E: enqueueFifo rejects supplying neither wirePayload '
+    test('enqueueFifo rejects supplying neither wirePayload '
         'nor nativeEnvelope', () async {
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
@@ -241,9 +232,8 @@ void main() {
 
     // -------- FIFO ordering --------
 
-    // Verifies: REQ-d00119-A — insertion order is preserved; readFifoHead
     // returns the oldest pending entry each time.
-    test('REQ-d00119-A: multiple enqueues preserve insertion order', () async {
+    test('multiple enqueues preserve insertion order', () async {
       final first = await enqueueSingle(
         backend,
         'primary',
@@ -312,58 +302,49 @@ void main() {
       expect(head2?.attempts, [attempt, attempt2]);
     });
 
-    // Verifies: REQ-d00127-B — appendAttempt on a missing row is a no-op,
     // does NOT throw. Closes the drain/unjam + drain/delete race (design
     // §6.6): drain awaits send() outside a transaction, so a concurrent
     // user op may remove the target row before drain's subsequent
     // appendAttempt transaction runs.
-    test(
-      'REQ-d00127-B: appendAttempt no-ops when entry does not exist',
-      () async {
-        final e1 = await enqueueSingle(
-          backend,
-          'primary',
-          eventId: 'e1',
-          sequenceNumber: 1,
-        );
-        // Must not throw.
-        await backend.appendAttempt(
-          'primary',
-          'nonexistent',
-          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
-        );
-        // The FIFO is otherwise untouched: e1 is still pending with no
-        // attempts.
-        final head = await backend.readFifoHead('primary');
-        expect(head?.entryId, e1.entryId);
-        expect(head?.attempts, isEmpty);
-      },
-    );
+    test('appendAttempt no-ops when entry does not exist', () async {
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      // Must not throw.
+      await backend.appendAttempt(
+        'primary',
+        'nonexistent',
+        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      );
+      // The FIFO is otherwise untouched: e1 is still pending with no
+      // attempts.
+      final head = await backend.readFifoHead('primary');
+      expect(head?.entryId, e1.entryId);
+      expect(head?.attempts, isEmpty);
+    });
 
-    // Verifies: REQ-d00127-B — appendAttempt against a FIFO store that
     // was never registered (destination that never existed, or whose
     // store was destroyed) is a no-op. In Sembast a never-written store
     // has zero records, so the records.isEmpty path covers both.
-    test(
-      'REQ-d00127-B: appendAttempt no-ops when FIFO store does not exist',
-      () async {
-        // 'ghost-dest' was never enqueued to.
-        await backend.appendAttempt(
-          'ghost-dest',
-          'any-entry',
-          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
-        );
-        // Nothing materialized in the unknown store.
-        expect(await backend.readFifoHead('ghost-dest'), isNull);
-      },
-    );
+    test('appendAttempt no-ops when FIFO store does not exist', () async {
+      // 'ghost-dest' was never enqueued to.
+      await backend.appendAttempt(
+        'ghost-dest',
+        'any-entry',
+        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      );
+      // Nothing materialized in the unknown store.
+      expect(await backend.readFifoHead('ghost-dest'), isNull);
+    });
 
     // -------- markFinal --------
 
-    // Verifies: REQ-d00119-D — markFinal does NOT delete the entry; it
     // flips final_status and, for sent, stamps sent_at. The entry lives
     // on as a send-log record.
-    test('REQ-d00119-D: markFinal sent retains the entry', () async {
+    test('markFinal sent retains the entry', () async {
       final e1 = await enqueueSingle(
         backend,
         'primary',
@@ -472,12 +453,11 @@ void main() {
       expect(head?.entryId, e2.entryId);
     });
 
-    // Verifies: REQ-d00124-A — readFifoHead returns the first row in
     // sequence_in_queue order whose final_status is null (pre-terminal;
     // drain may attempt) or wedged (blocking terminal; drain halts).
     // Rows whose final_status is sent or tombstoned are terminal-passable
     // and SHALL be skipped.
-    test('REQ-d00124-A: readFifoHead returns first row with finalStatus in '
+    test('readFifoHead returns first row with finalStatus in '
         '{null, wedged} — wedged row is returned, not skipped', () async {
       final e1 = await enqueueSingle(
         backend,
@@ -505,10 +485,9 @@ void main() {
       expect(head.finalStatus, FinalStatus.wedged);
     });
 
-    // Verifies: REQ-d00124-A — tombstoned rows are terminal-passable and
     // SHALL be skipped. A tombstoned row at sequence_in_queue position 1
     // followed by a pending row at position 2 returns the pending row.
-    test('REQ-d00124-A: readFifoHead skips tombstoned rows', () async {
+    test('readFifoHead skips tombstoned rows', () async {
       await enqueueSingle(backend, 'primary', eventId: 'e1', sequenceNumber: 1);
       final e2 = await enqueueSingle(
         backend,
@@ -532,12 +511,11 @@ void main() {
       expect(head.finalStatus, isNull);
     });
 
-    // Verifies: REQ-d00124-A — when every row's final_status is a
     // terminal-passable value ({sent, tombstoned}), readFifoHead returns
     // null. This is the "FIFO has no more drain-candidates and no wedge"
     // signal; drain returns on null, and tombstoneAndRefill is not
     // applicable (no head to act on).
-    test('REQ-d00124-A: readFifoHead returns null when only terminal-passable '
+    test('readFifoHead returns null when only terminal-passable '
         'rows exist (sent and tombstoned)', () async {
       final e1 = await enqueueSingle(
         backend,
@@ -557,12 +535,11 @@ void main() {
       expect(await backend.readFifoHead('primary'), isNull);
     });
 
-    // Verifies: REQ-d00127-A — markFinal on a missing row is a no-op, does
     // NOT throw. Closes the drain/unjam + drain/delete race (design §6.6):
     // drain awaits send() outside a transaction, so a concurrent user op
     // may remove the target row before drain's subsequent markFinal
     // transaction runs.
-    test('REQ-d00127-A: markFinal no-ops when entry does not exist', () async {
+    test('markFinal no-ops when entry does not exist', () async {
       final e1 = await enqueueSingle(
         backend,
         'primary',
@@ -577,16 +554,12 @@ void main() {
       expect(head?.finalStatus, isNull);
     });
 
-    // Verifies: REQ-d00127-A — markFinal against a FIFO store that was
     // never registered is a no-op. In Sembast a never-written store has
     // zero records, so the records.isEmpty path covers this case too.
-    test(
-      'REQ-d00127-A: markFinal no-ops when FIFO store does not exist',
-      () async {
-        await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
-        expect(await backend.readFifoHead('ghost-dest'), isNull);
-      },
-    );
+    test('markFinal no-ops when FIFO store does not exist', () async {
+      await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
+      expect(await backend.readFifoHead('ghost-dest'), isNull);
+    });
 
     // Verifies: drain() at-least-once semantics — a second markFinal with
     // the SAME status is a no-op (idempotent); it must NOT throw.
@@ -769,7 +742,7 @@ void main() {
     // Verifies that sequence_in_queue continues to grow past surviving
     // sent/exhausted entries — the backend's max-key+1 algorithm must not
     // re-use a slot vacated by a terminal-state entry (entries are
-    // retained forever per REQ-d00119-D).
+    // retained forever).
     test('sequence_in_queue advances across sent/exhausted entries '
         '(Prereq A, Option 1)', () async {
       final e1 = await enqueueSingle(
@@ -810,15 +783,14 @@ void main() {
       }
     });
 
-    // Verifies: REQ-d00119-E — sequence_in_queue is monotonic per
     // destination and NEVER reused. Even when a row is deleted from the
-    // underlying Sembast store (as the REQ-d00144-C trail sweep will
+    // underlying Sembast store (as the trail sweep will
     // do), a subsequent enqueue must NOT re-use the deleted row's
     // sequence_in_queue value. This test performs a raw `store.delete`
     // bypassing the backend API to simulate the deletion path, then
     // verifies the next enqueue picks up the next never-seen value
     // rather than refilling the vacated slot.
-    test('REQ-d00119-E: sequence_in_queue is monotonic per destination, '
+    test('sequence_in_queue is monotonic per destination, '
         'never reused', () async {
       await enqueueSingle(backend, 'primary', eventId: 'e1', sequenceNumber: 1);
       await enqueueSingle(backend, 'primary', eventId: 'e2', sequenceNumber: 2);
@@ -834,7 +806,7 @@ void main() {
       ]);
 
       // Raw delete of row whose sequence_in_queue is 2 (the e2 row).
-      // This simulates the REQ-d00144-C trail-sweep deletion path
+      // This simulates the -C trail-sweep deletion path
       // without depending on that API (which is introduced in Task 6).
       await store.record(2).delete(db);
 
@@ -881,14 +853,13 @@ void main() {
       expect(e5Record.key, 5);
     });
 
-    // -------- REQ-d00127-C: warning log on missing-row no-op --------
+    // -------- -C: warning log on missing-row no-op --------
 
-    // Verifies: REQ-d00127-C — both markFinal and appendAttempt emit a
     // warning-level diagnostic that names the method, the entry id, and
     // the destination id when they no-op due to a missing target. Tests
     // install a capture closure via debugLogSink so the assertion doesn't
     // depend on any global logger.
-    test('REQ-d00127-C: markFinal emits a warning that names method, '
+    test('markFinal emits a warning that names method, '
         'entry id, and destination id when it no-ops', () async {
       final logs = <String>[];
       backend.debugLogSink = logs.add;
@@ -904,7 +875,7 @@ void main() {
       expect(line, contains('drain/delete'));
     });
 
-    test('REQ-d00127-C: appendAttempt emits a warning that names method, '
+    test('appendAttempt emits a warning that names method, '
         'entry id, and destination id when it no-ops', () async {
       final logs = <String>[];
       backend.debugLogSink = logs.add;
@@ -924,10 +895,9 @@ void main() {
       expect(line, contains('drain/delete'));
     });
 
-    // Verifies: REQ-d00127-C — the warning is NOT emitted on a successful
     // happy-path call. Prevents a future regression where a code change
     // flipped the no-op branch in both directions.
-    test('REQ-d00127-C: no warning is emitted on a happy-path markFinal / '
+    test('no warning is emitted on a happy-path markFinal / '
         'appendAttempt', () async {
       final logs = <String>[];
       backend.debugLogSink = logs.add;
@@ -948,35 +918,29 @@ void main() {
       expect(logs, isEmpty);
     });
 
-    // -------- fill_cursor (REQ-d00128-G) --------
+    // -------- fill_cursor --------
 
-    // Verifies: REQ-d00128-G — readFillCursor returns -1 when no cursor has
     // ever been written for the destination, signalling "no row has yet been
     // enqueued into this FIFO".
-    test('REQ-d00128-G: readFillCursor returns -1 when unset', () async {
+    test('readFillCursor returns -1 when unset', () async {
       expect(await backend.readFillCursor('primary'), -1);
     });
 
-    // Verifies: REQ-d00128-G — writeFillCursor persists the value under
     // backend_state/fill_cursor_<destId>; readFillCursor observes it.
-    test(
-      'REQ-d00128-G: writeFillCursor then readFillCursor round-trips',
-      () async {
-        await backend.writeFillCursor('primary', 42);
-        expect(await backend.readFillCursor('primary'), 42);
+    test('writeFillCursor then readFillCursor round-trips', () async {
+      await backend.writeFillCursor('primary', 42);
+      expect(await backend.readFillCursor('primary'), 42);
 
-        // A second write replaces the prior value (monotonic advance is
-        // caller policy; the backend contract just stores what it's given).
-        await backend.writeFillCursor('primary', 100);
-        expect(await backend.readFillCursor('primary'), 100);
-      },
-    );
+      // A second write replaces the prior value (monotonic advance is
+      // caller policy; the backend contract just stores what it's given).
+      await backend.writeFillCursor('primary', 100);
+      expect(await backend.readFillCursor('primary'), 100);
+    });
 
-    // Verifies: REQ-d00128-G — the transactional writeFillCursorTxn variant
     // participates in the surrounding transaction's atomicity. If the
     // transaction body throws, the cursor write rolls back with everything
     // else and readFillCursor still returns the pre-transaction value.
-    test('REQ-d00128-G: writeFillCursor inside a transaction participates in '
+    test('writeFillCursor inside a transaction participates in '
         'atomicity (rollback confirms cursor was NOT advanced)', () async {
       // Pre-transaction baseline.
       await backend.writeFillCursor('primary', 7);
@@ -1000,9 +964,8 @@ void main() {
       expect(await backend.readFillCursor('primary'), 55);
     });
 
-    // Verifies: REQ-d00128-G — the fill_cursor is per-destination; writes to
     // one destination's cursor do NOT change another destination's cursor.
-    test('REQ-d00128-G: fill_cursor is per-destination (two destinations have '
+    test('fill_cursor is per-destination (two destinations have '
         'independent cursors)', () async {
       expect(await backend.readFillCursor('primary'), -1);
       expect(await backend.readFillCursor('secondary'), -1);
@@ -1018,10 +981,9 @@ void main() {
       expect(await backend.readFillCursor('primary'), 10);
     });
 
-    // Verifies: REQ-d00128-G — writeFillCursor rejects negative values
     // smaller than the -1 sentinel so a bogus caller cannot store a value
     // outside the fill_cursor's legal domain of [-1, infinity).
-    test('REQ-d00128-G: writeFillCursor rejects sequenceNumber < -1', () async {
+    test('writeFillCursor rejects sequenceNumber < -1', () async {
       await expectLater(
         backend.writeFillCursor('primary', -2),
         throwsArgumentError,
@@ -1047,20 +1009,15 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00148-A — empty FIFO returns an empty list (no throw).
-    test(
-      'REQ-d00148-A: listFifoEntries on unknown destination returns empty list',
-      () async {
-        final result = await backend.listFifoEntries('never-registered');
-        expect(result, isEmpty);
-      },
-    );
+    test('listFifoEntries on unknown destination returns empty list', () async {
+      final result = await backend.listFifoEntries('never-registered');
+      expect(result, isEmpty);
+    });
 
-    // Verifies: REQ-d00148-A+C — entries returned in sequence_in_queue order
     // with all FifoEntry fields populated (entryId, eventIds, sequenceInQueue
     // — populated by enqueueSingle through the existing enqueueFifo path).
     test(
-      'REQ-d00148-A+C: listFifoEntries returns entries ordered by sequence_in_queue',
+      'listFifoEntries returns entries ordered by sequence_in_queue',
       () async {
         final r1 = await enqueueSingle(
           backend,
@@ -1096,34 +1053,24 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00148-B — afterSequenceInQueue is exclusive.
-    test(
-      'REQ-d00148-B: listFifoEntries afterSequenceInQueue is exclusive',
-      () async {
-        for (var i = 1; i <= 4; i++) {
-          await enqueueSingle(
-            backend,
-            'dest',
-            eventId: 'e$i',
-            sequenceNumber: i,
-          );
-        }
-        final all = await backend.listFifoEntries('dest');
-        expect(all, hasLength(4));
-        final secondRow = all[1];
-        final after = await backend.listFifoEntries(
-          'dest',
-          afterSequenceInQueue: secondRow.sequenceInQueue,
-        );
-        // Exclusive: rows 3 and 4 only.
-        expect(after, hasLength(2));
-        expect(after.first.sequenceInQueue > secondRow.sequenceInQueue, isTrue);
-      },
-    );
+    test('listFifoEntries afterSequenceInQueue is exclusive', () async {
+      for (var i = 1; i <= 4; i++) {
+        await enqueueSingle(backend, 'dest', eventId: 'e$i', sequenceNumber: i);
+      }
+      final all = await backend.listFifoEntries('dest');
+      expect(all, hasLength(4));
+      final secondRow = all[1];
+      final after = await backend.listFifoEntries(
+        'dest',
+        afterSequenceInQueue: secondRow.sequenceInQueue,
+      );
+      // Exclusive: rows 3 and 4 only.
+      expect(after, hasLength(2));
+      expect(after.first.sequenceInQueue > secondRow.sequenceInQueue, isTrue);
+    });
 
-    // Verifies: REQ-d00148-B — limit caps the returned list size, taken
     // from the start of the ordered range.
-    test('REQ-d00148-B: listFifoEntries limit caps result size', () async {
+    test('listFifoEntries limit caps result size', () async {
       for (var i = 1; i <= 5; i++) {
         await enqueueSingle(backend, 'dest', eventId: 'e$i', sequenceNumber: i);
       }

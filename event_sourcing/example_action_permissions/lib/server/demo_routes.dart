@@ -1,6 +1,5 @@
 // lib/server/demo_routes.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167, REQ-d00168 — bootstrap and dispatch entry over HTTP.
 
 import 'dart:async';
 import 'dart:convert';

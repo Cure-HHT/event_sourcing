@@ -8,19 +8,12 @@ import 'package:provenance/provenance.dart';
 /// travel through the `StorageBackend` contract without leaking backend
 /// details into the abstraction. Lives in `lib/src/storage/` alongside the
 /// other storage value types (`FifoEntry`, etc.).
-// Implements: REQ-d00118-A — first-class entry_type field on the event record.
-// Implements: REQ-d00118-B — server_timestamp is NOT stored on the event;
 // the ingesting server is the sole authority on its own timestamp.
-// Implements: REQ-d00118-E — entry_type_version int field on the event record,
 // stamped by the substrate from EntryTypeDefinition.registeredVersion on every
 // local append; preserved verbatim on ingested events.
-// Implements: REQ-d00118-F — lib_format_version int field on the event record,
 // stamped by the lib from currentLibFormatVersion.
-// Implements: REQ-d00135-C — top-level user_id replaced by initiator; no
 // top-level user_id remains on StoredEvent.
-// Implements: REQ-d00136-A — flowToken is a nullable String? column on the
 // event record.
-// Implements: REQ-d00141-E — currentLibFormatVersion constant defined here.
 class StoredEvent {
   const StoredEvent({
     required this.key,
@@ -158,8 +151,7 @@ class StoredEvent {
   /// Storage shape version the current lib build produces. Stamped on every
   /// event by `EventStore.append` and propagated over the wire. Receivers
   /// reject events whose `lib_format_version > currentLibFormatVersion` per
-  /// REQ-d00145-L.
-  // Implements: REQ-d00141-E.
+  ///
   static const int currentLibFormatVersion = 1;
 
   /// Database key.
@@ -175,7 +167,7 @@ class StoredEvent {
   final String aggregateType;
 
   /// Structural kind of the entry within its aggregate type (e.g.,
-  /// 'order_placed', 'invoice_paid'). First-class per REQ-d00118-A.
+  /// 'order_placed', 'invoice_paid'). First-class
   final String entryType;
 
   /// Application schema version under which this event was authored.
@@ -187,12 +179,10 @@ class StoredEvent {
   /// `ProjectionInterpreter`) and boot-time snapshot promotion (in
   /// `EventStore.open`) read this field to decide whether the event needs
   /// to be lifted to a newer version before fold.
-  // Implements: REQ-d00118-E.
   final int entryTypeVersion;
 
   /// Storage shape version this event was persisted with. Stamped by the
   /// lib from [currentLibFormatVersion] on every append.
-  // Implements: REQ-d00118-F.
   final int libFormatVersion;
 
   /// User-intent discriminator for the event: 'finalized' | 'checkpoint' |
@@ -233,18 +223,17 @@ class StoredEvent {
   /// accessor for cross-hop discrimination logic (e.g.
   /// `EventStore.isLocallyOriginated`) and for read-side queries that
   /// project on originator identity. Throws `StateError` when the
-  /// provenance list is missing, non-list, or empty: REQ-d00115 requires
+  /// provenance list is missing, non-list, or empty:  requires
   /// every event to carry at least one provenance entry, so an absent or
   /// empty list indicates corrupted or malformed data and surfacing it
   /// loudly is the right behavior.
-  // Implements: REQ-d00154-A — originator hop convenience getter; throws
   // StateError on empty/missing provenance per the assertion contract.
   ProvenanceEntry get originatorHop {
     final raw = metadata['provenance'];
     if (raw is! List || raw.isEmpty) {
       throw StateError(
         'StoredEvent has empty or missing provenance; expected at least the '
-        'originator entry per REQ-d00115',
+        'originator entry',
       );
     }
     final first = raw.first;

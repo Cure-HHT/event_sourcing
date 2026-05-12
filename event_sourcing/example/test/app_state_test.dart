@@ -10,7 +10,7 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
   // Build a minimal EventStore wired with the system entry types so
-  // registry mutations can stamp their REQ-d00129-J/K/L/M/N audit
+  // registry mutations can stamp their -J/K/L/M/N audit
   // events without bootstrapping the full datastore facade.
   final entryTypes = EntryTypeRegistry();
   for (final defn in kSystemEntryTypes) {

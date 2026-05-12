@@ -31,9 +31,7 @@ const int _rebuildChunkSize = 500;
 ///
 /// Returns the number of events processed. Idempotent — running twice on
 /// the same log with the same map produces the same view rows.
-// Implements: REQ-d00140-D — rebuildView per-view, idempotent; declarative
 //   ProjectionSpec replay; strict-superset target-version map.
-// Implements: REQ-d00140-I — view_target_versions cleared and rewritten
 //   atomically with the view rebuild.
 Future<int> rebuildView({
   required EventStore store,

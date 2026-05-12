@@ -1,8 +1,6 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166 (Action Interface Contract): unit-of-work interface that
 //   every audited command implements. Pure parseInput/validate; effectful
 //   execute returns events for atomic persistence.
-//   REQ-d00170-F (Idempotency Contract): per-action idempotencyTtl with
 //   24-hour default.
 
 import 'package:event_sourcing/src/actions/action_context.dart';
@@ -21,13 +19,8 @@ import 'package:event_sourcing/src/actions/permission.dart';
 ///                                                events for atomic
 ///                                                persistence)
 //
-// Implements: REQ-d00166-A — interface shape with name/description/
 //             permissions/idempotency + parseInput/validate/execute methods.
-//             REQ-d00166-B,C — purity contracts on parseInput and validate
 //             (no I/O; enforced by review, not the type system).
-//             REQ-d00166-D — execute returns ExecutionResult.
-//             REQ-d00166-E — idempotency declared per action.
-//             REQ-d00170-F — per-action idempotencyTtl with 24-hour default.
 abstract class Action<TInput, TResult> {
   const Action();
 

@@ -1,6 +1,5 @@
 // lib/server/demo_idempotency_store.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00170-D,E (REQ-IDEMPOT) — same contract as InMemoryIdempotencyStore;
 //   adds an inspection-only `listEntries()` for the demo inspector pane.
 
 import 'package:event_sourcing/event_sourcing.dart';

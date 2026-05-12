@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166-D: EventDraft value type input to Action.execute.
 
 /// Input value for `appendWithSecurity`: the event to be persisted.
 ///
@@ -7,7 +6,6 @@
 /// and `metadata['action_name']` before persisting. `flowToken` is optional
 /// input from the action; the dispatcher uses the call parameter as fallback.
 //
-// Implements: REQ-d00166-D — value type holding aggregateId, aggregateType,
 // entryType, eventType, data, flowToken, metadata.
 class EventDraft {
   const EventDraft({

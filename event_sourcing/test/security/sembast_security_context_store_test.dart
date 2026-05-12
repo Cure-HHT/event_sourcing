@@ -15,8 +15,7 @@ Future<(SembastBackend, SembastSecurityContextStore)> _setup() async {
 
 void main() {
   group('SembastSecurityContextStore', () {
-    // Verifies: REQ-d00137-D — read on missing returns null.
-    test('REQ-d00137-D: read on missing returns null', () async {
+    test('read on missing returns null', () async {
       final (backend, store) = await _setup();
       expect(await store.read('nope'), isNull);
       await backend.close();
@@ -36,29 +35,25 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00137-B — one-way FK: deleting security row does not
     // touch the event log.
-    test(
-      'REQ-d00137-B: deleteInTxn on security row does not touch event log',
-      () async {
-        final (backend, store) = await _setup();
-        await backend.transaction((txn) async {
-          await store.writeInTxn(
-            txn,
-            EventSecurityContext(
-              eventId: 'e-2',
-              recordedAt: DateTime.utc(2026, 4, 22),
-            ),
-          );
-        });
-        await backend.transaction((txn) async {
-          await store.deleteInTxn(txn, 'e-2');
-        });
-        expect(await store.read('e-2'), isNull);
-        expect(await backend.findAllEvents(), isEmpty);
-        await backend.close();
-      },
-    );
+    test('deleteInTxn on security row does not touch event log', () async {
+      final (backend, store) = await _setup();
+      await backend.transaction((txn) async {
+        await store.writeInTxn(
+          txn,
+          EventSecurityContext(
+            eventId: 'e-2',
+            recordedAt: DateTime.utc(2026, 4, 22),
+          ),
+        );
+      });
+      await backend.transaction((txn) async {
+        await store.deleteInTxn(txn, 'e-2');
+      });
+      expect(await store.read('e-2'), isNull);
+      expect(await backend.findAllEvents(), isEmpty);
+      await backend.close();
+    });
 
     test(
       'findOlderThanInTxn / findUnredactedOlderThanInTxn select by recordedAt',

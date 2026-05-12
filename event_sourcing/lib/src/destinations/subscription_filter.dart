@@ -14,10 +14,10 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 ///    [kReservedSystemEntryTypeIds]. When `true`, system events bypass
 ///    [entryTypes] entirely and pass [matches]. When `false` (the
 ///    default), system events are rejected by [matches] regardless of
-///    [entryTypes] content. See REQ-d00128-J / REQ-d00154-F.
+///    [entryTypes] content. /
 /// 2. [entryTypes] — allow-list over `event.entry_type` for user events.
 ///    `null` means "any user entry type"; an **empty list** means
-///    "nothing matches" (the distinction is deliberate; see REQ-d00122-F).
+///    "nothing matches" (the distinction is deliberate; ).
 ///    Reserved system entry types route through [includeSystemEvents]
 ///    and never consult this list.
 /// 3. [eventTypes] — allow-list over `event.event_type` with the same
@@ -33,10 +33,8 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 /// [includeSystemEvents] defaults to `false`) admits no system events,
 /// which is the default for destinations that want unconditional fan-out
 /// of user events without forensic visibility into config-change audits.
-// Implements: REQ-d00122-B+F — deterministic event selection, allow-lists
 // by entry_type / event_type with null-vs-empty distinction, optional
 // predicate escape-hatch.
-// Implements: REQ-d00128-J, REQ-d00154-F — system entry types dispatch
 // through includeSystemEvents (opt-in) rather than entryTypes; matches
 // is the single authority on per-destination admission for both user
 // and system events.
@@ -80,7 +78,6 @@ class SubscriptionFilter {
   /// upstream node's local-state mutations sets this to `true` (paired
   /// with a possibly-empty [entryTypes] when the destination wants only
   /// system events).
-  // Implements: REQ-d00128-J, REQ-d00154-F — system-event opt-in.
   final bool includeSystemEvents;
 
   /// Returns `true` iff [event] should be enqueued to the destination
@@ -93,9 +90,7 @@ class SubscriptionFilter {
   /// [entryTypes] allow-list is consulted only for user entry types.
   /// [eventTypes] and [predicate] are consulted for both system and
   /// user events that cleared the entry-type gate.
-  // Implements: REQ-d00122-F — null-vs-empty list distinction; predicate
   // short-circuits when allow-lists fail.
-  // Implements: REQ-d00128-J, REQ-d00154-F — system entry types dispatch
   // through includeSystemEvents, bypassing entryTypes; user entry types
   // use the entryTypes list.
   bool matches(StoredEvent event) {

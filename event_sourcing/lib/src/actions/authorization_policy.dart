@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00173-A+E: AuthorizationPolicy exposes exactly two methods —
 //   isPermitted (per-dispatch authorization) and permissionsFor
 //   (session-start snapshot generation).
 

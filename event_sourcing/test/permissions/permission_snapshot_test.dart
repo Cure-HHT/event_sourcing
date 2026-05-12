@@ -1,11 +1,10 @@
 // test/permissions/permission_snapshot_test.dart
-// Verifies: REQ-d00177-A (PermissionSnapshot value type and JSON).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('PermissionSnapshot', () {
-    test('REQ-d00177-A: round-trips through JSON', () {
+    test('round-trips through JSON', () {
       final snap = PermissionSnapshot(
         role: 'admin',
         grants: <Permission>{

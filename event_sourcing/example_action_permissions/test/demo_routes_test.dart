@@ -1,5 +1,4 @@
 // test/demo_routes_test.dart
-// Verifies: REQ-d00167, REQ-d00168 — HTTP entry routes the request through
 // the dispatcher and returns the correct wire shape.
 import 'dart:convert';
 

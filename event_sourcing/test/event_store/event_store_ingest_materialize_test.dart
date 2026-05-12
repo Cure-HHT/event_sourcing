@@ -1,4 +1,3 @@
-// Verifies: REQ-d00121-K, REQ-d00145-N, REQ-d00154-D — receivers project
 //   ingested events into materialized views identically to local-appended
 //   events. The projection interpreter on the ingest path is symmetric with
 //   the interpreter on the append path (same gates, same atomicity, same
@@ -93,229 +92,221 @@ BatchEnvelope _buildEnvelope(
 // ---------------------------------------------------------------------------
 
 void main() {
-  group(
-    'EventStore ingest path projection interpreter (REQ-d00121-K, REQ-d00145-N)',
-    () {
-      // Verifies: REQ-d00121-K, REQ-d00145-N — ingestEvent fires the
-      //   projection interpreter per-event with the same gates as local-append.
-      test('REQ-d00121-K + REQ-d00145-N: ingestEvent populates toy_view '
-          'from a freshly-ingested user event', () async {
-        final orig = await _openDatastore(
-          hopId: 'mobile-device',
-          identifier: 'device-1',
+  group('EventStore ingest path projection interpreter', () {
+    //   projection interpreter per-event with the same gates as local-append.
+    test('ingestEvent populates toy_view '
+        'from a freshly-ingested user event', () async {
+      final orig = await _openDatastore(
+        hopId: 'mobile-device',
+        identifier: 'device-1',
+      );
+      final dest = await _openDatastore(
+        hopId: 'portal-server',
+        identifier: 'portal-1',
+        softwareVersion: 'portal@0.1.0',
+      );
+
+      try {
+        // Originate an event on the sender; it materializes locally.
+        final original = await orig.datastore.eventStore.append(
+          entryType: 'demo_note',
+          aggregateId: 'agg-ingest-1',
+          aggregateType: 'SampleAggregate',
+          eventType: 'finalized',
+          data: const <String, Object?>{
+            'answers': <String, Object?>{'title': 'hello', 'body': 'world'},
+          },
+          initiator: const UserInitiator('u-orig'),
         );
-        final dest = await _openDatastore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
-        );
+        expect(original, isNotNull);
 
-        try {
-          // Originate an event on the sender; it materializes locally.
-          final original = await orig.datastore.eventStore.append(
-            entryType: 'demo_note',
-            aggregateId: 'agg-ingest-1',
-            aggregateType: 'SampleAggregate',
-            eventType: 'finalized',
-            data: const <String, Object?>{
-              'answers': <String, Object?>{'title': 'hello', 'body': 'world'},
-            },
-            initiator: const UserInitiator('u-orig'),
-          );
-          expect(original, isNotNull);
-
-          // Pre-ingest: receiver has no toy_view rows for this aggregate.
-          final preRows = await dest.backend.findViewRows('toy_view');
-          final preUser = preRows
-              .where((r) => r['latestEventId'] == original!.eventId)
-              .toList();
-          expect(preUser, isEmpty);
-
-          // Ingest the originator's event at the receiver.
-          final outcome = await dest.datastore.eventStore.ingestEvent(
-            original!,
-          );
-          expect(outcome.outcome, equals(IngestOutcome.ingested));
-
-          // Post-ingest: receiver has one toy_view row for this aggregate.
-          final postRows = await dest.backend.findViewRows('toy_view');
-          final postUser = postRows
-              .where(
-                (r) =>
-                    r['aggregateId'] == 'agg-ingest-1' ||
-                    r['latestEventId'] == original.eventId,
-              )
-              .toList();
-          expect(postUser, hasLength(1));
-          final row = postUser.first;
-          // AggregateProjectionSpec stores the answers map inline.
-          final answers = row['answers'] as Map<String, Object?>;
-          expect(answers['title'], equals('hello'));
-          expect(answers['body'], equals('world'));
-        } finally {
-          await orig.close();
-          await dest.close();
-        }
-      });
-
-      // Verifies: REQ-d00121-K — ingestBatch projects each event in the batch
-      //   into the toy_view view atomically with the event log write.
-      test('REQ-d00121-K: ingestBatch projects each event in batch into '
-          'toy_view', () async {
-        final orig = await _openDatastore(
-          hopId: 'mobile-device',
-          identifier: 'device-1',
-        );
-        final dest = await _openDatastore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
-        );
-
-        try {
-          final e1 = await orig.datastore.eventStore.append(
-            entryType: 'demo_note',
-            aggregateId: 'agg-batch-A',
-            aggregateType: 'SampleAggregate',
-            eventType: 'finalized',
-            data: const <String, Object?>{
-              'answers': <String, Object?>{'idx': 'a'},
-            },
-            initiator: const UserInitiator('u'),
-          );
-          final e2 = await orig.datastore.eventStore.append(
-            entryType: 'demo_note',
-            aggregateId: 'agg-batch-B',
-            aggregateType: 'SampleAggregate',
-            eventType: 'finalized',
-            data: const <String, Object?>{
-              'answers': <String, Object?>{'idx': 'b'},
-            },
-            initiator: const UserInitiator('u'),
-          );
-          final e3 = await orig.datastore.eventStore.append(
-            entryType: 'demo_note',
-            aggregateId: 'agg-batch-C',
-            aggregateType: 'SampleAggregate',
-            eventType: 'finalized',
-            data: const <String, Object?>{
-              'answers': <String, Object?>{'idx': 'c'},
-            },
-            initiator: const UserInitiator('u'),
-          );
-          expect(e1, isNotNull);
-          expect(e2, isNotNull);
-          expect(e3, isNotNull);
-
-          final envelope = _buildEnvelope(
-            <StoredEvent>[e1!, e2!, e3!],
-            senderHop: 'mobile-device',
-            senderIdentifier: 'device-1',
-            senderSoftwareVersion: 'clinical_diary@1.0.0',
-          );
-
-          final result = await dest.datastore.eventStore.ingestBatch(
-            envelope.encode(),
-            wireFormat: BatchEnvelope.wireFormat,
-          );
-          expect(result.events, hasLength(3));
-          for (final outcome in result.events) {
-            expect(outcome.outcome, equals(IngestOutcome.ingested));
-          }
-
-          final rows = await dest.backend.findViewRows('toy_view');
-          // Only user-event rows (exclude any system-aggregate rows).
-          final userRows = rows
-              .where(
-                (r) =>
-                    r['aggregateId'] == 'agg-batch-A' ||
-                    r['aggregateId'] == 'agg-batch-B' ||
-                    r['aggregateId'] == 'agg-batch-C',
-              )
-              .toList();
-          expect(userRows, hasLength(3));
-          final byId = <String, Map<String, Object?>>{
-            for (final r in userRows) r['aggregateId'] as String: r,
-          };
-          final aAnswers =
-              byId['agg-batch-A']!['answers'] as Map<String, Object?>;
-          final bAnswers =
-              byId['agg-batch-B']!['answers'] as Map<String, Object?>;
-          final cAnswers =
-              byId['agg-batch-C']!['answers'] as Map<String, Object?>;
-          expect(aAnswers['idx'], equals('a'));
-          expect(bAnswers['idx'], equals('b'));
-          expect(cAnswers['idx'], equals('c'));
-        } finally {
-          await orig.close();
-          await dest.close();
-        }
-      });
-
-      // Verifies: REQ-d00154-D — ingested system events do NOT fire
-      //   the projection interpreter because the toy_view spec's
-      //   SubscriptionFilter.entryTypes excludes system entry types.
-      test('REQ-d00154-D: ingested system events do NOT populate toy_view '
-          '(excluded by SubscriptionFilter)', () async {
-        final dest = await _openDatastore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
-        );
-
-        final sender = await _openDatastore(
-          hopId: 'mobile-device',
-          identifier: 'sender-id-1',
-        );
-        final senderEvents = await sender.backend.findAllEvents();
-        final senderSystemEvent = senderEvents.firstWhere(
-          (e) => e.entryType == kEntryTypeRegistryInitializedEntryType,
-        );
-        expect(
-          kReservedSystemEntryTypeIds.contains(senderSystemEvent.entryType),
-          isTrue,
-          reason: 'precondition: sender system event must be a reserved id',
-        );
-
-        // Snapshot toy_view row count before ingest.
+        // Pre-ingest: receiver has no toy_view rows for this aggregate.
         final preRows = await dest.backend.findViewRows('toy_view');
-        final preCount = preRows.length;
+        final preUser = preRows
+            .where((r) => r['latestEventId'] == original!.eventId)
+            .toList();
+        expect(preUser, isEmpty);
 
-        try {
-          final envelope = _buildEnvelope(
-            <StoredEvent>[senderSystemEvent],
-            senderHop: 'mobile-device',
-            senderIdentifier: 'sender-id-1',
-            senderSoftwareVersion: 'clinical_diary@1.0.0',
-          );
+        // Ingest the originator's event at the receiver.
+        final outcome = await dest.datastore.eventStore.ingestEvent(original!);
+        expect(outcome.outcome, equals(IngestOutcome.ingested));
 
-          final result = await dest.datastore.eventStore.ingestBatch(
-            envelope.encode(),
-            wireFormat: BatchEnvelope.wireFormat,
-          );
-          expect(result.events, hasLength(1));
-          expect(
-            result.events.first.outcome,
-            anyOf(
-              equals(IngestOutcome.ingested),
-              equals(IngestOutcome.duplicate),
-            ),
-          );
+        // Post-ingest: receiver has one toy_view row for this aggregate.
+        final postRows = await dest.backend.findViewRows('toy_view');
+        final postUser = postRows
+            .where(
+              (r) =>
+                  r['aggregateId'] == 'agg-ingest-1' ||
+                  r['latestEventId'] == original.eventId,
+            )
+            .toList();
+        expect(postUser, hasLength(1));
+        final row = postUser.first;
+        // AggregateProjectionSpec stores the answers map inline.
+        final answers = row['answers'] as Map<String, Object?>;
+        expect(answers['title'], equals('hello'));
+        expect(answers['body'], equals('world'));
+      } finally {
+        await orig.close();
+        await dest.close();
+      }
+    });
 
-          // toy_view row count unchanged — system event excluded by filter.
-          final postRows = await dest.backend.findViewRows('toy_view');
-          expect(
-            postRows.length,
-            equals(preCount),
-            reason:
-                'system entry type is not in toy_view SubscriptionFilter; '
-                'no new rows should appear.',
-          );
-        } finally {
-          await sender.close();
-          await dest.close();
+    //   into the toy_view view atomically with the event log write.
+    test('ingestBatch projects each event in batch into '
+        'toy_view', () async {
+      final orig = await _openDatastore(
+        hopId: 'mobile-device',
+        identifier: 'device-1',
+      );
+      final dest = await _openDatastore(
+        hopId: 'portal-server',
+        identifier: 'portal-1',
+        softwareVersion: 'portal@0.1.0',
+      );
+
+      try {
+        final e1 = await orig.datastore.eventStore.append(
+          entryType: 'demo_note',
+          aggregateId: 'agg-batch-A',
+          aggregateType: 'SampleAggregate',
+          eventType: 'finalized',
+          data: const <String, Object?>{
+            'answers': <String, Object?>{'idx': 'a'},
+          },
+          initiator: const UserInitiator('u'),
+        );
+        final e2 = await orig.datastore.eventStore.append(
+          entryType: 'demo_note',
+          aggregateId: 'agg-batch-B',
+          aggregateType: 'SampleAggregate',
+          eventType: 'finalized',
+          data: const <String, Object?>{
+            'answers': <String, Object?>{'idx': 'b'},
+          },
+          initiator: const UserInitiator('u'),
+        );
+        final e3 = await orig.datastore.eventStore.append(
+          entryType: 'demo_note',
+          aggregateId: 'agg-batch-C',
+          aggregateType: 'SampleAggregate',
+          eventType: 'finalized',
+          data: const <String, Object?>{
+            'answers': <String, Object?>{'idx': 'c'},
+          },
+          initiator: const UserInitiator('u'),
+        );
+        expect(e1, isNotNull);
+        expect(e2, isNotNull);
+        expect(e3, isNotNull);
+
+        final envelope = _buildEnvelope(
+          <StoredEvent>[e1!, e2!, e3!],
+          senderHop: 'mobile-device',
+          senderIdentifier: 'device-1',
+          senderSoftwareVersion: 'clinical_diary@1.0.0',
+        );
+
+        final result = await dest.datastore.eventStore.ingestBatch(
+          envelope.encode(),
+          wireFormat: BatchEnvelope.wireFormat,
+        );
+        expect(result.events, hasLength(3));
+        for (final outcome in result.events) {
+          expect(outcome.outcome, equals(IngestOutcome.ingested));
         }
-      });
-    },
-  );
+
+        final rows = await dest.backend.findViewRows('toy_view');
+        // Only user-event rows (exclude any system-aggregate rows).
+        final userRows = rows
+            .where(
+              (r) =>
+                  r['aggregateId'] == 'agg-batch-A' ||
+                  r['aggregateId'] == 'agg-batch-B' ||
+                  r['aggregateId'] == 'agg-batch-C',
+            )
+            .toList();
+        expect(userRows, hasLength(3));
+        final byId = <String, Map<String, Object?>>{
+          for (final r in userRows) r['aggregateId'] as String: r,
+        };
+        final aAnswers =
+            byId['agg-batch-A']!['answers'] as Map<String, Object?>;
+        final bAnswers =
+            byId['agg-batch-B']!['answers'] as Map<String, Object?>;
+        final cAnswers =
+            byId['agg-batch-C']!['answers'] as Map<String, Object?>;
+        expect(aAnswers['idx'], equals('a'));
+        expect(bAnswers['idx'], equals('b'));
+        expect(cAnswers['idx'], equals('c'));
+      } finally {
+        await orig.close();
+        await dest.close();
+      }
+    });
+
+    //   the projection interpreter because the toy_view spec's
+    //   SubscriptionFilter.entryTypes excludes system entry types.
+    test('ingested system events do NOT populate toy_view '
+        '(excluded by SubscriptionFilter)', () async {
+      final dest = await _openDatastore(
+        hopId: 'portal-server',
+        identifier: 'portal-1',
+        softwareVersion: 'portal@0.1.0',
+      );
+
+      final sender = await _openDatastore(
+        hopId: 'mobile-device',
+        identifier: 'sender-id-1',
+      );
+      final senderEvents = await sender.backend.findAllEvents();
+      final senderSystemEvent = senderEvents.firstWhere(
+        (e) => e.entryType == kEntryTypeRegistryInitializedEntryType,
+      );
+      expect(
+        kReservedSystemEntryTypeIds.contains(senderSystemEvent.entryType),
+        isTrue,
+        reason: 'precondition: sender system event must be a reserved id',
+      );
+
+      // Snapshot toy_view row count before ingest.
+      final preRows = await dest.backend.findViewRows('toy_view');
+      final preCount = preRows.length;
+
+      try {
+        final envelope = _buildEnvelope(
+          <StoredEvent>[senderSystemEvent],
+          senderHop: 'mobile-device',
+          senderIdentifier: 'sender-id-1',
+          senderSoftwareVersion: 'clinical_diary@1.0.0',
+        );
+
+        final result = await dest.datastore.eventStore.ingestBatch(
+          envelope.encode(),
+          wireFormat: BatchEnvelope.wireFormat,
+        );
+        expect(result.events, hasLength(1));
+        expect(
+          result.events.first.outcome,
+          anyOf(
+            equals(IngestOutcome.ingested),
+            equals(IngestOutcome.duplicate),
+          ),
+        );
+
+        // toy_view row count unchanged — system event excluded by filter.
+        final postRows = await dest.backend.findViewRows('toy_view');
+        expect(
+          postRows.length,
+          equals(preCount),
+          reason:
+              'system entry type is not in toy_view SubscriptionFilter; '
+              'no new rows should appear.',
+        );
+      } finally {
+        await sender.close();
+        await dest.close();
+      }
+    });
+  });
 }

@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00172-A: Permission scope class enumeration. Closed set of three.
 
 /// The session-context precondition a permission attaches to.
 ///

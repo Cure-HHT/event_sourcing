@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00174 (Materializer-in-transaction pattern) — applies user_provisioned
 //   events to the in-memory UserDirectory; runs inside the events.transaction
 //   block as part of EventStore commit (when wired through Materializer
 //   protocol from event_sourcing in Task 14).

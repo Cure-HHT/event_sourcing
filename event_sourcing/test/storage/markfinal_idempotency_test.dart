@@ -1,6 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00119-D: one-way final_status transition (null -> terminal)
-//   REQ-d00127-A: markFinal no-op on missing row / missing FIFO store
 
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';

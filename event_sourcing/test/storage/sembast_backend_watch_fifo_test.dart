@@ -27,21 +27,16 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00150-A — snapshot-on-subscribe is empty for an
     // unknown destination.
-    test(
-      'REQ-d00150-A: watchFifo emits empty snapshot for unknown destination',
-      () async {
-        final stream = backend.watchFifo('unknown-dest');
-        await expectLater(
-          stream,
-          emits(isA<List<FifoEntry>>().having((l) => l.length, 'length', 0)),
-        );
-      },
-    );
+    test('watchFifo emits empty snapshot for unknown destination', () async {
+      final stream = backend.watchFifo('unknown-dest');
+      await expectLater(
+        stream,
+        emits(isA<List<FifoEntry>>().having((l) => l.length, 'length', 0)),
+      );
+    });
 
-    // Verifies: REQ-d00150-A — enqueue triggers a new snapshot emission.
-    test('REQ-d00150-A: watchFifo emits a new snapshot on enqueue', () async {
+    test('watchFifo emits a new snapshot on enqueue', () async {
       final stream = backend.watchFifo('dest');
       // Buffer emissions; then enqueue.
       final emissions = <List<FifoEntry>>[];
@@ -62,8 +57,7 @@ void main() {
       expect(emissions.last.first.eventIds, ['e1']);
     });
 
-    // Verifies: REQ-d00150-A — markFinal triggers a re-emission.
-    test('REQ-d00150-A: watchFifo emits a snapshot on markFinal', () async {
+    test('watchFifo emits a snapshot on markFinal', () async {
       final entry = await enqueueSingle(
         backend,
         'dest',
@@ -87,40 +81,30 @@ void main() {
       expect(emissions.last.first.finalStatus, FinalStatus.sent);
     });
 
-    // Verifies: REQ-d00150-C — cross-destination isolation.
-    test(
-      'REQ-d00150-C: watchFifo is per-destination (no cross-destination noise)',
-      () async {
-        final streamA = backend.watchFifo('dest-A');
-        final emA = <List<FifoEntry>>[];
-        final sa = streamA.listen(emA.add);
-        await Future<void>.delayed(Duration.zero);
-        emA.clear();
+    test('watchFifo is per-destination (no cross-destination noise)', () async {
+      final streamA = backend.watchFifo('dest-A');
+      final emA = <List<FifoEntry>>[];
+      final sa = streamA.listen(emA.add);
+      await Future<void>.delayed(Duration.zero);
+      emA.clear();
 
-        await enqueueSingle(
-          backend,
-          'dest-B',
-          eventId: 'b1',
-          sequenceNumber: 1,
-        );
-        // Two pumps so a mistakenly-wired emission would have time to
-        // surface on dest-A's collector before we assert isEmpty.
-        await Future<void>.delayed(Duration.zero);
-        await Future<void>.delayed(Duration.zero);
+      await enqueueSingle(backend, 'dest-B', eventId: 'b1', sequenceNumber: 1);
+      // Two pumps so a mistakenly-wired emission would have time to
+      // surface on dest-A's collector before we assert isEmpty.
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
 
-        await sa.cancel();
-        // Mutating dest-B did not emit to dest-A.
-        expect(emA, isEmpty);
-      },
-    );
+      await sa.cancel();
+      // Mutating dest-B did not emit to dest-A.
+      expect(emA, isEmpty);
+    });
 
-    // Verifies: REQ-d00150-B + REQ-d00119-K — watchFifo snapshots include
     // envelopeMetadata for native (`esd/batch@1`) rows. Confirms the
     // Phase-4.12 stream-side FifoEntry path stays in sync with the
     // Phase-4.13 storage shape: the row-typed snapshot exposes the
     // envelope identity that drain reconstructs from, and wirePayload is
     // null on the emitted entry.
-    test('REQ-d00150-B + REQ-d00119-K: watchFifo emits envelopeMetadata for '
+    test('watchFifo emits envelopeMetadata for '
         'native rows; wirePayload is null on the snapshot', () async {
       // Enqueue a native esd/batch@1 row via the public enqueueFifo
       // nativeEnvelope: path so the row's envelope_metadata column is
@@ -159,7 +143,7 @@ void main() {
         isNull,
         reason:
             'native rows MUST surface a null wirePayload on the watchFifo '
-            'snapshot (REQ-d00119-B)',
+            'snapshot',
       );
       expect(entry.envelopeMetadata, isNotNull);
       expect(entry.envelopeMetadata!.batchId, 'batch-watch-1');
@@ -168,17 +152,13 @@ void main() {
       expect(entry.envelopeMetadata!.batchFormatVersion, '1');
     });
 
-    // Verifies: REQ-d00150-D — close() sends done; subsequent throws.
-    test(
-      'REQ-d00150-D: watchFifo closes on backend close, then throws',
-      () async {
-        final stream = backend.watchFifo('dest');
-        final fut = expectLater(stream, emitsThrough(emitsDone));
-        await backend.close();
-        await fut;
-        expect(() => backend.watchFifo('dest'), throwsStateError);
-        backend = await _openBackend('watch-fifo-reopen-$dbCounter.db');
-      },
-    );
+    test('watchFifo closes on backend close, then throws', () async {
+      final stream = backend.watchFifo('dest');
+      final fut = expectLater(stream, emitsThrough(emitsDone));
+      await backend.close();
+      await fut;
+      expect(() => backend.watchFifo('dest'), throwsStateError);
+      backend = await _openBackend('watch-fifo-reopen-$dbCounter.db');
+    });
   });
 }

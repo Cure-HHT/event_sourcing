@@ -1,5 +1,4 @@
 // test/demo_state_projection_test.dart
-// Verifies: REQ-d00168 (inspector projection), REQ-d00175 (matrix populated by seed)
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,7 +39,7 @@ users:
 void main() {
   group('PollingDemoStateProjection', () {
     test(
-      'REQ-d00168: snapshot includes seeded matrix, directory, no idempotency yet',
+      'snapshot includes seeded matrix, directory, no idempotency yet',
       () async {
         final components = await bootstrapDemoServer(
           dbPath: 'unused',

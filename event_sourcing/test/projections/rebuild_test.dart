@@ -1,4 +1,3 @@
-// Verifies: REQ-d00140-D — rebuildView per-view, idempotent; declarative
 //   ProjectionSpec replay; strict-superset target-version map.
 //
 // Rewritten in Task 22 (CUR-1317) to use the new rebuildView(store:, viewName:,
@@ -83,51 +82,46 @@ Future<void> _appendEvent(
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('rebuildView (ProjectionSpec-based) — REQ-d00140-D', () {
-    // Verifies: REQ-d00140-D — strict-superset failure raises ArgumentError
+  group('rebuildView (ProjectionSpec-based)`', () {
     // when a previously-registered entry type is omitted from the supplied
     // map, and no destructive write happens.
-    test(
-      'REQ-d00140-D: strict-superset failure on missing existing entry type',
-      () async {
-        final store = await _openStore();
-        // Seed an existing target-version entry for two entry types.
-        await store.backend.transaction((txn) async {
-          await store.backend.writeViewTargetVersionInTxn(
-            txn,
-            'toy_view',
-            'sample_event',
-            1,
-          );
-          await store.backend.writeViewTargetVersionInTxn(
-            txn,
-            'toy_view',
-            'other_event',
-            1,
-          );
-        });
-        await expectLater(
-          rebuildView(
-            store: store,
-            viewName: 'toy_view',
-            // 'other_event' missing — strict-superset violation.
-            targetVersionByEntryType: const <String, int>{'sample_event': 1},
-          ),
-          throwsArgumentError,
+    test('strict-superset failure on missing existing entry type', () async {
+      final store = await _openStore();
+      // Seed an existing target-version entry for two entry types.
+      await store.backend.transaction((txn) async {
+        await store.backend.writeViewTargetVersionInTxn(
+          txn,
+          'toy_view',
+          'sample_event',
+          1,
         );
-        // Existing entries remain.
-        final stored = await store.backend.transaction<Map<String, int>>(
-          (txn) async =>
-              store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+        await store.backend.writeViewTargetVersionInTxn(
+          txn,
+          'toy_view',
+          'other_event',
+          1,
         );
-        expect(stored.containsKey('other_event'), isTrue);
-        await store.backend.close();
-      },
-    );
+      });
+      await expectLater(
+        rebuildView(
+          store: store,
+          viewName: 'toy_view',
+          // 'other_event' missing — strict-superset violation.
+          targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        ),
+        throwsArgumentError,
+      );
+      // Existing entries remain.
+      final stored = await store.backend.transaction<Map<String, int>>(
+        (txn) async =>
+            store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+      );
+      expect(stored.containsKey('other_event'), isTrue);
+      await store.backend.close();
+    });
 
-    // Verifies: REQ-d00140-D — no ProjectionSpec registered for viewName
     // raises StateError.
-    test('REQ-d00140-D: missing ProjectionSpec raises StateError', () async {
+    test('missing ProjectionSpec raises StateError', () async {
       _dbCounter += 1;
       final db = await newDatabaseFactoryMemory().openDatabase(
         'rebuild-no-spec-$_dbCounter.db',
@@ -155,9 +149,8 @@ void main() {
       await store.backend.close();
     });
 
-    // Verifies: REQ-d00140-D — adding a new entry type during rebuild is
     // allowed (strict superset).
-    test('REQ-d00140-D: superset accept — new entry type added', () async {
+    test('superset accept — new entry type added', () async {
       final store = await _openStore();
       await store.backend.transaction((txn) async {
         await store.backend.writeViewTargetVersionInTxn(
@@ -193,9 +186,8 @@ void main() {
       await store.backend.close();
     });
 
-    // Verifies: REQ-d00140-D — running rebuild twice with the same map
     // produces the same view rows (idempotent).
-    test('REQ-d00140-D: idempotent rebuild', () async {
+    test('idempotent rebuild', () async {
       final store = await _openStore();
       await _appendEvent(
         store,
@@ -227,10 +219,9 @@ void main() {
       await store.backend.close();
     });
 
-    // Verifies: REQ-d00140-D — rebuildView clears the view and rewrites
     // view_target_versions atomically; view rows absent from the rebuilt
     // event log do not survive.
-    test('REQ-d00140-D: rebuild removes prior view rows not derivable from '
+    test('rebuild removes prior view rows not derivable from '
         'the event log', () async {
       final store = await _openStore();
       // Seed toy_view with a garbage row not backed by any event.
@@ -270,9 +261,8 @@ void main() {
       await store.backend.close();
     });
 
-    // Verifies: REQ-d00140-D — rebuildView processes all events correctly
     // when the log spans multiple streaming chunks.
-    test('REQ-d00140-D: large event log spanning multiple chunks rebuilds '
+    test('large event log spanning multiple chunks rebuilds '
         'correctly — no events dropped at chunk boundaries', () async {
       final store = await _openStore();
       const totalEvents = 1250;
@@ -316,32 +306,28 @@ void main() {
       await store.backend.close();
     });
 
-    // Verifies: REQ-d00140-D — promoter chain is applied during rebuild;
     // PromoterRegistry with no registered steps (identity) produces the
     // original payload unchanged.
-    test(
-      'REQ-d00140-D: identity promoter (empty registry) passes payload through',
-      () async {
-        final store = await _openStore();
-        await _appendEvent(
-          store,
-          eventId: 'e1',
-          aggregateId: 'agg-1',
-          entryType: 'sample_event',
-          eventType: 'finalized',
-          data: const <String, dynamic>{'answer': 42},
-          clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
-        );
-        final processed = await rebuildView(
-          store: store,
-          viewName: 'toy_view',
-          targetVersionByEntryType: const <String, int>{'sample_event': 1},
-        );
-        expect(processed, 1);
-        final rows = await store.backend.findViewRows('toy_view');
-        expect(rows.single['answer'], 42);
-        await store.backend.close();
-      },
-    );
+    test('identity promoter (empty registry) passes payload through', () async {
+      final store = await _openStore();
+      await _appendEvent(
+        store,
+        eventId: 'e1',
+        aggregateId: 'agg-1',
+        entryType: 'sample_event',
+        eventType: 'finalized',
+        data: const <String, dynamic>{'answer': 42},
+        clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
+      );
+      final processed = await rebuildView(
+        store: store,
+        viewName: 'toy_view',
+        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+      );
+      expect(processed, 1);
+      final rows = await store.backend.findViewRows('toy_view');
+      expect(rows.single['answer'], 42);
+      await store.backend.close();
+    });
   });
 }

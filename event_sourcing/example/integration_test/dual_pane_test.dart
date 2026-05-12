@@ -1,6 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00122: Destination contract surface
-//   REQ-d00152: Native destination wire format
 
 import 'dart:async';
 
@@ -337,7 +335,6 @@ void main() {
     );
   });
 
-  // Verifies: REQ-d00154-B — `EventStreamPanel` rows render `[L]` for
   //   locally-originated events and `[R]` for events ingested from
   //   another hop. Mobile records a GREEN press locally; after sync,
   //   that event lives on both panes' event logs but with different
@@ -345,57 +342,56 @@ void main() {
   //     - Mobile's pane shows the row with `[L]` (originator == self).
   //     - Portal's pane shows the same row with `[R]` (originator was
   //       mobile, not portal).
-  testWidgets(
-    'REQ-d00154-B: portal pane shows [R] for ingested events; mobile shows [L]',
-    (tester) async {
-      final setup = await _setupDualApp(testId: 'hop-badge');
-      tester.view.physicalSize = const Size(4000, 2800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets('portal pane shows [R] for ingested events; mobile shows [L]', (
+    tester,
+  ) async {
+    final setup = await _setupDualApp(testId: 'hop-badge');
+    tester.view.physicalSize = const Size(4000, 2800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(setup.app);
-      await tester.pumpAndSettle();
+    await tester.pumpWidget(setup.app);
+    await tester.pumpAndSettle();
 
-      // Tap GREEN inside the mobile pane to record a locally-originated
-      // event that the bridge will carry to the portal pane.
-      final greenInMobile = find.descendant(
+    // Tap GREEN inside the mobile pane to record a locally-originated
+    // event that the bridge will carry to the portal pane.
+    final greenInMobile = find.descendant(
+      of: _paneByLabel('MOBILE'),
+      matching: find.widgetWithText(TextButton, 'GREEN'),
+    );
+    expect(greenInMobile, findsOneWidget);
+    await tester.tap(greenInMobile, warnIfMissed: false);
+    await tester.pumpAndSettle();
+
+    // Drive sync: mobile fills + drains, portal ingests + processes.
+    await setup.mobile.tick();
+    await setup.portal.tick();
+    await tester.pumpAndSettle();
+
+    // Mobile pane: at least one `[L]` row (the locally-recorded GREEN).
+    expect(
+      find.descendant(
         of: _paneByLabel('MOBILE'),
-        matching: find.widgetWithText(TextButton, 'GREEN'),
-      );
-      expect(greenInMobile, findsOneWidget);
-      await tester.tap(greenInMobile, warnIfMissed: false);
-      await tester.pumpAndSettle();
+        matching: find.textContaining('[L] '),
+      ),
+      findsAtLeastNWidgets(1),
+      reason:
+          'mobile pane must render at least one [L] row for the GREEN '
+          'event it originated locally',
+    );
 
-      // Drive sync: mobile fills + drains, portal ingests + processes.
-      await setup.mobile.tick();
-      await setup.portal.tick();
-      await tester.pumpAndSettle();
-
-      // Mobile pane: at least one `[L]` row (the locally-recorded GREEN).
-      expect(
-        find.descendant(
-          of: _paneByLabel('MOBILE'),
-          matching: find.textContaining('[L] '),
-        ),
-        findsAtLeastNWidgets(1),
-        reason:
-            'mobile pane must render at least one [L] row for the GREEN '
-            'event it originated locally',
-      );
-
-      // Portal pane: at least one `[R]` row (the GREEN ingested from
-      // mobile via the downstream bridge).
-      expect(
-        find.descendant(
-          of: _paneByLabel('PORTAL'),
-          matching: find.textContaining('[R] '),
-        ),
-        findsAtLeastNWidgets(1),
-        reason:
-            'portal pane must render at least one [R] row for the GREEN '
-            'event it ingested from mobile',
-      );
-    },
-  );
+    // Portal pane: at least one `[R]` row (the GREEN ingested from
+    // mobile via the downstream bridge).
+    expect(
+      find.descendant(
+        of: _paneByLabel('PORTAL'),
+        matching: find.textContaining('[R] '),
+      ),
+      findsAtLeastNWidgets(1),
+      reason:
+          'portal pane must render at least one [R] row for the GREEN '
+          'event it ingested from mobile',
+    );
+  });
 }

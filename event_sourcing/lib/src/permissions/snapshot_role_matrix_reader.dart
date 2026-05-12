@@ -1,7 +1,5 @@
 // lib/src/permissions/snapshot_role_matrix_reader.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-C (client-side RoleMatrixReader),
-//   REQ-d00177-C (principal-scoped — only answers for snapshot.role).
 
 import 'package:event_sourcing/event_sourcing.dart';
 

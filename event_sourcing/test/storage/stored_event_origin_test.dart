@@ -1,9 +1,7 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00154-A: StoredEvent.originatorHop returns provenance.first; throws
 //                 StateError on empty provenance.
 //
-// Convention: per-test `// Verifies: REQ-d00154-A — <prose>` annotations and
-// the assertion ID `REQ-d00154-A` at the start of each test description.
+// the assertion ID `-A` at the start of each test description.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,9 +28,8 @@ StoredEvent _eventWithProvenance(List<Map<String, Object?>> provenance) =>
     );
 
 void main() {
-  // Verifies: REQ-d00154-A — originatorHop returns the first ProvenanceEntry,
   // materialized from metadata.provenance[0].
-  test('REQ-d00154-A: originatorHop returns provenance.first', () {
+  test('originatorHop returns provenance.first', () {
     final event = _eventWithProvenance(<Map<String, Object?>>[
       <String, Object?>{
         'hop': 'mobile-device',
@@ -53,9 +50,7 @@ void main() {
     expect(originator.hop, 'mobile-device');
   });
 
-  // Verifies: REQ-d00154-A — empty provenance throws StateError because
-  // REQ-d00115 requires every event to carry at least one entry.
-  test('REQ-d00154-A: empty provenance throws StateError', () {
+  test('empty provenance throws StateError', () {
     final event = _eventWithProvenance(const <Map<String, Object?>>[]);
     expect(() => event.originatorHop, throwsStateError);
   });

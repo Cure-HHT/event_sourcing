@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166-D: ExecutionResult shape returned by Action.execute.
 
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -11,8 +10,7 @@ import 'package:event_sourcing/src/security/security_details.dart';
 /// `ActionContext.security` for all events written by this dispatch
 /// (rare; default behavior is to use ctx.security).
 //
-// Implements: REQ-d00166-D — execute returns this value type; dispatcher
-// persists `events` in one transaction (REQ-d00168-I).
+// persists `events` in one transaction.
 class ExecutionResult<TResult> {
   const ExecutionResult({
     required this.result,

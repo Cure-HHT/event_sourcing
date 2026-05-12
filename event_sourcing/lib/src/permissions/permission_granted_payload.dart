@@ -1,6 +1,5 @@
 // lib/src/permissions/permission_granted_payload.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00174-A (event payload shape for permission_granted).
 
 import 'package:event_sourcing/event_sourcing.dart' show ScopeClass;
 import 'package:meta/meta.dart';

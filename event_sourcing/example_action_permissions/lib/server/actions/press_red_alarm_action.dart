@@ -1,9 +1,6 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166-A+B+C+D+E+F — Action interface contract.
-//   REQ-d00170-B (Idempotency Contract) — Idempotency.required: dispatcher
 //   returns parseDenied(MissingIdempotencyKeyError) when the caller omits
 //   the idempotencyKey for this action.
-//   REQ-d00172 — self-scoped permission (ScopeClass.self).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

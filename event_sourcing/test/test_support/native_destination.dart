@@ -8,15 +8,14 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// modelling a destination that consumes the library's canonical
 /// `esd/batch@1` batch format. `fillBatch` SHALL bypass [transform] for
 /// such destinations and instead build a `BatchEnvelopeMetadata` from the
-/// library's source identity (REQ-d00152-A+B).
+/// library's source identity.
 ///
 /// `wireFormat` is fixed to `"esd/batch@1"` and `transform` throws if
 /// invoked — calling `transform` on a native destination is a contract
-/// violation by `fillBatch` (REQ-d00152-B).
+/// violation by `fillBatch`.
 ///
 /// Records every `send` invocation in [sent] and pops one [SendResult] per
 /// call from a script supplied at construction.
-// Implements: REQ-d00152-A — concrete destination overriding
 // serializesNatively to true.
 class NativeDestination extends Destination {
   NativeDestination({
@@ -35,7 +34,6 @@ class NativeDestination extends Destination {
   @override
   String get wireFormat => 'esd/batch@1';
 
-  // Implements: REQ-d00152-A — declares native serialization; library
   // produces envelope metadata, this destination provides no transform.
   @override
   bool get serializesNatively => true;
@@ -43,11 +41,9 @@ class NativeDestination extends Destination {
   /// Cap on events accepted into a single batch by [canAddToBatch].
   final int batchCapacity;
 
-  // Implements: REQ-d00128-F — maxAccumulateTime declared on the test double.
   @override
   final Duration maxAccumulateTime;
 
-  // Implements: REQ-d00129-B — explicit override (default false).
   @override
   final bool allowHardDelete;
 
@@ -63,19 +59,18 @@ class NativeDestination extends Destination {
   @override
   SubscriptionFilter get filter => _filter;
 
-  // Implements: REQ-d00128-E — canAddToBatch admits up to batchCapacity.
   @override
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
       currentBatch.length < batchCapacity;
 
   /// Native destinations do not own a transform — `fillBatch` is required
   /// to produce envelope metadata from the library's source identity
-  /// (REQ-d00152-B). Any call here is a contract violation.
+  ///. Any call here is a contract violation.
   @override
   Future<WirePayload> transform(List<StoredEvent> batch) {
     throw StateError(
       'NativeDestination($id).transform invoked: fillBatch must build '
-      'envelope metadata from source identity instead (REQ-d00152-B)',
+      'envelope metadata from source identity instead',
     );
   }
 

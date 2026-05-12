@@ -5,14 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('ExecutionResult', () {
-    test('REQ-d00166-D: holds result + events', () {
+    test('holds result + events', () {
       const r = ExecutionResult<int>(result: 42, events: <EventDraft>[]);
       expect(r.result, 42);
       expect(r.events, isEmpty);
       expect(r.securityDetailsOverride, isNull);
     });
 
-    test('REQ-d00166-D: events list MAY be empty (no-op success)', () {
+    test('events list MAY be empty (no-op success)', () {
       const r = ExecutionResult<String>(result: 'ok', events: <EventDraft>[]);
       expect(r.events, isEmpty);
     });

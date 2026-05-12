@@ -1,6 +1,5 @@
 // lib/src/permissions/bootstrap_action_permissions.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00178-B (top-level bootstrap sequence: load -> validate -> apply
 //   -> construct policy).
 
 import 'package:event_sourcing/event_sourcing.dart';

@@ -1,6 +1,5 @@
 // test/walkthroughs/walkthrough_05_cross_user_keys_test.dart
 //
-// Verifies: REQ-d00170-D — idempotency cache key includes principalId,
 // so two different principals can use the same idempotency key without
 // collision.
 

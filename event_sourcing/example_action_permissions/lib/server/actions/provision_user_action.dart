@@ -1,7 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166-A+B+C+D+E+F — Action interface contract.
-//   REQ-d00170-B (Idempotency Contract) — Idempotency.required.
-//   REQ-d00172 — global-scoped permission (system-admin).
 //
 // Admin-only. Validates uniqueness against the current in-memory directory
 // view. The emitted user_provisioned event is projected back into the

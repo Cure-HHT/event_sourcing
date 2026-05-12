@@ -10,9 +10,8 @@ Future<SembastBackend> _backend() async {
 }
 
 void main() {
-  group('REQ-d00140-I: view_target_versions storage', () {
+  group('view_target_versions storage', () {
     test('round-trip read/write', () async {
-      // Verifies: REQ-d00140-I — write then read returns the same int.
       final b = await _backend();
       await b.transaction((txn) async {
         await b.writeViewTargetVersionInTxn(
@@ -32,9 +31,8 @@ void main() {
     });
 
     test('returns null for unknown (view, entry_type)', () async {
-      // Verifies: REQ-d00140-I — read of unregistered key returns null
       //   (not StateError; the StateError lives in Materializer.targetVersionFor
-      //   per REQ-d00140-L).
+      //  ).
       final b = await _backend();
       await b.transaction((txn) async {
         expect(
@@ -46,7 +44,6 @@ void main() {
     });
 
     test('readAll returns full map for one view', () async {
-      // Verifies: REQ-d00140-I — readAll scopes correctly to viewName.
       final b = await _backend();
       await b.transaction((txn) async {
         await b.writeViewTargetVersionInTxn(
@@ -74,7 +71,6 @@ void main() {
     });
 
     test('clear removes only the named view', () async {
-      // Verifies: REQ-d00140-I — clear is scoped to viewName.
       final b = await _backend();
       await b.transaction((txn) async {
         await b.writeViewTargetVersionInTxn(txn, 'view_a', 'x', 1);
@@ -91,7 +87,6 @@ void main() {
     });
 
     test('idempotent overwrite', () async {
-      // Verifies: REQ-d00140-I — repeat writes overwrite cleanly.
       final b = await _backend();
       await b.transaction((txn) async {
         await b.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);

@@ -5,7 +5,6 @@ import 'package:event_sourcing/src/security/security_retention_policy.dart';
 /// foreign-key direction is one-way: `security_context.event_id` → the
 /// event log's `event_id`. The event row holds no reference back to
 /// security, so redacting telemetry never touches the legal event record.
-// Implements: REQ-d00137-A+B — sidecar store separate from event log;
 // one-way FK security → event.
 class EventSecurityContext {
   const EventSecurityContext({
@@ -96,7 +95,6 @@ class EventSecurityContext {
 
   /// Apply a retention policy's truncation rules to this row. Used by
   /// `EventStore.applyRetentionPolicy` on the compact sweep.
-  // Implements: REQ-d00138-B — per-policy-flag truncation of IP, user
   // agent, and geo fields.
   EventSecurityContext applyTruncation(SecurityRetentionPolicy policy) {
     return EventSecurityContext(

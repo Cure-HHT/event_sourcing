@@ -14,7 +14,7 @@ void main() {
       expect(entry, isNull);
     });
 
-    test('REQ-d00170-D: record then lookup returns cached entry', () async {
+    test('record then lookup returns cached entry', () async {
       await store.record(
         actionName: 'a',
         principalId: 'p',
@@ -65,7 +65,7 @@ void main() {
       expect(await store.lookup('b', 'p', 'k'), isNull);
     });
 
-    test('REQ-d00170-E: sweepExpired removes past entries', () async {
+    test('sweepExpired removes past entries', () async {
       await store.record(
         actionName: 'a',
         principalId: 'p',

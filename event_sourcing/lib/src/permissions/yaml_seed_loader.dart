@@ -1,6 +1,5 @@
 // lib/src/permissions/yaml_seed_loader.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00175-A (YAML schema parsing into PermissionSeed).
 
 import 'dart:io';
 

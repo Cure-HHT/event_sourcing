@@ -1,6 +1,5 @@
 // test/walkthroughs/walkthrough_06_identity_decoupling_test.dart
 //
-// Verifies: REQ-d00177 (per-userId snapshot), event metadata carries
 // initiator userId AND role distinctly so audit can correlate by either.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';

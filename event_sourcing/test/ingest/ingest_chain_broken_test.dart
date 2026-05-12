@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-C: Chain 1 verification failure throws IngestChainBroken
 //                  with hopIndex equal to the tampered position.
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -80,7 +79,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — chain broken (REQ-d00145-C)', () {
+  group('EventStore.ingestEvent — chain broken', () {
     test('ingesting event with tampered arrival_hash at hop 1 throws '
         'IngestChainBroken with hopIndex=1', () async {
       // Simulate a 2-hop chain:

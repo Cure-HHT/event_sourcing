@@ -50,8 +50,7 @@ Future<String> _enqueueOne(
 }
 
 void main() {
-  group('REQ-d00126-B: policyResolver invocation', () {
-    // Verifies: REQ-d00126-B — resolver invoked exactly once per call().
+  group('policyResolver invocation', () {
     test('resolver called exactly once per call()', () async {
       final ctx = await _bootstrap();
       var calls = 0;
@@ -70,7 +69,6 @@ void main() {
       await ctx.backend.close();
     });
 
-    // Verifies: REQ-d00126-B — resolver value is reused across every
     // destination's drain in a single cycle. Asserted indirectly: the
     // resolver counter increments by exactly 1 per cycle regardless of
     // how many destinations are registered. That is the load-bearing
@@ -118,7 +116,6 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00126-D — resolver returning null is acceptable;
     // drain() handles a null policy by falling back to SyncPolicy.defaults
     // (already covered by drain.dart's existing contract). Here we only
     // assert that cycle() does not throw when the resolver returns null.
@@ -135,8 +132,7 @@ void main() {
     });
   });
 
-  group('REQ-d00126-D: mutual exclusivity + throws', () {
-    // Verifies: REQ-d00126-D — supplying both policy and policyResolver
+  group('mutual exclusivity + throws', () {
     // throws ArgumentError at construction time.
     test(
       'constructing with both policy and policyResolver throws ArgumentError',
@@ -155,7 +151,6 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00126-D — when the resolver throws, the cycle
     // aborts (exception propagates), the reentrancy guard is cleared
     // via try/finally, and a subsequent trigger may invoke call() again.
     test('resolver throws → cycle aborts; reentrancy guard cleared', () async {
@@ -181,7 +176,6 @@ void main() {
   });
 
   group('regression', () {
-    // Verifies: REQ-d00126-B — SyncCycle constructed with neither policy
     // nor resolver still works (drain falls back to SyncPolicy.defaults).
     test(
       'SyncCycle with neither policy nor resolver still works (defaults)',
@@ -193,7 +187,6 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00126-B — explicit policy: parameter path is
     // unchanged; no resolver supplied, the field is forwarded to drain.
     test(
       'SyncCycle with explicit policy: still uses it (today behavior)',

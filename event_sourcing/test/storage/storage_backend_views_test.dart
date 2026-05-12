@@ -10,7 +10,7 @@ Future<SembastBackend> _backend(String tag) async {
 }
 
 void main() {
-  group('REQ-d00140-F: generic view storage on StorageBackend', () {
+  group('generic view storage on StorageBackend', () {
     test('readViewRowInTxn on missing key returns null', () async {
       final b = await _backend('missing');
       final row = await b.transaction(

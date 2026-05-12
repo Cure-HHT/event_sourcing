@@ -1,6 +1,5 @@
 // test/walkthroughs/walkthrough_08_audit_correlation_test.dart
 //
-// Verifies: REQ-d00168-C — every dispatch generates a v4 UUID
 // `action_invocation_id` and stamps it onto every emitted event so the
 // audit log can trace one dispatch's full effects.
 

@@ -14,11 +14,10 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// `eventIdRange: (firstSeq: n, lastSeq: n)`.
 ///
 /// This helper exists for tests that pre-date Phase 4.3 Task 6's
-/// single-event → batch-per-row migration. The batch shape (REQ-d00128-A
+/// single-event → batch-per-row migration. The batch shape (
 /// + B) makes `eventIds` and `eventIdRange` required on `FifoEntry`;
 /// wrapping a scalar `eventId` + `sequenceNumber` into both fields here
 /// keeps per-call churn minimal.
-// Implements: REQ-d00128-A+B — construct a valid batch-shape FifoEntry
 // from a single event's id and sequence_number.
 /// Build a minimal `StoredEvent` fixture with the given id and sequence
 /// number. Tests that need a batch input to `StorageBackend.enqueueFifo`

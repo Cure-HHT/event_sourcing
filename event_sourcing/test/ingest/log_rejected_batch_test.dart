@@ -1,7 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-H: EventStore.logRejectedBatch — caller-composed rejection audit
-//   REQ-d00145-I: ingest.batch_rejected event under ingest-audit aggregate
-//   REQ-d00145-J: batch_context null for rejection (no decoded batch)
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -66,7 +63,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.logRejectedBatch (REQ-d00145-H+I+J)', () {
+  group('EventStore.logRejectedBatch', () {
     test(
       'emits exactly one ingest.batch_rejected event under ingest-audit aggregate',
       () async {

@@ -21,27 +21,22 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00153-A — snapshot-on-subscribe is empty for an
     // unknown view.
-    test(
-      'REQ-d00153-A: watchView emits empty snapshot for unknown view',
-      () async {
-        final stream = backend.watchView('never-written');
-        await expectLater(
-          stream,
-          emits(
-            isA<List<Map<String, Object?>>>().having(
-              (l) => l.length,
-              'length',
-              0,
-            ),
+    test('watchView emits empty snapshot for unknown view', () async {
+      final stream = backend.watchView('never-written');
+      await expectLater(
+        stream,
+        emits(
+          isA<List<Map<String, Object?>>>().having(
+            (l) => l.length,
+            'length',
+            0,
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
-    // Verifies: REQ-d00153-A — upsert triggers a new snapshot emission.
-    test('REQ-d00153-A: watchView emits a new snapshot on upsert', () async {
+    test('watchView emits a new snapshot on upsert', () async {
       final stream = backend.watchView('lights');
       final emissions = <List<Map<String, Object?>>>[];
       final sub = stream.listen(emissions.add);
@@ -68,8 +63,7 @@ void main() {
       expect(emissions.last.first['is_on'], true);
     });
 
-    // Verifies: REQ-d00153-A — delete triggers a new snapshot emission.
-    test('REQ-d00153-A: watchView emits a new snapshot on delete', () async {
+    test('watchView emits a new snapshot on delete', () async {
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(
           txn,
@@ -95,8 +89,7 @@ void main() {
       expect(emissions.last, isEmpty);
     });
 
-    // Verifies: REQ-d00153-A — clear triggers a new snapshot emission.
-    test('REQ-d00153-A: watchView emits a new snapshot on clear', () async {
+    test('watchView emits a new snapshot on clear', () async {
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(
           txn,
@@ -130,9 +123,8 @@ void main() {
       expect(emissions.last, isEmpty);
     });
 
-    // Verifies: REQ-d00153-C — cross-view isolation (mutating B does not
     // emit to a watchView(A) subscriber).
-    test('REQ-d00153-C: watchView is per-view (no cross-view noise)', () async {
+    test('watchView is per-view (no cross-view noise)', () async {
       final streamA = backend.watchView('view-A');
       final emA = <List<Map<String, Object?>>>[];
       final sa = streamA.listen(emA.add);
@@ -152,17 +144,13 @@ void main() {
       expect(emA, isEmpty);
     });
 
-    // Verifies: REQ-d00153-D — close() sends done; subsequent throws.
-    test(
-      'REQ-d00153-D: watchView closes on backend close, then throws',
-      () async {
-        final stream = backend.watchView('lights');
-        final fut = expectLater(stream, emitsThrough(emitsDone));
-        await backend.close();
-        await fut;
-        expect(() => backend.watchView('lights'), throwsStateError);
-        backend = await _openBackend('watch-view-reopen-$dbCounter.db');
-      },
-    );
+    test('watchView closes on backend close, then throws', () async {
+      final stream = backend.watchView('lights');
+      final fut = expectLater(stream, emitsThrough(emitsDone));
+      await backend.close();
+      await fut;
+      expect(() => backend.watchView('lights'), throwsStateError);
+      backend = await _openBackend('watch-view-reopen-$dbCounter.db');
+    });
   });
 }

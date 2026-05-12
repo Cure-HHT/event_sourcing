@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline) — Principal is constructed at the
 //   request boundary and passed via ActionContext through every stage.
 //   `toInitiator()` produces the Initiator stamped onto every emitted
 //   event (success or denial).

@@ -1,4 +1,4 @@
-// Regression test for REQ-d00119-D "continue past exhausted" drift.
+// Regression test for "continue past exhausted".
 //
 // The Phase 4.6 demo surfaced that an exhausted head row did not block a
 // trailing pending row: drain skipped past the wedged head and shipped
@@ -18,8 +18,6 @@
 //      fillBatch + drain cycle re-enqueues and delivers events in
 //      sequence order (wedged event first, then trailing event).
 //
-// Verifies: REQ-d00124-D+H (drain halts at wedged head; trail is NOT
-// attempted), REQ-d00144-A+B+C+D+F (tombstoneAndRefill contract + fresh
 // re-promotion by the next fillBatch).
 
 import 'dart:convert';
@@ -161,7 +159,7 @@ class _RecordingDestination extends Destination {
 }
 
 void main() {
-  group('strict-order regression (REQ-d00119-D drift)', () {
+  group('strict-order regression regression', () {
     test('drain halts at wedged head; trail row stays null until '
         'tombstoneAndRefill re-enqueues and delivers in order', () async {
       final backend = await _openBackend('strict-order-regression.db');
@@ -186,7 +184,7 @@ void main() {
       );
 
       // Register the destination BEFORE appending events so the
-      // historical-replay branch (REQ-d00129-D) sees zero candidates
+      // historical-replay branch sees zero candidates
       // and does not pre-enqueue anything: we want every FIFO row on
       // `secondary` to be produced by the fillBatch path under test.
       final deps = await buildAuditedRegistryDeps(backend);
@@ -221,7 +219,7 @@ void main() {
         clientTimestamp: clientTs,
       );
       // Sanity: sequence numbers increment per append. The registry
-      // emits two REQ-d00129-J/K audit events during addDestination and
+      // emits two audit events during addDestination and
       // setStartDate above, so e1's sequence_number is offset past
       // those. We assert monotonic increment, not absolute values.
       expect(e2.sequenceNumber, e1.sequenceNumber + 1);
@@ -256,7 +254,7 @@ void main() {
 
       // Locate the three FIFO rows by scanning readFifoHead step by
       // step: head is now the WEDGED e2 (readFifoHead returns wedged
-      // rows so drain can halt on them — REQ-d00124-H). e3's row sits
+      // rows so drain can halt on them. e3's row sits
       // behind the wedged head with null final_status.
       final wedgedHead = await backend.readFifoHead(destination.id);
       expect(wedgedHead, isNotNull);
@@ -301,10 +299,8 @@ void main() {
       );
       expect(result, isA<TombstoneAndRefillResult>());
       expect(result.targetRowId, wedgedEntryId);
-      // REQ-d00144-C: e3's pre-terminal trail row was deleted in the
       // trail sweep.
       expect(result.deletedTrailCount, 1);
-      // REQ-d00144-D: fill_cursor rewound to target.first_seq - 1 =
       // e2.sequenceNumber - 1 = 1 (= e1.sequenceNumber).
       expect(result.rewoundTo, e2.sequenceNumber - 1);
       expect(
@@ -333,7 +329,7 @@ void main() {
         equals(<int>[e1.sequenceNumber, e2.sequenceNumber, e3.sequenceNumber]),
       );
 
-      // Assert: REQ-d00144-B — the wedged row is now a tombstoned
+      // Assert: the wedged row is now a tombstoned
       // archive. It coexists with the fresh rows (Task 6.5 UUID
       // entry_ids prevent collision).
       final wedgedRowAfter = await backend.readFifoRow(
@@ -346,7 +342,7 @@ void main() {
         wedgedRowAfter.attempts.length,
         1,
         reason:
-            'REQ-d00144-B: the SendPermanent attempt on the wedged '
+            'the SendPermanent attempt on the wedged '
             'row is preserved across the tombstone flip.',
       );
 

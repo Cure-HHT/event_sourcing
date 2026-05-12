@@ -1,6 +1,5 @@
 // lib/src/permissions/materialized_view_role_matrix_reader.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-C (server-side RoleMatrixReader). Reads through
 //   StorageBackend's view methods over the role_permission_grants view.
 
 import 'package:event_sourcing/event_sourcing.dart';

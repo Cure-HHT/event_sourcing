@@ -18,7 +18,6 @@ part of 'sembast_backend.dart';
 /// the typed surface first. The `@visibleForTesting` annotation makes
 /// the analyzer flag any non-test caller.
 extension SembastBackendTestSupport on SembastBackend {
-  // Implements: REQ-d00151-B (compliance posture) — keeps the raw-database
   // accessor outside the production API surface; only test code reaches
   // for it via this extension, and the analyzer flags non-test callers
   // through the @visibleForTesting annotation.

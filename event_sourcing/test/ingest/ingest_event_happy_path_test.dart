@@ -1,10 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-G: ingestEvent process-local per-event semantics
-//   REQ-d00145-K: originator identity fields preserved verbatim
-//   REQ-d00120-E: event_hash recomputed on receiver provenance append
-//   REQ-d00115-G: arrival_hash == wire event_hash at reception hop
-//   REQ-d00115-H: previous_ingest_hash null on first-ever ingest
-//   REQ-d00115-I: ingest_sequence_number monotonically increasing
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -86,7 +80,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — happy path (REQ-d00145-G)', () {
+  group('EventStore.ingestEvent — happy path', () {
     test('new event is stored with receiver provenance and rehashed', () async {
       final orig = await _openStore(
         hopId: 'mobile-device',

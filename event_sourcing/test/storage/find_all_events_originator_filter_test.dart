@@ -1,11 +1,9 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00154-C: StorageBackend.findAllEvents accepts originatorHopId and
 //                 originatorIdentifier optional named parameters; both
 //                 nullable; AND'd together when both supplied; each filters
 //                 on the corresponding field of provenance[0].
 //
-// Convention: per-test `// Verifies: REQ-d00154-C — <prose>` annotations and
-// the assertion ID `REQ-d00154-C` at the start of each test description.
+// the assertion ID `-C` at the start of each test description.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -94,61 +92,49 @@ Future<void> _seedThreeOrigins(SembastBackend backend) async {
 }
 
 void main() {
-  // Verifies: REQ-d00154-C — originatorIdentifier alone selects the unique
   // event whose provenance[0].identifier matches.
-  test(
-    'REQ-d00154-C: originatorIdentifier alone — install-A returns 1 event',
-    () async {
-      final backend = await _openBackend();
-      try {
-        await _seedThreeOrigins(backend);
-        final result = await backend.findAllEvents(
-          originatorIdentifier: 'install-A',
-        );
-        expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
-      } finally {
-        await backend.close();
-      }
-    },
-  );
+  test('originatorIdentifier alone — install-A returns 1 event', () async {
+    final backend = await _openBackend();
+    try {
+      await _seedThreeOrigins(backend);
+      final result = await backend.findAllEvents(
+        originatorIdentifier: 'install-A',
+      );
+      expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
+    } finally {
+      await backend.close();
+    }
+  });
 
-  // Verifies: REQ-d00154-C — originatorHopId alone selects every event whose
   // provenance[0].hopId matches the hop class, regardless of install.
-  test(
-    'REQ-d00154-C: originatorHopId alone — mobile-device returns 2 events',
-    () async {
-      final backend = await _openBackend();
-      try {
-        await _seedThreeOrigins(backend);
-        final result = await backend.findAllEvents(
-          originatorHopId: 'mobile-device',
-        );
-        expect(result.map((e) => e.eventId), <String>[
-          'ev-mobileA',
-          'ev-mobileB',
-        ]);
-      } finally {
-        await backend.close();
-      }
-    },
-  );
+  test('originatorHopId alone — mobile-device returns 2 events', () async {
+    final backend = await _openBackend();
+    try {
+      await _seedThreeOrigins(backend);
+      final result = await backend.findAllEvents(
+        originatorHopId: 'mobile-device',
+      );
+      expect(result.map((e) => e.eventId), <String>[
+        'ev-mobileA',
+        'ev-mobileB',
+      ]);
+    } finally {
+      await backend.close();
+    }
+  });
 
-  // Verifies: REQ-d00154-C — both filters together apply AND semantics:
   // mobile-device + install-A selects the single matching event.
-  test(
-    'REQ-d00154-C: both filters AND — mobile-device + install-A returns 1',
-    () async {
-      final backend = await _openBackend();
-      try {
-        await _seedThreeOrigins(backend);
-        final result = await backend.findAllEvents(
-          originatorHopId: 'mobile-device',
-          originatorIdentifier: 'install-A',
-        );
-        expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
-      } finally {
-        await backend.close();
-      }
-    },
-  );
+  test('both filters AND — mobile-device + install-A returns 1', () async {
+    final backend = await _openBackend();
+    try {
+      await _seedThreeOrigins(backend);
+      final result = await backend.findAllEvents(
+        originatorHopId: 'mobile-device',
+        originatorIdentifier: 'install-A',
+      );
+      expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
+    } finally {
+      await backend.close();
+    }
+  });
 }

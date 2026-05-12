@@ -5,9 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('WirePayload', () {
-    // Verifies: REQ-d00122-D — value carries bytes + contentType +
     // transformVersion; getters return the stored values.
-    test('REQ-d00122-D: constructor stores and exposes all three fields', () {
+    test('constructor stores and exposes all three fields', () {
       final bytes = Uint8List.fromList([0x7b, 0x7d]); // '{}'
       final payload = WirePayload(
         bytes: bytes,
@@ -19,7 +18,7 @@ void main() {
       expect(payload.transformVersion, 'json-v1');
     });
 
-    test('REQ-d00122-D: equal fields produce equal values', () {
+    test('equal fields produce equal values', () {
       final a = WirePayload(
         bytes: Uint8List.fromList([1, 2, 3]),
         contentType: 'application/json',

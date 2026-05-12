@@ -1,4 +1,4 @@
-// Tests for AppendOnlyDatastore.setViewTargetVersion (REQ-d00140-K).
+// Tests for AppendOnlyDatastore.setViewTargetVersion.
 //
 // The legacy initialViewTargetVersions / materializers bootstrap parameters
 // are removed in Task 22 (CUR-1317). View target versions are now written
@@ -29,9 +29,8 @@ const EntryTypeDefinition _demoNote = EntryTypeDefinition(
 );
 
 void main() {
-  group('REQ-d00140-K: AppendOnlyDatastore.setViewTargetVersion', () {
+  group('AppendOnlyDatastore.setViewTargetVersion', () {
     test('writes a new entry-type version after bootstrap', () async {
-      // Verifies: REQ-d00140-K — setViewTargetVersion registers a new
       //   entry type into a view's view_target_versions.
       final backend = await _openBackend();
       final ds = await bootstrapAppendOnlyDatastore(
@@ -49,7 +48,6 @@ void main() {
     });
 
     test('overwrites an existing entry-type version', () async {
-      // Verifies: REQ-d00140-K — repeated writes to the same key overwrite.
       final backend = await _openBackend();
       final ds = await bootstrapAppendOnlyDatastore(
         backend: backend,

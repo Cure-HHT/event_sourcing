@@ -55,7 +55,7 @@ Future<SembastBackend> _openBackend(String path) async {
 }
 
 void main() {
-  group('DestinationRegistry (instance-based, REQ-d00129)', () {
+  group('DestinationRegistry (instance-based', () {
     late SembastBackend backend;
     late DestinationRegistry registry;
     var dbCounter = 0;
@@ -74,38 +74,29 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00129-A — addDestination + all() round-trip.
-    test(
-      'REQ-d00129-A: addDestination adds a destination and all() returns it',
-      () async {
-        final d = _StubDestination('primary');
-        await registry.addDestination(d, initiator: _testInit);
-        expect(registry.all(), contains(d));
-      },
-    );
+    test('addDestination adds a destination and all() returns it', () async {
+      final d = _StubDestination('primary');
+      await registry.addDestination(d, initiator: _testInit);
+      expect(registry.all(), contains(d));
+    });
 
-    // Verifies: REQ-d00129-A — destination ids are unique; duplicate
     // addDestination throws ArgumentError.
-    test(
-      'REQ-d00129-A: addDestination with duplicate id throws ArgumentError',
-      () async {
-        await registry.addDestination(
+    test('addDestination with duplicate id throws ArgumentError', () async {
+      await registry.addDestination(
+        _StubDestination('primary'),
+        initiator: _testInit,
+      );
+      await expectLater(
+        registry.addDestination(
           _StubDestination('primary'),
           initiator: _testInit,
-        );
-        await expectLater(
-          registry.addDestination(
-            _StubDestination('primary'),
-            initiator: _testInit,
-          ),
-          throwsArgumentError,
-        );
-      },
-    );
+        ),
+        throwsArgumentError,
+      );
+    });
 
-    // Verifies: REQ-d00129-A — the registry does NOT freeze on first
     // read. Subsequent addDestination after all() succeeds.
-    test('REQ-d00129-A: first all() read does NOT freeze the registry; a '
+    test('first all() read does NOT freeze the registry; a '
         'subsequent addDestination succeeds', () async {
       await registry.addDestination(
         _StubDestination('primary'),

@@ -1,6 +1,5 @@
 // lib/src/permissions/permission_snapshot.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00177-A (snapshot value type and serialization).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

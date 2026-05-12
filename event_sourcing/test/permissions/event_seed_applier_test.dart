@@ -1,6 +1,5 @@
 // test/permissions/event_seed_applier_test.dart
-// Verifies: REQ-d00175-F (applier diff logic), REQ-d00175-G (idempotent
-// across restarts), REQ-d00175-H (drift reported, not auto-revoked).
+// across restarts) (drift reported, not auto-revoked).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -19,7 +18,7 @@ void main() {
     });
 
     test(
-      'REQ-d00175-F: emits PermissionGranted for every pair in seed when view is empty',
+      'emits PermissionGranted for every pair in seed when view is empty',
       () async {
         final applier = EventSeedApplier(
           eventStore: eventStore,
@@ -40,7 +39,7 @@ void main() {
     );
 
     test(
-      'REQ-d00175-G: re-running with unchanged seed emits zero events (idempotent)',
+      're-running with unchanged seed emits zero events (idempotent)',
       () async {
         final applier = EventSeedApplier(
           eventStore: eventStore,
@@ -60,7 +59,7 @@ void main() {
     );
 
     test(
-      'REQ-d00175-H: reports drift (grant in view not in seed) without revoking',
+      'reports drift (grant in view not in seed) without revoking',
       () async {
         // Manually grant something the seed will not contain.
         await eventStore.append(

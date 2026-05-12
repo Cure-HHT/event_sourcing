@@ -76,7 +76,6 @@ library;
 
 // Provenance types — re-export from the provenance package for convenience
 // (Phase 4.9, CUR-1154). ProvenanceEntry is exported so consumers of the
-// REQ-d00154-A `StoredEvent.originatorHop` getter have a name for the
 // returned type without depending on the provenance package directly.
 export 'package:provenance/provenance.dart' show BatchContext, ProvenanceEntry;
 
@@ -214,7 +213,7 @@ export 'src/subscriptions/update.dart'
     show Delta, EndOfReplay, Snapshot, Tombstone, Update;
 
 // Permissions module — role-permission matrix, materialized via the event
-// log; YAML-seeded; failsafe bootstrap (REQ-d00172..REQ-d00178, CUR-1192).
+// log; YAML-seeded; failsafe bootstrap.
 export 'src/permissions/authorization_policy_bootstrap.dart'
     show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'

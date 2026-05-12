@@ -4,9 +4,9 @@ import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
 import 'package:flutter/foundation.dart';
 
 /// Native demo destination — declares it speaks `esd/batch@1` so the
-/// library handles serialization itself (Phase 4.14 REQ-d00152). FIFO
+/// library handles serialization itself (Phase 4.14 ). FIFO
 /// rows for this destination store envelope metadata + null wire_payload
-/// (REQ-d00119-K). Used in the example to demonstrate the storage-shape
+///. Used in the example to demonstrate the storage-shape
 /// difference vs `DemoDestination` (lossy 3rd-party).
 ///
 /// Implements [DemoKnobs] so the FIFO panel exposes the same live-tunable
@@ -23,8 +23,6 @@ import 'package:flutter/foundation.dart';
 /// maps the outcome back to a [SendResult]. When `connection != ok`,
 /// the bridge is NOT invoked — link failures are simulated upstream of
 /// the bridge so the existing `broken`/`rejecting` UX is unchanged.
-// Implements: REQ-d00122 — Destination contract surface.
-// Implements: REQ-d00152-A — serializesNatively=true: library produces
 //   the canonical `esd/batch@1` envelope inside fillBatch and persists
 //   envelope_metadata with wire_payload null.
 class NativeDemoDestination implements Destination, DemoKnobs {
@@ -77,11 +75,9 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   Duration get maxAccumulateTime => maxAccumulateTimeN.value;
 
-  // Implements: REQ-d00152-A — native destination opts in.
   @override
   bool get serializesNatively => true;
 
-  // Implements: REQ-d00119-K — native rows carry the canonical wire format.
   @override
   String get wireFormat => 'esd/batch@1';
 
@@ -89,7 +85,7 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
       currentBatch.length < batchSize.value;
 
-  // Library handles native serialization in fillBatch (REQ-d00152-B); the
+  // Library handles native serialization in fillBatch; the
   // contract guarantees transform is never invoked when serializesNatively
   // is true, so this throw is defense-in-depth, not a code path.
   @override

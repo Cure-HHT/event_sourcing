@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00115-J: BatchContext fields stored on each ingested event allow
 //                 auditors to associate events with their originating batch.
 
 import 'package:crypto/crypto.dart';
@@ -119,7 +118,7 @@ Object? _rekey(Object? value) {
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('Batch reconstruction (REQ-d00115-J; design §2.3)', () {
+  group('Batch reconstruction (design §2.3)', () {
     test('all stored events from an ingested batch agree on batchId and '
         'batchWireBytesHash', () async {
       final orig = await _openStore(hopId: 'mobile-device');

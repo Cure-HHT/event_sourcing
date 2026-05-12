@@ -1,8 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-A: EventStore.ingestBatch wire-side decode
-//   REQ-d00145-B: esd/batch@1 wire format support
-//   REQ-d00145-E: BatchContext stamped on receiver provenance entry
-//   REQ-d00145-J: batch_context on duplicate_received audit event (REQ-d00115-J)
 
 import 'dart:typed_data';
 
@@ -85,7 +81,7 @@ BatchEnvelope _buildEnvelope(
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestBatch — happy path (REQ-d00145-A+B+E)', () {
+  group('EventStore.ingestBatch — happy path', () {
     test(
       '3-event batch stores 3 events with correct batch_context on each',
       () async {
@@ -285,7 +281,7 @@ void main() {
 
     test('batch with one duplicate + two new subjects: '
         'outcomes=[duplicate, ingested, ingested], '
-        'dup marker carries batch_context (REQ-d00115-J)', () async {
+        'dup marker carries batch_context', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'portal-server',
@@ -370,7 +366,7 @@ void main() {
         expect(dupEvents[0].data['subject_event_id'], equals(e1.eventId));
 
         // 4d. duplicate_received event carries batchContext referencing
-        //     this batch (REQ-d00115-J).
+        //     this batch.
         final dupProv = (dupEvents[0].metadata['provenance'] as List<Object?>)
             .cast<Map<String, Object?>>();
         expect(dupProv, hasLength(1));
@@ -391,7 +387,7 @@ void main() {
     });
 
     test('batch with identity-mismatching subject rolls back entirely '
-        '(REQ-d00145-D)', () async {
+        '', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'portal-server',

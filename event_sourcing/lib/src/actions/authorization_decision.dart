@@ -1,9 +1,7 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00173-B+C+D: isPermitted returns AuthorizationDecision (Allow
 //   or Deny); Deny carries the denied Permission and a DenyReason; the
 //   DenyReason enum has the three closed values notGranted,
 //   sessionPreconditionMissing, bootstrapFailure.
-//   REQ-d00171: the dispatcher uses Deny.permission and Deny.reason to
 //   construct authorization_denied denial events.
 
 import 'package:event_sourcing/src/actions/permission.dart';

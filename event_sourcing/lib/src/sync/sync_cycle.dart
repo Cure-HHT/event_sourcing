@@ -21,12 +21,10 @@ import 'package:event_sourcing/src/sync/sync_policy.dart';
 /// promotes events appended since the last cycle from the event log into
 /// the destination's FIFO; drain ships them. Both run inside
 /// [_fillAndDrainOrSwallow], which catches per-destination failures so
-/// one bad destination cannot starve the others (REQ-d00125-A).
-// Implements: REQ-d00125-A+B+C+E — concurrent per-destination
+/// one bad destination cannot starve the others.
 // fillBatch+drain, post-drain inbound poll, single-isolate reentrancy
 // guard, no background isolate.
 class SyncCycle {
-  // Implements: REQ-d00126-A+B+D — optional SyncPolicy? policy parameter
   // (null falls back to SyncPolicy.defaults inside drain()), or a
   // SyncPolicy Function()? policyResolver invoked once per call() for
   // hot-swap scenarios. The two are mutually exclusive (D).
@@ -43,7 +41,6 @@ class SyncCycle {
        _clock = clock,
        _policy = policy,
        _policyResolver = policyResolver {
-    // REQ-d00126-D: mutual exclusivity. Both supplied → ArgumentError.
     if (policy != null && policyResolver != null) {
       throw ArgumentError(
         'SyncCycle: supply at most one of policy / policyResolver',
@@ -71,8 +68,7 @@ class SyncCycle {
   bool get inFlight => _inFlight;
 
   /// Run one drain-and-poll cycle. Returns immediately (without side
-  /// effects) when a prior [call] is still running (REQ-d00125-C).
-  // Implements: REQ-d00125-A+B+C, REQ-d00126-B+D — concurrent drain +
+  /// effects) when a prior [call] is still running.
   // inbound poll + reentrancy guard + per-cycle policy resolution.
   Future<void> call() async {
     if (_inFlight) return;
@@ -81,18 +77,15 @@ class SyncCycle {
       // Resolve once per cycle, after the reentrancy guard. The same
       // SyncPolicy value is forwarded to every destination's drain in
       // this cycle.
-      // Implements: REQ-d00126-B+D.
       final cyclePolicy = _policyResolver != null ? _policyResolver() : _policy;
 
       final destinations = _registry.all();
-      // REQ-d00125-A: concurrent per-destination fillBatch + drain.
       // A thrown exception from one destination's fill or drain does
       // not cancel the others. See `_fillAndDrainOrSwallow` for the
       // per-destination exception handling.
       await Future.wait(
         destinations.map((d) => _fillAndDrainOrSwallow(d, cyclePolicy)),
       );
-      // REQ-d00125-B: inbound poll happens AFTER outbound drains complete.
       await portalInboundPoll();
     } finally {
       _inFlight = false;
@@ -117,7 +110,7 @@ class SyncCycle {
         clock: _clock,
       );
     } catch (e, st) {
-      // Swallow per REQ-d00125-A — one destination's fill failure must
+      // Swallow — one destination's fill failure must
       // not cancel another's drain. The drain step still runs because
       // any FIFO rows enqueued by a prior cycle are still drainable.
       // Unlike drain (which records each attempt into the entry's
@@ -142,7 +135,7 @@ class SyncCycle {
         policy: cyclePolicy,
       );
     } catch (e, st) {
-      // Per REQ-d00125-A, one destination's failure does not cancel
+      // Per the contract, one destination's failure does not cancel
       // another's drain. We swallow here so Future.wait does not abort;
       // the drain loop itself has already recorded the attempt via its
       // internal try/catch on `destination.send`, so the exception is

@@ -1,13 +1,10 @@
 // test/wire_types_test.dart
-// Verifies: REQ-d00168 (dispatcher pipeline wire-shape stability),
-//           REQ-d00170 (idempotency hit on the wire),
-//           REQ-d00171 (denial variants expose sanitized fields only).
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('DispatchRequest', () {
-    test('REQ-d00168: round-trips through JSON', () {
+    test('round-trips through JSON', () {
       const req = DispatchRequest(
         actionName: 'EditGreenNoteAction',
         rawInput: <String, Object?>{'title': 'hi', 'body': 'there'},
@@ -19,7 +16,7 @@ void main() {
       expect(parsed, equals(req));
     });
 
-    test('REQ-d00168: omits null idempotencyKey and userId', () {
+    test('omits null idempotencyKey and userId', () {
       const req = DispatchRequest(
         actionName: 'RequestHelpAction',
         rawInput: <String, Object?>{},
@@ -31,7 +28,7 @@ void main() {
   });
 
   group('DispatchResponse', () {
-    test('REQ-d00168: success variant round-trips', () {
+    test('success variant round-trips', () {
       const resp = DispatchResponseSuccess(
         actionInvocationId: 'inv-1',
         emittedEventIds: <String>['evt-1', 'evt-2'],
@@ -43,27 +40,24 @@ void main() {
       expect((parsed as DispatchResponseSuccess).actionInvocationId, 'inv-1');
     });
 
-    test(
-      'REQ-d00171: denied variant carries denialKind and sanitized error',
-      () {
-        const resp = DispatchResponseDenied(
-          denialKind: 'authorization_denied',
-          actionInvocationId: 'inv-2',
-          errorClass: 'AuthorizationError',
-          errorMessageSanitized: 'permission notes.write.blue not granted',
-          permissionDenied: 'notes.write.blue',
-        );
-        final json = resp.toJson();
-        final parsed = DispatchResponse.fromJson(json);
-        expect(parsed, isA<DispatchResponseDenied>());
-        expect(
-          (parsed as DispatchResponseDenied).denialKind,
-          'authorization_denied',
-        );
-      },
-    );
+    test('denied variant carries denialKind and sanitized error', () {
+      const resp = DispatchResponseDenied(
+        denialKind: 'authorization_denied',
+        actionInvocationId: 'inv-2',
+        errorClass: 'AuthorizationError',
+        errorMessageSanitized: 'permission notes.write.blue not granted',
+        permissionDenied: 'notes.write.blue',
+      );
+      final json = resp.toJson();
+      final parsed = DispatchResponse.fromJson(json);
+      expect(parsed, isA<DispatchResponseDenied>());
+      expect(
+        (parsed as DispatchResponseDenied).denialKind,
+        'authorization_denied',
+      );
+    });
 
-    test('REQ-d00170: idempotencyHit variant carries prior result', () {
+    test('idempotencyHit variant carries prior result', () {
       const resp = DispatchResponseIdempotencyHit(
         actionInvocationId: 'inv-3',
         priorEventIds: <String>['evt-prev'],
@@ -76,37 +70,31 @@ void main() {
   });
 
   group('SessionStartRequest/Response', () {
-    test('REQ-d00177: SessionStartRequest round-trip with userId', () {
+    test('SessionStartRequest round-trip with userId', () {
       const req = SessionStartRequest(userId: 'green-user-1');
       final parsed = SessionStartRequest.fromJson(req.toJson());
       expect(parsed.userId, 'green-user-1');
     });
 
-    test(
-      'REQ-d00177: SessionStartRequest round-trip without userId (Anon)',
-      () {
-        const req = SessionStartRequest();
-        final parsed = SessionStartRequest.fromJson(req.toJson());
-        expect(parsed.userId, isNull);
-      },
-    );
+    test('SessionStartRequest round-trip without userId (Anon)', () {
+      const req = SessionStartRequest();
+      final parsed = SessionStartRequest.fromJson(req.toJson());
+      expect(parsed.userId, isNull);
+    });
 
-    test(
-      'REQ-d00177: SessionStartResponse round-trip with snapshot fields',
-      () {
-        const resp = SessionStartResponse(
-          principalRole: 'GreenTeam',
-          principalUserId: 'green-user-1',
-          principalActiveSite: 'site-A',
-          snapshotPermissions: <String>['notes.write.green', 'help.request'],
-        );
-        final parsed = SessionStartResponse.fromJson(resp.toJson());
-        expect(parsed.principalRole, 'GreenTeam');
-        expect(parsed.principalUserId, 'green-user-1');
-        expect(parsed.principalActiveSite, 'site-A');
-        expect(parsed.snapshotPermissions, hasLength(2));
-      },
-    );
+    test('SessionStartResponse round-trip with snapshot fields', () {
+      const resp = SessionStartResponse(
+        principalRole: 'GreenTeam',
+        principalUserId: 'green-user-1',
+        principalActiveSite: 'site-A',
+        snapshotPermissions: <String>['notes.write.green', 'help.request'],
+      );
+      final parsed = SessionStartResponse.fromJson(resp.toJson());
+      expect(parsed.principalRole, 'GreenTeam');
+      expect(parsed.principalUserId, 'green-user-1');
+      expect(parsed.principalActiveSite, 'site-A');
+      expect(parsed.snapshotPermissions, hasLength(2));
+    });
   });
 
   group('InspectSnapshot', () {

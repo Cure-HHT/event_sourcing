@@ -93,8 +93,7 @@ Future<AppendOnlyDatastore> _bootstrapWithRegistry({
 }
 
 void main() {
-  group('REQ-d00145-L: lib_format_version-ahead', () {
-    // Verifies: REQ-d00145-L
+  group('lib_format_version-ahead', () {
     test('throws IngestLibFormatVersionAhead and rolls back batch', () async {
       final ds = await _bootstrapWithRegistry(registeredVersion: 1);
       final bytes = _envelope(
@@ -114,8 +113,7 @@ void main() {
     });
   });
 
-  group('REQ-d00145-M: entry_type_version-ahead', () {
-    // Verifies: REQ-d00145-M
+  group('entry_type_version-ahead', () {
     test('throws IngestEntryTypeVersionAhead and rolls back batch', () async {
       final ds = await _bootstrapWithRegistry(registeredVersion: 2);
       final bytes = _envelope(
@@ -131,7 +129,6 @@ void main() {
   });
 
   group('validation order', () {
-    // Verifies: REQ-d00145-L, REQ-d00145-M
     test('lib-ahead checked before entry-type-ahead', () async {
       final ds = await _bootstrapWithRegistry(registeredVersion: 2);
       final bytes = _envelope(
@@ -148,7 +145,6 @@ void main() {
   });
 
   group('happy path', () {
-    // Verifies: REQ-d00145-L, REQ-d00145-M (positive)
     test('matched versions ingest cleanly', () async {
       final ds = await _bootstrapWithRegistry(registeredVersion: 5);
       final bytes = _envelope(

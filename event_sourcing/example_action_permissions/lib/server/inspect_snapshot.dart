@@ -1,6 +1,5 @@
 // lib/server/inspect_snapshot.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline) — collector functions for the
 //   inspector snapshot.
 //
 // Pure-ish helpers: each takes a backend / directory / store and emits a

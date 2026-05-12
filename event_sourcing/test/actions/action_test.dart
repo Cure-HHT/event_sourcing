@@ -44,7 +44,7 @@ class _CustomTtlAction extends _NoOpAction {
 
 void main() {
   group('Action', () {
-    test('REQ-d00166-A: subclass exposes required getters', () {
+    test('subclass exposes required getters', () {
       final a = _NoOpAction();
       expect(a.name, 'noop');
       expect(a.description, contains('no-op'));
@@ -52,33 +52,30 @@ void main() {
       expect(a.idempotency, Idempotency.none);
     });
 
-    test('REQ-d00166-A: parseInput returns the typed input', () {
+    test('parseInput returns the typed input', () {
       final a = _NoOpAction();
       final input = a.parseInput(<String, Object?>{'k': 'v'});
       expect(input['k'], 'v');
     });
 
-    test(
-      'REQ-d00166-D: execute returns ExecutionResult with events list',
-      () async {
-        final a = _NoOpAction();
-        final ctx = ActionContext(
-          principal: const Principal.anonymous(),
-          security: const SecurityDetails(),
-          requestStartedAt: DateTime.now(),
-        );
-        final r = await a.execute(<String, Object?>{}, ctx);
-        expect(r.result, 'ok');
-        expect(r.events, isEmpty);
-      },
-    );
+    test('execute returns ExecutionResult with events list', () async {
+      final a = _NoOpAction();
+      final ctx = ActionContext(
+        principal: const Principal.anonymous(),
+        security: const SecurityDetails(),
+        requestStartedAt: DateTime.now(),
+      );
+      final r = await a.execute(<String, Object?>{}, ctx);
+      expect(r.result, 'ok');
+      expect(r.events, isEmpty);
+    });
 
-    test('REQ-d00170-F: default idempotencyTtl is 24 hours', () {
+    test('default idempotencyTtl is 24 hours', () {
       final a = _NoOpAction();
       expect(a.idempotencyTtl, const Duration(hours: 24));
     });
 
-    test('REQ-d00170-F: subclass can override idempotencyTtl', () {
+    test('subclass can override idempotencyTtl', () {
       final a = _CustomTtlAction();
       expect(a.idempotencyTtl, const Duration(minutes: 5));
     });

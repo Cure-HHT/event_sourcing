@@ -45,13 +45,10 @@ void main() {
       expect(set.length, 2);
     });
 
-    test(
-      'REQ-d00172-A: scope field is accessible and matches construction',
-      () {
-        const p = Permission('foo', scope: ScopeClass.site);
-        expect(p.scope, ScopeClass.site);
-      },
-    );
+    test('scope field is accessible and matches construction', () {
+      const p = Permission('foo', scope: ScopeClass.site);
+      expect(p.scope, ScopeClass.site);
+    });
 
     test(
       'same name with different scope is still equal (name-only equality)',

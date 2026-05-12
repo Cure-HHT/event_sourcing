@@ -1,6 +1,5 @@
 // lib/src/permissions/permission_seed.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00175-A (PermissionSeed value type).
 
 import 'package:meta/meta.dart';
 

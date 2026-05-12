@@ -9,7 +9,6 @@
 /// JSON serialization uses snake_case keys:
 /// `id`, `registered_version`, `name`, `materialize`.
 ///
-// Implements: REQ-d00116-A+B+C — value type carrying the three core fields.
 class EntryTypeDefinition {
   const EntryTypeDefinition({
     required this.id,
@@ -18,7 +17,6 @@ class EntryTypeDefinition {
     this.materialize = true,
   });
 
-  // Implements: REQ-d00116-A+B+C — decode from snake_case JSON; reject
   // payloads missing any of the three required fields or with wrong types.
   factory EntryTypeDefinition.fromJson(Map<String, Object?> json) {
     final id = _requireString(json, 'id');
@@ -46,7 +44,6 @@ class EntryTypeDefinition {
   /// Highest `entry_type_version` this lib build's registry accepts on
   /// `EventStore.ingestBatch`. Today (single-version world) it's the only
   /// value; Phase 4.21 may expand to a `Set<int>` for multi-sponsor concurrency.
-  // Implements: REQ-d00116-B.
   final int registeredVersion;
 
   /// Display name used by operational tooling.
@@ -56,7 +53,6 @@ class EntryTypeDefinition {
   /// Used by reserved system entry types (e.g., `security_context_redacted`)
   /// that must land in the event log as immutable audit rows but write no
   /// view state. Defaults to `true`.
-  // Implements: REQ-d00140-C — def.materialize=false skips all materializers.
   final bool materialize;
 
   Map<String, Object?> toJson() => <String, Object?>{

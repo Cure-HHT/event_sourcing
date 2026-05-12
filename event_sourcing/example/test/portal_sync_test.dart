@@ -1,6 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00122: Destination contract surface
-//   REQ-d00152: Native destination wire format
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/demo_destination.dart';
@@ -174,7 +172,7 @@ void main() {
         await portal.tick();
 
         // Filter out the portal's own bootstrap-emitted system audit
-        // events (REQ-d00129-J/K) so the assertion stays focused on
+        // events  so the assertion stays focused on
         // user payload arriving from mobile.
         final portalEvents = (await portal.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
@@ -220,7 +218,7 @@ void main() {
         await mobile.tick();
 
         // Filter out mobile's own bootstrap-emitted system audit
-        // events (REQ-d00129-J/K) so this assertion stays focused on
+        // events  so this assertion stays focused on
         // whether portal-originated user payloads leaked back.
         final mobileEvents = (await mobile.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))

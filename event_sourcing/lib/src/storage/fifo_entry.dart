@@ -10,8 +10,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 /// Declared as a Dart 3 record typedef so callers read the pair positionally
 /// (or via the named fields) without needing a dedicated class. Cursor-
 /// advancement math in the drain/fill-batch paths uses `lastSeq` as the
-/// inclusive upper bound of the batch (REQ-d00128-B).
-// Implements: REQ-d00128-B — event_id_range is a (first_seq, last_seq) pair.
+/// inclusive upper bound of the batch.
 typedef EventIdRange = ({int firstSeq, int lastSeq});
 
 /// One row in a destination's FIFO store — a batch of one or more events
@@ -25,25 +24,20 @@ typedef EventIdRange = ({int firstSeq, int lastSeq});
 /// permanent failure they are marked `FinalStatus.wedged`; rows excised
 /// by a trail sweep are marked `FinalStatus.tombstoned`. All non-null
 /// terminal states are retained forever as send-log / audit records
-/// (REQ-d00119-D).
+///.
 ///
 /// Phase-4.3 Task 6 migrated this type from a single-event-per-row shape
 /// to a batch-per-row shape: `eventIds` is a non-empty `List<String>`,
 /// `eventIdRange` is an `(firstSeq, lastSeq)` record, and `wirePayload`
 /// is one payload for the whole batch (no per-event payload is stored).
-// Implements: REQ-d00119-B+C — carries the documented columns;
 // final_status is nullable (null means not-yet-terminal; non-null
 // values are one of {sent, wedged, tombstoned}).
-// Implements: REQ-d00119-B+K — wirePayload is null iff
 // wireFormat == "esd/batch@1" (native), in which case envelopeMetadata
 // is non-null and drain reconstructs the wire bytes from
 // envelopeMetadata + event_ids-resolved events. For 3rd-party rows
 // (any other wireFormat) wirePayload is non-null and envelopeMetadata
 // is null.
-// Implements: REQ-d00128-A — eventIds is non-empty; enforced via
 // ArgumentError at construction and FormatException on fromJson.
-// Implements: REQ-d00128-B — eventIdRange is a (first_seq, last_seq) pair.
-// Implements: REQ-d00128-C — wirePayload is one payload covering the
 // entire batch (when present).
 class FifoEntry {
   FifoEntry({
@@ -60,24 +54,22 @@ class FifoEntry {
     this.wirePayload,
     this.envelopeMetadata,
   }) {
-    // Implements: REQ-d00128-A — reject empty batches at construction.
     // Explicit ArgumentError rather than assert so the invariant is
     // enforced in release builds too, not just debug.
     if (eventIds.isEmpty) {
       throw ArgumentError.value(
         eventIds,
         'eventIds',
-        'FifoEntry.eventIds must be non-empty (REQ-d00128-A)',
+        'FifoEntry.eventIds must be non-empty',
       );
     }
-    // Implements: REQ-d00128-B — event_id_range is drawn from the batch's
     // sequence numbers; the pair MUST be ordered (firstSeq <= lastSeq).
     if (eventIdRange.firstSeq > eventIdRange.lastSeq) {
       throw ArgumentError.value(
         eventIdRange,
         'eventIdRange',
         'eventIdRange.firstSeq (${eventIdRange.firstSeq}) must be '
-            '<= lastSeq (${eventIdRange.lastSeq}) (REQ-d00128-B)',
+            '<= lastSeq (${eventIdRange.lastSeq})',
       );
     }
   }
@@ -85,10 +77,10 @@ class FifoEntry {
   /// Decode from snake_case JSON. `wirePayload`, `attempts`, and
   /// `eventIds` are wrapped unmodifiable so downstream callers cannot
   /// mutate the record in place. `wire_payload` MAY be null (native
-  /// `esd/batch@1` rows store envelope_metadata instead — REQ-d00119-B+K).
+  /// `esd/batch@1` rows store envelope_metadata instead).
   /// `envelope_metadata` MAY be null (3rd-party rows). Throws
   /// [FormatException] on missing or wrong-typed fields, or when
-  /// `event_ids` is empty (REQ-d00128-A).
+  /// `event_ids` is empty.
   factory FifoEntry.fromJson(Map<String, Object?> json) {
     final entryId = json['entry_id'];
     if (entryId is! String) {
@@ -101,9 +93,7 @@ class FifoEntry {
       throw const FormatException('FifoEntry: missing or non-List "event_ids"');
     }
     if (eventIdsRaw.isEmpty) {
-      throw const FormatException(
-        'FifoEntry: "event_ids" must be non-empty (REQ-d00128-A)',
-      );
+      throw const FormatException('FifoEntry: "event_ids" must be non-empty');
     }
     final eventIds = <String>[];
     for (final e in eventIdsRaw) {
@@ -138,7 +128,6 @@ class FifoEntry {
         'FifoEntry: missing or non-int "sequence_in_queue"',
       );
     }
-    // Implements: REQ-d00119-B+K — wire_payload is null on native
     // `esd/batch@1` rows; non-null and a Map on 3rd-party rows. Reject
     // any other shape.
     final wirePayloadRaw = json['wire_payload'];
@@ -184,7 +173,6 @@ class FifoEntry {
         'FifoEntry: "sent_at" must be a String when present',
       );
     }
-    // Implements: REQ-d00119-K — envelope_metadata is a Map (or null) on
     // disk; non-null iff wireFormat == "esd/batch@1".
     final envelopeMetadataRaw = json['envelope_metadata'];
     if (envelopeMetadataRaw != null && envelopeMetadataRaw is! Map) {
@@ -232,10 +220,9 @@ class FifoEntry {
   final String entryId;
 
   /// Event_ids of every event included in this batch row, in the order they
-  /// were batched. Always non-empty (REQ-d00128-A) — enforced at
+  /// were batched. Always non-empty — enforced at
   /// construction and rechecked on `fromJson`. Preserved for audit and for
   /// idempotent redelivery.
-  // Implements: REQ-d00128-A — non-empty list identifying every event in
   // the batch.
   final List<String> eventIds;
 
@@ -243,20 +230,17 @@ class FifoEntry {
   /// of the events in this batch. Used for cursor advancement math in the
   /// drain and fill-batch paths — `lastSeq` is the upper bound of the batch
   /// on the event log. For a single-event batch, `firstSeq == lastSeq`.
-  // Implements: REQ-d00128-B — (first_seq, last_seq) pair for cursor math.
   final EventIdRange eventIdRange;
 
   /// Insertion-order position in this FIFO; monotonic per destination.
   final int sequenceInQueue;
 
   /// Transformed wire payload ready to hand to `destination.send()`. One
-  /// payload covers every event in the batch (REQ-d00128-C); per-event
+  /// payload covers every event in the batch; per-event
   /// wire payloads are NOT stored. Null when `wireFormat == "esd/batch@1"`
   /// (native rows reconstruct bytes at drain time from
-  /// [envelopeMetadata] + event_ids-resolved events — REQ-d00119-B+K);
+  /// [envelopeMetadata] + event_ids-resolved events);
   /// non-null otherwise.
-  // Implements: REQ-d00128-C — one payload per batch row (when present).
-  // Implements: REQ-d00119-B — null iff wireFormat == "esd/batch@1".
   final Map<String, Object?>? wirePayload;
 
   /// Wire-format discriminator (e.g., `"json-v1"`, `"fhir-r4"`).
@@ -271,13 +255,13 @@ class FifoEntry {
   final DateTime enqueuedAt;
 
   /// Historical send attempts; grows, never shrinks; retained forever per
-  /// REQ-d00119-D.
+  ///
   final List<AttemptResult> attempts;
 
   /// Terminal state of this entry. `null` on enqueue and while the row is
   /// still a drain candidate; moves to `sent`, `wedged`, or `tombstoned`
   /// on a terminal transition. Non-null terminal values are retained
-  /// forever as audit records (REQ-d00119-D).
+  /// forever as audit records.
   final FinalStatus? finalStatus;
 
   /// When the entry was marked `sent`; null while pre-terminal, wedged,
@@ -291,7 +275,6 @@ class FifoEntry {
   /// `eventIds`-resolved events to re-encode the wire bytes
   /// deterministically (RFC 8785 JCS) on each send attempt. Non-null
   /// iff `wireFormat == "esd/batch@1"`; null for 3rd-party rows.
-  // Implements: REQ-d00119-K — envelope_metadata is a BatchEnvelopeMetadata
   // value, non-null iff wireFormat == "esd/batch@1", set at enqueue,
   // immutable, drives drain re-encode determinism.
   final BatchEnvelopeMetadata? envelopeMetadata;

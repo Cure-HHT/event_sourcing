@@ -1,7 +1,6 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00171 (Denial Events): typed denial-event factories that the
 //   dispatcher uses to construct EventDraft instances for each denial
-//   stage. Sanitization (REQ-d00171-C) strips stack traces, file paths,
+//   stage. Sanitization strips stack traces, file paths,
 //   and likely-input-echoes before the message lands in the audit log.
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
@@ -16,7 +15,6 @@ const String _entryType = 'action_denial';
 /// error message before persisting it to the unified event log. Pure
 /// function for testability.
 //
-// Implements: REQ-d00171-C — sanitization rules.
 String sanitizeErrorMessage(Object error) {
   final raw = error.toString();
   // Remove stack-trace lines: `#N <whitespace> ... (file:///... or path)`.
@@ -97,7 +95,7 @@ EventDraft denialValidationDenied({
 /// Stage 6 (authorize) failure: a declared permission was denied.
 ///
 /// [denyReason] is optional richer audit data serialized as
-/// `data['deny_reason']` (the `DenyReason` enum name). Per REQ-d00171-A,
+/// `data['deny_reason']` (the `DenyReason` enum name). Per
 /// authorization_denied events SHALL additionally carry `permission_denied`
 /// and (when available) `principal_active_role`; `deny_reason` is an
 /// additional "(when available)" field for richer audit.

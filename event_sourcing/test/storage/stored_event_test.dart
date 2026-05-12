@@ -41,17 +41,15 @@ Map<String, Object?> _validEventMap() => <String, Object?>{
 
 void main() {
   group('StoredEvent Phase 4.4 shape', () {
-    // Verifies: REQ-d00135-C — initiator replaces top-level user_id and
     // round-trips through fromMap/toMap.
-    test('REQ-d00135-C: initiator round-trips through fromMap/toMap', () {
+    test('initiator round-trips through fromMap/toMap', () {
       final map = _minimalMap();
       final ev = StoredEvent.fromMap(map, 7);
       expect(ev.initiator, const UserInitiator('u'));
       expect(ev.toMap()['initiator'], {'type': 'user', 'user_id': 'u'});
     });
 
-    // Verifies: REQ-d00136-A — flowToken is nullable and round-trips.
-    test('REQ-d00136-A: flowToken is nullable and round-trips', () {
+    test('flowToken is nullable and round-trips', () {
       final mapNull = _minimalMap();
       final ev1 = StoredEvent.fromMap(mapNull, 7);
       expect(ev1.flowToken, isNull);
@@ -63,19 +61,15 @@ void main() {
       expect(ev2.toMap()['flow_token'], 'invite:ABC');
     });
 
-    // Verifies: REQ-d00135-C — top-level user_id/device_id/software_version
     // removed from the serialized map.
-    test(
-      'REQ-d00135-C: top-level user_id / device_id / software_version fields '
-      'are not emitted',
-      () {
-        final ev = StoredEvent.fromMap(_minimalMap(), 7);
-        final map = ev.toMap();
-        expect(map.containsKey('user_id'), isFalse);
-        expect(map.containsKey('device_id'), isFalse);
-        expect(map.containsKey('software_version'), isFalse);
-      },
-    );
+    test('top-level user_id / device_id / software_version fields '
+        'are not emitted', () {
+      final ev = StoredEvent.fromMap(_minimalMap(), 7);
+      final map = ev.toMap();
+      expect(map.containsKey('user_id'), isFalse);
+      expect(map.containsKey('device_id'), isFalse);
+      expect(map.containsKey('software_version'), isFalse);
+    });
 
     test('fromMap throws FormatException on missing initiator', () {
       final map = _minimalMap()..remove('initiator');
@@ -123,9 +117,8 @@ void main() {
     });
   });
 
-  group('REQ-d00118-E,F: entry_type_version + lib_format_version fields', () {
-    // Verifies: REQ-d00118-E
-    test('REQ-d00118-E: toMap includes entry_type_version', () {
+  group('entry_type_version + lib_format_version fields', () {
+    test('toMap includes entry_type_version', () {
       final e = StoredEvent.synthetic(
         eventId: 'e-1',
         aggregateId: 'a-1',
@@ -138,8 +131,7 @@ void main() {
       expect(e.toMap()['entry_type_version'], 7);
     });
 
-    // Verifies: REQ-d00118-F
-    test('REQ-d00118-F: toMap includes lib_format_version', () {
+    test('toMap includes lib_format_version', () {
       final e = StoredEvent.synthetic(
         eventId: 'e-1',
         aggregateId: 'a-1',
@@ -152,32 +144,27 @@ void main() {
       expect(e.toMap()['lib_format_version'], 3);
     });
 
-    // Verifies: REQ-d00118-E
-    test('REQ-d00118-E: fromMap rejects missing entry_type_version', () {
+    test('fromMap rejects missing entry_type_version', () {
       final m = _validEventMap()..remove('entry_type_version');
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    // Verifies: REQ-d00118-E
-    test('REQ-d00118-E: fromMap rejects non-int entry_type_version', () {
+    test('fromMap rejects non-int entry_type_version', () {
       final m = _validEventMap()..['entry_type_version'] = 'not-an-int';
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    // Verifies: REQ-d00118-F
-    test('REQ-d00118-F: fromMap rejects missing lib_format_version', () {
+    test('fromMap rejects missing lib_format_version', () {
       final m = _validEventMap()..remove('lib_format_version');
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    // Verifies: REQ-d00118-F
-    test('REQ-d00118-F: fromMap rejects non-int lib_format_version', () {
+    test('fromMap rejects non-int lib_format_version', () {
       final m = _validEventMap()..['lib_format_version'] = true;
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    // Verifies: REQ-d00118-E, REQ-d00118-F
-    test('REQ-d00118-E,F: round-trip preserves both fields', () {
+    test('round-trip preserves both fields', () {
       final m = _validEventMap()
         ..['entry_type_version'] = 11
         ..['lib_format_version'] = 1;
@@ -186,8 +173,7 @@ void main() {
       expect(e.libFormatVersion, 1);
     });
 
-    // Verifies: REQ-d00141-E
-    test('REQ-d00141-E: currentLibFormatVersion is 1', () {
+    test('currentLibFormatVersion is 1', () {
       expect(StoredEvent.currentLibFormatVersion, 1);
     });
   });

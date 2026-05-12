@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('ActionContext', () {
-    test('REQ-d00166: bundles principal, security, and timestamp', () {
+    test('bundles principal, security, and timestamp', () {
       final ctx = ActionContext(
         principal: const Principal.anonymous(),
         security: const SecurityDetails(),

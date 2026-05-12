@@ -4,7 +4,6 @@
 /// is blocked and on which entry. The entry remains in its FIFO with
 /// `final_status = "wedged"`; this summary carries the derived fields
 /// a UI or log needs to show without replaying the whole FIFO.
-// Implements: REQ-d00119-C+D — wedged head is observable without
 // scanning the FIFO; the underlying entry is retained as a send-log record.
 class WedgedFifoSummary {
   const WedgedFifoSummary({

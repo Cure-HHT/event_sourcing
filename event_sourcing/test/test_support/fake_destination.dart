@@ -43,11 +43,9 @@ class FakeDestination extends Destination {
   /// do not care about batching.
   final int batchCapacity;
 
-  // Implements: REQ-d00128-F — maxAccumulateTime declared on the fake.
   @override
   final Duration maxAccumulateTime;
 
-  // Implements: REQ-d00129-B — explicit override (default false) so the
   // abstract-class default is exercised on other destinations.
   @override
   final bool allowHardDelete;
@@ -66,18 +64,16 @@ class FakeDestination extends Destination {
 
   /// Count of times `transform` has been invoked. Used by Phase 4.10
   /// wedge-skip tests to assert `transform` is NOT called when fillBatch
-  /// early-returns on a wedged head (REQ-d00128-I).
+  /// early-returns on a wedged head.
   int transformCalls = 0;
 
   @override
   SubscriptionFilter get filter => _filter;
 
-  // Implements: REQ-d00128-E — canAddToBatch admits up to batchCapacity.
   @override
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
       currentBatch.length < batchCapacity;
 
-  // Implements: REQ-d00128-D / REQ-d00122-D — batch-aware transform.
   @override
   Future<WirePayload> transform(List<StoredEvent> batch) {
     transformCalls += 1;

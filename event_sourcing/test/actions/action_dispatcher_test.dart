@@ -49,62 +49,53 @@ void main() {
   });
 
   group('Stage 1 — lookup', () {
-    test(
-      'REQ-d00168-B: unknown action returns DispatchUnknownAction',
-      () async {
-        final r = await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'nope',
-            rawInput: <String, Object?>{},
-          ),
-          _ctx(),
-        );
-        expect(r, isA<DispatchUnknownAction<Object?>>());
-        expect((r as DispatchUnknownAction<Object?>).requestedName, 'nope');
-      },
-    );
+    test('unknown action returns DispatchUnknownAction', () async {
+      final r = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'nope',
+          rawInput: <String, Object?>{},
+        ),
+        _ctx(),
+      );
+      expect(r, isA<DispatchUnknownAction<Object?>>());
+      expect((r as DispatchUnknownAction<Object?>).requestedName, 'nope');
+    });
 
-    test(
-      'REQ-d00168-B: unknown action emits unknown_action denial event',
-      () async {
-        await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'nope',
-            rawInput: <String, Object?>{},
-          ),
-          _ctx(),
-        );
-        final allEvents = await eventStore.backend.findAllEvents();
-        final denials = allEvents
-            .where((e) => e.eventType == 'unknown_action')
-            .toList();
-        expect(denials, hasLength(1));
-        expect(denials.first.data['requested_name'], 'nope');
-      },
-    );
+    test('unknown action emits unknown_action denial event', () async {
+      await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'nope',
+          rawInput: <String, Object?>{},
+        ),
+        _ctx(),
+      );
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'unknown_action')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(denials.first.data['requested_name'], 'nope');
+    });
   });
 
   group('Stage 2 — invocation_id stamping', () {
-    test(
-      'REQ-d00168-C: every emitted event has action_invocation_id metadata',
-      () async {
-        await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'nope',
-            rawInput: <String, Object?>{},
-          ),
-          _ctx(),
-        );
-        final allEvents = await eventStore.backend.findAllEvents();
-        final denial = allEvents.firstWhere(
-          (e) => e.eventType == 'unknown_action',
-        );
-        expect(denial.metadata['action_invocation_id'], isNotNull);
-        expect(denial.metadata['action_invocation_id'], isA<String>());
-      },
-    );
+    test('every emitted event has action_invocation_id metadata', () async {
+      await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'nope',
+          rawInput: <String, Object?>{},
+        ),
+        _ctx(),
+      );
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denial = allEvents.firstWhere(
+        (e) => e.eventType == 'unknown_action',
+      );
+      expect(denial.metadata['action_invocation_id'], isNotNull);
+      expect(denial.metadata['action_invocation_id'], isA<String>());
+    });
 
-    test('REQ-d00168-C: invocation_id is unique per call', () async {
+    test('invocation_id is unique per call', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
           actionName: 'nope',
@@ -133,21 +124,18 @@ void main() {
       registry.register(BadParseAction());
     });
 
-    test(
-      'REQ-d00168-D: parseInput failure returns DispatchParseDenied',
-      () async {
-        final result = await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'bad_parse',
-            rawInput: <String, Object?>{},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchParseDenied<Object?>>());
-      },
-    );
+    test('parseInput failure returns DispatchParseDenied', () async {
+      final result = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_parse',
+          rawInput: <String, Object?>{},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchParseDenied<Object?>>());
+    });
 
-    test('REQ-d00168-D: parseInput failure emits parse_denied event', () async {
+    test('parseInput failure emits parse_denied event', () async {
       await dispatcher.dispatch(
         const ActionSubmission(
           actionName: 'bad_parse',
@@ -170,7 +158,7 @@ void main() {
     });
 
     test(
-      'REQ-d00170-B: idempotency.required without key returns DispatchParseDenied',
+      'idempotency.required without key returns DispatchParseDenied',
       () async {
         final result = await dispatcher.dispatch(
           const ActionSubmission(
@@ -187,7 +175,7 @@ void main() {
     );
 
     test(
-      'REQ-d00170-B: missing required key emits parse_denied before parseInput runs',
+      'missing required key emits parse_denied before parseInput runs',
       () async {
         await dispatcher.dispatch(
           const ActionSubmission(
@@ -209,7 +197,7 @@ void main() {
     );
 
     test(
-      'REQ-d00170-C: idempotency hit short-circuits and returns DispatchIdempotencyHit',
+      'idempotency hit short-circuits and returns DispatchIdempotencyHit',
       () async {
         // Pre-populate the idempotency store for (requires_key, u-1, k1).
         await idempotency.record(
@@ -245,7 +233,7 @@ void main() {
     );
 
     test(
-      'REQ-d00170-A: idempotency.none ignores supplied key — no store record created',
+      'idempotency.none ignores supplied key — no store record created',
       () async {
         // HelloAction has Idempotency.none. Dispatch with a key; Stage 6
         // (authorize) now runs and DenyAllAuthorizationPolicy denies it —
@@ -274,41 +262,35 @@ void main() {
       registry.register(BadValidateAction());
     });
 
-    test(
-      'REQ-d00168-F: validate failure returns DispatchValidationDenied',
-      () async {
-        final result = await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'bad_validate',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchValidationDenied<Object?>>());
-      },
-    );
+    test('validate failure returns DispatchValidationDenied', () async {
+      final result = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_validate',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchValidationDenied<Object?>>());
+    });
 
-    test(
-      'REQ-d00168-F: validate failure emits validation_denied event',
-      () async {
-        await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'bad_validate',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        final allEvents = await eventStore.backend.findAllEvents();
-        final denials = allEvents
-            .where((e) => e.eventType == 'validation_denied')
-            .toList();
-        expect(denials, hasLength(1));
-        expect(
-          denials.first.data['error_class'],
-          StateError('').runtimeType.toString(),
-        );
-      },
-    );
+    test('validate failure emits validation_denied event', () async {
+      await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_validate',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'validation_denied')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(
+        denials.first.data['error_class'],
+        StateError('').runtimeType.toString(),
+      );
+    });
   });
 
   // Helper: dispatcher that always allows authorization.
@@ -324,47 +306,41 @@ void main() {
   );
 
   group('Stage 6 — authorize', () {
-    test(
-      'REQ-d00168-G: authz denial returns DispatchAuthorizationDenied',
-      () async {
-        // Default dispatcher uses DenyAllAuthorizationPolicy.forTests().
-        // HelloAction declares permission test.hello which will be denied.
-        final result = await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'hello',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchAuthorizationDenied<Object?>>());
-        final denied = result as DispatchAuthorizationDenied<Object?>;
-        expect(denied.permission.name, 'test.hello');
-      },
-    );
+    test('authz denial returns DispatchAuthorizationDenied', () async {
+      // Default dispatcher uses DenyAllAuthorizationPolicy.forTests().
+      // HelloAction declares permission test.hello which will be denied.
+      final result = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+      final denied = result as DispatchAuthorizationDenied<Object?>;
+      expect(denied.permission.name, 'test.hello');
+    });
+
+    test('authz denial emits authorization_denied event', () async {
+      await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'authorization_denied')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(denials.first.data['permission_denied'], 'test.hello');
+      // DenyAllAuthorizationPolicy always denies with DenyReason.notGranted.
+      expect(denials.first.data['deny_reason'], 'notGranted');
+    });
 
     test(
-      'REQ-d00168-G: authz denial emits authorization_denied event',
-      () async {
-        await dispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'hello',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        final allEvents = await eventStore.backend.findAllEvents();
-        final denials = allEvents
-            .where((e) => e.eventType == 'authorization_denied')
-            .toList();
-        expect(denials, hasLength(1));
-        expect(denials.first.data['permission_denied'], 'test.hello');
-        // DenyAllAuthorizationPolicy always denies with DenyReason.notGranted.
-        expect(denials.first.data['deny_reason'], 'notGranted');
-      },
-    );
-
-    test(
-      'REQ-d00168-G: first denial short-circuits — only one authorization_denied event emitted',
+      'first denial short-circuits — only one authorization_denied event emitted',
       () async {
         registry.register(TwoPermissionAction());
         await dispatcher.dispatch(
@@ -383,7 +359,7 @@ void main() {
     );
 
     test(
-      'REQ-d00168-G: all-Allow falls through all stages and returns DispatchSuccess',
+      'all-Allow falls through all stages and returns DispatchSuccess',
       () async {
         final allowDispatcher = ActionDispatcher(
           registry: registry,
@@ -411,41 +387,35 @@ void main() {
       allowDispatcher = makeAllowDispatcher(registry, eventStore, idempotency);
     });
 
-    test(
-      'REQ-d00168-H: execute throw returns DispatchExecutionFailed',
-      () async {
-        final result = await allowDispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'bad_execute',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchExecutionFailed<Object?>>());
-      },
-    );
+    test('execute throw returns DispatchExecutionFailed', () async {
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_execute',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchExecutionFailed<Object?>>());
+    });
+
+    test('execute throw emits execution_failed denial event', () async {
+      await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_execute',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'execution_failed')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(denials.first.data['action_name'], 'bad_execute');
+    });
 
     test(
-      'REQ-d00168-H: execute throw emits execution_failed denial event',
-      () async {
-        await allowDispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'bad_execute',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        final allEvents = await eventStore.backend.findAllEvents();
-        final denials = allEvents
-            .where((e) => e.eventType == 'execution_failed')
-            .toList();
-        expect(denials, hasLength(1));
-        expect(denials.first.data['action_name'], 'bad_execute');
-      },
-    );
-
-    test(
-      'REQ-d00168-H: execute success persists events and returns DispatchSuccess',
+      'execute success persists events and returns DispatchSuccess',
       () async {
         // Stage 8 persists the event; Stage 9-10 complete and return success.
         final result = await allowDispatcher.dispatch(
@@ -476,7 +446,7 @@ void main() {
     });
 
     test(
-      'REQ-d00168-I: each emitted event has action_invocation_id and action_name in metadata',
+      'each emitted event has action_invocation_id and action_name in metadata',
       () async {
         final result = await allowDispatcher.dispatch(
           const ActionSubmission(
@@ -508,7 +478,7 @@ void main() {
     );
 
     test(
-      'REQ-d00168-I: multi-event execute persists all atomically with same action_invocation_id',
+      'multi-event execute persists all atomically with same action_invocation_id',
       () async {
         final result = await allowDispatcher.dispatch(
           const ActionSubmission(
@@ -556,7 +526,7 @@ void main() {
     });
 
     test(
-      'REQ-d00168-K: success path returns DispatchSuccess with result and emittedEventIds',
+      'success path returns DispatchSuccess with result and emittedEventIds',
       () async {
         final result = await allowDispatcher.dispatch(
           const ActionSubmission(
@@ -574,7 +544,7 @@ void main() {
     );
 
     test(
-      'REQ-d00170-D: Idempotency.optional + key records entry; lookup returns entry with matching emittedEventIds',
+      'Idempotency.optional + key records entry; lookup returns entry with matching emittedEventIds',
       () async {
         final ctx = _ctx();
         final result = await allowDispatcher.dispatch(
@@ -601,7 +571,7 @@ void main() {
     );
 
     test(
-      'REQ-d00170-D: Idempotency.required + key records entry; lookup returns entry with matching emittedEventIds',
+      'Idempotency.required + key records entry; lookup returns entry with matching emittedEventIds',
       () async {
         final ctx = _ctx();
         final result = await allowDispatcher.dispatch(
@@ -628,7 +598,7 @@ void main() {
     );
 
     test(
-      'REQ-d00168-J: Idempotency.none + key supplied → no idempotency entry recorded',
+      'Idempotency.none + key supplied → no idempotency entry recorded',
       () async {
         final result = await allowDispatcher.dispatch(
           const ActionSubmission(

@@ -1,7 +1,5 @@
 // lib/src/permissions/authorization_policy_bootstrap.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00178-B (sealed PolicyReady | PolicyFailSafe with isReady flag),
-//   REQ-d00178-C (PolicyFailSafe.policy is FailSafeAuthorizationPolicy
 //   with the carried errors).
 
 import 'package:event_sourcing/event_sourcing.dart';

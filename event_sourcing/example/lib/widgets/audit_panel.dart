@@ -5,7 +5,7 @@ import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 /// Demonstrates the typed cross-store audit query (`StorageBackend.queryAudit`,
-/// REQ-d00151). Renders one row per `(event, securityContext)` pair returned
+/// ). Renders one row per `(event, securityContext)` pair returned
 /// by the join, with an optional `flow_token` filter. Re-queries on every
 /// event arrival so the list stays live without a polling timer.
 ///

@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167-D (ActionRegistry and Bootstrap): the top-level
 //   convenience function that composes all dispatcher dependencies
 //   into a ready ActionDispatcher.
 
@@ -13,7 +12,7 @@ import 'package:event_sourcing/src/actions/idempotency_store.dart';
 /// Compose a ready [ActionDispatcher] from its dependencies.
 ///
 /// Builds an [ActionRegistry], registers all supplied [actions]
-/// (rejecting collisions per REQ-d00167-A), wires the registry plus
+/// (rejecting collisions), wires the registry plus
 /// [authorization], [events], and [idempotency] into the dispatcher,
 /// and returns it.
 ActionDispatcher bootstrapAuditedActions({

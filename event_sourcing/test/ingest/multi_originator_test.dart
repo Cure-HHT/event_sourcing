@@ -1,9 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00115-H: previous_ingest_hash threads across originators (Chain 2)
-//   REQ-d00115-I: ingest_sequence_number monotone across originators
-//   REQ-d00120-E: event_hash recomputed on each receiver provenance append
-//   REQ-d00146-A: verifyEventChain passes for every ingested event
-//   REQ-d00146-C: verifyIngestChain walks Chain 2 spanning all originators
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,7 +106,7 @@ Future<StoredEvent> _fetchStored(_Fixture fixture, String eventId) async {
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('Multi-originator ingest (REQ-d00115-H+I, REQ-d00120-E, REQ-d00146-A+C)', () {
+  group('Multi-originator ingest', () {
     // -----------------------------------------------------------------------
     // Test 1: per-event interleaved ingest from two originators
     // -----------------------------------------------------------------------

@@ -1,8 +1,5 @@
 // lib/src/permissions/event_seed_applier.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00175-F (diff yaml against view, emit missing grants),
-//   REQ-d00175-G (idempotent across restarts),
-//   REQ-d00175-H (drift reported, not auto-revoked).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

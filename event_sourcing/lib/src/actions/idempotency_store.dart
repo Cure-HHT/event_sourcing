@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00170-D,E (REQ-IDEMPOT): cache-with-TTL contract for action
 //   replay protection; in-memory impl for tests and early development.
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
@@ -8,8 +7,6 @@ import 'package:event_sourcing/src/actions/idempotency.dart';
 /// `(actionName, principalId, key)`. Lookup hits short-circuit a
 /// dispatch and return the cached result.
 //
-// Implements: REQ-d00170-D — lookup hit returns cached payload;
-//             REQ-d00170-E — sweepExpired purges past-expiry entries.
 abstract class IdempotencyStore {
   Future<IdempotencyEntry?> lookup(
     String actionName,

@@ -69,8 +69,7 @@ void main() {
     });
   });
 
-  group('allDemoEntryTypes (REQ-d00134 bootstrap registration)', () {
-    // Verifies: REQ-d00134 bootstrapAppendOnlyDatastore takes
+  group('allDemoEntryTypes (bootstrap registration)', () {
     //   List<EntryTypeDefinition>; duplicate id would throw at register.
     test('has exactly four entries', () {
       expect(allDemoEntryTypes.length, 4);

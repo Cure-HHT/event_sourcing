@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00172-A+B: Permission carries the ScopeClass that constrains which
 //   principals may exercise it based on session context; every Action's
 //   declared permissions state their scope explicitly.
 

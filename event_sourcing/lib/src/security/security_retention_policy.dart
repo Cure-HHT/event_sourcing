@@ -1,7 +1,6 @@
 /// Retention-and-truncation policy applied by
 /// `EventStore.applyRetentionPolicy` against the security-context sidecar
 /// store. Separate from the event log's retention, which is permanent.
-// Implements: REQ-d00138-A — policy value type with documented defaults
 // and static `defaults` instance.
 class SecurityRetentionPolicy {
   const SecurityRetentionPolicy({

@@ -17,8 +17,6 @@ import 'package:event_sourcing/src/storage/source.dart';
 /// security-context sidecar surface (`securityContexts`). Also exposes
 /// `setViewTargetVersion` for post-bootstrap registration of new entry
 /// types into a materializer's `view_target_versions`.
-// Implements: REQ-d00134-A (Phase 4.4 revised) — AppendOnlyDatastore facade.
-// Implements: REQ-d00140-K — setViewTargetVersion on AppendOnlyDatastore.
 class AppendOnlyDatastore {
   const AppendOnlyDatastore({
     required this.eventStore,
@@ -38,7 +36,6 @@ class AppendOnlyDatastore {
   /// the persisted `view_target_versions`. Used to add a new entry type
   /// to a materialized view after bootstrap (e.g., when a sponsor adds a
   /// new diary entry type at runtime).
-  // Implements: REQ-d00140-K.
   Future<void> setViewTargetVersion(
     String viewName,
     String entryType,
@@ -64,15 +61,12 @@ class AppendOnlyDatastore {
 /// reserved id throws `ArgumentError` with a "reserved" message.
 ///
 /// Destinations are registered sequentially, preserving fail-fast on id
-/// collision (REQ-d00134-D).
+/// collision.
 ///
 /// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
 /// lib-version boot check. Default `false` — production-correct behaviour
 /// is to refuse a downgrade. Pass `true` only during development / testing.
-// Implements: REQ-d00134-A (Phase 4.4) — single entry point; facade return.
-// Implements: REQ-d00134-B (Phase 4.4) — auto-register system entry types
 //   before caller-supplied types.
-// Implements: REQ-d00134-D (Phase 4.4) — caller id colliding with reserved
 //   id throws ArgumentError with "reserved" message.
 // Implements: EVS-DEV-event-store-open — boot-version check fires through
 //   the production bootstrap path.
@@ -117,12 +111,10 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   );
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
-  // Implements: REQ-d00134-E+F — emit a registry-initialized audit
   //   event recording the registry's full id->registered_version map
   //   after EventStore construction and before destination registration.
   //   dedupeByContent: same-state reboots no-op; a schema bump (added
   //   entry type or registeredVersion bump) emits a new event.
-  // Implements: REQ-d00154-D — system events use the install UUID as
   //   their aggregate so each install has a single per-installation
   //   hash-chained system aggregate spanning bootstrap, destination
   //   registry, and retention/redaction audits.

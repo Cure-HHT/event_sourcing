@@ -1,6 +1,5 @@
 // lib/src/permissions/in_memory_role_matrix_reader.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-C (RoleMatrixReader in-memory impl). Used as a test
 //   fixture and as the backing for FailSafeAuthorizationPolicy (with an
 //   empty map).
 

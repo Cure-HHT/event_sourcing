@@ -30,7 +30,6 @@ class ChainFailure {
 }
 
 /// Non-throwing verdict returned by `verifyEventChain` / `verifyIngestChain`.
-// Implements: REQ-d00146-B+C.
 class ChainVerdict {
   const ChainVerdict({required this.ok, required this.failures});
   final bool ok;

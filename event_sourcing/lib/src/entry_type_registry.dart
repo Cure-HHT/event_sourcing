@@ -3,7 +3,7 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 /// Process-wide registry mapping `entry_type` ids to `EntryTypeDefinition`.
 ///
 /// `EntryService.record` validates the incoming `entryType` through this
-/// registry (REQ-d00133-H) before opening a write transaction; widgets and
+/// registry before opening a write transaction; widgets and
 /// materialization paths also read through it to resolve per-type metadata
 /// (`effective_date_path`, `widget_id`). Centralizing registrations on one
 /// object is how an app keeps "the set of known entry types" a single
@@ -13,7 +13,6 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 /// what `EntryService.record` needs in Phase 4.3 Task 16. Task 17 will
 /// polish the surface (iteration ergonomics, JSON registration helpers)
 /// without changing these signatures.
-// Implements: REQ-d00133-H — isRegistered backs record()'s pre-I/O
 // entryType validation.
 class EntryTypeRegistry {
   /// Register [defn]. Duplicate id is a configuration bug — silent

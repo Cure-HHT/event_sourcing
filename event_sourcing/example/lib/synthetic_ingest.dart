@@ -8,7 +8,7 @@ import 'package:uuid/uuid.dart';
 /// (`remote-mobile-1`). The resulting envelope is fed to
 /// `EventStore.ingestBatch`, which stamps a receiver `ProvenanceEntry`
 /// (with `origin_sequence_number` carrying the wire-supplied seq) and
-/// reassigns a fresh local `sequence_number` per REQ-d00145-E.
+/// reassigns a fresh local `sequence_number`
 ///
 /// **Single-event-per-batch by design.** Plan 4.15 Task 5 Risk 2: the
 /// `EventStore.ingestBatch` Chain 1 verifier walks every provenance entry
@@ -24,7 +24,7 @@ import 'package:uuid/uuid.dart';
 /// The receiver-side `_appendReceiverProvenance` recomputes a real
 /// canonical hash for the stored event; the synthetic placeholder hash
 /// only ever lives on the receiver provenance entry's `arrival_hash`
-/// field (REQ-d00115-G), where its role is documentary, not verifying.
+/// field, where its role is documentary, not verifying.
 class SyntheticBatchBuilder {
   SyntheticBatchBuilder({
     this.senderHop = 'remote-mobile-1',

@@ -93,32 +93,27 @@ EntryTypeDefinition _simpleDef(String id) =>
 
 void main() {
   group('EventStore.append', () {
-    // Verifies: REQ-d00141-B — per-field append returns StoredEvent with
     // initiator / flowToken round-tripped.
-    test(
-      'REQ-d00141-B: returns StoredEvent with initiator + flowToken',
-      () async {
-        final fx = await _setup();
-        final ev = await fx.eventStore.append(
-          entryType: 'epistaxis_event',
-          aggregateId: 'a',
-          aggregateType: 'SampleAggregate',
-          eventType: 'finalized',
-          data: const {
-            'answers': {'severity': 'mild'},
-          },
-          initiator: const UserInitiator('u1'),
-          flowToken: 'flow:abc',
-        );
-        expect(ev, isNotNull);
-        expect(ev!.initiator, const UserInitiator('u1'));
-        expect(ev.flowToken, 'flow:abc');
-        await fx.backend.close();
-      },
-    );
+    test('returns StoredEvent with initiator + flowToken', () async {
+      final fx = await _setup();
+      final ev = await fx.eventStore.append(
+        entryType: 'epistaxis_event',
+        aggregateId: 'a',
+        aggregateType: 'SampleAggregate',
+        eventType: 'finalized',
+        data: const {
+          'answers': {'severity': 'mild'},
+        },
+        initiator: const UserInitiator('u1'),
+        flowToken: 'flow:abc',
+      );
+      expect(ev, isNotNull);
+      expect(ev!.initiator, const UserInitiator('u1'));
+      expect(ev.flowToken, 'flow:abc');
+      await fx.backend.close();
+    });
 
-    // Verifies: REQ-d00137-C — event + security row commit atomically.
-    test('REQ-d00137-C: append with security writes both rows', () async {
+    test('append with security writes both rows', () async {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
         entryType: 'epistaxis_event',
@@ -135,7 +130,6 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00137-C — no security row when security param is null.
     test('append without security writes only event row', () async {
       final fx = await _setup();
       final ev = await fx.eventStore.append(
@@ -150,39 +144,35 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00140-C — an entry type not covered by any ProjectionSpec
     // interest filter produces no view row. In the declarative model this is
     // expressed by simply not registering a ProjectionSpec for that entry type.
-    test(
-      'REQ-d00140-C: entry type not in any ProjectionSpec produces no view row',
-      () async {
-        final fx = await _setup(
-          defs: [
-            const EntryTypeDefinition(
-              id: 'non_materialized',
-              registeredVersion: 1,
-              name: 'Non-Mat',
-              materialize: false,
-            ),
-          ],
-          registerProjection: false,
-        );
-        final ev = await fx.eventStore.append(
-          entryType: 'non_materialized',
-          aggregateId: 'a',
-          aggregateType: 'SampleAggregate',
-          eventType: 'finalized',
-          data: const {'answers': {}},
-          initiator: const UserInitiator('u1'),
-        );
-        expect(ev, isNotNull);
-        final viewRow = await fx.backend.transaction(
-          (txn) async => fx.backend.readViewRowInTxn(txn, 'toy_view', 'a'),
-        );
-        expect(viewRow, isNull);
-        await fx.backend.close();
-      },
-    );
+    test('entry type not in any ProjectionSpec produces no view row', () async {
+      final fx = await _setup(
+        defs: [
+          const EntryTypeDefinition(
+            id: 'non_materialized',
+            registeredVersion: 1,
+            name: 'Non-Mat',
+            materialize: false,
+          ),
+        ],
+        registerProjection: false,
+      );
+      final ev = await fx.eventStore.append(
+        entryType: 'non_materialized',
+        aggregateId: 'a',
+        aggregateType: 'SampleAggregate',
+        eventType: 'finalized',
+        data: const {'answers': {}},
+        initiator: const UserInitiator('u1'),
+      );
+      expect(ev, isNotNull);
+      final viewRow = await fx.backend.transaction(
+        (txn) async => fx.backend.readViewRowInTxn(txn, 'toy_view', 'a'),
+      );
+      expect(viewRow, isNull);
+      await fx.backend.close();
+    });
 
     test('unregistered entryType throws ArgumentError before I/O', () async {
       final fx = await _setup();
@@ -200,9 +190,8 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00136-E — flow_token participates in event_hash; changing
     // it changes the hash.
-    test('REQ-d00136-E: flow_token participates in event_hash', () async {
+    test('flow_token participates in event_hash', () async {
       final fxA = await _setup(now: DateTime.utc(2026, 4, 22));
       final evA = await fxA.eventStore.append(
         entryType: 'epistaxis_event',
@@ -234,67 +223,58 @@ void main() {
   });
 
   group('EventStore.clearSecurityContext', () {
-    // Verifies: REQ-d00138-D — deletes security row and emits
     // security_context_redacted event with the correct fields.
-    test(
-      'REQ-d00138-D: deletes security row + emits redaction event',
-      () async {
-        final fx = await _setup();
-        final ev = await fx.eventStore.append(
-          entryType: 'epistaxis_event',
-          aggregateId: 'a',
-          aggregateType: 'SampleAggregate',
-          eventType: 'finalized',
-          data: const {'answers': {}},
-          initiator: const UserInitiator('u1'),
-          security: const SecurityDetails(ipAddress: '1.2.3.4'),
-        );
-        await fx.eventStore.clearSecurityContext(
-          ev!.eventId,
-          reason: 'GDPR request',
+    test('deletes security row + emits redaction event', () async {
+      final fx = await _setup();
+      final ev = await fx.eventStore.append(
+        entryType: 'epistaxis_event',
+        aggregateId: 'a',
+        aggregateType: 'SampleAggregate',
+        eventType: 'finalized',
+        data: const {'answers': {}},
+        initiator: const UserInitiator('u1'),
+        security: const SecurityDetails(ipAddress: '1.2.3.4'),
+      );
+      await fx.eventStore.clearSecurityContext(
+        ev!.eventId,
+        reason: 'GDPR request',
+        redactedBy: const UserInitiator('admin-1'),
+      );
+      expect(await fx.securityContexts.read(ev.eventId), isNull);
+
+      final events = await fx.backend.findAllEvents();
+      final redactionEvent = events.last;
+      expect(redactionEvent.entryType, 'security_context_redacted');
+      expect(redactionEvent.aggregateType, 'security_context');
+      // UUID; the redacted subject's eventId moves into
+      // data.subject_event_id.
+      expect(redactionEvent.aggregateId, fx.eventStore.source.identifier);
+      expect(redactionEvent.data['subject_event_id'], ev.eventId);
+      expect(redactionEvent.initiator, const UserInitiator('admin-1'));
+      expect(redactionEvent.data['reason'], 'GDPR request');
+      await fx.backend.close();
+    });
+
+    test('missing eventId throws ArgumentError; no event emitted', () async {
+      final fx = await _setup();
+      await expectLater(
+        fx.eventStore.clearSecurityContext(
+          'nope',
+          reason: 'oops',
           redactedBy: const UserInitiator('admin-1'),
-        );
-        expect(await fx.securityContexts.read(ev.eventId), isNull);
-
-        final events = await fx.backend.findAllEvents();
-        final redactionEvent = events.last;
-        expect(redactionEvent.entryType, 'security_context_redacted');
-        expect(redactionEvent.aggregateType, 'security_context');
-        // REQ-d00138-D (revised) + REQ-d00154-D: aggregateId is the install
-        // UUID; the redacted subject's eventId moves into
-        // data.subject_event_id.
-        expect(redactionEvent.aggregateId, fx.eventStore.source.identifier);
-        expect(redactionEvent.data['subject_event_id'], ev.eventId);
-        expect(redactionEvent.initiator, const UserInitiator('admin-1'));
-        expect(redactionEvent.data['reason'], 'GDPR request');
-        await fx.backend.close();
-      },
-    );
-
-    test(
-      'REQ-d00138-D: missing eventId throws ArgumentError; no event emitted',
-      () async {
-        final fx = await _setup();
-        await expectLater(
-          fx.eventStore.clearSecurityContext(
-            'nope',
-            reason: 'oops',
-            redactedBy: const UserInitiator('admin-1'),
-          ),
-          throwsArgumentError,
-        );
-        expect(await fx.backend.findAllEvents(), isEmpty);
-        await fx.backend.close();
-      },
-    );
+        ),
+        throwsArgumentError,
+      );
+      expect(await fx.backend.findAllEvents(), isEmpty);
+      await fx.backend.close();
+    });
   });
 
   group('EventStore.applyRetentionPolicy', () {
-    // Verifies: REQ-d00138-E/F — empty sweep emits no compact/purge
-    // events. REQ-d00138-H — empty sweep DOES emit a per-sweep
+    // events. empty sweep DOES emit a per-sweep
     // retention_policy_applied audit. The audit is the timeline
     // record; the compact/purge events are gated on actual work.
-    test('REQ-d00138-E+F+H: empty sweep emits per-sweep audit only', () async {
+    test('empty sweep emits per-sweep audit only', () async {
       final fx = await _setup(now: DateTime.utc(2030, 1, 1));
       final result = await fx.eventStore.applyRetentionPolicy();
       expect(result.compactedCount, 0);
@@ -310,7 +290,7 @@ void main() {
         isFalse,
       );
       // But the per-sweep retention_policy_applied audit fires
-      // unconditionally (REQ-d00138-H).
+      // unconditionally.
       final perSweep = events
           .where((e) => e.entryType == kRetentionPolicyAppliedEntryType)
           .toList();
@@ -320,46 +300,42 @@ void main() {
       await fx.backend.close();
     });
 
-    // Verifies: REQ-d00138-B+E — compact sweep truncates and emits one
     // security_context_compacted event.
-    test(
-      'REQ-d00138-B+E: compact sweep truncates IP and emits compacted event',
-      () async {
-        final fixtureNow = DateTime.utc(2030, 1, 1);
-        final fx = await _setup(now: fixtureNow);
-        // Write an event from 2020 (well past the 90-day full retention
-        // window but within 90+365 so it is compacted, not purged).
-        final ev = await fx.eventStore.append(
-          entryType: 'epistaxis_event',
-          aggregateId: 'a',
-          aggregateType: 'SampleAggregate',
-          eventType: 'finalized',
-          data: const {'answers': {}},
-          initiator: const UserInitiator('u1'),
-          security: const SecurityDetails(ipAddress: '203.0.113.7'),
-        );
-        // Manually backdate the security row to ensure it's past
-        // fullRetention.
-        final backdated = EventSecurityContext(
-          eventId: ev!.eventId,
-          recordedAt: DateTime.utc(2029, 1, 1),
-          ipAddress: '203.0.113.7',
-        );
-        await fx.backend.transaction((txn) async {
-          await fx.securityContexts.upsertInTxn(txn, backdated);
-        });
+    test('compact sweep truncates IP and emits compacted event', () async {
+      final fixtureNow = DateTime.utc(2030, 1, 1);
+      final fx = await _setup(now: fixtureNow);
+      // Write an event from 2020 (well past the 90-day full retention
+      // window but within 90+365 so it is compacted, not purged).
+      final ev = await fx.eventStore.append(
+        entryType: 'epistaxis_event',
+        aggregateId: 'a',
+        aggregateType: 'SampleAggregate',
+        eventType: 'finalized',
+        data: const {'answers': {}},
+        initiator: const UserInitiator('u1'),
+        security: const SecurityDetails(ipAddress: '203.0.113.7'),
+      );
+      // Manually backdate the security row to ensure it's past
+      // fullRetention.
+      final backdated = EventSecurityContext(
+        eventId: ev!.eventId,
+        recordedAt: DateTime.utc(2029, 1, 1),
+        ipAddress: '203.0.113.7',
+      );
+      await fx.backend.transaction((txn) async {
+        await fx.securityContexts.upsertInTxn(txn, backdated);
+      });
 
-        final result = await fx.eventStore.applyRetentionPolicy();
-        expect(result.compactedCount, 1);
-        final events = await fx.backend.findAllEvents();
-        final compacted = events.firstWhere(
-          (e) => e.entryType == 'security_context_compacted',
-        );
-        expect(compacted.data['count'], 1);
-        final ctx = await fx.securityContexts.read(ev.eventId);
-        expect(ctx!.ipAddress, '203.0.113.0');
-        await fx.backend.close();
-      },
-    );
+      final result = await fx.eventStore.applyRetentionPolicy();
+      expect(result.compactedCount, 1);
+      final events = await fx.backend.findAllEvents();
+      final compacted = events.firstWhere(
+        (e) => e.entryType == 'security_context_compacted',
+      );
+      expect(compacted.data['count'], 1);
+      final ctx = await fx.securityContexts.read(ev.eventId);
+      expect(ctx!.ipAddress, '203.0.113.0');
+      await fx.backend.close();
+    });
   });
 }

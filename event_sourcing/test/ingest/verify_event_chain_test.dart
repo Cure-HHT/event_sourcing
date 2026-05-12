@@ -1,8 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00146-A: verifyEventChain — public Chain-1 verifier on EventStore
-//   REQ-d00146-B: ChainVerdict shape; non-throwing contract
-//   REQ-d00146-D: verifyEventChain does not throw; returns ChainVerdict
-//   REQ-d00146-E: ok=true trivially for origin-only (length-1 provenance)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,7 +78,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.verifyEventChain (REQ-d00146-A+B)', () {
+  group('EventStore.verifyEventChain', () {
     test('returns ok=true for a well-formed ingested event', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(

@@ -3,9 +3,6 @@
 /// of actor — human user, automation service, or pre-auth anonymous flow —
 /// so downstream audit and filtering can reason about causation without
 /// guessing.
-// Implements: REQ-d00135-A — sealed Dart 3 class with three variants.
-// Implements: REQ-d00135-B — JSON round-trip with type discriminator.
-// Implements: REQ-d00135-F — rejects unknown discriminator / missing
 // required fields with FormatException.
 sealed class Initiator {
   const Initiator();
@@ -78,7 +75,6 @@ class UserInitiator extends Initiator {
   String toString() => 'UserInitiator($userId)';
 }
 
-// Implements: REQ-d00135-D — Automation.triggeringEventId optional cascade
 // audit link; null for cron / free-running / observed-external-fact triggers.
 class AutomationInitiator extends Initiator {
   const AutomationInitiator({required this.service, this.triggeringEventId});
@@ -107,7 +103,6 @@ class AutomationInitiator extends Initiator {
       'AutomationInitiator(service: $service, triggeringEventId: $triggeringEventId)';
 }
 
-// Implements: REQ-d00135-E — Anonymous accepts null ipAddress; used by
 // pre-auth flows like the PIN-login screen.
 class AnonymousInitiator extends Initiator {
   const AnonymousInitiator({required this.ipAddress});

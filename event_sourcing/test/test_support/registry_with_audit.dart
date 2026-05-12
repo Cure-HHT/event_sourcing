@@ -1,7 +1,6 @@
 // Test helper: build a `(EventStore, DestinationRegistry)` pair wired to
 // a shared `SembastBackend` so registry-mutation tests can satisfy the
-// audit-emission contract introduced by REQ-d00129-J+K+L+M+N and
-// REQ-d00144-G without going through `bootstrapAppendOnlyDatastore`.
+// audit-emission contract introduced and
 //
 // The system entry types (kSystemEntryTypes) are pre-registered on the
 // returned `EntryTypeRegistry` so every audit append validates cleanly

@@ -1,6 +1,5 @@
 // lib/src/permissions/fail_safe_authorization_policy.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00178-A (every query denies with bootstrapFailure reason).
 
 import 'package:event_sourcing/event_sourcing.dart';
 

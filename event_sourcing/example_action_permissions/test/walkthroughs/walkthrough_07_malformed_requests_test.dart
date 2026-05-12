@@ -1,6 +1,5 @@
 // test/walkthroughs/walkthrough_07_malformed_requests_test.dart
 //
-// Verifies: REQ-d00171 — denial events for parse / validation /
 //           unknown-action paths; each shows up in the event log with
 //           the matching eventType.
 

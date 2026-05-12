@@ -60,7 +60,7 @@ class SendTransient extends SendResult {
 
 /// The destination will not accept the payload, and retry would not change
 /// that. The drain loop SHALL mark the FIFO head `wedged` and stop
-/// draining this destination until operator action (REQ-d00119-C).
+/// draining this destination until operator action.
 class SendPermanent extends SendResult {
   const SendPermanent({required this.error});
 
