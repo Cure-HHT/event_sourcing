@@ -99,7 +99,6 @@ class _TopActionBarState extends State<TopActionBar> {
     final aggregateType = demoAggregateTypeByEntryTypeId[entryType]!;
     await widget.datastore.eventStore.append(
       entryType: entryType,
-      entryTypeVersion: 1,
       aggregateId: aggregateId,
       aggregateType: aggregateType,
       eventType: eventType,

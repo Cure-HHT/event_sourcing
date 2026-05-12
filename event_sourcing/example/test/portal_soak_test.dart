@@ -141,7 +141,6 @@ Future<_Pane> _mkPane({
 Future<void> _appendButtonEvent(_Pane pane, String entryType) async {
   await pane.datastore.eventStore.append(
     entryType: entryType,
-    entryTypeVersion: 1,
     aggregateId: 'soak-${entryType.replaceAll('_', '-')}',
     aggregateType: demoAggregateTypeByEntryTypeId[entryType]!,
     eventType: 'finalized',

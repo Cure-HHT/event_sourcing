@@ -138,7 +138,6 @@ Future<DemoServerComponents> bootstrapDemoServer({
   for (final payload in pending) {
     await eventStore.append(
       entryType: 'user_provisioned',
-      entryTypeVersion: 1,
       aggregateType: 'user_directory',
       aggregateId: payload['userId']! as String,
       eventType: 'user_provisioned',

@@ -129,7 +129,6 @@ Future<_Pane> _mkPane({
 Future<void> _appendDemoNote(_Pane pane, String aggregateId) async {
   await pane.datastore.eventStore.append(
     entryType: 'demo_note',
-    entryTypeVersion: 1,
     aggregateId: aggregateId,
     aggregateType: 'Note',
     eventType: 'finalized',
