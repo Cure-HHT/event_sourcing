@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-materializer/A
+// Implements: EVS-DEV-ingest-promotes-before-fold/C
+// Implements: EVS-DEV-snapshot-promotion-on-open/B
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 
 class PromoterSpec {
