@@ -1,4 +1,10 @@
 // test/permissions/materialized_view_role_matrix_reader_test.dart
+// Verifies: EVS-PRD-permissions-as-events/B — isGranted and grantsForRole
+//   read exclusively from the event-log projection; no external authority
+//   is consulted.
+// Verifies: EVS-PRD-permissions-as-events/C — appending permission_granted
+//   makes isGranted return true; appending permission_revoked removes the
+//   row, confirming the view is fully reconstructable from the event log.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

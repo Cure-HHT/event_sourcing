@@ -1,5 +1,7 @@
 // lib/src/permissions/permission_granted_payload.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/A — payload for the
+// permission_granted event type, which records the grant as an immutable
+// log entry in the same append-only event store as all other state changes.
 
 import 'package:event_sourcing/event_sourcing.dart' show ScopeClass;
 import 'package:meta/meta.dart';

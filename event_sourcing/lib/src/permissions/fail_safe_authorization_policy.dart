@@ -1,5 +1,8 @@
 // lib/src/permissions/fail_safe_authorization_policy.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/B — safe fallback implementation
+// of AuthorizationPolicy used when bootstrap validation fails; denies all
+// requests with DenyReason.bootstrapFailure so that no authorization decision
+// is made from a corrupt or incomplete event-derived projection.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

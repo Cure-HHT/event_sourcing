@@ -1,5 +1,11 @@
 // test/permissions/snapshot_role_matrix_reader_test.dart
-// (snapshot is principal-scoped — answers false for any other role).
+// Verifies: EVS-PRD-permissions-as-events/B — SnapshotRoleMatrixReader
+//   answers authorization queries from a PermissionSnapshot (log-derived
+//   state); the snapshot is principal-scoped — answers false for any other
+//   role.
+// Verifies: EVS-PRD-permissions-as-events/C — snapshot captures log-derived
+//   permission state in serializable form; grantsForRole for a different role
+//   returns empty, confirming scoping is preserved through serialization.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

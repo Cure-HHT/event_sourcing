@@ -1,4 +1,5 @@
 // test/permissions/test_support/sembast_event_store_harness.dart
+// Test infrastructure — no direct assertion citations.
 // Builds an in-memory Sembast-backed EventStore with the
 // rolePermissionGrantsSpec registered in a ProjectionRegistry, the
 // role_permission_grant entry type registered, and the initial view

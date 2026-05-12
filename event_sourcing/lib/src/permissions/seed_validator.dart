@@ -1,5 +1,7 @@
 // lib/src/permissions/seed_validator.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/A — validates the seed before
+// any events are emitted; an invalid seed results in PolicyFailSafe rather
+// than emitting malformed permission grants into the event log.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

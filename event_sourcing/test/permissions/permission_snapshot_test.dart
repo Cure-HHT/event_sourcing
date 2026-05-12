@@ -1,4 +1,7 @@
 // test/permissions/permission_snapshot_test.dart
+// Verifies: EVS-PRD-permissions-as-events/C — PermissionSnapshot round-trips
+// faithfully through JSON, confirming that log-derived permission state can
+// be serialized and restored without loss.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

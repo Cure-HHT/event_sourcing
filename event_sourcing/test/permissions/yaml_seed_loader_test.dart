@@ -1,4 +1,7 @@
 // test/permissions/yaml_seed_loader_test.dart
+// Verifies: EVS-PRD-permissions-as-events/A — YamlSeedLoader correctly
+// parses the YAML configuration that drives permission_granted event
+// emission; malformed YAML is rejected before any events are written.
 import 'package:event_sourcing/src/permissions/yaml_seed_loader.dart';
 import 'package:flutter_test/flutter_test.dart';
 

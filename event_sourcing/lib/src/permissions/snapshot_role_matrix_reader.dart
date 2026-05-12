@@ -1,5 +1,11 @@
 // lib/src/permissions/snapshot_role_matrix_reader.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/B — reads authorization data
+//   from a PermissionSnapshot derived from the event-log projection;
+//   decisions are made solely from event-derived state, not from any
+//   external authority.
+// Implements: EVS-PRD-permissions-as-events/C — the snapshot is itself a
+//   serialized view of log-derived state; reconstructability is preserved
+//   because any snapshot can be reproduced by replaying the event log.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

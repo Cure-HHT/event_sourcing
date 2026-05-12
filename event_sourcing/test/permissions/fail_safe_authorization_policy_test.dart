@@ -1,4 +1,8 @@
 // test/permissions/fail_safe_authorization_policy_test.dart
+// Verifies: EVS-PRD-permissions-as-events/B — FailSafeAuthorizationPolicy
+// denies all requests with DenyReason.bootstrapFailure when the event-derived
+// projection is unavailable, ensuring no authorization decision is made from
+// a corrupt or incomplete projection.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

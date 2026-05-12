@@ -1,6 +1,12 @@
 // lib/src/permissions/authorization_policy_bootstrap.dart
-// IMPLEMENTS REQUIREMENTS:
-//   with the carried errors).
+// Implements: EVS-PRD-permissions-as-events/A — sealed result type for the
+//   permission bootstrap flow; PolicyReady carries a policy built from the
+//   event log; PolicyFailSafe is returned when seed validation fails,
+//   preventing malformed grants from entering the log.
+// Implements: EVS-PRD-permissions-as-events/B — the policy exposed by
+//   PolicyReady is always backed by the event-log projection; PolicyFailSafe
+//   denies everything rather than consulting any external authority when the
+//   event-derived projection is unavailable (with the carried errors).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

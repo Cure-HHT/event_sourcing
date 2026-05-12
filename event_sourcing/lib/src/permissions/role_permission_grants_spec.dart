@@ -1,8 +1,13 @@
 // lib/src/permissions/role_permission_grants_spec.dart
 // Declares the TableProjectionSpec for the role_permission_grants view.
-// Implements: EVS-PRD-permissions-as-events (closed-under-events trust model) — the
-// permission matrix is a first-class projection of the event log, not an
-// external config store.
+// Implements: EVS-PRD-permissions-as-events/A — permission grant and revoke
+//   events are recorded in the same event log as application state changes.
+// Implements: EVS-PRD-permissions-as-events/B — the library evaluates
+//   authorization decisions solely from the event-derived role_permission_grants
+//   projection, not from any external authority.
+// Implements: EVS-PRD-permissions-as-events/C — the projection is fully
+//   reconstructable from the event log alone; replaying permission_granted /
+//   permission_revoked events reproduces the view deterministically.
 //
 // Row-layout contract (consumed by MaterializedViewRoleMatrixReader):
 //   key: event.aggregateId  (e.g. 'admin:user.invite')

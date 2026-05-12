@@ -1,4 +1,7 @@
 // test/permissions/in_memory_role_matrix_reader_test.dart
+// Verifies: EVS-PRD-permissions-as-events/B — InMemoryRoleMatrixReader
+// correctly answers isGranted and grantsForRole queries from a Map populated
+// with event-derived data; unknown roles and absent grants return false/empty.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

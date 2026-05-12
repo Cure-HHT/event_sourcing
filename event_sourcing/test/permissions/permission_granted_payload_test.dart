@@ -1,4 +1,7 @@
 // test/permissions/permission_granted_payload_test.dart
+// Verifies: EVS-PRD-permissions-as-events/A — the permission_granted event
+// payload round-trips faithfully through JSON, confirming that grant events
+// can be durably recorded in and replayed from the event log.
 import 'package:event_sourcing/event_sourcing.dart' show ScopeClass;
 import 'package:event_sourcing/src/permissions/permission_granted_payload.dart';
 import 'package:flutter_test/flutter_test.dart';

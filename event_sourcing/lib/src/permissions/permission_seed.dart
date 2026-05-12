@@ -1,5 +1,7 @@
 // lib/src/permissions/permission_seed.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/A — the seed is the declarative
+// source of initial role-permission grants; EventSeedApplier realises these
+// as permission_granted events written into the event log.
 
 import 'package:meta/meta.dart';
 

@@ -1,7 +1,8 @@
 // lib/src/permissions/in_memory_role_matrix_reader.dart
-// IMPLEMENTS REQUIREMENTS:
-//   fixture and as the backing for FailSafeAuthorizationPolicy (with an
-//   empty map).
+// Implements: EVS-PRD-permissions-as-events/B — Map-backed RoleMatrixReader
+//   used in tests and as an in-process fixture; the map is populated from
+//   event-log data by callers, keeping authorization decisions derived from
+//   event-sourced state rather than external authorities.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

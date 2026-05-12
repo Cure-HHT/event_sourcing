@@ -1,4 +1,9 @@
 // test/permissions/table_backed_authorization_policy_test.dart
+// Verifies: EVS-PRD-permissions-as-events/B — TableBackedAuthorizationPolicy
+// evaluates all authorization decisions from the event-derived role matrix
+// (via RoleMatrixReader); scope preconditions, role membership, and anonymous
+// principal handling are all resolved from projection data alone, with no
+// external authority consulted.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

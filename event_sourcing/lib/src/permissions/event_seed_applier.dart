@@ -1,5 +1,10 @@
 // lib/src/permissions/event_seed_applier.dart
-// IMPLEMENTS REQUIREMENTS:
+// Implements: EVS-PRD-permissions-as-events/A — emits permission_granted
+//   events for any seed grants not yet in the log, ensuring all grants are
+//   recorded as events alongside other state changes.
+// Implements: EVS-PRD-permissions-as-events/C — idempotent application
+//   ensures the event log alone is sufficient to reconstruct permission state;
+//   re-running the applier against an already-populated store emits nothing.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

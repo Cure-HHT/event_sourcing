@@ -1,6 +1,13 @@
 // test/permissions/bootstrap_action_permissions_test.dart
-// + valid declared perms -> PolicyReady; mismatched yaml -> PolicyFailSafe;
-// idempotent re-runs.
+// Verifies: EVS-PRD-permissions-as-events/A — bootstrap emits permission_granted
+//   events into the event log for all seed grants; mismatched yaml yields
+//   PolicyFailSafe with no events written.
+// Verifies: EVS-PRD-permissions-as-events/B — PolicyReady wraps a policy that
+//   reads solely from the event-derived projection; valid declared perms ->
+//   PolicyReady; mismatched yaml -> PolicyFailSafe.
+// Verifies: EVS-PRD-permissions-as-events/C — re-running bootstrap with the
+//   same yaml is idempotent (no new events), confirming the log alone
+//   suffices to reconstruct permission state.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
