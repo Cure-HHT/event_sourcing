@@ -1,3 +1,17 @@
+// Implements: EVS-PRD-canonical-json/A/B/C/D/E/F
+//
+// A — serializes to RFC 8785 JCS form (_canonicalizeValue + helpers).
+// B — deterministic byte-identical output: key-sort + number normalization
+//     guarantee identical bytes for identical logical content.
+// C — accepts null, bool, num (int/double), String, List, Map; all other
+//     types fall through to the FormatException branch (see D).
+// D — FormatException on unsupported types (runtimeType message) and on
+//     NaN / Infinity.
+// E — only dart:convert (a core Dart library) is imported; no
+//     platform-specific code, so the implementation runs identically on
+//     every Dart-supported platform.
+// F — pure Dart; zero third-party or platform-specific dependencies.
+//
 // Adapted from affinidi-ssi-dart/lib/src/util/jcs_util.dart
 // (Apache License 2.0). See the package NOTICE.md for attribution and the
 // list of local adaptations.

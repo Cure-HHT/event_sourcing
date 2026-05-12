@@ -1,3 +1,19 @@
+// Verifies: EVS-PRD-canonical-json/A/B/C/D/E/F
+//
+// A — RFC 8785 number vectors (Appendix B), key-sort, string-escaping, and
+//     cross-platform baseline tests verify RFC 8785 conformance.
+// B — "identical input produces identical UTF-8 bytes" and "insertion order
+//     does not affect output" tests verify byte-identical determinism.
+// C — primitives / integers / doubles / strings / arrays / objects groups
+//     each verify a JSON-compatible Dart value type accepted by the package.
+// D — "unsupported types" group verifies FormatException on DateTime and
+//     arbitrary Object; doubles group verifies rejection of NaN / Infinity.
+// E — test suite itself is pure Dart (dart:convert + dart:typed_data only)
+//     and the "cross-platform invariance property" group pins the exact
+//     canonical form as a concrete baseline for any platform receiver.
+// F — test-only imports (dart:convert, dart:typed_data, package:test) confirm
+//     the package under test carries no platform-specific dependencies.
+//
 // Test vectors adapted from affinidi-ssi-dart's JCS test suite
 // (Apache License 2.0). See the package NOTICE.md for full attribution.
 
