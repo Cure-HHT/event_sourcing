@@ -1,0 +1,20 @@
+name: reaction
+description: >
+  Substrate-agnostic action submission, view subscription, permission
+  snapshots, and credential lifecycle for apps built on event_sourcing.
+  Pure Dart. The Flutter widget library reaction_widgets sits on top.
+version: 0.1.0-dev
+publish_to: none
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  event_sourcing:
+    path: ../event_sourcing
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  sembast: ^3.7.1
