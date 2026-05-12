@@ -1,4 +1,7 @@
 // test/walkthroughs/walkthrough_03_matrix_perimeter_test.dart
+// Verifies: EVS-PRD-permissions-as-events/authorization-enforcement
+// Verifies: EVS-PRD-permissions-as-events/scope-class-enforcement
+// Verifies: EVS-PRD-event-log/denial-event-recording
 //
 //
 // Per-test fresh server so denial-event counts are deterministic.

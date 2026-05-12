@@ -1,4 +1,7 @@
 // test/walkthroughs/walkthrough_02_happy_paths_test.dart
+// Verifies: EVS-PRD-action-dispatch/dispatch-happy-path
+// Verifies: EVS-PRD-permissions-as-events/scope-class-enforcement
+// Verifies: EVS-PRD-event-log/event-recording
 //
 //
 // One test per happy-path action. Each test fires a single dispatch and

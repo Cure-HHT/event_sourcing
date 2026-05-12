@@ -1,4 +1,6 @@
 // test/walkthroughs/walkthrough_07_malformed_requests_test.dart
+// Verifies: EVS-PRD-action-dispatch/malformed-request-handling
+// Verifies: EVS-PRD-event-log/denial-event-recording
 //
 //           unknown-action paths; each shows up in the event log with
 //           the matching eventType.

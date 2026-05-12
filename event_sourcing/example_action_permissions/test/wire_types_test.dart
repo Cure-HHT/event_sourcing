@@ -1,4 +1,5 @@
 // test/wire_types_test.dart
+// Verifies: EVS-PRD-action-dispatch/wire-protocol-serialization
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 

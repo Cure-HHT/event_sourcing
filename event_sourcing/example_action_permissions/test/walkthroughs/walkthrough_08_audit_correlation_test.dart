@@ -1,4 +1,6 @@
 // test/walkthroughs/walkthrough_08_audit_correlation_test.dart
+// Verifies: EVS-PRD-event-log/action-invocation-id-stamping
+// Verifies: EVS-PRD-action-dispatch/dispatch-audit-trail
 //
 // `action_invocation_id` and stamps it onto every emitted event so the
 // audit log can trace one dispatch's full effects.

@@ -1,4 +1,8 @@
 // test/walkthroughs/walkthrough_04_idempotency_policies_test.dart
+// Verifies: EVS-PRD-action-dispatch/idempotency-none-policy
+// Verifies: EVS-PRD-action-dispatch/idempotency-optional-policy
+// Verifies: EVS-PRD-action-dispatch/idempotency-required-policy
+// Verifies: EVS-PRD-event-log/event-recording
 //
 //           required), and the dispatcher's behavior under each.
 

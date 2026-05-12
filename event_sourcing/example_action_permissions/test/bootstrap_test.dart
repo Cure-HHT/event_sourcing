@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/dispatcher-bootstrap
+// Verifies: EVS-PRD-permissions-as-events/policy-composition
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

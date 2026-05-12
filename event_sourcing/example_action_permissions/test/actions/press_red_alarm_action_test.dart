@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/action-lifecycle
+// Verifies: EVS-PRD-permissions-as-events/self-scope-enforcement
+// Verifies: EVS-PRD-action-dispatch/idempotency-required-policy
 //                         enforcement by dispatcher tested at integration level),
 import 'package:action_permissions_demo/server/actions/press_red_alarm_action.dart';
 import 'package:event_sourcing/event_sourcing.dart';

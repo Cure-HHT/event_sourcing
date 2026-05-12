@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/action-lifecycle
+// Verifies: EVS-PRD-permissions-as-events/user-provisioning
+// Verifies: EVS-PRD-action-dispatch/idempotency-required-policy
 import 'package:action_permissions_demo/server/actions/provision_user_action.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:event_sourcing/event_sourcing.dart';
