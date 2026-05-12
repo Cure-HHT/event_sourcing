@@ -490,4 +490,196 @@ void main() {
       },
     );
   });
+
+  group('EventStore.open integration', () {
+    test('boot with a bumped registeredVersion: seeds, refuses no '
+        'downgrade, snapshot-promotes, emits audit event', () async {
+      // First boot at v1, append a v1 note, simulate a registry bump to
+      // v2, re-open against the same backend. After re-open: row is
+      // promoted; view_target_versions[notes/note] = 2; a
+      // view_snapshot_promoted audit event exists in the log.
+      //
+      // Note: we don't close the EventStore between boots, since closing
+      // the EventStore also closes the underlying sembast db. The two
+      // EventStore instances share one backend; that's enough to exercise
+      // the boot-time helpers' second pass against persisted state.
+      final db = await databaseFactoryMemory.openDatabase(
+        'integration_${_dbCounter++}.db',
+      );
+      final backend = SembastBackend(database: db);
+
+      // First boot: register note at v1.
+      {
+        final entryTypes = EntryTypeRegistry();
+        for (final defn in kSystemEntryTypes) {
+          entryTypes.register(defn);
+        }
+        entryTypes.register(
+          const EntryTypeDefinition(
+            id: 'note',
+            registeredVersion: 1,
+            name: 'Note',
+          ),
+        );
+        final projections = ProjectionRegistry()..register(_kNotesSpec);
+        final store = await EventStore.open(
+          storage: backend,
+          entryTypes: entryTypes,
+          source: const Source(
+            hopId: 'test',
+            identifier: 'test-i',
+            softwareVersion: '0.0.0',
+          ),
+          securityContexts: SembastSecurityContextStore(backend: backend),
+          projections: projections,
+        );
+        await store.append(
+          entryType: 'note',
+          aggregateId: 'agg-1',
+          aggregateType: 'note',
+          eventType: 'finalized',
+          data: const <String, Object?>{'body': 'hello'},
+          initiator: const AutomationInitiator(service: 'test'),
+        );
+      }
+
+      // Second boot against the same backend: register note at v2 plus
+      // a v1->v2 promoter (rename body -> note_body).
+      {
+        final entryTypes = EntryTypeRegistry();
+        for (final defn in kSystemEntryTypes) {
+          entryTypes.register(defn);
+        }
+        entryTypes.register(
+          const EntryTypeDefinition(
+            id: 'note',
+            registeredVersion: 2,
+            name: 'Note',
+          ),
+        );
+        final projections = ProjectionRegistry()..register(_kNotesSpec);
+        final promoters = PromoterRegistry()
+          ..register(
+            const PromoterSpec(
+              viewName: 'notes',
+              entryType: 'note',
+              fromVersion: 1,
+              toVersion: 2,
+              transforms: <TransformPrimitive>[
+                RenameField(from: 'body', to: 'note_body'),
+              ],
+            ),
+          );
+        await EventStore.open(
+          storage: backend,
+          entryTypes: entryTypes,
+          source: const Source(
+            hopId: 'test',
+            identifier: 'test-i',
+            softwareVersion: '0.0.0',
+          ),
+          securityContexts: SembastSecurityContextStore(backend: backend),
+          projections: projections,
+          promoters: promoters,
+        );
+
+        // View row was promoted.
+        await backend.transaction((txn) async {
+          final row = await backend.readViewRowInTxn(txn, 'notes', 'agg-1');
+          expect(row!['note_body'], 'hello');
+          expect(row.containsKey('body'), isFalse);
+          expect(
+            await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
+            2,
+          );
+        });
+
+        // Audit event was emitted.
+        final audits = await backend.findAllEvents(
+          entryType: 'view_snapshot_promoted',
+        );
+        expect(audits, hasLength(1));
+        expect(audits.single.data['viewName'], 'notes');
+        expect(audits.single.data['fromVersion'], 1);
+        expect(audits.single.data['toVersion'], 2);
+        expect(audits.single.data['rowsPromoted'], 1);
+      }
+    });
+
+    test('boot refuses entry-type downgrade', () async {
+      final db = await databaseFactoryMemory.openDatabase(
+        'downgrade_${_dbCounter++}.db',
+      );
+      final backend = SembastBackend(database: db);
+
+      // First boot at v2, append an event.
+      {
+        final entryTypes = EntryTypeRegistry();
+        for (final defn in kSystemEntryTypes) {
+          entryTypes.register(defn);
+        }
+        entryTypes.register(
+          const EntryTypeDefinition(
+            id: 'note',
+            registeredVersion: 2,
+            name: 'Note',
+          ),
+        );
+        final projections = ProjectionRegistry()..register(_kNotesSpec);
+        final store = await EventStore.open(
+          storage: backend,
+          entryTypes: entryTypes,
+          source: const Source(
+            hopId: 'test',
+            identifier: 'test-i',
+            softwareVersion: '0.0.0',
+          ),
+          securityContexts: SembastSecurityContextStore(backend: backend),
+          projections: projections,
+        );
+        await store.append(
+          entryType: 'note',
+          aggregateId: 'agg-1',
+          aggregateType: 'note',
+          eventType: 'finalized',
+          data: const <String, Object?>{'body': 'x'},
+          initiator: const AutomationInitiator(service: 'test'),
+        );
+      }
+
+      // Second boot against the same backend: downgrade to v1.
+      final entryTypes = EntryTypeRegistry();
+      for (final defn in kSystemEntryTypes) {
+        entryTypes.register(defn);
+      }
+      entryTypes.register(
+        const EntryTypeDefinition(
+          id: 'note',
+          registeredVersion: 1,
+          name: 'Note',
+        ),
+      );
+      final projections = ProjectionRegistry()..register(_kNotesSpec);
+
+      await expectLater(
+        EventStore.open(
+          storage: backend,
+          entryTypes: entryTypes,
+          source: const Source(
+            hopId: 'test',
+            identifier: 'test-i',
+            softwareVersion: '0.0.0',
+          ),
+          securityContexts: SembastSecurityContextStore(backend: backend),
+          projections: projections,
+        ),
+        throwsA(
+          isA<EntryTypeVersionDowngradeError>()
+              .having((e) => e.entryType, 'entryType', 'note')
+              .having((e) => e.fromVersion, 'fromVersion', 2)
+              .having((e) => e.toVersion, 'toVersion', 1),
+        ),
+      );
+    });
+  });
 }

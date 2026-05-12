@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
@@ -201,6 +202,12 @@ class EventStore {
     effectiveProjections.seal();
     final effectivePromoters = promoters ?? PromoterRegistry();
     effectivePromoters.seal();
+    await _runBootSnapshotPromotionPass(
+      storage: storage,
+      entryTypes: entryTypes,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+    );
     return EventStore._(
       backend: storage,
       entryTypes: entryTypes,
@@ -220,6 +227,11 @@ class EventStore {
   /// Skipping the boot check means no `lib_version_initialized` event is
   /// appended, which keeps sequence numbers predictable for tests that assert
   /// on raw sequence values.
+  ///
+  /// The snapshot-promotion boot pass (entry-type downgrade refusal,
+  /// view_target_versions seeding, and snapshot promotion) still runs here:
+  /// on a greenfield log it's a no-op (no view rows, no stored target
+  /// versions), and tests that exercise version evolution want it to fire.
   static Future<EventStore> openForTest({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -235,6 +247,12 @@ class EventStore {
     effectiveProjections.seal();
     final effectivePromoters = promoters ?? PromoterRegistry();
     effectivePromoters.seal();
+    await _runBootSnapshotPromotionPass(
+      storage: storage,
+      entryTypes: entryTypes,
+      projections: effectiveProjections,
+      promoters: effectivePromoters,
+    );
     return EventStore._(
       backend: storage,
       entryTypes: entryTypes,
@@ -246,6 +264,77 @@ class EventStore {
       clock: clock,
       uuid: uuid,
     );
+  }
+
+  /// Runs the three boot-time entry-type-version helpers in fixed order
+  /// inside a single backend transaction:
+  ///
+  ///   1. [assertNoEntryTypeDowngrade] — refuse boot if any entry type's
+  ///      `registeredVersion` is below the highest stored
+  ///      `view_target_versions` value.
+  ///   2. [seedViewTargetVersions] — write a `view_target_versions` row
+  ///      at the current `registeredVersion` for every (viewName, entry
+  ///      type matched by the projection's interest filter) pair that
+  ///      doesn't already have one.
+  ///   3. [promoteViewSnapshots] — for each pair where the stored target
+  ///      lags the registry, apply the registered promoter chain to the
+  ///      affected view rows, update `view_target_versions`, and emit
+  ///      one `view_snapshot_promoted` audit event per promoted pair via
+  ///      [_appendViewSnapshotPromotedAuditInTxn].
+  ///
+  /// All three run inside a single [backend.transaction] so a mid-pass
+  /// crash rolls back atomically and the next boot retries from a clean
+  /// state.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal,
+  //   EVS-DEV-view-target-versions-seeding,
+  //   EVS-DEV-snapshot-promotion-on-open.
+  static Future<void> _runBootSnapshotPromotionPass({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required ProjectionRegistry projections,
+    required PromoterRegistry promoters,
+  }) async {
+    await storage.transaction((txn) async {
+      await assertNoEntryTypeDowngrade(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        entryTypes: entryTypes,
+      );
+      await seedViewTargetVersions(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        entryTypes: entryTypes,
+      );
+      await promoteViewSnapshots(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        promoters: promoters,
+        entryTypes: entryTypes,
+        now: DateTime.now().toUtc(),
+        emitAudit:
+            ({
+              required String viewName,
+              required String entryType,
+              required int fromVersion,
+              required int toVersion,
+              required int rowsPromoted,
+            }) async {
+              await _appendViewSnapshotPromotedAuditInTxn(
+                txn,
+                storage,
+                entryTypes,
+                viewName: viewName,
+                entryType: entryType,
+                fromVersion: fromVersion,
+                toVersion: toVersion,
+                rowsPromoted: rowsPromoted,
+              );
+            },
+      );
+    });
   }
 
   /// Runs the lib-version boot check against [storage].
@@ -1602,4 +1691,64 @@ Future<void> _appendLibVersionEventToBackend(
       uuid: uuid,
     );
   });
+}
+
+/// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
+///
+/// Called by [EventStore._runBootSnapshotPromotionPass] (via the
+/// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
+/// (viewName, entryType) pair that has been lifted to a new
+/// `registeredVersion`. Runs inside the same backend transaction as the
+/// row updates and `view_target_versions` write, so the promoted state
+/// and its audit event commit atomically.
+///
+/// Bypasses [EventStore.appendInTxn] because boot-time helpers run
+/// before the [EventStore] instance exists; uses the same raw-internal-
+/// append helper ([_appendRawInternalEventInTxn]) that
+/// [EventStore._emitDuplicateReceivedInTxn] and
+/// [_appendLibVersionEventToBackend] share.
+// Implements: EVS-DEV-snapshot-promotion-on-open — audit event emission.
+Future<void> _appendViewSnapshotPromotedAuditInTxn(
+  Txn txn,
+  StorageBackend backend,
+  EntryTypeRegistry entryTypes, {
+  required String viewName,
+  required String entryType,
+  required int fromVersion,
+  required int toVersion,
+  required int rowsPromoted,
+}) async {
+  const uuid = Uuid();
+  final now = DateTime.now().toUtc();
+  final localSeq = await backend.nextSequenceNumber(txn);
+  final previousTailHash = await backend.readLatestEventHash(txn);
+  final provenance0 = ProvenanceEntry(
+    hop: 'event_sourcing',
+    receivedAt: now,
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.current,
+  );
+  await _appendRawInternalEventInTxn(
+    txn,
+    backend,
+    aggregateId: '_lib',
+    aggregateType: '_lib',
+    entryType: kViewSnapshotPromotedEntryType,
+    entryTypeVersion: entryTypes
+        .byId(kViewSnapshotPromotedEntryType)!
+        .registeredVersion,
+    eventType: 'finalized',
+    data: <String, Object?>{
+      'viewName': viewName,
+      'entryType': entryType,
+      'fromVersion': fromVersion,
+      'toVersion': toVersion,
+      'rowsPromoted': rowsPromoted,
+    },
+    initiator: _kLibVersionInitiator,
+    provenance0: provenance0,
+    localSeq: localSeq,
+    previousTailHash: previousTailHash,
+    uuid: uuid,
+  );
 }
