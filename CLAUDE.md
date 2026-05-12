@@ -61,6 +61,17 @@ Phase II work.
   refused by default. State at sequence N is reconstructable from
   `(events, projection_specs, promoter_specs, lib_version)` — all in
   the log.
+- **Entry-type version is substrate-owned.** The substrate stamps
+  `entryTypeVersion = entryTypes.byId(entryType).registeredVersion` on
+  every appended event. Producers do not choose the version; ingest
+  transparently promotes older-peer events before the fold;
+  `EventStore.open` snapshot-promotes view rows on a `registeredVersion`
+  bump and refuses downgrade. Promoter primitives are restricted to
+  shape-changers (`RenameField`, `DefaultField`, `DropField`) so the
+  chain commutes with the deep-merge fold — snapshot promotion at boot
+  is provably equivalent to event-replay-with-promotion. See
+  `docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md`
+  for the full design.
 - **Originator-of-first-event canonicalization convention.** A Layer-2
   convention (see Epistemic layers): whoever appends the first event
   for an aggregate is treated as the initial canonicalization authority
