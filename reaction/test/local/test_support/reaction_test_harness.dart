@@ -64,6 +64,24 @@ class ReactionTestHarness {
           name: 'Greeting',
           materialize: false,
         ),
+      )
+      // Required by EventSeedApplier when seeding the role-permission matrix.
+      ..register(
+        const EntryTypeDefinition(
+          id: 'role_permission_grant',
+          registeredVersion: 1,
+          name: 'Role-Permission Grant',
+          materialize: false,
+        ),
+      )
+      // Required by ActionDispatcher for denial-stage audit events.
+      ..register(
+        const EntryTypeDefinition(
+          id: 'action_denial',
+          registeredVersion: 1,
+          name: 'Action Denial',
+          materialize: false,
+        ),
       );
 
     // --- Projections ---
