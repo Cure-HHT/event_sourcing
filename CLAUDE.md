@@ -268,33 +268,49 @@ packages today.
 
 ## Reading the design specs
 
-The design layer between PRDs and DEV-level requirements lives in
-`docs/superpowers/specs/`. Phase I has two specs:
+Design ideas in this repo evolve through a brainstorm → stabilize →
+archive lifecycle. **Brainstorm output** is prose-heavy and lives
+transiently in `docs/superpowers/specs/`. **Stabilized designs** migrate
+into `spec/<topic>.md` files containing the normative requirement blocks
+alongside the cross-system narrative (overview, architecture, decisions
+rejected, open questions, future work) as remainder sections. The
+original brainstorm doc is archived once its content has migrated. See
+`spec/README.md` for the full lifecycle convention and file-organization
+rules (multi-requirement files, remainder sections, mermaid diagrams).
 
-- `docs/superpowers/specs/2026-05-09-substrate-and-materializer-design.md`
-  — the original Phase I overview. Pins the substrate's component
-  model, the event log and hash-chain layout, the action-dispatch flow,
-  the ingest path, and the storage abstraction. **Partially superseded:**
-  the "Subscribe primitive", "Materializer", "Filter, query, and the
-  closed-set rule", and "Multi-source readiness" sections are
-  superseded by the spec below.
-- `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md`
-  — the authoritative spec for the projection model (declarative
-  `ProjectionSpec` shapes interpreted by the substrate), the promoter
-  model (declarative `PromoterSpec` composing library-supplied
-  transformation primitives), the `subscribe<T>` primitive, and the
-  library-version lifecycle. Embodies the "Domain-neutral lib",
-  "Declarative projections", "Permission policy is substrate code", and
-  "Library version recorded in the log" commitments above.
+Brainstorm-stage design specs currently in `docs/superpowers/specs/`
+that have NOT yet been migrated to `spec/`:
+
+- `2026-05-09-substrate-and-materializer-design.md` — the original
+  Phase I overview. Pins the substrate's component model, the event log
+  and hash-chain layout, the action-dispatch flow, the ingest path, and
+  the storage abstraction. **Partially superseded:** the "Subscribe
+  primitive", "Materializer", "Filter, query, and the closed-set rule",
+  and "Multi-source readiness" sections are superseded by the spec
+  below.
+- `2026-05-09-projections-and-subscribe-design.md` — the authoritative
+  spec for the projection model (declarative `ProjectionSpec` shapes
+  interpreted by the substrate), the promoter model (declarative
+  `PromoterSpec` composing library-supplied transformation primitives),
+  the `subscribe<T>` primitive, and the library-version lifecycle.
+  Embodies the "Domain-neutral lib", "Declarative projections",
+  "Permission policy is substrate code", and "Library version recorded
+  in the log" commitments above.
+- `2026-05-11-entry-type-version-substrate-owned-design.md` — entry-type
+  version is substrate-owned; promoter primitives restricted to shape-
+  changers (RenameField/DefaultField/DropField); snapshot-promotion at
+  boot is provably equivalent to event-replay-with-promotion.
 
 The implementation plan that turns these specs into working code is at
 `docs/superpowers/plans/2026-05-09-projections-and-subscribe-implementation.md`.
 DEV-level requirements (`EVS-DEV-*`) are authored alongside the code
 that satisfies them per the plan's task structure.
 
-Subsequent design specs land here as design work demands — for example,
-when Phase II's multi-source canonicalization rule grammar needs
-pinning, that gets its own spec.
+Subsequent design specs land in `docs/superpowers/specs/` as design work
+demands; once stabilized they migrate to `spec/<topic>.md` per the
+lifecycle above. Roadmap and time-evolving status documents (e.g.,
+`docs/superpowers/specs/2026-05-11-roadmap.md`) stay in
+`docs/superpowers/specs/` — they are not normative design specs.
 
 ## License
 
