@@ -1,6 +1,7 @@
 # EVS-PRD-subscription: Subscription
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -26,4 +27,4 @@ D. Subscription delivery SHALL be at-least-once: every event matching a subscrip
 
 **Why at-least-once rather than exactly-once?** Exactly-once delivery requires either consumer-side acknowledgement protocols that complicate the API, or end-to-end transactionality that is impractical across reconnects and across tiers. At-least-once with hash-addressable events is operationally simpler: the consumer's deduplication is a one-line check against the event's hash, and loss — which is unrecoverable — is ruled out.
 
-*End* *Subscription* | **Hash**: 00000000
+*End* *Subscription* | **Hash**: 5d398de1

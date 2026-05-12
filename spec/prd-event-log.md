@@ -1,6 +1,7 @@
 # EVS-PRD-event-log: Event Log
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -30,4 +31,4 @@ D. The library SHALL allow consumers to read events from the log in order, from 
 
 **Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
 
-*End* *Event Log* | **Hash**: 00000000
+*End* *Event Log* | **Hash**: da8f0f0b

@@ -1,6 +1,7 @@
 # EVS-PRD-provenance: Provenance Chain Tracking
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -26,4 +27,4 @@ D. The package SHALL be pure Dart and run identically on every Dart-supported pl
 
 **Why a separate package?** Provenance chains are useful beyond event sourcing — any component that processes structured data through multiple stages (signing, transformation, distribution) can use the same chain types. Keeping the package narrow and dependency-free preserves that reusability.
 
-*End* *Provenance Chain Tracking* | **Hash**: 00000000
+*End* *Provenance Chain Tracking* | **Hash**: 4755ef8b

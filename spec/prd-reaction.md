@@ -73,7 +73,8 @@ The PRDs below are best read in this order on first contact, because each later 
 
 ## EVS-PRD-auth-session: Auth Session
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ### Purpose
 
@@ -111,11 +112,12 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 **Why no `JwtAuthValidator` in v1?** JWT validation needs a key-loading strategy, an issuer convention, and a claim-mapping policy — all of which depend on the deployment's identity-provider choices. A premature default would either be too narrow (only fits Firebase, only fits Auth0) or too configurable (weighed down with options no consumer actually needs). Defer until consumer demand makes the right shape obvious.
 
-*End* *Auth Session* | **Hash**: 00000000
+*End* *Auth Session* | **Hash**: 9c087173
 
 ## EVS-PRD-action-submitter: Action Submitter
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-action-dispatch, EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-action-dispatch, EVS-PRD-library-charter
 
 ### Purpose
 
@@ -143,11 +145,12 @@ E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be s
 
 **Why "source-identical" widget code (E)?** This is the central user-facing promise of the interface. Without it, mobile widget code and web widget code would diverge structurally, which defeats the purpose of building a substrate-agnostic widget library on top.
 
-*End* *Action Submitter* | **Hash**: 00000000
+*End* *Action Submitter* | **Hash**: 22898b0a
 
 ## EVS-PRD-view-subscriber: View Subscriber
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-subscription, EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
 
@@ -171,11 +174,12 @@ D. Consumer code that depends only on the `ViewSource` interface SHALL be source
 
 **Why "source-identical" widget code (D)?** Same rationale as `EVS-PRD-action-submitter`-E.
 
-*End* *View Subscriber* | **Hash**: 00000000
+*End* *View Subscriber* | **Hash**: b6801679
 
 ## EVS-PRD-permission-snapshot-source: Permission Snapshot Source
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-permissions-as-events, EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter, EVS-PRD-permissions-as-events
 
 ### Purpose
 
@@ -201,11 +205,12 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 **Why does the Remote impl piggyback on the same wire as `RemoteViewSource` (C)?** `RolePermissionGrants` is just another substrate view. Treating its updates as ordinary view subscriptions means the wire transport has one mechanism for all reactive data, not two. The `RemotePermissionSource` is, internally, a thin specialization of `RemoteViewSource` over the `RolePermissionGrants` view filtered to the active `Principal`.
 
-*End* *Permission Snapshot Source* | **Hash**: 00000000
+*End* *Permission Snapshot Source* | **Hash**: 81edb261
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-subscription, EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
 
@@ -239,11 +244,12 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 
 **Why isn't action-submission idempotency-key handling pinned here?** Idempotency is the substrate's existing dispatcher concern (`EVS-PRD-action-dispatch`) and the widget-side key-generation policy (`EVS-PRD-reaction-widget-contract`-E). The wire just carries the key as an `idempotencyKey` field on the `ActionSubmission`. No special wire treatment is needed.
 
-*End* *Cross-Process Event Transport* | **Hash**: 00000000
+*End* *Cross-Process Event Transport* | **Hash**: cc74d38e
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-snapshot-source, EVS-PRD-auth-session
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-snapshot-source, EVS-PRD-view-subscriber
 
 ### Purpose
 
@@ -275,7 +281,7 @@ F. The widget library SHALL be source-organized so that no widget references the
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Forcing a state-mgmt choice (Riverpod, BLoC, Provider) excludes consumers who use the others; the existing portal-ui already uses Provider. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca; the optional `reaction_widgets_provider` adapter package bridges to Provider's `context.watch<...>()` ergonomics for the existing portal-ui. Riverpod or BLoC adapters can ship in the same way if/when consumer demand exists.
 
-*End* *Reaction Widget Contract* | **Hash**: 00000000
+*End* *Reaction Widget Contract* | **Hash**: d21c8301
 
 ## Decisions and alternatives rejected
 

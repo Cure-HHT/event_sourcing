@@ -1,6 +1,7 @@
 # EVS-PRD-materializer: Materializer
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -26,4 +27,4 @@ C. The materializer's rules SHALL themselves be events recorded in the log; the 
 
 **Multi-source readiness.** The rules-as-events seam is what admits multi-source canonicalization later (see EVS-PRD-multi-source-canonicalization). The default rule preserves single-source semantics — only events from the aggregate's originating authority fold into state. Multi-source semantics are activated by additional rules expressed over event authorities, recorded as events on the same log; the materializer code path is identical in either case.
 
-*End* *Materializer* | **Hash**: 00000000
+*End* *Materializer* | **Hash**: 02028dcf
