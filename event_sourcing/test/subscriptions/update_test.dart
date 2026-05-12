@@ -28,10 +28,17 @@ void main() {
       expect(u.sequence, 10);
     });
 
+    test('EndOfReplay carries sequence and is a subtype of Update<T>', () {
+      const u = EndOfReplay<String>(sequence: 42);
+      expect(u, isA<Update<String>>());
+      expect(u.sequence, 42);
+    });
+
     test('Pattern matching across variants', () {
       Update<int> any = const Snapshot<int>(value: 1, sequence: 0);
       final tag = switch (any) {
         Snapshot() => 'snap',
+        EndOfReplay() => 'eor',
         Delta() => 'delta',
         Tombstone() => 'tomb',
       };
