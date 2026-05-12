@@ -106,6 +106,8 @@ Future<DemoServerComponents> bootstrapDemoServer({
         const Events(),
       )
       .listen((update) {
+        // Events()-mode subscriptions never emit Snapshot/EndOfReplay/Tombstone;
+        // we only act on Delta. Any future variants are intentionally ignored.
         if (update is Delta<StoredEvent>) {
           directoryMaterializer.applyDirect(update.value.data);
         }
