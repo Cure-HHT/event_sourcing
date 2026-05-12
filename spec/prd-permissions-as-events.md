@@ -1,6 +1,7 @@
 # EVS-PRD-permissions-as-events: Permissions as Events
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -26,4 +27,4 @@ C. The permission state at any point in the log SHALL be reconstructable from th
 
 **Where do external identity providers fit?** At the ingest boundary. An identity assertion from an external system enters the log as an event ("X authenticated via provider P at time T"); from there it participates in projections like any other event. External systems become event sources, not decision-time consultants.
 
-*End* *Permissions as Events* | **Hash**: 00000000
+*End* *Permissions as Events* | **Hash**: 9165094d

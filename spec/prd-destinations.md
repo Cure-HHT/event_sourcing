@@ -1,6 +1,7 @@
 # EVS-PRD-destinations: Destinations
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -34,4 +35,4 @@ F. Destinations SHALL be addable and removable dynamically over the deployment's
 
 **Why dynamic registration?** A diary user signs up for a sponsored trial after the diary has been operating for some time. Adding the sponsor's destination at that point must work without restarting the deployment or invalidating its log. The same property supports linking and unlinking destinations as a participant moves between trials.
 
-*End* *Destinations* | **Hash**: 00000000
+*End* *Destinations* | **Hash**: ec656743

@@ -29,7 +29,7 @@ name = "Cure-HHT Event Sourcing Library"
 #   assertion — optional A–Z label (or A/B/C... multi-assertion)
 #
 # Examples:
-#   EVS-PRD-event-store
+#   EVS-PRD-event-log
 #   EVS-DEV-provenance-entry-schema/G
 #   EVS-OPS-secret-rotation
 
@@ -98,7 +98,12 @@ file_patterns = ["*.md"]
 skip_files = ["README.md", "requirements-spec.md", "INDEX.md", "EXAMPLE-requirement.md"]
 
 [scanning.code]
-directories = ["event_sourcing/lib", "canonical_json_jcs/lib", "provenance/lib"]
+directories = [
+  "event_sourcing/lib",
+  "canonical_json_jcs/lib",
+  "provenance/lib",
+  "reaction/lib",
+]
 file_patterns = []
 skip_files = []
 skip_dirs = []
@@ -106,11 +111,11 @@ skip_dirs = []
 [scanning.test]
 directories = [
   "event_sourcing/test",
-  "event_sourcing/integration_test",
   "event_sourcing/example_action_permissions/test",
   "event_sourcing/example/test",
   "canonical_json_jcs/test",
   "provenance/test",
+  "reaction/test",
 ]
 file_patterns = ["*_test.dart", "test_*.dart"]
 skip_files = []
@@ -119,6 +124,40 @@ enabled = true
 prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
+
+# Test runners — one per package. `elspais checks --run-tests` invokes
+# each entry's `command` from its `cwd` before evaluating coverage.
+# Without --run-tests, these are not invoked; static checks run only.
+
+[[scanning.test.runners]]
+name = "event_sourcing"
+command = "flutter test"
+cwd = "event_sourcing"
+
+[[scanning.test.runners]]
+name = "event_sourcing-example"
+command = "flutter test"
+cwd = "event_sourcing/example"
+
+[[scanning.test.runners]]
+name = "event_sourcing-example_action_permissions"
+command = "flutter test"
+cwd = "event_sourcing/example_action_permissions"
+
+[[scanning.test.runners]]
+name = "canonical_json_jcs"
+command = "flutter test"
+cwd = "canonical_json_jcs"
+
+[[scanning.test.runners]]
+name = "provenance"
+command = "flutter test"
+cwd = "provenance"
+
+[[scanning.test.runners]]
+name = "reaction"
+command = "flutter test"
+cwd = "reaction"
 
 [scanning.result]
 directories = ["build-reports"]
@@ -136,3 +175,21 @@ skip_dirs = []
 [scanning.docs]
 directories = ["docs"]
 file_patterns = ["*.md"]
+
+# Requirement-status semantics
+#
+# Default elspais behaviour treats `Draft` as `provisional` (excluded
+# from coverage tallies). For CUR-1317 the whole spec set is still in
+# Draft — promoting requirements to Active is part of the post-Phase-I
+# stabilization pass, not yet done. Until then we want coverage metrics
+# to reflect the Draft surface so authoring progress is visible.
+#
+# Move `Draft` into `active`. `Proposed` stays provisional (genuinely
+# tentative requirements still excluded). Aspirational and retired
+# semantics unchanged.
+
+[rules.format.status_roles]
+active = ["Active", "Draft"]
+provisional = ["Proposed"]
+aspirational = ["Roadmap", "Future", "Idea"]
+retired = ["Deprecated", "Superseded", "Rejected"]

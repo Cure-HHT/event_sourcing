@@ -1,6 +1,7 @@
 # EVS-PRD-canonical-json: Canonical JSON Serialization
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -30,4 +31,4 @@ F. The package SHALL be pure Dart.
 
 **Why pure Dart?** The package must run identically on every tier — mobile clients producing canonical hashes, server tiers verifying them. Any platform-specific branching would break byte-identical output across tiers, defeating the package's purpose.
 
-*End* *Canonical JSON Serialization* | **Hash**: 00000000
+*End* *Canonical JSON Serialization* | **Hash**: cd11dd12

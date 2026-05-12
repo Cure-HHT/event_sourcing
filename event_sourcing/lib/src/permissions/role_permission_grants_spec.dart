@@ -1,6 +1,6 @@
 // lib/src/permissions/role_permission_grants_spec.dart
 // Declares the TableProjectionSpec for the role_permission_grants view.
-// Implements: EVS-PRD-event-store (closed-under-events trust model) — the
+// Implements: EVS-PRD-permissions-as-events (closed-under-events trust model) — the
 // permission matrix is a first-class projection of the event log, not an
 // external config store.
 //

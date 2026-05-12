@@ -1,6 +1,7 @@
 # EVS-PRD-ingest: Ingest Path
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -36,4 +37,4 @@ F. The ingest path SHALL be idempotent: re-presenting an event already admitted 
 
 **Why does ingest participate in canonicalization rules rather than being canonical by default?** Multi-source editing is the case where ingested events and locally-originated events both target the same aggregate. The library's resolution of "which events are canonical for this aggregate?" is governed by configurable canonicalization rules (the multi-source-canonicalization PRD specifies the rule grammar), which can be configured per aggregate or per aggregate type. Ingest doesn't presume canonicality; it presents the event for the rule to evaluate.
 
-*End* *Ingest Path* | **Hash**: 00000000
+*End* *Ingest Path* | **Hash**: 92f2bd91

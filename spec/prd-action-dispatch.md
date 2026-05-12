@@ -1,6 +1,7 @@
 # EVS-PRD-action-dispatch: Action Dispatch
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -36,4 +37,4 @@ F. All consumer-initiated events recorded in the local log SHALL be produced by 
 
 **Why is mismatched content under a duplicate identifier a denial?** Two cases need distinct handling. A retry with identical content is the consumer's intended duplicate suppression — return the cached outcome. A submission with the same identifier but different content is either a consumer bug or an attack; silently overwriting or silently returning the cached outcome would absorb the discrepancy, leaving no audit trail. A denial event records the conflict explicitly so the audit captures what was attempted, not just what was accepted.
 
-*End* *Action Dispatch* | **Hash**: 00000000
+*End* *Action Dispatch* | **Hash**: 3b0a0ef4

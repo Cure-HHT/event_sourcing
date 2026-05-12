@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-action-submitter/B — LocalActionSubmitter
+// delegates submit() to an in-process ActionDispatcher.dispatch.
+// Builds ActionContext from the wired-in AuthSession's active
+// Principal (per EVS-PRD-auth-session-G).
 import 'package:event_sourcing/event_sourcing.dart';
 
 import 'package:reaction/src/interfaces/action_submitter.dart';

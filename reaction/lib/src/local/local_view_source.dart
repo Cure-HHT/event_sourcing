@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-view-subscriber/B — LocalViewSource delegates
+// to EventStore.subscribe<T> with AggregateMode<T>.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

@@ -1,3 +1,9 @@
+// Implements: EVS-PRD-reaction-widget-contract/E — idempotency-key
+// generator the widget library uses to mint UUID v4 keys (with the
+// caching-during-Submitting and reset-after-terminal-state policy
+// applied at the widget layer, not in this generator). Default impl
+// is Uuid4IdempotencyKeyGenerator; the abstract interface admits
+// deterministic stubs for tests.
 import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
 

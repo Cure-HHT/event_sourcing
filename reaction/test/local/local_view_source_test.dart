@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-view-subscriber/B — LocalViewSource delegates
+// to EventStore.subscribe<T> with AggregateMode<T>: emits Snapshot/
+// EndOfReplay/Delta/Tombstone updates, applies the mapper, and
+// respects the aggregates allow-list.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

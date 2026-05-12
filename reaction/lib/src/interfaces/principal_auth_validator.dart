@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-auth-session/C/D — defines the
+// PrincipalAuthValidator interface (C: authenticate(String) returns
+// the Principal or throws AuthenticationDenied) and the credential-
+// format-opaque rule (D: format selection delegated to the validator).
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Validates an opaque credential string from the wire (HTTP header

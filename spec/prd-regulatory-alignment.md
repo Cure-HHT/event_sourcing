@@ -1,6 +1,7 @@
 # EVS-PRD-regulatory-alignment: Regulatory Alignment
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -17,8 +18,6 @@ B. Hash-chain mismatch encountered during normal operation SHALL be surfaced as 
 C. Canonicalization-rule conflict encountered during normal operation SHALL be surfaced as an integrity violation.
 
 D. Provenance verification failure encountered during normal operation SHALL be surfaced as an integrity violation.
-
-## Rationale
 
 ### ALCOA+ cross-walk
 
@@ -54,4 +53,4 @@ Timestamps are not strictly necessary for an event log to be a valid event log �
 
 EVS-PRD-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library surfaces verification failures encountered during normal use, rather than absorbing them. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does. The three classes of failure are split into separate assertions (B, C, D) because each is independently testable: hash-chain mismatch is detected via the chain-verification path; canonicalization-rule conflict is detected by the rule-evaluation path; provenance verification failure is detected at the ingest boundary.
 
-*End* *Regulatory Alignment* | **Hash**: 00000000
+*End* *Regulatory Alignment* | **Hash**: c68731c0

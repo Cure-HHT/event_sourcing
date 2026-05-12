@@ -1,6 +1,7 @@
 # EVS-PRD-multi-source-canonicalization: Multi-Source Canonicalization
 
-**Level**: PRD | **Status**: Draft | **Refines**: EVS-PRD-library-charter
+**Level**: prd | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter
 
 ## Purpose
 
@@ -36,4 +37,4 @@ F. A non-canonical event SHALL remain visible in the log and in subscriptions; t
 
 **Why is this in the substrate, not the application?** The library is the only component with the necessary visibility — it sees every event, it runs the materializer, it evaluates the rules. Pushing canonicalization to the application would require every consumer to reimplement multi-source resolution, with all the audit-divergence risks that entails. Concentrating it in the substrate keeps the audit story uniform across consumers.
 
-*End* *Multi-Source Canonicalization* | **Hash**: 00000000
+*End* *Multi-Source Canonicalization* | **Hash**: 3e087d41
