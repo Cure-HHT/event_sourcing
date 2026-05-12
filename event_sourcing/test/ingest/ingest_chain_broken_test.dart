@@ -111,7 +111,7 @@ void main() {
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-chain',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -197,7 +197,7 @@ void main() {
         final recordMap = <String, Object?>{
           'event_id': 'test-chain-null-arrival',
           'aggregate_id': 'agg-chain-null',
-          'aggregate_type': 'DiaryEntry',
+          'aggregate_type': 'note',
           'entry_type': 'epistaxis_event',
           'entry_type_version': 1,
           'lib_format_version': 1,

@@ -105,7 +105,7 @@ void main() {
           final e1 = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-batch1',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {
               'answers': {'q': 'a1'},
@@ -115,7 +115,7 @@ void main() {
           final e2 = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-batch2',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {
               'answers': {'q': 'a2'},
@@ -125,7 +125,7 @@ void main() {
           final e3 = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-batch3',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {
               'answers': {'q': 'a3'},
@@ -241,7 +241,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-single-batch',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -298,7 +298,7 @@ void main() {
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup-batch-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {
             'answers': {'q': 'pre-ingested'},
@@ -308,7 +308,7 @@ void main() {
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup-batch-2',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -316,7 +316,7 @@ void main() {
         final e3 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup-batch-3',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -404,7 +404,7 @@ void main() {
         final e1 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-mismatch-batch-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {
             'answers': {'q': 'original'},
@@ -426,7 +426,7 @@ void main() {
         final e2 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-mismatch-batch-2',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -434,7 +434,7 @@ void main() {
         final e3 = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-mismatch-batch-3',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),

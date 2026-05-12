@@ -78,7 +78,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -135,7 +135,7 @@ void main() {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-dup2',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {'answers': {}},
             initiator: const UserInitiator('u1'),
@@ -176,7 +176,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup3',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -217,7 +217,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup-chain-verify',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -276,7 +276,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-dup4',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),

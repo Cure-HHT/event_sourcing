@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
   'event_id': 'e',
   'aggregate_id': 'a',
-  'aggregate_type': 'DiaryEntry',
+  'aggregate_type': 'note',
   'entry_type': 'epistaxis_event',
   'entry_type_version': 1,
   'lib_format_version': 1,
@@ -24,7 +24,7 @@ Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
 Map<String, Object?> _validEventMap() => <String, Object?>{
   'event_id': 'e-1',
   'aggregate_id': 'a-1',
-  'aggregate_type': 'DiaryEntry',
+  'aggregate_type': 'note',
   'entry_type': 'demo_note',
   'event_type': 'finalized',
   'sequence_number': 1,

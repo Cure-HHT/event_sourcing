@@ -14,11 +14,11 @@ import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
-class _DiaryEntry {
+class _Note {
   final String entryId;
   final Map<String, Object?> answers;
-  _DiaryEntry({required this.entryId, required this.answers});
-  static _DiaryEntry fromMap(Map<String, Object?> m) => _DiaryEntry(
+  _Note({required this.entryId, required this.answers});
+  static _Note fromMap(Map<String, Object?> m) => _Note(
     entryId: m['latestEventId'] as String? ?? '_',
     answers: (m['answers'] as Map?)?.cast<String, Object?>() ?? {},
   );
@@ -41,7 +41,7 @@ Future<EventStore> _open() async {
     ..register(
       AggregateProjectionSpec(
         viewName: 'diary_entries',
-        interest: const SubscriptionFilter(aggregateTypes: {'DiaryEntry'}),
+        interest: const SubscriptionFilter(aggregateTypes: {'note'}),
         tombstoneEventTypes: const {'tombstone'},
       ),
     );
@@ -67,7 +67,7 @@ Future<void> _append(
 ]) => store.append(
   entryType: 'epistaxis_event',
   aggregateId: aggId,
-  aggregateType: 'DiaryEntry',
+  aggregateType: 'note',
   eventType: type,
   data: data ?? const <String, Object?>{},
   initiator: const UserInitiator('u'),
@@ -78,20 +78,20 @@ void main() {
     'snapshot for not-yet-existing aggregate emits null-value Snapshot',
     () async {
       final store = await _open();
-      final updates = <Update<_DiaryEntry?>>[];
+      final updates = <Update<_Note?>>[];
       final sub = store
           .subscribe(
             const SubscriptionFilter(),
-            AggregateMode<_DiaryEntry?>(
+            AggregateMode<_Note?>(
               viewName: 'diary_entries',
-              mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+              mapper: (m) => m.isEmpty ? null : _Note.fromMap(m),
               aggregates: const {'never-created'},
             ),
           )
           .listen(updates.add);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(updates.length, 1);
-      expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+      expect(updates.first, isA<Snapshot<_Note?>>());
       expect((updates.first as Snapshot).value, isNull);
       await sub.cancel();
       await store.close();
@@ -106,13 +106,13 @@ void main() {
         'answers': {'q1': 'yes'},
       });
 
-      final updates = <Update<_DiaryEntry?>>[];
+      final updates = <Update<_Note?>>[];
       final sub = store
           .subscribe(
             const SubscriptionFilter(),
-            AggregateMode<_DiaryEntry?>(
+            AggregateMode<_Note?>(
               viewName: 'diary_entries',
-              mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+              mapper: (m) => m.isEmpty ? null : _Note.fromMap(m),
               aggregates: const {'e1'},
             ),
           )
@@ -120,7 +120,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
       // Snapshot delivered
-      expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+      expect(updates.first, isA<Snapshot<_Note?>>());
       expect((updates.first as Snapshot).value, isNotNull);
 
       await _append(store, 'e1', 'checkpoint', {
@@ -128,8 +128,8 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(updates.any((u) => u is Delta<_DiaryEntry?>), isTrue);
-      final delta = updates.whereType<Delta<_DiaryEntry?>>().last;
+      expect(updates.any((u) => u is Delta<_Note?>), isTrue);
+      final delta = updates.whereType<Delta<_Note?>>().last;
       expect(delta.value!.answers, {'q1': 'yes', 'q2': 'no'});
       await sub.cancel();
       await store.close();
@@ -144,7 +144,7 @@ void main() {
     final stored2 = await store.append(
       entryType: 'epistaxis_event',
       aggregateId: 'e1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'checkpoint',
       data: {
         'answers': {'q2': 'no'},
@@ -152,20 +152,20 @@ void main() {
       initiator: const UserInitiator('u'),
     );
 
-    final updates = <Update<_DiaryEntry?>>[];
+    final updates = <Update<_Note?>>[];
     final sub = store
         .subscribe(
           const SubscriptionFilter(),
-          AggregateMode<_DiaryEntry?>(
+          AggregateMode<_Note?>(
             viewName: 'diary_entries',
-            mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            mapper: (m) => m.isEmpty ? null : _Note.fromMap(m),
             aggregates: const {'e1'},
           ),
         )
         .listen(updates.add);
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(updates.first, isA<Snapshot<_DiaryEntry?>>());
+    expect(updates.first, isA<Snapshot<_Note?>>());
     expect((updates.first as Snapshot).sequence, stored2!.sequenceNumber);
     await sub.cancel();
     await store.close();
@@ -177,13 +177,13 @@ void main() {
       'answers': {'q1': 'yes'},
     });
 
-    final updates = <Update<_DiaryEntry?>>[];
+    final updates = <Update<_Note?>>[];
     final sub = store
         .subscribe(
           const SubscriptionFilter(),
-          AggregateMode<_DiaryEntry?>(
+          AggregateMode<_Note?>(
             viewName: 'diary_entries',
-            mapper: (m) => m.isEmpty ? null : _DiaryEntry.fromMap(m),
+            mapper: (m) => m.isEmpty ? null : _Note.fromMap(m),
             aggregates: const {'e1'},
           ),
         )
@@ -193,7 +193,7 @@ void main() {
     await _append(store, 'e1', 'tombstone');
     await Future<void>.delayed(const Duration(milliseconds: 50));
 
-    expect(updates.any((u) => u is Tombstone<_DiaryEntry?>), isTrue);
+    expect(updates.any((u) => u is Tombstone<_Note?>), isTrue);
     await sub.cancel();
     await store.close();
   });

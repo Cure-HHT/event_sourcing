@@ -96,7 +96,7 @@ void main() {
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-verify-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -137,7 +137,7 @@ void main() {
           final original = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-tamper-1',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {'answers': {}},
             initiator: const UserInitiator('u1'),
@@ -202,7 +202,7 @@ void main() {
         final original = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-nothrow-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -256,7 +256,7 @@ void main() {
           final event = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-origin-only',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const {'answers': {}},
             initiator: const UserInitiator('u1'),

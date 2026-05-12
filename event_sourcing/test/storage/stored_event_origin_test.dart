@@ -13,7 +13,7 @@ StoredEvent _eventWithProvenance(List<Map<String, Object?>> provenance) =>
       key: 0,
       eventId: 'ev-1',
       aggregateId: 'agg-1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: 1,
       libFormatVersion: 1,

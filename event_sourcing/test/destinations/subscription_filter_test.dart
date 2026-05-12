@@ -11,7 +11,7 @@ StoredEvent _mkEvent({
   key: 1,
   eventId: eventId,
   aggregateId: 'agg-1',
-  aggregateType: 'DiaryEntry',
+  aggregateType: 'note',
   entryType: entryType,
   entryTypeVersion: 1,
   libFormatVersion: 1,

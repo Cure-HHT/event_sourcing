@@ -133,7 +133,7 @@ Future<List<StoredEvent>> _originate(int count) async {
     final e = await store.append(
       entryType: 'epistaxis_event',
       aggregateId: 'agg-orig-$i-$_dbCounter',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'finalized',
       data: <String, Object?>{'index': i},
       initiator: const UserInitiator('u1'),

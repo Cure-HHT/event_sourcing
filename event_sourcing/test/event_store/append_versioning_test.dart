@@ -38,7 +38,7 @@ void main() {
         final stored = await es.append(
           entryType: 'demo_note',
           aggregateId: 'a-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const <String, Object?>{'answers': <String, Object?>{}},
           initiator: const UserInitiator('u-1'),
@@ -57,7 +57,7 @@ void main() {
         final stored = await es.append(
           entryType: 'demo_note',
           aggregateId: 'a-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const <String, Object?>{'answers': <String, Object?>{}},
           initiator: const UserInitiator('u-1'),

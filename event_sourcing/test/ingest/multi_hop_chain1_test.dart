@@ -134,7 +134,7 @@ void main() {
             final eA1 = await originatorA.store.append(
               entryType: 'epistaxis_event',
               aggregateId: 'agg-3hop-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {
                 'answers': {'q': 'a1'},
@@ -144,7 +144,7 @@ void main() {
             final eA2 = await originatorA.store.append(
               entryType: 'epistaxis_event',
               aggregateId: 'agg-3hop-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'checkpoint',
               data: const {
                 'answers': {'q': 'a2'},
@@ -290,7 +290,7 @@ void main() {
             final eA = await originatorA.store.append(
               entryType: 'epistaxis_event',
               aggregateId: 'agg-4hop',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {
                 'answers': {'q': 'a'},

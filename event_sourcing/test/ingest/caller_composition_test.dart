@@ -95,7 +95,7 @@ void main() {
             final e1 = await orig.store.append(
               entryType: 'epistaxis_event',
               aggregateId: 'agg-caller-comp-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {
                 'answers': {'severity': 'mild'},
@@ -206,7 +206,7 @@ void main() {
             final e1 = await orig.store.append(
               entryType: 'epistaxis_event',
               aggregateId: 'agg-chain2-link-1',
-              aggregateType: 'DiaryEntry',
+              aggregateType: 'note',
               eventType: 'finalized',
               data: const {'answers': {}},
               initiator: const UserInitiator('u1'),

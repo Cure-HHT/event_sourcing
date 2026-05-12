@@ -84,7 +84,7 @@ void main() {
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -136,7 +136,7 @@ void main() {
           final evCompact = await fx.eventStore.append(
             entryType: 'epistaxis_event',
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -158,7 +158,7 @@ void main() {
           final evPurge = await fx.eventStore.append(
             entryType: 'epistaxis_event',
             aggregateId: 'b',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),
@@ -206,7 +206,7 @@ void main() {
           final ev = await fx.eventStore.append(
             entryType: 'epistaxis_event',
             aggregateId: 'a',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{'answers': <String, Object?>{}},
             initiator: const UserInitiator('u1'),

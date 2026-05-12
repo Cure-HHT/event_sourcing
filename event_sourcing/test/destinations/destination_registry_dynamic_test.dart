@@ -431,7 +431,7 @@ void main() {
             key: 0,
             eventId: eventId,
             aggregateId: 'agg-gap',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             entryType: 'epistaxis_event',
             entryTypeVersion: 1,
             libFormatVersion: 1,

@@ -46,7 +46,7 @@ void main() {
     final appended = await eventStore.append(
       entryType: 'epistaxis_event',
       aggregateId: 'agg-1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'finalized',
       data: const <String, Object?>{
         'answers': <String, Object?>{'severity': 'mild'},
@@ -71,7 +71,7 @@ void main() {
       final foreign = await foreignStore.append(
         entryType: 'epistaxis_event',
         aggregateId: 'agg-foreign',
-        aggregateType: 'DiaryEntry',
+        aggregateType: 'note',
         eventType: 'finalized',
         data: const <String, Object?>{
           'answers': <String, Object?>{'severity': 'mild'},

@@ -10,7 +10,7 @@ void main() {
     test('exposes viewName, interest, tombstones, derivations', () {
       final spec = AggregateProjectionSpec(
         viewName: 'diary_entries',
-        interest: SubscriptionFilter(aggregateTypes: const {'DiaryEntry'}),
+        interest: SubscriptionFilter(aggregateTypes: const {'note'}),
         tombstoneEventTypes: const {'tombstone'},
         derivedFields: const [
           DerivedField(

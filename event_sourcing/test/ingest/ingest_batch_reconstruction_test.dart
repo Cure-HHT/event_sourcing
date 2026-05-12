@@ -136,7 +136,7 @@ void main() {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-recon-$i',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: <String, Object?>{
               'answers': <String, Object?>{'idx': i},
@@ -223,7 +223,7 @@ void main() {
         final e = await orig.store.append(
           entryType: 'epistaxis_event',
           aggregateId: 'agg-hash-check',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const {'answers': {}},
           initiator: const UserInitiator('u1'),
@@ -289,7 +289,7 @@ void main() {
           final e = await orig.store.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-fullrecon-$i',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: <String, Object?>{
               'answers': <String, Object?>{'idx': i},

@@ -18,7 +18,7 @@ Future<StoredEvent> _appendEvent(
       key: 0,
       eventId: eventId,
       aggregateId: aggregateId,
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       entryType: 'epistaxis_event',
       entryTypeVersion: 1,
       libFormatVersion: 1,
@@ -174,7 +174,7 @@ void main() {
           final origEvent = await origStore.append(
             entryType: 'epistaxis_event',
             aggregateId: 'agg-watch-1',
-            aggregateType: 'DiaryEntry',
+            aggregateType: 'note',
             eventType: 'finalized',
             data: const <String, Object?>{
               'answers': {'q': 'a'},

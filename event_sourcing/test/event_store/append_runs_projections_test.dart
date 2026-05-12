@@ -29,7 +29,7 @@ void main() {
       ..register(
         AggregateProjectionSpec(
           viewName: 'diary_entries',
-          interest: const SubscriptionFilter(aggregateTypes: {'DiaryEntry'}),
+          interest: const SubscriptionFilter(aggregateTypes: {'note'}),
           tombstoneEventTypes: const {'tombstone'},
         ),
       );
@@ -58,7 +58,7 @@ void main() {
     await store.append(
       entryType: 'epistaxis_event',
       aggregateId: 'e1',
-      aggregateType: 'DiaryEntry',
+      aggregateType: 'note',
       eventType: 'finalized',
       data: <String, Object?>{
         'answers': <String, Object?>{'q1': 'yes'},

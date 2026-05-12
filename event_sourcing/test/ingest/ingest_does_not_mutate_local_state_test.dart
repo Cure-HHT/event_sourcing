@@ -388,7 +388,7 @@ void main() {
         await originator.datastore.eventStore.append(
           entryType: 'demo_note',
           aggregateId: 'agg-orig-1',
-          aggregateType: 'DiaryEntry',
+          aggregateType: 'note',
           eventType: 'finalized',
           data: const <String, Object?>{
             'answers': <String, Object?>{'k': 'v'},
