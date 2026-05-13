@@ -22,6 +22,9 @@
 // Implements: EVS-PRD-event-log/B — sequence counter durability (via
 //   backend_state schema_version), per-destination fill cursors,
 //   destination schedules.
+// Implements: EVS-PRD-regulatory-alignment — queryAudit joins events and
+//   security_context for ALCOA+-aligned audit access; the join lives in
+//   the storage layer so callers cannot reach past the abstraction.
 
 import 'dart:async';
 import 'dart:convert';
@@ -31,6 +34,7 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
@@ -60,18 +64,38 @@ void _defaultLogSink(String message) {
   developer.log(message, name: 'PostgresBackend', level: 900);
 }
 
-/// Concrete Postgres-backed implementation of [StorageBackend].
+/// Thrown by every public [PostgresBackend] I/O method after
+/// `PostgresBackend.close` has run. Implements [Exception] (not [Error])
+/// so callers can match on `isA<Exception>()` in the conformance harness
+/// — `StateError` from the underlying `package:pool` `Pool` would
+/// otherwise leak through as an [Error], which the contract test
+/// rejects.
 ///
-/// Task 4 (schema skeleton): only `open()`, `pool`, and `close()` are
-/// functional. Every other method throws [UnimplementedError] with a
-/// pointer to the task that lands it (Tasks 5–11). Subsequent tasks
-/// fill in transactions (Task 5), event log (Task 6), view rows
-/// (Task 7), view target versions (Task 8), FIFO (Task 9), backend
-/// state (Task 10), and reverse scan / audit query (Task 11).
+/// The instance has no fields; the closed state is binary. Callers
+/// inspecting the exception receive a stable `toString()` for logs.
+// Implements: EVS-DEV-postgres-backend/D — post-close I/O throws an
+//   Exception subtype (not Error), matching the storage-backend conformance
+//   harness' `throwsA(isA<Exception>())` expectation on the close subgroup.
+class PostgresBackendClosedException implements Exception {
+  const PostgresBackendClosedException();
+  @override
+  String toString() =>
+      'PostgresBackendClosedException: backend has been closed; '
+      're-open via PostgresBackend.open() to perform further I/O.';
+}
+
+/// Concrete Postgres-backed implementation of [StorageBackend].
 class PostgresBackend extends StorageBackend {
   PostgresBackend._(this._pool);
 
   final Pool<void> _pool;
+
+  /// Latches true on the first call to [close]. Subsequent I/O on this
+  /// backend instance throws [PostgresBackendClosedException]; the flag
+  /// also makes [close] itself idempotent (a second call is a no-op).
+  // Implements: EVS-DEV-postgres-backend/D — closed-state guard for the
+  //   conformance harness' close subgroup.
+  bool _closed = false;
 
   /// Override the default warning-level diagnostic sink used by FIFO
   /// methods that no-op on a missing target row ([appendAttempt],
@@ -132,13 +156,36 @@ class PostgresBackend extends StorageBackend {
   // re-parsing the URL. Internal; not part of the public API surface.
   Pool<void> get pool => _pool;
 
+  /// Close the underlying connection pool. Idempotent: a second call is
+  /// a no-op. After close, every public I/O method on this instance
+  /// throws [PostgresBackendClosedException].
+  // Implements: EVS-DEV-postgres-backend/D — close is idempotent and
+  //   subsequent I/O surfaces a typed Exception (not the underlying
+  //   `package:pool` StateError, which `isA<Exception>()` would reject).
   @override
-  Future<void> close() => _pool.close();
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _pool.close();
+  }
+
+  /// Throws [PostgresBackendClosedException] when [close] has already
+  /// run. Called at the top of every public I/O method so the caller
+  /// receives a typed [Exception] rather than the `package:pool`
+  /// `StateError` that would otherwise leak through. Cheap (single
+  /// field read); inlined trivially.
+  // Implements: EVS-DEV-postgres-backend/D — closed-state guard.
+  void _checkOpen() {
+    if (_closed) throw const PostgresBackendClosedException();
+  }
 
   // ------------------------------------------------------------------
-  // Stubs. Implementations land in Tasks 5–11. Each body throws
-  // UnimplementedError with the task number that owns it so failing
-  // tests in the meantime point at the next piece of work.
+  // StorageBackend method implementations follow. The closed-state
+  // guard (`_checkOpen()`) runs at the top of every public I/O method
+  // so a post-close call throws PostgresBackendClosedException rather
+  // than the underlying `package:pool` StateError (which is an Error,
+  // not an Exception, and would not satisfy the conformance harness'
+  // `throwsA(isA<Exception>())` expectation).
   // ------------------------------------------------------------------
 
   // -------- Task 5: transactions --------
@@ -151,6 +198,7 @@ class PostgresBackend extends StorageBackend {
   //   body returns or throws.
   @override
   Future<T> transaction<T>(Future<T> Function(Txn txn) body) async {
+    _checkOpen();
     return _pool.runTx<T>(
       (tx) async {
         final wrapper = PostgresTxn(tx);
@@ -249,6 +297,7 @@ class PostgresBackend extends StorageBackend {
   //   lookup O(log n + k).
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named(
         'SELECT * FROM events WHERE aggregate_id = @aggId '
@@ -294,15 +343,24 @@ class PostgresBackend extends StorageBackend {
     String? entryType,
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
-  }) => _findAllEventsComposed(
-    afterSequence: afterSequence,
-    limit: limit,
-    originatorHopId: originatorHopId,
-    originatorIdentifier: originatorIdentifier,
-    entryType: entryType,
-    clientTimestampStart: clientTimestampStart,
-    clientTimestampEnd: clientTimestampEnd,
-  );
+  }) async {
+    // `async` (not arrow / sync-return) so that a synchronous
+    // `_checkOpen` throw on a closed backend lands as a rejected Future
+    // rather than a synchronous exception at call-site evaluation. The
+    // conformance harness uses `expectLater(..., throwsA(...))` which
+    // matches on the awaited Future's error; a synchronous throw would
+    // short-circuit before the matcher could observe it.
+    _checkOpen();
+    return _findAllEventsComposed(
+      afterSequence: afterSequence,
+      limit: limit,
+      originatorHopId: originatorHopId,
+      originatorIdentifier: originatorIdentifier,
+      entryType: entryType,
+      clientTimestampStart: clientTimestampStart,
+      clientTimestampEnd: clientTimestampEnd,
+    );
+  }
 
   // Implements: EVS-PRD-event-log/D — transactional variant; reads see
   //   writes staged in the same txn body.
@@ -451,6 +509,7 @@ class PostgresBackend extends StorageBackend {
   //   for diagnostics; returns 0 when the row has never been materialized.
   @override
   Future<int> readSequenceCounter() async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
       parameters: {'k': _sequenceCounterKey},
@@ -474,6 +533,7 @@ class PostgresBackend extends StorageBackend {
   //   outside any transaction; returns null when absent.
   @override
   Future<StoredEvent?> findEventById(String eventId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('SELECT * FROM events WHERE event_id = @id LIMIT 1'),
       parameters: {'id': eventId},
@@ -544,6 +604,7 @@ class PostgresBackend extends StorageBackend {
     int? limit,
     int? offset,
   }) async {
+    _checkOpen();
     final limitClause = limit == null ? '' : 'LIMIT $limit';
     final offsetClause = offset == null ? '' : 'OFFSET $offset';
     final result = await _pool.execute(
@@ -669,7 +730,10 @@ class PostgresBackend extends StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
-  }) {
+  }) async {
+    // `async` so the synchronous _checkOpen throw lands as a rejected
+    // Future rather than at the call site (parallels findAllEvents).
+    _checkOpen();
     return transaction(
       (txn) => enqueueFifoTxn(
         txn,
@@ -854,6 +918,7 @@ class PostgresBackend extends StorageBackend {
   //   Uses the partial `fifo_entries_head_idx` for an index-only scan.
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('''
         SELECT * FROM fifo_entries
@@ -877,6 +942,7 @@ class PostgresBackend extends StorageBackend {
     int? afterSequenceInQueue,
     int? limit,
   }) async {
+    _checkOpen();
     final wheres = <String>['destination_id = @dest'];
     final params = <String, Object?>{'dest': destinationId};
     if (afterSequenceInQueue != null) {
@@ -907,6 +973,7 @@ class PostgresBackend extends StorageBackend {
     String entryId,
     AttemptResult attempt,
   ) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('''
         UPDATE fifo_entries
@@ -938,6 +1005,7 @@ class PostgresBackend extends StorageBackend {
     String entryId,
     FinalStatus status,
   ) async {
+    _checkOpen();
     await transaction<void>((txn) async {
       final session = _asPgTxn(txn).session;
       final existing = await session.execute(
@@ -999,6 +1067,7 @@ class PostgresBackend extends StorageBackend {
   //   one scan, then filter to wedged.
   @override
   Future<bool> anyFifoWedged() async {
+    _checkOpen();
     final result = await _pool.execute('''
       SELECT EXISTS (
         SELECT 1 FROM (
@@ -1020,6 +1089,7 @@ class PostgresBackend extends StorageBackend {
   //   error_message (or fallback string when none).
   @override
   Future<List<WedgedFifoSummary>> wedgedFifos() async {
+    _checkOpen();
     final result = await _pool.execute('''
       SELECT destination_id, entry_id, event_ids,
              enqueued_at, attempts, final_status
@@ -1076,6 +1146,7 @@ class PostgresBackend extends StorageBackend {
   //   tooling/tests to inspect a specific row.
   @override
   Future<FifoEntry?> readFifoRow(String destinationId, String entryId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('''
         SELECT * FROM fifo_entries
@@ -1227,6 +1298,7 @@ class PostgresBackend extends StorageBackend {
   // Returns 0 when the row has never been written.
   @override
   Future<int> readSchemaVersion() async {
+    _checkOpen();
     final result = await _pool.execute(
       "SELECT value::numeric::int FROM backend_state WHERE key = 'schema_version'",
     );
@@ -1251,6 +1323,7 @@ class PostgresBackend extends StorageBackend {
   // Returns -1 when the row has never been written.
   @override
   Future<int> readFillCursor(String destinationId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
       parameters: {'k': 'fill_cursor_$destinationId'},
@@ -1264,6 +1337,7 @@ class PostgresBackend extends StorageBackend {
   // the contract surface and `expectLater(..., throwsArgumentError)`.
   @override
   Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
+    _checkOpen();
     _validateFillCursorValue(sequenceNumber);
     return transaction(
       (txn) => writeFillCursorTxn(txn, destinationId, sequenceNumber),
@@ -1294,6 +1368,7 @@ class PostgresBackend extends StorageBackend {
   // Returns null when the row has never been written.
   @override
   Future<DestinationSchedule?> readSchedule(String destinationId) async {
+    _checkOpen();
     final result = await _pool.execute(
       Sql.named('SELECT value FROM backend_state WHERE key = @k'),
       parameters: {'k': 'schedule_$destinationId'},
@@ -1307,7 +1382,12 @@ class PostgresBackend extends StorageBackend {
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
-  ) => transaction((txn) => writeScheduleTxn(txn, destinationId, schedule));
+  ) async {
+    // `async` so a synchronous _checkOpen throw lands as a rejected
+    // Future rather than at the call site (parallels findAllEvents).
+    _checkOpen();
+    return transaction((txn) => writeScheduleTxn(txn, destinationId, schedule));
+  }
 
   // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.
   @override
@@ -1339,10 +1419,78 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 11: reverse scan + audit query --------
 
+  /// Server-side-paged reverse scan over the event log. Emits events in
+  /// descending `sequence_number` order, optionally filtered to a set of
+  /// event types. The implementation pages on `sequence_number < @last`
+  /// in batches of [_reverseScanPageSize] so a `await for ... break` on
+  /// the first match terminates after at most one page worth of network
+  /// traffic. When [eventTypes] is null no type filter is applied;
+  /// otherwise the filter binds as a Postgres `event_type = ANY(@types)`
+  /// against a `List<String>` parameter.
+  // Implements: EVS-PRD-event-log/D — read events in (reverse) order from
+  //   any starting position; underpins `VersionCheck.findMostRecent`'s
+  //   first-match-and-break consumer.
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; method materialized so callers (lifecycle version-check) can
+  //   bind PostgresBackend interchangeably with SembastBackend.
   @override
-  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
-      throw UnimplementedError('PostgresBackend.readEventsReverse — Task 11');
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) async* {
+    _checkOpen();
+    int? lastSeenSequence;
+    while (true) {
+      final wheres = <String>[];
+      final params = <String, dynamic>{};
+      if (lastSeenSequence != null) {
+        wheres.add('sequence_number < @last');
+        params['last'] = lastSeenSequence;
+      }
+      if (eventTypes != null) {
+        // ANY(@types) binds a Dart `List<String>` to a Postgres text[] in
+        // postgres v3.5 without further coercion; verified at task 11
+        // landing.
+        wheres.add('event_type = ANY(@types)');
+        params['types'] = eventTypes.toList();
+      }
+      final whereClause = wheres.isEmpty ? '' : 'WHERE ${wheres.join(' AND ')}';
+      final result = await _pool.execute(
+        Sql.named(
+          'SELECT * FROM events $whereClause '
+          'ORDER BY sequence_number DESC '
+          'LIMIT $_reverseScanPageSize',
+        ),
+        parameters: params,
+      );
+      if (result.isEmpty) return;
+      for (final row in result) {
+        yield _storedEventFromRow(row);
+      }
+      // Use the last row's sequence_number as the upper-exclusive bound
+      // for the next page. Once a result page is shorter than the page
+      // size we know there are no more rows; bail without an extra
+      // round-trip.
+      lastSeenSequence = result.last.toColumnMap()['sequence_number'] as int;
+      if (result.length < _reverseScanPageSize) return;
+    }
+  }
 
+  /// Cross-store audit query joining `events` and `security_context` on
+  /// `event_id`. Filters AND-compose; pagination is a strict lower bound
+  /// on the `(recorded_at, event_id)` tuple under DESC ordering so a
+  /// stable forward walk does not skew under concurrent head-inserts.
+  ///
+  /// Cursor encoding: base64-url of `"<isoRecordedAt>|<eventId>"`. Pipe
+  /// is illegal in both ISO 8601 timestamps and UUIDs, so the split is
+  /// unambiguous. Corrupt cursors (wrong shape, unparseable timestamp,
+  /// non-base64) surface as `ArgumentError`. The encoding mirrors the
+  /// sembast `_AuditCursorPoint` shape so a cursor minted under one
+  /// backend would be readable under the other if/when shared — though
+  /// the contract does not require this and tests do not exercise it.
+  // Implements: EVS-PRD-regulatory-alignment — queryAudit provides the
+  //   ALCOA+-Available retrieval path; join lives in the storage layer
+  //   so consumers cannot reach past the abstraction.
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; queryAudit materialized so the security-context store's
+  //   delegator round-trips identically to sembast.
   @override
   Future<PagedAudit> queryAudit({
     Initiator? initiator,
@@ -1352,7 +1500,138 @@ class PostgresBackend extends StorageBackend {
     DateTime? to,
     int limit = 50,
     String? cursor,
-  }) => throw UnimplementedError('PostgresBackend.queryAudit — Task 11');
+  }) async {
+    _checkOpen();
+    if (limit < 1 || limit > 1000) {
+      throw ArgumentError.value(
+        limit,
+        'limit',
+        'queryAudit limit must be in [1, 1000]',
+      );
+    }
+
+    _AuditCursorPoint? decodedCursor;
+    if (cursor != null) {
+      try {
+        decodedCursor = _AuditCursorPoint.decode(cursor);
+      } on Object catch (e) {
+        throw ArgumentError.value(cursor, 'cursor', 'corrupt cursor: $e');
+      }
+    }
+
+    final wheres = <String>[];
+    final params = <String, dynamic>{};
+
+    if (initiator != null) {
+      // events.initiator is JSONB; the `@v:jsonb = jsonb` comparison is
+      // structural (independent of key order) so the comparison matches
+      // SembastBackend's `events.where((e) => e.initiator == initiator)`.
+      wheres.add('events.initiator = @initJson:jsonb');
+      params['initJson'] = initiator.toJson();
+    }
+    if (flowToken != null) {
+      wheres.add('events.flow_token = @flowTok');
+      params['flowTok'] = flowToken;
+    }
+    if (ipAddress != null) {
+      wheres.add('security_context.ip_address = @ip');
+      params['ip'] = ipAddress;
+    }
+    if (from != null) {
+      wheres.add('security_context.recorded_at >= @from:timestamptz');
+      params['from'] = from.toUtc();
+    }
+    if (to != null) {
+      wheres.add('security_context.recorded_at <= @to:timestamptz');
+      params['to'] = to.toUtc();
+    }
+    if (decodedCursor != null) {
+      // Postgres supports row-value tuple comparison directly: the
+      // strict-less-than form below evaluates to TRUE iff recorded_at is
+      // less than the cursor's recorded_at, OR they are equal and
+      // event_id is less than the cursor's event_id — i.e. the strict
+      // lower bound under the DESC ordering used below. (Verified
+      // working under Postgres 16 by task 11's conformance run.)
+      wheres.add(
+        '(security_context.recorded_at, events.event_id) '
+        '< (@curAt:timestamptz, @curEv)',
+      );
+      params['curAt'] = decodedCursor.recordedAt.toUtc();
+      params['curEv'] = decodedCursor.eventId;
+    }
+
+    final whereClause = wheres.isEmpty ? '' : 'WHERE ${wheres.join(' AND ')}';
+    // Fetch limit + 1 to detect "more pages" without a separate
+    // COUNT(*); the extra row, if present, is dropped from the page and
+    // its predecessor's (recorded_at, event_id) tuple is encoded into
+    // nextCursor.
+    final result = await _pool.execute(
+      Sql.named('''
+        SELECT
+          events.sequence_number, events.event_id, events.aggregate_id,
+          events.aggregate_type, events.entry_type, events.entry_type_version,
+          events.lib_format_version, events.event_type,
+          events.data, events.metadata, events.initiator,
+          events.client_timestamp, events.event_hash, events.flow_token,
+          events.previous_event_hash,
+          security_context.recorded_at, security_context.ip_address,
+          security_context.payload
+        FROM events
+        INNER JOIN security_context
+          ON events.event_id = security_context.event_id
+        $whereClause
+        ORDER BY security_context.recorded_at DESC, events.event_id DESC
+        LIMIT ${limit + 1}
+      '''),
+      parameters: params,
+    );
+
+    final rows = <AuditRow>[];
+    final returnedCount = result.length > limit ? limit : result.length;
+    for (var i = 0; i < returnedCount; i++) {
+      final row = result[i];
+      final event = StoredEvent(
+        key: row[0] as int,
+        sequenceNumber: row[0] as int,
+        eventId: row[1] as String,
+        aggregateId: row[2] as String,
+        aggregateType: row[3] as String,
+        entryType: row[4] as String,
+        entryTypeVersion: row[5] as int,
+        libFormatVersion: row[6] as int,
+        eventType: row[7] as String,
+        data: _asJsonMap(row[8]),
+        metadata: _asJsonMap(row[9]),
+        initiator: Initiator.fromJson(_asJsonMap(row[10])),
+        clientTimestamp: (row[11] as DateTime).toUtc(),
+        eventHash: row[12] as String,
+        flowToken: row[13] as String?,
+        previousEventHash: row[14] as String?,
+      );
+      // The security row is reified from the JSONB `payload` column so
+      // every field on EventSecurityContext (user_agent, session_id,
+      // geo_*, redacted_at, redaction_reason) lands populated — the
+      // top-level `recorded_at` / `ip_address` columns exist only for
+      // server-side filtering and ORDER BY.
+      final context = EventSecurityContext.fromJson(_asJsonMap(row[17]));
+      rows.add(AuditRow(event: event, context: context));
+    }
+    String? nextCursor;
+    if (result.length > limit) {
+      final tail = rows.last;
+      nextCursor = _AuditCursorPoint(
+        recordedAt: tail.context.recordedAt,
+        eventId: tail.event.eventId,
+      ).encode();
+    }
+    return PagedAudit(rows: rows, nextCursor: nextCursor);
+  }
+
+  /// Page size for [readEventsReverse]'s server-side pagination. 1024 is
+  /// a soft choice — large enough that the typical first-match-and-break
+  /// terminates in one round-trip, small enough that a full reverse
+  /// walk over a multi-million-row log doesn't blow per-batch memory.
+  static const int _reverseScanPageSize = 1024;
 
   // ------------------------------------------------------------------
   // Internal helpers
@@ -1501,5 +1780,38 @@ class PostgresBackend extends StorageBackend {
       'PostgresBackend: expected JSON map for JSONB column; '
       'got ${raw.runtimeType}',
     );
+  }
+}
+
+/// Opaque pagination cursor for [PostgresBackend.queryAudit]. Encodes
+/// the `(recorded_at, event_id)` tuple from the previous page's tail
+/// row; the next page is a strict lower bound under the
+/// `recorded_at DESC, event_id DESC` ordering so concurrent inserts at
+/// the head do not skew page contents. Encoding is base64-url of
+/// `"<isoTimestamp>|<eventId>"`. Pipe is illegal in both ISO 8601
+/// timestamps and UUIDs so the split is unambiguous. The shape parallels
+/// `_AuditCursorPoint` in `sembast_backend.dart` so a cursor minted on
+/// one backend is recognizable on the other; the contract does not
+/// require this round-trip but tests do not exercise inter-backend
+/// cursor portability either.
+class _AuditCursorPoint {
+  const _AuditCursorPoint({required this.recordedAt, required this.eventId});
+
+  factory _AuditCursorPoint.decode(String encoded) {
+    final raw = utf8.decode(base64Url.decode(encoded));
+    final parts = raw.split('|');
+    if (parts.length != 2) throw const FormatException('bad cursor shape');
+    return _AuditCursorPoint(
+      recordedAt: DateTime.parse(parts[0]),
+      eventId: parts[1],
+    );
+  }
+
+  final DateTime recordedAt;
+  final String eventId;
+
+  String encode() {
+    final raw = '${recordedAt.toUtc().toIso8601String()}|$eventId';
+    return base64Url.encode(utf8.encode(raw));
   }
 }
