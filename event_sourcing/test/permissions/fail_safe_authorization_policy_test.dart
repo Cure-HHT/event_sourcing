@@ -19,10 +19,7 @@ void main() {
         activeRole: 'admin',
         activeSite: 's1',
       );
-      final d = await policy.isPermitted(
-        p,
-        const Permission('user.invite', scope: ScopeClass.global),
-      );
+      final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
       expect((d as Deny).reason, DenyReason.bootstrapFailure);
     });
@@ -43,10 +40,7 @@ void main() {
 
     test('anonymous principal also denied with bootstrapFailure', () async {
       const p = Principal.anonymous();
-      final d = await policy.isPermitted(
-        p,
-        const Permission('user.invite', scope: ScopeClass.global),
-      );
+      final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
       expect((d as Deny).reason, DenyReason.bootstrapFailure);
     });

@@ -14,7 +14,6 @@ import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show Principal;
-import 'package:event_sourcing/src/actions/scope_class.dart';
 
 /// Always-succeeds, emits one event.
 class HelloAction extends Action<Map<String, Object?>, String> {
@@ -25,9 +24,7 @@ class HelloAction extends Action<Map<String, Object?>, String> {
   String get description => 'Say hello.';
 
   @override
-  Set<Permission> get permissions => {
-    const Permission('test.hello', scope: ScopeClass.global),
-  };
+  Set<Permission> get permissions => {const Permission('test.hello')};
 
   @override
   Idempotency get idempotency => Idempotency.none;
@@ -120,8 +117,8 @@ class TwoPermissionAction extends HelloAction {
 
   @override
   Set<Permission> get permissions => {
-    const Permission('test.first', scope: ScopeClass.global),
-    const Permission('test.second', scope: ScopeClass.global),
+    const Permission('test.first'),
+    const Permission('test.second'),
   };
 }
 

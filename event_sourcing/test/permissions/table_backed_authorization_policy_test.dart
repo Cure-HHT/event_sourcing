@@ -1,9 +1,15 @@
 // test/permissions/table_backed_authorization_policy_test.dart
 // Verifies: EVS-PRD-permissions-as-events/B — TableBackedAuthorizationPolicy
 // evaluates all authorization decisions from the event-derived role matrix
-// (via RoleMatrixReader); scope preconditions, role membership, and anonymous
-// principal handling are all resolved from projection data alone, with no
-// external authority consulted.
+// (via RoleMatrixReader); role membership and anonymous principal handling
+// are resolved from projection data alone, with no external authority
+// consulted.
+//
+// NOTE: Scope-precondition assertions previously lived here. Task 5 removed
+// the legacy ScopeClass{global,site,self} session-precondition switch from
+// the policy; Task 17 will reintroduce scope-aware evaluation against a
+// ScopeValue dispatched alongside each Permission. Until then this file
+// covers only the matrix-lookup contract.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -11,23 +17,20 @@ void main() {
   group('TableBackedAuthorizationPolicy', () {
     const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
       'admin': <String, Permission>{
-        'user.invite': Permission('user.invite', scope: ScopeClass.global),
-        'site.manage': Permission('site.manage', scope: ScopeClass.site),
-        'profile.read': Permission('profile.read', scope: ScopeClass.self),
+        'user.invite': Permission('user.invite'),
+        'site.manage': Permission('site.manage', scopeClass: 'site'),
+        'profile.read': Permission('profile.read'),
       },
     });
     const policy = TableBackedAuthorizationPolicy(reader);
 
-    test('Allow when role holds global permission', () async {
+    test('Allow when role holds permission', () async {
       const p = Principal.user(
         userId: 'u1',
         roles: {'admin'},
         activeRole: 'admin',
       );
-      final d = await policy.isPermitted(
-        p,
-        const Permission('user.invite', scope: ScopeClass.global),
-      );
+      final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Allow>());
     });
 
@@ -37,107 +40,19 @@ void main() {
         roles: {'patient'},
         activeRole: 'patient',
       );
-      final d = await policy.isPermitted(
-        p,
-        const Permission('user.invite', scope: ScopeClass.global),
-      );
+      final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
       expect((d as Deny).reason, DenyReason.notGranted);
     });
 
-    test(
-      'Deny sessionPreconditionMissing for site-scoped without activeSite',
-      () async {
-        const p = Principal.user(
-          userId: 'u1',
-          roles: {'admin'},
-          activeRole: 'admin',
-          // activeSite: null (default)
-        );
-        final d = await policy.isPermitted(
-          p,
-          const Permission('site.manage', scope: ScopeClass.site),
-        );
-        expect(d, isA<Deny>());
-        expect((d as Deny).reason, DenyReason.sessionPreconditionMissing);
-      },
-    );
+    test('Deny notGranted when anonymous principal (no role)', () async {
+      const p = Principal.anonymous();
+      final d = await policy.isPermitted(p, const Permission('user.invite'));
+      expect(d, isA<Deny>());
+      expect((d as Deny).reason, DenyReason.notGranted);
+    });
 
-    test(
-      'Deny sessionPreconditionMissing for self-scoped when anonymous',
-      () async {
-        const p = Principal.anonymous();
-        final d = await policy.isPermitted(
-          p,
-          const Permission('profile.read', scope: ScopeClass.self),
-        );
-        expect(d, isA<Deny>());
-        expect((d as Deny).reason, DenyReason.sessionPreconditionMissing);
-      },
-    );
-
-    test(
-      'Deny sessionPreconditionMissing for site-scoped when anonymous (precondition before matrix lookup)',
-      () async {
-        const p = Principal.anonymous();
-        final d = await policy.isPermitted(
-          p,
-          const Permission('site.manage', scope: ScopeClass.site),
-        );
-        expect(d, isA<Deny>());
-        expect((d as Deny).reason, DenyReason.sessionPreconditionMissing);
-      },
-    );
-
-    test(
-      'Deny notGranted when anonymous attempts global-scoped permission (no role)',
-      () async {
-        const p = Principal.anonymous();
-        final d = await policy.isPermitted(
-          p,
-          const Permission('user.invite', scope: ScopeClass.global),
-        );
-        expect(d, isA<Deny>());
-        expect((d as Deny).reason, DenyReason.notGranted);
-      },
-    );
-
-    test(
-      'Allow self-scoped permission for any user (userId always present)',
-      () async {
-        const p = Principal.user(
-          userId: 'u1',
-          roles: {'admin'},
-          activeRole: 'admin',
-        );
-        final d = await policy.isPermitted(
-          p,
-          const Permission('profile.read', scope: ScopeClass.self),
-        );
-        expect(d, isA<Allow>());
-      },
-    );
-
-    test(
-      'permissionsFor filters out site-scoped perms when no activeSite',
-      () async {
-        const p = Principal.user(
-          userId: 'u1',
-          roles: {'admin'},
-          activeRole: 'admin',
-          // activeSite: null
-        );
-        final perms = await policy.permissionsFor(p);
-        // Self-scope passes (userId present), site-scope fails (no activeSite),
-        // global always passes.
-        expect(perms.map((x) => x.name).toSet(), <String>{
-          'user.invite',
-          'profile.read',
-        });
-      },
-    );
-
-    test('permissionsFor returns all when preconditions met', () async {
+    test('permissionsFor returns the role grants for a user', () async {
       const p = Principal.user(
         userId: 'u1',
         roles: {'admin'},

@@ -91,7 +91,7 @@ grants:
       );
       final decision = await components.policy.isPermitted(
         principal,
-        const Permission('help.ask', scope: ScopeClass.global),
+        const Permission('help.ask'),
       );
       expect(decision, isA<Allow>());
     });

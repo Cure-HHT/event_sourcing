@@ -11,8 +11,8 @@ void main() {
       final snap = PermissionSnapshot(
         role: 'admin',
         grants: <Permission>{
-          const Permission('user.invite', scope: ScopeClass.global),
-          const Permission('site.manage', scope: ScopeClass.site),
+          const Permission('user.invite'),
+          const Permission('site.manage'),
         },
         issuedAt: DateTime.utc(2026, 5, 6),
       );
@@ -20,18 +20,8 @@ void main() {
       final parsed = PermissionSnapshot.fromJson(json);
       expect(parsed.role, 'admin');
       expect(parsed.grants.length, 2);
-      expect(
-        parsed.grants.any(
-          (p) => p.name == 'user.invite' && p.scope == ScopeClass.global,
-        ),
-        isTrue,
-      );
-      expect(
-        parsed.grants.any(
-          (p) => p.name == 'site.manage' && p.scope == ScopeClass.site,
-        ),
-        isTrue,
-      );
+      expect(parsed.grants.any((p) => p.name == 'user.invite'), isTrue);
+      expect(parsed.grants.any((p) => p.name == 'site.manage'), isTrue);
       expect(parsed.issuedAt, DateTime.utc(2026, 5, 6));
     });
   });

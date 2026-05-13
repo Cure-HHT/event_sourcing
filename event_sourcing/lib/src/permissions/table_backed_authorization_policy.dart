@@ -10,17 +10,18 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   const TableBackedAuthorizationPolicy(this._reader);
   final RoleMatrixReader _reader;
 
+  // TODO(Task 17): rewrite this policy to consult ScopeClassRegistry and
+  // evaluate scope membership against the ScopeValue carried on the action
+  // dispatch. For now we only check role-membership in the matrix; the
+  // legacy session-precondition switch (global/site/self) has been removed
+  // along with Permission.scope, since the new Permission.scopeClass is a
+  // free-form name validated by the registry rather than an enum the policy
+  // can pattern-match on.
   @override
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission perm,
   ) async {
-    if (!_scopePreconditionMet(principal, perm.scope)) {
-      return Deny(
-        permission: perm,
-        reason: DenyReason.sessionPreconditionMissing,
-      );
-    }
     if (principal is! UserPrincipal) {
       // AnonymousPrincipal has no role — nothing in the matrix can be
       // granted to them.
@@ -37,16 +38,6 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     if (principal is! UserPrincipal) {
       return const <Permission>{};
     }
-    final all = await _reader.grantsForRole(principal.activeRole);
-    return all.where((p) => _scopePreconditionMet(principal, p.scope)).toSet();
-  }
-
-  bool _scopePreconditionMet(Principal p, ScopeClass scope) {
-    return switch (scope) {
-      ScopeClass.global => true,
-      ScopeClass.site => p is UserPrincipal && p.activeSite != null,
-      // UserPrincipal has a non-empty userId by invariant; anonymous has none.
-      ScopeClass.self => p is UserPrincipal,
-    };
+    return _reader.grantsForRole(principal.activeRole);
   }
 }

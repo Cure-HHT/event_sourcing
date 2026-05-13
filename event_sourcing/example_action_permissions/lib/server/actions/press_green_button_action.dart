@@ -33,7 +33,7 @@ class PressGreenButtonAction extends Action<PressGreenInput, PressGreenResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('buttons.press.green', scope: ScopeClass.site),
+    const Permission('buttons.press.green', scopeClass: 'site'),
   };
 
   @override

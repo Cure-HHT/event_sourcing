@@ -28,10 +28,7 @@ void main() {
 
     test('declares global users.provision, idempotency required', () {
       expect(action.name, 'ProvisionUserAction');
-      expect(
-        action.permissions,
-        contains(const Permission('users.provision', scope: ScopeClass.global)),
-      );
+      expect(action.permissions, contains(const Permission('users.provision')));
       expect(action.idempotency, Idempotency.required);
     });
 

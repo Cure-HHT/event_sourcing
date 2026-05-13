@@ -37,7 +37,7 @@ class PressRedAlarmAction extends Action<RedAlarmInput, RedAlarmResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('buttons.press.red', scope: ScopeClass.self),
+    const Permission('buttons.press.red'),
   };
 
   @override

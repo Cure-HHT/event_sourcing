@@ -37,7 +37,7 @@ class EditGreenNoteAction
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('notes.write.green', scope: ScopeClass.site),
+    const Permission('notes.write.green', scopeClass: 'site'),
   };
 
   @override

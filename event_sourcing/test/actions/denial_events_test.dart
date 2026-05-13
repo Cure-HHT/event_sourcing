@@ -5,7 +5,6 @@ import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
 import 'package:event_sourcing/src/actions/denial_events.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -65,7 +64,7 @@ void main() {
       final draft = denialAuthorizationDenied(
         invocationId: 'inv-1',
         actionName: 'user.delete',
-        permission: const Permission('user.delete', scope: ScopeClass.global),
+        permission: const Permission('user.delete'),
         principalActiveRole: 'Investigator',
       );
       expect(draft.eventType, 'authorization_denied');
@@ -77,7 +76,7 @@ void main() {
       final draft = denialAuthorizationDenied(
         invocationId: 'inv-1',
         actionName: 'user.delete',
-        permission: const Permission('user.delete', scope: ScopeClass.global),
+        permission: const Permission('user.delete'),
       );
       expect(draft.data.containsKey('principal_active_role'), isFalse);
     });
@@ -86,7 +85,7 @@ void main() {
       final draft = denialAuthorizationDenied(
         invocationId: 'inv-1',
         actionName: 'user.delete',
-        permission: const Permission('user.delete', scope: ScopeClass.global),
+        permission: const Permission('user.delete'),
         denyReason: DenyReason.sessionPreconditionMissing,
       );
       expect(draft.data['deny_reason'], 'sessionPreconditionMissing');
@@ -96,7 +95,7 @@ void main() {
       final draft = denialAuthorizationDenied(
         invocationId: 'inv-1',
         actionName: 'user.delete',
-        permission: const Permission('user.delete', scope: ScopeClass.global),
+        permission: const Permission('user.delete'),
       );
       expect(draft.data.containsKey('deny_reason'), isFalse);
     });
@@ -153,7 +152,7 @@ void main() {
         denialAuthorizationDenied(
           invocationId: 'i',
           actionName: 'a',
-          permission: const Permission('p', scope: ScopeClass.global),
+          permission: const Permission('p'),
         ).aggregateType,
         denialExecutionFailed(
           invocationId: 'i',

@@ -14,8 +14,8 @@ void main() {
   group('EventSeedApplier', () {
     late EventStore eventStore;
     final declared = <Permission>{
-      const Permission('user.invite', scope: ScopeClass.global),
-      const Permission('patient.read', scope: ScopeClass.global),
+      const Permission('user.invite'),
+      const Permission('patient.read'),
     };
 
     setUp(() async {

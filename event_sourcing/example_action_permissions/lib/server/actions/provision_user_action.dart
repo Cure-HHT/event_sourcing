@@ -47,7 +47,7 @@ class ProvisionUserAction
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('users.provision', scope: ScopeClass.global),
+    const Permission('users.provision'),
   };
 
   @override

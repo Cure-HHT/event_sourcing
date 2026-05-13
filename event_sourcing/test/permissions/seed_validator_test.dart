@@ -9,8 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('SeedValidator', () {
     final declared = <Permission>{
-      const Permission('user.invite', scope: ScopeClass.global),
-      const Permission('patient.read', scope: ScopeClass.global),
+      const Permission('user.invite'),
+      const Permission('patient.read'),
     };
 
     test('SeedValid for clean seed', () {
@@ -67,9 +67,7 @@ void main() {
     });
 
     test('rejects permission name containing colon', () {
-      final declared2 = <Permission>{
-        const Permission('user:invite', scope: ScopeClass.global),
-      };
+      final declared2 = <Permission>{const Permission('user:invite')};
       const seed = PermissionSeed(
         roles: <String>{'admin'},
         grants: <String, Set<String>>{

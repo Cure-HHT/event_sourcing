@@ -27,18 +27,7 @@ class MaterializedViewRoleMatrixReader implements RoleMatrixReader {
     final rows = await backend.findViewRows(_viewName);
     return rows
         .where((r) => r['role'] == role)
-        .map(
-          (r) => Permission(
-            r['permissionName']! as String,
-            scope: ScopeClass.values.firstWhere(
-              (s) => s.name == r['scope']! as String,
-              orElse: () => throw StateError(
-                "unknown scope '${r['scope']}' for "
-                "${r['role']}:${r['permissionName']}",
-              ),
-            ),
-          ),
-        )
+        .map((r) => Permission(r['permissionName']! as String))
         .toSet();
   }
 }

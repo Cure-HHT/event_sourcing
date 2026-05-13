@@ -8,7 +8,6 @@ import 'package:event_sourcing/src/actions/action_registry.dart';
 import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
 
 class _A extends Action<Map<String, Object?>, void> {
@@ -42,18 +41,14 @@ class _A extends Action<Map<String, Object?>, void> {
 void main() {
   group('ActionRegistry', () {
     test('register stores the action', () {
-      final r = ActionRegistry()
-        ..register(_A('a', {const Permission('p1', scope: ScopeClass.global)}));
+      final r = ActionRegistry()..register(_A('a', {const Permission('p1')}));
       expect(r.lookup('a'), isNotNull);
     });
 
     test('duplicate name throws ArgumentError', () {
-      final r = ActionRegistry()
-        ..register(_A('a', {const Permission('p1', scope: ScopeClass.global)}));
+      final r = ActionRegistry()..register(_A('a', {const Permission('p1')}));
       expect(
-        () => r.register(
-          _A('a', {const Permission('p2', scope: ScopeClass.global)}),
-        ),
+        () => r.register(_A('a', {const Permission('p2')})),
         throwsArgumentError,
       );
     });
@@ -65,22 +60,12 @@ void main() {
 
     test('allDeclaredPermissions is the union', () {
       final r = ActionRegistry()
-        ..register(
-          _A('a', {
-            const Permission('p1', scope: ScopeClass.global),
-            const Permission('p2', scope: ScopeClass.global),
-          }),
-        )
-        ..register(
-          _A('b', {
-            const Permission('p2', scope: ScopeClass.global),
-            const Permission('p3', scope: ScopeClass.global),
-          }),
-        );
+        ..register(_A('a', {const Permission('p1'), const Permission('p2')}))
+        ..register(_A('b', {const Permission('p2'), const Permission('p3')}));
       expect(r.allDeclaredPermissions, {
-        const Permission('p1', scope: ScopeClass.global),
-        const Permission('p2', scope: ScopeClass.global),
-        const Permission('p3', scope: ScopeClass.global),
+        const Permission('p1'),
+        const Permission('p2'),
+        const Permission('p3'),
       });
     });
 

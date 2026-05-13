@@ -23,7 +23,7 @@ void main() {
       expect(action.name, 'EditBlueNoteAction');
       expect(
         action.permissions,
-        contains(const Permission('notes.write.blue', scope: ScopeClass.site)),
+        contains(const Permission('notes.write.blue', scopeClass: 'site')),
       );
       expect(action.idempotency, Idempotency.optional);
     });

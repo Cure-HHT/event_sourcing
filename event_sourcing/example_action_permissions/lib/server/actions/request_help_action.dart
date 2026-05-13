@@ -34,9 +34,7 @@ class RequestHelpAction extends Action<HelpInput, HelpResult> {
       'help_request event on a fresh help_ticket aggregate.';
 
   @override
-  Set<Permission> get permissions => <Permission>{
-    const Permission('help.ask', scope: ScopeClass.global),
-  };
+  Set<Permission> get permissions => <Permission>{const Permission('help.ask')};
 
   @override
   Idempotency get idempotency => Idempotency.none;

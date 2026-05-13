@@ -23,9 +23,7 @@ void main() {
       expect(action.name, 'PressGreenButtonAction');
       expect(
         action.permissions,
-        contains(
-          const Permission('buttons.press.green', scope: ScopeClass.site),
-        ),
+        contains(const Permission('buttons.press.green', scopeClass: 'site')),
       );
       expect(action.idempotency, Idempotency.none);
     });

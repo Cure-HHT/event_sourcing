@@ -33,7 +33,7 @@ class PressBlueButtonAction extends Action<PressBlueInput, PressBlueResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('buttons.press.blue', scope: ScopeClass.site),
+    const Permission('buttons.press.blue', scopeClass: 'site'),
   };
 
   @override

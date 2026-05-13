@@ -36,7 +36,7 @@ class EditBlueNoteAction extends Action<EditBlueNoteInput, EditBlueNoteResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('notes.write.blue', scope: ScopeClass.site),
+    const Permission('notes.write.blue', scopeClass: 'site'),
   };
 
   @override

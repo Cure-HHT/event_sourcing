@@ -70,6 +70,10 @@ class EventSeedApplier {
           'permission $permName not in declaredPermissions during apply',
         );
       }
+      // TODO(Task 9): rewrite PermissionGrantedPayload to carry the
+      // scopeClass identifier (or no scope at all) instead of the legacy
+      // ScopeClass enum. For now, emit ScopeClass.global as a placeholder
+      // so the payload remains JSON-compatible.
       await eventStore.append(
         entryType: 'role_permission_grant',
         aggregateType: 'role_permission_grant',
@@ -78,7 +82,7 @@ class EventSeedApplier {
         data: PermissionGrantedPayload(
           role: role,
           permissionName: permName,
-          scope: perm.scope,
+          scope: ScopeClass.global,
         ).toJson(),
         initiator: seedInitiator,
       );

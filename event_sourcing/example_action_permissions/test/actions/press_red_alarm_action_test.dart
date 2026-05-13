@@ -25,7 +25,7 @@ void main() {
       expect(action.name, 'PressRedAlarmAction');
       expect(
         action.permissions,
-        contains(const Permission('buttons.press.red', scope: ScopeClass.self)),
+        contains(const Permission('buttons.press.red')),
       );
       expect(action.idempotency, Idempotency.required);
     });

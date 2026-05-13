@@ -33,9 +33,7 @@ grants:
 ''';
         final boot = await bootstrapActionPermissions(
           eventStore: eventStore,
-          declaredPermissions: <Permission>{
-            const Permission('user.invite', scope: ScopeClass.global),
-          },
+          declaredPermissions: <Permission>{const Permission('user.invite')},
           yamlSource: yaml,
         );
         expect(boot, isA<PolicyReady>());
@@ -47,10 +45,7 @@ grants:
           roles: {'admin'},
           activeRole: 'admin',
         );
-        final d = await policy.isPermitted(
-          p,
-          const Permission('user.invite', scope: ScopeClass.global),
-        );
+        final d = await policy.isPermitted(p, const Permission('user.invite'));
         expect(d, isA<Allow>());
       },
     );
@@ -65,9 +60,7 @@ grants:
 ''';
       final boot = await bootstrapActionPermissions(
         eventStore: eventStore,
-        declaredPermissions: <Permission>{
-          const Permission('user.invite', scope: ScopeClass.global),
-        },
+        declaredPermissions: <Permission>{const Permission('user.invite')},
         yamlSource: yaml,
       );
       expect(boot, isA<PolicyFailSafe>());
@@ -82,7 +75,7 @@ grants:
       );
       final d = await boot.policy.isPermitted(
         p,
-        const Permission('user.invite', scope: ScopeClass.global),
+        const Permission('user.invite'),
       );
       expect(d, isA<Deny>());
       expect((d as Deny).reason, DenyReason.bootstrapFailure);
@@ -96,9 +89,7 @@ grants:
   admin:
     - user.invite
 ''';
-      final declared = <Permission>{
-        const Permission('user.invite', scope: ScopeClass.global),
-      };
+      final declared = <Permission>{const Permission('user.invite')};
       await bootstrapActionPermissions(
         eventStore: eventStore,
         declaredPermissions: declared,

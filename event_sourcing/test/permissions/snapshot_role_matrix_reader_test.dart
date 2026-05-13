@@ -16,9 +16,7 @@ void main() {
       () async {
         final snap = PermissionSnapshot(
           role: 'admin',
-          grants: <Permission>{
-            const Permission('user.invite', scope: ScopeClass.global),
-          },
+          grants: <Permission>{const Permission('user.invite')},
           issuedAt: DateTime(2026),
         );
         final reader = SnapshotRoleMatrixReader(snap);
@@ -31,9 +29,7 @@ void main() {
       () async {
         final snap = PermissionSnapshot(
           role: 'admin',
-          grants: <Permission>{
-            const Permission('user.invite', scope: ScopeClass.global),
-          },
+          grants: <Permission>{const Permission('user.invite')},
           issuedAt: DateTime(2026),
         );
         final reader = SnapshotRoleMatrixReader(snap);

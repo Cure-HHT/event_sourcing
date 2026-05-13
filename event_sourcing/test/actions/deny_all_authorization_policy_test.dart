@@ -4,7 +4,6 @@ import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/deny_all_authorization_policy.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
 
 // DenyAllAuthorizationPolicy is convenience scaffolding without a
@@ -19,10 +18,7 @@ void main() {
         roles: {'Admin'},
         activeRole: 'Admin',
       );
-      final result = await policy.isPermitted(
-        p,
-        const Permission('any.thing', scope: ScopeClass.global),
-      );
+      final result = await policy.isPermitted(p, const Permission('any.thing'));
       expect(result, isA<Deny>());
       expect((result as Deny).reason, DenyReason.notGranted);
       expect(result.permission.name, 'any.thing');
@@ -31,10 +27,7 @@ void main() {
     test('returns Deny(notGranted) for anonymous', () async {
       const policy = DenyAllAuthorizationPolicy.forTests();
       const p = Principal.anonymous();
-      final result = await policy.isPermitted(
-        p,
-        const Permission('any.thing', scope: ScopeClass.global),
-      );
+      final result = await policy.isPermitted(p, const Permission('any.thing'));
       expect(result, isA<Deny>());
       expect((result as Deny).reason, DenyReason.notGranted);
     });

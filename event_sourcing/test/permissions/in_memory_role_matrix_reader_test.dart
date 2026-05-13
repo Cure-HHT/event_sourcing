@@ -15,23 +15,19 @@ void main() {
 
     test('returns true / non-empty when grant present', () async {
       const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
-        'admin': <String, Permission>{
-          'user.invite': Permission('user.invite', scope: ScopeClass.global),
-        },
+        'admin': <String, Permission>{'user.invite': Permission('user.invite')},
       });
       expect(await reader.isGranted('admin', 'user.invite'), isTrue);
       expect(await reader.isGranted('admin', 'user.delete'), isFalse);
       final grants = await reader.grantsForRole('admin');
       expect(grants, hasLength(1));
       expect(grants.first.name, 'user.invite');
-      expect(grants.first.scope, ScopeClass.global);
+      expect(grants.first.scopeClass, isNull);
     });
 
     test('unknown role answers false / empty', () async {
       const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
-        'admin': <String, Permission>{
-          'p': Permission('p', scope: ScopeClass.global),
-        },
+        'admin': <String, Permission>{'p': Permission('p')},
       });
       expect(await reader.isGranted('patient', 'p'), isFalse);
       expect(await reader.grantsForRole('patient'), isEmpty);
