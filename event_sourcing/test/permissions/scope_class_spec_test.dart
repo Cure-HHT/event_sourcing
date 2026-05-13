@@ -77,5 +77,41 @@ void main() {
       expect(a, equals(b));
       expect(a, isNot(equals(c)));
     });
+
+    test('ContainmentRef equality compares all fields', () {
+      const r1 = ContainmentRef(
+        parentClass: 'site',
+        projection: 'idx',
+        keyColumn: 'k',
+        parentColumn: 'p',
+      );
+      const r2 = ContainmentRef(
+        parentClass: 'site',
+        projection: 'idx',
+        keyColumn: 'k',
+        parentColumn: 'p',
+      );
+      const r3 = ContainmentRef(
+        parentClass: 'other',
+        projection: 'idx',
+        keyColumn: 'k',
+        parentColumn: 'p',
+      );
+      expect(r1, equals(r2));
+      expect(r1, isNot(equals(r3)));
+      expect(r1.hashCode, equals(r2.hashCode));
+    });
+
+    test('ScopeClassSpec equality accounts for containedIn', () {
+      const ref = ContainmentRef(
+        parentClass: 'site',
+        projection: 'idx',
+        keyColumn: 'k',
+        parentColumn: 'p',
+      );
+      const withRef = ScopeClassSpec(name: 'patient', containedIn: ref);
+      const withoutRef = ScopeClassSpec(name: 'patient');
+      expect(withRef, isNot(equals(withoutRef)));
+    });
   });
 }
