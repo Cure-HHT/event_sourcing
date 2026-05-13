@@ -787,6 +787,35 @@ class SembastBackend extends StorageBackend {
         .toList(growable: false);
   }
 
+  // Implements: EVS-PRD-permissions-as-events — transactional multi-row
+  //   view-read primitive for the scoped-permissions authorize stage.
+  // Implements: EVS-PRD-action-dispatch — same dispatch-transaction
+  //   coherence requirement on the authorize side.
+  @override
+  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+    Txn txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  }) async {
+    final t = _requireValidTxn(txn);
+    Filter? filter;
+    if (where != null && where.isNotEmpty) {
+      final clauses = where.entries
+          .map((e) => Filter.equals(e.key, e.value))
+          .toList(growable: false);
+      filter = clauses.length == 1 ? clauses.single : Filter.and(clauses);
+    }
+    final records = await _viewStore(viewName).find(
+      t._sembastTxn,
+      finder: Finder(filter: filter, limit: limit, offset: offset),
+    );
+    return records
+        .map((r) => Map<String, dynamic>.from(r.value))
+        .toList(growable: false);
+  }
+
   // views untouched.
   @override
   Future<void> clearViewInTxn(Txn txn, String viewName) async {

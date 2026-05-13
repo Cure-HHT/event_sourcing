@@ -301,6 +301,14 @@ class _InMemoryBackend extends StorageBackend {
     int? offset,
   }) => throw UnimplementedError();
   @override
+  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+    Txn txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  }) => throw UnimplementedError();
+  @override
   Future<void> clearViewInTxn(Txn txn, String viewName) =>
       throw UnimplementedError();
   @override
