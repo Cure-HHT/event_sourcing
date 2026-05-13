@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/txn.dart';
@@ -96,9 +97,28 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 5: transactions --------
 
+  // Implements: EVS-PRD-event-log/A — successful body commits atomically;
+  //   thrown exception rolls back. Postgres SERIALIZABLE isolation prevents
+  //   the per-device sequence counter from being read+written by concurrent
+  //   transactions.
+  // Implements: EVS-DEV-postgres-backend/C — Txn handle invalidated after
+  //   body returns or throws.
   @override
-  Future<T> transaction<T>(Future<T> Function(Txn txn) body) =>
-      throw UnimplementedError('PostgresBackend.transaction — Task 5');
+  Future<T> transaction<T>(Future<T> Function(Txn txn) body) async {
+    return _pool.runTx<T>(
+      (tx) async {
+        final wrapper = PostgresTxn(tx);
+        try {
+          return await body(wrapper);
+        } finally {
+          wrapper.invalidate();
+        }
+      },
+      settings: TransactionSettings(
+        isolationLevel: IsolationLevel.serializable,
+      ),
+    );
+  }
 
   // -------- Task 6: event log --------
 
