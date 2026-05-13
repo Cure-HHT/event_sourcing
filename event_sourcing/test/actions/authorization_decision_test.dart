@@ -36,12 +36,11 @@ void main() {
       expect(desc, 'allow');
     });
 
-    test('DenyReason has three values', () {
-      expect(DenyReason.values, hasLength(3));
+    test('DenyReason has two values', () {
+      expect(DenyReason.values, hasLength(2));
       expect(DenyReason.values.toSet(), {
         DenyReason.notGranted,
-        DenyReason.sessionPreconditionMissing,
-        DenyReason.bootstrapFailure,
+        DenyReason.scopeUnresolvable,
       });
     });
   });

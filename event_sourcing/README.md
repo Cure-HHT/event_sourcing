@@ -701,10 +701,10 @@ module at `lib/src/actions/`; both share `Permission`, `ScopeClass`,
   validates against `registry.allDeclaredPermissions`, idempotently emits
   missing grants, and returns `PolicyReady(policy)` or
   `PolicyFailSafe(errors)`. Hosts wire `isReady` into a readiness probe.
-- The scope precondition (`global` / `site` / `self`) is checked BEFORE
-  the matrix lookup so a principal missing session context receives
-  `Deny(sessionPreconditionMissing)` — the actionable answer — rather
-  than a misleading `Deny(notGranted)`.
+- Scope resolution is handled at the permission-evaluation layer. If
+  `Action.scopeFor` returns null or a class-mismatched `ScopeValue` for
+  a scoped permission, the decision is `Deny(scopeUnresolvable)` — a
+  programmer-bug indicator.
 
 **Authoritative documentation:**
 

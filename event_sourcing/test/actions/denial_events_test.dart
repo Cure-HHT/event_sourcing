@@ -86,9 +86,9 @@ void main() {
         invocationId: 'inv-1',
         actionName: 'user.delete',
         permission: const Permission('user.delete'),
-        denyReason: DenyReason.sessionPreconditionMissing,
+        denyReason: DenyReason.scopeUnresolvable,
       );
-      expect(draft.data['deny_reason'], 'sessionPreconditionMissing');
+      expect(draft.data['deny_reason'], 'scopeUnresolvable');
     });
 
     test('authorizationDenied without denyReason omits deny_reason field', () {

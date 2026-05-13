@@ -78,7 +78,7 @@ grants:
         const Permission('user.invite'),
       );
       expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.bootstrapFailure);
+      expect((d as Deny).reason, DenyReason.notGranted);
     });
 
     test('re-bootstrap with same yaml is idempotent (no new events)', () async {

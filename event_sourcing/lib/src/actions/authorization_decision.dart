@@ -33,15 +33,13 @@ final class Deny extends AuthorizationDecision {
 //
 // Closed enum. Adding a value here is a deliberate code-plus-REQ change.
 enum DenyReason {
-  /// The principal's role does not hold the permission in the matrix.
+  /// Principal's active role doesn't carry the permission, OR no scope
+  /// assignment under that role covers the requested scope (including
+  /// the fail-closed containment-miss case).
   notGranted,
 
-  /// The permission's scope precondition is not satisfied (e.g. site-
-  /// scoped permission with no `activeSite`, or self-scoped permission
-  /// while anonymous).
-  sessionPreconditionMissing,
-
-  /// The authorization policy booted in fail-safe mode; no decisions
-  /// can be trusted, so everything is denied.
-  bootstrapFailure,
+  /// `Action.scopeFor` returned null for a scoped permission, or
+  /// returned a `ScopeValue` whose class does not match the permission's
+  /// declared `scopeClass`. A programmer-bug surface.
+  scopeUnresolvable,
 }

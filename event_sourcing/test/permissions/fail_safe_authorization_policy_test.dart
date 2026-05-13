@@ -1,6 +1,6 @@
 // test/permissions/fail_safe_authorization_policy_test.dart
 // Verifies: EVS-PRD-permissions-as-events/B — FailSafeAuthorizationPolicy
-// denies all requests with DenyReason.bootstrapFailure when the event-derived
+// denies all requests with DenyReason.notGranted when the event-derived
 // projection is unavailable, ensuring no authorization decision is made from
 // a corrupt or incomplete projection.
 import 'package:event_sourcing/event_sourcing.dart';
@@ -12,7 +12,7 @@ void main() {
       'boot validation failed',
     ]);
 
-    test('isPermitted returns Deny(bootstrapFailure) for any query', () async {
+    test('isPermitted returns Deny(notGranted) for any query', () async {
       const p = Principal.user(
         userId: 'u1',
         roles: {'admin'},
@@ -21,7 +21,7 @@ void main() {
       );
       final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.bootstrapFailure);
+      expect((d as Deny).reason, DenyReason.notGranted);
     });
 
     test('permissionsFor returns empty', () async {
@@ -38,11 +38,11 @@ void main() {
       expect(policy.bootstrapErrors, <String>['boot validation failed']);
     });
 
-    test('anonymous principal also denied with bootstrapFailure', () async {
+    test('anonymous principal also denied with notGranted', () async {
       const p = Principal.anonymous();
       final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.bootstrapFailure);
+      expect((d as Deny).reason, DenyReason.notGranted);
     });
   });
 }
