@@ -91,7 +91,7 @@ void main() {
       await tmp.execute('CREATE SCHEMA public');
       await tmp.close();
 
-      backend = await PostgresBackend.open(url: url);
+      backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
       idempotencyStore = PostgresIdempotencyStore.over(backend.pool);
 
       components = await bootstrapDemoServer(

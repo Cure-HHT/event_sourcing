@@ -107,29 +107,31 @@ class PostgresBackend extends StorageBackend {
   //   or drain/delete race tolerance).
   void Function(String) logSink = _defaultLogSink;
 
-  /// Open against [url]. Connects, emits the schema DDL (idempotent on
-  /// re-open), and returns a ready backend. Callers MUST call [close]
-  /// to release the connection pool.
+  /// Open against [url] using the supplied [sslMode]. Connects, emits
+  /// the schema DDL (idempotent on re-open), and returns a ready
+  /// backend. Callers MUST call [close] to release the connection
+  /// pool.
   ///
   /// Example: `postgres://user:pass@host:5432/db`.
   ///
-  /// `SslMode.disable` is hard-wired in this skeleton because the first
-  /// deployment target is local-only (docker-compose Postgres on the
-  /// developer's machine and the future CI runner). Productionizing
-  /// against a remote Postgres will need to plumb [SslMode] through
-  /// here; that's deliberately out of scope until a deployment requires
-  /// it.
+  /// The default `SslMode.require` matches Cloud SQL's default
+  /// "Require SSL" posture, so a managed-Postgres deployment Just
+  /// Works without code changes. Local development against an
+  /// unencrypted Postgres (e.g., the docker-compose Postgres in
+  /// `example_action_permissions/`) should pass `SslMode.disable`.
+  /// Production deployments against a managed Postgres over the
+  /// public internet should consider `SslMode.verifyFull` to validate
+  /// the server certificate.
   // Implements: EVS-DEV-postgres-backend/A — connects and emits the schema
   //   DDL on every open; idempotent on re-open against a provisioned db.
-  static Future<PostgresBackend> open({required String url}) async {
+  static Future<PostgresBackend> open({
+    required String url,
+    SslMode sslMode = SslMode.require,
+  }) async {
     final endpoint = _endpointFromUrl(url);
-    final pool = Pool<void>.withEndpoints(
-      [endpoint],
-      settings: const PoolSettings(
-        maxConnectionCount: 4,
-        sslMode: SslMode.disable,
-      ),
-    );
+    final pool = Pool<void>.withEndpoints([
+      endpoint,
+    ], settings: PoolSettings(maxConnectionCount: 4, sslMode: sslMode));
     final backend = PostgresBackend._(pool);
     await pool.runTx(ensurePostgresSchema);
     return backend;

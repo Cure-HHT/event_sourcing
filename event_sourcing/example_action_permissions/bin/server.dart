@@ -32,6 +32,16 @@ Future<void> main(List<String> args) async {
           'Postgres URL (required when --backend=postgres). '
           'Example: postgres://evs:evs@localhost:5432/evs_demo',
     )
+    ..addOption(
+      'postgres-ssl-mode',
+      allowed: <String>['disable', 'require', 'verifyFull'],
+      defaultsTo: 'require',
+      help:
+          'SSL mode for the Postgres connection (default: require). '
+          'Use "disable" for local docker-compose without SSL; '
+          '"verifyFull" for full certificate validation against a '
+          'managed Postgres over the public internet.',
+    )
     ..addFlag(
       'ephemeral',
       defaultsTo: false,
@@ -76,6 +86,14 @@ Future<void> main(List<String> args) async {
   final port = int.parse(parsed['port'] as String);
   final backendKind = parsed['backend'] as String;
   final postgresUrl = parsed['postgres-url'] as String?;
+  final postgresSslMode = switch (parsed['postgres-ssl-mode'] as String) {
+    'disable' => SslMode.disable,
+    'require' => SslMode.require,
+    'verifyFull' => SslMode.verifyFull,
+    _ => throw StateError(
+      'unreachable — ArgParser allowed list constrains this option',
+    ),
+  };
   final ephemeral = parsed['ephemeral'] as bool;
   final permissionsYamlPath = parsed['permissions-yaml'] as String;
   final usersYamlPath = parsed['users-yaml'] as String;
@@ -115,10 +133,13 @@ Future<void> main(List<String> args) async {
   final String backendDescription;
 
   if (backendKind == 'postgres') {
-    final pg = await PostgresBackend.open(url: postgresUrl!);
+    final pg = await PostgresBackend.open(
+      url: postgresUrl!,
+      sslMode: postgresSslMode,
+    );
     backend = pg;
     idempotencyStore = PostgresIdempotencyStore.over(pg.pool);
-    backendDescription = 'postgres ($postgresUrl)';
+    backendDescription = 'postgres ($postgresUrl, ssl=${postgresSslMode.name})';
   } else {
     final dbPath = p.join(dataDir.path, 'demo.db');
     final Database db = ephemeral

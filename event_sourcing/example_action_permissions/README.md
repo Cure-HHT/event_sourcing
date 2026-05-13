@@ -177,10 +177,16 @@ Then start the demo server pointed at it:
 dart run bin/server.dart \
   --backend=postgres \
   --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-ssl-mode=disable \
   --port=8080 \
   --permissions-yaml=tool/permissions.yaml \
   --users-yaml=tool/users.yaml
 ```
+
+For production deployments against a managed Postgres (Cloud SQL, RDS,
+etc.), omit `--postgres-ssl-mode` to use the secure-by-default `require`
+setting, or pass `--postgres-ssl-mode=verifyFull` for full certificate
+validation.
 
 The integration test under `test/postgres_integration_test.dart` is the
 canonical end-to-end check: it boots the demo server in-process against

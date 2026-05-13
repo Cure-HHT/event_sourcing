@@ -37,7 +37,10 @@ void main() {
     });
 
     test('open() emits CREATE TABLE for every expected table', () async {
-      final backend = await PostgresBackend.open(url: url);
+      final backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+      );
       addTearDown(backend.close);
 
       final conn = await _connect(url);
@@ -59,9 +62,9 @@ void main() {
     });
 
     test('open() is idempotent (second open is a no-op on schema)', () async {
-      final b1 = await PostgresBackend.open(url: url);
+      final b1 = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
       await b1.close();
-      final b2 = await PostgresBackend.open(url: url);
+      final b2 = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
       addTearDown(b2.close);
       // No throw is the assertion. Implicitly: second open SHALL not
       // raise "relation already exists".

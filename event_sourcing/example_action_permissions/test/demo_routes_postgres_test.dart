@@ -39,7 +39,7 @@ void main() {
     await tmp.execute('CREATE SCHEMA public');
     await tmp.close();
 
-    final pg = await PostgresBackend.open(url: url);
+    final pg = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
     addTearDown(pg.close);
     return DemoBackends(
       backend: pg,

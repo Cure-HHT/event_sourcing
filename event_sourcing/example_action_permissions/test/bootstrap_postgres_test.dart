@@ -44,7 +44,7 @@ void main() {
     await tmp.execute('CREATE SCHEMA public');
     await tmp.close();
 
-    final pg = await PostgresBackend.open(url: url);
+    final pg = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
     // Close on test exit regardless of whether the test body cleaned
     // up. `close()` is idempotent (PostgresBackend `_closed` flag) so
     // a double-close from the test body and tearDown is safe.

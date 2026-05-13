@@ -2,6 +2,8 @@
 //   concrete StorageBackend. Consumers import the library barrel and
 //   pick `PostgresBackend.open` instead of `SembastBackend.new`.
 
+export 'package:postgres/postgres.dart' show SslMode;
+
 export 'postgres_backend.dart';
 export 'postgres_idempotency_store.dart' show PostgresIdempotencyStore;
 export 'postgres_schema.dart' show postgresBackendSchemaVersion;
