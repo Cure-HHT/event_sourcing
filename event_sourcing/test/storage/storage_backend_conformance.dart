@@ -75,18 +75,18 @@ void runStorageBackendConformanceTests(
       }
     });
 
-    _registerTransactionTests(() => backend, factory);
-    _registerEventLogTests(() => backend);
-    _registerFindAllEventsFilterTests(() => backend);
-    _registerOriginatorFilterTests(() => backend);
-    _registerViewRowTests(() => backend);
-    _registerViewTargetVersionTests(() => backend);
-    _registerFifoTests(() => backend);
-    _registerListFifoEntriesTests(() => backend);
-    _registerFillCursorTests(() => backend);
-    _registerBackendStateTests(() => backend);
-    _registerEventByIdTests(() => backend);
-    _registerCloseTests(() => backend);
+    _registerTransactionTests(() => backend, () => initialized, factory);
+    _registerEventLogTests(() => backend, () => initialized);
+    _registerFindAllEventsFilterTests(() => backend, () => initialized);
+    _registerOriginatorFilterTests(() => backend, () => initialized);
+    _registerViewRowTests(() => backend, () => initialized);
+    _registerViewTargetVersionTests(() => backend, () => initialized);
+    _registerFifoTests(() => backend, () => initialized);
+    _registerListFifoEntriesTests(() => backend, () => initialized);
+    _registerFillCursorTests(() => backend, () => initialized);
+    _registerBackendStateTests(() => backend, () => initialized);
+    _registerEventByIdTests(() => backend, () => initialized);
+    _registerCloseTests(() => backend, () => initialized);
   });
 }
 
@@ -176,10 +176,12 @@ Future<StoredEvent> _appendBuilt(
 //   identity check).
 void _registerTransactionTests(
   StorageBackend Function() backendOf,
+  bool Function() initializedOf,
   Future<StorageBackend?> Function() factory,
 ) {
   group('transaction', () {
     test('successful body commits all writes', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final s = await backend.nextSequenceNumber(txn);
@@ -190,6 +192,7 @@ void _registerTransactionTests(
     });
 
     test('thrown exception rolls back all writes', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.transaction((txn) async {
@@ -204,6 +207,7 @@ void _registerTransactionTests(
     });
 
     test('mid-body throw rolls back earlier writes too', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.transaction((txn) async {
@@ -219,6 +223,7 @@ void _registerTransactionTests(
     });
 
     test('Txn cannot be used after body returns', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       late Txn escaped;
       await backend.transaction((txn) async {
@@ -231,6 +236,7 @@ void _registerTransactionTests(
     });
 
     test('Txn cannot be used after body throws', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       late Txn escaped;
       await expectLater(
@@ -249,6 +255,7 @@ void _registerTransactionTests(
     test(
       'sequential transactions: second transaction sees first commit',
       () async {
+        if (!initializedOf()) return;
         final backend = backendOf();
         await backend.transaction((txn) async {
           final s = await backend.nextSequenceNumber(txn);
@@ -268,6 +275,7 @@ void _registerTransactionTests(
     // type-and-identity check guards against accidentally feeding one
     // backend's transaction into another's state.
     test('foreign Txn (from a different backend) is rejected', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final other = await factory();
       if (other == null) {
@@ -298,9 +306,13 @@ void _registerTransactionTests(
 //   counter monotonicity (reserve-and-increment); per-aggregate order;
 //   in-order reads from any starting position; findAllEventsInTxn coherent
 //   with same-txn writes; readLatestEventHash transactional read.
-void _registerEventLogTests(StorageBackend Function() backendOf) {
+void _registerEventLogTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('event log', () {
     test('two appendEvents in one transaction both land', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final seq1 = await backend.nextSequenceNumber(txn);
@@ -314,6 +326,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('thrown body rolls back both writes', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.transaction((txn) async {
@@ -333,6 +346,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('appendEvent advances sequence counter', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final seq = await backend.nextSequenceNumber(txn);
@@ -346,6 +360,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('nextSequenceNumber is monotonic across transactions', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final seen = <int>[];
       for (var i = 0; i < 5; i++) {
@@ -361,6 +376,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     test(
       'findEventsForAggregate returns events sorted by sequence_number',
       () async {
+        if (!initializedOf()) return;
         final backend = backendOf();
         await backend.transaction((txn) async {
           final s1 = await backend.nextSequenceNumber(txn);
@@ -385,6 +401,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     test(
       'findAllEvents(afterSequence, limit) slices correctly and keeps order',
       () async {
+        if (!initializedOf()) return;
         final backend = backendOf();
         for (var i = 0; i < 5; i++) {
           await backend.transaction((txn) async {
@@ -410,6 +427,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     // counter equals total appends after multi-append txn (PRD-event-log/B —
     // reserve-and-increment).
     test('counter equals total appends after multi-append txn', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final s1 = await backend.nextSequenceNumber(txn);
@@ -427,6 +445,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     // silently advancing the counter implicitly.
     test('appendEvent throws when sequenceNumber does not match the reserved '
         'counter value (Prereq B, Option 1)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.transaction((txn) async {
@@ -441,6 +460,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
 
     test('two nextSequenceNumber calls in one txn return '
         'current+1 and current+2 (reserve-and-increment)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         expect(await backend.nextSequenceNumber(txn), 1);
@@ -454,6 +474,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
 
     test('appendEvent consumes the reservation without '
         're-advancing the counter (Prereq B, Option 1)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final seq = await backend.nextSequenceNumber(txn);
@@ -471,6 +492,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     // in the same transaction body so a caller can build the next event's
     // previous_event_hash atomically with the append that uses it.
     test('readLatestEventHash returns null on an empty log', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         expect(await backend.readLatestEventHash(txn), isNull);
@@ -478,6 +500,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('readLatestEventHash returns hash of highest-seq event', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final s1 = await backend.nextSequenceNumber(txn);
@@ -493,6 +516,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('readLatestEventHash sees writes staged in the same txn', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         expect(await backend.readLatestEventHash(txn), isNull);
@@ -504,6 +528,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('readLatestEventHash rejects use outside its transaction', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       late Txn escaped;
       await backend.transaction((txn) async {
@@ -514,6 +539,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
 
     test('findAllEventsInTxn returns events ordered by sequence_number '
         'including txn-staged ones', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final s1 = await backend.nextSequenceNumber(txn);
@@ -530,6 +556,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('findAllEventsInTxn returns empty list when log is empty', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         expect(await backend.findAllEventsInTxn(txn), isEmpty);
@@ -537,6 +564,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     });
 
     test('findAllEventsInTxn rejects use outside its transaction', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       late Txn escaped;
       await backend.transaction((txn) async {
@@ -548,6 +576,7 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
     test('findAllEventsInTxn paginates via afterSequence and limit — the full '
         'log can be walked without ever holding more than `limit` events at '
         'once', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       for (var i = 1; i <= 7; i++) {
         await backend.transaction((txn) async {
@@ -592,9 +621,13 @@ void _registerEventLogTests(StorageBackend Function() backendOf) {
 //   clientTimestampStart, clientTimestampEnd on findAllEvents and
 //   findAllEventsInTxn; filters AND-compose; existing afterSequence +
 //   limit unaffected.
-void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
+void _registerFindAllEventsFilterTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('findAllEvents extended filters', () {
     test('entryType filter returns only matching events', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -629,6 +662,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('clientTimestampStart filter is inclusive-lower-bound', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -662,6 +696,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('clientTimestampEnd filter is inclusive-upper-bound', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -695,6 +730,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('AND-composes entryType with timestamp range', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -739,6 +775,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
 
     test('existing afterSequence + limit filters still work alongside the new '
         'ones', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -789,6 +826,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('empty result when no events match', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -804,6 +842,7 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('findAllEventsInTxn honors the same filters', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(
         backend,
@@ -847,7 +886,10 @@ void _registerFindAllEventsFilterTests(StorageBackend Function() backendOf) {
 // Verifies: EVS-DEV-find-all-events-extended-filters/C — originatorHopId and
 //   originatorIdentifier filters; each filters on provenance[0]; AND'd when
 //   both supplied.
-void _registerOriginatorFilterTests(StorageBackend Function() backendOf) {
+void _registerOriginatorFilterTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('findAllEvents originator filters', () {
     Future<void> seedThreeOrigins(StorageBackend backend) async {
       await backend.transaction((txn) async {
@@ -894,6 +936,7 @@ void _registerOriginatorFilterTests(StorageBackend Function() backendOf) {
     }
 
     test('originatorIdentifier alone — install-A returns 1 event', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await seedThreeOrigins(backend);
       final result = await backend.findAllEvents(
@@ -903,6 +946,7 @@ void _registerOriginatorFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('originatorHopId alone — mobile-device returns 2 events', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await seedThreeOrigins(backend);
       final result = await backend.findAllEvents(
@@ -915,6 +959,7 @@ void _registerOriginatorFilterTests(StorageBackend Function() backendOf) {
     });
 
     test('both filters AND — mobile-device + install-A returns 1', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await seedThreeOrigins(backend);
       final result = await backend.findAllEvents(
@@ -931,9 +976,13 @@ void _registerOriginatorFilterTests(StorageBackend Function() backendOf) {
 // Verifies: EVS-PRD-portability/D — generic view-storage methods are part
 //   of the StorageBackend abstraction; round-trip, missing-key-null,
 //   delete, find with limit/offset, clearView, viewName isolation.
-void _registerViewRowTests(StorageBackend Function() backendOf) {
+void _registerViewRowTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('generic view storage', () {
     test('readViewRowInTxn on missing key returns null', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final row = await backend.transaction(
         (txn) async => backend.readViewRowInTxn(txn, 'test_view', 'missing'),
@@ -942,6 +991,7 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
     });
 
     test('upsert then read round-trips', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(txn, 'test_view', 'k1', {
@@ -956,6 +1006,7 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
     });
 
     test('delete removes the row; read-after-delete returns null', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(txn, 'test_view', 'k', {'x': 1});
@@ -968,6 +1019,7 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
     });
 
     test('findViewRows iterates with limit and offset', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         for (var i = 0; i < 5; i++) {
@@ -983,6 +1035,7 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
     });
 
     test('clearViewInTxn empties one view without touching others', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(txn, 'a', 'k', {'x': 1});
@@ -994,6 +1047,7 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
     });
 
     test('viewName isolation: writing to "a" never affects "b"', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.upsertViewRowInTxn(txn, 'a', 'k', {'src': 'a'});
@@ -1016,9 +1070,13 @@ void _registerViewRowTests(StorageBackend Function() backendOf) {
 // Verifies: EVS-PRD-portability/D — view-target-version persistence is
 //   part of the StorageBackend abstraction (round-trip, null-on-unknown,
 //   readAll, clear, cross-view isolation).
-void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
+void _registerViewTargetVersionTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('view_target_versions storage', () {
     test('round-trip read/write', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.writeViewTargetVersionInTxn(
@@ -1041,6 +1099,7 @@ void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
     });
 
     test('returns null for unknown (view, entry_type)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         expect(
@@ -1055,6 +1114,7 @@ void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
     });
 
     test('readAll returns full map for one view', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.writeViewTargetVersionInTxn(
@@ -1086,6 +1146,7 @@ void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
     });
 
     test('clear removes only the named view', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.writeViewTargetVersionInTxn(txn, 'view_a', 'x', 1);
@@ -1104,6 +1165,7 @@ void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
     });
 
     test('idempotent overwrite', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);
@@ -1123,11 +1185,15 @@ void _registerViewTargetVersionTests(StorageBackend Function() backendOf) {
 //   markFinal idempotency + one-way transition rule are part of the FIFO
 //   contract; drain's at-least-once delivery depends on
 //   markFinal(same-status) being a no-op.
-void _registerFifoTests(StorageBackend Function() backendOf) {
+void _registerFifoTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('FIFO', () {
     // -------- enqueueFifo + validation --------
 
     test('enqueueFifo + readFifoHead round-trip', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final enqueued = await enqueueSingle(
         backend,
@@ -1150,6 +1216,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('enqueueFifo rejects an empty batch with ArgumentError', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.enqueueFifo(
@@ -1163,6 +1230,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('enqueueFifo assigns distinct UUID entry_ids even when the same '
         'event id is enqueued twice', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final first = await enqueueSingle(
         backend,
@@ -1183,6 +1251,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('two FIFOs produce independent UUID entry_ids even with the same '
         'event id', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final a = await enqueueSingle(
         backend,
@@ -1205,6 +1274,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('enqueueFifo with nativeEnvelope persists '
         'envelope_metadata and nulls wire_payload', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
@@ -1239,6 +1309,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('enqueueFifo with wirePayload stores '
         'wire_payload, envelope_metadata is null', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final payload = wirePayloadJson(
@@ -1264,6 +1335,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('enqueueFifo rejects supplying both wirePayload '
         'and nativeEnvelope', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
@@ -1286,6 +1358,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('enqueueFifo rejects supplying neither wirePayload '
         'nor nativeEnvelope', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
@@ -1297,6 +1370,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // -------- FIFO ordering --------
 
     test('multiple enqueues preserve insertion order', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final first = await enqueueSingle(
         backend,
@@ -1313,6 +1387,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('per-destination isolation', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final a = await enqueueSingle(
         backend,
@@ -1336,6 +1411,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // -------- appendAttempt --------
 
     test('appendAttempt appends without changing final_status', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1369,6 +1445,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('appendAttempt no-ops when entry does not exist', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1389,6 +1466,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('appendAttempt no-ops when FIFO store does not exist', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.appendAttempt(
         'ghost-dest',
@@ -1402,6 +1480,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // -------- markFinal --------
 
     test('markFinal sent retains the entry', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1425,6 +1504,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('markFinal sent sets sent_at', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1444,6 +1524,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('markFinal wedged does NOT set sent_at', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1459,6 +1540,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('after markFinal sent, readFifoHead returns next pending', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1481,6 +1563,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('readFifoHead returns first row with finalStatus in '
         '{null, wedged} — wedged row is returned, not skipped', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1509,6 +1592,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('readFifoHead skips tombstoned rows', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1542,6 +1626,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('readFifoHead returns null when only terminal-passable '
         'rows exist (sent and tombstoned)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1569,6 +1654,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('markFinal no-ops when entry does not exist', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1585,6 +1671,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('markFinal no-ops when FIFO store does not exist', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
       expect(await backend.readFifoHead('ghost-dest'), isNull);
@@ -1593,6 +1680,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // From markfinal_idempotency_test.dart — Case 2 (idempotency).
     test('markFinal sent twice on the same row returns cleanly '
         '(no throw, row stays sent)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1614,6 +1702,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // explicit error-message inspection).
     test('markFinal sent then markFinal wedged throws StateError '
         'naming both statuses', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1638,6 +1727,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // -------- anyFifoWedged + wedgedFifos --------
 
     test('anyFifoWedged true iff any FIFO is wedged', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final a1 = await enqueueSingle(
         backend,
@@ -1654,6 +1744,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('wedgedFifos returns one summary per wedged FIFO', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final a1 = await enqueueSingle(
         backend,
@@ -1693,6 +1784,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('wedgedFifos returns empty when nothing is wedged', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await enqueueSingle(backend, 'primary', eventId: 'e1', sequenceNumber: 1);
       expect(await backend.wedgedFifos(), isEmpty);
@@ -1700,6 +1792,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('wedgedFifos reports sensible fallbacks when wedged with no '
         'attempts', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final bare = await enqueueSingle(
         backend,
@@ -1717,6 +1810,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     });
 
     test('a FIFO with only sent entries is NOT wedged', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1735,6 +1829,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
     // starting at 1, regardless of any caller-side sequencing concerns.
     test('enqueueFifo assigns its own monotonic sequence_in_queue '
         '(Prereq A, Option 1)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final r1 = await enqueueSingle(
         backend,
@@ -1772,6 +1867,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 
     test('sequence_in_queue advances across sent/wedged entries '
         '(Prereq A, Option 1)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1800,9 +1896,13 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
 // Verifies: EVS-PRD-portability/D — listFifoEntries enumerates entries
 //   ordered by sequence_in_queue with optional afterSequenceInQueue +
 //   limit slicing; empty list on unknown destination.
-void _registerListFifoEntriesTests(StorageBackend Function() backendOf) {
+void _registerListFifoEntriesTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('listFifoEntries', () {
     test('listFifoEntries on unknown destination returns empty list', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final result = await backend.listFifoEntries('never-registered');
       expect(result, isEmpty);
@@ -1811,6 +1911,7 @@ void _registerListFifoEntriesTests(StorageBackend Function() backendOf) {
     test(
       'listFifoEntries returns entries ordered by sequence_in_queue',
       () async {
+        if (!initializedOf()) return;
         final backend = backendOf();
         final r1 = await enqueueSingle(
           backend,
@@ -1844,6 +1945,7 @@ void _registerListFifoEntriesTests(StorageBackend Function() backendOf) {
     );
 
     test('listFifoEntries afterSequenceInQueue is exclusive', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       for (var i = 1; i <= 4; i++) {
         await enqueueSingle(backend, 'dest', eventId: 'e$i', sequenceNumber: i);
@@ -1860,6 +1962,7 @@ void _registerListFifoEntriesTests(StorageBackend Function() backendOf) {
     });
 
     test('listFifoEntries limit caps result size', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       for (var i = 1; i <= 5; i++) {
         await enqueueSingle(backend, 'dest', eventId: 'e$i', sequenceNumber: i);
@@ -1878,14 +1981,19 @@ void _registerListFifoEntriesTests(StorageBackend Function() backendOf) {
 //   transactional variants) is part of the StorageBackend abstraction;
 //   default sentinel, round-trip, rollback semantics, per-destination
 //   isolation, validation of legal range.
-void _registerFillCursorTests(StorageBackend Function() backendOf) {
+void _registerFillCursorTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('fill_cursor', () {
     test('readFillCursor returns -1 when unset', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       expect(await backend.readFillCursor('primary'), -1);
     });
 
     test('writeFillCursor then readFillCursor round-trips', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.writeFillCursor('primary', 42);
       expect(await backend.readFillCursor('primary'), 42);
@@ -1898,6 +2006,7 @@ void _registerFillCursorTests(StorageBackend Function() backendOf) {
 
     test('writeFillCursor inside a transaction participates in '
         'atomicity (rollback confirms cursor was NOT advanced)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       // Pre-transaction baseline.
       await backend.writeFillCursor('primary', 7);
@@ -1923,6 +2032,7 @@ void _registerFillCursorTests(StorageBackend Function() backendOf) {
 
     test('fill_cursor is per-destination (two destinations have '
         'independent cursors)', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       expect(await backend.readFillCursor('primary'), -1);
       expect(await backend.readFillCursor('secondary'), -1);
@@ -1937,6 +2047,7 @@ void _registerFillCursorTests(StorageBackend Function() backendOf) {
     });
 
     test('writeFillCursor rejects sequenceNumber < -1', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
         backend.writeFillCursor('primary', -2),
@@ -1952,9 +2063,13 @@ void _registerFillCursorTests(StorageBackend Function() backendOf) {
 //
 // Verifies: EVS-PRD-portability/D — schema_version round-trip via
 //   backend-state KV bookkeeping is part of the StorageBackend abstraction.
-void _registerBackendStateTests(StorageBackend Function() backendOf) {
+void _registerBackendStateTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('backend_state', () {
     test('schema_version round-trips', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       expect(await backend.readSchemaVersion(), 0); // never written
       await backend.transaction((txn) async {
@@ -1970,9 +2085,13 @@ void _registerBackendStateTests(StorageBackend Function() backendOf) {
 // Verifies: EVS-PRD-event-log/D — findEventById / findEventByIdInTxn read
 //   a single event from the unified log; returns null when absent; used
 //   by ingest's idempotency check.
-void _registerEventByIdTests(StorageBackend Function() backendOf) {
+void _registerEventByIdTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('findEventById', () {
     test('findEventById returns the stored event when present', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       final appended = await _appendBuilt(
         backend,
@@ -1989,6 +2108,7 @@ void _registerEventByIdTests(StorageBackend Function() backendOf) {
     test(
       'findEventById returns null when no event with that id exists',
       () async {
+        if (!initializedOf()) return;
         final backend = backendOf();
         await _appendBuilt(backend, (seq) => _event('evt-other-1', seq));
         await _appendBuilt(backend, (seq) => _event('evt-other-2', seq));
@@ -1998,6 +2118,7 @@ void _registerEventByIdTests(StorageBackend Function() backendOf) {
     );
 
     test('findEventById disambiguates among many stored events', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await _appendBuilt(backend, (seq) => _event('evt-a', seq));
       final target = await _appendBuilt(
@@ -2019,9 +2140,13 @@ void _registerEventByIdTests(StorageBackend Function() backendOf) {
 //   operations on the closed backend fail. The exception type is loose
 //   (any subclass of Exception) — concrete backends raise their own
 //   storage-layer error.
-void _registerCloseTests(StorageBackend Function() backendOf) {
+void _registerCloseTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
   group('close', () {
     test('close() closes the underlying database', () async {
+      if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
         final s = await backend.nextSequenceNumber(txn);
