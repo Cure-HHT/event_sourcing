@@ -2,8 +2,11 @@
 // Verifies: EVS-PRD-permissions-as-events/B/C
 // Verifies: EVS-PRD-event-log/A/C
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
 const String _validPermissionsYaml = '''
 roles:
@@ -43,9 +46,10 @@ void main() {
     test(
       'snapshot includes seeded matrix, directory, no idempotency yet',
       () async {
+        final db = await databaseFactoryMemory.openDatabase('demo');
         final components = await bootstrapDemoServer(
-          dbPath: 'unused',
-          ephemeral: true,
+          backend: SembastBackend(database: db),
+          idempotencyStore: DemoIdempotencyStore(),
           permissionsYaml: _validPermissionsYaml,
           usersYaml: _validUsersYaml,
           installIdentifier: '00000000-0000-4000-8000-000000000010',

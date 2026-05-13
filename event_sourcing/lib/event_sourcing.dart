@@ -259,6 +259,8 @@ export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
 export 'src/security/sembast_security_context_store.dart'
     show SembastSecurityContextStore;
+export 'src/security/postgres_security_context_store.dart'
+    show PostgresSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
         // Security-context lifecycle audits (Phase 4.4).

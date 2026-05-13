@@ -6,10 +6,13 @@
 import 'dart:convert';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_routes.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 import 'package:shelf/shelf.dart';
 
 const String _yamlPermissions = '''
@@ -46,9 +49,10 @@ users:
 ''';
 
 Future<DemoRoutes> _makeRoutes(String installId) async {
+  final db = await databaseFactoryMemory.openDatabase('demo');
   final components = await bootstrapDemoServer(
-    dbPath: 'unused',
-    ephemeral: true,
+    backend: SembastBackend(database: db),
+    idempotencyStore: DemoIdempotencyStore(),
     permissionsYaml: _yamlPermissions,
     usersYaml: _yamlUsers,
     installIdentifier: installId,

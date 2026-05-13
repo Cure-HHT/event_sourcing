@@ -1,8 +1,25 @@
 // Verifies: EVS-PRD-action-dispatch/A
 // Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
+
+Future<DemoServerComponents> _bootstrap({
+  required String permissionsYaml,
+  required String usersYaml,
+  required String installIdentifier,
+}) async {
+  final db = await databaseFactoryMemory.openDatabase('demo');
+  return bootstrapDemoServer(
+    backend: SembastBackend(database: db),
+    idempotencyStore: DemoIdempotencyStore(),
+    permissionsYaml: permissionsYaml,
+    usersYaml: usersYaml,
+    installIdentifier: installIdentifier,
+  );
+}
 
 const String _validPermissionsYaml = '''
 roles:
@@ -40,9 +57,7 @@ users:
 void main() {
   group('bootstrapDemoServer', () {
     test('composes dispatcher + EventStore + directory + policy', () async {
-      final components = await bootstrapDemoServer(
-        dbPath: 'unused',
-        ephemeral: true,
+      final components = await _bootstrap(
         permissionsYaml: _validPermissionsYaml,
         usersYaml: _validUsersYaml,
         installIdentifier: '00000000-0000-4000-8000-000000000001',
@@ -64,9 +79,7 @@ grants:
   Admin:
     - permission.does.not.exist
 ''';
-      final components = await bootstrapDemoServer(
-        dbPath: 'unused',
-        ephemeral: true,
+      final components = await _bootstrap(
         permissionsYaml: invalidYaml,
         usersYaml: _validUsersYaml,
         installIdentifier: '00000000-0000-4000-8000-000000000002',
@@ -76,9 +89,7 @@ grants:
     });
 
     test('matrix readable: GreenTeam->help.ask granted', () async {
-      final components = await bootstrapDemoServer(
-        dbPath: 'unused',
-        ephemeral: true,
+      final components = await _bootstrap(
         permissionsYaml: _validPermissionsYaml,
         usersYaml: _validUsersYaml,
         installIdentifier: '00000000-0000-4000-8000-000000000003',
