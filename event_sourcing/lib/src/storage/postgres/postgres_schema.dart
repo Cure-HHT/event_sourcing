@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS fifo_entries (
   event_id_first_seq  BIGINT        NOT NULL,
   event_id_last_seq   BIGINT        NOT NULL,
   wire_format         TEXT          NOT NULL,
-  transform_version   INTEGER       NOT NULL,
+  transform_version   TEXT,
   enqueued_at         TIMESTAMPTZ   NOT NULL,
   attempts            JSONB         NOT NULL,
   final_status        TEXT,
