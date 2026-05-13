@@ -80,9 +80,9 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  /// Expose the underlying [Pool] so future subsystems (e.g.,
-  /// `PostgresIdempotencyStore`) can share connections without
-  /// re-parsing the URL. Internal; do not document publicly.
+  // Expose the underlying [Pool] so future subsystems (e.g.,
+  // PostgresIdempotencyStore) can share connections without
+  // re-parsing the URL. Internal; not part of the public API surface.
   Pool<void> get pool => _pool;
 
   @override

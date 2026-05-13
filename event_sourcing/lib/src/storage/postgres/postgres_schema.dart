@@ -24,7 +24,8 @@ const int postgresBackendSchemaVersion = 1;
 /// the schema emission is atomic.
 Future<void> ensurePostgresSchema(Session session) async {
   await session.execute(_eventsTable);
-  await session.execute(_eventsEventIdIdx);
+  // No explicit index on event_id: the UNIQUE constraint above creates a
+  // B-tree index automatically; a second non-unique index would be redundant.
   await session.execute(_eventsAggregateIdx);
   await session.execute(_eventsClientTsIdx);
 
@@ -59,10 +60,6 @@ CREATE TABLE IF NOT EXISTS events (
   flow_token           TEXT,
   previous_event_hash  TEXT
 )
-''';
-
-const String _eventsEventIdIdx = '''
-CREATE INDEX IF NOT EXISTS events_event_id_idx ON events (event_id)
 ''';
 
 const String _eventsAggregateIdx = '''

@@ -69,6 +69,8 @@ void main() {
   });
 }
 
+// TODO(CUR-1330): once @visibleForTesting'd, replace with
+// PostgresBackend.endpointFromUrl + Connection.open(...).
 Future<Connection> _connect(String url) async {
   final uri = Uri.parse(url);
   final userInfoParts = uri.userInfo.isEmpty
