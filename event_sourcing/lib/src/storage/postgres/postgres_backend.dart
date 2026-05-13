@@ -12,6 +12,9 @@
 //   clientTimestampStart, clientTimestampEnd filters AND-compose with
 //   afterSequence/limit/originator filters; both in-txn and out-of-txn
 //   variants share a single composition helper (_findAllEventsComposed).
+// Implements: EVS-DEV-postgres-backend/B — view rows persisted as JSONB
+//   blobs in a single view_rows(view_name, row_key, row_data JSONB,
+//   updated_at) table with primary key (view_name, row_key).
 
 import 'dart:async';
 
@@ -445,35 +448,91 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 7: view rows --------
 
+  // Implements: EVS-DEV-postgres-backend/B — read a single JSONB blob from
+  //   view_rows; returns null when the (view_name, row_key) pair is absent.
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,
     String viewName,
     String key,
-  ) => throw UnimplementedError('PostgresBackend.readViewRowInTxn — Task 7');
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT row_data FROM view_rows
+        WHERE view_name = @v AND row_key = @k
+        LIMIT 1
+      '''),
+      parameters: {'v': viewName, 'k': key},
+    );
+    if (result.isEmpty) return null;
+    return _asJsonMap(result.first[0]);
+  }
 
+  // Implements: EVS-DEV-postgres-backend/B — whole-row upsert via
+  //   INSERT … ON CONFLICT (view_name, row_key) DO UPDATE.
   @override
   Future<void> upsertViewRowInTxn(
     Txn txn,
     String viewName,
     String key,
     Map<String, dynamic> row,
-  ) => throw UnimplementedError('PostgresBackend.upsertViewRowInTxn — Task 7');
+  ) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO view_rows (view_name, row_key, row_data, updated_at)
+        VALUES (@v, @k, @row:jsonb, NOW())
+        ON CONFLICT (view_name, row_key)
+        DO UPDATE SET row_data = EXCLUDED.row_data, updated_at = NOW()
+      '''),
+      parameters: {'v': viewName, 'k': key, 'row': row},
+    );
+  }
 
+  // Implements: EVS-DEV-postgres-backend/B — delete a single row from
+  //   view_rows by (view_name, row_key); no-op when absent.
   @override
-  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) =>
-      throw UnimplementedError('PostgresBackend.deleteViewRowInTxn — Task 7');
+  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('DELETE FROM view_rows WHERE view_name = @v AND row_key = @k'),
+      parameters: {'v': viewName, 'k': key},
+    );
+  }
 
+  // Implements: EVS-DEV-postgres-backend/B — list all rows for a view in
+  //   deterministic row_key ASC order; optional LIMIT/OFFSET for paging.
   @override
   Future<List<Map<String, dynamic>>> findViewRows(
     String viewName, {
     int? limit,
     int? offset,
-  }) => throw UnimplementedError('PostgresBackend.findViewRows — Task 7');
+  }) async {
+    final limitClause = limit == null ? '' : 'LIMIT $limit';
+    final offsetClause = offset == null ? '' : 'OFFSET $offset';
+    final result = await _pool.execute(
+      Sql.named('''
+        SELECT row_data FROM view_rows
+        WHERE view_name = @v
+        ORDER BY row_key ASC
+        $limitClause $offsetClause
+      '''),
+      parameters: {'v': viewName},
+    );
+    return result.map((r) => _asJsonMap(r[0])).toList();
+  }
 
+  // Implements: EVS-DEV-postgres-backend/B — delete all rows for a view
+  //   without touching other views (WHERE view_name = @v).
   @override
-  Future<void> clearViewInTxn(Txn txn, String viewName) =>
-      throw UnimplementedError('PostgresBackend.clearViewInTxn — Task 7');
+  Future<void> clearViewInTxn(Txn txn, String viewName) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('DELETE FROM view_rows WHERE view_name = @v'),
+      parameters: {'v': viewName},
+    );
+  }
 
   // -------- Task 8: view target versions --------
 
