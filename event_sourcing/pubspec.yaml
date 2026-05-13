@@ -17,6 +17,7 @@ dependencies:
   json_annotation: ^4.9.0
   meta: ^1.16.0
   path: ^1.9.1
+  postgres: ^3.5.0
   sembast: ^3.7.3
   sembast_web: ^2.3.0
   provenance:
