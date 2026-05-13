@@ -94,6 +94,15 @@ jobs:
       - name: PostgresIdempotencyStore conformance
         run: flutter test test/storage/postgres/postgres_idempotency_store_conformance_test.dart
         working-directory: event_sourcing
+      - name: Demo bootstrap on Postgres
+        run: flutter test test/bootstrap_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: Demo routes on Postgres
+        run: flutter test test/demo_routes_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: Demo state projection on Postgres
+        run: flutter test test/demo_state_projection_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
       - name: action_permissions_demo Postgres integration
         run: flutter test test/postgres_integration_test.dart
         working-directory: event_sourcing/example_action_permissions
