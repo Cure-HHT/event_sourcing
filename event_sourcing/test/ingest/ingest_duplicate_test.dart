@@ -1,8 +1,10 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-D: Idempotency check — duplicate-received path
-//   REQ-d00145-F: verifyEventChain ok=true for every event emitted by ingestBatch, including duplicate_received
-//   REQ-d00145-I: ingest.duplicate_received audit event under ingest-audit aggregate
-//   REQ-d00115-J: batchContext=null for process-local ingestEvent path
+// Verifies: EVS-PRD-ingest/F — idempotency: re-presenting an already-admitted
+//   event returns IngestOutcome.duplicate and does not mutate the stored subject
+// Verifies: EVS-PRD-ingest/A — ingest.duplicate_received audit event is
+//   emitted under the ingest-audit aggregate for each duplicate re-presentation
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyEventChain passes on a
+//   receiver-originated duplicate_received event (length-1 provenance trivially
+//   valid)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -63,7 +65,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — duplicate (REQ-d00145-D)', () {
+  group('EventStore.ingestEvent — duplicate', () {
     test('second ingest of identical event returns duplicate outcome and '
         'does not mutate the stored subject', () async {
       final orig = await _openStore(hopId: 'mobile-device');
@@ -164,7 +166,7 @@ void main() {
     );
 
     test('duplicate_received event carries batchContext absent (null) for '
-        'ingestEvent path (REQ-d00115-J)', () async {
+        'ingestEvent path', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'portal-server',
@@ -204,7 +206,7 @@ void main() {
     });
 
     test('verifyEventChain passes on an ingest.duplicate_received audit event '
-        '(REQ-d00145-F)', () async {
+        '', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'portal-server',

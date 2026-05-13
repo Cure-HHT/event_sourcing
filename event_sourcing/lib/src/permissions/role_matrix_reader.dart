@@ -1,6 +1,8 @@
 // lib/src/permissions/role_matrix_reader.dart
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-C (RoleMatrixReader is the single seam between policy and
+// Implements: EVS-PRD-permissions-as-events/B — abstract interface through
+//   which TableBackedAuthorizationPolicy reads role-permission data; all
+//   concrete implementations derive their answers from event-log projections
+//   or from serialized snapshots of those projections (not from any external
 //   storage substrate).
 //
 // Three concrete implementations live in sibling files:

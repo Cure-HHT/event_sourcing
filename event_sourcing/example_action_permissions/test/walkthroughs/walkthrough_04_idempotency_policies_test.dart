@@ -1,6 +1,9 @@
 // test/walkthroughs/walkthrough_04_idempotency_policies_test.dart
+// Verifies: EVS-PRD-action-dispatch/D
+// Verifies: EVS-PRD-action-dispatch/D
+// Verifies: EVS-PRD-action-dispatch/D
+// Verifies: EVS-PRD-event-log/A/C
 //
-// Verifies: REQ-d00170-A,B,C — idempotency policies (none, optional,
 //           required), and the dispatcher's behavior under each.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';

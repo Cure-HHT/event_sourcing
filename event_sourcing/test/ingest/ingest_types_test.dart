@@ -1,3 +1,10 @@
+// Verifies: EVS-PRD-ingest/F — IngestOutcome enum has exactly two values
+//   (ingested / duplicate), confirming the idempotency semantics contract
+// Verifies: EVS-PRD-hash-chain-integrity/C — ChainVerdict.valid constant and
+//   failure-carrying construction are correctly shaped for chain-walk callers
+// Verifies: EVS-PRD-ingest/D — IngestChainBroken carries diagnostic fields
+//   (eventId, hopIndex, expectedHash, actualHash) in toString
+
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';

@@ -6,9 +6,10 @@
 /// SendResult. It is deliberately a string rather than an enum at this
 /// layer so that a destination's judgment on response categorization can
 /// evolve without ABI pressure on this persisted record.
-// Implements: REQ-d00119-B — attempts[] entries carry attempted_at,
+// Implements: EVS-PRD-portability/C — pure Dart value type; platform-
+//   independent JSON serialisation.
 // outcome, error_message, http_status. Persisted permanently on the
-// FifoEntry (REQ-d00119-D).
+// FifoEntry.
 class AttemptResult {
   const AttemptResult({
     required this.attemptedAt,

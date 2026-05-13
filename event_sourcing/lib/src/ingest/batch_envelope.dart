@@ -1,3 +1,10 @@
+// Implements: EVS-PRD-ingest/A — ingest path existence (wire-format codec)
+// Implements: EVS-PRD-ingest/B — upstream identity preserved (BatchEnvelope
+//   carries originator events verbatim; receiver adds its own provenance hop
+//   inside ingestBatch, not here)
+// Implements: EVS-PRD-hash-chain-integrity/D — encoding uses JCS canonical
+//   form so hash values are reproducible across observers
+
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -6,7 +13,6 @@ import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 
 /// The library's canonical batch envelope. Phase 4.9 supports exactly one
 /// format version: `"1"` (identifier `"esd/batch@1"`).
-// Implements: REQ-d00145-B.
 class BatchEnvelope {
   const BatchEnvelope({
     required this.batchFormatVersion,
@@ -84,7 +90,6 @@ class BatchEnvelope {
   /// callers minting a fresh envelope (e.g. `fillBatch` building a
   /// native `BatchEnvelopeMetadata`) and the decoder share one source
   /// of truth for the version string.
-  // Implements: REQ-d00145-B — single canonical batch_format_version.
   static const String currentBatchFormatVersion = '1';
 
   final String batchFormatVersion;

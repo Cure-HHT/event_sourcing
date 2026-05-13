@@ -1,9 +1,7 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00170-B: idempotency.required action with no key supplied is rejected
-//   at parse-stage with a typed error before parseInput runs.
+// Implements: EVS-PRD-action-dispatch/D (typed error for Idempotency.required precondition failure; triggers a parse_denied denial event)
 
 /// Thrown by the dispatcher's idempotency precondition check (Stage 4,
-/// REQ-d00170-B) when an action declares `Idempotency.required` but the
+/// -B) when an action declares `Idempotency.required` but the
 /// caller did not supply an `idempotencyKey`.
 ///
 /// The dispatcher converts this into a `parse_denied` denial event (same

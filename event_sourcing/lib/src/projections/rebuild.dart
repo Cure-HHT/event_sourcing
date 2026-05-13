@@ -1,3 +1,13 @@
+// Implements: EVS-PRD-materializer/A — rebuildView is the library-supplied
+//   helper that replays the event log to reconstruct a single view from
+//   scratch; it is part of the library's materializer surface.
+// Implements: EVS-PRD-materializer/B — rebuild is deterministic and
+//   idempotent: the same log + same targetVersionByEntryType always produces
+//   identical view rows.
+// Implements: EVS-PRD-materializer/C (partial) — the strict-superset check
+//   and explicit targetVersionByEntryType map ensure the rebuild's scope is
+//   fully specified and auditable; rebuild does not silently shrink the set
+//   of entry types the view covers.
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
@@ -31,9 +41,7 @@ const int _rebuildChunkSize = 500;
 ///
 /// Returns the number of events processed. Idempotent — running twice on
 /// the same log with the same map produces the same view rows.
-// Implements: REQ-d00140-D — rebuildView per-view, idempotent; declarative
 //   ProjectionSpec replay; strict-superset target-version map.
-// Implements: REQ-d00140-I — view_target_versions cleared and rewritten
 //   atomically with the view rebuild.
 Future<int> rebuildView({
   required EventStore store,

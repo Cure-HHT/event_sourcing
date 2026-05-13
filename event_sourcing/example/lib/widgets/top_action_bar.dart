@@ -81,7 +81,7 @@ class _TopActionBarState extends State<TopActionBar> {
   Map<String, Object?> _collectAnswers() {
     // Omit empty-string fields so successive events carry only the keys
     // the operator actually filled in. Lets the materialized view exercise
-    // its absent-key-preserves-prior merge branch (REQ-d00121-B+C+J).
+    // its absent-key-preserves-prior merge branch.
     return <String, Object?>{
       if (_title.text.isNotEmpty) 'title': _title.text,
       if (_body.text.isNotEmpty) 'body': _body.text,
@@ -112,7 +112,7 @@ class _TopActionBarState extends State<TopActionBar> {
   /// Build a synthetic `esd/batch@1` envelope (one event from
   /// `remote-mobile-1`) and feed it through `EventStore.ingestBatch`.
   /// Plan 4.15 Task 5 Step 1. Surfaces the receiver-stamped
-  /// `origin_sequence_number` for demo of REQ-d00115-K.
+  /// `origin_sequence_number` for demo of
   Future<void> _ingestSyntheticBatch() async {
     final envelope = _syntheticBatch.buildSingleEventBatch();
     await widget.datastore.eventStore.ingestBatch(

@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/D (InMemoryIdempotencyStore: record → lookup returns cached entry; miss → null; expired → null; sweepExpired removes past entries)
+
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:test/test.dart';
 
@@ -14,7 +16,7 @@ void main() {
       expect(entry, isNull);
     });
 
-    test('REQ-d00170-D: record then lookup returns cached entry', () async {
+    test('record then lookup returns cached entry', () async {
       await store.record(
         actionName: 'a',
         principalId: 'p',
@@ -65,7 +67,7 @@ void main() {
       expect(await store.lookup('b', 'p', 'k'), isNull);
     });
 
-    test('REQ-d00170-E: sweepExpired removes past entries', () async {
+    test('sweepExpired removes past entries', () async {
       await store.record(
         actionName: 'a',
         principalId: 'p',

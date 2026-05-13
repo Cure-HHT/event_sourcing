@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00175 (YAML seed + event-emitting applier) — directory-side analogue
 //   of the permissions module's EventSeedApplier. Diffs YAML against the
 //   current directory; for each missing entry, calls `emit(payload)` (the
 //   server uses this to write a user_provisioned event) and

@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-destinations/E — WirePayload: the byte-level output
+// type produced by an app-supplied Destination.transform implementation;
+// carries the bytes, content type, and transform version that the library
+// hands off to Destination.send for transit.
 import 'dart:typed_data';
 
 import 'package:collection/collection.dart';
@@ -15,7 +19,6 @@ import 'package:collection/collection.dart';
 /// This type is not a JSON value: it carries raw bytes. The `FifoEntry`
 /// stores the bytes under `wire_payload`, the `contentType` under
 /// `wire_format`, and the `transformVersion` under `transform_version`.
-// Implements: REQ-d00122-D — transform(List<StoredEvent>) returns bytes +
 // content_type + transform_version covering the whole batch;
 // transform_version flows through FifoEntry into downstream
 // ProvenanceEntry stamping.

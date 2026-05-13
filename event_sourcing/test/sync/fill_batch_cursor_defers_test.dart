@@ -1,12 +1,14 @@
-// Verifies: REQ-d00128-K — fill_cursor advances past permanently-rejected
-//   events (subscription mismatch, client_timestamp < startDate) and
-//   promoted events, but NOT past events deferred by the upper bound
-//   (client_timestamp > min(endDate, now())). The upper bound is
-//   non-monotonic because endDate is mutable per REQ-d00129-F.
-// Verifies: REQ-d00128-L — fillBatch short-circuits when the destination's
-//   window has not yet opened (future startDate) or the window is malformed
-//   (startDate > endDate). When endDate is in the past with startDate
-//   <= endDate, fillBatch SHALL still scan and process in-window events.
+// Verifies: EVS-PRD-destinations/B (per-destination filter — fill_cursor
+//   advances past permanently-rejected events (subscription mismatch,
+//   client_timestamp < startDate) but NOT past events deferred by the upper
+//   bound (client_timestamp > min(endDate, now())). The upper bound is
+//   non-monotonic because endDate is mutable; the window has not yet opened
+//   (future startDate) or is malformed (startDate > endDate). When endDate is
+//   in the past with startDate <= endDate, fillBatch still scans in-window
+//   events.)
+// Verifies: EVS-PRD-destinations/C (FIFO order — cursor advances to
+//   batch.last.sequenceNumber so deferred events remain re-evaluable and are
+//   enqueued in sequence order when the window widens)
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -64,15 +66,13 @@ void main() {
 
   tearDown(() async => backend.close());
 
-  /// Verifies REQ-d00128-K — cursor advance respects deferred-vs-permanent
   /// rejection.
-  group('REQ-d00128-K: cursor advance respects rejection reason', () {
-    // Verifies: REQ-d00128-K — an event whose client_timestamp is past the
+  group('cursor advance respects rejection reason', () {
     //   current upper bound (min(endDate, now())) is deferred. fill_cursor
     //   SHALL NOT advance past it. When the upper bound widens (clock
     //   advances or endDate moves forward), the deferred event becomes
     //   eligible and is enqueued on a subsequent fillBatch call.
-    test('REQ-d00128-K: deferred event is not cursor-skipped; later fillBatch '
+    test('deferred event is not cursor-skipped; later fillBatch '
         'with widened upper enqueues it', () async {
       // T0 = the test's reference "now". endDate is set far in the future
       // so the upper bound is now (line 99-101 of fill_batch.dart picks
@@ -115,7 +115,7 @@ void main() {
       expect(
         cursorAfterFirst,
         e1.sequenceNumber,
-        reason: 'cursor must NOT advance past the deferred e2 (REQ-d00128-K)',
+        reason: 'cursor must NOT advance past the deferred e2',
       );
       expect(
         cursorAfterFirst,
@@ -138,7 +138,7 @@ void main() {
         hasLength(2),
         reason:
             'previously-deferred e2 must be picked up after upper widens '
-            '(REQ-d00128-K)',
+            '',
       );
       expect(
         fifoAfterSecond.map((r) => r.eventIds.single).toList(),
@@ -152,14 +152,13 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00128-K — the BUG path. When inWindow is empty (every
     //   candidate fails the time-window or subscription filter), the OLD
     //   code advanced cursor to candidates.last.sequenceNumber regardless
     //   of why each candidate was rejected. The K fix splits rejection
     //   reasons: cursor advances past permanently-rejected events
     //   (subscription mismatch), but stops at the first deferred event
     //   (upper-bound rejection).
-    test('REQ-d00128-K: inWindow.isEmpty path — cursor advances past permanent '
+    test('inWindow.isEmpty path — cursor advances past permanent '
         'rejection but stops at first deferred event', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
       final schedule = DestinationSchedule(
@@ -223,7 +222,7 @@ void main() {
         e1.sequenceNumber,
         reason:
             'cursor advances past e1 (permanent rejection) and stops at '
-            'e2 (deferred); REQ-d00128-K',
+            'e2 (deferred); -K',
       );
       expect(
         cursor1,
@@ -263,16 +262,15 @@ void main() {
         equals([e2.eventId, e3.eventId]),
         reason:
             'second tick: e3 enqueued. Both previously-deferred events '
-            'are recovered (REQ-d00128-K — would be lost without the fix).',
+            'are recovered (-K — would be lost without the fix).',
       );
     });
 
-    // Verifies: REQ-d00128-K — the throttle scheme works: inching endDate
     //   forward while still in the past lets each tick pick up a slice of
     //   previously-deferred events. Cursor advances incrementally; events
     //   are not lost. Uses batchCapacity=100 so each fillBatch call drains
     //   all in-window events in one go.
-    test('REQ-d00128-K: throttle scheme — endDate inched forward while past '
+    test('throttle scheme — endDate inched forward while past '
         'enqueues previously-deferred events incrementally', () async {
       final clockNow = DateTime.utc(2026, 6, 1);
       // Five events spanning Jan-May.
@@ -325,7 +323,7 @@ void main() {
       expect(
         await backend.readFillCursor('throttle'),
         e2.sequenceNumber,
-        reason: 'cursor at e2; e3+ still deferred (REQ-d00128-K)',
+        reason: 'cursor at e2; e3+ still deferred',
       );
 
       // Step 2: inch endDate to end of April. Should pick up e3, e4.
@@ -342,7 +340,7 @@ void main() {
       expect(
         fifo.expand((r) => r.eventIds).toList(),
         equals([e1.eventId, e2.eventId, e3.eventId, e4.eventId]),
-        reason: 'e3 and e4 picked up after endDate widens (REQ-d00128-K)',
+        reason: 'e3 and e4 picked up after endDate widens',
       );
 
       // Step 3: widen endDate to far future. e5 should land.
@@ -359,192 +357,174 @@ void main() {
       expect(
         fifo.expand((r) => r.eventIds).toList(),
         equals([e1.eventId, e2.eventId, e3.eventId, e4.eventId, e5.eventId]),
-        reason: 'all events ultimately enqueued (REQ-d00128-K)',
+        reason: 'all events ultimately enqueued',
       );
     });
 
-    // Verifies: REQ-d00128-K — events whose entry_type fails the
     //   destination's SubscriptionFilter are PERMANENTLY rejected. The
     //   cursor MAY advance past them (filter is stable). Tested as a
     //   regression to ensure the K fix did not over-correct.
-    test(
-      'REQ-d00128-K (regression): subscription-rejected events advance cursor',
-      () async {
-        final t0 = DateTime.utc(2026, 4, 15, 12);
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 1, 1),
-          endDate: DateTime.utc(2099, 1, 1),
-        );
+    test('subscription-rejected events advance cursor', () async {
+      final t0 = DateTime.utc(2026, 4, 15, 12);
+      final schedule = DestinationSchedule(
+        startDate: DateTime.utc(2026, 1, 1),
+        endDate: DateTime.utc(2099, 1, 1),
+      );
 
-        // e1: subscription-rejected (entry_type 'other').
-        final e1 = await _appendEvent(
-          backend,
-          eventId: 'e1',
-          entryType: 'other',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
-        // e2: in-window, in subscription.
-        final e2 = await _appendEvent(
-          backend,
-          eventId: 'e2',
-          entryType: 'epistaxis_event',
-          clientTimestamp: DateTime.utc(2026, 4, 11),
-        );
+      // e1: subscription-rejected (entry_type 'other').
+      final e1 = await _appendEvent(
+        backend,
+        eventId: 'e1',
+        entryType: 'other',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
+      // e2: in-window, in subscription.
+      final e2 = await _appendEvent(
+        backend,
+        eventId: 'e2',
+        entryType: 'epistaxis_event',
+        clientTimestamp: DateTime.utc(2026, 4, 11),
+      );
 
-        final dest = FakeDestination(
-          id: 'sub',
-          filter: const SubscriptionFilter(entryTypes: ['epistaxis_event']),
-        );
+      final dest = FakeDestination(
+        id: 'sub',
+        filter: const SubscriptionFilter(entryTypes: ['epistaxis_event']),
+      );
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => t0,
-        );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => t0,
+      );
 
-        final fifo = await backend.listFifoEntries('sub');
-        expect(fifo.expand((r) => r.eventIds).toList(), equals([e2.eventId]));
-        // Cursor advanced past e1 (permanent subscription rejection) AND
-        // through e2 (promoted). Cursor at e2.seq.
-        expect(await backend.readFillCursor('sub'), e2.sequenceNumber);
-        expect(
-          await backend.readFillCursor('sub'),
-          greaterThan(e1.sequenceNumber),
-          reason: 'cursor advanced past subscription-rejected e1',
-        );
-      },
-    );
+      final fifo = await backend.listFifoEntries('sub');
+      expect(fifo.expand((r) => r.eventIds).toList(), equals([e2.eventId]));
+      // Cursor advanced past e1 (permanent subscription rejection) AND
+      // through e2 (promoted). Cursor at e2.seq.
+      expect(await backend.readFillCursor('sub'), e2.sequenceNumber);
+      expect(
+        await backend.readFillCursor('sub'),
+        greaterThan(e1.sequenceNumber),
+        reason: 'cursor advanced past subscription-rejected e1',
+      );
+    });
 
-    // Verifies: REQ-d00128-K — events with client_timestamp < startDate
     //   are PERMANENTLY rejected for the current invocation; the cursor
-    //   MAY advance past them. Under REQ-d00129-C monotonic-backward
+    //   MAY advance past them. Under monotonic-backward
     //   semantics, a later setStartDate(earlier) re-promotes the gap
     //   window via runGapReplay (independent of fill_cursor); fillBatch
     //   does not need to keep these events re-evaluable.
-    test(
-      'REQ-d00128-K (regression): events below startDate advance cursor',
-      () async {
-        final t0 = DateTime.utc(2026, 4, 15, 12);
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-          endDate: DateTime.utc(2099, 1, 1),
-        );
+    test('events below startDate advance cursor', () async {
+      final t0 = DateTime.utc(2026, 4, 15, 12);
+      final schedule = DestinationSchedule(
+        startDate: DateTime.utc(2026, 4, 1),
+        endDate: DateTime.utc(2099, 1, 1),
+      );
 
-        // e1: backdated (client_timestamp before startDate).
-        final e1 = await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 3, 31, 23),
-        );
-        // e2: in-window.
-        final e2 = await _appendEvent(
-          backend,
-          eventId: 'e2',
-          clientTimestamp: DateTime.utc(2026, 4, 5),
-        );
+      // e1: backdated (client_timestamp before startDate).
+      final e1 = await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 3, 31, 23),
+      );
+      // e2: in-window.
+      final e2 = await _appendEvent(
+        backend,
+        eventId: 'e2',
+        clientTimestamp: DateTime.utc(2026, 4, 5),
+      );
 
-        final dest = FakeDestination(id: 'lower');
+      final dest = FakeDestination(id: 'lower');
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => t0,
-        );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => t0,
+      );
 
-        final fifo = await backend.listFifoEntries('lower');
-        expect(fifo.expand((r) => r.eventIds).toList(), equals([e2.eventId]));
-        expect(await backend.readFillCursor('lower'), e2.sequenceNumber);
-        expect(
-          await backend.readFillCursor('lower'),
-          greaterThan(e1.sequenceNumber),
-          reason:
-              'cursor advanced past startDate-rejected e1 (lower bound is '
-              'permanent for fillBatch; REQ-d00129-C backward moves are '
-              'handled by runGapReplay)',
-        );
-      },
-    );
+      final fifo = await backend.listFifoEntries('lower');
+      expect(fifo.expand((r) => r.eventIds).toList(), equals([e2.eventId]));
+      expect(await backend.readFillCursor('lower'), e2.sequenceNumber);
+      expect(
+        await backend.readFillCursor('lower'),
+        greaterThan(e1.sequenceNumber),
+        reason:
+            'cursor advanced past startDate-rejected e1 (lower bound is '
+            'permanent for fillBatch; -C backward moves are '
+            'handled by runGapReplay)',
+      );
+    });
   });
 
-  /// Verifies REQ-d00128-L — short-circuits for not-yet-opened or malformed
   /// windows; closed-past windows still scan.
-  group('REQ-d00128-L: window-state short-circuits', () {
-    // Verifies: REQ-d00128-L — when startDate is in the future, fillBatch
+  group('window-state short-circuits', () {
     //   returns immediately. No FIFO writes, no cursor advance.
-    test(
-      'REQ-d00128-L: future startDate causes immediate return without scan',
-      () async {
-        final t0 = DateTime.utc(2026, 4, 15);
+    test('future startDate causes immediate return without scan', () async {
+      final t0 = DateTime.utc(2026, 4, 15);
 
-        // Append events that would otherwise be processed.
-        await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
+      // Append events that would otherwise be processed.
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
 
-        final dest = FakeDestination(id: 'future-start');
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2027, 1, 1), // future
-        );
+      final dest = FakeDestination(id: 'future-start');
+      final schedule = DestinationSchedule(
+        startDate: DateTime.utc(2027, 1, 1), // future
+      );
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => t0,
-        );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => t0,
+      );
 
-        expect(await backend.readFifoHead('future-start'), isNull);
-        expect(await backend.readFillCursor('future-start'), -1);
-        expect(
-          dest.transformCalls,
-          0,
-          reason: 'transform must NOT be called when window not yet open',
-        );
-      },
-    );
+      expect(await backend.readFifoHead('future-start'), isNull);
+      expect(await backend.readFillCursor('future-start'), -1);
+      expect(
+        dest.transformCalls,
+        0,
+        reason: 'transform must NOT be called when window not yet open',
+      );
+    });
 
-    // Verifies: REQ-d00128-L — when startDate > endDate (malformed
     //   window), fillBatch returns immediately.
-    test(
-      'REQ-d00128-L: malformed window (startDate > endDate) early-returns',
-      () async {
-        final t0 = DateTime.utc(2026, 4, 15);
+    test('malformed window (startDate > endDate) early-returns', () async {
+      final t0 = DateTime.utc(2026, 4, 15);
 
-        await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
 
-        final dest = FakeDestination(id: 'malformed');
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 5, 1),
-          endDate: DateTime.utc(2026, 3, 1), // before startDate
-        );
+      final dest = FakeDestination(id: 'malformed');
+      final schedule = DestinationSchedule(
+        startDate: DateTime.utc(2026, 5, 1),
+        endDate: DateTime.utc(2026, 3, 1), // before startDate
+      );
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => t0,
-        );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => t0,
+      );
 
-        expect(await backend.readFifoHead('malformed'), isNull);
-        expect(await backend.readFillCursor('malformed'), -1);
-        expect(dest.transformCalls, 0);
-      },
-    );
+      expect(await backend.readFifoHead('malformed'), isNull);
+      expect(await backend.readFillCursor('malformed'), -1);
+      expect(dest.transformCalls, 0);
+    });
 
-    // Verifies: REQ-d00128-L — when endDate has passed in the past
     //   (startDate <= endDate < now), fillBatch SHALL STILL SCAN to enqueue
     //   any in-window events not yet promoted. This is the throttle scheme's
     //   foundation: closed-past does not freeze processing, only the
     //   not-yet-opened / malformed cases do.
-    test('REQ-d00128-L: closed-past window still scans and enqueues in-window '
+    test('closed-past window still scans and enqueues in-window '
         'events', () async {
       final t0 = DateTime.utc(2026, 6, 1);
 
@@ -584,7 +564,7 @@ void main() {
         equals([e1.eventId, e2.eventId]),
         reason:
             'closed-past window still processes in-window events; only '
-            'e3 (past endDate) is deferred (REQ-d00128-L + REQ-d00128-K)',
+            'e3 (past endDate) is deferred',
       );
       expect(await backend.readFillCursor('closed-past'), e2.sequenceNumber);
     });

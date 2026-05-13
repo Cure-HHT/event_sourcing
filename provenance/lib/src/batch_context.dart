@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-provenance assertion A (BatchContext is the value type
+//   that records batch membership in the ProvenanceEntry.batchContext field)
+// Implements: EVS-PRD-provenance assertion C (JSON serialization and
+//   deserialization of BatchContext without loss of information)
+
 /// Per-event record of batch membership for events received via
 /// `EventStore.ingestBatch`.
 ///
@@ -10,7 +15,6 @@
 /// orders them, the size bounds the expected set, the wire-bytes hash pins
 /// the bytes the receiver hashed, and the wire format identifies the
 /// canonicalization procedure used.
-// Implements: REQ-d00115-J — batch-context schema.
 class BatchContext {
   const BatchContext({
     required this.batchId,

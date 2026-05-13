@@ -1,6 +1,5 @@
 // lib/server/action_catalog.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167 (ActionRegistry and Bootstrap) — collision-free registration of
 //   all 7 demo actions.
 
 import 'package:action_permissions_demo/server/actions/edit_blue_note_action.dart';

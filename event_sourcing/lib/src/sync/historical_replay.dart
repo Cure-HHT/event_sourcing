@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-destinations/B (per-destination filter — runHistoricalReplay
+//   and runGapReplay both evaluate destination.filter.matches on every candidate
+//   event, using the same admission semantics as the live fillBatch path)
+// Implements: EVS-PRD-destinations/C (FIFO order — historical and gap replay
+//   enqueue events in sequence_number order and advance fill_cursor to the last
+//   replayed event so subsequent fillBatch calls continue without gaps)
+// Implements: EVS-PRD-destinations/D (durable queue — both replay functions run
+//   inside the caller-supplied Txn so enqueue and schedule writes are atomic;
+//   concurrent record() serializes behind the transaction and sees no gaps)
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
@@ -20,9 +29,9 @@ const _uuidGen = Uuid();
 /// .setStartDate` invokes replay inside the same transaction that
 /// persists the new schedule, so a concurrent `record()` serialized
 /// behind that transaction observes the advanced `fill_cursor` and never
-/// re-enqueues the events replay already promoted (REQ-d00130-C).
+/// re-enqueues the events replay already promoted.
 ///
-/// Algorithm (design §6.8, REQ-d00130-A+B):
+/// Algorithm (design §6.8):
 ///
 /// 1. Compute the upper bound of the promotion window as
 ///    `min(endDate, now())`. When `startDate > upper`, the window is
@@ -60,14 +69,10 @@ const _uuidGen = Uuid();
 /// log into the destination's outbound FIFO, not into a materialized view.
 /// The receiving destination is responsible for any version translation it
 /// needs to perform on the wire.
-// Implements: REQ-d00129-D — setStartDate(past) triggers historical
 // replay synchronously in the same transaction as the schedule write.
-// Implements: REQ-d00130-A — single-transaction walk of event_log from
 // fill_cursor + 1 forward, filtered by subscription + time window.
-// Implements: REQ-d00130-B — uses destination.canAddToBatch and
 // destination.transform so rows are identical in shape to fillBatch's
 // live output.
-// Implements: REQ-d00130-C — runs inside the caller's transaction so a
 // concurrent record() serializes behind and sees the advanced
 // fill_cursor; no double-enqueue.
 Future<void> runHistoricalReplay(
@@ -116,9 +121,7 @@ Future<void> runHistoricalReplay(
   // destination is permanently uninterested in does not block cursor
   // advance regardless of its client_timestamp.
   //
-  // Implements: REQ-d00128-J — admission decided by
   //   destination.filter.matches.
-  // Implements: REQ-d00128-K — cursor advance respects rejection reason:
   //   permanent rejections (subscription, startDate-lower) contribute to
   //   cursor advance; deferred rejections (upper bound) stop the walk so
   //   the cursor does not skip past them. Replay's parity with fillBatch
@@ -136,7 +139,7 @@ Future<void> runHistoricalReplay(
     if (e.clientTimestamp.isBefore(startDate)) {
       // Permanent for the current invocation: events with
       // client_timestamp < startDate are skipped and the cursor
-      // advances past them. Under REQ-d00129-C monotonic-backward
+      // advances past them. Under monotonic-backward
       // semantics, a later setStartDate(earlier) invocation re-promotes
       // the gap window via runGapReplay, which walks the event log
       // independent of fill_cursor and does not require these events
@@ -145,7 +148,7 @@ Future<void> runHistoricalReplay(
       continue;
     }
     if (e.clientTimestamp.isAfter(upper)) {
-      // Deferred — endDate is mutable per REQ-d00129-F. Stop the walk;
+      // Deferred — endDate is mutable Stop the walk;
       // any subsequent candidates wait for the next invocation
       // (replay or fillBatch tick).
       break;
@@ -180,9 +183,8 @@ Future<void> runHistoricalReplay(
   // library's `esd/batch@1` envelope; replay must mint
   // `BatchEnvelopeMetadata` from the caller's `source` and enqueue via
   // `nativeEnvelope:`, mirroring `fillBatch`'s native branch
-  // (REQ-d00152-B). Calling `transform` on a native destination
+  //. Calling `transform` on a native destination
   // throws by contract.
-  // Implements: REQ-d00152-B (replay parity) — historical replay
   //   honors `serializesNatively` symmetrically with `fillBatch` so a
   //   destination registered after events have already landed (e.g., an
   //   audit-mirror destination registered post-bootstrap with
@@ -193,7 +195,7 @@ Future<void> runHistoricalReplay(
       'runHistoricalReplay: destination "${destination.id}" declares '
       'serializesNatively == true but no source was supplied; native '
       'batches require a Source to stamp the envelope identity '
-      '(REQ-d00152-B+E).',
+      '.',
     );
   }
   var i = 0;
@@ -232,7 +234,6 @@ Future<void> runHistoricalReplay(
   }
 
   // Cursor advances to the last replayed event's sequence_number.
-  // REQ-d00130-C: after this write commits, a concurrent record()
   // serialized behind this transaction will re-evaluate candidates
   // strictly past this value, so no double-enqueue.
   await backend.writeFillCursorTxn(
@@ -246,7 +247,7 @@ Future<void> runHistoricalReplay(
 /// falls in the half-open gap `[newStartDate, oldStartDate)` and that
 /// match [destination]'s subscription filter. Used by
 /// `DestinationRegistry.setStartDate` when the call moves an
-/// already-set `startDate` to an earlier value (REQ-d00129-C
+/// already-set `startDate` to an earlier value (
 /// monotonic-backward semantics).
 ///
 /// Differs from [runHistoricalReplay] in three ways:
@@ -272,10 +273,8 @@ Future<void> runHistoricalReplay(
 ///
 /// No promoter is invoked here — gap replay promotes events from the log
 /// into the destination's FIFO, not into a materialized view.
-// Implements: REQ-d00129-C — backward movement of startDate triggers a
 //   gap replay over [newStartDate, oldStartDate) in the same transaction
 //   as the schedule write.
-// Implements: REQ-d00130-D — gap replay walks the event log directly
 //   (independent of fill_cursor) and uses destination.canAddToBatch and
 //   destination.transform so rows are identical in shape to fillBatch's
 //   live output.
@@ -299,7 +298,7 @@ Future<void> runGapReplay(
       'runGapReplay: destination "${destination.id}" declares '
       'serializesNatively == true but no source was supplied; native '
       'batches require a Source to stamp the envelope identity '
-      '(REQ-d00152-B+E).',
+      '.',
     );
   }
 

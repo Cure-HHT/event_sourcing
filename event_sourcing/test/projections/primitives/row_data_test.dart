@@ -1,4 +1,10 @@
 // event_sourcing/test/projections/primitives/row_data_test.dart
+//
+// Verifies: EVS-PRD-materializer/A — WholePayload, PayloadField, and
+//   SelectedFields are library-supplied materializer primitives (row data
+//   extractors for TableProjectionSpec).
+// Verifies: EVS-PRD-materializer/B — each extractor is a pure function of
+//   the StoredEvent; tests confirm deterministic extraction and error cases.
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';

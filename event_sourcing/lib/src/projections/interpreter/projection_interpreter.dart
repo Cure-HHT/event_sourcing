@@ -1,4 +1,23 @@
 // event_sourcing/lib/src/projections/interpreter/projection_interpreter.dart
+//
+// Implements: EVS-PRD-materializer/A — ProjectionInterpreter is the central
+//   dispatch loop that drives the library's materializer: for each incoming
+//   event it iterates registered specs and invokes the appropriate fold.
+// Implements: EVS-PRD-materializer/B — determinism is preserved: the same
+//   event dispatched to the same specs in the same order yields the same
+//   fold changes; no non-deterministic inputs (wall clock, random, I/O
+//   outside the backend transaction) are introduced here.
+// Implements: EVS-DEV-ingest-promotes-before-fold/A — applies the per-view
+//   promoter chain to any event whose entryTypeVersion is below
+//   registeredVersion, before dispatching to the fold.
+// Implements: EVS-DEV-ingest-promotes-before-fold/B — promotion operates on
+//   an in-memory event.withData(...) copy; the original StoredEvent is not
+//   modified.
+// Implements: EVS-DEV-ingest-promotes-before-fold/C — two views matching the
+//   same entry type receive independently-computed promoted payloads (per-spec
+//   loop; promoter chain lookup is keyed by (viewName, entryType)).
+// Implements: EVS-DEV-ingest-promotes-before-fold/D — when entryTypeVersion
+//   equals registeredVersion the promoter branch is skipped entirely.
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
@@ -35,8 +54,6 @@ class ProjectionInterpreter {
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
   /// notification via [SubscriptionEngine.publishRowChange].
-  // Implements: EVS-DEV-ingest-promotes-before-fold — per-spec
-  //   in-memory promotion of older-version events before fold.
   Future<List<AggregateFoldChange>> applyEvent({
     required Txn txn,
     required StorageBackend backend,

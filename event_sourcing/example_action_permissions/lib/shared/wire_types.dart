@@ -1,8 +1,5 @@
 // lib/shared/wire_types.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline) — wire envelope between client and server
-//   REQ-d00170 (Idempotency Contract) — idempotencyHit variant on the wire
-//   REQ-d00171 (Denial Events) — denied variant exposes sanitized fields only
 //
 // Both client and server import this file verbatim. If the JSON shape drifts,
 // the compiler catches it.

@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-regulatory-alignment/A — recordedAt round-trips correctly
+//   through toJson/fromJson, preserving the ALCOA+ Contemporaneous timestamp.
+// Verifies: EVS-PRD-regulatory-alignment — applyTruncation correctly reduces
+//   PII fields (IP, UA, geo) per SecurityRetentionPolicy defaults, exercising
+//   the retention compact path that satisfies §11.10(c) protection-of-records.
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,8 +33,7 @@ void main() {
       expect(EventSecurityContext.fromJson(ctx.toJson()), ctx);
     });
 
-    // Verifies: REQ-d00138-B — compact sweep truncation rules.
-    test('REQ-d00138-B: applyTruncation drops UA, truncates IPv4 last octet, '
+    test('applyTruncation drops UA, truncates IPv4 last octet, '
         'keeps geo by default', () {
       final ctx = EventSecurityContext(
         eventId: 'e',
@@ -46,7 +50,7 @@ void main() {
       expect(truncated.geoRegion, 'NY');
     });
 
-    test('REQ-d00138-B: IPv6 truncation keeps first 3 groups when enabled', () {
+    test('IPv6 truncation keeps first 3 groups when enabled', () {
       final ctx = EventSecurityContext(
         eventId: 'e',
         recordedAt: DateTime.utc(2026, 4, 22),

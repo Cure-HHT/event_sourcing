@@ -1,9 +1,11 @@
 // test/walkthroughs/walkthrough_09_user_provisioning_test.dart
+// Verifies: EVS-PRD-permissions-as-events/A/B
+// Verifies: EVS-PRD-action-dispatch/A/C
+// Verifies: EVS-PRD-permissions-as-events/B
+// Verifies: EVS-PRD-event-log/A/C
 //
-// Verifies: REQ-d00174-C — UserDirectoryMaterializer (via the adapter)
 //           projects user_provisioned events into the in-memory directory
 //           inside the EventStore transaction;
-//           REQ-d00177 — the new user's snapshot reflects the seeded role.
 
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:flutter_test/flutter_test.dart';

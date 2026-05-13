@@ -1,11 +1,9 @@
-// Verifies: REQ-d00128-J — fillBatch admission of system events is
-// driven entirely by SubscriptionFilter.matches via the
-// includeSystemEvents flag. fillBatch holds no hard-drop guard against
-// reserved system entry types; that decision lives on the destination's
-// filter.
-// Verifies: REQ-d00154-F — system events are visible to destinations
-// that opt in (e.g. forensic / audit-mirroring destinations) and are
-// not visible to destinations that do not.
+// Verifies: EVS-PRD-destinations/B (per-destination filter — system-event
+//   admission is driven entirely by SubscriptionFilter.matches via the
+//   includeSystemEvents flag; fillBatch holds no hard-drop guard against
+//   reserved system entry types; that decision lives on the destination's
+//   filter so audit-mirroring destinations that opt in receive system events
+//   and destinations that do not are unaffected)
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -51,7 +49,6 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00128-J + REQ-d00154-F — a destination that opts
     // in via includeSystemEvents=true sees system audit events flow
     // into its FIFO via fillBatch; a peer destination without the
     // opt-in sees only user events.
@@ -74,13 +71,13 @@ void main() {
     //   - audit destination's FIFO contains every prior
     //     system.destination_* audit;
     //   - user destination's FIFO contains zero system audits.
-    test('REQ-d00128-J: includeSystemEvents=true admits system events through '
+    test('includeSystemEvents=true admits system events through '
         'fillBatch; includeSystemEvents=false drops them', () async {
       // Build two destinations sharing one backend.
       // Audit destination opts in to system events with no entryTypes
       // allow-list (system events bypass entryTypes when the flag is
       // true; user events fall through and are rejected because
-      // entryTypes is empty — REQ-d00122-F).
+      // entryTypes is empty).
       final auditDest = FakeDestination(
         id: 'audit-mirror',
         filter: const SubscriptionFilter(
@@ -224,13 +221,12 @@ void main() {
       }
     });
 
-    // Verifies: REQ-d00128-J — explicit symmetric assertion that a
     // destination with the default filter (includeSystemEvents=false)
     // never admits system events even when the destination's
     // entryTypes list contains a reserved id by mistake. The
     // includeSystemEvents flag wins; entryTypes is consulted only for
     // user events.
-    test('REQ-d00128-J: includeSystemEvents=false rejects system events '
+    test('includeSystemEvents=false rejects system events '
         'even if entryTypes contains a reserved id', () async {
       final dest = FakeDestination(
         id: 'misconfigured',

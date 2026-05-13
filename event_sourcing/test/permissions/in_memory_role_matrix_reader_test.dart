@@ -1,17 +1,19 @@
 // test/permissions/in_memory_role_matrix_reader_test.dart
-// Verifies: REQ-d00176-C (RoleMatrixReader in-memory impl).
+// Verifies: EVS-PRD-permissions-as-events/B — InMemoryRoleMatrixReader
+// correctly answers isGranted and grantsForRole queries from a Map populated
+// with event-derived data; unknown roles and absent grants return false/empty.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('InMemoryRoleMatrixReader', () {
-    test('REQ-d00176-C: empty map answers false / empty set', () async {
+    test('empty map answers false / empty set', () async {
       final reader = InMemoryRoleMatrixReader.empty();
       expect(await reader.isGranted('admin', 'user.invite'), isFalse);
       expect(await reader.grantsForRole('admin'), isEmpty);
     });
 
-    test('REQ-d00176-C: returns true / non-empty when grant present', () async {
+    test('returns true / non-empty when grant present', () async {
       const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
         'admin': <String, Permission>{
           'user.invite': Permission('user.invite', scope: ScopeClass.global),
@@ -25,7 +27,7 @@ void main() {
       expect(grants.first.scope, ScopeClass.global);
     });
 
-    test('REQ-d00176-C: unknown role answers false / empty', () async {
+    test('unknown role answers false / empty', () async {
       const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
         'admin': <String, Permission>{
           'p': Permission('p', scope: ScopeClass.global),

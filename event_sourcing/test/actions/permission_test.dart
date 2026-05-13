@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-action-dispatch/B (Permission is the unit checked in the authorize stage; name-based equality; scope field accessible)
+// Verifies: EVS-PRD-permissions-as-events/A (Permission names are the subjects of permission-grant events; equality by name is the log-identity contract)
+// Verifies: EVS-PRD-permissions-as-events/B (Permission is passed to isPermitted for evaluation from event-derived projections)
+
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
@@ -45,13 +49,10 @@ void main() {
       expect(set.length, 2);
     });
 
-    test(
-      'REQ-d00172-A: scope field is accessible and matches construction',
-      () {
-        const p = Permission('foo', scope: ScopeClass.site);
-        expect(p.scope, ScopeClass.site);
-      },
-    );
+    test('scope field is accessible and matches construction', () {
+      const p = Permission('foo', scope: ScopeClass.site);
+      expect(p.scope, ScopeClass.site);
+    });
 
     test(
       'same name with different scope is still equal (name-only equality)',

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-materializer/A — AggregateProjectionSpec and
+//   TableProjectionSpec expose the declarative fields that describe the
+//   materializer's rule set; tests confirm the field surface.
 import 'package:event_sourcing/src/projections/primitives/derived_field.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';

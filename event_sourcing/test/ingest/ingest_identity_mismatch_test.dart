@@ -1,6 +1,8 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-D: identity-mismatch throws IngestIdentityMismatch;
-//                  transaction rolls back — no side effects.
+// Verifies: EVS-PRD-ingest/D — IngestIdentityMismatch thrown when incoming
+//   event_hash differs from stored arrival_hash for the same event_id;
+//   transaction rolls back — no side effects
+// Verifies: EVS-PRD-ingest/F — idempotency: divergent re-presentation is
+//   rejected, not silently accepted as a duplicate
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -80,7 +82,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — identity mismatch (REQ-d00145-D)', () {
+  group('EventStore.ingestEvent — identity mismatch', () {
     test(
       'same event_id but different event_hash throws IngestIdentityMismatch',
       () async {

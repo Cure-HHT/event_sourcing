@@ -1,3 +1,36 @@
+// Implements: EVS-PRD-event-log/A — EventStore is the append-only, immutable
+//   log; append/appendInTxn are its sole write paths.
+// Implements: EVS-PRD-event-log/B — the storage backend preserves a stable
+//   total order; EventStore surfaces it via read/findAll/subscribe.
+// Implements: EVS-PRD-event-log/D — EventStore.read and subscribe both
+//   accept a starting sequence position for replay from any offset.
+// Implements: EVS-DEV-event-store-open/A — EventStore.open is the sole
+//   public constructor; EventStore._ is private and library-internal only.
+// Implements: EVS-DEV-event-store-open/B — open emits lib_version_initialized
+//   on first boot via _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/C — open emits lib_version_changed
+//   on version upgrade via _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/D — open throws DowngradeRefusedError
+//   on lib-version downgrade (unless allowDowngrade: true) via
+//   _runBootVersionCheck.
+// Implements: EVS-DEV-event-store-open/E — both the version check and the
+//   snapshot-promotion pass run inside single backend.transaction calls in
+//   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
+// Implements: EVS-DEV-append-stamps-registered-version/A — append looks up
+//   entryTypes.byId(entryType).registeredVersion and stamps it on the event.
+// Implements: EVS-DEV-append-stamps-registered-version/B — appendInTxn
+//   applies the same registry-lookup stamping as append.
+// Implements: EVS-DEV-append-stamps-registered-version/C — entryTypeVersion
+//   does not appear on the public append/appendInTxn signatures.
+// Implements: EVS-DEV-snapshot-promotion-on-open — _runBootSnapshotPromotionPass
+//   promotes lagging view rows and emits view_snapshot_promoted audit events.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/A — EntryTypeVersionDowngradeError
+//   is thrown from open when registeredVersion < stored target version.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/B — assertNoEntryTypeDowngrade
+//   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/C — EntryTypeVersionDowngradeError
+//   carries entryType id, fromVersion, and toVersion for diagnostic logging.
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -58,7 +91,6 @@ class PublishCollector {
 
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
 /// the compact and purge sweeps.
-// Implements: REQ-d00138-B+C+E+F — retention-sweep return type.
 class RetentionResult {
   const RetentionResult({
     required this.compactedCount,
@@ -118,16 +150,12 @@ class EntryTypeVersionDowngradeError extends Error {
 
 /// Phase 4.4 write API. Serves both mobile widgets and portal callers via
 /// one `append` method that takes per-field arguments plus optional
-/// `SecurityDetails`. Replaces `EntryService.record` (REQ-d00141-A).
+/// `SecurityDetails`. Replaces `EntryService.record`.
 ///
-/// `EventStore` is permission-blind (REQ-d00141-D): it exposes unguarded
+/// `EventStore` is permission-blind: it exposes unguarded
 /// read/write APIs to anything holding a reference. All access control
 /// lives in the widget layer (Flutter widgets client-side, request
 /// handlers server-side).
-// Implements: REQ-d00141-A — class named EventStore, lives in event_store.dart.
-// Implements: REQ-d00141-B — single append() method serving mobile + portal.
-// Implements: REQ-d00141-C — per-field arguments directly, no EventDraft.
-// Implements: REQ-d00141-D — permission-blind.
 class EventStore {
   EventStore._({
     required this.backend,
@@ -184,7 +212,8 @@ class EventStore {
   /// This is the single production entry point. All required collaborators
   /// ([entryTypes], [source], [securityContexts]) must be supplied; the
   /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open — boot flow with lib-version check.
+  // Implements: EVS-DEV-event-store-open/A,B,C,D,E — sole public constructor;
+  //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
   static Future<EventStore> open({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -285,9 +314,10 @@ class EventStore {
   /// All three run inside a single [backend.transaction] so a mid-pass
   /// crash rolls back atomically and the next boot retries from a clean
   /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal,
-  //   EVS-DEV-view-target-versions-seeding,
-  //   EVS-DEV-snapshot-promotion-on-open.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A,B — refusal before any
+  //   mutation; EVS-DEV-snapshot-promotion-on-open/A,B,C — promote lagging
+  //   rows and emit view_snapshot_promoted; EVS-DEV-event-store-open/E —
+  //   all three steps run inside one storage.transaction.
   static Future<void> _runBootSnapshotPromotionPass({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -566,17 +596,11 @@ class EventStore {
   /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. The
   /// substrate is the single source of truth for both fields; callers do
   /// not (and cannot) supply them. Ingest still validates
-  /// `entry_type_version` against the registry per REQ-d00145-M.
-  // Implements: REQ-d00141-B — per-field append API.
-  // Implements: REQ-d00141-E — lib_format_version stamped from
+  /// `entry_type_version` against the registry
   //   StoredEvent.currentLibFormatVersion on every append.
   // Implements: EVS-DEV-append-stamps-registered-version — substrate stamps
   //   entry_type_version from registry.registeredVersion; callers no longer
   //   pass the value.
-  // Implements: REQ-d00135-C — initiator replaces userId.
-  // Implements: REQ-d00136-A+E — flowToken nullable; hashed.
-  // Implements: REQ-d00137-C — event + security row commit atomically.
-  // Implements: REQ-d00140-B+C+E — materializers fire per event; def.materialize
   //   skip honored; throw rolls back entire append.
   Future<StoredEvent?> append({
     required String entryType,
@@ -642,9 +666,8 @@ class EventStore {
   /// by hand.
   ///
   /// Throws `StateError` (via `event.originatorHop`) when [event] has no
-  /// provenance entries; REQ-d00115 requires every event to carry at
+  /// provenance entries; requires every event to carry at
   /// least the originator hop.
-  // Implements: REQ-d00154-B — local-vs-upstream discrimination on
   // install UUID; comparison is on identifier, not hopId.
   bool isLocallyOriginated(StoredEvent event) =>
       event.originatorHop.identifier == source.identifier;
@@ -652,8 +675,6 @@ class EventStore {
   /// Delete the security-context row for [eventId] AND append one
   /// `security_context_redacted` event in the same transaction. The act
   /// of redaction is permanently auditable.
-  // Implements: REQ-d00138-D — clearSecurityContext semantics.
-  // Implements: REQ-d00138-G — redaction event is an immutable event-log row.
   Future<void> clearSecurityContext(
     String eventId, {
     required String reason,
@@ -669,8 +690,6 @@ class EventStore {
         );
       }
       await securityContexts.deleteInTxn(txn, eventId);
-      // Implements: REQ-d00138-D (revised: aggregateId=source.identifier),
-      //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate; the redaction subject moves into
       //   `data.subject_event_id` so callers can still query "all
       //   redactions of event X" by filtering on entry_type AND
@@ -702,8 +721,6 @@ class EventStore {
   /// (zero-effect sweeps included), plus per-population
   /// `security_context_compacted` / `security_context_purged` events
   /// when those sweeps are non-empty.
-  // Implements: REQ-d00138-B+C+E+F — compact + purge sweeps with audit.
-  // Implements: REQ-d00138-H — per-sweep retention_policy_applied audit
   //   (always, even on empty sweeps).
   Future<RetentionResult> applyRetentionPolicy({
     SecurityRetentionPolicy? policy,
@@ -736,8 +753,6 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        // Implements: REQ-d00138-E (revised: aggregateId=source.identifier),
-        //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
         await appendInTxn(
           txn,
@@ -761,8 +776,6 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        // Implements: REQ-d00138-F (revised: aggregateId=source.identifier),
-        //   REQ-d00154-D — system events use the install UUID as their
         //   aggregate.
         await appendInTxn(
           txn,
@@ -784,10 +797,7 @@ class EventStore {
           dedupeByContent: false,
         );
       }
-      // Implements: REQ-d00138-H — per-sweep audit, always emitted (the
       // operator wants a retention timeline, not just non-empty sweeps).
-      // Implements: REQ-d00138-H (revised: aggregateId=source.identifier),
-      //   REQ-d00154-D — system events use the install UUID as their
       //   aggregate.
       await appendInTxn(
         txn,
@@ -857,7 +867,6 @@ class EventStore {
   /// so the surrounding [_runInTxnWithPublish] / [runTransaction] call can
   /// publish it to the subscription bus after commit. Callers that open their
   /// own transaction via [runTransaction] MUST pass their collector here.
-  // Implements: REQ-d00141-B (delegated transactional half).
   Future<StoredEvent?> appendInTxn(
     Txn txn, {
     required String entryType,
@@ -896,9 +905,8 @@ class EventStore {
     );
 
     // dedupe-by-content
-    // Implements: REQ-d00134-F — dedupeByContent matches against the
     //   most-recent event of matching entry_type within the aggregate.
-    //   Multiple entry types may share an aggregate (REQ-d00154-D system
+    //   Multiple entry types may share an aggregate (-D system
     //   events under source.identifier); dedupe scopes per entry_type so
     //   each emission stream is treated independently.
     StoredEvent? prior;
@@ -998,7 +1006,6 @@ class EventStore {
     return sha256.convert(canonicalizeBytes(input)).toString();
   }
 
-  // Implements: REQ-d00120-A+B (Phase 4.4 revised) — hash over the Phase
   // 4.4 identity-field set.
   String _eventHash(Map<String, Object?> recordMap) =>
       _canonicalEventHash(recordMap);
@@ -1013,7 +1020,6 @@ class EventStore {
   /// Accepts an [incoming] StoredEvent, verifies Chain 1, checks idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
-  // Implements: REQ-d00145-G+I+J+K.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
     return _runInTxnWithPublish((txn, collector) async {
       return _ingestOneInTxn(
@@ -1033,7 +1039,6 @@ class EventStore {
   /// batch) if any subject has a hash conflict with an already-stored event.
   ///
   /// See design spec §2.5.
-  // Implements: REQ-d00145-A+B+E.
   Future<IngestBatchResult> ingestBatch(
     Uint8List bytes, {
     required String wireFormat,
@@ -1054,7 +1059,6 @@ class EventStore {
           Map<String, Object?>.from(eventMap),
           0,
         );
-        // Implements: REQ-d00145-L. Lib-format check runs first.
         if (storedEvent.libFormatVersion >
             StoredEvent.currentLibFormatVersion) {
           throw IngestLibFormatVersionAhead(
@@ -1063,7 +1067,6 @@ class EventStore {
             receiverVersion: StoredEvent.currentLibFormatVersion,
           );
         }
-        // Implements: REQ-d00145-M. Entry-type check second; def==null falls
         // through to the existing failure path inside _ingestOneInTxn.
         final def = entryTypes.byId(storedEvent.entryType);
         if (def != null &&
@@ -1100,7 +1103,6 @@ class EventStore {
   ///
   /// [batchContext] is non-null when called from `ingestBatch`, null when
   /// called from [ingestEvent].
-  // Implements: REQ-d00145-D+G+K; REQ-d00120-E.
   Future<PerEventIngestOutcome> _ingestOneInTxn(
     Txn txn,
     StoredEvent incoming, {
@@ -1191,11 +1193,10 @@ class EventStore {
     collector?.add(updatedEvent);
 
     // 7. Fire the projection interpreter symmetric with the local-append path.
-    // Implements: REQ-d00121-K, REQ-d00145-N — the ingest-path projection
     //   interpreter runs inside the same transaction as `appendEvent`, applying
     //   all registered ProjectionSpecs whose interest filter matches the event.
     //   A throw propagates out of `_ingestOneInTxn` and rolls back the entire
-    //   ingest transaction (REQ-d00145-A all-or-nothing batch atomicity).
+    //   ingest transaction (-A all-or-nothing batch atomicity).
     await _interpreter.applyEvent(
       txn: txn,
       backend: backend,
@@ -1221,7 +1222,6 @@ class EventStore {
   /// no inter-hop links to verify).
   ///
   /// See design spec §2.11.
-  // Implements: REQ-d00146-A+B+D+E.
   Future<ChainVerdict> verifyEventChain(StoredEvent event) async {
     return _verifyChainOn(event);
   }
@@ -1240,7 +1240,6 @@ class EventStore {
   /// made by this device — are skipped.
   ///
   /// See design spec §2.11.
-  // Implements: REQ-d00146-C+D+E — Chain 2 walk over the unified event log.
   Future<ChainVerdict> verifyIngestChain({
     int fromSequenceNumber = 0,
     int? toSequenceNumber,
@@ -1313,7 +1312,6 @@ class EventStore {
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
   /// verdict. Used by [ingestEvent] and [verifyEventChain].
-  // Implements: REQ-d00146-A+B.
   ChainVerdict _verifyChainOn(StoredEvent event) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List) {
@@ -1347,7 +1345,7 @@ class EventStore {
     // Walk from tail back to hop 1 (skip origin at index 0).
     //
     // Each receiver hop reassigns the stored event's `sequence_number` to
-    // its local counter (REQ-d00145-E). To recompute the hash at hop k-1,
+    // its local counter. To recompute the hash at hop k-1,
     // substitute the seq that was on the event when hop k-1 stored it:
     //
     //   - For k == 1 (recomputing the origin's hash): use the originator's
@@ -1400,11 +1398,9 @@ class EventStore {
   ///
   /// Under the unified event store, the receiver overwrites the wire-supplied
   /// `sequence_number` so origin and ingest events share one monotone counter
-  /// per device (REQ-d00145-E). The originator's wire-supplied
+  /// per device. The originator's wire-supplied
   /// `sequence_number` is preserved on [receiverEntry] as
-  /// `originSequenceNumber` (REQ-d00115).
-  // Implements: REQ-d00120-E — hash recomputed on receiver provenance append.
-  // Implements: REQ-d00145-E — local sequence_number reassignment.
+  /// `originSequenceNumber`.
   StoredEvent _appendReceiverProvenance(
     StoredEvent incoming,
     ProvenanceEntry receiverEntry, {
@@ -1433,7 +1429,7 @@ class EventStore {
   /// by [provenanceSlice] and (optionally) `sequence_number` overridden to
   /// [sequenceNumberOverride]. Used by [_verifyChainOn] to reconstruct what
   /// each intermediate hop's `event_hash` was, accounting for the receiver-
-  /// side reassignment of `sequence_number` (REQ-d00145-E).
+  /// side reassignment of `sequence_number`.
   String _hashWithProvenanceSlice(
     StoredEvent event,
     List<Map<String, Object?>> provenanceSlice, {
@@ -1473,7 +1469,6 @@ class EventStore {
   ///   );
   /// }
   /// ```
-  // Implements: REQ-d00145-H+I+J.
   Future<void> logRejectedBatch(
     Uint8List bytes, {
     required String wireFormat,
@@ -1526,7 +1521,6 @@ class EventStore {
 
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
   /// inside [txn]. Stamped with Chain 2 fields on `provenance[0]`.
-  // Implements: REQ-d00145-D+I+J; REQ-d00115-H+I.
   Future<void> _emitDuplicateReceivedInTxn(
     Txn txn, {
     required String subjectEventId,
@@ -1587,7 +1581,6 @@ const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 /// append path) and [_appendLibVersionEventToBackend] (the substrate-
 /// internal boot path) — previously duplicated between
 /// `_eventHash` and `_libVersionEventHash`.
-// Implements: REQ-d00120-A+B — hash over the 11-field identity set.
 String _canonicalEventHash(Map<String, Object?> recordMap) {
   final hashInput = <String, Object?>{
     'event_id': recordMap['event_id'],

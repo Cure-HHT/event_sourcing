@@ -35,26 +35,23 @@ class _ThrowOnIdAccess extends FakeDestination {
 
 void main() {
   group('bootstrapAppendOnlyDatastore', () {
-    test(
-      'REQ-d00134-A: returns AppendOnlyDatastore facade carrying eventStore, '
-      'entryTypes, destinations, securityContexts',
-      () async {
-        final backend = await _openBackend();
-        final ds = await bootstrapAppendOnlyDatastore(
-          backend: backend,
-          source: _source,
-          entryTypes: [_defn('demo_note')],
-          destinations: const <Destination>[],
-        );
-        expect(ds.eventStore, isA<EventStore>());
-        expect(ds.entryTypes, isA<EntryTypeRegistry>());
-        expect(ds.destinations, isA<DestinationRegistry>());
-        expect(ds.securityContexts, isA<SecurityContextStore>());
-        expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
-      },
-    );
+    test('returns AppendOnlyDatastore facade carrying eventStore, '
+        'entryTypes, destinations, securityContexts', () async {
+      final backend = await _openBackend();
+      final ds = await bootstrapAppendOnlyDatastore(
+        backend: backend,
+        source: _source,
+        entryTypes: [_defn('demo_note')],
+        destinations: const <Destination>[],
+      );
+      expect(ds.eventStore, isA<EventStore>());
+      expect(ds.entryTypes, isA<EntryTypeRegistry>());
+      expect(ds.destinations, isA<DestinationRegistry>());
+      expect(ds.securityContexts, isA<SecurityContextStore>());
+      expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
+    });
 
-    test('REQ-d00134-B: auto-registers 3 reserved system entry types BEFORE '
+    test('auto-registers 3 reserved system entry types BEFORE '
         'caller-supplied list', () async {
       final backend = await _openBackend();
       final ds = await bootstrapAppendOnlyDatastore(
@@ -68,7 +65,7 @@ void main() {
       expect(ds.entryTypes.isRegistered('security_context_purged'), isTrue);
     });
 
-    test('REQ-d00134-D: caller-supplied id colliding with reserved id throws '
+    test('caller-supplied id colliding with reserved id throws '
         'ArgumentError with "reserved" message', () async {
       final backend = await _openBackend();
       await expectLater(
@@ -88,7 +85,7 @@ void main() {
       );
     });
 
-    test('REQ-d00134-A+C: wires entry types and destinations; registry stays '
+    test('wires entry types and destinations; registry stays '
         'open', () async {
       final backend = await _openBackend();
       final types = [_defn('demo_note'), _defn('red_button')];
@@ -121,7 +118,7 @@ void main() {
       expect(ds.destinations.all(), hasLength(3));
     });
 
-    test('REQ-d00134-B: type-loop runs first — duplicate type id throws '
+    test('type-loop runs first — duplicate type id throws '
         'before any destination is registered', () async {
       final backend = await _openBackend();
       final types = [_defn('dup'), _defn('dup')];
@@ -139,7 +136,7 @@ void main() {
       expect(await backend.readSchedule('primary'), isNull);
     });
 
-    test('REQ-d00134-B: when the destination loop throws, supplied types were '
+    test('when the destination loop throws, supplied types were '
         'registered first (ordering proof)', () async {
       final backend = await _openBackend();
       final types = [_defn('demo_note'), _defn('red_button')];
@@ -166,7 +163,7 @@ void main() {
       expect(ds.entryTypes.isRegistered('red_button'), isTrue);
     });
 
-    test('REQ-d00134-D: duplicate destination id throws', () async {
+    test('duplicate destination id throws', () async {
       final backend = await _openBackend();
       final dests = [
         FakeDestination(id: 'x', script: const []),
@@ -185,7 +182,7 @@ void main() {
     });
 
     test(
-      'REQ-d00134-D: id collision after a successful first registration '
+      'id collision after a successful first registration '
       'leaves the first destination persisted (sequential registration)',
       () async {
         final backend = await _openBackend();

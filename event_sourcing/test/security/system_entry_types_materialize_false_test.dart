@@ -1,4 +1,3 @@
-// Verifies: REQ-d00154-D — all reserved system entry types ship
 //   materialize:false. Cross-aggregate stream events stay out of view-
 //   side projection on every install, on both the local-append path
 //   and the ingest path (the outer gate `def.materialize` short-
@@ -10,6 +9,13 @@
 //   start firing materializers on cross-aggregate stream events, which
 //   is out of scope for Phase 4.22. This test fails loudly if that
 //   happens.
+//
+// Verifies: EVS-PRD-event-log/A — all reserved system entry types have
+//   materialize:false, ensuring audit events never corrupt view-side state.
+// Verifies: EVS-DEV-event-store-open/B,C — lib_version_initialized and
+//   lib_version_changed are registered in kSystemEntryTypes so byId() returns
+//   non-null and SubscriptionFilter correctly gates them behind
+//   includeSystemEvents:true.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -21,15 +27,14 @@ const Source _source = Source(
 );
 
 void main() {
-  group('Reserved system entry types — materialize:false (REQ-d00154-D)', () {
-    // Verifies: REQ-d00154-D — every reserved system entry type
+  group('Reserved system entry types — materialize:false', () {
     //   auto-registered by `bootstrapAppendOnlyDatastore` ships
     //   `materialize: false`. Iteration is driven from
     //   `kReservedSystemEntryTypeIds` and the registry is consulted
     //   post-bootstrap so the test exercises the actual auto-registered
     //   `EntryTypeDefinition` instances rather than re-importing the
     //   internal `kSystemEntryTypes` list.
-    test('REQ-d00154-D: all reserved system entry types have '
+    test('all reserved system entry types have '
         'materialize:false', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'mat-false-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -62,7 +67,7 @@ void main() {
           equals(14),
           reason:
               'kReservedSystemEntryTypeIds is the canonical 14-element '
-              'set per REQ-d00154-D; adding a new system entry type '
+              'set per adding a new system entry type '
               'requires updating this expectation explicitly.',
         );
 
@@ -73,14 +78,14 @@ void main() {
             isNotNull,
             reason:
                 'reserved system entry type "$id" must be auto-registered '
-                'by bootstrapAppendOnlyDatastore (REQ-d00134-B).',
+                'by bootstrapAppendOnlyDatastore.',
           );
           expect(
             defn!.materialize,
             isFalse,
             reason:
                 '$id MUST ship materialize:false to keep cross-aggregate '
-                'stream events out of view-side projection (REQ-d00154-D). '
+                'stream events out of view-side projection. '
                 'Flipping a reserved system entry type to materialize:true '
                 'would start firing materializers on system audits — out '
                 'of scope for Phase 4.22.',

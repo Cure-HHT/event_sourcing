@@ -1,11 +1,13 @@
 // test/permissions/permission_snapshot_test.dart
-// Verifies: REQ-d00177-A (PermissionSnapshot value type and JSON).
+// Verifies: EVS-PRD-permissions-as-events/C — PermissionSnapshot round-trips
+// faithfully through JSON, confirming that log-derived permission state can
+// be serialized and restored without loss.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('PermissionSnapshot', () {
-    test('REQ-d00177-A: round-trips through JSON', () {
+    test('round-trips through JSON', () {
       final snap = PermissionSnapshot(
         role: 'admin',
         grants: <Permission>{

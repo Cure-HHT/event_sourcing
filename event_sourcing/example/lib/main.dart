@@ -17,7 +17,6 @@ import 'package:uuid/uuid.dart';
 
 /// Reads a persisted install UUID from [path], or mints + persists a new
 /// UUIDv4 if the file does not exist.
-// Implements: REQ-d00142-D — demo demonstrates per-installation unique
 //   identity by persisting a UUIDv4 per pane to disk on first boot and
 //   reading the same value on every subsequent boot.
 Future<String> _readOrMintUUID(String path) async {
@@ -55,8 +54,6 @@ class _PaneRuntime {
 /// portal's `EventStore.ingestBatch`. The portal pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
 /// simulator (existing behavior).
-// Implements: REQ-d00134 — single init point: registers entry types,
-// destinations, materializer. Implements: REQ-d00125 — 1-second tick
 // drives fillBatch + drain per destination with live policy from
 // the per-pane policyNotifier.
 Future<_PaneRuntime> _bootstrapPane({
@@ -85,7 +82,6 @@ Future<_PaneRuntime> _bootstrapPane({
       entryTypes: <String>['green_button_pressed', 'blue_button_pressed'],
     ),
   );
-  // Implements: REQ-d00128-J, REQ-d00154-F — the demo hosts two parallel
   //   native-wire destinations so the dual-pane UI shows both lanes
   //   reaching the downstream bridge:
   //     - NativeUser ships user-payload events only (the demo's three
@@ -93,8 +89,8 @@ Future<_PaneRuntime> _bootstrapPane({
   //       wedges this destination without affecting NativeAudit.
   //     - NativeAudit ships system audit events only
   //       (`includeSystemEvents: true` plus an empty entryTypes list).
-  //       This is the visible demonstration of REQ-d00128-J's
-  //       opt-in path and REQ-d00154-F's cross-hop forensic visibility.
+  //       This is the visible demonstration of -J's
+  //       opt-in path and its cross-hop forensic visibility.
   final nativeUser = NativeDemoDestination(
     id: 'NativeUser',
     filter: const SubscriptionFilter(
@@ -160,7 +156,6 @@ Future<_PaneRuntime> _bootstrapPane({
     policyNotifier: policyNotifier,
   );
 
-  // Implements: REQ-d00125-C, REQ-d00126-B+D — SyncCycle owns the
   // reentrancy guard and per-cycle policy resolution; we do per-pane
   // fillBatch in this tick body since SyncCycle covers drain + inbound
   // poll only.

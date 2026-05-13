@@ -1,6 +1,13 @@
 // test/permissions/role_permission_grants_spec_test.dart
-// Verifies rolePermissionGrantsSpec: insert, remove, no-op for unrelated
-// events, and idempotency (re-insert same row).
+// Verifies: EVS-PRD-permissions-as-events/A — permission_granted and
+//   permission_revoked events are written into the same event log as all
+//   other state changes, and the projection spec responds to them.
+// Verifies: EVS-PRD-permissions-as-events/B — the role_permission_grants
+//   view is the sole source of truth for authorization lookups; no external
+//   store is required.
+// Verifies: EVS-PRD-permissions-as-events/C — insert, remove, no-op for
+//   unrelated events, and idempotency (re-insert same row) confirm that the
+//   view is fully reconstructable from the event log alone.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

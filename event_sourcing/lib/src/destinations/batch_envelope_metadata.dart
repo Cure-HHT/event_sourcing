@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-destinations/E — BatchEnvelopeMetadata: metadata
+// persisted on FIFO rows for library-native destinations (serializesNatively)
+// so the drain path can reconstruct wire bytes deterministically at send
+// time without requiring the app to supply a transform.
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 
 /// Metadata extracted from a `BatchEnvelope` minus its events list.
@@ -6,8 +10,7 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 /// re-encoding `(envelope_metadata + events resolved via findEventById)`.
 ///
 /// The fields are immutable once set — they are part of the FIFO row's
-/// identity for retry determinism (REQ-d00119-K).
-// Implements: REQ-d00119-K — envelope-metadata value type for native
+/// identity for retry determinism.
 // FIFO rows; supports retry-deterministic re-encoding at drain time.
 class BatchEnvelopeMetadata {
   const BatchEnvelopeMetadata({
@@ -22,7 +25,6 @@ class BatchEnvelopeMetadata {
   /// Build from a parsed [BatchEnvelope]. Drops the `events` list — the
   /// drain path resolves events via `findEventById` and reattaches them
   /// at encode time.
-  // Implements: REQ-d00119-K — extract envelope identity from a parsed
   // BatchEnvelope, dropping the events list.
   factory BatchEnvelopeMetadata.fromEnvelope(BatchEnvelope env) {
     return BatchEnvelopeMetadata(
@@ -35,7 +37,6 @@ class BatchEnvelopeMetadata {
     );
   }
 
-  // Implements: REQ-d00119-K — restore envelope metadata from a serialized
   // map (sembast row deserialization).
   factory BatchEnvelopeMetadata.fromMap(Map<String, Object?> m) {
     return BatchEnvelopeMetadata(
@@ -59,7 +60,6 @@ class BatchEnvelopeMetadata {
   /// drain path: after `findEventById` resolves each event in `event_ids`,
   /// the events are passed here to rebuild the envelope and `.encode()`
   /// is called to produce wire bytes.
-  // Implements: REQ-d00119-K — reattach events for retry-deterministic
   // re-encode at drain time.
   BatchEnvelope toEnvelope(List<Map<String, Object?>> events) {
     return BatchEnvelope(
@@ -73,7 +73,6 @@ class BatchEnvelopeMetadata {
     );
   }
 
-  // Implements: REQ-d00119-K — serialize envelope metadata for sembast
   // row persistence.
   Map<String, Object?> toMap() => <String, Object?>{
     'batch_format_version': batchFormatVersion,

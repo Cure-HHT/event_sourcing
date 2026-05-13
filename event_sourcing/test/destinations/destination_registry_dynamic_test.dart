@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/A/D/F — exercises the full dynamic lifecycle
+// of DestinationRegistry: dormant-seed on add (A), schedule persistence and
+// cold-restart recovery (D), and monotonic-backward setStartDate + gap-replay
+// semantics supporting dynamic re-configuration (F).
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -18,7 +22,7 @@ Future<SembastBackend> _openBackend(String path) async {
 }
 
 void main() {
-  group('DestinationRegistry (dynamic lifecycle, REQ-d00129)', () {
+  group('DestinationRegistry (dynamic lifecycle', () {
     late SembastBackend backend;
     late DestinationRegistry registry;
     var dbCounter = 0;
@@ -37,50 +41,41 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00129-A — addDestination registers at any time; the
     // first addDestination lands a dormant schedule, and all() returns it.
-    test(
-      'REQ-d00129-A: addDestination registers and seeds a dormant schedule',
-      () async {
-        final d = FakeDestination(id: 'primary');
-        await registry.addDestination(d, initiator: _testInit);
+    test('addDestination registers and seeds a dormant schedule', () async {
+      final d = FakeDestination(id: 'primary');
+      await registry.addDestination(d, initiator: _testInit);
 
-        expect(registry.all().map((x) => x.id), ['primary']);
-        expect(registry.byId('primary'), same(d));
-        final schedule = await registry.scheduleOf('primary');
-        expect(schedule.isDormant, isTrue);
-        expect(schedule.startDate, isNull);
-        expect(schedule.endDate, isNull);
-        // Persisted too (a later process restart recovers the dormant
-        // state).
-        final persisted = await backend.readSchedule('primary');
-        expect(persisted, const DestinationSchedule());
-      },
-    );
+      expect(registry.all().map((x) => x.id), ['primary']);
+      expect(registry.byId('primary'), same(d));
+      final schedule = await registry.scheduleOf('primary');
+      expect(schedule.isDormant, isTrue);
+      expect(schedule.startDate, isNull);
+      expect(schedule.endDate, isNull);
+      // Persisted too (a later process restart recovers the dormant
+      // state).
+      final persisted = await backend.readSchedule('primary');
+      expect(persisted, const DestinationSchedule());
+    });
 
-    // Verifies: REQ-d00129-A — duplicate id throws ArgumentError on the
     // second addDestination.
-    test(
-      'REQ-d00129-A: addDestination with duplicate id throws ArgumentError',
-      () async {
-        await registry.addDestination(
+    test('addDestination with duplicate id throws ArgumentError', () async {
+      await registry.addDestination(
+        FakeDestination(id: 'primary'),
+        initiator: _testInit,
+      );
+      await expectLater(
+        registry.addDestination(
           FakeDestination(id: 'primary'),
           initiator: _testInit,
-        );
-        await expectLater(
-          registry.addDestination(
-            FakeDestination(id: 'primary'),
-            initiator: _testInit,
-          ),
-          throwsArgumentError,
-        );
-      },
-    );
+        ),
+        throwsArgumentError,
+      );
+    });
 
-    // Verifies: REQ-d00129-A — addDestination is allowed AFTER a prior
     // read of the registry (no freeze). This is the behavior change from
-    // Phase 4's REQ-d00122-G.
-    test('REQ-d00129-A: registry does NOT freeze on first read; subsequent '
+    // Phase 4's
+    test('registry does NOT freeze on first read; subsequent '
         'addDestination succeeds', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -96,30 +91,25 @@ void main() {
       expect(registry.all().map((d) => d.id), ['primary', 'secondary']);
     });
 
-    // Verifies: REQ-d00129-C — setStartDate assigns once; schedule
     // reflects the new startDate and persists.
-    test(
-      'REQ-d00129-C: setStartDate assigns a startDate and persists it',
-      () async {
-        await registry.addDestination(
-          FakeDestination(id: 'primary'),
-          initiator: _testInit,
-        );
-        final start = DateTime.utc(2026, 4, 1);
-        await registry.setStartDate('primary', start, initiator: _testInit);
+    test('setStartDate assigns a startDate and persists it', () async {
+      await registry.addDestination(
+        FakeDestination(id: 'primary'),
+        initiator: _testInit,
+      );
+      final start = DateTime.utc(2026, 4, 1);
+      await registry.setStartDate('primary', start, initiator: _testInit);
 
-        final schedule = await registry.scheduleOf('primary');
-        expect(schedule.startDate, start);
-        expect(schedule.endDate, isNull);
-        expect(schedule.isDormant, isFalse);
-        final persisted = await backend.readSchedule('primary');
-        expect(persisted?.startDate, start);
-      },
-    );
+      final schedule = await registry.scheduleOf('primary');
+      expect(schedule.startDate, start);
+      expect(schedule.endDate, isNull);
+      expect(schedule.isDormant, isFalse);
+      final persisted = await backend.readSchedule('primary');
+      expect(persisted?.startDate, start);
+    });
 
-    // Verifies: REQ-d00129-C — forward movement is forbidden; a later
     // setStartDate throws StateError and leaves the prior value intact.
-    test('REQ-d00129-C: setStartDate throws StateError on forward movement '
+    test('setStartDate throws StateError on forward movement '
         '(later than current)', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -143,29 +133,24 @@ void main() {
       expect(schedule.startDate, DateTime.utc(2026, 4, 1));
     });
 
-    // Verifies: REQ-d00129-C — calling with the same startDate is a no-op.
-    test(
-      'REQ-d00129-C: setStartDate is a no-op when when == current',
-      () async {
-        await registry.addDestination(
-          FakeDestination(id: 'primary'),
-          initiator: _testInit,
-        );
-        final start = DateTime.utc(2026, 4, 1);
-        await registry.setStartDate('primary', start, initiator: _testInit);
-        // Second call with the exact same value: must not throw, must not
-        // alter persisted state.
-        await registry.setStartDate('primary', start, initiator: _testInit);
-        final schedule = await registry.scheduleOf('primary');
-        expect(schedule.startDate, start);
-      },
-    );
+    test('setStartDate is a no-op when when == current', () async {
+      await registry.addDestination(
+        FakeDestination(id: 'primary'),
+        initiator: _testInit,
+      );
+      final start = DateTime.utc(2026, 4, 1);
+      await registry.setStartDate('primary', start, initiator: _testInit);
+      // Second call with the exact same value: must not throw, must not
+      // alter persisted state.
+      await registry.setStartDate('primary', start, initiator: _testInit);
+      final schedule = await registry.scheduleOf('primary');
+      expect(schedule.startDate, start);
+    });
 
-    // Verifies: REQ-d00129-C — backward movement succeeds and the
     // schedule reflects the new (earlier) value. Gap replay is exercised
     // separately via dedicated event-log fixtures; this test focuses on
     // the schedule write itself.
-    test('REQ-d00129-C: setStartDate accepts backward movement (earlier '
+    test('setStartDate accepts backward movement (earlier '
         'than current)', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -181,9 +166,8 @@ void main() {
       expect(persisted?.startDate, earlier);
     });
 
-    // Verifies: REQ-d00129-F — setEndDate with a past endDate on a
     // currently-active destination returns closed.
-    test('REQ-d00129-F: setEndDate returns closed when the call transitions '
+    test('setEndDate returns closed when the call transitions '
         'active -> currently-closed', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -206,9 +190,8 @@ void main() {
       expect(schedule.endDate, past);
     });
 
-    // Verifies: REQ-d00129-F — setEndDate with a future endDate on a
     // currently-active destination returns scheduled.
-    test('REQ-d00129-F: setEndDate returns scheduled when endDate is in the '
+    test('setEndDate returns scheduled when endDate is in the '
         'future (active destination)', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -228,10 +211,9 @@ void main() {
       expect(result, SetEndDateResult.scheduled);
     });
 
-    // Verifies: REQ-d00129-F — overwriting an existing past endDate with
     // another past endDate leaves the classification unchanged and
     // returns applied.
-    test('REQ-d00129-F: setEndDate returns applied when classification does '
+    test('setEndDate returns applied when classification does '
         'not change relative to now', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -256,9 +238,8 @@ void main() {
       expect(schedule.endDate, secondPast);
     });
 
-    // Verifies: REQ-d00129-G — deactivateDestination is a setEndDate(now)
     // shorthand; returns closed.
-    test('REQ-d00129-G: deactivateDestination returns closed and stamps '
+    test('deactivateDestination returns closed and stamps '
         'endDate at approximately now()', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -288,9 +269,8 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00129-H — deleteDestination throws StateError when
     // the destination's allowHardDelete is false.
-    test('REQ-d00129-H: deleteDestination throws StateError when '
+    test('deleteDestination throws StateError when '
         'allowHardDelete is false', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -304,10 +284,9 @@ void main() {
       expect(registry.byId('primary'), isNotNull);
     });
 
-    // Verifies: REQ-d00129-H — when allowHardDelete is true,
     // deleteDestination unregisters + drops FIFO + drops schedule in one
     // transaction.
-    test('REQ-d00129-H: deleteDestination drops FIFO store and schedule when '
+    test('deleteDestination drops FIFO store and schedule when '
         'allowHardDelete is true', () async {
       final d = FakeDestination(id: 'purgeable', allowHardDelete: true);
       await registry.addDestination(d, initiator: _testInit);
@@ -366,54 +345,49 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00129-C — monotonic-backward semantics survive a
     // process restart. A fresh registry bound to the same backend must
     // recover the persisted startDate AND continue rejecting forward
     // movement against it.
-    test(
-      'REQ-d00129-C: monotonic-backward semantics survive cold restart',
-      () async {
-        await registry.addDestination(
-          FakeDestination(id: 'x', script: []),
+    test('monotonic-backward semantics survive cold restart', () async {
+      await registry.addDestination(
+        FakeDestination(id: 'x', script: []),
+        initiator: _testInit,
+      );
+      final originalStart = DateTime.utc(2026, 1, 1);
+      await registry.setStartDate('x', originalStart, initiator: _testInit);
+
+      // Simulate a process restart: construct a new registry over the
+      // same backend, re-run bootstrap's addDestination call.
+      final restartedDeps = await buildAuditedRegistryDeps(backend);
+      final restarted = DestinationRegistry(
+        backend: backend,
+        eventStore: restartedDeps.eventStore,
+      );
+      await restarted.addDestination(
+        FakeDestination(id: 'x', script: []),
+        initiator: _testInit,
+      );
+
+      // The persisted schedule must be preserved.
+      final restored = await restarted.scheduleOf('x');
+      expect(restored.startDate, originalStart);
+
+      // Forward movement is still rejected.
+      await expectLater(
+        restarted.setStartDate(
+          'x',
+          DateTime.utc(2027, 1, 1),
           initiator: _testInit,
-        );
-        final originalStart = DateTime.utc(2026, 1, 1);
-        await registry.setStartDate('x', originalStart, initiator: _testInit);
+        ),
+        throwsStateError,
+      );
+    });
 
-        // Simulate a process restart: construct a new registry over the
-        // same backend, re-run bootstrap's addDestination call.
-        final restartedDeps = await buildAuditedRegistryDeps(backend);
-        final restarted = DestinationRegistry(
-          backend: backend,
-          eventStore: restartedDeps.eventStore,
-        );
-        await restarted.addDestination(
-          FakeDestination(id: 'x', script: []),
-          initiator: _testInit,
-        );
-
-        // The persisted schedule must be preserved.
-        final restored = await restarted.scheduleOf('x');
-        expect(restored.startDate, originalStart);
-
-        // Forward movement is still rejected.
-        await expectLater(
-          restarted.setStartDate(
-            'x',
-            DateTime.utc(2027, 1, 1),
-            initiator: _testInit,
-          ),
-          throwsStateError,
-        );
-      },
-    );
-
-    // Verifies: REQ-d00129-C + REQ-d00130-D — backward setStartDate
     // triggers a gap replay over [newStartDate, oldStartDate). Events
     // already enqueued under the prior (later) startDate stay in the
     // FIFO; events in the gap window are added; events strictly before
     // the new startDate stay out.
-    test('REQ-d00129-C + REQ-d00130-D: backward setStartDate gap-replays '
+    test('backward setStartDate gap-replays '
         'events in [newStartDate, oldStartDate)', () async {
       // Append events with explicit client_timestamps spanning four days.
       // SembastBackend.appendEventTxn lets us bypass EventStore's "now"
@@ -507,13 +481,12 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00129-F — replacing a future-dated endDate with
     // another future-dated endDate on an active destination does not
     // change the active-vs-closed classification AND does not newly
     // schedule a close (a close is already scheduled); the return code
     // is `applied`, not `scheduled`.
     test(
-      'REQ-d00129-F: setEndDate returns applied when replacing a future '
+      'setEndDate returns applied when replacing a future '
       'endDate with another future endDate on an active destination',
       () async {
         await registry.addDestination(

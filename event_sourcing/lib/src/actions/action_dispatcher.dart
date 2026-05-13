@@ -1,10 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline): owner of the 10-stage pipeline.
-//   This file implements all 10 stages:
-//     1 (lookup), 2 (invocation_id), 3 (parse), 4 (idempotency check),
-//     5 (validate), 6 (authorize), 7 (execute), 8 (atomic multi-event persist),
-//     9 (record idempotency — REQ-d00168-J, REQ-d00170-D),
-//     10 (return success — REQ-d00168-K).
+// Implements: EVS-PRD-action-dispatch/A (accepts actions submitted by principals)
+// Implements: EVS-PRD-action-dispatch/B (parse → validate → authorize → execute → record, in that order)
+// Implements: EVS-PRD-action-dispatch/C (every dispatch produces a recorded outcome: success events or denial event)
+// Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
+// Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
+// Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
@@ -24,7 +23,7 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:uuid/uuid.dart';
 
 /// Runs every untrusted-ingress action through the standard 10-stage
-/// pipeline. See REQ-d00168 in `spec/dev-event-sourcing.md` for the
+/// pipeline. in `spec/dev-event-sourcing.md` for the
 /// stage list and contract.
 class ActionDispatcher {
   ActionDispatcher({
@@ -43,14 +42,14 @@ class ActionDispatcher {
 
   /// Dispatch one action call.
   ///
-  /// Pipeline (per REQ-d00168):
+  /// Pipeline (per ):
   ///   Stage 1 — lookup `actionName` in [registry]. If unknown, emit
   ///             `unknown_action` denial event and return
   ///             [DispatchUnknownAction].
   ///   Stage 2 — generate v4 UUID `action_invocation_id`; stamp it into
   ///             every emitted event's metadata.
   ///   (Pre-Stage 3) — idempotency-required precondition check
-  ///             (REQ-d00170-B): if action requires a key and none was
+  ///            : if action requires a key and none was
   ///             supplied, emit `parse_denied` and return before
   ///             parseInput runs.
   ///   Stage 3 — call `action.parseInput(rawInput)`; on throw, emit
@@ -97,7 +96,6 @@ class ActionDispatcher {
     };
 
     // Stage 1: lookup
-    // Implements: REQ-d00168-B
     final action = registry.lookup(actionName);
     if (action == null) {
       final denial = denialUnknownAction(
@@ -109,7 +107,7 @@ class ActionDispatcher {
       return DispatchResult<Object?>.unknownAction(actionName);
     }
 
-    // Idempotency-required precondition check (REQ-d00170-B).
+    // Idempotency-required precondition check.
     // Must run BEFORE parseInput per spec: missing-required-key is a
     // parse-stage denial that fires before the action gets to see the raw
     // input.
@@ -126,7 +124,6 @@ class ActionDispatcher {
     }
 
     // Stage 3: parse
-    // Implements: REQ-d00168-D
     final Object? parsedInput;
     try {
       parsedInput = action.parseInput(rawInput);
@@ -142,7 +139,6 @@ class ActionDispatcher {
     }
 
     // Stage 4: idempotency cache lookup
-    // Implements: REQ-d00168-E, REQ-d00170-A,C
     // Skip entirely for Idempotency.none; also skip if no key was supplied
     // (covers Idempotency.optional with no key).
     if (action.idempotency != Idempotency.none && idempotencyKey != null) {
@@ -162,7 +158,6 @@ class ActionDispatcher {
     }
 
     // Stage 5: validate
-    // Implements: REQ-d00168-F
     try {
       action.validate(parsedInput);
     } on Object catch (err) {
@@ -177,7 +172,6 @@ class ActionDispatcher {
     }
 
     // Stage 6: authorize
-    // Implements: REQ-d00168-G
     final principal = ctx.principal;
     final principalActiveRole = principal is UserPrincipal
         ? principal.activeRole
@@ -200,7 +194,6 @@ class ActionDispatcher {
     }
 
     // Stage 7: execute
-    // Implements: REQ-d00168-H
     //
     // The registry stores Action<Object?, Object?> so action.execute
     // already returns ExecutionResult<Object?> — no cast needed.
@@ -219,7 +212,6 @@ class ActionDispatcher {
     }
 
     // Stage 8: atomic persist of all events in one transaction.
-    // Implements: REQ-d00168-I
     final emittedEventIds = <String>[];
     final initiator = ctx.principal.toInitiator();
     final security = executionResult.securityDetailsOverride ?? ctx.security;
@@ -269,7 +261,6 @@ class ActionDispatcher {
     }
 
     // Stage 9: record idempotency
-    // Implements: REQ-d00168-J, REQ-d00170-D
     if (action.idempotency != Idempotency.none && idempotencyKey != null) {
       final resultJson = _resultToJson(executionResult.result);
       await idempotency.record(
@@ -283,7 +274,6 @@ class ActionDispatcher {
     }
 
     // Stage 10: return success
-    // Implements: REQ-d00168-K
     return DispatchResult<Object?>.success(
       executionResult.result,
       emittedEventIds,

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/A (registry stores and looks up Action instances by name; collision detection)
+// Verifies: EVS-PRD-action-dispatch/B (Stage 1 contract: lookup returns action or null for unknown name)
+
 import 'package:event_sourcing/event_sourcing.dart' show EventDraft;
 import 'package:event_sourcing/src/actions/action.dart';
 import 'package:event_sourcing/src/actions/action_context.dart';
@@ -38,13 +41,13 @@ class _A extends Action<Map<String, Object?>, void> {
 
 void main() {
   group('ActionRegistry', () {
-    test('REQ-d00167-A: register stores the action', () {
+    test('register stores the action', () {
       final r = ActionRegistry()
         ..register(_A('a', {const Permission('p1', scope: ScopeClass.global)}));
       expect(r.lookup('a'), isNotNull);
     });
 
-    test('REQ-d00167-A: duplicate name throws ArgumentError', () {
+    test('duplicate name throws ArgumentError', () {
       final r = ActionRegistry()
         ..register(_A('a', {const Permission('p1', scope: ScopeClass.global)}));
       expect(
@@ -55,12 +58,12 @@ void main() {
       );
     });
 
-    test('REQ-d00167-B: lookup of unknown name returns null', () {
+    test('lookup of unknown name returns null', () {
       final r = ActionRegistry();
       expect(r.lookup('nope'), isNull);
     });
 
-    test('REQ-d00167-C: allDeclaredPermissions is the union', () {
+    test('allDeclaredPermissions is the union', () {
       final r = ActionRegistry()
         ..register(
           _A('a', {

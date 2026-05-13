@@ -1,6 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00166-A+B+C+D+E+F — Action interface contract.
-//   REQ-d00170 (Idempotency Contract) — Idempotency.none policy.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

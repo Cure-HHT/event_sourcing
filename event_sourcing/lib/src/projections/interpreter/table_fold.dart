@@ -1,4 +1,11 @@
 // event_sourcing/lib/src/projections/interpreter/table_fold.dart
+//
+// Implements: EVS-PRD-materializer/A — TableFold is the fold engine for the
+//   TableProjectionSpec shape, one of the two shapes the library's
+//   materializer provides.
+// Implements: EVS-PRD-materializer/B — the fold is deterministic: upsert on
+//   insert, delete on remove, no-op on absent row; applying the same events
+//   in the same order from the same state yields identical results.
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';

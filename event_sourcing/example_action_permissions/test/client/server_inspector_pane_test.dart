@@ -1,4 +1,7 @@
 // test/client/server_inspector_pane_test.dart
+// Verifies: EVS-PRD-event-log/D
+// Verifies: EVS-PRD-permissions-as-events/B/C
+// Verifies: EVS-PRD-action-dispatch/C
 import 'dart:convert';
 
 import 'package:action_permissions_demo/client/http_client.dart';

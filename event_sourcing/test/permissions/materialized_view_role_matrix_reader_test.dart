@@ -1,5 +1,10 @@
 // test/permissions/materialized_view_role_matrix_reader_test.dart
-// Verifies: REQ-d00176-C (server-side RoleMatrixReader over StorageBackend).
+// Verifies: EVS-PRD-permissions-as-events/B — isGranted and grantsForRole
+//   read exclusively from the event-log projection; no external authority
+//   is consulted.
+// Verifies: EVS-PRD-permissions-as-events/C — appending permission_granted
+//   makes isGranted return true; appending permission_revoked removes the
+//   row, confirming the view is fully reconstructable from the event log.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -13,82 +18,73 @@ void main() {
       eventStore = await buildInMemoryEventStore();
     });
 
-    test(
-      'REQ-d00176-C: isGranted returns true after PermissionGranted appended',
-      () async {
-        const payload = PermissionGrantedPayload(
+    test('isGranted returns true after PermissionGranted appended', () async {
+      const payload = PermissionGrantedPayload(
+        role: 'admin',
+        permissionName: 'user.invite',
+        scope: ScopeClass.global,
+      );
+      await eventStore.append(
+        entryType: 'role_permission_grant',
+        aggregateType: 'role_permission_grant',
+        aggregateId: 'admin:user.invite',
+        eventType: 'permission_granted',
+        data: payload.toJson(),
+        initiator: const AutomationInitiator(service: 'test'),
+      );
+      final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
+      expect(await reader.isGranted('admin', 'user.invite'), isTrue);
+    });
+
+    test('isGranted returns false after PermissionRevoked appended', () async {
+      await eventStore.append(
+        entryType: 'role_permission_grant',
+        aggregateType: 'role_permission_grant',
+        aggregateId: 'admin:user.invite',
+        eventType: 'permission_granted',
+        data: const PermissionGrantedPayload(
           role: 'admin',
           permissionName: 'user.invite',
           scope: ScopeClass.global,
-        );
-        await eventStore.append(
-          entryType: 'role_permission_grant',
-          aggregateType: 'role_permission_grant',
-          aggregateId: 'admin:user.invite',
-          eventType: 'permission_granted',
-          data: payload.toJson(),
-          initiator: const AutomationInitiator(service: 'test'),
-        );
-        final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
-        expect(await reader.isGranted('admin', 'user.invite'), isTrue);
-      },
-    );
+        ).toJson(),
+        initiator: const AutomationInitiator(service: 'test'),
+      );
+      await eventStore.append(
+        entryType: 'role_permission_grant',
+        aggregateType: 'role_permission_grant',
+        aggregateId: 'admin:user.invite',
+        eventType: 'permission_revoked',
+        data: const <String, Object?>{
+          'role': 'admin',
+          'permissionName': 'user.invite',
+        },
+        initiator: const AutomationInitiator(service: 'test'),
+      );
+      final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
+      expect(await reader.isGranted('admin', 'user.invite'), isFalse);
+    });
 
-    test(
-      'REQ-d00176-C: isGranted returns false after PermissionRevoked appended',
-      () async {
+    test('grantsForRole returns all current grants for role', () async {
+      for (final perm in <String>['user.invite', 'user.role.assign']) {
         await eventStore.append(
           entryType: 'role_permission_grant',
           aggregateType: 'role_permission_grant',
-          aggregateId: 'admin:user.invite',
+          aggregateId: 'admin:$perm',
           eventType: 'permission_granted',
-          data: const PermissionGrantedPayload(
+          data: PermissionGrantedPayload(
             role: 'admin',
-            permissionName: 'user.invite',
+            permissionName: perm,
             scope: ScopeClass.global,
           ).toJson(),
           initiator: const AutomationInitiator(service: 'test'),
         );
-        await eventStore.append(
-          entryType: 'role_permission_grant',
-          aggregateType: 'role_permission_grant',
-          aggregateId: 'admin:user.invite',
-          eventType: 'permission_revoked',
-          data: const <String, Object?>{
-            'role': 'admin',
-            'permissionName': 'user.invite',
-          },
-          initiator: const AutomationInitiator(service: 'test'),
-        );
-        final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
-        expect(await reader.isGranted('admin', 'user.invite'), isFalse);
-      },
-    );
-
-    test(
-      'REQ-d00176-C: grantsForRole returns all current grants for role',
-      () async {
-        for (final perm in <String>['user.invite', 'user.role.assign']) {
-          await eventStore.append(
-            entryType: 'role_permission_grant',
-            aggregateType: 'role_permission_grant',
-            aggregateId: 'admin:$perm',
-            eventType: 'permission_granted',
-            data: PermissionGrantedPayload(
-              role: 'admin',
-              permissionName: perm,
-              scope: ScopeClass.global,
-            ).toJson(),
-            initiator: const AutomationInitiator(service: 'test'),
-          );
-        }
-        final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
-        final grants = await reader.grantsForRole('admin');
-        expect(grants.map((p) => p.name).toSet(), <String>{
-          'user.invite',
-          'user.role.assign',
-        });
-      },
-    );
+      }
+      final reader = MaterializedViewRoleMatrixReader(eventStore.backend);
+      final grants = await reader.grantsForRole('admin');
+      expect(grants.map((p) => p.name).toSet(), <String>{
+        'user.invite',
+        'user.role.assign',
+      });
+    });
   });
 }

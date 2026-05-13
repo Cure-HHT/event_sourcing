@@ -1,4 +1,6 @@
 // test/client/action_buttons_panel_test.dart
+// Verifies: EVS-PRD-permissions-as-events/B
+// Verifies: EVS-PRD-action-dispatch/A
 import 'dart:convert';
 
 import 'package:action_permissions_demo/client/action_buttons_panel.dart';

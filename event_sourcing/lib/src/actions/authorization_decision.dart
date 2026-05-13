@@ -1,10 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00173-B+C+D: isPermitted returns AuthorizationDecision (Allow
-//   or Deny); Deny carries the denied Permission and a DenyReason; the
-//   DenyReason enum has the three closed values notGranted,
-//   sessionPreconditionMissing, bootstrapFailure.
-//   REQ-d00171: the dispatcher uses Deny.permission and Deny.reason to
-//   construct authorization_denied denial events.
+// Implements: EVS-PRD-action-dispatch/B (authorize stage outcome type: Allow falls through; Deny short-circuits to denial event)
+// Implements: EVS-PRD-action-dispatch/C (Deny carries permission + reason so dispatcher can record authorization_denied)
+// Implements: EVS-PRD-permissions-as-events/B (authorization evaluated solely from event-derived projections; this sealed type carries the decision)
 
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:meta/meta.dart';

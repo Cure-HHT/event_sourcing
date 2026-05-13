@@ -2,6 +2,9 @@
 /// should carry security telemetry. Dispatcher stamps `eventId` and
 /// `recordedAt` on write; redaction fields are set by the retention
 /// policy or explicit `clearSecurityContext`, never by the caller.
+// Implements: EVS-PRD-regulatory-alignment/A — caller-supplied fields feed
+//   the `EventSecurityContext.recordedAt` timestamp that satisfies the
+//   ALCOA+ Contemporaneous obligation.
 class SecurityDetails {
   const SecurityDetails({
     this.ipAddress,

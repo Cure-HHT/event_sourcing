@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-destinations/A/D/F — DestinationRegistry: configures
+// destinations on a deployment (A), persists schedules so state survives
+// restart (D), and supports dynamic add/deactivate/delete over the
+// operating lifetime (F).
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';
@@ -10,7 +14,7 @@ import 'package:event_sourcing/src/sync/historical_replay.dart';
 
 /// Process-wide registry of synchronization destinations.
 ///
-/// Under REQ-d00129, the registry supports a dynamic lifecycle: destinations
+/// Under , the registry supports a dynamic lifecycle: destinations
 /// may be added at any time after bootstrap, their `startDate` may be set
 /// or moved earlier (monotonically non-increasing — forward movement
 /// throws), their `endDate` may be mutated, and they may be deactivated
@@ -28,24 +32,17 @@ import 'package:event_sourcing/src/sync/historical_replay.dart';
 /// Production code constructs a single instance during bootstrap; tests
 /// construct a fresh instance per test against an in-memory
 /// `SembastBackend` and a matching `EventStore`.
-// Implements: REQ-d00122-A — destination ids are unique in the registry.
-// Implements: REQ-d00129-A+J — addDestination accepts registrations at any
 // time after bootstrap; duplicate id is rejected; emits a registration
 // audit event atomically with the schedule write.
-// Implements: REQ-d00129-C+K — setStartDate is monotonically
 // non-increasing (earlier OK, equal no-op, later throws); emits a
 // start_date audit event atomically with the schedule write and any
 // applicable replay (historical on first activation, gap on backward
 // move).
-// Implements: REQ-d00129-F+G+L — setEndDate returns SetEndDateResult;
 // deactivateDestination is the now() shorthand; both emit an end_date
 // audit event atomically with the schedule write.
-// Implements: REQ-d00129-H+M — deleteDestination is gated on
 // allowHardDelete and drops the schedule + FIFO store atomically with
 // a deletion audit event.
-// Implements: REQ-d00129-N — every audit emission participates in the
 // same transaction as the mutation, so partial states cannot persist.
-// Implements: REQ-d00144-A+B+C+D+E+F+G — tombstoneAndRefill is the sole
 // operator wedge-recovery primitive; emits a wedge-recovery audit event
 // atomically with the FIFO mutations.
 class DestinationRegistry {
@@ -78,15 +75,12 @@ class DestinationRegistry {
   /// transaction as the schedule write.
   ///
   /// Throws `ArgumentError` if a destination with the same id is already
-  /// registered (REQ-d00129-A).
-  // Implements: REQ-d00129-A — addDestination at any time after
+  /// registered.
   // bootstrap; duplicate id rejected with ArgumentError.
-  // Implements: REQ-d00129-C — addDestination preserves any persisted
   // schedule across process restart, so setStartDate's monotonic-
   // backward semantics survive bootstrap re-running addDestination
   // with the same id. Only seeds a dormant schedule when no schedule
   // is persisted.
-  // Implements: REQ-d00129-J+N — registration audit emitted in the same
   // transaction as the schedule write.
   Future<void> addDestination(
     Destination destination, {
@@ -97,7 +91,7 @@ class DestinationRegistry {
         destination.id,
         'destination.id',
         'destination id ${destination.id} is already registered '
-            '(REQ-d00129-A)',
+            '',
       );
     }
     // Read schedule outside the txn — it's a pure read, and the
@@ -121,7 +115,6 @@ class DestinationRegistry {
           'serializes_natively': destination.serializesNatively,
           'filter_entry_types': destination.filter.entryTypes?.toList(),
           'filter_event_types': destination.filter.eventTypes?.toList(),
-          // REQ-d00129-J: explicit null until SubscriptionFilter exposes a
           // predicate API. Downstream key-based queries should find the
           // key present-but-null rather than absent.
           'filter_predicate_description': null,
@@ -150,7 +143,6 @@ class DestinationRegistry {
   /// in-memory cache; the cache is populated by `addDestination` and
   /// kept current by `setStartDate` / `setEndDate`. Throws
   /// `ArgumentError` when [id] is not registered.
-  // Implements: REQ-d00129-A+C+F — schedule read surface for
   // downstream fillBatch time-window filtering.
   Future<DestinationSchedule> scheduleOf(String id) async {
     final cached = _schedules[id];
@@ -168,15 +160,15 @@ class DestinationRegistry {
   }
 
   /// Assign or move [when] as the destination's `startDate`
-  /// (REQ-d00129-C). The contract is monotonic-backward — earlier OK,
+  ///. The contract is monotonic-backward — earlier OK,
   /// equal no-op, later throws:
   ///
   /// - `current.startDate == null` (first activation): persists [when]
   ///   as the new `startDate`. If [when] is at or before `DateTime.now()`
   ///   the call triggers historical replay synchronously in the same
-  ///   transaction (REQ-d00129-D). If [when] is in the future, no
+  ///   transaction. If [when] is in the future, no
   ///   replay runs — events accumulate in `event_log` and are batched by
-  ///   `fillBatch` once the wall-clock crosses [when] (REQ-d00129-E).
+  ///   `fillBatch` once the wall-clock crosses [when].
   /// - `when < current.startDate` (move earlier): persists [when] and
   ///   triggers a gap replay over `[when, current.startDate)` in the
   ///   same transaction. The gap replay walks the event log
@@ -193,17 +185,12 @@ class DestinationRegistry {
   /// previous value, or `null` on first activation).
   ///
   /// Throws `ArgumentError` when [id] is not registered.
-  // Implements: REQ-d00129-C — setStartDate is monotonically
   // non-increasing.
-  // Implements: REQ-d00129-D — past startDate (first activation)
   // triggers historical replay synchronously inside the same
   // transaction as the schedule write.
-  // Implements: REQ-d00129-E — future startDate (first activation)
   // does NOT trigger replay.
-  // Implements: REQ-d00130-D — backward movement triggers gap replay
   // over [when, current.startDate) inside the same transaction;
   // fill_cursor is not regressed.
-  // Implements: REQ-d00129-K+N — start_date audit emitted in the same
   // transaction as the schedule write and replay.
   Future<void> setStartDate(
     String id,
@@ -232,7 +219,7 @@ class DestinationRegistry {
           'DestinationRegistry.setStartDate($id): forward movement '
           'forbidden — current startDate is $priorStartDate, requested '
           '$when. setStartDate is monotonically non-increasing '
-          '(REQ-d00129-C).',
+          '.',
         );
       }
       // when < priorStartDate: backward move, falls through to the
@@ -246,7 +233,7 @@ class DestinationRegistry {
     // The schedule write, replay (historical on first activation OR
     // gap on backward move), and audit emission all commit together.
     // Running everything in the same transaction provides the
-    // serialization guarantee REQ-d00130-C relies on: a concurrent
+    // serialization guarantee relies on: a concurrent
     // record() serializes behind this transaction and walks candidates
     // strictly past the advanced fill_cursor (or the unchanged cursor,
     // for gap replay).
@@ -265,10 +252,9 @@ class DestinationRegistry {
             source: _eventStore.source,
           );
         }
-        // REQ-d00129-E: future startDate skips replay.
       } else {
         // Backward move — gap replay over [when, priorStartDate).
-        // Skip when [when] is in the future: by REQ-d00129-E logic,
+        // Skip when [when] is in the future: by the logic,
         // events with client_timestamp < priorStartDate are still
         // unreachable through the current window, but they will become
         // eligible only when the wall-clock reaches [when]; we leave
@@ -306,7 +292,7 @@ class DestinationRegistry {
   }
 
   /// Mutate the destination's `endDate` to [endDate] and return a
-  /// `SetEndDateResult` describing the transition (REQ-d00129-F):
+  /// `SetEndDateResult` describing the transition:
   ///
   /// - `closed` — call transitions currently-active to currently-closed.
   /// - `scheduled` — new `endDate` is in the future.
@@ -318,9 +304,7 @@ class DestinationRegistry {
   /// shorthand).
   ///
   /// Throws `ArgumentError` when [id] is not registered.
-  // Implements: REQ-d00129-F — setEndDate returns closed / scheduled /
   // applied per the three-way classification.
-  // Implements: REQ-d00129-L+N — end_date audit emitted in the same
   // transaction as the schedule write; covers deactivate as the
   // now() shorthand.
   Future<SetEndDateResult> setEndDate(
@@ -392,9 +376,8 @@ class DestinationRegistry {
   }
 
   /// Set the destination's `endDate` to `DateTime.now()`, returning
-  /// `SetEndDateResult.closed` (REQ-d00129-G). The audit event is
+  /// `SetEndDateResult.closed`. The audit event is
   /// emitted by the underlying `setEndDate` call.
-  // Implements: REQ-d00129-G+L+N — deactivateDestination is the now()
   // shorthand for setEndDate; audit emission is delegated.
   Future<SetEndDateResult> deactivateDestination(
     String id, {
@@ -407,9 +390,7 @@ class DestinationRegistry {
   /// `StateError` when the destination's `allowHardDelete` getter is
   /// `false` — the default, opt-out-only gate on permanent FIFO
   /// destruction.
-  // Implements: REQ-d00129-H — deleteDestination gated on
   // allowHardDelete; atomic FIFO-store + schedule drop.
-  // Implements: REQ-d00129-M+N — deletion audit emitted in the same
   // transaction as the FIFO + schedule drop.
   Future<void> deleteDestination(
     String id, {
@@ -427,7 +408,7 @@ class DestinationRegistry {
       throw StateError(
         'DestinationRegistry.deleteDestination($id): destination '
         'allowHardDelete is false; hard deletion requires an explicit '
-        'per-destination opt-in (REQ-d00129-H).',
+        'per-destination opt-in.',
       );
     }
     await _eventStore.runTransaction((txn, collector) async {
@@ -451,7 +432,7 @@ class DestinationRegistry {
   /// `backend.transaction`. The sole code path by which a FIFO row
   /// reaches `final_status == tombstoned`.
   ///
-  /// Preconditions (REQ-d00144-A), checked BEFORE opening the
+  /// Preconditions, checked BEFORE opening the
   /// transaction so a mis-call does not hold a write lock:
   /// - The row identified by [fifoRowId] on [destinationId] SHALL exist.
   /// - The row SHALL be the current head of the destination's FIFO
@@ -461,7 +442,7 @@ class DestinationRegistry {
   ///   `tombstoned` target, or a non-head target, is rejected with
   ///   `ArgumentError`.
   ///
-  /// Cascade inside one `StorageBackend.transaction` (REQ-d00144-B+C+D):
+  /// Cascade inside one `StorageBackend.transaction`:
   /// - Target row flips to `FinalStatus.tombstoned`; `attempts[]` and
   ///   all other fields preserved.
   /// - Every row whose `sequence_in_queue > target.sequence_in_queue`
@@ -470,22 +451,15 @@ class DestinationRegistry {
   ///   `target.event_id_range.first_seq - 1`.
   /// - A `system.destination_wedge_recovered` audit event is appended.
   ///
-  /// Returns a [TombstoneAndRefillResult] (REQ-d00144-E).
-  // Implements: REQ-d00144-A — head-only + existence preconditions,
+  /// Returns a [TombstoneAndRefillResult].
   // checked pre-transaction so ArgumentError does not hold a write lock.
-  // Implements: REQ-d00144-B — `null|wedged -> tombstoned` flip,
   // preserves attempts[] verbatim.
-  // Implements: REQ-d00144-C — trail null rows deleted.
-  // Implements: REQ-d00144-D — fill_cursor rewinds to first_seq - 1.
-  // Implements: REQ-d00144-E — TombstoneAndRefillResult return shape.
-  // Implements: REQ-d00144-G — wedge-recovery audit emitted in the same
   // transaction as the FIFO mutations.
   Future<TombstoneAndRefillResult> tombstoneAndRefill(
     String destinationId,
     String fifoRowId, {
     required Initiator initiator,
   }) async {
-    // REQ-d00144-A: pre-transaction precondition checks. readFifoHead
     // returns the first row whose final_status is null or wedged; sent
     // and tombstoned rows are skipped. So if the caller's target is the
     // head, it is automatically in {null, wedged}; if it is anything
@@ -498,7 +472,7 @@ class DestinationRegistry {
         'fifoRowId',
         'tombstoneAndRefill($destinationId, $fifoRowId): target is not '
             'the current head of the FIFO. readFifoHead returned '
-            '${head?.entryId}. (REQ-d00144-A)',
+            '${head?.entryId}.',
       );
     }
     // head.finalStatus is null or wedged here (readFifoHead contract).
@@ -559,8 +533,6 @@ class DestinationRegistry {
   /// `registeredVersion` for [entryType]; if [entryType] is not registered,
   /// `appendInTxn`'s `_validateAppendInputs` raises an `ArgumentError`
   /// inside the surrounding transaction (rolling back any prior writes).
-  // Implements: REQ-d00129-J+K+L+M+N (revised: aggregateId=source.identifier),
-  //   REQ-d00144-G (revised), REQ-d00154-D — system events use the
   //   install UUID as their aggregate; destination identity moves into
   //   data.id so callers can still query "all audits about destination
   //   X" by filtering on entry_type AND data.id.

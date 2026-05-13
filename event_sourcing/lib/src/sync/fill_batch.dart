@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-destinations/B (per-destination filter — fillBatch
+//   evaluates destination.filter.matches on every candidate event and skips
+//   non-matching events, advancing the cursor past them)
+// Implements: EVS-PRD-destinations/C (FIFO order — events are enqueued in
+//   sequence_number order; the cursor advance to batch.last.sequenceNumber
+//   preserves ordering for subsequent drain calls)
+// Implements: EVS-PRD-destinations/D (durable queue — enqueue and
+//   fill_cursor advance run inside a single StorageBackend transaction so
+//   the FIFO state is crash-consistent across restarts)
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
@@ -18,7 +27,7 @@ const _uuidGen = Uuid();
 /// Promote matching events from the event log into a destination's FIFO
 /// as batches, advancing `fill_cursor` accordingly.
 ///
-/// Algorithm (design §6.8, REQ-d00128-E/F/G/H + REQ-d00129-I):
+/// Algorithm (design §6.8):
 ///
 /// 1. If the destination's schedule is dormant (`startDate == null`),
 ///    there is nothing to do. Return.
@@ -27,30 +36,30 @@ const _uuidGen = Uuid();
 ///    the window is closed; return.
 /// 3. Read `readFifoHead(destination.id)`. If the returned row's
 ///    `final_status == FinalStatus.wedged`, return — drain halts at a
-///    wedged head (REQ-d00124-H), so any row promoted now would be
+///    wedged head, so any row promoted now would be
 ///    speculative work that `tombstoneAndRefill`'s trail-delete sweep
-///    (REQ-d00144-C) would undo. Recovery rewinds `fill_cursor`
-///    (REQ-d00128-I) and the next `fillBatch` promotes in one pass.
+///    would undo. Recovery rewinds `fill_cursor`
+///    and the next `fillBatch` promotes in one pass.
 /// 4. Read `fill_cursor_<destId>` and fetch every event with
 ///    `sequence_number > fill_cursor`.
 /// 5. Filter by `client_timestamp ∈ [startDate, upper]` and by
 ///    `destination.filter.matches(event)`.
 /// 6. If no events remain after filtering, advance the cursor past the
 ///    non-matching tail (so they are not re-evaluated on the next tick)
-///    and return. REQ-d00128-H treats this as a no-op at the
+///    and return. treats this as a no-op at the
 ///    "no new matching events" level: no FIFO row is written, and the
 ///    cursor advance is only the cursor-maintenance we need to keep
 ///    fillBatch O(new events) rather than O(log).
 /// 7. Otherwise, assemble a greedy batch: start with the first matching
 ///    event, then add each subsequent one while `canAddToBatch` returns
 ///    true. Break on the first `false`.
-/// 8. REQ-d00128-F — if the batch is a single event AND `maxAccumulateTime`
+/// 8. if the batch is a single event AND `maxAccumulateTime`
 ///    has not yet elapsed (`now() - batch.first.clientTimestamp < max`),
 ///    hold the batch. Do not write a FIFO row; do not advance the cursor.
 ///    Multi-event batches do not hit the hold — `canAddToBatch` returning
 ///    false for the next candidate already indicated size pressure, which
 ///    is an admissible flush condition.
-/// 9. Branch on `destination.serializesNatively` (REQ-d00152-B):
+/// 9. Branch on `destination.serializesNatively`:
 ///    - True: build a fresh [BatchEnvelopeMetadata] from [source] (mint
 ///      `batch_id`, stamp `sent_at = now`, copy `hopId` /
 ///      `identifier` / `softwareVersion`) and enqueue via
@@ -68,17 +77,14 @@ const _uuidGen = Uuid();
 ///
 /// [clock] defaults to `() => DateTime.now().toUtc()`; tests inject a
 /// fixed-time closure so the `now()` reference point is deterministic.
-// Implements: REQ-d00128-E+F+G+H+I — canAddToBatch-driven batch assembly,
 // maxAccumulateTime hold on single-event batches, fill_cursor advance to
 // batch.last.sequenceNumber, idempotent no-op when no new matching events,
 // and wedge-aware early return when readFifoHead's row is wedged.
-// Implements: REQ-d00129-I — filter candidates by
 // client_timestamp ∈ [startDate, min(endDate, now())]; events outside
 // the window are never enqueued.
-// Implements: REQ-d00152-B — branch on destination.serializesNatively:
 // native destinations bypass transform and receive a library-built
 // envelope; non-native destinations call transform as before.
-// Honors: REQ-d00124-H — drain halts on a wedged head; the wedge-skip
+// drain halts on a wedged head; the wedge-skip
 // branch above avoids speculative rows that tombstoneAndRefill would
 // have to undo.
 Future<void> fillBatch(
@@ -102,10 +108,9 @@ Future<void> fillBatch(
   // Window entirely in the future (startDate > upper): nothing to promote.
   if (schedule.startDate!.isAfter(upper)) return;
 
-  // REQ-d00128-I — wedge-aware skip. If the destination's FIFO head is
-  // wedged, drain halts at it (REQ-d00124-H), so any row we promote
+  // wedged, drain halts at it, so any row we promote
   // behind it would be speculative work that tombstoneAndRefill's
-  // trail-delete sweep (REQ-d00144-C) would have to undo. Return
+  // trail-delete sweep would have to undo. Return
   // without promoting; recovery rewinds fill_cursor and the next
   // fillBatch fills in one pass.
   final head = await backend.readFifoHead(destination.id);
@@ -123,9 +128,7 @@ Future<void> fillBatch(
   // advances past the event's client_timestamp, or endDate is widened
   // via setEndDate).
   //
-  // Implements: REQ-d00128-J — admission decided by
   //   destination.filter.matches.
-  // Implements: REQ-d00128-K — cursor advance respects rejection reason:
   //   permanent rejections (subscription, startDate-lower) contribute to
   //   cursor advance; deferred rejections (upper bound) stop the walk so
   //   the cursor does not skip past them.
@@ -149,7 +152,7 @@ Future<void> fillBatch(
     if (e.clientTimestamp.isBefore(schedule.startDate!)) {
       // Permanent for the current invocation: events outside the
       // current window are skipped and the cursor advances past them.
-      // Under REQ-d00129-C monotonic-backward startDate semantics, a
+      // Under monotonic-backward startDate semantics, a
       // setStartDate(earlier) call re-promotes the gap window via
       // runGapReplay (independent of fill_cursor), so fillBatch does
       // not need to keep these events re-evaluable.
@@ -157,7 +160,7 @@ Future<void> fillBatch(
       continue;
     }
     if (e.clientTimestamp.isAfter(upper)) {
-      // Deferred — endDate is mutable per REQ-d00129-F, so this event
+      // Deferred — endDate is mutable so this event
       // may become eligible later. Stop the walk; cursor must not
       // advance past this event nor past any subsequent candidate
       // (advancing past a later in-window event would skip this
@@ -174,7 +177,7 @@ Future<void> fillBatch(
     // No promotions to make. Advance cursor past any permanently-rejected
     // events the walk visited; if the walk stopped at the very first
     // candidate (deferred), do not advance — that event must remain
-    // re-evaluable. REQ-d00128-H idempotency holds: repeated invocations
+    // re-evaluable. idempotency holds: repeated invocations
     // with no new matching events produce no new FIFO rows.
     if (lastDecidedSeq != null) {
       await backend.writeFillCursor(destination.id, lastDecidedSeq);
@@ -194,7 +197,6 @@ Future<void> fillBatch(
     }
   }
 
-  // REQ-d00128-F: hold a single-event batch until maxAccumulateTime has
   // elapsed. Multi-event batches don't hit this hold: canAddToBatch
   // returning false for the next candidate already indicated size
   // pressure, which is an admissible flush condition.
@@ -211,11 +213,10 @@ Future<void> fillBatch(
   // consume the library's `esd/batch@1` format; the library mints the
   // envelope identity from the local `Source` and enqueues via
   // `nativeEnvelope:`. The on-the-wire bytes are reconstructed
-  // deterministically at drain time (REQ-d00119-K) so we do NOT call
+  // deterministically at drain time so we do NOT call
   // `Destination.transform` and do NOT carry the bytes through the FIFO
   // row. Non-native destinations own their wire format and pass through
   // [transform].
-  // Implements: REQ-d00152-B — fillBatch branches on serializesNatively;
   // native rows skip transform entirely and receive a library-built
   // BatchEnvelopeMetadata from `source`.
   if (destination.serializesNatively) {
@@ -224,7 +225,7 @@ Future<void> fillBatch(
         'fillBatch: destination "${destination.id}" declares '
         'serializesNatively == true but no source was supplied; '
         'native batches require a Source to stamp the envelope identity '
-        '(REQ-d00152-B+E)',
+        '',
       );
     }
     final envelope = BatchEnvelopeMetadata(

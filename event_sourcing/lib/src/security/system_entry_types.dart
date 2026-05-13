@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-event-log/A — every reserved system id corresponds to
+//   an audit event appended to the immutable log for each substrate mutation;
+//   no reserved entry type has materialize:true, so they never corrupt views.
+// Implements: EVS-PRD-regulatory-alignment/A — security-context and
+//   retention audit events carry timestamps (via EventStore.append), satisfying
+//   the ALCOA+ Contemporaneous obligation for substrate-emitted records.
+// Implements: EVS-DEV-event-store-open/B,C — kLibVersionInitializedEntryType
+//   and kLibVersionChangedEntryType are the boot-version event types emitted
+//   by EventStore.open on first boot and on version transitions respectively.
 import 'package:event_sourcing/src/entry_type_definition.dart';
 
 /// Reserved id for the per-event security-context redaction audit event.
@@ -10,33 +19,27 @@ const String kSecurityContextCompactedEntryType = 'security_context_compacted';
 const String kSecurityContextPurgedEntryType = 'security_context_purged';
 
 /// Reserved id for the destination-registration audit event.
-// Implements: REQ-d00129-J — destination registration audit.
 const String kDestinationRegisteredEntryType = 'system.destination_registered';
 
 /// Reserved id for the destination start-date set audit event.
-// Implements: REQ-d00129-K — destination start_date set audit.
 const String kDestinationStartDateSetEntryType =
     'system.destination_start_date_set';
 
 /// Reserved id for the destination end-date set audit event (covers
 /// deactivate).
-// Implements: REQ-d00129-L — destination end_date set audit.
 const String kDestinationEndDateSetEntryType =
     'system.destination_end_date_set';
 
 /// Reserved id for the destination deletion audit event.
-// Implements: REQ-d00129-M — destination deletion audit.
 const String kDestinationDeletedEntryType = 'system.destination_deleted';
 
 /// Reserved id for the wedge-recovery audit event emitted by
 /// `DestinationRegistry.tombstoneAndRefill`.
-// Implements: REQ-d00144-G — wedge recovery audit.
 const String kDestinationWedgeRecoveredEntryType =
     'system.destination_wedge_recovered';
 
 /// Reserved id for the retention-policy-applied audit event emitted by
 /// `EventStore.applyRetentionPolicy` once per sweep.
-// Implements: REQ-d00138-H — retention policy applied audit (per-sweep).
 const String kRetentionPolicyAppliedEntryType =
     'system.retention_policy_applied';
 
@@ -45,21 +48,22 @@ const String kRetentionPolicyAppliedEntryType =
 /// `bootstrapAppendOnlyDatastore` call after `EventStore` construction
 /// and before destination registration; deduped by content so a same-
 /// version reboot no-ops while a schema bump emits a new event.
-// Implements: REQ-d00134-E+F — bootstrap registry-initialized audit.
 const String kEntryTypeRegistryInitializedEntryType =
     'system.entry_type_registry_initialized';
 
 /// Reserved id for the substrate-level lib-version-initialized event.
 /// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
 /// `_appendLibVersionEventToBackend` on first boot.
-// Implements: EVS-DEV-event-store-open — boot-version events are substrate-
-//   internal and must not be admitted to destinations as user events.
+// Implements: EVS-DEV-event-store-open/B — defines the entry-type id for the
+//   first-boot lib-version event; boot-version events are substrate-internal
+//   and must not be admitted to destinations as user events.
 const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 
 /// Reserved id for the substrate-level lib-version-changed event.
 /// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
 /// `_appendLibVersionEventToBackend` on upgrade.
-// Implements: EVS-DEV-event-store-open — boot-version events are substrate-
+// Implements: EVS-DEV-event-store-open/C — defines the entry-type id for the
+//   version-transition lib-version event; boot-version events are substrate-
 //   internal and must not be admitted to destinations as user events.
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
@@ -76,7 +80,7 @@ const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
 /// Reserved set of ids. `bootstrapAppendOnlyDatastore` auto-registers
 /// these BEFORE iterating the caller-supplied entry-type list. A
 /// caller-supplied id colliding with one of these throws `ArgumentError`
-/// with an explicit "reserved" message (REQ-d00134-D revised).
+/// with an explicit "reserved" message (-D revised).
 ///
 /// Also includes the substrate-internal lib-version boot events
 /// (`lib_version_initialized`, `lib_version_changed`) so that
@@ -120,17 +124,12 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 ///   2. `SubscriptionFilter.matches` correctly gates them behind
 ///      `includeSystemEvents: true` via the `kReservedSystemEntryTypeIds`
 ///      membership check (which this list is the authoritative source for).
-// Implements: REQ-d00138-D+E+F+G — system entry types for redaction /
 // compact / purge audit events.
-// Implements: REQ-d00129-J+K+L+M — destination mutation audit entry types.
-// Implements: REQ-d00144-G — wedge recovery audit entry type.
-// Implements: REQ-d00138-H — retention policy applied audit entry type.
-// Implements: REQ-d00134-E+F+G — bootstrap registry-initialized audit
 //   entry type; the substrate stamps entry_type_version from the registry's
 //   registeredVersion on every append.
-// Implements: EVS-DEV-event-store-open — lib-version boot events registered
-//   here so byId() returns non-null and SubscriptionFilter gates them
-//   correctly, even though they are appended raw (bypassing the registry).
+// Implements: EVS-DEV-event-store-open/B,C — lib-version boot events
+//   registered here so byId() returns non-null and SubscriptionFilter gates
+//   them correctly, even though they are appended raw (bypassing the registry).
 const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
   EntryTypeDefinition(
     id: kSecurityContextRedactedEntryType,

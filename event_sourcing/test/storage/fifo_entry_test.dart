@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-portability/C — FifoEntry pure-Dart value type;
+//   toJson/fromJson round-trips produce identical results on any runtime;
+//   constructor invariants (non-empty eventIds, firstSeq <= lastSeq) are
+//   enforced in both release and debug builds.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -6,15 +10,15 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Phase 4.3 Task 6 — FifoEntry batch-per-row shape.
 ///
-/// Verifies the three REQ-d00128 assertions on the new FifoEntry shape:
+/// Verifies the FifoEntry shape:
 ///
-/// - REQ-d00128-A — `eventIds` is a non-empty `List<String>`.
-/// - REQ-d00128-B — `eventIdRange` is a (firstSeq, lastSeq) record drawn from
+/// - `eventIds` is a non-empty `List<String>`.
+/// - `eventIdRange` is a (firstSeq, lastSeq) record drawn from
 ///   the sequence_numbers of the contained events.
-/// - REQ-d00128-C — `wirePayload` is one payload covering the whole batch;
+/// - `wirePayload` is one payload covering the whole batch;
 ///   no per-event wire payload is stored.
 ///
-/// Phase 4.7 Task 3 additionally verifies REQ-d00119-C under the nullable
+/// Phase 4.7 Task 3 additionally verifies the nullable
 /// enum refactor:
 ///
 /// - `FinalStatus` has exactly `{sent, wedged, tombstoned}`.
@@ -46,9 +50,8 @@ void main() {
   }
 
   group('FifoEntry batch shape (Phase 4.3 Task 6)', () {
-    // Verifies: REQ-d00128-A — eventIds is a non-empty List<String>
     // identifying every event in the batch.
-    test('REQ-d00128-A: eventIds is a non-empty List<String> with every batch '
+    test('eventIds is a non-empty List<String> with every batch '
         'event id', () {
       final entry = makeBatch(eventIds: const ['ev-a', 'ev-b', 'ev-c']);
       expect(entry.eventIds, isA<List<String>>());
@@ -56,9 +59,8 @@ void main() {
       expect(entry.eventIds, isNotEmpty);
     });
 
-    // Verifies: REQ-d00128-A — an empty eventIds list is rejected at
     // construction so a batch row can never be persisted with zero events.
-    test('REQ-d00128-A: constructing FifoEntry with empty eventIds throws', () {
+    test('constructing FifoEntry with empty eventIds throws', () {
       expect(
         () => FifoEntry(
           entryId: 'entry-1',
@@ -77,33 +79,28 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00128-B — the eventIdRange constructor invariant
     // (firstSeq <= lastSeq) is enforced at runtime, not just by convention.
-    test(
-      'REQ-d00128-B: constructing FifoEntry with firstSeq > lastSeq throws',
-      () {
-        expect(
-          () => FifoEntry(
-            entryId: 'entry-1',
-            eventIds: const <String>['e1'],
-            eventIdRange: (firstSeq: 5, lastSeq: 3),
-            sequenceInQueue: 1,
-            wirePayload: const <String, Object?>{},
-            wireFormat: 'json-v1',
-            transformVersion: null,
-            enqueuedAt: enqueuedAt,
-            attempts: const <AttemptResult>[],
-            finalStatus: null,
-            sentAt: null,
-          ),
-          throwsArgumentError,
-        );
-      },
-    );
+    test('constructing FifoEntry with firstSeq > lastSeq throws', () {
+      expect(
+        () => FifoEntry(
+          entryId: 'entry-1',
+          eventIds: const <String>['e1'],
+          eventIdRange: (firstSeq: 5, lastSeq: 3),
+          sequenceInQueue: 1,
+          wirePayload: const <String, Object?>{},
+          wireFormat: 'json-v1',
+          transformVersion: null,
+          enqueuedAt: enqueuedAt,
+          attempts: const <AttemptResult>[],
+          finalStatus: null,
+          sentAt: null,
+        ),
+        throwsArgumentError,
+      );
+    });
 
-    // Verifies: REQ-d00128-A — fromJson rejects an absent, wrong-typed, or
     // empty event_ids field with a FormatException.
-    test('REQ-d00128-A: fromJson rejects missing, non-List, and empty '
+    test('fromJson rejects missing, non-List, and empty '
         'event_ids', () {
       final base = makeBatch().toJson();
 
@@ -118,10 +115,9 @@ void main() {
       expect(() => FifoEntry.fromJson(empty), throwsFormatException);
     });
 
-    // Verifies: REQ-d00128-B — eventIdRange is a (firstSeq, lastSeq) record
     // drawn from the sequence_number values of the contained events; the
     // pair is typed as EventIdRange (Dart 3 record typedef), not a class.
-    test('REQ-d00128-B: eventIdRange is an (firstSeq, lastSeq) record', () {
+    test('eventIdRange is an (firstSeq, lastSeq) record', () {
       final entry = makeBatch(eventIdRange: (firstSeq: 100, lastSeq: 104));
       expect(entry.eventIdRange.firstSeq, 100);
       expect(entry.eventIdRange.lastSeq, 104);
@@ -130,9 +126,8 @@ void main() {
       expect(entry.eventIdRange, (firstSeq: 100, lastSeq: 104));
     });
 
-    // Verifies: REQ-d00128-B — event_id_range round-trips as
     // {"first_seq": int, "last_seq": int} in JSON.
-    test('REQ-d00128-B: event_id_range persists as first_seq/last_seq Map', () {
+    test('event_id_range persists as first_seq/last_seq Map', () {
       final entry = makeBatch(eventIdRange: (firstSeq: 7, lastSeq: 9));
       final json = entry.toJson();
       expect(
@@ -143,63 +138,53 @@ void main() {
       expect(decoded.eventIdRange, (firstSeq: 7, lastSeq: 9));
     });
 
-    // Verifies: REQ-d00128-B — fromJson rejects a missing or malformed
     // event_id_range field.
-    test(
-      'REQ-d00128-B: fromJson rejects missing or malformed event_id_range',
-      () {
-        final base = makeBatch().toJson();
+    test('fromJson rejects missing or malformed event_id_range', () {
+      final base = makeBatch().toJson();
 
-        final missing = Map<String, Object?>.from(base)
-          ..remove('event_id_range');
-        expect(() => FifoEntry.fromJson(missing), throwsFormatException);
+      final missing = Map<String, Object?>.from(base)..remove('event_id_range');
+      expect(() => FifoEntry.fromJson(missing), throwsFormatException);
 
-        final wrongType = Map<String, Object?>.from(base)
-          ..['event_id_range'] = 'oops';
-        expect(() => FifoEntry.fromJson(wrongType), throwsFormatException);
+      final wrongType = Map<String, Object?>.from(base)
+        ..['event_id_range'] = 'oops';
+      expect(() => FifoEntry.fromJson(wrongType), throwsFormatException);
 
-        final missingFirst = Map<String, Object?>.from(base)
-          ..['event_id_range'] = <String, Object?>{'last_seq': 5};
-        expect(() => FifoEntry.fromJson(missingFirst), throwsFormatException);
+      final missingFirst = Map<String, Object?>.from(base)
+        ..['event_id_range'] = <String, Object?>{'last_seq': 5};
+      expect(() => FifoEntry.fromJson(missingFirst), throwsFormatException);
 
-        final missingLast = Map<String, Object?>.from(base)
-          ..['event_id_range'] = <String, Object?>{'first_seq': 5};
-        expect(() => FifoEntry.fromJson(missingLast), throwsFormatException);
+      final missingLast = Map<String, Object?>.from(base)
+        ..['event_id_range'] = <String, Object?>{'first_seq': 5};
+      expect(() => FifoEntry.fromJson(missingLast), throwsFormatException);
 
-        final nonIntSeq = Map<String, Object?>.from(base)
-          ..['event_id_range'] = <String, Object?>{
-            'first_seq': 1,
-            'last_seq': '2',
-          };
-        expect(() => FifoEntry.fromJson(nonIntSeq), throwsFormatException);
-      },
-    );
+      final nonIntSeq = Map<String, Object?>.from(base)
+        ..['event_id_range'] = <String, Object?>{
+          'first_seq': 1,
+          'last_seq': '2',
+        };
+      expect(() => FifoEntry.fromJson(nonIntSeq), throwsFormatException);
+    });
 
-    // Verifies: REQ-d00128-C — wirePayload is one payload for the entire
     // batch; no per-event payload is stored.
-    test(
-      'REQ-d00128-C: wirePayload is a single map covering the whole batch',
-      () {
-        final entry = makeBatch(
-          eventIds: const ['ev-a', 'ev-b'],
-          wirePayload: const <String, Object?>{
-            'events': [
-              <String, Object?>{'id': 'ev-a'},
-              <String, Object?>{'id': 'ev-b'},
-            ],
-          },
-        );
-        expect(entry.wirePayload, isA<Map<String, Object?>>());
-        expect(entry.wirePayload!['events'], isA<List<Object?>>());
-        expect((entry.wirePayload!['events']! as List).length, 2);
-      },
-    );
+    test('wirePayload is a single map covering the whole batch', () {
+      final entry = makeBatch(
+        eventIds: const ['ev-a', 'ev-b'],
+        wirePayload: const <String, Object?>{
+          'events': [
+            <String, Object?>{'id': 'ev-a'},
+            <String, Object?>{'id': 'ev-b'},
+          ],
+        },
+      );
+      expect(entry.wirePayload, isA<Map<String, Object?>>());
+      expect(entry.wirePayload!['events'], isA<List<Object?>>());
+      expect((entry.wirePayload!['events']! as List).length, 2);
+    });
 
-    // Verifies: REQ-d00128-A+B+C — the new shape round-trips cleanly
     // through toJson/fromJson without losing any of the three new/changed
     // fields, and the legacy single-event 'event_id' scalar key is NOT
     // emitted (no backward-compat shim).
-    test('REQ-d00128-A+B+C: JSON round-trip preserves new shape and does not '
+    test('JSON round-trip preserves new shape and does not '
         'emit legacy event_id scalar', () {
       final entry = makeBatch(
         eventIds: const ['ev-a', 'ev-b'],
@@ -240,33 +225,28 @@ void main() {
 
   // Phase 4.7 Task 3 — FinalStatus nullable + {sent, wedged, tombstoned}.
   group('FifoEntry nullable final_status (Phase 4.7 Task 3)', () {
-    // Verifies: REQ-d00119-C — finalStatus is nullable; null means "not
     // yet terminal". Drain may attempt a row whose finalStatus is null;
     // non-null terminal values are retained forever as audit records.
-    test(
-      'REQ-d00119-C: finalStatus is nullable; null is not a terminal state',
-      () {
-        final entry = FifoEntry(
-          entryId: 'e1',
-          eventIds: const ['ev1'],
-          eventIdRange: (firstSeq: 1, lastSeq: 1),
-          sequenceInQueue: 1,
-          wirePayload: const {'k': 'v'},
-          wireFormat: 'json-v1',
-          transformVersion: 'v1',
-          enqueuedAt: DateTime.utc(2026, 4, 23, 10),
-          attempts: const [],
-          finalStatus: null,
-          sentAt: null,
-        );
-        expect(entry.finalStatus, isNull);
-      },
-    );
+    test('finalStatus is nullable; null is not a terminal state', () {
+      final entry = FifoEntry(
+        entryId: 'e1',
+        eventIds: const ['ev1'],
+        eventIdRange: (firstSeq: 1, lastSeq: 1),
+        sequenceInQueue: 1,
+        wirePayload: const {'k': 'v'},
+        wireFormat: 'json-v1',
+        transformVersion: 'v1',
+        enqueuedAt: DateTime.utc(2026, 4, 23, 10),
+        attempts: const [],
+        finalStatus: null,
+        sentAt: null,
+      );
+      expect(entry.finalStatus, isNull);
+    });
 
-    // Verifies: REQ-d00119-C — the enum has exactly three values, and
     // `pending` / `exhausted` are NOT among them (pending is now null,
     // exhausted is renamed to wedged).
-    test('REQ-d00119-C: FinalStatus enum has exactly {sent, wedged, '
+    test('FinalStatus enum has exactly {sent, wedged, '
         'tombstoned}', () {
       expect(FinalStatus.values.toSet(), {
         FinalStatus.sent,
@@ -275,24 +255,19 @@ void main() {
       });
     });
 
-    // Verifies: REQ-d00119-C — fromJson rejects the legacy wire-format
     // strings 'pending' and 'exhausted' so a stale persisted row with an
     // old value cannot quietly load as something else.
-    test(
-      'REQ-d00119-C: FinalStatus.fromJson rejects pending and exhausted',
-      () {
-        expect(() => FinalStatus.fromJson('pending'), throwsFormatException);
-        expect(() => FinalStatus.fromJson('exhausted'), throwsFormatException);
-        expect(FinalStatus.fromJson('sent'), FinalStatus.sent);
-        expect(FinalStatus.fromJson('wedged'), FinalStatus.wedged);
-        expect(FinalStatus.fromJson('tombstoned'), FinalStatus.tombstoned);
-      },
-    );
+    test('FinalStatus.fromJson rejects pending and exhausted', () {
+      expect(() => FinalStatus.fromJson('pending'), throwsFormatException);
+      expect(() => FinalStatus.fromJson('exhausted'), throwsFormatException);
+      expect(FinalStatus.fromJson('sent'), FinalStatus.sent);
+      expect(FinalStatus.fromJson('wedged'), FinalStatus.wedged);
+      expect(FinalStatus.fromJson('tombstoned'), FinalStatus.tombstoned);
+    });
 
-    // Verifies: REQ-d00119-C — FifoEntry.fromJson accepts null
     // final_status and round-trips through toJson as explicit null
     // (not omission).
-    test('REQ-d00119-C: FifoEntry.fromJson accepts null final_status', () {
+    test('FifoEntry.fromJson accepts null final_status', () {
       final json = {
         'entry_id': 'e1',
         'event_ids': ['ev1'],
@@ -323,10 +298,9 @@ void main() {
       sentAt: DateTime.utc(2026, 4, 25, 12),
     );
 
-    // Verifies: REQ-d00119-K — a native FIFO row carries envelope_metadata
     // and a null wire_payload, and the pair round-trips through
     // toJson / fromJson with both fields preserved.
-    test('REQ-d00119-K: native row round-trips envelopeMetadata with null '
+    test('native row round-trips envelopeMetadata with null '
         'wirePayload', () {
       final entry = FifoEntry(
         entryId: 'fe-001',
@@ -365,10 +339,9 @@ void main() {
       expect(restored, equals(entry));
     });
 
-    // Verifies: REQ-d00119-B — a 3rd-party FIFO row carries a non-null
     // wire_payload and a null envelope_metadata, and the pair round-trips
     // through toJson / fromJson with both fields preserved.
-    test('REQ-d00119-B: 3rd-party row round-trips wirePayload with null '
+    test('3rd-party row round-trips wirePayload with null '
         'envelopeMetadata', () {
       final entry = FifoEntry(
         entryId: 'fe-002',

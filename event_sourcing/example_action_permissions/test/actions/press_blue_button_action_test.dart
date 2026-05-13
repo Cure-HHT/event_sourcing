@@ -1,5 +1,5 @@
-// Verifies: REQ-d00166 (Action interface), REQ-d00170 (idempotency none),
-//           REQ-d00172 (site-scoped permission)
+// Verifies: EVS-PRD-action-dispatch/A/B/C
+// Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/actions/press_blue_button_action.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,32 +19,29 @@ void main() {
   group('PressBlueButtonAction', () {
     final action = PressBlueButtonAction();
 
-    test(
-      'REQ-d00166-A: declares site-scoped buttons.press.blue, idempotency none',
-      () {
-        expect(action.name, 'PressBlueButtonAction');
-        expect(
-          action.permissions,
-          contains(
-            const Permission('buttons.press.blue', scope: ScopeClass.site),
-          ),
-        );
-        expect(action.idempotency, Idempotency.none);
-      },
-    );
+    test('declares site-scoped buttons.press.blue, idempotency none', () {
+      expect(action.name, 'PressBlueButtonAction');
+      expect(
+        action.permissions,
+        contains(
+          const Permission('buttons.press.blue', scope: ScopeClass.site),
+        ),
+      );
+      expect(action.idempotency, Idempotency.none);
+    });
 
-    test('REQ-d00166-C: parseInput accepts empty map', () {
+    test('parseInput accepts empty map', () {
       expect(
         action.parseInput(const <String, Object?>{}),
         isA<PressBlueInput>(),
       );
     });
 
-    test('REQ-d00166-D: validate accepts the singleton input', () {
+    test('validate accepts the singleton input', () {
       action.validate(const PressBlueInput());
     });
 
-    test('REQ-d00166-E: execute emits one blue_button_pressed event', () async {
+    test('execute emits one blue_button_pressed event', () async {
       final result = await action.execute(const PressBlueInput(), _ctx());
       expect(result.events, hasLength(1));
       final draft = result.events.single;
@@ -56,16 +53,10 @@ void main() {
       expect(result.result.eventId, draft.aggregateId);
     });
 
-    test(
-      'REQ-d00166-E: execute generates a fresh aggregateId per call',
-      () async {
-        final r1 = await action.execute(const PressBlueInput(), _ctx());
-        final r2 = await action.execute(const PressBlueInput(), _ctx());
-        expect(
-          r1.events.single.aggregateId,
-          isNot(r2.events.single.aggregateId),
-        );
-      },
-    );
+    test('execute generates a fresh aggregateId per call', () async {
+      final r1 = await action.execute(const PressBlueInput(), _ctx());
+      final r2 = await action.execute(const PressBlueInput(), _ctx());
+      expect(r1.events.single.aggregateId, isNot(r2.events.single.aggregateId));
+    });
   });
 }

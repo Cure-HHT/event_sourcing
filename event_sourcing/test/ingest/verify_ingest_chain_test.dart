@@ -1,7 +1,12 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00146-C: verifyIngestChain — walks Chain 2 on destination log
-//   REQ-d00146-D: non-throwing; returns ChainVerdict
-//   REQ-d00146-E: ArgumentError when fromSequenceNumber > toSequenceNumber
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyIngestChain provides the
+//   operation by which any holder recomputes Chain 2 integrity end-to-end
+//   without privileged access; returns ChainVerdict, not throws
+// Verifies: EVS-PRD-hash-chain-integrity/B — previous_ingest_hash tampering is
+//   detected at the exact sequence position, reported as
+//   ChainFailureKind.previousIngestHashMismatch
+// Verifies: EVS-PRD-ingest/C — Chain 2 thread (ingest_sequence_number +
+//   previous_ingest_hash) is verifiable across a bounded range via
+//   fromSequenceNumber / toSequenceNumber parameters
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -149,7 +154,7 @@ Future<List<StoredEvent>> _originate(int count) async {
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.verifyIngestChain (REQ-d00146-C)', () {
+  group('EventStore.verifyIngestChain', () {
     test('returns ok=true over a clean sequence of ingests', () async {
       final dest = await _openStore();
       final origEvents = await _originate(3);

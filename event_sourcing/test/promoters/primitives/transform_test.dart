@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-materializer/A/B
+// Verifies: EVS-DEV-snapshot-promotion-on-open/D
 // event_sourcing/test/promoters/primitives/transform_test.dart
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:flutter_test/flutter_test.dart';

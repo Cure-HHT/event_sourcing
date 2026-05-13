@@ -1,3 +1,4 @@
+// Implements: EVS-PRD-library-charter/A
 /// Base exception for all datastore errors.
 ///
 /// All exceptions thrown by the append-only datastore extend this class.

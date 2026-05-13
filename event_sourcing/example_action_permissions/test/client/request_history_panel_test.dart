@@ -1,4 +1,6 @@
 // test/client/request_history_panel_test.dart
+// Verifies: EVS-PRD-action-dispatch/C
+// Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/client/action_buttons_panel.dart';
 import 'package:action_permissions_demo/client/request_history_panel.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';

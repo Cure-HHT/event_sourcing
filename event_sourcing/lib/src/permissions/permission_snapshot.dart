@@ -1,6 +1,7 @@
 // lib/src/permissions/permission_snapshot.dart
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00177-A (snapshot value type and serialization).
+// Implements: EVS-PRD-permissions-as-events/C — a serializable snapshot of
+// the permission state for a single role, derived from the event-log
+// projection; enables reconstructability without a live StorageBackend.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';

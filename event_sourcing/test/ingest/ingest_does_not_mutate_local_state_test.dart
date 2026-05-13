@@ -1,4 +1,10 @@
-// Verifies: REQ-d00154-E + REQ-d00129-O — the ingest path is a write-side
+// Verifies: EVS-PRD-ingest/A — ingest path admits events from another
+//   deployment into the local log (system audit events bridged cross-hop)
+// Verifies: EVS-PRD-ingest/B — upstream identity preserved; ingested system
+//   audit retains its originator aggregate and event identity
+// Verifies: EVS-PRD-ingest/E — ingested events land in the local event log
+//   identically to locally-originated events (stored for observability)
+//
 //   path that lands a wire-side audit event in `event_log` and stamps
 //   receiver provenance on it. It SHALL NOT mutate the receiver's
 //   `DestinationRegistry`, the receiver's `EntryTypeRegistry`, or any
@@ -125,16 +131,15 @@ class _NoopDestination extends Destination {
 
 void main() {
   group('EventStore ingest path — receiver-stays-passive invariant '
-      '(REQ-d00154-E, REQ-d00129-O)', () {
-    // Verifies: REQ-d00154-E, REQ-d00129-O — ingesting a bridged
+      '(-E', () {
     //   `system.destination_registered` audit MUST NOT add a destination
     //   to the receiver's `DestinationRegistry`. The destination listed
     //   in the audit's `data.id` is the originator's destination, not
     //   the receiver's; configuration on the receiver remains driven by
     //   its own local `addDestination` calls. The audit MUST still be
-    //   stored in the receiver's `event_log` (REQ-d00154-F admission +
+    //   stored in the receiver's `event_log` (-F admission +
     //   ingest-path write).
-    test('REQ-d00154-E: ingesting system.destination_registered does NOT '
+    test('ingesting system.destination_registered does NOT '
         'mutate DestinationRegistry on the receiver', () async {
       final originator = await _bootstrapDatastore(
         hopId: 'mobile-device',
@@ -196,7 +201,7 @@ void main() {
           reason:
               'receiver DestinationRegistry MUST NOT be mutated by an '
               'ingested system.destination_registered audit '
-              '(REQ-d00154-E, REQ-d00129-O)',
+              '(-E',
         );
         expect(
           receiver.datastore.destinations.byId('OriginatorSecondary'),
@@ -204,7 +209,7 @@ void main() {
           reason:
               'an originator destination id (data.id="OriginatorSecondary") '
               'MUST NOT appear in the receiver registry just because the '
-              'receiver ingested the audit (REQ-d00154-E)',
+              'receiver ingested the audit',
         );
 
         // The audit IS stored in the receiver's event_log.
@@ -221,7 +226,7 @@ void main() {
           hasLength(1),
           reason:
               'bridged audit MUST be stored in the receiver event_log '
-              'for cross-hop observability (REQ-d00154-F admission)',
+              'for cross-hop observability (-F admission)',
         );
       } finally {
         await originator.close();
@@ -229,14 +234,13 @@ void main() {
       }
     });
 
-    // Verifies: REQ-d00154-E, REQ-d00129-O — ingesting a bridged
     //   `system.entry_type_registry_initialized` audit MUST NOT mutate
     //   the receiver's `EntryTypeRegistry`. The originator's registry
     //   shape (encoded inside the audit's `data.registry` map) is the
     //   originator's runtime contract, not the receiver's; the
     //   receiver's registry remains exactly the set of types its own
     //   `bootstrapAppendOnlyDatastore` call registered.
-    test('REQ-d00154-E: ingesting system.entry_type_registry_initialized '
+    test('ingesting system.entry_type_registry_initialized '
         'does NOT mutate EntryTypeRegistry on the receiver', () async {
       // Originator bootstraps with one user entry type registered;
       // receiver bootstraps with NO user entry types. After the
@@ -317,7 +321,7 @@ void main() {
           reason:
               'receiver EntryTypeRegistry MUST NOT be mutated by an '
               'ingested system.entry_type_registry_initialized audit '
-              '(REQ-d00154-E, REQ-d00129-O)',
+              '(-E',
         );
         expect(
           receiver.datastore.entryTypes.byId('demo_note'),
@@ -325,7 +329,7 @@ void main() {
           reason:
               'demo_note (an originator-only entry type) MUST NOT '
               'appear in the receiver registry just because the '
-              'receiver ingested the registry-init audit (REQ-d00154-E)',
+              'receiver ingested the registry-init audit',
         );
 
         // The audit IS stored in the receiver's event_log.
@@ -343,7 +347,7 @@ void main() {
           reason:
               'bridged registry-init audit MUST be stored in the '
               'receiver event_log under the originator install '
-              'aggregate (REQ-d00154-F admission)',
+              'aggregate (-F admission)',
         );
       } finally {
         await originator.close();
@@ -351,14 +355,13 @@ void main() {
       }
     });
 
-    // Verifies: REQ-d00154-E, REQ-d00129-O — ingesting a bridged
     //   `system.destination_wedge_recovered` audit MUST NOT touch the
     //   receiver's per-destination FIFO state. The wedge recovery the
     //   audit describes happened on the originator's FIFO; the
     //   receiver's FIFOs are private state driven by its own
     //   `fillBatch` / `tombstoneAndRefill` calls. A snapshot of every
     //   receiver FIFO pre-ingest equals the same snapshot post-ingest.
-    test('REQ-d00154-E: ingesting system.destination_wedge_recovered '
+    test('ingesting system.destination_wedge_recovered '
         'does NOT mutate FIFO state on the receiver', () async {
       // Originator: one destination so `tombstoneAndRefill` has a
       // FIFO row to operate on. The originator's bootstrap also
@@ -463,8 +466,7 @@ void main() {
           equals(preReceiverFifo.length),
           reason:
               'receiver FIFO row count MUST NOT change on ingest of a '
-              'bridged wedge-recovery audit (REQ-d00154-E, '
-              'REQ-d00129-O)',
+              'bridged wedge-recovery audit',
         );
         for (var i = 0; i < preReceiverFifo.length; i++) {
           expect(
@@ -496,7 +498,7 @@ void main() {
             reason:
                 'an originator FIFO row id (data.target_row_id) MUST '
                 'NOT appear in the receiver FIFO just because the '
-                'receiver ingested the audit (REQ-d00154-E)',
+                'receiver ingested the audit',
           );
         }
 
@@ -508,7 +510,7 @@ void main() {
           reason:
               'wedge-recovery audit naming an originator destination '
               'MUST NOT register that destination on the receiver '
-              '(REQ-d00154-E, REQ-d00129-O)',
+              '(-E',
         );
 
         // The audit IS stored in the receiver's event_log.
@@ -525,7 +527,7 @@ void main() {
           hasLength(1),
           reason:
               'bridged wedge-recovery audit MUST be stored in the '
-              'receiver event_log (REQ-d00154-F admission)',
+              'receiver event_log (-F admission)',
         );
       } finally {
         await originator.close();

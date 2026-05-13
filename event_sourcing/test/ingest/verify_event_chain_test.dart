@@ -1,8 +1,11 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00146-A: verifyEventChain — public Chain-1 verifier on EventStore
-//   REQ-d00146-B: ChainVerdict shape; non-throwing contract
-//   REQ-d00146-D: verifyEventChain does not throw; returns ChainVerdict
-//   REQ-d00146-E: ok=true trivially for origin-only (length-1 provenance)
+// Verifies: EVS-PRD-hash-chain-integrity/C — verifyEventChain provides the
+//   operation by which any holder recomputes and confirms Chain 1 integrity
+//   without privileged access; returns a non-throwing ChainVerdict
+// Verifies: EVS-PRD-hash-chain-integrity/A — arrival_hash mismatch is detected
+//   and reported as ChainFailureKind.arrivalHashMismatch in the verdict
+// Verifies: EVS-PRD-ingest/D — chain verification at the ingest boundary;
+//   verifyEventChain is the post-admission audit counterpart to the
+//   pre-admission check performed by ingestEvent
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -82,7 +85,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.verifyEventChain (REQ-d00146-A+B)', () {
+  group('EventStore.verifyEventChain', () {
     test('returns ok=true for a well-formed ingested event', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(

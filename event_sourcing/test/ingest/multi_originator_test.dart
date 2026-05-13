@@ -1,9 +1,13 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00115-H: previous_ingest_hash threads across originators (Chain 2)
-//   REQ-d00115-I: ingest_sequence_number monotone across originators
-//   REQ-d00120-E: event_hash recomputed on each receiver provenance append
-//   REQ-d00146-A: verifyEventChain passes for every ingested event
-//   REQ-d00146-C: verifyIngestChain walks Chain 2 spanning all originators
+// Verifies: EVS-PRD-ingest/A — ingestEvent and ingestBatch admit events from
+//   multiple independent originators into a single local log
+// Verifies: EVS-PRD-ingest/B — originator identity preserved per event
+//   (aggregateId, sequenceNumber, arrival_hash, origin_sequence_number)
+// Verifies: EVS-PRD-ingest/C — Chain 2 ingest_sequence_number and
+//   previous_ingest_hash thread monotonically across interleaved originators
+// Verifies: EVS-PRD-hash-chain-integrity/B — verifyIngestChain and
+//   verifyEventChain return ok=true over a multi-originator log
+// Verifies: EVS-PRD-ingest/E — locally-ingested events from distinct
+//   originators participate in the same Chain 2 (unified ingest sequence)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -111,7 +115,7 @@ Future<StoredEvent> _fetchStored(_Fixture fixture, String eventId) async {
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('Multi-originator ingest (REQ-d00115-H+I, REQ-d00120-E, REQ-d00146-A+C)', () {
+  group('Multi-originator ingest', () {
     // -----------------------------------------------------------------------
     // Test 1: per-event interleaved ingest from two originators
     // -----------------------------------------------------------------------

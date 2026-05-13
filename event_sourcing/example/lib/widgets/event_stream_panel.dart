@@ -19,7 +19,6 @@ class EventStreamPanel extends StatefulWidget {
   /// Owns the per-pane `Source` used to discriminate locally-originated
   /// rows from rows ingested from another hop. Drives the `[L]` / `[R]`
   /// hop badge prefix on each row (see [_EventRow]).
-  // Implements: REQ-d00154-B — UI hop discrimination uses
   //   `EventStore.isLocallyOriginated`, which compares
   //   `provenance[0].identifier` against the pane's `source.identifier`.
   final EventStore eventStore;
@@ -128,7 +127,6 @@ class _EventRow extends StatelessWidget {
     final shortAgg = event.aggregateId.length >= 6
         ? event.aggregateId.substring(event.aggregateId.length - 6)
         : event.aggregateId;
-    // Implements: REQ-d00154-B — visual hop discrimination per row.
     //   `[L]` flags rows originated on this pane's install; `[R]` flags
     //   rows ingested from another hop (e.g. mobile -> portal via the
     //   downstream bridge).

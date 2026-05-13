@@ -1,10 +1,12 @@
+// Verifies: EVS-PRD-regulatory-alignment — default retention windows and
+//   round-trip serialization correctness for SecurityRetentionPolicy, the
+//   mechanism that satisfies ALCOA+ Enduring / §11.10(c) protection-of-records.
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('SecurityRetentionPolicy', () {
-    // Verifies: REQ-d00138-A — defaults match the design-doc spec.
-    test('REQ-d00138-A: defaults match spec', () {
+    test('defaults match spec', () {
       const p = SecurityRetentionPolicy.defaults;
       expect(p.fullRetention, const Duration(days: 90));
       expect(p.truncatedRetention, const Duration(days: 365));
@@ -15,7 +17,7 @@ void main() {
       expect(p.dropAllAfterTruncated, isTrue);
     });
 
-    test('REQ-d00138-A: round-trips through toJson / fromJson', () {
+    test('round-trips through toJson / fromJson', () {
       const p = SecurityRetentionPolicy(
         fullRetention: Duration(days: 30),
         truncatedRetention: Duration(days: 100),

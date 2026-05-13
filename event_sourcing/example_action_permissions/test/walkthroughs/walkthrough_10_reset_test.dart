@@ -1,6 +1,8 @@
 // test/walkthroughs/walkthrough_10_reset_test.dart
+// Verifies: EVS-PRD-event-log/A
+// Verifies: EVS-PRD-action-dispatch/A
 //
-// Verifies: reset semantics — a fresh ephemeral harness starts with the
+// Reset semantics — a fresh ephemeral harness starts with the
 // seed state only (4 directory entries, 9 matrix grants, no user-emitted
 // events). The actual /_demo/reset HTTP endpoint requires lib-level
 // support for in-process wipe-and-reseed and is deferred — for this

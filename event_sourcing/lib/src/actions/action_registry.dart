@@ -1,16 +1,11 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167 (ActionRegistry and Bootstrap): keyed action registry
-//   with name-collision detection at register time and permission
-//   discovery for the role-permission matrix migration tool.
+// Implements: EVS-PRD-action-dispatch/A (registry that maps action names to Action instances for dispatch lookup)
+// Implements: EVS-PRD-action-dispatch/B (Stage 1 lookup contract: unknown name → unknownAction denial)
 
 import 'package:event_sourcing/src/actions/action.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 
 /// Central registry of all `Action` instances known to a deployment.
 //
-// Implements: REQ-d00167-A — register throws on name collision.
-//             REQ-d00167-B — lookup returns the registered action or null.
-//             REQ-d00167-C — allDeclaredPermissions is the union across
 //             every registered action.
 class ActionRegistry {
   ActionRegistry();

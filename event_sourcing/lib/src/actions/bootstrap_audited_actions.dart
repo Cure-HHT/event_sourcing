@@ -1,7 +1,5 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167-D (ActionRegistry and Bootstrap): the top-level
-//   convenience function that composes all dispatcher dependencies
-//   into a ready ActionDispatcher.
+// Implements: EVS-PRD-action-dispatch/A (entry-point factory that wires registry, policy, store, and events into a dispatch-ready ActionDispatcher)
+// Implements: EVS-PRD-library-charter/C (composes the authorization-checked action dispatch pipeline)
 
 import 'package:event_sourcing/event_sourcing.dart' show EventStore;
 import 'package:event_sourcing/src/actions/action.dart';
@@ -13,7 +11,7 @@ import 'package:event_sourcing/src/actions/idempotency_store.dart';
 /// Compose a ready [ActionDispatcher] from its dependencies.
 ///
 /// Builds an [ActionRegistry], registers all supplied [actions]
-/// (rejecting collisions per REQ-d00167-A), wires the registry plus
+/// (rejecting collisions), wires the registry plus
 /// [authorization], [events], and [idempotency] into the dispatcher,
 /// and returns it.
 ActionDispatcher bootstrapAuditedActions({

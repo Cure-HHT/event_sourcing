@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-destinations/B/E — Destination abstract interface:
+// declares the per-destination event-selection filter (B) and the
+// app-supplied delivery implementation contract (transform + send, E).
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -28,10 +31,7 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// its FIFO Sembast store (`fifo_{id}`) and SHALL be stable: changing it
 /// later would orphan the store's contents. The typical id is a short
 /// slug, e.g. `"primary"` for the primary diary server.
-// Implements: REQ-d00122-A+B+C+D+E — Destination contract surface.
-// Implements: REQ-d00128-D+E+F — batch transform, canAddToBatch,
 // maxAccumulateTime.
-// Implements: REQ-d00129-B — allowHardDelete defaults to false in the
 // abstract contract; concrete destinations opt in explicitly.
 abstract class Destination {
   const Destination();
@@ -39,18 +39,15 @@ abstract class Destination {
   /// Stable identifier — used as the FIFO store suffix (`fifo_{id}`) and as
   /// the key in `DestinationRegistry`. SHALL be unique across the registry
   /// and SHALL NOT change for the lifetime of the store.
-  // Implements: REQ-d00122-A — stable id is the FIFO store identifier.
   String get id;
 
   /// Event-selection predicate. An event is enqueued to this destination
   /// iff `filter.matches(event)` returns `true`.
-  // Implements: REQ-d00122-B — filter deterministically selects events.
   SubscriptionFilter get filter;
 
   /// Opaque wire-format identifier such as `"json-v1"` or `"fhir-r4"`.
   /// Every `FifoEntry` enqueued for this destination SHALL carry this
   /// value in its `wire_format` column.
-  // Implements: REQ-d00122-C — wire_format string is declared.
   String get wireFormat;
 
   /// Upper bound on how long `fillBatch` may hold a single-event batch
@@ -65,7 +62,6 @@ abstract class Destination {
   /// trailing single-event batch is flushed immediately. The hold exists
   /// to let a live single-event batch coalesce with a second arrival,
   /// which has no meaning for historical catch-up.
-  // Implements: REQ-d00128-F — maxAccumulateTime hold on single-event
   // batches is honored by fillBatch.
   Duration get maxAccumulateTime;
 
@@ -75,7 +71,6 @@ abstract class Destination {
   /// must not be purged in one call; concrete destinations that permit
   /// hard deletion SHALL override the getter to `true` as an explicit
   /// opt-in.
-  // Implements: REQ-d00129-B — abstract default false; opt-in via override.
   bool get allowHardDelete => false;
 
   /// Whether this destination consumes the library's canonical batch
@@ -90,7 +85,6 @@ abstract class Destination {
   /// When `false` (the default for 3rd-party destinations such as sponsor
   /// CSV or Rave EDC XML), `fillBatch` invokes [transform] and persists the
   /// resulting [WirePayload] verbatim with `envelope_metadata: null`.
-  // Implements: REQ-d00152-A — abstract default false; native destinations
   // override to true.
   bool get serializesNatively => false;
 
@@ -108,7 +102,6 @@ abstract class Destination {
   /// silently results in no FIFO row being formed on this tick. Most
   /// destinations SHOULD return `true` when `currentBatch.isEmpty` to
   /// accept at least the first event.
-  // Implements: REQ-d00128-E — canAddToBatch is the destination-owned
   // batch admission predicate.
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate);
 
@@ -132,9 +125,7 @@ abstract class Destination {
   /// The returned payload is typically handed directly to `send(...)` on
   /// the drain path; the same bytes are also persisted on the
   /// [`FifoEntry.wirePayload`] for later retry attempts.
-  // Implements: REQ-d00122-D — transform produces (bytes, content_type,
   // transform_version); transform_version is preserved on the FifoEntry.
-  // Implements: REQ-d00128-D — transform takes a batch and produces one
   // WirePayload covering every event in the batch; empty batch is invalid.
   Future<WirePayload> transform(List<StoredEvent> batch);
 
@@ -147,12 +138,11 @@ abstract class Destination {
   ///   errors); drain loop applies backoff per `SyncPolicy`.
   /// - [SendPermanent] — non-retryable failure (typically 4xx excluding
   ///   rate-limits); drain loop marks the entry wedged and wedges the
-  ///   FIFO per REQ-d00119-D.
+  ///   FIFO
   ///
   /// How underlying HTTP codes, network errors, and timeouts map into those
   /// three variants is a per-destination judgment, not dictated by the
   /// contract.
-  // Implements: REQ-d00122-E — send returns a three-variant SendResult;
   // categorization is per-destination policy.
   Future<SendResult> send(WirePayload payload);
 }

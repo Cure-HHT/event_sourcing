@@ -1,3 +1,5 @@
+// Implements: EVS-PRD-action-dispatch/A (value type that carries a principal's action submission into the dispatch flow)
+
 /// The complete input to one [ActionDispatcher.dispatch] call.
 ///
 /// Bundles the action name, raw input, and optional idempotency/flow
@@ -19,7 +21,7 @@ class ActionSubmission {
   /// `null` is valid when the action's policy is `none` or `optional`.
   /// For policy `required`, omitting the key causes the dispatcher to
   /// return a `parse_denied` outcome (Stage pre-3 precondition check;
-  /// see REQ-d00170-B in action_dispatcher.dart's docs).
+  ///  in action_dispatcher.dart's docs).
   final String? idempotencyKey;
 
   /// Optional cross-action correlation token. The dispatcher stamps it

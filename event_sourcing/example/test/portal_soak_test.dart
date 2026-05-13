@@ -1,8 +1,7 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00122: Destination contract surface
-//   REQ-d00128: Batch transform, canAddToBatch, maxAccumulateTime
-//   REQ-d00152: Native destination wire format
-
+// Verifies: EVS-PRD-destinations/C
+// Verifies: EVS-PRD-destinations/C/D
+// Verifies: EVS-PRD-ingest/A/F
+// Verifies: EVS-PRD-provenance/B/C
 import 'dart:async';
 import 'dart:math';
 
@@ -347,7 +346,7 @@ void main() {
         }
 
         // ---- Collect results ---------------------------------------------
-        // Filter out the system audit events emitted by REQ-d00129-J/K
+        // Filter out the system audit events emitted by
         // (destination registration + start_date set) so the
         // user-event-count assertions stay focused on the soak's
         // simulated clicks.
@@ -525,7 +524,6 @@ void main() {
         );
 
         // 6. System audits originated on mobile reach portal via NativeAudit.
-        // Verifies: REQ-d00128-J, REQ-d00154-F — `includeSystemEvents: true`
         //   on a destination admits reserved system entry types into its
         //   FIFO; the downstream bridge then carries those rows to the
         //   portal pane's event log.

@@ -1,5 +1,4 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline) — host-side resolver before pipeline
 //   entry.
 //
 // Server-side userId -> Principal resolver. Seed comes from tool/users.yaml at

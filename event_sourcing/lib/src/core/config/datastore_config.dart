@@ -1,3 +1,4 @@
+// Implements: EVS-PRD-library-charter/H/D
 /// Configuration for the append-only datastore.
 ///
 /// This class holds all configuration needed to initialize the datastore,

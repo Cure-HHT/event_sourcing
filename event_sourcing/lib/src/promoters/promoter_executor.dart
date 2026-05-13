@@ -1,4 +1,6 @@
 // event_sourcing/lib/src/promoters/promoter_executor.dart
+// Implements: EVS-DEV-ingest-promotes-before-fold/A/B
+// Implements: EVS-DEV-snapshot-promotion-on-open/B/D
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 

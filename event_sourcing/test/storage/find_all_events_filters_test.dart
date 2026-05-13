@@ -1,6 +1,11 @@
-// Verifies: EVS-DEV-find-all-events-extended-filters — findAllEvents grows
-// entryType + clientTimestamp{Start,End} filters. All filters compose with
-// AND. Pre-existing parameters are unchanged.
+// Verifies: EVS-DEV-find-all-events-extended-filters/A — findAllEvents accepts
+//   entryType, clientTimestampStart, clientTimestampEnd optional parameters.
+// Verifies: EVS-DEV-find-all-events-extended-filters/B — findAllEventsInTxn
+//   accepts the same three parameters with the same semantics.
+// Verifies: EVS-DEV-find-all-events-extended-filters/C — all filters AND-
+//   compose; existing afterSequence + limit parameters are unaffected.
+// Verifies: EVS-PRD-event-log/D — reads in sequence_number order from any
+//   position after applying the filters.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

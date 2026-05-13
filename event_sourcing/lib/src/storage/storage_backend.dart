@@ -23,12 +23,10 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 /// callers. Writes are grouped into [transaction] bodies to guarantee
 /// atomicity across the four logical stores (event log, generic view store,
 /// per-destination FIFOs, backend_state KV).
-// Implements: REQ-d00117-A — transaction atomicity.
-// Implements: REQ-d00117-C — appendEvent co-atomic with sequence counter.
-// Implements: REQ-d00117-E — enqueueFifo initial state.
-// Implements: REQ-d00117-F — backend_state KV store for schema_version and
+// Implements: EVS-PRD-portability/D — platform-divergent persistent storage
+//   abstracted behind this Dart-side interface; the consuming application
+//   supplies the concrete implementation per platform.
 // sequence counter (not 'metadata').
-// Implements: REQ-d00140-F — generic view-row read/write via readViewRowInTxn
 // / clearViewInTxn.
 abstract class StorageBackend {
   const StorageBackend();
@@ -40,7 +38,7 @@ abstract class StorageBackend {
   ///
   /// Concrete backends SHALL invalidate the [Txn] handle when [body] returns
   /// or throws, so that a later out-of-scope use raises an error rather than
-  /// silently writing against a closed transaction (REQ-d00117-B).
+  /// silently writing against a closed transaction.
   Future<T> transaction<T>(Future<T> Function(Txn txn) body);
 
   // -------- Events --------
@@ -49,15 +47,20 @@ abstract class StorageBackend {
   /// counter. Both writes land atomically inside [txn]. Returns an
   /// [AppendResult] carrying the sequence number that was stamped on the
   /// event and the event hash that was persisted.
+  // Implements: EVS-PRD-event-log/A — append to the append-only, immutable log.
+  // Implements: EVS-PRD-event-log/B — stable total order via sequence counter.
   Future<AppendResult> appendEvent(Txn txn, StoredEvent event);
 
   /// Events for one aggregate, sorted by `sequence_number` ascending.
+  // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position.
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId);
 
   /// Events for one aggregate, read within [txn] so the result reflects
   /// writes already staged in the same transaction body. Sorted by
   /// `sequence_number` ascending. Used by callers that need hash-chain /
   /// no-op-detection reads to be coherent with the same-transaction append.
+  // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
     Txn txn,
     String aggregateId,
@@ -81,9 +84,10 @@ abstract class StorageBackend {
   ///
   /// Concrete backends are expected to translate these filters to whatever
   /// query mechanism they support (indexed predicate, WHERE clause, etc.).
-  // Implements: REQ-d00154-C — originator filters on findAllEvents.
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  //   client-timestamp filters on findAllEvents.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position.
+  // Implements: EVS-DEV-find-all-events-extended-filters/A — entryType,
+  //   clientTimestampStart, clientTimestampEnd optional named parameters.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — filters AND-compose.
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
     int? limit,
@@ -119,8 +123,11 @@ abstract class StorageBackend {
   ///
   /// Used by `rebuildView` so the event snapshot folded into the
   /// cache is coherent with the clear+upsert done under the same transaction.
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  //   client-timestamp filters on findAllEventsInTxn.
+  // Implements: EVS-PRD-event-log/D — read events in order from any position
+  //   (transactional variant; result reflects staged writes in same txn).
+  // Implements: EVS-DEV-find-all-events-extended-filters/B — same three
+  //   optional parameters with same semantics on the transactional variant.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — filters AND-compose.
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
     int? afterSequence,
@@ -161,7 +168,6 @@ abstract class StorageBackend {
 
   /// Read one row from [viewName] by [key] inside [txn], or null when
   /// the row is absent.
-  // Implements: REQ-d00140-F — generic view-row read.
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,
     String viewName,
@@ -169,7 +175,6 @@ abstract class StorageBackend {
   );
 
   /// Whole-row upsert into [viewName] at [key] inside [txn].
-  // Implements: REQ-d00140-F — generic view-row upsert.
   Future<void> upsertViewRowInTxn(
     Txn txn,
     String viewName,
@@ -178,12 +183,10 @@ abstract class StorageBackend {
   );
 
   /// Delete the row at [key] in [viewName] inside [txn].
-  // Implements: REQ-d00140-F — generic view-row delete.
   Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key);
 
   /// Iterate rows in [viewName] with optional `limit` / `offset`.
   /// Non-transactional.
-  // Implements: REQ-d00140-F — generic view-row iteration.
   Future<List<Map<String, dynamic>>> findViewRows(
     String viewName, {
     int? limit,
@@ -191,14 +194,12 @@ abstract class StorageBackend {
   });
 
   /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
-  // Implements: REQ-d00140-F — generic view clear.
   Future<void> clearViewInTxn(Txn txn, String viewName);
 
   // -------- View target versions (Phase 4.19) --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by [rebuildView] per REQ-d00140-I.
-  // Implements: REQ-d00140-I.
+  /// if no entry has been registered. Used by [rebuildView]
   Future<int?> readViewTargetVersionInTxn(
     Txn txn,
     String viewName,
@@ -207,7 +208,6 @@ abstract class StorageBackend {
 
   /// Persist [targetVersion] for the [viewName]/[entryType] pair.
   /// Idempotent on repeat writes of the same value.
-  // Implements: REQ-d00140-I.
   Future<void> writeViewTargetVersionInTxn(
     Txn txn,
     String viewName,
@@ -216,8 +216,7 @@ abstract class StorageBackend {
   );
 
   /// Read all entry-type → target-version entries for [viewName].
-  /// Used by `rebuildView`'s strict-superset check (REQ-d00140-D).
-  // Implements: REQ-d00140-I.
+  /// Used by `rebuildView`'s strict-superset check.
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
     Txn txn,
     String viewName,
@@ -225,16 +224,15 @@ abstract class StorageBackend {
 
   /// Remove every target-version entry for [viewName]. Used by
   /// `rebuildView` before re-recording, and by view drop helpers.
-  // Implements: REQ-d00140-I.
   Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName);
 
   // -------- FIFO (per destination) --------
 
   /// Append a batch-shaped entry to destination [destinationId]'s FIFO
-  /// (REQ-d00117-E). The batch covers every event in [batch], which MUST
-  /// be non-empty (REQ-d00128-A). The returned `FifoEntry` carries the
+  ///. The batch covers every event in [batch], which MUST
+  /// be non-empty. The returned `FifoEntry` carries the
   /// backend-assigned `sequence_in_queue` and the constructed
-  /// `event_ids` (REQ-d00128-A) + `event_id_range` (REQ-d00128-B) fields.
+  /// `event_ids` + `event_id_range` fields.
   ///
   /// The backend opens its own atomic transaction for the write so
   /// callers that are not already composing a larger transaction can
@@ -242,7 +240,7 @@ abstract class StorageBackend {
   /// replay, fill_batch) use [enqueueFifoTxn] instead.
   ///
   /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null
-  /// (REQ-d00152-B+E). The two payload shapes are mutually exclusive:
+  ///. The two payload shapes are mutually exclusive:
   ///
   /// - [wirePayload] (3rd-party path) — destination owns the wire format
   ///   and produced opaque bytes via `Destination.transform`. The bytes
@@ -271,8 +269,6 @@ abstract class StorageBackend {
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
   /// destination on first use so `anyFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
-  // Implements: REQ-d00128-A+B+C — batch-per-row enqueue contract.
-  // Implements: REQ-d00152-B+E — XOR wirePayload / nativeEnvelope payload
   // shape; native path persists envelope_metadata and nulls wire_payload.
   Future<FifoEntry> enqueueFifo(
     String destinationId,
@@ -293,9 +289,7 @@ abstract class StorageBackend {
   /// Implementations SHALL centralize row-construction logic here;
   /// [enqueueFifo] delegates to [enqueueFifoTxn] inside its own
   /// `transaction((txn) => ...)` wrapper.
-  // Implements: REQ-d00128-A+B+C — transactional batch-per-row enqueue
   // (co-atomic with the surrounding transaction; used by fillBatch).
-  // Implements: REQ-d00152-B+E — XOR wirePayload / nativeEnvelope payload
   // shape on the transactional variant.
   Future<FifoEntry> enqueueFifoTxn(
     Txn txn,
@@ -316,11 +310,10 @@ abstract class StorageBackend {
   /// Callers enforce the wedge: `drain` returns without calling
   /// `Destination.send` when the returned row's `final_status` is
   /// [FinalStatus.wedged]. Recovery from a wedged head is
-  /// `tombstoneAndRefill` (REQ-d00144). Returning the wedged row here
+  /// `tombstoneAndRefill`. Returning the wedged row here
   /// (rather than filtering it out) lets UI surfaces observe the
   /// wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
-  // Implements: REQ-d00124-A — readFifoHead returns first {null, wedged};
   // skips {sent, tombstoned}.
   Future<FifoEntry?> readFifoHead(String destinationId);
 
@@ -337,7 +330,6 @@ abstract class StorageBackend {
   /// directly to read FIFO entries — the store name is an implementation
   /// detail of the sembast backend and is not part of the public storage
   /// contract; this method is the supported enumeration API.
-  // Implements: REQ-d00148-A+B+C+D — typed enumeration with exclusive
   // afterSequenceInQueue slicing and optional limit; empty list on
   // unknown destination; no raw-map exposure; sole supported public
   // enumeration path (no fifo_<id> store reach-around).
@@ -353,12 +345,12 @@ abstract class StorageBackend {
   /// Implementations SHALL be a no-op (return without throwing) when the
   /// FIFO row identified by `entryId` does not exist in the destination's
   /// FIFO store, and SHALL be a no-op when the FIFO store for
-  /// `destinationId` does not exist (REQ-d00127-B). This tolerates the
+  /// `destinationId` does not exist. This tolerates the
   /// drain/unjam + drain/delete race: drain `await send()`s outside a
   /// storage transaction, and a concurrent user operation may remove the
   /// target row before drain's subsequent `appendAttempt` transaction
   /// runs. Implementations SHALL emit a warning-level diagnostic when
-  /// they no-op (REQ-d00127-C).
+  /// they no-op.
   Future<void> appendAttempt(
     String destinationId,
     String entryId,
@@ -368,15 +360,15 @@ abstract class StorageBackend {
   /// Transition an entry to a terminal `final_status`. When [status] is
   /// [FinalStatus.sent] the entry's `sent_at` is also set. Entries
   /// transitioned to terminal status are retained forever as send-log
-  /// records (REQ-d00119-D); they are never deleted.
+  /// records; they are never deleted.
   ///
   /// Implementations SHALL be a no-op (return without throwing) when the
   /// FIFO row identified by `entryId` does not exist in the destination's
   /// FIFO store, and SHALL be a no-op when the FIFO store for
-  /// `destinationId` does not exist (REQ-d00127-A) — see the matching
+  /// `destinationId` does not exist — see the matching
   /// note on [appendAttempt] for the race this closes. Implementations
   /// SHALL emit a warning-level diagnostic when they no-op
-  /// (REQ-d00127-C).
+  ///.
   ///
   /// **Idempotent on matching already-final rows.** When the entry's
   /// current `final_status` equals [status] the call returns without
@@ -420,13 +412,12 @@ abstract class StorageBackend {
   ///
   /// Note: `-1` is both the default-when-unset sentinel and the only
   /// legal pre-start rewind value (e.g., `unjamDestination` rewinding a
-  /// destination with no sent rows per REQ-d00131-D). Callers that need
+  /// destination with no sent rows). Callers that need
   /// to distinguish "never written" from "explicitly rewound to -1" MUST
   /// do so via other bookkeeping; this method treats them as equivalent.
   ///
   /// Persisted under `backend_state` key `fill_cursor_<destinationId>`.
   /// Non-transactional, read-only.
-  // Implements: REQ-d00128-G — per-destination fill cursor persisted under
   // backend_state/fill_cursor_<destinationId>, returns -1 when unset.
   Future<int> readFillCursor(String destinationId);
 
@@ -435,7 +426,6 @@ abstract class StorageBackend {
   /// already composing a larger transaction (e.g., fill_batch) SHALL use
   /// [writeFillCursorTxn] to keep the cursor advance co-atomic with the
   /// enqueue / sequence-counter writes it accompanies.
-  // Implements: REQ-d00128-G — per-destination fill cursor write
   // (standalone variant).
   Future<void> writeFillCursor(String destinationId, int sequenceNumber);
 
@@ -443,7 +433,6 @@ abstract class StorageBackend {
   /// [sequenceNumber] inside [txn]. Participates in the surrounding
   /// transaction's atomicity: on rollback the cursor reverts to its
   /// pre-transaction value.
-  // Implements: REQ-d00128-G — per-destination fill cursor write
   // (transactional variant; co-atomic with the surrounding transaction).
   Future<void> writeFillCursorTxn(
     Txn txn,
@@ -453,10 +442,9 @@ abstract class StorageBackend {
 
   /// Read a single event by `event_id` within [txn]. Returns `null` when no
   /// event with that id is present. Used by ingest's idempotency check
-  /// (REQ-d00145-D). Reads the unified event log; origin-appended events
+  ///. Reads the unified event log; origin-appended events
   /// and ingest-appended events occupy a single store keyed by
   /// `sequence_number`.
-  // Implements: REQ-d00145-D — unified-store idempotency lookup.
   Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId);
 
   /// Read a single event by `event_id` outside any transaction. Returns
@@ -465,11 +453,10 @@ abstract class StorageBackend {
   /// lookup, not a scan.
   ///
   /// Callers needing read-coherence with writes staged in the same
-  /// transaction body SHALL use [findEventByIdInTxn] (REQ-d00145) instead.
-  // Implements: REQ-d00147-A+B+C — non-transactional indexed lookup by event_id.
+  /// transaction body SHALL use [findEventByIdInTxn] instead.
   Future<StoredEvent?> findEventById(String eventId);
 
-  // -------- Destination schedules (REQ-d00129) --------
+  // -------- Destination schedules --------
 
   /// Read the persisted `DestinationSchedule` for [destinationId], or
   /// null when no schedule has ever been written. Non-transactional.
@@ -477,7 +464,6 @@ abstract class StorageBackend {
   /// Schedules are persisted under `backend_state` key
   /// `schedule_<destinationId>` as the JSON form produced by
   /// `DestinationSchedule.toJson`.
-  // Implements: REQ-d00129-A+C+F — readSchedule backs registry
   // scheduleOf/setStartDate/setEndDate persistence.
   Future<DestinationSchedule?> readSchedule(String destinationId);
 
@@ -485,7 +471,6 @@ abstract class StorageBackend {
   /// transaction. Callers already composing a transaction SHALL use
   /// [writeScheduleTxn] to keep the write co-atomic with adjacent
   /// schedule / FIFO mutations.
-  // Implements: REQ-d00129-A — initial dormant schedule persistence.
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
@@ -495,7 +480,6 @@ abstract class StorageBackend {
   /// surrounding transaction's atomicity so a schedule write and the
   /// ops that accompany it (e.g. FIFO-store drop in
   /// `deleteDestination`) commit or roll back together.
-  // Implements: REQ-d00129-C+F+H — transactional schedule write for
   // setStartDate / setEndDate / deleteDestination.
   Future<void> writeScheduleTxn(
     Txn txn,
@@ -506,7 +490,6 @@ abstract class StorageBackend {
   /// Delete the `schedule_<destinationId>` record inside [txn]. Used by
   /// `deleteDestination` to drop schedule state and the FIFO store in
   /// one atomic step.
-  // Implements: REQ-d00129-H — atomic drop of schedule + FIFO store.
   Future<void> deleteScheduleTxn(Txn txn, String destinationId);
 
   /// Drop the FIFO store for [destinationId] entirely inside [txn].
@@ -514,7 +497,6 @@ abstract class StorageBackend {
   /// (not just the currently-present records), so a subsequent
   /// `readFifoHead` on the same id returns null without seeing any
   /// trailing state.
-  // Implements: REQ-d00129-H — atomic FIFO-store drop in
   // deleteDestination.
   Future<void> deleteFifoStoreTxn(Txn txn, String destinationId);
 
@@ -548,14 +530,13 @@ abstract class StorageBackend {
   /// `sent_at = DateTime.now().toUtc()`. On every other transition
   /// `attempts[]` and `sent_at` SHALL be left untouched —
   /// tombstoneAndRefill preserves the wedged row's attempts[] verbatim
-  /// (REQ-d00144-B).
+  ///.
   ///
   /// Implementations SHALL throw [StateError] when the target row is
   /// absent — callers are expected to have verified existence (via
   /// [readFifoHead] for tombstoneAndRefill) before opening the
   /// transaction, so a missing row at this point indicates a
   /// concurrent delete race that these ops do not close.
-  // Implements: REQ-d00144-B — `null|wedged -> tombstoned` flip,
   // preserves attempts[] verbatim.
   Future<void> setFinalStatusTxn(
     Txn txn,
@@ -569,11 +550,10 @@ abstract class StorageBackend {
   /// `final_status IS null`. Returns the count of rows deleted.
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
-  /// tombstoned target in one transaction (REQ-d00144-C). Rows whose
+  /// tombstoned target in one transaction. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue` — per
-  /// REQ-d00119-D all non-null rows are retained forever.
-  // Implements: REQ-d00144-C — trail-delete predicate for tombstoneAndRefill.
+  /// all non-null rows are retained forever.
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
     Txn txn,
     String destinationId,
@@ -595,7 +575,7 @@ abstract class StorageBackend {
   /// applied.
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes});
 
-  // -------- Audit query (REQ-d00151) --------
+  // -------- Audit query --------
 
   /// Cross-store audit query joining the event log with the security-
   /// context sidecar, filtered by the supplied predicates and paginated
@@ -622,9 +602,6 @@ abstract class StorageBackend {
   /// consumers SHALL NOT reach past the abstraction to perform their
   /// own joins. `SembastSecurityContextStore.queryAudit` is a thin
   /// delegator that forwards to this method.
-  // Implements: REQ-d00151-A — typed cross-store audit query.
-  // Implements: REQ-d00151-B — join lives in storage layer.
-  // Implements: REQ-d00137-F — pagination + filter contract (relocated
   // from SecurityContextStore; the same contract holds at this level).
   Future<PagedAudit> queryAudit({
     Initiator? initiator,

@@ -7,10 +7,12 @@ import 'package:event_sourcing/src/storage/txn.dart';
 /// package-private via `InternalSecurityContextStore` — only `EventStore`
 /// writes, updates, or deletes rows so each mutation commits atomically
 /// with the event-log row that describes it.
-// Implements: REQ-d00137-A — sidecar store.
-// Implements: REQ-d00137-D — read on missing returns null.
-// Implements: REQ-d00137-E — public surface is read-only.
-// Implements: REQ-d00137-F — queryAudit contract.
+// Implements: EVS-PRD-event-log/A — mutations are committed atomically with
+//   the event-log row they describe, preserving append-only semantics at the
+//   store boundary.
+// Implements: EVS-PRD-regulatory-alignment — queryAudit provides the
+//   retrieval path required for ALCOA+ Available; read access is scoped
+//   separately from mutation to enforce least-privilege at the interface.
 abstract class SecurityContextStore {
   Future<EventSecurityContext?> read(String eventId);
 
@@ -30,7 +32,9 @@ abstract class SecurityContextStore {
 /// Not exported at the library surface — application code must go
 /// through `EventStore.append` / `EventStore.clearSecurityContext` /
 /// `EventStore.applyRetentionPolicy`.
-// Implements: REQ-d00137-E — mutation-internal API not exposed publicly.
+// Implements: EVS-PRD-event-log/A — `writeInTxn` / `upsertInTxn` /
+//   `deleteInTxn` all accept a `Txn` so the caller (EventStore) can commit
+//   security and event-log mutations atomically.
 abstract class InternalSecurityContextStore extends SecurityContextStore {
   Future<void> writeInTxn(Txn txn, EventSecurityContext row);
   Future<EventSecurityContext?> readInTxn(Txn txn, String eventId);

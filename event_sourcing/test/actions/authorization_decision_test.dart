@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/B (AuthorizationDecision sealed type: Allow falls through; Deny short-circuits with permission + reason)
+// Verifies: EVS-PRD-permissions-as-events/B (decision type is the output of isPermitted, which evaluates from event-derived projections)
+
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_class.dart';
@@ -5,8 +8,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('AuthorizationDecision', () {
-    // Verifies: REQ-d00173-B
-    test('REQ-d00173-B: Allow is a const singleton-style variant', () {
+    test('Allow is a const singleton-style variant', () {
       const a1 = Allow();
       const a2 = Allow();
       expect(a1, isA<Allow>());
@@ -17,8 +19,7 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00173-C
-    test('REQ-d00173-C: Deny carries permission + reason', () {
+    test('Deny carries permission + reason', () {
       const d = Deny(
         permission: Permission('user.invite', scope: ScopeClass.global),
         reason: DenyReason.notGranted,
@@ -27,8 +28,7 @@ void main() {
       expect(d.reason, DenyReason.notGranted);
     });
 
-    // Verifies: REQ-d00173-B
-    test('REQ-d00173-B: sealed switch is exhaustive across both variants', () {
+    test('sealed switch is exhaustive across both variants', () {
       const AuthorizationDecision d = Allow();
       final desc = switch (d) {
         Allow() => 'allow',
@@ -37,8 +37,7 @@ void main() {
       expect(desc, 'allow');
     });
 
-    // Verifies: REQ-d00173-D
-    test('REQ-d00173-D: DenyReason has three values', () {
+    test('DenyReason has three values', () {
       expect(DenyReason.values, hasLength(3));
       expect(DenyReason.values.toSet(), {
         DenyReason.notGranted,

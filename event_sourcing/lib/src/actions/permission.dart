@@ -1,7 +1,6 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00172-A+B: Permission carries the ScopeClass that constrains which
-//   principals may exercise it based on session context; every Action's
-//   declared permissions state their scope explicitly.
+// Implements: EVS-PRD-action-dispatch/B (Permission is the unit checked by the authorize stage; Action.permissions declares what is required)
+// Implements: EVS-PRD-permissions-as-events/A (Permission names are the subject of permission-grant events in the same log)
+// Implements: EVS-PRD-permissions-as-events/B (AuthorizationPolicy.isPermitted receives Permission; evaluates from event-derived projections)
 
 import 'package:event_sourcing/src/actions/scope_class.dart';
 

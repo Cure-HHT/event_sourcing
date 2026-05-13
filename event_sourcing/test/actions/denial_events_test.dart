@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-action-dispatch/C (denial event factories produce correctly-shaped EventDrafts for every failure stage)
+// Verifies: EVS-PRD-action-dispatch/B (one factory per stage maps directly to the B-stage taxonomy)
+
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
 import 'package:event_sourcing/src/actions/denial_events.dart';
@@ -7,7 +10,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('denial event factories', () {
-    test('REQ-d00171-A: unknownAction draft has correct shape', () {
+    test('unknownAction draft has correct shape', () {
       final draft = denialUnknownAction(
         invocationId: 'inv-1',
         requestedName: 'foo',
@@ -21,7 +24,7 @@ void main() {
       expect(draft.metadata?['request_id'], 'r-1');
     });
 
-    test('REQ-d00171-A+B: parseDenied includes sanitized error message', () {
+    test('parseDenied includes sanitized error message', () {
       final draft = denialParseDenied(
         invocationId: 'inv-1',
         actionName: 'invite_user',
@@ -31,14 +34,13 @@ void main() {
       );
       expect(draft.eventType, 'parse_denied');
       expect(draft.data['error_class'], 'ArgumentError');
-      // REQ-d00171-C: file paths sanitized out.
       expect(
         draft.data['error_message_sanitized'],
         isNot(contains('/home/user/secret')),
       );
     });
 
-    test('REQ-d00171-A+B: validationDenied carries error class', () {
+    test('validationDenied carries error class', () {
       final draft = denialValidationDenied(
         invocationId: 'inv-1',
         actionName: 'invite_user',
@@ -49,7 +51,7 @@ void main() {
       expect(draft.data['action_name'], 'invite_user');
     });
 
-    test('REQ-d00171-A+B: validationDenied carries optional fieldPath', () {
+    test('validationDenied carries optional fieldPath', () {
       final draft = denialValidationDenied(
         invocationId: 'inv-1',
         actionName: 'invite_user',
@@ -59,59 +61,47 @@ void main() {
       expect(draft.data['field_path'], 'email');
     });
 
-    test(
-      'REQ-d00171-A+B: authorizationDenied includes permission and active role',
-      () {
-        final draft = denialAuthorizationDenied(
-          invocationId: 'inv-1',
-          actionName: 'user.delete',
-          permission: const Permission('user.delete', scope: ScopeClass.global),
-          principalActiveRole: 'Investigator',
-        );
-        expect(draft.eventType, 'authorization_denied');
-        expect(draft.data['permission_denied'], 'user.delete');
-        expect(draft.data['principal_active_role'], 'Investigator');
-      },
-    );
+    test('authorizationDenied includes permission and active role', () {
+      final draft = denialAuthorizationDenied(
+        invocationId: 'inv-1',
+        actionName: 'user.delete',
+        permission: const Permission('user.delete', scope: ScopeClass.global),
+        principalActiveRole: 'Investigator',
+      );
+      expect(draft.eventType, 'authorization_denied');
+      expect(draft.data['permission_denied'], 'user.delete');
+      expect(draft.data['principal_active_role'], 'Investigator');
+    });
 
-    test(
-      'REQ-d00171-A+B: authorizationDenied without active role omits the field',
-      () {
-        final draft = denialAuthorizationDenied(
-          invocationId: 'inv-1',
-          actionName: 'user.delete',
-          permission: const Permission('user.delete', scope: ScopeClass.global),
-        );
-        expect(draft.data.containsKey('principal_active_role'), isFalse);
-      },
-    );
+    test('authorizationDenied without active role omits the field', () {
+      final draft = denialAuthorizationDenied(
+        invocationId: 'inv-1',
+        actionName: 'user.delete',
+        permission: const Permission('user.delete', scope: ScopeClass.global),
+      );
+      expect(draft.data.containsKey('principal_active_role'), isFalse);
+    });
 
-    test(
-      'REQ-d00171-A: authorizationDenied with denyReason serializes enum name',
-      () {
-        final draft = denialAuthorizationDenied(
-          invocationId: 'inv-1',
-          actionName: 'user.delete',
-          permission: const Permission('user.delete', scope: ScopeClass.global),
-          denyReason: DenyReason.sessionPreconditionMissing,
-        );
-        expect(draft.data['deny_reason'], 'sessionPreconditionMissing');
-      },
-    );
+    test('authorizationDenied with denyReason serializes enum name', () {
+      final draft = denialAuthorizationDenied(
+        invocationId: 'inv-1',
+        actionName: 'user.delete',
+        permission: const Permission('user.delete', scope: ScopeClass.global),
+        denyReason: DenyReason.sessionPreconditionMissing,
+      );
+      expect(draft.data['deny_reason'], 'sessionPreconditionMissing');
+    });
 
-    test(
-      'REQ-d00171-A: authorizationDenied without denyReason omits deny_reason field',
-      () {
-        final draft = denialAuthorizationDenied(
-          invocationId: 'inv-1',
-          actionName: 'user.delete',
-          permission: const Permission('user.delete', scope: ScopeClass.global),
-        );
-        expect(draft.data.containsKey('deny_reason'), isFalse);
-      },
-    );
+    test('authorizationDenied without denyReason omits deny_reason field', () {
+      final draft = denialAuthorizationDenied(
+        invocationId: 'inv-1',
+        actionName: 'user.delete',
+        permission: const Permission('user.delete', scope: ScopeClass.global),
+      );
+      expect(draft.data.containsKey('deny_reason'), isFalse);
+    });
 
-    test('REQ-d00171-A+B: executionFailed carries sanitized error', () {
+    test('executionFailed carries sanitized error', () {
       final draft = denialExecutionFailed(
         invocationId: 'inv-1',
         actionName: 'invite_user',
@@ -121,7 +111,7 @@ void main() {
       expect(draft.data['error_class'], 'StateError');
     });
 
-    test('REQ-d00171-C: sanitization strips stack-trace markers', () {
+    test('sanitization strips stack-trace markers', () {
       final draft = denialExecutionFailed(
         invocationId: 'inv-1',
         actionName: 'a',
@@ -134,7 +124,7 @@ void main() {
       expect(msg, isNot(contains('file:///')));
     });
 
-    test('REQ-d00171-C: sanitization strips Windows paths', () {
+    test('sanitization strips Windows paths', () {
       final draft = denialExecutionFailed(
         invocationId: 'inv-1',
         actionName: 'a',
@@ -144,7 +134,7 @@ void main() {
       expect(msg, isNot(contains(r'C:\Users')));
     });
 
-    test('REQ-d00171: every denial type uses aggregateType=action_attempt', () {
+    test('every denial type uses aggregateType=action_attempt', () {
       final all = <String>{
         denialUnknownAction(
           invocationId: 'i',

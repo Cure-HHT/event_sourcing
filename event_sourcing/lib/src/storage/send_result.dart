@@ -12,9 +12,8 @@
 /// per-destination judgment — default categorization is `2xx -> SendOk`,
 /// `5xx/network -> SendTransient`, `4xx -> SendPermanent`, with
 /// destination-level carve-outs possible (see design doc §8.1, §11.1).
-// Implements: REQ-p01001-L — three-category send outcome classification
-// so the drain loop can make retry vs. wedge decisions without destination-
-// specific knowledge.
+// Implements: EVS-PRD-portability/C — pure Dart sealed type; platform-
+//   independent; no platform-specific imports.
 sealed class SendResult {
   const SendResult();
 }
@@ -60,7 +59,7 @@ class SendTransient extends SendResult {
 
 /// The destination will not accept the payload, and retry would not change
 /// that. The drain loop SHALL mark the FIFO head `wedged` and stop
-/// draining this destination until operator action (REQ-d00119-C).
+/// draining this destination until operator action.
 class SendPermanent extends SendResult {
   const SendPermanent({required this.error});
 

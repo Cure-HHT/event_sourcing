@@ -1,9 +1,11 @@
+// Verifies: EVS-PRD-action-dispatch/D (Idempotency enum has three policy variants; IdempotencyEntry is the cached outcome; defaultIdempotencyTtl is 24h)
+
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('Idempotency enum', () {
-    test('REQ-d00170-A,B,C: has three variants', () {
+    test('has three variants', () {
       expect(Idempotency.values, hasLength(3));
       expect(Idempotency.values, contains(Idempotency.none));
       expect(Idempotency.values, contains(Idempotency.optional));
@@ -55,7 +57,7 @@ void main() {
   });
 
   group('defaultIdempotencyTtl', () {
-    test('REQ-d00170-F: defaults to 24 hours', () {
+    test('defaults to 24 hours', () {
       expect(defaultIdempotencyTtl, const Duration(hours: 24));
     });
   });

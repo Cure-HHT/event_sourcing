@@ -28,7 +28,7 @@ class FifoPanel extends StatefulWidget {
   /// (lossy 3rd-party shape: `transform()` produces opaque bytes the
   /// FIFO row stores under `wire_payload`) or any other [Destination]
   /// such as a native `esd/batch@1` destination (FIFO row stores
-  /// `envelope_metadata` instead, REQ-d00119-K). The demo-specific
+  /// `envelope_metadata` instead). The demo-specific
   /// connection / latency / batch-size knobs render whenever the
   /// destination implements [DemoKnobs] — both demo destinations do.
   final Destination destination;
@@ -551,7 +551,7 @@ class _FifoRowTile extends StatelessWidget {
 
     final label =
         '$prefix#$seq: events: $count (latest: $latestLabel)  attempts:$attemptsLen';
-    // Per-row format badge + storage-shape summary. Native rows (REQ-d00119-K)
+    // Per-row format badge + storage-shape summary. Native rows
     // carry envelope_metadata + null wire_payload — the on-wire bytes are
     // reconstructed deterministically by drain at send time, so the storage
     // footprint is just the envelope identity. Lossy 3rd-party rows persist
@@ -569,7 +569,7 @@ class _FifoRowTile extends StatelessWidget {
       shapeSummary =
           'batch $batchPrefix | $count events | wire bytes recovered on demand';
     } else {
-      // wire_payload is the decoded JSON map (REQ-d00119-B path); re-encode
+      // wire_payload is the decoded JSON map (-B path); re-encode
       // it via JSON to get a representative byte count. This is the same
       // shape `transform()` produced before enqueueFifo decoded it for
       // structured storage — so the count stays comparable across both
@@ -581,7 +581,7 @@ class _FifoRowTile extends StatelessWidget {
       shapeSummary = 'wire_payload: $bytesLabel bytes';
     }
     // Show TombstoneAndRefill button only on wedged rows. A healthy pending
-    // head is also a valid target per REQ-d00144-A, but surfacing the control
+    // head is also a valid target but surfacing the control
     // on every transient null head during rapid enqueue reads as a false
     // "this row needs intervention" signal. Operator scripts can still call
     // tombstoneAndRefill on a null head directly through the library API.

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/E — exercises BatchEnvelopeMetadata: the
+// library-native batch format for destinations that serializesNatively;
+// verifies round-trip serialization and deterministic re-encoding at drain.
 import 'dart:convert';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
@@ -15,16 +18,14 @@ void main() {
       sentAt: DateTime.utc(2026, 4, 25, 12, 0, 0),
     );
 
-    // Verifies: REQ-d00119-K — round-trip toMap / fromMap preserves all
     // six fields exactly.
-    test('REQ-d00119-K: round-trip via toMap / fromMap is value-equal', () {
+    test('round-trip via toMap / fromMap is value-equal', () {
       final map = fixture.toMap();
       final restored = BatchEnvelopeMetadata.fromMap(map);
       expect(restored, fixture);
     });
 
-    // Verifies: REQ-d00119-K — fromEnvelope drops the events list.
-    test('REQ-d00119-K: fromEnvelope copies metadata, drops events', () {
+    test('fromEnvelope copies metadata, drops events', () {
       final env = BatchEnvelope(
         batchFormatVersion: '1',
         batchId: 'b-001',
@@ -41,8 +42,7 @@ void main() {
       expect(meta, fixture);
     });
 
-    // Verifies: REQ-d00119-K — toEnvelope reattaches events for re-encode.
-    test('REQ-d00119-K: toEnvelope reattaches events; encode is byte-equal '
+    test('toEnvelope reattaches events; encode is byte-equal '
         'across two calls (RFC 8785 JCS determinism)', () {
       final events = <Map<String, Object?>>[
         <String, Object?>{'event_id': 'e1', 'sequence_number': 1},
@@ -57,9 +57,8 @@ void main() {
       expect((decoded['events']! as List).length, 2);
     });
 
-    // Verifies: REQ-d00119-K — equality + hashCode consistent across
     // identical metadata.
-    test('REQ-d00119-K: equality and hashCode are value-based', () {
+    test('equality and hashCode are value-based', () {
       final a = BatchEnvelopeMetadata.fromMap(fixture.toMap());
       final b = BatchEnvelopeMetadata.fromMap(fixture.toMap());
       expect(a, b);

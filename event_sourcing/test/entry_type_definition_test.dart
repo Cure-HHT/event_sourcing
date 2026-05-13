@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-event-log/A
+// Verifies: EVS-DEV-append-stamps-registered-version/A/B/C
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -7,27 +9,21 @@ Map<String, Object?> _validJson() => <String, Object?>{
   'name': 'Nosebleed',
 };
 
-/// Verifies REQ-d00116-A, REQ-d00116-B, REQ-d00116-C, REQ-d00140-C.
 void main() {
   group('EntryTypeDefinition', () {
-    // Verifies: REQ-d00116-A+B+C — all three required fields present.
-    test(
-      'REQ-d00116-A,B,C: constructs with all required fields; getters round-trip',
-      () {
-        const def = EntryTypeDefinition(
-          id: 'epistaxis_event',
-          registeredVersion: 1,
-          name: 'Nosebleed',
-        );
+    test('constructs with all required fields; getters round-trip', () {
+      const def = EntryTypeDefinition(
+        id: 'epistaxis_event',
+        registeredVersion: 1,
+        name: 'Nosebleed',
+      );
 
-        expect(def.id, 'epistaxis_event');
-        expect(def.registeredVersion, 1);
-        expect(def.name, 'Nosebleed');
-        expect(def.materialize, isTrue);
-      },
-    );
+      expect(def.id, 'epistaxis_event');
+      expect(def.registeredVersion, 1);
+      expect(def.name, 'Nosebleed');
+      expect(def.materialize, isTrue);
+    });
 
-    // Verifies: REQ-d00116-A+B+C+materialize — toJson emits snake_case keys.
     test('toJson emits snake_case keys for every field', () {
       const def = EntryTypeDefinition(
         id: 'epistaxis_event',
@@ -57,26 +53,17 @@ void main() {
     });
 
     group('fromJson validation', () {
-      // Verifies: REQ-d00116-A — missing id rejected.
-      test('REQ-d00116-A: missing id throws FormatException', () {
+      test('missing id throws FormatException', () {
         final bad = _validJson()..remove('id');
         expect(() => EntryTypeDefinition.fromJson(bad), throwsFormatException);
       });
 
-      // Verifies: REQ-d00116-B — missing registered_version rejected.
-      test(
-        'REQ-d00116-B: missing registered_version throws FormatException',
-        () {
-          final bad = _validJson()..remove('registered_version');
-          expect(
-            () => EntryTypeDefinition.fromJson(bad),
-            throwsFormatException,
-          );
-        },
-      );
+      test('missing registered_version throws FormatException', () {
+        final bad = _validJson()..remove('registered_version');
+        expect(() => EntryTypeDefinition.fromJson(bad), throwsFormatException);
+      });
 
-      // Verifies: REQ-d00116-C — missing name rejected.
-      test('REQ-d00116-C: missing name throws FormatException', () {
+      test('missing name throws FormatException', () {
         final bad = _validJson()..remove('name');
         expect(() => EntryTypeDefinition.fromJson(bad), throwsFormatException);
       });
@@ -153,7 +140,7 @@ void main() {
     });
   });
 
-  group('REQ-d00140-C: materialize flag', () {
+  group('materialize flag', () {
     test('defaults to true', () {
       const def = EntryTypeDefinition(id: 'x', registeredVersion: 1, name: 'X');
       expect(def.materialize, isTrue);

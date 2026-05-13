@@ -1,9 +1,6 @@
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00167 (Bootstrap) — composes ActionDispatcher with all dependencies
 //   into a single DemoServerComponents facade the demo server reads through.
-//   REQ-d00175 (Seed appliers) — runs both YAML seed appliers (matrix +
 //   user directory) before the dispatcher accepts any request.
-//   REQ-d00178-B+C (PolicyReady / PolicyFailSafe) — surfaces the seed-bootstrap
 //   verdict and the FailSafe policy's errors so the inspector can show why
 //   every dispatch denies.
 

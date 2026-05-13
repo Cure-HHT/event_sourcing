@@ -14,14 +14,15 @@ import 'package:sembast/sembast.dart';
 ///   denied, closed state, bad argument); requires caller / operator action.
 /// * `StorageCorruptException` — data-integrity violated (decode failure,
 ///   hash-chain mismatch); requires intervention and usually a rebuild.
-// Implements: REQ-d00143-A — sealed Dart 3 class with exactly three
+// Implements: EVS-PRD-portability/D — part of the platform-agnostic
+//   StorageBackend abstraction; hides backend-specific error types behind this
+//   sealed hierarchy so callers need not import Sembast or IO packages.
 // subclasses; exhaustive pattern-matching enforced at compile time.
 sealed class StorageException implements Exception {
   const StorageException(this.message, this.cause, this.stackTrace);
 
   final String message;
 
-  // Implements: REQ-d00143-G — preserve the original cause and stackTrace for
   // diagnostic traceability.
   final Object cause;
   final StackTrace stackTrace;
@@ -61,7 +62,7 @@ class StorageCorruptException extends StorageException {
 /// Callers pass the raw `error` and `stack` from a `try`/`catch` and then
 /// pattern-match the result to decide whether to retry, quarantine, or
 /// surface. No call sites wire this classifier in Phase 4.5 — consumers land
-/// in Phase 4.6 (or later) under the same REQ-d00143 umbrella.
+/// in Phase 4.6 (or later) under the same umbrella.
 ///
 /// Mapping today:
 /// * `dart:async` `TimeoutException` → transient
@@ -71,22 +72,16 @@ class StorageCorruptException extends StorageException {
 /// * `dart:io` `FileSystemException`, `StateError`, `ArgumentError`, sembast
 ///   `DatabaseException` lifecycle codes (`errBadParam`,
 ///   `errDatabaseNotFound`, `errDatabaseClosed`) → permanent
-/// * anything else → permanent (conservative fallback per REQ-d00143-F — a
+/// * anything else → permanent (conservative fallback — a
 ///   retry loop on unknown errors is worse than failing loudly)
-// Implements: REQ-d00143-B — public classifier returning StorageException
 // for any input; never throws.
-// Implements: REQ-d00143-C — TimeoutException and backend-raised transient
 // signals classify as StorageTransientException.
-// Implements: REQ-d00143-D — FormatException (JSON decode / hash-chain
 // break) and sembast DatabaseException.errInvalidCodec classify as
 // StorageCorruptException.
-// Implements: REQ-d00143-E — dart:io FileSystemException, StateError,
 // ArgumentError, and sembast DatabaseException lifecycle codes
 // (errBadParam, errDatabaseNotFound, errDatabaseClosed) classify as
 // StoragePermanentException.
-// Implements: REQ-d00143-F — unrecognized input conservatively classifies
 // as StoragePermanentException (never transient).
-// Implements: REQ-d00143-G — classifier forwards the original cause and
 // stackTrace to the returned exception.
 StorageException classifyStorageException(Object error, StackTrace stack) {
   return switch (error) {

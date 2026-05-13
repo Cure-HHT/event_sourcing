@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-event-log/A
+// Verifies: EVS-DEV-append-stamps-registered-version/A
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:flutter_test/flutter_test.dart';

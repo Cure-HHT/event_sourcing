@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/C (FIFO order — SyncPolicy.backoffFor computes
+//   the exponential-backoff curve that governs when drain re-attempts the head
+//   row; the cap, jitter, and maxAttempts fields are tested against their
+//   specified defaults so the retry curve is predictable and bounded)
 import 'dart:math';
 
 import 'package:event_sourcing/src/sync/sync_policy.dart';
@@ -5,89 +9,65 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('SyncPolicy.defaults constants', () {
-    // Verifies: REQ-d00123-A — initialBackoff is 60 seconds.
-    test('REQ-d00123-A: defaults.initialBackoff == Duration(seconds: 60)', () {
+    test('defaults.initialBackoff == Duration(seconds: 60)', () {
       expect(SyncPolicy.defaults.initialBackoff, const Duration(seconds: 60));
     });
 
-    // Verifies: REQ-d00123-B — backoffMultiplier is 5.0.
-    test('REQ-d00123-B: defaults.backoffMultiplier == 5.0', () {
+    test('defaults.backoffMultiplier == 5.0', () {
       expect(SyncPolicy.defaults.backoffMultiplier, 5.0);
     });
 
-    // Verifies: REQ-d00123-C — maxBackoff is 2 hours.
-    test('REQ-d00123-C: defaults.maxBackoff == Duration(hours: 2)', () {
+    test('defaults.maxBackoff == Duration(hours: 2)', () {
       expect(SyncPolicy.defaults.maxBackoff, const Duration(hours: 2));
     });
 
-    // Verifies: REQ-d00123-D — jitterFraction is 0.1.
-    test('REQ-d00123-D: defaults.jitterFraction == 0.1', () {
+    test('defaults.jitterFraction == 0.1', () {
       expect(SyncPolicy.defaults.jitterFraction, 0.1);
     });
 
-    // Verifies: REQ-d00123-E — maxAttempts is 20.
-    test('REQ-d00123-E: defaults.maxAttempts == 20', () {
+    test('defaults.maxAttempts == 20', () {
       expect(SyncPolicy.defaults.maxAttempts, 20);
     });
 
-    // Verifies: REQ-d00123-F — periodicInterval is 15 minutes.
-    test(
-      'REQ-d00123-F: defaults.periodicInterval == Duration(minutes: 15)',
-      () {
-        expect(
-          SyncPolicy.defaults.periodicInterval,
-          const Duration(minutes: 15),
-        );
-      },
-    );
+    test('defaults.periodicInterval == Duration(minutes: 15)', () {
+      expect(SyncPolicy.defaults.periodicInterval, const Duration(minutes: 15));
+    });
   });
 
-  group('REQ-d00126-A: SyncPolicy is a value class', () {
-    // Verifies: REQ-d00126-A — SyncPolicy has a const constructor and can be
+  group('SyncPolicy is a value class', () {
     // instantiated with custom field values.
-    test(
-      'REQ-d00126-A: const constructor accepts all fields and exposes them',
-      () {
-        const custom = SyncPolicy(
-          initialBackoff: Duration(seconds: 10),
-          backoffMultiplier: 2.0,
-          maxBackoff: Duration(minutes: 30),
-          jitterFraction: 0.2,
-          maxAttempts: 7,
-          periodicInterval: Duration(minutes: 5),
-        );
-        expect(custom.initialBackoff, const Duration(seconds: 10));
-        expect(custom.backoffMultiplier, 2.0);
-        expect(custom.maxBackoff, const Duration(minutes: 30));
-        expect(custom.jitterFraction, 0.2);
-        expect(custom.maxAttempts, 7);
-        expect(custom.periodicInterval, const Duration(minutes: 5));
-      },
-    );
+    test('const constructor accepts all fields and exposes them', () {
+      const custom = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 2.0,
+        maxBackoff: Duration(minutes: 30),
+        jitterFraction: 0.2,
+        maxAttempts: 7,
+        periodicInterval: Duration(minutes: 5),
+      );
+      expect(custom.initialBackoff, const Duration(seconds: 10));
+      expect(custom.backoffMultiplier, 2.0);
+      expect(custom.maxBackoff, const Duration(minutes: 30));
+      expect(custom.jitterFraction, 0.2);
+      expect(custom.maxAttempts, 7);
+      expect(custom.periodicInterval, const Duration(minutes: 5));
+    });
 
-    // Verifies: REQ-d00126-A — SyncPolicy.defaults is a static const instance.
-    test('REQ-d00126-A: SyncPolicy.defaults is a static const instance', () {
+    test('SyncPolicy.defaults is a static const instance', () {
       const ref = SyncPolicy.defaults;
       expect(ref, isA<SyncPolicy>());
       // Identity is preserved for a static const — same reference each access.
       expect(identical(SyncPolicy.defaults, ref), isTrue);
     });
 
-    // Verifies: REQ-d00126-A — defaults values equal the REQ-d00123 constants.
-    test(
-      'REQ-d00126-A: defaults field values equal the REQ-d00123 constants',
-      () {
-        expect(SyncPolicy.defaults.initialBackoff, const Duration(seconds: 60));
-        expect(SyncPolicy.defaults.backoffMultiplier, 5.0);
-        expect(SyncPolicy.defaults.maxBackoff, const Duration(hours: 2));
-        expect(SyncPolicy.defaults.jitterFraction, 0.1);
-        expect(SyncPolicy.defaults.maxAttempts, 20);
-        expect(
-          SyncPolicy.defaults.periodicInterval,
-          const Duration(minutes: 15),
-        );
-      },
-    );
+    test('defaults field values equal the  constants', () {
+      expect(SyncPolicy.defaults.initialBackoff, const Duration(seconds: 60));
+      expect(SyncPolicy.defaults.backoffMultiplier, 5.0);
+      expect(SyncPolicy.defaults.maxBackoff, const Duration(hours: 2));
+      expect(SyncPolicy.defaults.jitterFraction, 0.1);
+      expect(SyncPolicy.defaults.maxAttempts, 20);
+      expect(SyncPolicy.defaults.periodicInterval, const Duration(minutes: 15));
+    });
   });
 
   group('SyncPolicy.backoffFor (instance method)', () {
@@ -200,9 +180,8 @@ void main() {
       );
     });
 
-    // Verifies: REQ-d00126-A — a custom SyncPolicy instance reads the
     // curve from its own instance fields, not from the defaults.
-    test('REQ-d00126-A: custom policy uses its own fields for backoffFor', () {
+    test('custom policy uses its own fields for backoffFor', () {
       const fast = SyncPolicy(
         initialBackoff: Duration(seconds: 1),
         backoffMultiplier: 2.0,

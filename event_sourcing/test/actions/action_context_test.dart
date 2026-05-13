@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-action-dispatch/A (ActionContext bundles Principal + security + timestamp for passing through every dispatch stage)
+
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -5,7 +7,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('ActionContext', () {
-    test('REQ-d00166: bundles principal, security, and timestamp', () {
+    test('bundles principal, security, and timestamp', () {
       final ctx = ActionContext(
         principal: const Principal.anonymous(),
         security: const SecurityDetails(),

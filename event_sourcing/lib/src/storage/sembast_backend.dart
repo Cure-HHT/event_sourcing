@@ -33,7 +33,6 @@ const _uuidGen = Uuid();
 /// Package-private default log sink used when a [SembastBackend] instance
 /// has not overridden [SembastBackend.debugLogSink]. Routes through
 /// `dart:developer` at the warning level (`level: 900`).
-// Implements: REQ-d00127-C — warning-level diagnostic when markFinal or
 // appendAttempt no-op on a missing target.
 void _defaultLogSink(String message) {
   developer.log(message, name: 'SembastBackend', level: 900);
@@ -41,8 +40,17 @@ void _defaultLogSink(String message) {
 
 /// Concrete Sembast-backed implementation of [StorageBackend].
 ///
+/// The reference implementation for Dart VM / Flutter mobile / Flutter desktop
+/// / Flutter web. Satisfies the portability contract by keeping all
+/// Sembast-specific code behind this class; callers see only `StorageBackend`.
+///
 /// Opens a single Sembast database at `path` via `databaseFactory`. The
 /// database hosts four logical stores:
+// Implements: EVS-PRD-portability/D — reference platform-divergent storage
+//   implementation; app supplies databaseFactory per platform.
+// Implements: EVS-PRD-event-log/A — append-only event log in 'events' store.
+// Implements: EVS-PRD-event-log/B — stable total order via sequence counter in
+//   backend_state; monotonic; never reset.
 ///
 /// - `events` — append-only event log, keyed by Sembast auto-increment int.
 /// - `diary_entries` — materialized view, keyed by `entry_id` (string).
@@ -51,7 +59,7 @@ void _defaultLogSink(String message) {
 ///   the persisted schema version. Deliberately NOT named `metadata` — that
 ///   name is already used on every event record as the provenance / change-
 ///   reason carrier, so reusing it at the store level would make code
-///   references ambiguous (REQ-d00117-F).
+///   references ambiguous.
 ///
 /// The database is opened lazily on first use so construction is cheap and
 /// test setup can instantiate many backends without paying database-open
@@ -73,8 +81,8 @@ class SembastBackend extends StorageBackend {
   // Per-destination monotonic `sequence_in_queue` counter key, stored in
   // `backend_state` as `fifo_seq_counter_<destinationId>`. Used by
   // `enqueueFifoTxn` to assign a never-reused sequence_in_queue value
-  // (REQ-d00119-E): the counter advances on every enqueue and is never
-  // reset, so a row deleted by the REQ-d00144-C trail sweep cannot have
+  //: the counter advances on every enqueue and is never
+  // reset, so a row deleted by the trail sweep cannot have
   // its slot re-used by a later enqueue.
   static String _fifoSeqCounterKey(String destinationId) =>
       'fifo_seq_counter_$destinationId';
@@ -101,12 +109,12 @@ class SembastBackend extends StorageBackend {
 
   // Broadcast controllers — feed reactive APIs added in Phase 4.12.
   // _eventsController fed after each successful appendEvent commit
-  // (REQ-d00149); origin and ingest paths both route through appendEvent
+  //; origin and ingest paths both route through appendEvent
   // under the unified event store, so a single emission point covers both.
   // _fifoChangesController fed after each successful FIFO mutation;
-  // payload is the destinationId (REQ-d00150). _viewChangesController fed
+  // payload is the destinationId. _viewChangesController fed
   // after each successful view-row mutation; payload is the viewName
-  // (REQ-d00153).
+  //.
   final StreamController<StoredEvent> _eventsController =
       StreamController<StoredEvent>.broadcast();
   final StreamController<String> _fifoChangesController =
@@ -124,7 +132,6 @@ class SembastBackend extends StorageBackend {
   /// commit. The field is mutable so the wrapper can preserve outer
   /// state across nested calls (sembast does not nest, but the swap is
   /// the cleanest race-safe pattern).
-  // Implements: REQ-d00149-A+B+C — post-commit emission to broadcast
   // controllers; co-atomic with the surrounding transaction's commit.
   List<void Function()> _pendingPostCommit = <void Function()>[];
 
@@ -144,12 +151,11 @@ class SembastBackend extends StorageBackend {
 
   /// Visible-for-testing sink for the warning-level diagnostic emitted by
   /// [markFinal] and [appendAttempt] when they no-op on a missing target
-  /// (REQ-d00127-C). Defaults to the package-private [_defaultLogSink],
+  ///. Defaults to the package-private [_defaultLogSink],
   /// which writes through `dart:developer` at `level: 900` (warning).
   /// Tests install a `List<String>.add` closure to capture emitted lines
   /// without depending on a global logger. Setting this to `null`
   /// suppresses diagnostics entirely.
-  // Implements: REQ-d00127-C — debugLogSink for test capture.
   void Function(String)? debugLogSink = _defaultLogSink;
 
   // -------- transaction --------
@@ -213,11 +219,11 @@ class SembastBackend extends StorageBackend {
   /// consumed the reservation with a wrong `sequenceNumber`; both are
   /// caller bugs, so `appendEvent` throws `StateError` rather than
   /// silently accepting an out-of-range value.
-  // Implements: REQ-d00117-C — appendEvent co-atomic with sequence counter
   // (advance owned by nextSequenceNumber; appendEvent consumes the
   // reservation).
-  // Implements: REQ-p00004-A+B — append-only event, hash chain stamped by
-  // caller and persisted verbatim.
+  // Implements: EVS-PRD-event-log/A — persists event to append-only log.
+  // Implements: EVS-PRD-event-log/B — sequence number stamped by caller from
+  //   nextSequenceNumber; persisted verbatim preserving total order.
   @override
   Future<AppendResult> appendEvent(Txn txn, StoredEvent event) async {
     final t = _requireValidTxn(txn);
@@ -235,7 +241,6 @@ class SembastBackend extends StorageBackend {
       );
     }
     await _eventStore.add(t._sembastTxn, event.toMap());
-    // Implements: REQ-d00149-A — emit on the broadcast controller
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
     _pendingPostCommit.add(() {
@@ -272,7 +277,6 @@ class SembastBackend extends StorageBackend {
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
   }
 
-  // Implements: REQ-d00154-C — Dart-side AND filter on
   // provenance[0].hopId / provenance[0].identifier. The originator filter
   // runs on the already-loaded list rather than as a sembast query because
   // the provenance entries live inside the JSON-encoded `metadata` blob and
@@ -280,13 +284,15 @@ class SembastBackend extends StorageBackend {
   // mobile-scale event log, in-memory filtering after the
   // `afterSequence` / `limit` / `entry_type` / `client_timestamp` slice is
   // well-bounded and matches the straightforward semantic.
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  // client-timestamp filters land as sembast Filter predicates on the
-  // top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
-  // strings sort lexicographically in the same order as their underlying
-  // instants, so greater/less-than-or-equals against
-  // `clientTimestampStart.toUtc().toIso8601String()` reproduces the
-  // intended chronological bound).
+  // Implements: EVS-PRD-event-log/D — read all events in order from any
+  //   starting position, optionally sliced.
+  // Implements: EVS-DEV-find-all-events-extended-filters/A — entryType +
+  //   clientTimestampStart + clientTimestampEnd optional named parameters.
+  // Implements: EVS-DEV-find-all-events-extended-filters/C — AND-composition;
+  //   entry-type and client-timestamp filters land as sembast Filter predicates
+  //   on the top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
+  //   strings sort lexicographically in chronological order so
+  //   greaterThanOrEquals / lessThanOrEquals reproduce the intended bounds).
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
@@ -333,8 +339,9 @@ class SembastBackend extends StorageBackend {
   /// `null` when no predicates are supplied (Finder treats `null` filter
   /// as "match all"). When exactly one predicate is supplied it is
   /// returned directly; multiple predicates compose via `Filter.and`.
-  // Implements: EVS-DEV-find-all-events-extended-filters — shared filter
-  // composition for the two findAllEvents variants.
+  // Implements: EVS-DEV-find-all-events-extended-filters/D — single shared
+  //   helper (_composeFindAllEventsFilter) used by both in-transaction and
+  //   out-of-transaction code paths.
   Filter? _composeFindAllEventsFilter({
     required int? afterSequence,
     required String? entryType,
@@ -375,7 +382,6 @@ class SembastBackend extends StorageBackend {
   /// [appendEvent] consumes the reservation without advancing again. If
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
-  // Implements: REQ-d00117-C — reserve-and-increment sequence counter in a
   // single atomic step with the subsequent appendEvent.
   @override
   Future<int> nextSequenceNumber(Txn txn) async {
@@ -403,10 +409,13 @@ class SembastBackend extends StorageBackend {
     return records.first.value['event_hash'] as String?;
   }
 
-  // Implements: EVS-DEV-find-all-events-extended-filters — entry-type and
-  // client-timestamp filters on the transactional variant. Same shape as
-  // the non-transactional `findAllEvents` (shared via
-  // `_composeFindAllEventsFilter`).
+  // Implements: EVS-PRD-event-log/D — read events in order from any position
+  //   (transactional variant; includes staged writes from same txn body).
+  // Implements: EVS-DEV-find-all-events-extended-filters/B — same three
+  //   optional parameters with same semantics; shared via
+  //   _composeFindAllEventsFilter.
+  // Implements: EVS-DEV-find-all-events-extended-filters/D — same shared
+  //   helper reused here.
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
     Txn txn, {
@@ -448,12 +457,11 @@ class SembastBackend extends StorageBackend {
     }
   }
 
-  // Implements: REQ-d00149-A+B+C+D+E — replay-then-live with race-safe
   // live-filter via held-cursor; broadcast; close-aware.
   //
   // The per-call controller is itself broadcast so a single
   // `watchEvents()` return value supports multiple `listen()`
-  // subscribers (REQ-d00149-C). On the first listen:
+  // subscribers. On the first listen:
   //   1. `scheduleMicrotask(startReplay)` defers the replay so the
   //      caller's `listen()` returns before any emission, ensuring no
   //      replayed event is missed.
@@ -461,7 +469,7 @@ class SembastBackend extends StorageBackend {
   //      forwards each event, advancing `lastReplayed`.
   //   3. After replay completes, attach to the package-private
   //      `_eventsController` broadcast and filter
-  //      `e.sequenceNumber > lastReplayed` per REQ-d00149-B — this
+  //      `e.sequenceNumber > lastReplayed` — this
   //      closes the race where an event commits between the replay
   //      snapshot read and the live attach.
   // Close on the backend's `_eventsController` propagates via
@@ -554,7 +562,6 @@ class SembastBackend extends StorageBackend {
 
   /// Read the per-destination fill cursor. Returns -1 when the key is absent
   /// (no row has yet been enqueued for this destination). Non-transactional.
-  // Implements: REQ-d00128-G — per-destination fill cursor read, -1 sentinel.
   @override
   Future<int> readFillCursor(String destinationId) async {
     final db = _database();
@@ -566,7 +573,6 @@ class SembastBackend extends StorageBackend {
 
   /// Write the per-destination fill cursor inside its own atomic
   /// transaction.
-  // Implements: REQ-d00128-G — per-destination fill cursor write
   // (standalone variant; opens its own transaction).
   @override
   Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
@@ -581,7 +587,6 @@ class SembastBackend extends StorageBackend {
   /// Write the per-destination fill cursor inside [txn] so the advance is
   /// co-atomic with the surrounding transaction. Rolls back with the rest
   /// of the transaction body on a throw.
-  // Implements: REQ-d00128-G — per-destination fill cursor write
   // (transactional variant; participates in surrounding atomicity).
   @override
   Future<void> writeFillCursorTxn(
@@ -597,8 +602,8 @@ class SembastBackend extends StorageBackend {
   }
 
   /// The fill cursor's legal domain is `[-1, ∞)`: `-1` is the "no row
-  /// enqueued" / "rewound to pre-start" sentinel per REQ-d00128-G and
-  /// REQ-d00131-D; all other values are `sequence_number`s drawn from the
+  /// enqueued" / "rewound to pre-start" sentinel and
+  /// all other values are `sequence_number`s drawn from the
   /// event log, which are non-negative ints. Reject anything smaller than
   /// `-1` at write time so a bogus caller value cannot land as a stored
   /// cursor and confuse downstream fillBatch / unjam logic.
@@ -613,13 +618,12 @@ class SembastBackend extends StorageBackend {
     }
   }
 
-  // -------- Destination schedules (REQ-d00129) --------
+  // -------- Destination schedules --------
 
   static String _scheduleKey(String destinationId) => 'schedule_$destinationId';
 
   /// Read the persisted `DestinationSchedule` for [destinationId], or
   /// null when no schedule record exists. Non-transactional.
-  // Implements: REQ-d00129-A+C+F — schedule read backs
   // DestinationRegistry.scheduleOf.
   @override
   Future<DestinationSchedule?> readSchedule(String destinationId) async {
@@ -635,7 +639,6 @@ class SembastBackend extends StorageBackend {
 
   /// Persist [schedule] for [destinationId] inside its own atomic
   /// transaction (standalone variant).
-  // Implements: REQ-d00129-A — initial dormant-schedule persistence.
   @override
   Future<void> writeSchedule(
     String destinationId,
@@ -650,7 +653,6 @@ class SembastBackend extends StorageBackend {
 
   /// Persist [schedule] inside [txn] so the write participates in the
   /// surrounding transaction's atomicity.
-  // Implements: REQ-d00129-C+F+H — transactional schedule write.
   @override
   Future<void> writeScheduleTxn(
     Txn txn,
@@ -665,7 +667,6 @@ class SembastBackend extends StorageBackend {
 
   /// Delete the persisted schedule record for [destinationId] inside
   /// [txn]. Used by `deleteDestination`.
-  // Implements: REQ-d00129-H — atomic schedule-record drop.
   @override
   Future<void> deleteScheduleTxn(Txn txn, String destinationId) async {
     final t = _requireValidTxn(txn);
@@ -677,7 +678,6 @@ class SembastBackend extends StorageBackend {
   /// Drop the entire `fifo_<destinationId>` Sembast store inside [txn]
   /// and remove [destinationId] from the known-FIFOs registry so
   /// `anyFifoWedged` / `wedgedFifos` no longer iterate it.
-  // Implements: REQ-d00129-H — atomic FIFO-store drop.
   @override
   Future<void> deleteFifoStoreTxn(Txn txn, String destinationId) async {
     final t = _requireValidTxn(txn);
@@ -690,7 +690,7 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
     // Drop the per-destination sequence_in_queue counter so a later
     // addDestination of the same id starts at 1 rather than inheriting
-    // the old counter. REQ-d00119-E's "never reused" invariant is
+    // the old counter. its "never reused" invariant is
     // scoped to a destination's lifetime; a fresh addDestination is a
     // fresh lifetime.
     await _backendStateStore
@@ -709,7 +709,6 @@ class SembastBackend extends StorageBackend {
           .record(_knownFifosKey)
           .put(t._sembastTxn, current);
     }
-    // Implements: REQ-d00150-A — emit on the broadcast controller
     // post-commit so live `watchFifo(destinationId)` subscribers see
     // the FIFO-store drop (subsequent listFifoEntries will be empty).
     _pendingPostCommit.add(() {
@@ -730,7 +729,6 @@ class SembastBackend extends StorageBackend {
         () => stringMapStoreFactory.store(viewName),
       );
 
-  // Implements: REQ-d00140-F — readViewRowInTxn generic view-row read.
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Txn txn,
@@ -743,8 +741,6 @@ class SembastBackend extends StorageBackend {
     return Map<String, dynamic>.from(raw);
   }
 
-  // Implements: REQ-d00140-F — upsertViewRowInTxn whole-row upsert.
-  // Implements: REQ-d00153-A — emit on _viewChangesController post-commit
   // so watchView subscribers re-fetch the snapshot.
   @override
   Future<void> upsertViewRowInTxn(
@@ -764,8 +760,6 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // Implements: REQ-d00140-F — deleteViewRowInTxn row-scoped delete.
-  // Implements: REQ-d00153-A — emit on _viewChangesController post-commit.
   @override
   Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) async {
     final t = _requireValidTxn(txn);
@@ -777,7 +771,6 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // Implements: REQ-d00140-F — findViewRows iteration with limit/offset.
   @override
   Future<List<Map<String, dynamic>>> findViewRows(
     String viewName, {
@@ -794,9 +787,7 @@ class SembastBackend extends StorageBackend {
         .toList(growable: false);
   }
 
-  // Implements: REQ-d00140-F — clearViewInTxn view-scoped clear; other
   // views untouched.
-  // Implements: REQ-d00153-A — emit on _viewChangesController post-commit.
   @override
   Future<void> clearViewInTxn(Txn txn, String viewName) async {
     final t = _requireValidTxn(txn);
@@ -824,7 +815,6 @@ class SembastBackend extends StorageBackend {
   String _viewTargetVersionsKey(String viewName, String entryType) =>
       '$viewName::$entryType';
 
-  // Implements: REQ-d00140-I.
   @override
   Future<int?> readViewTargetVersionInTxn(
     Txn txn,
@@ -846,7 +836,6 @@ class SembastBackend extends StorageBackend {
     return v;
   }
 
-  // Implements: REQ-d00140-I.
   @override
   Future<void> writeViewTargetVersionInTxn(
     Txn txn,
@@ -864,7 +853,6 @@ class SembastBackend extends StorageBackend {
         });
   }
 
-  // Implements: REQ-d00140-I.
   @override
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
     Txn txn,
@@ -881,7 +869,6 @@ class SembastBackend extends StorageBackend {
     };
   }
 
-  // Implements: REQ-d00140-I.
   @override
   Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) async {
     final t = _requireValidTxn(txn);
@@ -903,11 +890,11 @@ class SembastBackend extends StorageBackend {
   /// commit co-atomically.
   ///
   /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null
-  /// (REQ-d00152-B+E). See [StorageBackend.enqueueFifo] for the contract
+  ///. See [StorageBackend.enqueueFifo] for the contract
   /// distinguishing the two payload shapes.
   ///
   /// The backend owns `sequence_in_queue` via the persisted
-  /// `fifo_seq_counter_<destinationId>` record (REQ-d00119-E):
+  /// `fifo_seq_counter_<destinationId>` record:
   /// monotonic, never reused.
   ///
   /// The returned `FifoEntry` is the persisted record. Callers that
@@ -918,12 +905,8 @@ class SembastBackend extends StorageBackend {
   /// The row's `entry_id` is a freshly-minted v4 UUID and has no
   /// relationship to the events the row carries — callers that need
   /// to correlate against events use `eventIds` / `eventIdRange`.
-  // Implements: REQ-d00117-E — enqueue initial state (pending, no
   // attempts, no sent_at).
-  // Implements: REQ-d00119-A — exactly one FIFO store per destination_id.
-  // Implements: REQ-d00128-A+B+C — batch-per-row enqueue (standalone
   // variant; opens its own transaction and delegates to enqueueFifoTxn).
-  // Implements: REQ-d00152-B+E — XOR (wirePayload, nativeEnvelope) shape.
   @override
   Future<FifoEntry> enqueueFifo(
     String destinationId,
@@ -934,7 +917,7 @@ class SembastBackend extends StorageBackend {
     // Route through this backend's `transaction()` (rather than the
     // raw `_database().transaction(...)`) so the post-commit callback
     // appended inside `enqueueFifoTxn` is drained by the wrapper on
-    // commit; otherwise REQ-d00150-A FIFO-change emissions on the
+    // commit; otherwise FIFO-change emissions on the
     // standalone enqueue path would silently drop.
     return transaction(
       (txn) => enqueueFifoTxn(
@@ -969,15 +952,10 @@ class SembastBackend extends StorageBackend {
   /// `sequence_in_queue` assignment, and the known-FIFOs registry
   /// bookkeeping all live here; [enqueueFifo] is a thin
   /// `transaction(...)` wrapper.
-  // Implements: REQ-d00117-E — enqueue initial state (pending, no
   // attempts, no sent_at).
-  // Implements: REQ-d00119-A — exactly one FIFO store per destination_id.
-  // Implements: REQ-d00119-B+K — native rows store envelope_metadata +
   // null wire_payload; 3rd-party rows store wire_payload + null
   // envelope_metadata.
-  // Implements: REQ-d00128-A+B+C — batch-per-row enqueue (transactional
   // variant; used by fillBatch to co-commit enqueue + fill_cursor).
-  // Implements: REQ-d00152-B+E — XOR (wirePayload, nativeEnvelope) shape;
   // native path stores envelope_metadata directly, no wire decode.
   @override
   Future<FifoEntry> enqueueFifoTxn(
@@ -991,7 +969,7 @@ class SembastBackend extends StorageBackend {
       throw ArgumentError.value(
         batch,
         'batch',
-        'enqueueFifo requires a non-empty batch (REQ-d00128-A)',
+        'enqueueFifo requires a non-empty batch',
       );
     }
     // XOR enforcement: exactly one payload shape is legal. Reject both
@@ -1000,7 +978,7 @@ class SembastBackend extends StorageBackend {
     if ((wirePayload == null) == (nativeEnvelope == null)) {
       throw ArgumentError(
         'enqueueFifo requires exactly one of wirePayload or nativeEnvelope '
-        'to be non-null (REQ-d00152-B+E); got '
+        'to be non-null; got '
         'wirePayload=${wirePayload == null ? "null" : "set"}, '
         'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
       );
@@ -1055,15 +1033,15 @@ class SembastBackend extends StorageBackend {
     // UUID generation means two FIFO rows (of any final_status, including
     // tombstoned archive rows) never share an entry_id, so
     // `tombstoneAndRefill` can coexist with fresh rows re-promoting the
-    // same underlying events (REQ-d00144-F).
+    // same underlying events.
     final entryId = _uuidGen.v4();
     final enqueuedAt = DateTime.now().toUtc();
     final store = _fifoStore(destinationId);
     // Assign the next sequence_in_queue from a persisted per-destination
     // counter (backend_state/fifo_seq_counter_<destinationId>). The
     // counter advances strictly monotonically and is NEVER reset: even
-    // when a row is deleted (trail sweep per REQ-d00144-C), the deleted
-    // slot is NOT re-used. The resulting invariant (REQ-d00119-E) is
+    // when a row is deleted (trail sweep), the deleted
+    // slot is NOT re-used. The resulting invariant is
     // load-bearing for event-log cursor math and for the send-log's
     // auditability — two different rows with the same sequence_in_queue
     // would produce ambiguous "which row was deleted?" diagnostics.
@@ -1072,7 +1050,6 @@ class SembastBackend extends StorageBackend {
     // max(existing key) + 1 at read time closes the reuse path: the
     // previous derivation would reassign slot N if row N was deleted
     // and row N was the current max.
-    // Implements: REQ-d00119-E — sequence_in_queue monotonic; never reused.
     final counterRec = _backendStateStore.record(
       _fifoSeqCounterKey(destinationId),
     );
@@ -1095,7 +1072,6 @@ class SembastBackend extends StorageBackend {
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);
-    // Implements: REQ-d00150-A — emit on the broadcast controller
     // post-commit so live `watchFifo(destinationId)` subscribers learn
     // of the new row. Pushed onto _pendingPostCommit so the emission is
     // co-atomic with the surrounding `transaction()` commit; fires only
@@ -1145,9 +1121,8 @@ class SembastBackend extends StorageBackend {
   /// wedged row here (rather than filtering it out) lets UI surfaces
   /// observe the wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
-  // Implements: REQ-d00124-A — readFifoHead returns first {null, wedged};
   // skips {sent, tombstoned}. Recovery from a wedged head is
-  // tombstoneAndRefill (REQ-d00144).
+  // tombstoneAndRefill.
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) async {
     final db = _database();
@@ -1167,7 +1142,6 @@ class SembastBackend extends StorageBackend {
     return FifoEntry.fromJson(Map<String, Object?>.from(records.single.value));
   }
 
-  // Implements: REQ-d00148-A+B+C+D — listFifoEntries returns the
   // destination's FIFO rows as typed FifoEntry, ordered by
   // sequence_in_queue ascending. afterSequenceInQueue is an exclusive
   // lower bound (Filter.greaterThan); limit caps result size taken from
@@ -1199,22 +1173,21 @@ class SembastBackend extends StorageBackend {
         .toList();
   }
 
-  // Implements: REQ-d00150-A+B+C+D+E — snapshot-on-subscribe + change-
   // driven re-emission filtered by destinationId; broadcast;
   // close-aware.
   //
   // Like `watchEvents`, the per-call controller is itself broadcast so a
   // single `watchFifo()` return value supports multiple `listen()`
-  // subscribers (REQ-d00150-C). On the first listen:
+  // subscribers. On the first listen:
   //   1. `scheduleMicrotask(emitSnapshot)` defers the initial snapshot so
   //      the caller's `listen()` returns before any emission.
   //   2. Subscribe to the package-private `_fifoChangesController`
   //      broadcast and re-emit a fresh snapshot whenever the changed
   //      destinationId matches this subscription's destination
-  //      (REQ-d00150-C cross-destination isolation).
+  //      (cross-destination isolation).
   // Snapshot fetch goes through `listFifoEntries`, so an unknown
-  // destination produces an empty list (REQ-d00150-A) and emissions
-  // carry typed `FifoEntry` (REQ-d00150-B) — no raw maps leak.
+  // destination produces an empty list and emissions
+  // carry typed `FifoEntry` — no raw maps leak.
   // Close on the backend's `_fifoChangesController` propagates via
   // `onDone`. The per-call controller closes via `controller.close()`.
   // Not on the StorageBackend abstract surface — SembastBackend-specific.
@@ -1274,7 +1247,6 @@ class SembastBackend extends StorageBackend {
     return controller.stream;
   }
 
-  // Implements: REQ-d00153-A+B+C+D — reactive snapshot stream of a
   // materialized view by name. Mirrors watchFifo's shape: snapshot on
   // subscribe + re-emit on every mutation (upsert / delete / clear);
   // cross-view isolation enforced by the viewName filter; broadcast so
@@ -1330,7 +1302,7 @@ class SembastBackend extends StorageBackend {
   /// finalStatus. Runs in its own transaction.
   ///
   /// Tolerates a missing target row or a never-registered FIFO store
-  /// (REQ-d00127-B): in both cases this method returns without throwing
+  ///: in both cases this method returns without throwing
   /// and emits a warning-level diagnostic via [debugLogSink]. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
@@ -1341,7 +1313,6 @@ class SembastBackend extends StorageBackend {
   /// never written to simply has zero records, so the `records.isEmpty`
   /// branch covers both "unknown destination" and "row deleted from a
   /// known destination". No separate "store exists?" probe is needed.
-  // Implements: REQ-d00127-B — appendAttempt is a no-op on missing row /
   // missing FIFO store, with a warning-level diagnostic.
   @override
   Future<void> appendAttempt(
@@ -1350,7 +1321,7 @@ class SembastBackend extends StorageBackend {
     AttemptResult attempt,
   ) async {
     // Route through this backend's `transaction()` so post-commit FIFO
-    // emissions appended below are drained on commit (REQ-d00150-A).
+    // emissions appended below are drained on commit.
     await transaction((txn) async {
       final t = _requireValidTxn(txn);
       final store = _fifoStore(destinationId);
@@ -1377,7 +1348,6 @@ class SembastBackend extends StorageBackend {
       ];
       updated['attempts'] = attemptsRaw;
       await store.record(record.key).put(t._sembastTxn, updated);
-      // Implements: REQ-d00150-A — emit on the broadcast controller
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the appended attempt.
       _pendingPostCommit.add(() {
@@ -1390,10 +1360,10 @@ class SembastBackend extends StorageBackend {
 
   /// Transition entry's finalStatus to [status]. For `sent`, also stamps
   /// `sent_at = DateTime.now().toUtc()`. The entry is RETAINED: no delete
-  /// ever happens through this path (REQ-d00119-D).
+  /// ever happens through this path.
   ///
   /// Tolerates a missing target row or a never-registered FIFO store
-  /// (REQ-d00127-A): in both cases this method returns without throwing
+  ///: in both cases this method returns without throwing
   /// and emits a warning-level diagnostic via [debugLogSink]. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
@@ -1410,9 +1380,7 @@ class SembastBackend extends StorageBackend {
   /// returns cleanly (no-op, no re-stamp of `sent_at`). When the entry is
   /// already terminal with a DIFFERENT status, `StateError` is thrown —
   /// this is real corruption and loud failure is correct.
-  // Implements: REQ-d00119-D — non-null terminal entries are retained as
   // permanent send-log records.
-  // Implements: REQ-d00127-A — markFinal is a no-op on missing row /
   // missing FIFO store, with a warning-level diagnostic.
   @override
   Future<void> markFinal(
@@ -1428,7 +1396,7 @@ class SembastBackend extends StorageBackend {
     // runtime null-check unnecessary here.
     //
     // Routed through this backend's `transaction()` so post-commit
-    // FIFO emissions appended below are drained on commit (REQ-d00150-A).
+    // FIFO emissions appended below are drained on commit.
     await transaction((txn) async {
       final t = _requireValidTxn(txn);
       final store = _fifoStore(destinationId);
@@ -1471,7 +1439,6 @@ class SembastBackend extends StorageBackend {
         updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
       }
       await store.record(record.key).put(t._sembastTxn, updated);
-      // Implements: REQ-d00150-A — emit on the broadcast controller
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the terminal-status transition.
       _pendingPostCommit.add(() {
@@ -1543,24 +1510,22 @@ class SembastBackend extends StorageBackend {
   /// - `null -> wedged` — drain-terminal SendPermanent / SendTransient
   ///   at max attempts.
   /// - `null -> tombstoned` — tombstoneAndRefill on a null head
-  ///   (REQ-d00144-B).
+  ///  .
   /// - `wedged -> tombstoned` — tombstoneAndRefill on a wedged head
-  ///   (REQ-d00144-B).
+  ///  .
   ///
   /// Any other transition throws [StateError]. In particular `sent`
   /// and `tombstoned` are terminal end-states; they cannot transition
   /// to anything else.
   ///
-  /// Preserves `attempts[]` verbatim on every transition (REQ-d00144-B
+  /// Preserves `attempts[]` verbatim on every transition (
   /// tombstoneAndRefill requires it). `sent_at` is set on `null -> sent`
   /// and untouched on every other transition.
   ///
   /// Throws [StateError] on a missing target row: callers verify
   /// existence before opening the transaction, so a missing row here
   /// indicates a concurrent delete race that these ops do not close.
-  // Implements: REQ-d00144-B — `null|wedged -> tombstoned` flip;
   // attempts[] preserved verbatim; sent_at untouched.
-  // Implements: REQ-d00119-D — one-way rule: terminal rows
   // ({sent, tombstoned}) cannot transition further.
   @override
   Future<void> setFinalStatusTxn(
@@ -1589,7 +1554,7 @@ class SembastBackend extends StorageBackend {
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw as String);
-    // Legal transitions (REQ-d00119-D one-way rule + REQ-d00144-B):
+    // Legal transitions:
     //  - null  -> sent          (drain SendOk)
     //  - null  -> wedged        (drain SendPermanent / max-attempts)
     //  - null  -> tombstoned    (tombstoneAndRefill on null head)
@@ -1604,7 +1569,7 @@ class SembastBackend extends StorageBackend {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
         '$current -> $status. Legal transitions: null -> {sent, wedged, '
-        'tombstoned}; wedged -> {tombstoned}. (REQ-d00119-D one-way '
+        'tombstoned}; wedged -> {tombstoned}. (one-way '
         'rule.)',
       );
     }
@@ -1613,13 +1578,12 @@ class SembastBackend extends StorageBackend {
       // Drain-terminal SendOk stamps sent_at.
       updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
     }
-    // attempts[] is deliberately NOT touched — REQ-d00144-B
+    // attempts[] is deliberately NOT touched
     // tombstoneAndRefill requires verbatim preservation; the
     // drain-terminal null->{sent,wedged} path has already appended its
     // attempts via appendAttempt before calling markFinal /
     // setFinalStatusTxn.
     await store.record(record.key).put(t._sembastTxn, updated);
-    // Implements: REQ-d00150-A — emit on the broadcast controller
     // post-commit so live `watchFifo(destinationId)` subscribers see
     // the final-status transition (tombstone / drain-terminal). The
     // surrounding `transaction()` drains _pendingPostCommit on commit.
@@ -1635,11 +1599,10 @@ class SembastBackend extends StorageBackend {
   /// `final_status IS null`. Returns the count of rows deleted.
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
-  /// tombstoned target in one transaction (REQ-d00144-C). Rows whose
+  /// tombstoned target in one transaction. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue` — per
-  /// REQ-d00119-D all non-null rows are retained forever.
-  // Implements: REQ-d00144-C — trail-delete predicate
+  /// all non-null rows are retained forever.
   // (final_status IS null AND sequence_in_queue > afterSequenceInQueue).
   @override
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
@@ -1659,7 +1622,6 @@ class SembastBackend extends StorageBackend {
       ),
     );
     if (deleted > 0) {
-      // Implements: REQ-d00150-A — emit on the broadcast controller
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the trail-sweep deletion. Skip when no rows were actually
       // removed to avoid spurious wakeups.
@@ -1676,9 +1638,8 @@ class SembastBackend extends StorageBackend {
 
   /// Read a single event by `event_id` within [txn]. Returns `null` when no
   /// event with that id is present. Used by ingest's idempotency check
-  /// (REQ-d00145-D) against the unified event store (origin and ingest
+  /// against the unified event store (origin and ingest
   /// appends share `_eventStore`).
-  // Implements: REQ-d00145-D — unified-store idempotency lookup.
   @override
   Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId) async {
     final t = _requireValidTxn(txn);
@@ -1691,7 +1652,6 @@ class SembastBackend extends StorageBackend {
     );
   }
 
-  // Implements: REQ-d00147-A+B+C — non-transactional indexed lookup by
   // event_id over the unified event store; returns null when absent.
   @override
   Future<StoredEvent?> findEventById(String eventId) async {
@@ -1705,12 +1665,10 @@ class SembastBackend extends StorageBackend {
     );
   }
 
-  // -------- Audit query (REQ-d00151) --------
+  // -------- Audit query --------
 
-  // Implements: REQ-d00151-A+B — typed cross-store audit query lives at
   // the storage layer; SembastSecurityContextStore.queryAudit is a thin
-  // delegator (REQ-d00151-C).
-  // Implements: REQ-d00137-F — pagination + filter contract preserved
+  // delegator.
   // verbatim from the previous SecurityContextStore-hosted implementation.
   @override
   Future<PagedAudit> queryAudit({
@@ -1726,7 +1684,7 @@ class SembastBackend extends StorageBackend {
       throw ArgumentError.value(
         limit,
         'limit',
-        'queryAudit limit must be in [1, 1000] (REQ-d00137-F)',
+        'queryAudit limit must be in [1, 1000]',
       );
     }
 
@@ -1889,7 +1847,6 @@ class _SembastTxn extends Txn {
 /// `(recorded_at, event_id)` tuple from the previous page's tail row;
 /// the next page is a strict lower bound under the same sort order so
 /// concurrent inserts at the head do not skew page contents.
-// Implements: REQ-d00137-F — opaque cursor encoding shared by storage
 // queryAudit and (transitively) the SecurityContextStore delegator.
 class _AuditCursorPoint {
   const _AuditCursorPoint({required this.recordedAt, required this.eventId});

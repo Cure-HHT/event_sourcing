@@ -1,7 +1,9 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00145-H: EventStore.logRejectedBatch — caller-composed rejection audit
-//   REQ-d00145-I: ingest.batch_rejected event under ingest-audit aggregate
-//   REQ-d00145-J: batch_context null for rejection (no decoded batch)
+// Verifies: EVS-PRD-ingest/A — logRejectedBatch records an ingest.batch_rejected
+//   audit event in the ingest-audit aggregate for forensic observability
+// Verifies: EVS-PRD-ingest/D — rejection audit captures wire_bytes, wire_format,
+//   reason, failed_event_id, and error_detail for post-hoc chain diagnosis
+// Verifies: EVS-PRD-hash-chain-integrity/B — Chain 2 previous_ingest_hash on
+//   consecutive rejection audit events forms a consistent chain
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -66,7 +68,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.logRejectedBatch (REQ-d00145-H+I+J)', () {
+  group('EventStore.logRejectedBatch', () {
     test(
       'emits exactly one ingest.batch_rejected event under ingest-audit aggregate',
       () async {

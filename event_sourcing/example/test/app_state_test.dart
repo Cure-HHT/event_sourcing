@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/D/F
+// Verifies: EVS-PRD-destinations/A/E
+// Verifies: EVS-PRD-library-charter/D/E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/app_state.dart';
 import 'package:event_sourcing_datastore_demo/demo_destination.dart';
@@ -10,7 +13,7 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
   // Build a minimal EventStore wired with the system entry types so
-  // registry mutations can stamp their REQ-d00129-J/K/L/M/N audit
+  // registry mutations can stamp their -J/K/L/M/N audit
   // events without bootstrapping the full datastore facade.
   final entryTypes = EntryTypeRegistry();
   for (final defn in kSystemEntryTypes) {

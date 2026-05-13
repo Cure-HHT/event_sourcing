@@ -4,10 +4,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
 import 'package:flutter/foundation.dart';
 
-// Implements: REQ-d00122 — Destination contract surface.
-// Implements: REQ-d00128 — batch transform, canAddToBatch,
 //   maxAccumulateTime.
-// Implements: REQ-d00129-B — allowHardDelete opt-in.
 // Design: §7.6.
 class DemoDestination implements Destination, DemoKnobs {
   DemoDestination({
@@ -35,7 +32,6 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   String get wireFormat => 'demo-json-v1';
 
-  // Implements: REQ-d00152-A — DemoDestination is a lossy 3rd-party-style
   // destination; library invokes transform() and stores the resulting
   // WirePayload verbatim.
   @override

@@ -1,4 +1,11 @@
 // event_sourcing/lib/src/projections/primitives/row_key.dart
+//
+// Implements: EVS-PRD-materializer/A — RowKeyExtractor (AggregateIdKey,
+//   CompositeKey) are library-supplied primitives that determine how the
+//   TableProjectionSpec fold identifies rows; they are part of the
+//   library's materializer rule set.
+// Implements: EVS-PRD-materializer/B — each extractor is a pure function of
+//   the StoredEvent; same event always yields the same key.
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
 sealed class RowKeyExtractor {

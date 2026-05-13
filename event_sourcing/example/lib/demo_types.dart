@@ -1,8 +1,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 
-// Implements: REQ-d00116 — EntryTypeDefinition value type from
 // event_sourcing_datastore; demo instances registered via
-// bootstrapAppendOnlyDatastore (REQ-d00134) at Task 9.
+// bootstrapAppendOnlyDatastore at Task 9.
 // Validated by: JNY-01 (demo_note lifecycle), JNY-02 (CQRS via action
 // types' distinct aggregate types in demoAggregateTypeByEntryTypeId).
 
@@ -36,7 +35,7 @@ const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
 );
 
 /// Full demo entry-type set. Passed as `entryTypes:` to
-/// `bootstrapAppendOnlyDatastore` at Task 9 (REQ-d00134).
+/// `bootstrapAppendOnlyDatastore` at Task 9.
 const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
   demoNoteType,
   redButtonType,
@@ -47,7 +46,7 @@ const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
 /// Per-entry-type aggregate-type lookup.
 ///
 /// `EntryTypeDefinition` itself does not carry an `aggregateType` field
-/// (REQ-d00116 shape). `EventStore.append` (REQ-d00141-B) takes
+/// (shape). `EventStore.append` takes
 /// `aggregateType` as a per-call argument; the demo looks it up here
 /// keyed on `entryType.id`. Distinct aggregate types on the three action
 /// events are the CQRS discriminator JNY-02 walks through the EVENTS

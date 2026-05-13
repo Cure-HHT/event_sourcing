@@ -1,12 +1,15 @@
+// Verifies: EVS-PRD-destinations/D — verifies atomicity of DestinationRegistry
+// mutations: when the audit appendInTxn fails the surrounding transaction
+// rolls back, so the schedule write / FIFO mutation never persists without
+// its audit (D — durable queues commit atomically with their audit).
 // Atomicity test for the in-transaction config-change audit emissions
 // added in Phase 4.17c-g. When the audit appendInTxn throws inside the
 // registry mutation's transaction, the WHOLE transaction rolls back —
 // the schedule write, FIFO mutation, and any other side effect commit
-// only when the audit also commits. This is REQ-d00129-N's atomicity
+// only when the audit also commits. This is its atomicity
 // half: the partial state ("mutation persisted, audit lost") must be
 // unobservable.
 //
-// Verifies: REQ-d00129-N — audit failure rolls back the underlying
 // mutation. Tested by registering a `DestinationRegistry` against an
 // `EventStore` whose `EntryTypeRegistry` is truncated — only the
 // system entry types needed to reach the mutation under test are
@@ -68,7 +71,7 @@ Future<DestinationRegistry> _buildPartialRegistry(
 }
 
 void main() {
-  group('DestinationRegistry mutation atomicity (REQ-d00129-N)', () {
+  group('DestinationRegistry mutation atomicity', () {
     late SembastBackend backend;
     var counter = 0;
 
@@ -81,7 +84,6 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00129-N — addDestination's schedule write rolls
     // back when the audit append fails. The destination must NOT appear
     // persisted (readSchedule returns null afterwards).
     test(
@@ -102,7 +104,6 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00129-N — setStartDate's schedule write rolls back
     // when the audit append fails. Built via a `DestinationRegistry`
     // bound to an `EntryTypeRegistry` that registers
     // `system.destination_registered` (so addDestination's setup
@@ -147,7 +148,6 @@ void main() {
       expect(scheduleAfter!.startDate, isNull);
     });
 
-    // Verifies: REQ-d00129-N — deleteDestination's FIFO + schedule
     // drop rolls back when the audit append fails. Built via a
     // `DestinationRegistry` bound to an `EntryTypeRegistry` that
     // registers `system.destination_registered` and

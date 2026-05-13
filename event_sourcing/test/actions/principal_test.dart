@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-action-dispatch/A (Principal sealed type: UserPrincipal and AnonymousPrincipal carry caller identity through every stage)
+// Verifies: EVS-PRD-action-dispatch/C (toInitiator() stamps the Principal onto emitted events for the audit trail)
+// Verifies: EVS-PRD-library-charter/H (Principal is accepted on faith from the caller — the acknowledged-unaudited trust input)
+
 import 'package:event_sourcing/event_sourcing.dart'
     show UserInitiator, AnonymousInitiator;
 import 'package:event_sourcing/src/actions/principal.dart';
@@ -6,7 +10,7 @@ import 'package:test/test.dart';
 void main() {
   group('Principal', () {
     group('UserPrincipal', () {
-      test('REQ-d00168: id returns userId', () {
+      test('id returns userId', () {
         const p = Principal.user(
           userId: 'u-1',
           roles: {'Investigator'},
@@ -16,7 +20,7 @@ void main() {
         expect(p.id, 'u-1');
       });
 
-      test('REQ-d00168: toInitiator returns UserInitiator carrying userId', () {
+      test('toInitiator returns UserInitiator carrying userId', () {
         const p = Principal.user(userId: 'u-7', roles: {'X'}, activeRole: 'X');
         final init = p.toInitiator();
         expect(init, isA<UserInitiator>());
@@ -65,17 +69,17 @@ void main() {
     });
 
     group('AnonymousPrincipal', () {
-      test('REQ-d00168: id returns "anon:<ip>" when ip provided', () {
+      test('id returns "anon:<ip>" when ip provided', () {
         const p = Principal.anonymous(ipAddress: '1.2.3.4');
         expect(p.id, 'anon:1.2.3.4');
       });
 
-      test('REQ-d00168: id returns "anon:unknown" when ip absent', () {
+      test('id returns "anon:unknown" when ip absent', () {
         const p = Principal.anonymous();
         expect(p.id, 'anon:unknown');
       });
 
-      test('REQ-d00168: toInitiator returns AnonymousInitiator', () {
+      test('toInitiator returns AnonymousInitiator', () {
         const p = Principal.anonymous(ipAddress: '5.6.7.8');
         final init = p.toInitiator();
         expect(init, isA<AnonymousInitiator>());

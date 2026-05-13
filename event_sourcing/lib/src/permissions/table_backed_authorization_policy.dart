@@ -1,8 +1,8 @@
 // lib/src/permissions/table_backed_authorization_policy.dart
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00176-A (isPermitted with scope-precondition check before matrix
-//   lookup),
-//   REQ-d00176-B (permissionsFor filters by session preconditions).
+// Implements: EVS-PRD-permissions-as-events/B — evaluates all authorization
+//   decisions solely from the event-derived role matrix exposed via
+//   RoleMatrixReader (projection-based lookup); no external authority is
+//   consulted at decision time.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

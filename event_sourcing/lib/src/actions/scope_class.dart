@@ -1,5 +1,5 @@
-// IMPLEMENTS REQUIREMENTS:
-//   REQ-d00172-A: Permission scope class enumeration. Closed set of three.
+// Implements: EVS-PRD-action-dispatch/B (ScopeClass is the session-context precondition checked during the authorize stage)
+// Implements: EVS-PRD-permissions-as-events/B (scope preconditions constrain which principals may exercise a permission per projection-derived session state)
 
 /// The session-context precondition a permission attaches to.
 ///

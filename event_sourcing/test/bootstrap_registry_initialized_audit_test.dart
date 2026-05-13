@@ -1,3 +1,4 @@
+// Verifies: EVS-DEV-event-store-open/B/C
 // Verifies the bootstrap-time `system.entry_type_registry_initialized`
 // audit event:
 //
@@ -12,12 +13,8 @@
 //     - bumping registeredVersion on an existing caller entry type changes
 //       the map's value for that key, so a new event lands.
 //
-// Verifies: REQ-d00134-E — bootstrap registry-initialized audit content;
 //   aggregateId = source.identifier (the install UUID).
-// Verifies: REQ-d00134-F — dedupeByContent semantics across reboots.
-// Verifies: REQ-d00134-G — entryTypeVersion read from the registry, not
 //   hard-coded; the registry is the source of truth.
-// Verifies: REQ-d00154-D — system events use the install UUID as their
 //   aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -67,9 +64,9 @@ Future<List<StoredEvent>> _eventsOfType(
 }
 
 void main() {
-  group('REQ-d00134-E,F,G: bootstrap registry-initialized audit', () {
+  group('bootstrap registry-initialized audit', () {
     test(
-      'REQ-d00134-E: fresh bootstrap emits '
+      'fresh bootstrap emits '
       'system.entry_type_registry_initialized with full registry map',
       () async {
         final factory = newDatabaseFactoryMemory();
@@ -106,7 +103,6 @@ void main() {
         }
         expect(registryMap.length, ds.entryTypes.all().length);
 
-        // REQ-d00134-G: stamp matches the registry's registered version
         // for the audit's own entry type (1, defined in kSystemEntryTypes).
         expect(audit.entryTypeVersion, 1);
         expect(
@@ -116,7 +112,7 @@ void main() {
       },
     );
 
-    test('REQ-d00134-F: same-version reboot no-ops via dedupeByContent — '
+    test('same-version reboot no-ops via dedupeByContent — '
         'still exactly one audit event', () async {
       // First bootstrap.
       final factory = newDatabaseFactoryMemory();
@@ -154,7 +150,7 @@ void main() {
       expect(secondAudits.single.eventId, firstAudits.single.eventId);
     });
 
-    test('REQ-d00134-F: schema bump (new entry type added) emits a new '
+    test('schema bump (new entry type added) emits a new '
         'audit event with the updated registry map', () async {
       final factory = newDatabaseFactoryMemory();
       const path = 'add-type.db';
@@ -187,7 +183,7 @@ void main() {
       expect(laterRegistry['red_button'], 1);
     });
 
-    test('REQ-d00134-F: schema bump (registeredVersion bump on existing '
+    test('schema bump (registeredVersion bump on existing '
         'caller type) emits a new audit event', () async {
       final factory = newDatabaseFactoryMemory();
       const path = 'bump-version.db';

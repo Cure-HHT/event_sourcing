@@ -1,3 +1,10 @@
+// Implements: EVS-PRD-destinations/C (FIFO delivery order — drain attempts rows
+//   in sequence_in_queue order; a wedged head halts the pass so trail rows are
+//   never sent ahead of it)
+// Implements: EVS-PRD-destinations/D (durable queue — drain reads from the
+//   StorageBackend so queued rows survive restarts and are delivered on resume)
+// Implements: EVS-PRD-destinations/E (pluggable delivery — drain delegates
+//   each attempt to Destination.send, the application-supplied transport)
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -21,9 +28,9 @@ typedef ClockFn = DateTime Function();
 /// Returns when:
 ///
 /// - the FIFO has no drain-candidate rows (`readFifoHead` returns null
-///   after skipping `sent` and `tombstoned` rows — REQ-d00124-A); or
+///   after skipping `sent` and `tombstoned` rows); or
 /// - the head row's `final_status` is [FinalStatus.wedged] (strict-order
-///   halt; operator recovery via `tombstoneAndRefill` — REQ-d00124-H);
+///   halt; operator recovery via `tombstoneAndRefill`);
 /// - the head row's backoff has not elapsed; or
 /// - the most recent [Destination.send] returned [SendTransient] below
 ///   the `maxAttempts` cap (backoff applies on the next drain tick).
@@ -32,23 +39,21 @@ typedef ClockFn = DateTime Function();
 /// next drain candidate. On [SendPermanent] or [SendTransient]-at-
 /// `maxAttempts` the head is marked [FinalStatus.wedged]; the next loop
 /// iteration reads the newly-wedged row via `readFifoHead` and the
-/// top-of-loop halt check returns (REQ-d00124-D+E+H). Trail rows
+/// top-of-loop halt check returns. Trail rows
 /// behind a wedged head are NEVER attempted — strict-order delivery
 /// guarantees that once a bundle has been retired to `wedged`, no
 /// later bundle is sent ahead of it. Recovery is the operator's
-/// `tombstoneAndRefill` primitive (REQ-d00144).
+/// `tombstoneAndRefill` primitive.
 ///
-/// Strict FIFO order (REQ-d00124-H): within a single drain pass, rows
+/// Strict FIFO order: within a single drain pass, rows
 /// are attempted in `sequence_in_queue` order and a wedged head halts
 /// the pass. `sent` and `tombstoned` rows are terminal-passable and are
 /// skipped by `readFifoHead` so they do not block a later drain
 /// candidate.
 ///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
-/// loop falls back to [SyncPolicy.defaults] (REQ-d00126-B).
-// Implements: REQ-d00124-A+B+C+D+E+F+G+H — strict-FIFO drain with
+/// loop falls back to [SyncPolicy.defaults].
 // halt-at-wedged head and backoff.
-// Implements: REQ-d00126-B — optional SyncPolicy? parameter; null falls
 // back to SyncPolicy.defaults.
 Future<void> drain(
   Destination destination, {
@@ -61,8 +66,7 @@ Future<void> drain(
   while (true) {
     final head = await backend.readFifoHead(destination.id);
     if (head == null) return;
-    // Implements: REQ-d00124-H — drain halts at a wedged head. Operator
-    // recovery is tombstoneAndRefill (REQ-d00144). The wedged row is
+    // recovery is tombstoneAndRefill. The wedged row is
     // still returned by readFifoHead (rather than skipped) so UI
     // surfaces can observe the wedge via that one entry point without
     // also querying wedgedFifos separately.
@@ -81,11 +85,10 @@ Future<void> drain(
     // Native `esd/batch@1` rows reconstruct bytes from
     // `envelopeMetadata` + `eventIds`-resolved events through
     // `BatchEnvelope.encode`, which JCS-canonicalizes the envelope so
-    // the result is byte-identical across retries (REQ-d00119-K).
+    // the result is byte-identical across retries.
     // 3rd-party rows (any other wireFormat) carry the bytes as a stored
     // JSON-Map `wirePayload`; we re-encode that Map to bytes verbatim
     // for `Destination.send`, preserving the previous storage shape.
-    // Implements: REQ-d00119-B+K — drain branches on envelopeMetadata
     // presence; native re-encode is byte-deterministic across retries
     // (RFC 8785 JCS); 3rd-party path is unchanged.
     final WirePayload payload;
@@ -127,12 +130,10 @@ Future<void> drain(
       result = SendTransient(error: 'uncaught exception: $error\n$stack');
     }
 
-    // REQ-d00124-G: always record the attempt, regardless of outcome.
     final attempt = _attemptFromResult(result, now());
     await backend.appendAttempt(destination.id, head.entryId, attempt);
 
     // Route the outcome.
-    // Implements: REQ-d00124-D+E+H — SendPermanent and SendTransient-at-
     // maxAttempts both mark the head wedged. The next loop iteration
     // sees the wedged row via readFifoHead and drain halts at the
     // top-of-loop check. Trail rows are never attempted ahead of a

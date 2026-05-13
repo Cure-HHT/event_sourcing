@@ -1,3 +1,5 @@
+// Verifies: EVS-PRD-event-log/A
+// Verifies: EVS-PRD-event-log/A
 import 'package:event_sourcing_datastore_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -69,8 +71,7 @@ void main() {
     });
   });
 
-  group('allDemoEntryTypes (REQ-d00134 bootstrap registration)', () {
-    // Verifies: REQ-d00134 bootstrapAppendOnlyDatastore takes
+  group('allDemoEntryTypes (bootstrap registration)', () {
     //   List<EntryTypeDefinition>; duplicate id would throw at register.
     test('has exactly four entries', () {
       expect(allDemoEntryTypes.length, 4);

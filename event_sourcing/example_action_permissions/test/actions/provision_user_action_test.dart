@@ -1,5 +1,6 @@
-// Verifies: REQ-d00166 (Action interface), REQ-d00170-B (idempotency required),
-//           REQ-d00172 (global-scoped permission for system admin)
+// Verifies: EVS-PRD-action-dispatch/A/B/C
+// Verifies: EVS-PRD-permissions-as-events/A/B
+// Verifies: EVS-PRD-action-dispatch/D
 import 'package:action_permissions_demo/server/actions/provision_user_action.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:event_sourcing/event_sourcing.dart';
@@ -25,21 +26,16 @@ void main() {
       action = ProvisionUserAction(directory: directory);
     });
 
-    test(
-      'REQ-d00166-A: declares global users.provision, idempotency required',
-      () {
-        expect(action.name, 'ProvisionUserAction');
-        expect(
-          action.permissions,
-          contains(
-            const Permission('users.provision', scope: ScopeClass.global),
-          ),
-        );
-        expect(action.idempotency, Idempotency.required);
-      },
-    );
+    test('declares global users.provision, idempotency required', () {
+      expect(action.name, 'ProvisionUserAction');
+      expect(
+        action.permissions,
+        contains(const Permission('users.provision', scope: ScopeClass.global)),
+      );
+      expect(action.idempotency, Idempotency.required);
+    });
 
-    test('REQ-d00166-C: parseInput accepts {userId, role, activeSite?}', () {
+    test('parseInput accepts {userId, role, activeSite?}', () {
       final input = action.parseInput(<String, Object?>{
         'userId': 'new-user',
         'role': 'GreenTeam',
@@ -50,7 +46,7 @@ void main() {
       expect(input.activeSite, 'green-workspace');
     });
 
-    test('REQ-d00166-C: parseInput accepts null/missing activeSite', () {
+    test('parseInput accepts null/missing activeSite', () {
       final fromNull = action.parseInput(<String, Object?>{
         'userId': 'admin-2',
         'role': 'Admin',
@@ -64,46 +60,34 @@ void main() {
       expect(fromMissing.activeSite, isNull);
     });
 
-    test(
-      'REQ-d00166-C: parseInput throws FormatException on missing/wrong fields',
-      () {
-        expect(
-          () => action.parseInput(<String, Object?>{'userId': 'x'}),
-          throwsA(isA<FormatException>()),
-        );
-        expect(
-          () => action.parseInput(<String, Object?>{
-            'userId': 42,
-            'role': 'Admin',
-          }),
-          throwsA(isA<FormatException>()),
-        );
-      },
-    );
+    test('parseInput throws FormatException on missing/wrong fields', () {
+      expect(
+        () => action.parseInput(<String, Object?>{'userId': 'x'}),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () =>
+            action.parseInput(<String, Object?>{'userId': 42, 'role': 'Admin'}),
+        throwsA(isA<FormatException>()),
+      );
+    });
 
-    test(
-      'REQ-d00166-D: validate rejects empty userId or role with ArgumentError',
-      () {
-        expect(
-          () => action.validate(
-            const ProvisionUserInput(
-              userId: '',
-              role: 'Admin',
-              activeSite: null,
-            ),
-          ),
-          throwsA(isA<ArgumentError>()),
-        );
-        expect(
-          () => action.validate(
-            const ProvisionUserInput(userId: 'x', role: '', activeSite: null),
-          ),
-          throwsA(isA<ArgumentError>()),
-        );
-      },
-    );
+    test('validate rejects empty userId or role with ArgumentError', () {
+      expect(
+        () => action.validate(
+          const ProvisionUserInput(userId: '', role: 'Admin', activeSite: null),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      expect(
+        () => action.validate(
+          const ProvisionUserInput(userId: 'x', role: '', activeSite: null),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
 
-    test('REQ-d00166-D: validate rejects userId already in directory', () {
+    test('validate rejects userId already in directory', () {
       directory.upsert(userId: 'taken', role: 'GreenTeam', activeSite: null);
       expect(
         () => action.validate(
@@ -117,7 +101,7 @@ void main() {
       );
     });
 
-    test('REQ-d00166-D: validate accepts a fresh userId', () {
+    test('validate accepts a fresh userId', () {
       action.validate(
         const ProvisionUserInput(
           userId: 'fresh',
@@ -127,28 +111,25 @@ void main() {
       );
     });
 
-    test(
-      'REQ-d00166-E: execute emits one user_provisioned event with the payload',
-      () async {
-        final result = await action.execute(
-          const ProvisionUserInput(
-            userId: 'fresh',
-            role: 'GreenTeam',
-            activeSite: 'green-workspace',
-          ),
-          _adminCtx(),
-        );
-        expect(result.events, hasLength(1));
-        final draft = result.events.single;
-        expect(draft.eventType, 'user_provisioned');
-        expect(draft.aggregateType, 'user_directory');
-        expect(draft.entryType, 'user_provisioned');
-        expect(draft.aggregateId, 'fresh');
-        expect(draft.data['userId'], 'fresh');
-        expect(draft.data['role'], 'GreenTeam');
-        expect(draft.data['activeSite'], 'green-workspace');
-        expect(result.result.userId, 'fresh');
-      },
-    );
+    test('execute emits one user_provisioned event with the payload', () async {
+      final result = await action.execute(
+        const ProvisionUserInput(
+          userId: 'fresh',
+          role: 'GreenTeam',
+          activeSite: 'green-workspace',
+        ),
+        _adminCtx(),
+      );
+      expect(result.events, hasLength(1));
+      final draft = result.events.single;
+      expect(draft.eventType, 'user_provisioned');
+      expect(draft.aggregateType, 'user_directory');
+      expect(draft.entryType, 'user_provisioned');
+      expect(draft.aggregateId, 'fresh');
+      expect(draft.data['userId'], 'fresh');
+      expect(draft.data['role'], 'GreenTeam');
+      expect(draft.data['activeSite'], 'green-workspace');
+      expect(result.result.userId, 'fresh');
+    });
   });
 }

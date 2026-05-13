@@ -1,6 +1,5 @@
-// Verifies: REQ-d00167 (bootstrap composition), REQ-d00175 (seed application),
-//           REQ-d00178-A (PolicyReady on valid seed),
-//           REQ-d00178-C (PolicyFailSafe on invalid seed).
+// Verifies: EVS-PRD-action-dispatch/A
+// Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,27 +39,24 @@ users:
 
 void main() {
   group('bootstrapDemoServer', () {
-    test(
-      'REQ-d00167: composes dispatcher + EventStore + directory + policy',
-      () async {
-        final components = await bootstrapDemoServer(
-          dbPath: 'unused',
-          ephemeral: true,
-          permissionsYaml: _validPermissionsYaml,
-          usersYaml: _validUsersYaml,
-          installIdentifier: '00000000-0000-4000-8000-000000000001',
-        );
-        expect(components.policyErrors, isEmpty);
-        expect(components.policy, isA<TableBackedAuthorizationPolicy>());
-        // Directory has the 3 seed users.
-        expect(components.directory.listEntries(), hasLength(3));
-        expect(components.directory.contains('admin-user'), isTrue);
-        expect(components.directory.contains('green-user-1'), isTrue);
-        expect(components.directory.contains('blue-user'), isTrue);
-      },
-    );
+    test('composes dispatcher + EventStore + directory + policy', () async {
+      final components = await bootstrapDemoServer(
+        dbPath: 'unused',
+        ephemeral: true,
+        permissionsYaml: _validPermissionsYaml,
+        usersYaml: _validUsersYaml,
+        installIdentifier: '00000000-0000-4000-8000-000000000001',
+      );
+      expect(components.policyErrors, isEmpty);
+      expect(components.policy, isA<TableBackedAuthorizationPolicy>());
+      // Directory has the 3 seed users.
+      expect(components.directory.listEntries(), hasLength(3));
+      expect(components.directory.contains('admin-user'), isTrue);
+      expect(components.directory.contains('green-user-1'), isTrue);
+      expect(components.directory.contains('blue-user'), isTrue);
+    });
 
-    test('REQ-d00178-C: invalid seed produces FailSafe with errors', () async {
+    test('invalid seed produces FailSafe with errors', () async {
       const invalidYaml = '''
 roles:
   - Admin
@@ -79,7 +75,7 @@ grants:
       expect(components.policy, isA<FailSafeAuthorizationPolicy>());
     });
 
-    test('REQ-d00178: matrix readable: GreenTeam->help.ask granted', () async {
+    test('matrix readable: GreenTeam->help.ask granted', () async {
       final components = await bootstrapDemoServer(
         dbPath: 'unused',
         ephemeral: true,

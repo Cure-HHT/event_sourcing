@@ -1,3 +1,11 @@
+// Verifies: EVS-PRD-event-log/A — append-only writes commit atomically;
+//   rolled-back txn leaves log unchanged.
+// Verifies: EVS-PRD-event-log/B — sequence counter is monotonic across
+//   transactions; nextSequenceNumber reserve-and-increment contract.
+// Verifies: EVS-PRD-event-log/C — findEventsForAggregate returns events sorted
+//   by sequence_number, isolating per-aggregate order.
+// Verifies: EVS-PRD-event-log/D — findAllEvents + findAllEventsInTxn read in
+//   order from any starting position (afterSequence + limit).
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -23,26 +31,21 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00117-A — two writes inside a single transaction both
     // land on commit.
-    test(
-      'REQ-d00117-A: two appendEvents in one transaction both land',
-      () async {
-        await backend.transaction((txn) async {
-          final seq1 = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(txn, _event('ev-1', seq1));
-          final seq2 = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(txn, _event('ev-2', seq2));
-        });
+    test('two appendEvents in one transaction both land', () async {
+      await backend.transaction((txn) async {
+        final seq1 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-1', seq1));
+        final seq2 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-2', seq2));
+      });
 
-        final stored = await backend.findAllEvents();
-        expect(stored.map((e) => e.eventId), ['ev-1', 'ev-2']);
-      },
-    );
+      final stored = await backend.findAllEvents();
+      expect(stored.map((e) => e.eventId), ['ev-1', 'ev-2']);
+    });
 
-    // Verifies: REQ-d00117-A — throw inside transaction body rolls back both
     // the event and the sequence counter.
-    test('REQ-d00117-A: thrown body rolls back both writes', () async {
+    test('thrown body rolls back both writes', () async {
       await expectLater(
         backend.transaction((txn) async {
           final seq = await backend.nextSequenceNumber(txn);
@@ -60,10 +63,9 @@ void main() {
       });
     });
 
-    // Verifies: REQ-d00117-C — appendEvent advances the sequence counter via
     // backend_state store so nextSequenceNumber() in the next transaction
     // returns the next monotonic value.
-    test('REQ-d00117-C: appendEvent advances sequence counter', () async {
+    test('appendEvent advances sequence counter', () async {
       await backend.transaction((txn) async {
         final seq = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(txn, _event('ev-1', seq));
@@ -75,20 +77,17 @@ void main() {
       });
     });
 
-    test(
-      'REQ-d00117-C: nextSequenceNumber is monotonic across transactions',
-      () async {
-        final seen = <int>[];
-        for (var i = 0; i < 5; i++) {
-          await backend.transaction((txn) async {
-            final seq = await backend.nextSequenceNumber(txn);
-            seen.add(seq);
-            await backend.appendEvent(txn, _event('ev-$i', seq));
-          });
-        }
-        expect(seen, [1, 2, 3, 4, 5]);
-      },
-    );
+    test('nextSequenceNumber is monotonic across transactions', () async {
+      final seen = <int>[];
+      for (var i = 0; i < 5; i++) {
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          seen.add(seq);
+          await backend.appendEvent(txn, _event('ev-$i', seq));
+        });
+      }
+      expect(seen, [1, 2, 3, 4, 5]);
+    });
 
     test(
       'findEventsForAggregate returns events sorted by sequence_number',
@@ -138,23 +137,18 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00117-F — schema_version lives in backend_state,
     // and MUST NOT collide with the event-level metadata field.
-    test(
-      'REQ-d00117-F: schema_version round-trips via backend_state',
-      () async {
-        expect(await backend.readSchemaVersion(), 0); // never written
-        await backend.transaction((txn) async {
-          await backend.writeSchemaVersion(txn, 7);
-        });
-        expect(await backend.readSchemaVersion(), 7);
-      },
-    );
+    test('schema_version round-trips via backend_state', () async {
+      expect(await backend.readSchemaVersion(), 0); // never written
+      await backend.transaction((txn) async {
+        await backend.writeSchemaVersion(txn, 7);
+      });
+      expect(await backend.readSchemaVersion(), 7);
+    });
 
-    // Verifies: REQ-d00117-F — the Sembast store named `metadata` is NOT
     // used for backend bookkeeping. An empty `metadata` store is proof that
     // bookkeeping landed in `backend_state` instead.
-    test('REQ-d00117-F: no writes go to a `metadata` store', () async {
+    test('no writes go to a `metadata` store', () async {
       await backend.transaction((txn) async {
         final s = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(txn, _event('ev-1', s));
@@ -168,23 +162,19 @@ void main() {
       expect(rows, isEmpty);
     });
 
-    // Verifies: REQ-d00117-B — SembastBackend's concrete Txn subclass is
     // invalidated when the transaction body returns; a later use throws
     // StateError rather than writing against a closed Sembast transaction.
-    test(
-      'REQ-d00117-B: SembastBackend Txn cannot be used after body returns',
-      () async {
-        late Txn escaped;
-        await backend.transaction((txn) async {
-          escaped = txn;
-        });
+    test('SembastBackend Txn cannot be used after body returns', () async {
+      late Txn escaped;
+      await backend.transaction((txn) async {
+        escaped = txn;
+      });
 
-        await expectLater(
-          backend.appendEvent(escaped, _event('ev-late', 1)),
-          throwsStateError,
-        );
-      },
-    );
+      await expectLater(
+        backend.appendEvent(escaped, _event('ev-late', 1)),
+        throwsStateError,
+      );
+    });
 
     // Verifies the guard against handing one backend's Txn to another
     // backend. Gives defense in depth so a foreign Txn can't be mis-typed
@@ -209,23 +199,20 @@ void main() {
       );
     });
 
-    // Verifies REQ-d00117-C — counter is correctly 2 after a successful
+    // Verifies -C — counter is correctly 2 after a successful
     // two-appends-in-one-transaction commit, so the next nextSequenceNumber
     // call returns 3.
-    test(
-      'REQ-d00117-C: counter equals total appends after multi-append txn',
-      () async {
-        await backend.transaction((txn) async {
-          final s1 = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(txn, _event('ev-1', s1));
-          final s2 = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(txn, _event('ev-2', s2));
-        });
-        await backend.transaction((txn) async {
-          expect(await backend.nextSequenceNumber(txn), 3);
-        });
-      },
-    );
+    test('counter equals total appends after multi-append txn', () async {
+      await backend.transaction((txn) async {
+        final s1 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-1', s1));
+        final s2 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(txn, _event('ev-2', s2));
+      });
+      await backend.transaction((txn) async {
+        expect(await backend.nextSequenceNumber(txn), 3);
+      });
+    });
 
     // Verifies appendEvent rejects a mismatched sequence number,
     // preventing silent counter regression if a caller forgets to pair
@@ -247,10 +234,9 @@ void main() {
       expect(await backend.findAllEvents(), isEmpty);
     });
 
-    // Verifies: REQ-d00117-C — nextSequenceNumber reserves-and-increments,
     // so two calls in the same transaction advance the counter twice.
     // Locks Phase-2 Prereq B, Option 1.
-    test('REQ-d00117-C: two nextSequenceNumber calls in one txn return '
+    test('two nextSequenceNumber calls in one txn return '
         'current+1 and current+2 (reserve-and-increment)', () async {
       await backend.transaction((txn) async {
         expect(await backend.nextSequenceNumber(txn), 1);
@@ -262,9 +248,8 @@ void main() {
       });
     });
 
-    // Verifies: REQ-d00117-C — appendEvent does NOT re-advance the counter.
     // The counter after `nextSeq -> appendEvent` equals the reserved value.
-    test('REQ-d00117-C: appendEvent consumes the reservation without '
+    test('appendEvent consumes the reservation without '
         're-advancing the counter (Prereq B, Option 1)', () async {
       await backend.transaction((txn) async {
         final seq = await backend.nextSequenceNumber(txn);

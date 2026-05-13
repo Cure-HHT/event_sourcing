@@ -1,3 +1,9 @@
+// Implements: EVS-PRD-provenance assertion A (immutable ProvenanceEntry value
+//   type with hop, receivedAt, identifier, softwareVersion, transformVersion
+//   and optional ingest/receiver fields)
+// Implements: EVS-PRD-provenance assertion C (JSON serialization and
+//   deserialization without loss of information)
+
 import 'package:provenance/src/batch_context.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.
@@ -9,20 +15,18 @@ import 'package:provenance/src/batch_context.dart';
 ///
 /// `receivedAt` is a UTC or timezone-offset-explicit instant; `fromJson`
 /// rejects offsetless ISO 8601 strings to preserve the ALCOA+
-/// *Contemporaneous* guarantee (REQ-d00115-C).
+/// *Contemporaneous* guarantee.
 ///
-/// `identifier` and `softwareVersion` shape rules (REQ-d00115-D, -E) are
+/// `identifier` and `softwareVersion` shape rules (-D, -E) are
 /// **permanent caller obligations**, not deferred validation: the source of
 /// each hop — mobile device, diary server, portal — is the only place that
 /// knows which shape applies, so there is no hop-ingress validator that can
 /// take ownership. The type documents the contract; callers construct
 /// conforming values.
 ///
-// Implements: REQ-d00115-C+D+E+F — immutable value type carrying hop,
 // received_at, identifier, software_version, and optional transform_version.
 // received_at offset validation enforced at the JSON boundary;
 // identifier and software_version shapes are caller obligations by design.
-// Implements: REQ-d00115-G+H+I+J+K — optional receiver-only fields:
 // arrival_hash, previous_ingest_hash, ingest_sequence_number, batch_context,
 // origin_sequence_number.
 class ProvenanceEntry {
@@ -39,7 +43,6 @@ class ProvenanceEntry {
     this.originSequenceNumber,
   });
 
-  // Implements: REQ-d00115-C — decode from snake_case JSON; reject payloads
   // missing any required field, with wrong types, or with a received_at that
   // lacks an explicit timezone offset (Z or ±HH[:]MM). An offsetless string
   // would be silently interpreted as local time, breaking the ALCOA+
@@ -116,23 +119,18 @@ class ProvenanceEntry {
   final String softwareVersion;
   final String? transformVersion;
 
-  // Implements: REQ-d00115-G — SHA-256 hex digest of the wire bytes of the
   // event as received at this hop.
   final String? arrivalHash;
 
-  // Implements: REQ-d00115-H — arrival_hash of the previous event ingested
   // at this hop, forming a per-hop hash chain.
   final String? previousIngestHash;
 
-  // Implements: REQ-d00115-I — monotonically increasing counter for events
   // ingested at this hop, starting at 0.
   final int? ingestSequenceNumber;
 
-  // Implements: REQ-d00115-J — batch membership context when this event was
   // received as part of an ingestBatch call.
   final BatchContext? batchContext;
 
-  // Implements: REQ-d00115-K — preserves the originator's sequence_number on
   // the receiver-hop entry. Receivers reassign a fresh local sequence_number
   // to the stored event so that origin and ingested events share one event
   // store keyed by one monotone counter; this field carries the wire-supplied
@@ -140,7 +138,6 @@ class ProvenanceEntry {
   // field set. Null on originator entries.
   final int? originSequenceNumber;
 
-  // Implements: REQ-d00115-C — encode to snake_case JSON with an ISO 8601
   // `received_at` string that preserves the source timezone (Z suffix for
   // UTC). Receiver-only fields are omitted when null.
   Map<String, Object?> toJson() => <String, Object?>{
@@ -202,7 +199,6 @@ class ProvenanceEntry {
       'originSequenceNumber: $originSequenceNumber)';
 }
 
-// REQ-d00115-C timezone-offset regex: matches a trailing Z or ±HH[:]MM
 // (including hour-only ±HH) at the end of the string. The positive-lookbehind
 // `(?<=\d)` requires the offset to immediately follow a digit, so strings
 // like "foo+0500" do not sneak past this layer (DateTime.parse rejects them

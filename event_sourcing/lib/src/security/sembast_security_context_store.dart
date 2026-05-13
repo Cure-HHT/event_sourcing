@@ -9,9 +9,12 @@ import 'package:sembast/sembast.dart';
 /// (`security_context`) keyed on `event_id`. Cross-store reads (the
 /// security_context + events join) live on the backend via
 /// [SembastBackend.queryAudit]; this store's [queryAudit] is a thin
-/// delegator (REQ-d00151-C).
-// Implements: REQ-d00137-A+D — sembast sidecar; null on missing.
-// Implements: REQ-d00151-C — queryAudit delegates to backend.queryAudit.
+/// delegator.
+// Implements: EVS-PRD-event-log/A — all mutations accept a caller-supplied
+//   `Txn` so they commit atomically with the event-log row they describe.
+// Implements: EVS-PRD-regulatory-alignment — `findUnredactedOlderThanInTxn`
+//   and `findOlderThanInTxn` drive the retention compact/purge sweeps that
+//   satisfy ALCOA+ Enduring / §11.10(c) protection-of-records obligations.
 class SembastSecurityContextStore extends InternalSecurityContextStore {
   SembastSecurityContextStore({required this.backend});
 
@@ -90,8 +93,7 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
         .toList();
   }
 
-  // Implements: REQ-d00151-C — thin delegator; the cross-store join lives
-  // on the backend (REQ-d00151-A+B) so consumers cannot reach past the
+  // on the backend so consumers cannot reach past the
   // abstraction to perform their own joins.
   @override
   Future<PagedAudit> queryAudit({

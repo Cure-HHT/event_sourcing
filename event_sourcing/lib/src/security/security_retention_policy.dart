@@ -1,7 +1,11 @@
 /// Retention-and-truncation policy applied by
 /// `EventStore.applyRetentionPolicy` against the security-context sidecar
 /// store. Separate from the event log's retention, which is permanent.
-// Implements: REQ-d00138-A — policy value type with documented defaults
+// Implements: EVS-PRD-regulatory-alignment — defines the time-based
+//   truncation and deletion windows for security telemetry, enabling
+//   compliant handling of PII while preserving the append-only event log.
+// Implements: EVS-PRD-event-log/A — policy never touches the immutable
+//   event-log rows; only the sidecar security_context store is mutated.
 // and static `defaults` instance.
 class SecurityRetentionPolicy {
   const SecurityRetentionPolicy({

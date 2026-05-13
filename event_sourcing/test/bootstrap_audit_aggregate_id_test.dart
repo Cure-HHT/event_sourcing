@@ -1,10 +1,9 @@
+// Verifies: EVS-DEV-event-store-open/B
 // Verifies the bootstrap-time `system.entry_type_registry_initialized`
 // audit stamps `aggregateId = source.identifier` (the install UUID).
 // The bootstrap audit is the first event in every installation's
 // per-install hash-chained system aggregate.
 //
-// Verifies: REQ-d00134-E (revised: aggregateId=source.identifier).
-// Verifies: REQ-d00154-D — system events use the install UUID as their
 //   aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -28,11 +27,10 @@ void main() {
   group(
     'bootstrap entry_type_registry_initialized aggregateId = source.identifier',
     () {
-      // Verifies: REQ-d00134-E (revised) — fresh bootstrap stamps
       // `aggregateId = source.identifier` on the registry-initialized
       // audit event. The installation's own UUID anchors the per-install
       // system aggregate from the very first system event.
-      test('REQ-d00134-E: entry_type_registry_initialized audit uses '
+      test('entry_type_registry_initialized audit uses '
           'source.identifier as aggregateId', () async {
         final db = await newDatabaseFactoryMemory().openDatabase(
           'bootstrap-aggid.db',
@@ -62,11 +60,10 @@ void main() {
         await backend.close();
       });
 
-      // Verifies: REQ-d00154-D — two distinct installations stamp
       // disjoint aggregateIds on their bootstrap audits, so a downstream
       // observer that bridges audits from both installs can split the
       // streams cleanly.
-      test('REQ-d00154-D: two installs produce disjoint bootstrap audit '
+      test('two installs produce disjoint bootstrap audit '
           'aggregateIds', () async {
         const sourceA = Source(
           hopId: 'mobile-device',

@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-destinations/E
+// Verifies: EVS-PRD-ingest/D
+// Verifies: EVS-PRD-ingest/D
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -70,44 +73,36 @@ void main() {
       expect(result, isA<SendTransient>());
     });
 
-    // Verifies: REQ-d00145-L
-    test(
-      'REQ-d00145-L: IngestLibFormatVersionAhead -> SendPermanent',
-      () async {
-        final stub = _ThrowingEventStore(
-          const IngestLibFormatVersionAhead(
-            eventId: 'e-1',
-            wireVersion: 2,
-            receiverVersion: 1,
-          ),
-        );
-        final bridge = DownstreamBridge(stub);
-        final result = await bridge.deliver(
-          _wirePayload(Uint8List.fromList(<int>[1])),
-        );
-        expect(result, isA<SendPermanent>());
-      },
-    );
+    test('IngestLibFormatVersionAhead -> SendPermanent', () async {
+      final stub = _ThrowingEventStore(
+        const IngestLibFormatVersionAhead(
+          eventId: 'e-1',
+          wireVersion: 2,
+          receiverVersion: 1,
+        ),
+      );
+      final bridge = DownstreamBridge(stub);
+      final result = await bridge.deliver(
+        _wirePayload(Uint8List.fromList(<int>[1])),
+      );
+      expect(result, isA<SendPermanent>());
+    });
 
-    // Verifies: REQ-d00145-M
-    test(
-      'REQ-d00145-M: IngestEntryTypeVersionAhead -> SendPermanent',
-      () async {
-        final stub = _ThrowingEventStore(
-          const IngestEntryTypeVersionAhead(
-            eventId: 'e-1',
-            entryType: 'demo_note',
-            wireVersion: 5,
-            receiverVersion: 2,
-          ),
-        );
-        final bridge = DownstreamBridge(stub);
-        final result = await bridge.deliver(
-          _wirePayload(Uint8List.fromList(<int>[1])),
-        );
-        expect(result, isA<SendPermanent>());
-      },
-    );
+    test('IngestEntryTypeVersionAhead -> SendPermanent', () async {
+      final stub = _ThrowingEventStore(
+        const IngestEntryTypeVersionAhead(
+          eventId: 'e-1',
+          entryType: 'demo_note',
+          wireVersion: 5,
+          receiverVersion: 2,
+        ),
+      );
+      final bridge = DownstreamBridge(stub);
+      final result = await bridge.deliver(
+        _wirePayload(Uint8List.fromList(<int>[1])),
+      );
+      expect(result, isA<SendPermanent>());
+    });
   });
 }
 

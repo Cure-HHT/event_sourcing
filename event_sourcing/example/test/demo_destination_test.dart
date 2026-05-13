@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-destinations/A/E
+// Verifies: EVS-PRD-destinations/B
+// Verifies: EVS-PRD-destinations/E
+// Verifies: EVS-PRD-destinations/E
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -15,18 +19,15 @@ StoredEvent _mkEvent(String id) => StoredEvent.synthetic(
 );
 
 void main() {
-  group('DemoDestination implements Destination contract (REQ-d00122)', () {
-    // Verifies: REQ-d00122-A — stable id.
+  group('DemoDestination implements Destination contract', () {
     test('id is stable once constructed', () {
       final d = DemoDestination(id: 'Primary');
       expect(d.id, 'Primary');
     });
-    // Verifies: REQ-d00122-C — wireFormat declared.
     test('wireFormat is "demo-json-v1"', () {
       final d = DemoDestination(id: 'Primary');
       expect(d.wireFormat, 'demo-json-v1');
     });
-    // Verifies: REQ-d00122-B — filter selects events; SubscriptionFilter
     //   with null allow-lists and no predicate accepts all events.
     test('filter accepts events regardless of entryType / eventType', () {
       final d = DemoDestination(id: 'Primary');
@@ -35,8 +36,7 @@ void main() {
     });
   });
 
-  group('allowHardDelete (REQ-d00129-B)', () {
-    // Verifies: REQ-d00129-B — abstract default false; concrete opt-in.
+  group('allowHardDelete', () {
     test('default is false', () {
       final d = DemoDestination(id: 'x');
       expect(d.allowHardDelete, isFalse);
@@ -47,8 +47,7 @@ void main() {
     });
   });
 
-  group('canAddToBatch (REQ-d00128-E)', () {
-    // Verifies: REQ-d00128-E — destination-owned batch admission; batchSize
+  group('canAddToBatch', () {
     //   notifier is the live knob.
     test('batchSize = 1 rejects a second event', () {
       final d = DemoDestination(id: 'x');
@@ -78,8 +77,7 @@ void main() {
     });
   });
 
-  group('maxAccumulateTime (REQ-d00128-F)', () {
-    // Verifies: REQ-d00128-F — maxAccumulateTime is per-destination and
+  group('maxAccumulateTime', () {
     //   live-tunable via the underlying notifier.
     test('reads the current notifier value', () {
       final d = DemoDestination(id: 'x');
@@ -90,10 +88,8 @@ void main() {
     });
   });
 
-  group('transform (REQ-d00128-D + REQ-d00122-D)', () {
-    // Verifies: REQ-d00128-D — transform(batch) produces one WirePayload
-    //   covering every event. REQ-d00122-D — contentType +
-    //   transformVersion stamps.
+  group('transform', () {
+    //   covering every event — contentType + transformVersion stamps.
     test('produces JSON bytes + contentType + transformVersion', () async {
       final d = DemoDestination(id: 'x');
       final batch = <StoredEvent>[_mkEvent('1'), _mkEvent('2')];
@@ -110,8 +106,7 @@ void main() {
     });
   });
 
-  group('send routes by Connection (REQ-d00122-E + REQ-p01001)', () {
-    // Verifies: REQ-d00122-E — send returns one of three SendResult
+  group('send routes by Connection (REQ-p01001)', () {
     //   variants. Connection.ok → SendOk after waiting sendLatency;
     //   Connection.broken → SendTransient with "simulated disconnect";
     //   Connection.rejecting → SendPermanent with "simulated rejection".

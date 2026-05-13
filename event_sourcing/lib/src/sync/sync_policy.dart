@@ -1,10 +1,14 @@
+// Implements: EVS-PRD-destinations/C (FIFO order — SyncPolicy governs the
+//   retry/backoff curve that controls when drain re-attempts a queued entry;
+//   the maxAttempts cap and backoff prevent indefinite blocking on a bad head
+//   while preserving strict-FIFO ordering within each drain pass)
 import 'dart:math';
 
 /// Retry-curve and timing settings for the per-destination FIFO drain.
 ///
 /// `SyncPolicy` is a value class: all fields are `final`, the constructor is
 /// `const`, and [SyncPolicy.defaults] is a `static const` instance whose
-/// field values equal the REQ-d00123 constants (60s initial backoff, 5.0
+/// field values equal the  constants (60s initial backoff, 5.0
 /// multiplier, 2h cap, ±10% jitter, 20-attempt lifetime cap, 15-minute
 /// foreground cadence).
 ///
@@ -18,10 +22,7 @@ import 'dart:math';
 /// Curve shape: `initialBackoff * backoffMultiplier^attemptCount`, capped
 /// at `maxBackoff`, shaken by `±jitterFraction` multiplicative jitter to
 /// avoid synchronized retry storms.
-// Implements: REQ-d00123-A..F — constants and backoff curve.
-// Implements: REQ-d00126-A — value-class shape with SyncPolicy.defaults.
 class SyncPolicy {
-  // Implements: REQ-d00126-A — const constructor with final fields.
   const SyncPolicy({
     required this.initialBackoff,
     required this.backoffMultiplier,
@@ -32,34 +33,27 @@ class SyncPolicy {
   });
 
   /// First retry backoff.
-  // Implements: REQ-d00123-A.
   final Duration initialBackoff;
 
   /// Per-attempt multiplier.
-  // Implements: REQ-d00123-B.
   final double backoffMultiplier;
 
   /// Cap on the computed backoff.
-  // Implements: REQ-d00123-C.
   final Duration maxBackoff;
 
   /// Fraction of the base backoff applied as uniform ±jitter.
-  // Implements: REQ-d00123-D.
   final double jitterFraction;
 
   /// Per-entry lifetime attempt cap.
-  // Implements: REQ-d00123-E.
   final int maxAttempts;
 
   /// Foreground sync-cycle cadence.
-  // Implements: REQ-d00123-F.
   final Duration periodicInterval;
 
   /// The production policy: 60s / 5.0 / 2h / 0.1 / 20 / 15min, matching
-  /// REQ-d00123's constants exactly. Call sites that do not inject a
+  /// its constants exactly. Call sites that do not inject a
   /// custom policy resolve to this instance.
-  // Implements: REQ-d00126-A — SyncPolicy.defaults static const instance
-  // whose field values equal the REQ-d00123 constants.
+  // whose field values equal the  constants.
   static const SyncPolicy defaults = SyncPolicy(
     initialBackoff: Duration(seconds: 60),
     backoffMultiplier: 5.0,
@@ -78,8 +72,6 @@ class SyncPolicy {
   ///
   /// Pass a [random] for deterministic jitter in tests; production passes
   /// `null` (a process-wide default `Random` is used).
-  // Implements: REQ-d00123-A+B+C+D — curve shape, cap, and jitter.
-  // Implements: REQ-d00126-A — instance method reads this.<field>, so a
   // custom policy yields a custom curve.
   Duration backoffFor(int attemptCount, {Random? random}) {
     if (attemptCount < 0) {

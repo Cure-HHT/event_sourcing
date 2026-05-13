@@ -1,3 +1,12 @@
+// Verifies: EVS-PRD-destinations/B (per-destination filter — events not
+//   matching destination.filter are skipped; cursor advances past them;
+//   system events are admitted only when includeSystemEvents is true)
+// Verifies: EVS-PRD-destinations/C (FIFO order — fill_cursor advances to
+//   batch.last.sequenceNumber on enqueue; canAddToBatch batching preserves
+//   sequence order; maxAccumulateTime hold keeps a lone event re-evaluable)
+// Verifies: EVS-PRD-destinations/D (durable queue — enqueue and cursor
+//   advance run inside one transaction; idempotent repeat calls do not
+//   double-enqueue; post-tombstoneAndRefill recovery re-promotes in one pass)
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
@@ -71,58 +80,47 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00128-H — fillBatch with no new matching events is a
     // no-op: no FIFO rows are enqueued, fill_cursor is unchanged, no
     // transient state leaks.
-    test(
-      'REQ-d00128-H: fillBatch with no new matching events is a no-op',
-      () async {
-        // Append events to the log so the dormant-schedule early-exit
-        // is the only thing preventing a FIFO write (not vacuous).
-        await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 4, 22, 11),
-        );
-        final dest = FakeDestination(id: 'fake');
-        const schedule = DestinationSchedule();
-        // Dormant schedule: should be a no-op despite candidates.
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        expect(await backend.readFifoHead('fake'), isNull);
-        expect(await backend.readFillCursor('fake'), -1);
-      },
-    );
+    test('fillBatch with no new matching events is a no-op', () async {
+      // Append events to the log so the dormant-schedule early-exit
+      // is the only thing preventing a FIFO write (not vacuous).
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11),
+      );
+      final dest = FakeDestination(id: 'fake');
+      const schedule = DestinationSchedule();
+      // Dormant schedule: should be a no-op despite candidates.
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), -1);
+    });
 
-    // Verifies: REQ-d00128-H — with an active schedule but an empty event
     // log, fillBatch does not enqueue any rows and does not advance the
     // cursor.
-    test(
-      'REQ-d00128-H: fillBatch with empty event log does not advance cursor',
-      () async {
-        final dest = FakeDestination(id: 'fake');
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-        );
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        expect(await backend.readFifoHead('fake'), isNull);
-        expect(await backend.readFillCursor('fake'), -1);
-      },
-    );
+    test('fillBatch with empty event log does not advance cursor', () async {
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), -1);
+    });
 
-    // Verifies: REQ-d00128-E — fillBatch respects canAddToBatch: 7 events
     // with batchCapacity=3 produces one FIFO row covering the first 3
     // events and advances the cursor to the 3rd event's sequence_number.
-    test('REQ-d00128-E: fillBatch respects canAddToBatch boundary', () async {
+    test('fillBatch respects canAddToBatch boundary', () async {
       final clientTs = DateTime.utc(2026, 4, 22, 10);
       final appended = <StoredEvent>[];
       for (var i = 1; i <= 7; i++) {
@@ -153,10 +151,9 @@ void main() {
       expect(await backend.readFillCursor('fake'), 3);
     });
 
-    // Verifies: REQ-d00128-F — a single-event batch is held until
     // maxAccumulateTime has elapsed: no FIFO row is written yet and the
     // fill_cursor is not advanced.
-    test('REQ-d00128-F: fillBatch with 1 candidate and maxAccumulateTime>0 '
+    test('fillBatch with 1 candidate and maxAccumulateTime>0 '
         'does not flush yet', () async {
       // Only one event in window.
       final ts = DateTime.utc(2026, 4, 22, 11, 59, 50);
@@ -181,10 +178,9 @@ void main() {
       expect(await backend.readFillCursor('fake'), -1);
     });
 
-    // Verifies: REQ-d00128-F — once maxAccumulateTime has elapsed, a
     // single-event batch flushes: a FIFO row is written and the
     // fill_cursor advances to the event's sequence_number.
-    test('REQ-d00128-F: fillBatch flushes a 1-event batch once '
+    test('fillBatch flushes a 1-event batch once '
         'maxAccumulateTime has elapsed', () async {
       final ts = DateTime.utc(2026, 4, 22, 11, 50);
       await _appendEvent(backend, eventId: 'e1', clientTimestamp: ts);
@@ -208,139 +204,127 @@ void main() {
       expect(await backend.readFillCursor('fake'), 1);
     });
 
-    // Verifies: REQ-d00129-I — events with client_timestamp < startDate
     // are NOT enqueued. Fresher matching events still flow through and
     // the cursor advances past the skipped ones.
-    test(
-      'REQ-d00129-I: fillBatch skips events with client_timestamp < startDate',
-      () async {
-        // Two events before startDate, one after.
-        await _appendEvent(
-          backend,
-          eventId: 'e-pre1',
-          clientTimestamp: DateTime.utc(2026, 3, 15),
-        );
-        await _appendEvent(
-          backend,
-          eventId: 'e-pre2',
-          clientTimestamp: DateTime.utc(2026, 3, 20),
-        );
-        await _appendEvent(
-          backend,
-          eventId: 'e-active',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
+    test('fillBatch skips events with client_timestamp < startDate', () async {
+      // Two events before startDate, one after.
+      await _appendEvent(
+        backend,
+        eventId: 'e-pre1',
+        clientTimestamp: DateTime.utc(2026, 3, 15),
+      );
+      await _appendEvent(
+        backend,
+        eventId: 'e-pre2',
+        clientTimestamp: DateTime.utc(2026, 3, 20),
+      );
+      await _appendEvent(
+        backend,
+        eventId: 'e-active',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
 
-        final dest = FakeDestination(id: 'fake', batchCapacity: 10);
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-        );
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
+      final dest = FakeDestination(id: 'fake', batchCapacity: 10);
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
 
-        final head = await backend.readFifoHead('fake');
-        expect(head, isNotNull);
-        // Only the in-window event is enqueued.
-        expect(head!.eventIds, ['e-active']);
-        // Cursor advances to the in-window event's sequence number (3),
-        // past the two skipped earlier events.
-        expect(await backend.readFillCursor('fake'), 3);
-      },
-    );
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      // Only the in-window event is enqueued.
+      expect(head!.eventIds, ['e-active']);
+      // Cursor advances to the in-window event's sequence number (3),
+      // past the two skipped earlier events.
+      expect(await backend.readFillCursor('fake'), 3);
+    });
 
-    // Verifies: REQ-d00129-I — events with client_timestamp > endDate
     // (or > now() when endDate is later than now) are NOT enqueued.
-    test(
-      'REQ-d00129-I: fillBatch skips events with client_timestamp > endDate',
-      () async {
-        await _appendEvent(
-          backend,
-          eventId: 'e-active',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
-        // This event is AFTER endDate and should be skipped.
-        await _appendEvent(
-          backend,
-          eventId: 'e-after',
-          clientTimestamp: DateTime.utc(2026, 4, 20),
-        );
+    test('fillBatch skips events with client_timestamp > endDate', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e-active',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
+      // This event is AFTER endDate and should be skipped.
+      await _appendEvent(
+        backend,
+        eventId: 'e-after',
+        clientTimestamp: DateTime.utc(2026, 4, 20),
+      );
 
-        final dest = FakeDestination(id: 'fake', batchCapacity: 10);
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-          endDate: DateTime.utc(2026, 4, 15),
-        );
-        // now() is well after endDate so the upper bound is endDate.
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
+      final dest = FakeDestination(id: 'fake', batchCapacity: 10);
+      final schedule = DestinationSchedule(
+        startDate: DateTime.utc(2026, 4, 1),
+        endDate: DateTime.utc(2026, 4, 15),
+      );
+      // now() is well after endDate so the upper bound is endDate.
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
 
-        final head = await backend.readFifoHead('fake');
-        expect(head, isNotNull);
-        // Only the in-window event is enqueued.
-        expect(head!.eventIds, ['e-active']);
-        // Cursor advances to the enqueued batch's last sequence_number
-        // (1). The out-of-window event at seq 2 is deferred per
-        // REQ-d00128-K — endDate is mutable (REQ-d00129-F) so events
-        // rejected by the upper bound stay re-evaluable. Cursor stops at
-        // 1 (last decided seq before the deferred event).
-        expect(await backend.readFillCursor('fake'), 1);
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      // Only the in-window event is enqueued.
+      expect(head!.eventIds, ['e-active']);
+      // Cursor advances to the enqueued batch's last sequence_number
+      // (1). The out-of-window event at seq 2 is deferred per
+      // rejected by the upper bound stay re-evaluable. Cursor stops at
+      // 1 (last decided seq before the deferred event).
+      expect(await backend.readFillCursor('fake'), 1);
 
-        // Second call: the tail event is still deferred (endDate has not
-        // moved). fillBatch's walk stops at e-after (deferred); cursor
-        // does NOT advance past it. Per REQ-d00128-K this preserves
-        // re-evaluability when endDate later widens.
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        expect(
-          await backend.readFillCursor('fake'),
-          1,
-          reason:
-              'cursor stays at 1; e-after at seq 2 remains deferred '
-              '(REQ-d00128-K)',
-        );
-        // Head unchanged.
-        final head2 = await backend.readFifoHead('fake');
-        expect(head2, isNotNull);
-        expect(head2!.eventIds, ['e-active']);
+      // Second call: the tail event is still deferred (endDate has not
+      // moved). fillBatch's walk stops at e-after (deferred); cursor
+      // does NOT advance past it. this preserves
+      // re-evaluability when endDate later widens.
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(
+        await backend.readFillCursor('fake'),
+        1,
+        reason:
+            'cursor stays at 1; e-after at seq 2 remains deferred '
+            '',
+      );
+      // Head unchanged.
+      final head2 = await backend.readFifoHead('fake');
+      expect(head2, isNotNull);
+      expect(head2!.eventIds, ['e-active']);
 
-        // Widening endDate to admit e-after: next fillBatch tick picks it
-        // up. Demonstrates the K-fix payoff — deferred events are NOT
-        // lost when the upper bound widens.
-        final widened = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-          endDate: DateTime.utc(2026, 4, 30),
-        );
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: widened,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        expect(await backend.readFillCursor('fake'), 2);
-        final fifo = await backend.listFifoEntries('fake');
-        expect(
-          fifo.expand((r) => r.eventIds).toList(),
-          equals(['e-active', 'e-after']),
-        );
-      },
-    );
+      // Widening endDate to admit e-after: next fillBatch tick picks it
+      // up. Demonstrates the K-fix payoff — deferred events are NOT
+      // lost when the upper bound widens.
+      final widened = DestinationSchedule(
+        startDate: DateTime.utc(2026, 4, 1),
+        endDate: DateTime.utc(2026, 4, 30),
+      );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: widened,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFillCursor('fake'), 2);
+      final fifo = await backend.listFifoEntries('fake');
+      expect(
+        fifo.expand((r) => r.eventIds).toList(),
+        equals(['e-active', 'e-after']),
+      );
+    });
 
-    // Verifies: REQ-d00128-G — fillBatch advances the fill_cursor to
     // batch.last.sequenceNumber on successful enqueue (single-event
     // batch here; cursor = the single event's sequence number).
-    test('REQ-d00128-G: fillBatch advances fill_cursor to '
+    test('fillBatch advances fill_cursor to '
         'batch.last.sequenceNumber on successful enqueue', () async {
       // One matching event, batchCapacity=1, maxAccumulateTime=0 so it
       // flushes immediately.
@@ -363,51 +347,44 @@ void main() {
       expect(head!.eventIdRange.lastSeq, 1);
     });
 
-    // Verifies: REQ-d00128-H — a second fillBatch call immediately after
     // a first with no new matching events is a true no-op: no new FIFO
     // row, cursor unchanged at batch.last.sequenceNumber.
-    test(
-      'REQ-d00128-H: repeat fillBatch with no new events is idempotent',
-      () async {
-        await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 4, 10),
-        );
-        final dest = FakeDestination(id: 'fake');
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-        );
+    test('repeat fillBatch with no new events is idempotent', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        final firstCursor = await backend.readFillCursor('fake');
-        expect(firstCursor, 1);
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      final firstCursor = await backend.readFillCursor('fake');
+      expect(firstCursor, 1);
 
-        // Second call — no new events. Should not touch the cursor, and
-        // should not enqueue a second FIFO row.
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        expect(await backend.readFillCursor('fake'), firstCursor);
-        // Head is still the single row from the first call.
-        final head = await backend.readFifoHead('fake');
-        expect(head, isNotNull);
-        expect(head!.eventIds, ['e1']);
-      },
-    );
+      // Second call — no new events. Should not touch the cursor, and
+      // should not enqueue a second FIFO row.
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFillCursor('fake'), firstCursor);
+      // Head is still the single row from the first call.
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+    });
 
-    // Verifies: REQ-d00128-H — filter short-circuit: events that do not
     // match destination.filter are never enqueued, and the cursor advances
     // past them so they are not re-evaluated.
-    test('REQ-d00128-H: non-matching events advance cursor but enqueue '
+    test('non-matching events advance cursor but enqueue '
         'nothing', () async {
       // Filter only accepts entry_type='epistaxis_event'; append two
       // events of a different type.
@@ -440,7 +417,7 @@ void main() {
       // subsequent fillBatch calls don't rescan them.
       expect(await backend.readFillCursor('fake'), 2);
 
-      // Idempotency (REQ-d00128-H): a repeat call with no new candidates
+      // Idempotency: a repeat call with no new candidates
       // does not re-advance the cursor and does not enqueue anything.
       await fillBatch(
         dest,
@@ -452,75 +429,68 @@ void main() {
       expect(await backend.readFillCursor('fake'), 2);
     });
 
-    // Verifies: REQ-d00128-I — when readFifoHead returns a wedged row,
     // fillBatch returns without enqueueing any new rows, without calling
     // Destination.transform, and without advancing fill_cursor.
-    test(
-      'REQ-d00128-I: fillBatch is a no-op when FIFO head is wedged',
-      () async {
-        // Step 1: enqueue one matching event and let fillBatch promote it
-        // into a FIFO row, then mark that row wedged. This is the wedge
-        // setup the new behavior must respect.
-        await _appendEvent(
-          backend,
-          eventId: 'e1',
-          clientTimestamp: DateTime.utc(2026, 4, 22, 11),
-        );
-        final dest = FakeDestination(id: 'fake', batchCapacity: 10);
-        final schedule = DestinationSchedule(
-          startDate: DateTime.utc(2026, 4, 1),
-        );
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
-        final wedgedRow = await backend.readFifoHead('fake');
-        expect(wedgedRow, isNotNull);
-        await backend.markFinal('fake', wedgedRow!.entryId, FinalStatus.wedged);
+    test('fillBatch is a no-op when FIFO head is wedged', () async {
+      // Step 1: enqueue one matching event and let fillBatch promote it
+      // into a FIFO row, then mark that row wedged. This is the wedge
+      // setup the new behavior must respect.
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11),
+      );
+      final dest = FakeDestination(id: 'fake', batchCapacity: 10);
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      final wedgedRow = await backend.readFifoHead('fake');
+      expect(wedgedRow, isNotNull);
+      await backend.markFinal('fake', wedgedRow!.entryId, FinalStatus.wedged);
 
-        // Step 2: snapshot post-wedge state.
-        final cursorBeforeSecondFill = await backend.readFillCursor('fake');
-        final transformCallsBefore = dest.transformCalls;
+      // Step 2: snapshot post-wedge state.
+      final cursorBeforeSecondFill = await backend.readFillCursor('fake');
+      final transformCallsBefore = dest.transformCalls;
 
-        // Step 3: append more matching events, then call fillBatch again.
-        // The new behavior: it must NOT promote them, NOT advance cursor,
-        // NOT call transform.
-        await _appendEvent(
-          backend,
-          eventId: 'e2',
-          clientTimestamp: DateTime.utc(2026, 4, 22, 11, 30),
-        );
-        await _appendEvent(
-          backend,
-          eventId: 'e3',
-          clientTimestamp: DateTime.utc(2026, 4, 22, 11, 45),
-        );
+      // Step 3: append more matching events, then call fillBatch again.
+      // The new behavior: it must NOT promote them, NOT advance cursor,
+      // NOT call transform.
+      await _appendEvent(
+        backend,
+        eventId: 'e2',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11, 30),
+      );
+      await _appendEvent(
+        backend,
+        eventId: 'e3',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11, 45),
+      );
 
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        );
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
 
-        // Cursor unchanged.
-        expect(await backend.readFillCursor('fake'), cursorBeforeSecondFill);
-        // No additional transform calls.
-        expect(dest.transformCalls, transformCallsBefore);
-        // Head is still the wedged row, with status wedged.
-        final headAfter = await backend.readFifoHead('fake');
-        expect(headAfter, isNotNull);
-        expect(headAfter!.entryId, wedgedRow.entryId);
-        expect(headAfter.finalStatus, FinalStatus.wedged);
-      },
-    );
+      // Cursor unchanged.
+      expect(await backend.readFillCursor('fake'), cursorBeforeSecondFill);
+      // No additional transform calls.
+      expect(dest.transformCalls, transformCallsBefore);
+      // Head is still the wedged row, with status wedged.
+      final headAfter = await backend.readFifoHead('fake');
+      expect(headAfter, isNotNull);
+      expect(headAfter!.entryId, wedgedRow.entryId);
+      expect(headAfter.finalStatus, FinalStatus.wedged);
+    });
 
-    // Verifies: REQ-d00128-I (recovery half) — after the wedged head is
     // tombstoned and refilled, the next fillBatch promotes events that
     // arrived during the wedge in one pass against the rewound cursor.
-    test('REQ-d00128-I: post-tombstoneAndRefill, fillBatch promotes wedge-era '
+    test('post-tombstoneAndRefill, fillBatch promotes wedge-era '
         'events in one pass', () async {
       // Setup: destination with batchCapacity=10 (so a single fillBatch
       // can produce one row covering many events).
@@ -588,13 +558,12 @@ void main() {
       expect(await backend.readFillCursor('fake'), 3);
     });
 
-    // Verifies: REQ-d00152-B+E — when destination.serializesNatively is
     // true, fillBatch builds a fresh BatchEnvelopeMetadata from `source`
     // (mints batch_id, stamps sent_at = now, copies hopId / identifier /
     // softwareVersion) and enqueues via nativeEnvelope:. The destination's
     // transform is NOT called — NativeDestination's transform throws if
     // invoked.
-    test('REQ-d00152-B+E: native destination — fillBatch mints envelope '
+    test('native destination — fillBatch mints envelope '
         'from source, stores envelope_metadata, nulls wire_payload', () async {
       const source = Source(
         hopId: 'mobile-device',
@@ -624,7 +593,7 @@ void main() {
       expect(
         head.wirePayload,
         isNull,
-        reason: 'native rows MUST null wire_payload (REQ-d00119-B)',
+        reason: 'native rows MUST null wire_payload',
       );
       expect(head.envelopeMetadata, isNotNull);
       expect(head.envelopeMetadata!.senderHop, 'mobile-device');
@@ -647,11 +616,10 @@ void main() {
       expect(await backend.readFillCursor('native'), 2);
     });
 
-    // Verifies: REQ-d00152-B+E — fillBatch on a native destination
     // without a `source:` parameter throws ArgumentError. The native
     // branch needs Source to stamp envelope identity; the absence is a
     // caller-bug surfaced loudly rather than a silent partial enqueue.
-    test('REQ-d00152-B+E: native destination without source: throws '
+    test('native destination without source: throws '
         'ArgumentError', () async {
       final clientTs = DateTime.utc(2026, 4, 22, 10);
       await _appendEvent(backend, eventId: 'e1', clientTimestamp: clientTs);

@@ -70,7 +70,7 @@ class AppState extends ChangeNotifier {
   /// batch size sliders) on rows whose runtime type carries them; native
   /// destinations get a knob-less column that still renders the FIFO
   /// snapshot, surfacing the storage-shape difference (envelope_metadata
-  /// vs wire_payload) per REQ-d00119-K.
+  /// vs wire_payload)
   List<Destination> get destinations => registry.all().toList(growable: false);
 
   /// Delegate to `DestinationRegistry.addDestination` and notify listeners

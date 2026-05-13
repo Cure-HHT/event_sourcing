@@ -1,3 +1,6 @@
+// Verifies: EVS-PRD-event-log/D — findEventById / findEventByIdInTxn read a
+//   single event by id from the unified log; null when absent; used by
+//   ingest idempotency check.
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -51,23 +54,18 @@ void main() {
       await backend.close();
     });
 
-    // Verifies: REQ-d00147-A — found id returns the stored event.
-    test(
-      'REQ-d00147-A: findEventById returns the stored event when present',
-      () async {
-        final appended = await _appendEvent(backend, eventId: 'evt-target');
-        final result = await backend.findEventById('evt-target');
-        expect(result, isNotNull);
-        expect(result!.eventId, 'evt-target');
-        expect(result.sequenceNumber, appended.sequenceNumber);
-        expect(result.aggregateId, appended.aggregateId);
-        expect(result.eventHash, appended.eventHash);
-      },
-    );
+    test('findEventById returns the stored event when present', () async {
+      final appended = await _appendEvent(backend, eventId: 'evt-target');
+      final result = await backend.findEventById('evt-target');
+      expect(result, isNotNull);
+      expect(result!.eventId, 'evt-target');
+      expect(result.sequenceNumber, appended.sequenceNumber);
+      expect(result.aggregateId, appended.aggregateId);
+      expect(result.eventHash, appended.eventHash);
+    });
 
-    // Verifies: REQ-d00147-A — absent id returns null (does NOT throw).
     test(
-      'REQ-d00147-A: findEventById returns null when no event with that id exists',
+      'findEventById returns null when no event with that id exists',
       () async {
         await _appendEvent(backend, eventId: 'evt-other-1');
         await _appendEvent(backend, eventId: 'evt-other-2');
@@ -76,18 +74,14 @@ void main() {
       },
     );
 
-    // Verifies: REQ-d00147-A — multiple events present, lookup picks the right one.
-    test(
-      'REQ-d00147-A: findEventById disambiguates among many stored events',
-      () async {
-        await _appendEvent(backend, eventId: 'evt-a');
-        final target = await _appendEvent(backend, eventId: 'evt-target');
-        await _appendEvent(backend, eventId: 'evt-c');
-        final result = await backend.findEventById('evt-target');
-        expect(result, isNotNull);
-        expect(result!.sequenceNumber, target.sequenceNumber);
-        expect(result.eventId, 'evt-target');
-      },
-    );
+    test('findEventById disambiguates among many stored events', () async {
+      await _appendEvent(backend, eventId: 'evt-a');
+      final target = await _appendEvent(backend, eventId: 'evt-target');
+      await _appendEvent(backend, eventId: 'evt-c');
+      final result = await backend.findEventById('evt-target');
+      expect(result, isNotNull);
+      expect(result!.sequenceNumber, target.sequenceNumber);
+      expect(result.eventId, 'evt-target');
+    });
   });
 }

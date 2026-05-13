@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-portability/D — StorageBackend interface is implementable
+//   by any concrete backend; contract test uses a pure in-memory double.
+// Verifies: EVS-PRD-event-log/A — successful transaction body commits all
+//   writes atomically; thrown exception rolls back all writes.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -21,9 +25,8 @@ void main() {
       backend = _InMemoryBackend();
     });
 
-    // Verifies: REQ-d00117-A — transaction body that returns successfully
     // commits all writes so they are visible to subsequent reads.
-    test('REQ-d00117-A: successful body commits all writes', () async {
+    test('successful body commits all writes', () async {
       final event = _sampleEvent(eventId: 'ev-1');
 
       final result = await backend.transaction((txn) async {
@@ -36,9 +39,8 @@ void main() {
       expect(stored.map((e) => e.eventId), ['ev-1']);
     });
 
-    // Verifies: REQ-d00117-A — a throw inside the transaction body rolls
     // back every Txn-bound write so none of them are visible afterwards.
-    test('REQ-d00117-A: thrown exception rolls back all writes', () async {
+    test('thrown exception rolls back all writes', () async {
       await expectLater(
         backend.transaction((txn) async {
           await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-rollback'));
@@ -51,28 +53,23 @@ void main() {
       expect(stored, isEmpty);
     });
 
-    // Verifies: REQ-d00117-A — a partially-successful body still rolls back
     // atomically; nothing from before the throw remains committed.
-    test(
-      'REQ-d00117-A: mid-body throw rolls back earlier writes too',
-      () async {
-        await expectLater(
-          backend.transaction((txn) async {
-            await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-a'));
-            await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-b'));
-            throw StateError('simulated failure');
-          }),
-          throwsStateError,
-        );
+    test('mid-body throw rolls back earlier writes too', () async {
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-a'));
+          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-b'));
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
 
-        expect(await backend.findAllEvents(), isEmpty);
-      },
-    );
+      expect(await backend.findAllEvents(), isEmpty);
+    });
 
-    // Verifies: REQ-d00117-B — using a Txn handle after the transaction body
     // returns raises StateError so accidental escape is detected instead of
     // silently writing against a closed transaction.
-    test('REQ-d00117-B: Txn cannot be used after body returns', () async {
+    test('Txn cannot be used after body returns', () async {
       late Txn escaped;
       await backend.transaction((txn) async {
         escaped = txn;
@@ -84,7 +81,7 @@ void main() {
       );
     });
 
-    test('REQ-d00117-B: Txn cannot be used after body throws', () async {
+    test('Txn cannot be used after body throws', () async {
       late Txn escaped;
       await expectLater(
         backend.transaction((txn) async {
@@ -152,8 +149,8 @@ StoredEvent _sampleEvent({required String eventId}) => StoredEvent(
 
 /// Minimal in-memory backend used only by the contract tests.
 ///
-/// Implements just enough behavior to exercise REQ-d00117-A (transaction
-/// atomicity) and REQ-d00117-B (Txn lexical scoping). All other methods
+/// Implements just enough behavior to exercise (transaction
+/// atomicity) and -B (Txn lexical scoping). All other methods
 /// throw [UnimplementedError] — the real SembastBackend is covered by
 /// dedicated tests in Tasks 6-8.
 class _InMemoryBackend extends StorageBackend {
@@ -212,7 +209,7 @@ class _InMemoryBackend extends StorageBackend {
         clientTimestampEnd != null) {
       throw UnimplementedError(
         '_InMemoryBackend.findAllEvents does not implement filter parameters; '
-        'this fake is scoped to REQ-d00117-A+B (transaction atomicity).',
+        'this fake is scoped to (transaction atomicity).',
       );
     }
     final sorted = _events.values.toList()
@@ -245,7 +242,7 @@ class _InMemoryBackend extends StorageBackend {
       throw UnimplementedError(
         '_InMemoryBackend.findAllEventsInTxn does not implement entry-type '
         'or client-timestamp filters; this fake is scoped to '
-        'REQ-d00117-A+B (transaction atomicity).',
+        '-A+B (transaction atomicity).',
       );
     }
     _assertOwnValid(txn)._check();
@@ -373,7 +370,7 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> writeSchemaVersion(Txn txn, int version) =>
       throw UnimplementedError();
   // Fill-cursor behavioral tests live in sembast_backend_fifo_test.dart
-  // (REQ-d00128-G: default/round-trip/transactional-rollback/per-destination).
+  // (-G: default/round-trip/transactional-rollback/per-destination).
   // When a second StorageBackend implementation lands, replicate those
   // behaviors here as implementation-agnostic contract tests.
   @override

@@ -1,6 +1,5 @@
 // lib/server/demo_state_projection.dart
 // IMPLEMENTS REQUIREMENTS:
-//   REQ-d00168 (Dispatcher Pipeline) — exposes pipeline state for the
 //   inspector pane.
 //
 // PollingDemoStateProjection re-queries the event store, matrix view,

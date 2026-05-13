@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-ingest/A — BatchEnvelope.decode / encode round-trip
+//   exercises the wire-format codec that the ingest path depends on
+// Verifies: EVS-PRD-hash-chain-integrity/D — encoding is deterministic
+//   (JCS-canonical), confirming hash reproducibility across observers
+
 import 'dart:convert';
 import 'dart:typed_data';
 

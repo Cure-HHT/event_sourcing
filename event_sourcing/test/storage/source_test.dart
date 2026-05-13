@@ -1,10 +1,14 @@
+// Verifies: EVS-PRD-event-log/C — Source carries hopId + identifier that
+//   together identify the authority whose events must stay ordered within an
+//   aggregate.
+// Verifies: EVS-PRD-portability/C — pure Dart value; equality and hashCode
+//   are consistent across all Dart-supported runtimes.
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Source', () {
-    // Verifies: REQ-d00142-A — three fields, no userId.
-    test('REQ-d00142-A: construction carries three fields (no userId)', () {
+    test('construction carries three fields (no userId)', () {
       const s = Source(
         hopId: 'mobile-device',
         identifier: 'dev-1',
@@ -24,8 +28,7 @@ void main() {
       expect(a, isNot(c));
     });
 
-    // Verifies: REQ-d00142-B — well-known hopId values.
-    test('REQ-d00142-B: hopId accepts well-known values', () {
+    test('hopId accepts well-known values', () {
       const m = Source(
         hopId: 'mobile-device',
         identifier: 'd',
@@ -40,17 +43,13 @@ void main() {
       expect(p.hopId, 'portal-server');
     });
 
-    // Verifies: REQ-d00142-C — softwareVersion not validated at runtime.
-    test(
-      'REQ-d00142-C: softwareVersion is accepted without runtime validation',
-      () {
-        const s = Source(
-          hopId: 'mobile-device',
-          identifier: 'd',
-          softwareVersion: 'anything-goes',
-        );
-        expect(s.softwareVersion, 'anything-goes');
-      },
-    );
+    test('softwareVersion is accepted without runtime validation', () {
+      const s = Source(
+        hopId: 'mobile-device',
+        identifier: 'd',
+        softwareVersion: 'anything-goes',
+      );
+      expect(s.softwareVersion, 'anything-goes');
+    });
   });
 }
