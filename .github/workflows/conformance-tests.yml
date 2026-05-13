@@ -1,0 +1,99 @@
+# Conformance tests — runs the sembast and Postgres conformance + integration
+# test suites on every PR and push to main.
+#
+# Two jobs:
+#   sembast  — SembastBackend conformance + in-memory IdempotencyStore
+#              conformance. No external services required.
+#   postgres — PostgresBackend conformance + schema test + IdempotencyStore
+#              conformance + action_permissions_demo end-to-end integration.
+#              Runs a postgres:16 service container; gated on PG_TEST_URL.
+
+name: Conformance tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: conformance-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sembast:
+    name: Sembast conformance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Sembast StorageBackend conformance
+        run: flutter test test/storage/sembast_backend_conformance_test.dart
+        working-directory: event_sourcing
+      - name: IdempotencyStore conformance (in-memory)
+        run: flutter test test/actions/idempotency_store_test.dart
+        working-directory: event_sourcing
+
+  postgres:
+    name: Postgres conformance + integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (example_action_permissions)
+        run: flutter pub get
+        working-directory: event_sourcing/example_action_permissions
+      - name: Postgres schema test
+        run: flutter test test/storage/postgres/postgres_backend_schema_test.dart
+        working-directory: event_sourcing
+      - name: PostgresBackend conformance
+        run: flutter test test/storage/postgres/postgres_backend_conformance_test.dart
+        working-directory: event_sourcing
+      - name: PostgresIdempotencyStore conformance
+        run: flutter test test/storage/postgres/postgres_idempotency_store_conformance_test.dart
+        working-directory: event_sourcing
+      - name: action_permissions_demo Postgres integration
+        run: flutter test test/postgres_integration_test.dart
+        working-directory: event_sourcing/example_action_permissions
