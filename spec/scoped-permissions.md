@@ -186,13 +186,19 @@ Total wildcard (any class, any value):
 
 The wildcard shapes are distinct *types*, not sentinel strings inside a normal `value` field. This protects against the corner case where a legitimate value happens to be the literal `'*'` — there is no sentinel to clash with.
 
-**Aggregate id** uniquely identifies one (user, role, scope) tuple so that the projection's insert/remove discipline works:
+**JSON parse contract.** The three key sets are mutually exclusive by construction: `{"wildcard_class": true}` (no other keys) is total-wildcard; `{"class": <s>, "wildcard_value": true}` (no `"value"` key) is value-wildcard; `{"class": <s>, "value": <s>}` (no `"wildcard_value"` key) is bound. `ScopeValue.fromJson` SHALL reject any object whose keys do not match exactly one of these three shapes with a `FormatException`.
+
+**Aggregate id** uniquely identifies one (user, role, scope) tuple so that the projection's insert/remove discipline works. To avoid encoding ambiguity from colon-bearing values (e.g., a path-like `scope_value` or any future `user_id` shape that contains a `:`), the aggregate id is the canonical-JSON serialization of the tuple:
 
 ```text
-'{user_id}:{role}:bound:{class}:{value}'
-'{user_id}:{role}:val_wild:{class}'
-'{user_id}:{role}:total_wild'
+aggregate_id = canonical_json({
+  "user_id": <string>,
+  "role":    <string>,
+  "scope":   <ScopeValue JSON, one of the three shapes above>,
+})
 ```
+
+Canonical JSON (JCS, RFC 8785) is already a substrate dependency. The aggregate id is constructed-only; no parser needs to reverse it. The projection's row key (`AggregateIdKey()`) treats it as opaque. This is collision-free across any (user_id, role, scope) tuple regardless of segment content.
 
 Granting two sites to a user emits two `role_assigned` events with distinct aggregate ids. Revoking one targets that aggregate id specifically.
 
@@ -310,7 +316,7 @@ final class ValueWildcardScope extends ScopeValue { String class_; }
 final class TotalWildcardScope extends ScopeValue { /* no fields */ }
 ```
 
-The `Action.scopeFor` method typically returns `BoundScope` from input; the wildcard variants are primarily for role-assignment storage (rare for actions to return wildcards from input).
+The `Action.scopeFor` method typically returns `BoundScope` from input; the wildcard variants are primarily for role-assignment *storage*, not action-side scope-binding. `TotalWildcardScope` MUST NOT be returned from `scopeFor`: it carries no `class_` field, so the dispatcher's class-check cannot apply. If `scopeFor` returns `TotalWildcardScope`, the dispatcher denies with `scopeUnresolvable` (treated as a programmer bug, surfaced at runtime). `ValueWildcardScope` is technically returnable when an action genuinely operates on all values of a class (e.g., a cross-site report-generation action), but the action author should document the intent per call site.
 
 **`AuthorizationPolicy`** (extended signature):
 
@@ -382,6 +388,8 @@ commit
 This closes the narrow race where an ingest-arriving revocation could land between authorize's projection read and execute's event append. Under the transaction, authorize and execute see the same projection state, and the appended events are committed atomically against that state. Future dispatches see the post-revoke state.
 
 The decision this pins: a revocation arriving between two dispatches takes effect on the *second* one; a revocation arriving during a single dispatch's transaction takes effect *after* it commits. Concretely on a single-source v1 deployment without ingest, the race window doesn't exist at all; the transaction stance is the correct posture regardless and prepares for ingest-active deployments.
+
+**Implementation pre-req — transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. The current `StorageBackend` surface (`event_sourcing/lib/src/storage/storage_backend.dart`) provides `readViewRowInTxn` (single-row, in-txn) and `findViewRows` (multi-row, non-transactional); the transactional-snapshot guarantee requires a transactional multi-row read. The impl ticket adds `findViewRowsInTxn(Txn, viewName, {filter})` (or equivalent — name TBD by impl) to the abstract `StorageBackend` interface, with implementations in each backend (sembast first). This is a substrate-interface addition, not an app surface; follows the same abstract-backend-agnostic contract as existing `*InTxn` methods.
 
 **Denial reasons** (refined):
 
@@ -466,6 +474,9 @@ event_sourcing/lib/src/permissions/containment_resolver.dart     NEW
 - permission_seed.dart                  drop scope from seed shape
 - seed_validator.dart                   add scope-class-registry validation
 - bootstrap_action_permissions.dart     unchanged in shape; payload change
+- fail_safe_authorization_policy.dart   replace permissionsFor with
+                                         effectivePermissionsFor returning
+                                         an empty EffectiveAuthorization
 - example/ and example_action_permissions/  add a scoped action sample
 ```
 
@@ -473,7 +484,7 @@ event_sourcing/lib/src/permissions/containment_resolver.dart     NEW
 
 **Spec / PRD work:**
 
-- This design doc remains in `docs/superpowers/specs/` during impl. After Phase I friction reveals any necessary refinements, migrate to `spec/<topic>.md` (likely `spec/prd-scoped-permissions.md`) with normative `EVS-PRD-*` assertions.
+- This design doc lives at `spec/scoped-permissions.md` from the start (see the lifecycle note at the top of this file). Normative `EVS-PRD-scoped-permissions` and supporting `EVS-DEV-*` requirement blocks land in-place against this file as impl stabilizes; no migration step.
 - `spec/prd-permissions-as-events.md` likely picks up additional assertions about scope-class registration and event-derived containment evaluation.
 - `spec/prd-action-dispatch.md` may need refinement of assertion B (the authorize stage acquires scope-binding sub-steps) and of the consistency / transaction stance.
 - DEV-level requirements (`EVS-DEV-*`) authored alongside impl per CLAUDE.md.
