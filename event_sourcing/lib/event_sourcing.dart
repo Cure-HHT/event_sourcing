@@ -241,6 +241,8 @@ export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
+export 'src/permissions/scope_class_spec.dart'
+    show ContainmentRef, ScopeClassSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/snapshot_role_matrix_reader.dart'
