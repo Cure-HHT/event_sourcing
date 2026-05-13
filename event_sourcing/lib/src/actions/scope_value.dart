@@ -128,7 +128,7 @@ final class TotalWildcardScope extends ScopeValue {
   bool operator ==(Object other) => other is TotalWildcardScope;
 
   @override
-  int get hashCode => 'TotalWildcard'.hashCode;
+  int get hashCode => Object.hash('TotalWildcard', null);
 
   @override
   String toString() => 'TotalWildcardScope()';

@@ -64,5 +64,23 @@ void main() {
         throwsA(isA<FormatException>()),
       );
     });
+
+    test('fromJson rejects wildcard_class with non-true value', () {
+      expect(
+        () => ScopeValue.fromJson({'wildcard_class': false}),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => ScopeValue.fromJson({'wildcard_class': 'yes'}),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('fromJson rejects wildcard_value with non-true value', () {
+      expect(
+        () => ScopeValue.fromJson({'class': 'site', 'wildcard_value': false}),
+        throwsA(isA<FormatException>()),
+      );
+    });
   });
 }
