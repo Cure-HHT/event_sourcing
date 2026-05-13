@@ -19,6 +19,9 @@
 //   monotone sequence_in_queue, head behavior, attempt log, final-status
 //   transitions, wedged-FIFO summary, trail-sweep delete, full FIFO
 //   delete on destination teardown.
+// Implements: EVS-PRD-event-log/B — sequence counter durability (via
+//   backend_state schema_version), per-destination fill cursors,
+//   destination schedules.
 
 import 'dart:async';
 import 'dart:convert';
@@ -186,7 +189,7 @@ class PostgresBackend extends StorageBackend {
     // sees the value staged by nextSequenceNumber.
     final reservedResult = await session.execute(
       Sql.named('''
-        SELECT value::text::int FROM backend_state
+        SELECT value::numeric::int FROM backend_state
         WHERE key = @k
       '''),
       parameters: {'k': _sequenceCounterKey},
@@ -435,9 +438,9 @@ class PostgresBackend extends StorageBackend {
     final result = await session.execute(
       Sql.named('''
         UPDATE backend_state
-        SET value = ((value::text::int) + 1)::text::jsonb
+        SET value = ((value::numeric::int) + 1)::text::jsonb
         WHERE key = @k
-        RETURNING value::text::int
+        RETURNING value::numeric::int
       '''),
       parameters: {'k': _sequenceCounterKey},
     );
@@ -449,7 +452,7 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<int> readSequenceCounter() async {
     final result = await _pool.execute(
-      Sql.named('SELECT value::text::int FROM backend_state WHERE key = @k'),
+      Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
       parameters: {'k': _sequenceCounterKey},
     );
     return result.isEmpty ? 0 : result.first[0] as int;
@@ -782,9 +785,9 @@ class PostgresBackend extends StorageBackend {
     final counterResult = await session.execute(
       Sql.named('''
         UPDATE backend_state
-        SET value = ((value::text::int) + 1)::text::jsonb
+        SET value = ((value::numeric::int) + 1)::text::jsonb
         WHERE key = @k
-        RETURNING value::text::int
+        RETURNING value::numeric::int
       '''),
       parameters: {'k': counterKey},
     );
@@ -1216,49 +1219,123 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 10: backend_state (schema version, fill cursor, schedule) --------
 
-  @override
-  Future<int> readSchemaVersion() =>
-      throw UnimplementedError('PostgresBackend.readSchemaVersion — Task 10');
+  // Implements: EVS-DEV-postgres-backend/D — backend-state KV (schema
+  //   version, fill cursor, schedules) persisted in the backend_state
+  //   table keyed by stable string keys.
 
+  // Key: 'schema_version'; value: integer.
+  // Returns 0 when the row has never been written.
   @override
-  Future<void> writeSchemaVersion(Txn txn, int version) =>
-      throw UnimplementedError('PostgresBackend.writeSchemaVersion — Task 10');
+  Future<int> readSchemaVersion() async {
+    final result = await _pool.execute(
+      "SELECT value::numeric::int FROM backend_state WHERE key = 'schema_version'",
+    );
+    return result.isEmpty ? 0 : result.first[0] as int;
+  }
 
+  // Key: 'schema_version'; value: integer. INSERT … ON CONFLICT DO UPDATE.
   @override
-  Future<int> readFillCursor(String destinationId) =>
-      throw UnimplementedError('PostgresBackend.readFillCursor — Task 10');
+  Future<void> writeSchemaVersion(Txn txn, int version) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO backend_state (key, value)
+        VALUES ('schema_version', @v:jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      '''),
+      parameters: {'v': version},
+    );
+  }
 
+  // Key: 'fill_cursor_<destinationId>'; value: integer.
+  // Returns -1 when the row has never been written.
   @override
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) =>
-      throw UnimplementedError('PostgresBackend.writeFillCursor — Task 10');
+  Future<int> readFillCursor(String destinationId) async {
+    final result = await _pool.execute(
+      Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
+      parameters: {'k': 'fill_cursor_$destinationId'},
+    );
+    return result.isEmpty ? -1 : result.first[0] as int;
+  }
 
+  // Non-txn write: opens its own transaction via [transaction] and
+  // delegates to [writeFillCursorTxn]. Same pattern as [enqueueFifo].
+  // `async` so validation errors land as Future completions, matching
+  // the contract surface and `expectLater(..., throwsArgumentError)`.
+  @override
+  Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
+    _validateFillCursorValue(sequenceNumber);
+    return transaction(
+      (txn) => writeFillCursorTxn(txn, destinationId, sequenceNumber),
+    );
+  }
+
+  // In-txn write for fill_cursor. INSERT … ON CONFLICT DO UPDATE.
+  // `async` so validation errors land as Future completions.
   @override
   Future<void> writeFillCursorTxn(
     Txn txn,
     String destinationId,
     int sequenceNumber,
-  ) => throw UnimplementedError('PostgresBackend.writeFillCursorTxn — Task 10');
+  ) async {
+    _validateFillCursorValue(sequenceNumber);
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO backend_state (key, value)
+        VALUES (@k, @v:jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      '''),
+      parameters: {'k': 'fill_cursor_$destinationId', 'v': sequenceNumber},
+    );
+  }
 
+  // Key: 'schedule_<destinationId>'; value: DestinationSchedule JSON map.
+  // Returns null when the row has never been written.
   @override
-  Future<DestinationSchedule?> readSchedule(String destinationId) =>
-      throw UnimplementedError('PostgresBackend.readSchedule — Task 10');
+  Future<DestinationSchedule?> readSchedule(String destinationId) async {
+    final result = await _pool.execute(
+      Sql.named('SELECT value FROM backend_state WHERE key = @k'),
+      parameters: {'k': 'schedule_$destinationId'},
+    );
+    if (result.isEmpty) return null;
+    return DestinationSchedule.fromJson(_asJsonMap(result.first[0]));
+  }
 
+  // Non-txn write: opens its own transaction and delegates to [writeScheduleTxn].
   @override
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
-  ) => throw UnimplementedError('PostgresBackend.writeSchedule — Task 10');
+  ) => transaction((txn) => writeScheduleTxn(txn, destinationId, schedule));
 
+  // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.
   @override
   Future<void> writeScheduleTxn(
     Txn txn,
     String destinationId,
     DestinationSchedule schedule,
-  ) => throw UnimplementedError('PostgresBackend.writeScheduleTxn — Task 10');
+  ) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO backend_state (key, value)
+        VALUES (@k, @v:jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      '''),
+      parameters: {'k': 'schedule_$destinationId', 'v': schedule.toJson()},
+    );
+  }
 
+  // Delete the schedule row for [destinationId]. No-op when absent.
   @override
-  Future<void> deleteScheduleTxn(Txn txn, String destinationId) =>
-      throw UnimplementedError('PostgresBackend.deleteScheduleTxn — Task 10');
+  Future<void> deleteScheduleTxn(Txn txn, String destinationId) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('DELETE FROM backend_state WHERE key = @k'),
+      parameters: {'k': 'schedule_$destinationId'},
+    );
+  }
 
   // -------- Task 11: reverse scan + audit query --------
 
@@ -1280,6 +1357,21 @@ class PostgresBackend extends StorageBackend {
   // ------------------------------------------------------------------
   // Internal helpers
   // ------------------------------------------------------------------
+
+  /// Validates that [sequenceNumber] is a legal fill-cursor value.
+  /// The legal domain is `[-1, ∞)`: -1 is "unset or rewound to pre-start";
+  /// all other values are event sequence_numbers (non-negative). Mirrors
+  /// `SembastBackend._validateFillCursorValue`.
+  static void _validateFillCursorValue(int sequenceNumber) {
+    if (sequenceNumber < -1) {
+      throw ArgumentError.value(
+        sequenceNumber,
+        'sequenceNumber',
+        'fill_cursor must be >= -1 (-1 = unset or rewound to pre-start; '
+            'all other values are event sequence_numbers)',
+      );
+    }
+  }
 
   /// Key under which the per-install sequence counter is persisted in
   /// the `backend_state` KV row. Sembast uses the same string for the
