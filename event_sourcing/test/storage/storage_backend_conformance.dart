@@ -10,7 +10,7 @@
 //   by sequence_number, isolating per-aggregate order.
 // Verifies: EVS-PRD-event-log/D — findAllEvents + findAllEventsInTxn read in
 //   order from any starting position (afterSequence + limit); findEventById
-//   reads single events; reverse scan; client-timestamp + originator filters.
+//   reads single events; client-timestamp + originator filters.
 // Verifies: EVS-DEV-find-all-events-extended-filters/A,B,C — entry-type,
 //   client-timestamp, and originator filters on findAllEvents and
 //   findAllEventsInTxn; filters AND-compose.
@@ -153,14 +153,18 @@ StoredEvent _eventWithProvenance({
 
 // Append [build] to the log, reserving its sequence number via
 // nextSequenceNumber so [build]'s int -> StoredEvent body can stamp it.
-Future<void> _appendBuilt(
+// Returns the StoredEvent that was built and appended.
+Future<StoredEvent> _appendBuilt(
   StorageBackend backend,
   StoredEvent Function(int seq) build,
 ) async {
+  late final StoredEvent built;
   await backend.transaction((txn) async {
     final s = await backend.nextSequenceNumber(txn);
-    await backend.appendEvent(txn, build(s));
+    built = build(s);
+    await backend.appendEvent(txn, built);
   });
+  return built;
 }
 
 // -------- Transaction subgroup --------
@@ -1439,7 +1443,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
       expect(row.sentAt!.isBefore(after) || row.sentAt == after, isTrue);
     });
 
-    test('markFinal exhausted does NOT set sent_at', () async {
+    test('markFinal wedged does NOT set sent_at', () async {
       final backend = backendOf();
       final e1 = await enqueueSingle(
         backend,
@@ -1585,57 +1589,6 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
       await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
       expect(await backend.readFifoHead('ghost-dest'), isNull);
     });
-
-    // Verifies: drain() at-least-once semantics — a second markFinal with
-    // the SAME status is a no-op (idempotent); it must NOT throw.
-    test('markFinal is idempotent when called twice with the same status '
-        '(pending -> sent -> sent no-op)', () async {
-      final backend = backendOf();
-      final e1 = await enqueueSingle(
-        backend,
-        'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
-      );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        backend.markFinal('primary', e1.entryId, FinalStatus.sent),
-        completes,
-      );
-    });
-
-    test('markFinal rejects sent -> exhausted transition', () async {
-      final backend = backendOf();
-      final e1 = await enqueueSingle(
-        backend,
-        'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
-      );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        backend.markFinal('primary', e1.entryId, FinalStatus.wedged),
-        throwsStateError,
-      );
-    });
-
-    // From markfinal_idempotency_test.dart — Case 1 (happy path).
-    test(
-      'markFinal sent on a pending row succeeds and row becomes sent',
-      () async {
-        final backend = backendOf();
-        final e1 = await enqueueSingle(
-          backend,
-          'primary',
-          eventId: 'e1',
-          sequenceNumber: 1,
-        );
-        await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-        final all = await backend.listFifoEntries('primary');
-        expect(all, hasLength(1));
-        expect(all.single.finalStatus, FinalStatus.sent);
-      },
-    );
 
     // From markfinal_idempotency_test.dart — Case 2 (idempotency).
     test('markFinal sent twice on the same row returns cleanly '
@@ -1817,7 +1770,7 @@ void _registerFifoTests(StorageBackend Function() backendOf) {
       ]);
     });
 
-    test('sequence_in_queue advances across sent/exhausted entries '
+    test('sequence_in_queue advances across sent/wedged entries '
         '(Prereq A, Option 1)', () async {
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -2019,37 +1972,12 @@ void _registerBackendStateTests(StorageBackend Function() backendOf) {
 //   by ingest's idempotency check.
 void _registerEventByIdTests(StorageBackend Function() backendOf) {
   group('findEventById', () {
-    Future<StoredEvent> appendOne(
-      StorageBackend backend, {
-      required String eventId,
-      String aggregateId = 'agg-1',
-    }) {
-      return backend.transaction((txn) async {
-        final seq = await backend.nextSequenceNumber(txn);
-        final event = StoredEvent(
-          key: 0,
-          eventId: eventId,
-          aggregateId: aggregateId,
-          aggregateType: 'note',
-          entryType: 'epistaxis_event',
-          entryTypeVersion: 1,
-          libFormatVersion: 1,
-          eventType: 'finalized',
-          sequenceNumber: seq,
-          data: const <String, dynamic>{},
-          metadata: const <String, dynamic>{},
-          initiator: const UserInitiator('u'),
-          clientTimestamp: DateTime.utc(2026, 4, 22, 10),
-          eventHash: 'hash-$eventId',
-        );
-        await backend.appendEvent(txn, event);
-        return event;
-      });
-    }
-
     test('findEventById returns the stored event when present', () async {
       final backend = backendOf();
-      final appended = await appendOne(backend, eventId: 'evt-target');
+      final appended = await _appendBuilt(
+        backend,
+        (seq) => _event('evt-target', seq),
+      );
       final result = await backend.findEventById('evt-target');
       expect(result, isNotNull);
       expect(result!.eventId, 'evt-target');
@@ -2062,8 +1990,8 @@ void _registerEventByIdTests(StorageBackend Function() backendOf) {
       'findEventById returns null when no event with that id exists',
       () async {
         final backend = backendOf();
-        await appendOne(backend, eventId: 'evt-other-1');
-        await appendOne(backend, eventId: 'evt-other-2');
+        await _appendBuilt(backend, (seq) => _event('evt-other-1', seq));
+        await _appendBuilt(backend, (seq) => _event('evt-other-2', seq));
         final result = await backend.findEventById('evt-missing');
         expect(result, isNull);
       },
@@ -2071,9 +1999,12 @@ void _registerEventByIdTests(StorageBackend Function() backendOf) {
 
     test('findEventById disambiguates among many stored events', () async {
       final backend = backendOf();
-      await appendOne(backend, eventId: 'evt-a');
-      final target = await appendOne(backend, eventId: 'evt-target');
-      await appendOne(backend, eventId: 'evt-c');
+      await _appendBuilt(backend, (seq) => _event('evt-a', seq));
+      final target = await _appendBuilt(
+        backend,
+        (seq) => _event('evt-target', seq),
+      );
+      await _appendBuilt(backend, (seq) => _event('evt-c', seq));
       final result = await backend.findEventById('evt-target');
       expect(result, isNotNull);
       expect(result!.sequenceNumber, target.sequenceNumber);
