@@ -1,20 +1,40 @@
-# Reaction Remote Impls, Reference Server, and Wire Protocol Design
+# Reaction Remote Impls, Reference Server, and Wire Protocol
 
-**Phase**: I (post Plan B-local)
-**Status**: Draft (Plan B-remote+C implementation target)
-**Last updated**: 2026-05-12
+**Phase**: I (post Plan B-local; impl gated on CUR-1331 impl)
+**Status**: Design draft (no normative requirement blocks yet;
+`EVS-DEV-*` requirements land in-place against this file as impl
+stabilizes)
+**Linear**: CUR-1317 (libify); impl ticket TBD
 **Elaborates**: `spec/prd-reaction.md` PRDs `EVS-PRD-auth-session`,
 `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`,
 `EVS-PRD-permission-snapshot-source`, and
 `EVS-PRD-cross-process-event-transport`.
-**Supersedes**: the roadmap's split of Plan B-remote (client only) and
-Plan C (server only) into two separate plans. This design merges them
-into a single coherent implementation: the wire protocol cannot be
-specified, codec-tested, or end-to-end-validated without both sides
-present, and the PRD architecture
-(`spec/prd-reaction.md` lines 26-55) already puts `local/`, `remote/`,
-`server/`, and `wire/` in one package. Roadmap update to reflect the
-merge ships alongside this design.
+**Depends on**: `spec/scoped-permissions.md` (CUR-1331) for the
+`AuthorizationPolicy`, `EffectiveAuthorization`, and `ScopeValue`
+shapes that the reference server's per-subscription authorization
+consults. Plan B-remote+C impl is sequenced to land after CUR-1331
+impl so the server's permission-consulting code targets the final
+API shape directly rather than being written against the pre-1331
+surface and then swept.
+
+> **Lifecycle note.** This file is authored as a design document and
+> will grow normative `EVS-{TYPE}-{component}` requirement blocks in
+> place as the design stabilizes through implementation. The
+> brainstorm → stabilize → migrate lifecycle in `spec/README.md` is
+> short-circuited here: the design lives in `spec/` from the start to
+> preserve fidelity (avoid information loss in a migration step), and
+> the same file is edited to add assertions later. elspais treats
+> this file as non-normative prose until a requirement block heading
+> is added.
+
+**Note on roadmap supersession.** This design merges the roadmap's
+split of Plan B-remote (client only) and Plan C (server only) into a
+single implementation. The wire protocol cannot be specified, codec-
+tested, or end-to-end-validated without both sides; the PRD
+architecture (`spec/prd-reaction.md` lines 26-55) already puts
+`local/`, `remote/`, `server/`, and `wire/` in one package. The
+roadmap document (`docs/superpowers/specs/2026-05-11-roadmap.md`)
+gets an update reflecting the merge alongside this design's commit.
 
 ## Scope
 
@@ -92,7 +112,9 @@ rationale.
 Per-subscription authorization consults the substrate's existing
 `RolePermissionGrants` projection. The reaction server introduces no
 parallel policy mechanism; it composes substrate filter primitives
-based on the requesting Principal's `PermissionSnapshot`.
+based on the requesting Principal's `EffectiveAuthorization` (the
+substrate type that, post-CUR-1331, replaces the legacy
+`PermissionSnapshot`).
 
 ### 5. Append-Only Primitives discipline applies to the wire
 
@@ -113,7 +135,8 @@ reaction/lib/src/
     update_codec.dart              Update<Map<String, Object?>> codecs
     action_submission_codec.dart   ActionSubmission JSON codec
     dispatch_result_codec.dart     DispatchResult JSON codec
-    permission_snapshot_codec.dart PermissionSnapshot JSON codec
+    effective_authorization_codec.dart EffectiveAuthorization JSON codec
+                                       (CUR-1331 substrate type)
     subscription_messages.dart     Subscribe/Unsubscribe/Update msgs
     filter_codec.dart              SubscriptionFilter JSON codec
     principal_codec.dart           Principal JSON codec
@@ -169,7 +192,7 @@ GET /me
 
 GET /permissions/snapshot
   Header:  Authorization: Bearer <credential>
-  200:     JSON PermissionSnapshot envelope
+  200:     JSON EffectiveAuthorization envelope
   401:     empty body
 
 GET /healthz
@@ -414,7 +437,10 @@ Two-phase load:
    `RemoteConnection`) on `viewName: "role_permission_grants"`,
    filtered to the active Principal's rows. Each incoming
    `Update<Map<String, Object?>>` is converted via the same
-   `PermissionSnapshot` reducer the `LocalPermissionSource` uses.
+   `EffectiveAuthorization` reducer the `LocalPermissionSource` uses.
+   (Note: `LocalPermissionSource` currently uses the legacy
+   `PermissionSnapshot` type; CUR-1331 impl renames + reshapes that
+   reducer. The Plan B-remote+C impl absorbs the consequence.)
 
 When `AuthSession` flips to `Expired` or `NotAuthenticated`:
 `current` → `null`, snapshot stream emits `null`, underlying WS
@@ -479,7 +505,7 @@ perm — pure row-level scoping) or remap names.
 GET   /healthz              -> 'ok' (no auth)
 GET   /me                   -> JSON Principal (auth required)
 POST  /actions              -> dispatch + JSON DispatchResult (auth)
-GET   /permissions/snapshot -> JSON PermissionSnapshot (auth)
+GET   /permissions/snapshot -> JSON EffectiveAuthorization (auth)
 GET   /subscriptions        -> WS upgrade (auth via first WS msg)
 ```
 
@@ -515,7 +541,7 @@ On message in AWAITING_AUTH:
   On Principal:
     state = AUTHENTICATED
     Send {type: auth_ok, principalId: P.id}
-    Open per-Principal PermissionSnapshot subscription (so view-
+    Open per-Principal EffectiveAuthorization subscription (so view-
     level authz checks have fresh data without re-querying).
   On AuthenticationDenied:
     close 4001 auth_rejected
@@ -529,27 +555,86 @@ On message in AUTHENTICATED:
 
 On disconnect:
   Cancel all substrate subs for this connection.
-  Cancel the per-Principal PermissionSnapshot subscription.
+  Cancel the per-Principal EffectiveAuthorization subscription.
   Release connection state.
 ```
 
-### Per-subscription authorization (Approach B)
+### Per-subscription authorization (Approach B, aligned to CUR-1331)
 
 Two-tier: view-level deny + row-level narrowing.
+
+The mechanism consults the API shapes `spec/scoped-permissions.md`
+(CUR-1331) defines: `AuthorizationPolicy.isPermitted(principal,
+permission, scopeValue)`, `effectivePermissionsFor(principal) ->
+EffectiveAuthorization`, sealed `ScopeValue` with `BoundScope` /
+`ValueWildcardScope` / `TotalWildcardScope`, and the `ContainmentRef`
+expansion against app-registered scope-class projections. This
+section is the design surface where Plan B-remote+C plugs into
+CUR-1331's primitives; the impl ticket runs after CUR-1331 impl
+lands so this code is written against the final API.
 
 ```text
 On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
 
   // Step 1: view-level deny
+  // Map viewName -> required Permission (substrate-default
+  // 'view:<viewName>'; deployment may override via viewPermissionNamer).
   required = viewPermissionNamer(viewName)
-  if required != null and !currentSnapshot.has(required, scope: any):
+  if required == null:
+    // Public view: skip view-level check, fall through to narrowing.
+    goto Step 2
+  // For view-level permissions, ScopeValue is TotalWildcardScope
+  // (the subscribe action is "I want to see this view at all";
+  // row-level scoping is the next step).
+  decision = policy.isPermitted(
+    principal,
+    Permission(required, scopeClass: null),   // unscoped view-level
+    null,
+  )
+  if decision is not Allow:
     send {type: subscription_denied,
           subscriptionId, reason: view_permission_denied}
     return
 
   // Step 2: row-level narrowing
-  allowedAggregates = currentSnapshot.aggregatesGrantedFor(viewName)
-  // null = unrestricted
+  // The reaction server derives the SET of aggregate IDs the
+  // Principal may see by expanding their scope assignments against
+  // the view's associated scope-class projection. This requires:
+  //   (a) viewName -> (scopeClass, aggregate-id-resolver) mapping
+  //       (e.g., 'patient_files' is scoped to 'patient' class;
+  //        aggregate-id IS the patient_id directly).
+  //   (b) Reading effectivePermissionsFor(principal).scopeAssignments
+  //       under the active role.
+  //   (c) For each assignment, walking the containment graph
+  //       (ContainmentResolver from CUR-1331) downward to expand
+  //       'site A' (ValueAt class 'site') into the set of patient_ids
+  //       under site A.
+  //   (d) Unioning the expansion across all assignments.
+  //
+  // Implementations should treat this expansion as a snapshot at
+  // subscribe-time (consistent with the v1 baseline; reactive
+  // re-narrowing on permission change is a separate concern;
+  // see Open Question 1).
+
+  viewScope = viewScopeRegistry.lookup(viewName)
+  // viewScope: { scopeClass, aggregateIdFromScopeValue,
+  //              scopeValuesContainingAggregateId }
+  // null for views with no row-level scoping (admin views, etc.).
+
+  if viewScope == null:
+    allowedAggregates = null   // unrestricted at row-level
+  else:
+    eff = policy.effectivePermissionsFor(principal)
+    allowedAggregates = expandAssignments(
+      assignments: eff.scopeAssignments,
+      targetClass: viewScope.scopeClass,
+      containmentResolver: containmentResolver,
+      activeRole: principal.activeRole,
+    )
+    // expandAssignments walks each ScopeAssignment via the
+    // ContainmentResolver to produce the Set<aggregateId> the
+    // Principal covers under their active role.
+
   effectiveAggregates = aggregates == null
       ? allowedAggregates
       : (allowedAggregates == null ? aggregates
@@ -569,11 +654,38 @@ On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
   register sub against subscriptionId
 ```
 
-The call site `currentSnapshot.aggregatesGrantedFor(viewName)` is the
-seam that CUR-1331 (scope-aware permissions) will reshape. It is
-also the call site where reactive re-narrowing on permission change
-would attach — deferring both to the CUR-1331 impl follow-up keeps
-related work together.
+**New configuration surface introduced here: `viewScopeRegistry`.**
+The reaction server needs a `viewName -> ScopeClass` mapping for the
+row-level narrowing step. This is composition-time data the
+consumer supplies alongside `viewPermissionNamer`; the lib does NOT
+bake in a default beyond "no view-scope, no narrowing." Concrete
+shape lands in the impl ticket; provisional sketch:
+
+```text
+ReactionServer(
+  ...,
+  viewScopeRegistry: ViewScopeRegistry()
+    ..register(
+      viewName: 'patient_files',
+      scopeClass: 'patient',
+      aggregateIdResolver: (scopeValue) => scopeValue.value,
+      // patient_id IS the aggregate id directly
+    )
+    ..register(
+      viewName: 'site_summaries',
+      scopeClass: 'site',
+      aggregateIdResolver: (scopeValue) => scopeValue.value,
+    ),
+)
+```
+
+When `aggregateIdResolver` is a 1:1 mapping (patient scope value =
+patient aggregate id), expansion is `O(assignments)`. When the
+mapping requires containment walks (e.g., view is keyed by
+`patient_id` but the assignment is `(site, A)`), expansion goes
+through `ContainmentResolver` walks per assignment. This is the same
+mechanism CUR-1331 uses for action-side authorize evaluation —
+reused on the read path.
 
 **Defensible "no-scope" behavior**: if `effectiveAggregates` resolves
 to an empty set (Principal has zero row-level scope on this view but
@@ -808,13 +920,14 @@ is sufficient.
 
 **Why Approach B for per-subscription authorization (two-tier:
 deny then narrow) instead of A (narrow only)?** B gives a clean
-client error
-path (`subscription_denied` envelope), distinguishes "no data" from
-"no permission" (which Approach A conflates), and matches how
-`RolePermissionGrants` is already shaped (view-name-scoped and
-aggregate-scoped permissions both exist). C (post-filter) was
-rejected outright — leaks information via timing/count side-channels
-and violates substrate-shaped filter composition.
+client error path (`subscription_denied` envelope), distinguishes
+"no data" from "no permission" (which Approach A conflates), and
+maps cleanly onto CUR-1331's two-layer model (role-to-permission
+grants drive view-level deny; user-role-scope assignments expanded
+through containment projections drive row-level narrowing). C
+(post-filter) was rejected outright — leaks information via
+timing/count side-channels and violates substrate-shaped filter
+composition.
 
 **Why expose `server.router` directly rather than
 `addCustomRoute(...)`?** Simpler; matches how `shelf_router` is
@@ -847,13 +960,28 @@ from similar systems; cheap to keep idle WS open for 30s.
 
 ## Open questions
 
-1. **Reactive re-narrowing of active subscriptions on permission
-   grant change.** Today's design snapshots the narrowed filter at
-   subscribe-time and does not react to subsequent
-   `RolePermissionGrants` changes. **Defers to: CUR-1331 impl
-   follow-up.** The same call site is reshaped for scope-aware
-   permission consulting; tackling both together keeps related work
-   in one change.
+1. **Reactive re-narrowing of active subscriptions on permission /
+   scope-assignment / containment change.** Today's design snapshots
+   the row-level narrowing at subscribe-time and does not react to
+   subsequent changes in `role_permission_grants`, `user_role_scopes`,
+   OR the scope-class containment projections (e.g.,
+   `patient_site_index`). Under CUR-1331's scope model this becomes
+   more semantically load-bearing than under flat permissions:
+   re-parenting a patient under a different site, revoking a
+   `(user, role, scope)` assignment, or revoking a role-to-permission
+   grant should immediately narrow live subscriptions — but doesn't
+   in v1. The reaction server can take this on as a follow-up after
+   CUR-1331 impl lands by subscribing to the relevant projections
+   per-connection and recomputing each open subscription's
+   `effectiveAggregates` when those projections change. The wire
+   doesn't need new envelopes: the server can simply emit additional
+   `tombstone` envelopes when an aggregate falls out of scope, or
+   close the subscription with a `subscription_denied` envelope on
+   `role_permission_grants` revocation. The client-side `Stream`
+   already handles both. Pinned as a follow-up after CUR-1331 impl
+   ships; defensible to launch v1 without it because portal scale is
+   small and grant revocations are rare relative to subscription
+   lifetime.
 2. **`Principal` wire encoding canonicalization.** The codec must
    handle future `Principal` field additions without breaking older
    clients. Tentative rule: unknown fields are preserved opaquely on
@@ -893,20 +1021,27 @@ Explicitly out of scope for this plan but anticipated:
   `reaction_firebase_auth` package), a concrete validator could ship
   separately from `reaction` proper. Same pluggability discipline.
 
-## Roadmap impact
+## Roadmap impact and sequencing
 
-This plan supersedes the roadmap's split of Plan B-remote (client
-only) and Plan C (server only) into a single merged plan: "Plan
-B-remote+C". The roadmap document (`docs/superpowers/specs/
-2026-05-11-roadmap.md`) will be updated alongside this design to
-reflect:
+This design merges the roadmap's split of Plan B-remote (client only)
+and Plan C (server only) into a single plan: "Plan B-remote+C". The
+roadmap document (`docs/superpowers/specs/2026-05-11-roadmap.md`)
+will be updated alongside this design to reflect:
 
 - Plan B-remote+C scope (Remote* impls + wire codecs + reference
   server + `TrustingAuthValidator`).
-- Defers: production validators, resume-from-sequence,
-  reactive re-narrowing (link to CUR-1331).
-- Status: pending implementation per the plan ticket that follows
-  this design.
+- Defers: production validators, resume-from-sequence, reactive
+  re-narrowing on permission/scope change.
+- **Sequencing:** impl ticket is gated on CUR-1331 impl landing. The
+  reaction server's per-subscription authz consults
+  `AuthorizationPolicy.isPermitted` /
+  `effectivePermissionsFor` / `ContainmentResolver` shapes that
+  CUR-1331 reshapes; writing impl against the pre-1331 surface and
+  then sweeping would mean two PRs touch the same code in pre-
+  shipping greenfield posture. Better to land CUR-1331 impl first
+  and target the final API directly.
+- Status: design draft committed; impl ticket TBD after CUR-1331
+  impl lands.
 
 ## Reading order recommendation
 
@@ -914,16 +1049,23 @@ For first contact:
 
 1. `spec/prd-reaction.md` Reading Order section (PRDs 1-5) — pins
    the obligations this design satisfies.
-2. This document, Sections 1 → 5 (module → wire → client → server →
+2. `spec/scoped-permissions.md` (CUR-1331) — the substrate
+   permission shapes this design's server-side authz consults.
+3. This document, Sections 1 → 5 (module → wire → client → server →
    test).
-3. The Trust Boundary Expansion section — understand the new trust
+4. The Trust Boundary Expansion section — understand the new trust
    input the deployment is committing to.
-4. The Decisions section — for context on why specific choices were
+5. The Decisions section — for context on why specific choices were
    made.
 
-The implementation plan that follows this design references the
-PRD assertions, the design sections, and the saved feedback memories
-in `~/.claude/projects/.../memory/` (auth-validators-are-consumer-
-supplied; substrate-trust-boundaries; permission-policy-is-substrate)
-to ensure no implementation step quietly drifts from a committed
-principle.
+## References
+
+- `spec/prd-reaction.md` — the 6 PRDs this design elaborates.
+- `spec/scoped-permissions.md` — CUR-1331 substrate primitives the
+  reference server's per-subscription authz consults.
+- `spec/prd-library-charter.md` — epistemic-layer framing and AOP
+  discipline.
+- `docs/superpowers/specs/2026-05-11-roadmap.md` — Phase progress,
+  Plan B-remote+C status, sequencing notes.
+- Linear: CUR-1317 (libify), CUR-1331 (scope-aware permissions;
+  blocks Plan B-remote+C impl).
