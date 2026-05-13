@@ -536,38 +536,81 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 8: view target versions --------
 
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; readViewTargetVersionInTxn reads a single row from the
+  //   view_target_versions(view_name, entry_type, target_version) table and
+  //   returns null when the (view_name, entry_type) pair is absent.
   @override
   Future<int?> readViewTargetVersionInTxn(
     Txn txn,
     String viewName,
     String entryType,
-  ) => throw UnimplementedError(
-    'PostgresBackend.readViewTargetVersionInTxn — Task 8',
-  );
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT target_version FROM view_target_versions
+        WHERE view_name = @v AND entry_type = @et
+        LIMIT 1
+      '''),
+      parameters: {'v': viewName, 'et': entryType},
+    );
+    return result.isEmpty ? null : result.first[0] as int;
+  }
 
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; writeViewTargetVersionInTxn upserts via INSERT … ON CONFLICT
+  //   DO UPDATE so repeated writes for the same (view_name, entry_type) pair
+  //   reflect the latest target_version value.
   @override
   Future<void> writeViewTargetVersionInTxn(
     Txn txn,
     String viewName,
     String entryType,
     int targetVersion,
-  ) => throw UnimplementedError(
-    'PostgresBackend.writeViewTargetVersionInTxn — Task 8',
-  );
+  ) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO view_target_versions (view_name, entry_type, target_version)
+        VALUES (@v, @et, @tv)
+        ON CONFLICT (view_name, entry_type)
+        DO UPDATE SET target_version = EXCLUDED.target_version
+      '''),
+      parameters: {'v': viewName, 'et': entryType, 'tv': targetVersion},
+    );
+  }
 
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; readAllViewTargetVersionsInTxn returns all (entry_type →
+  //   target_version) pairs for the given view_name as a Map<String, int>.
   @override
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
     Txn txn,
     String viewName,
-  ) => throw UnimplementedError(
-    'PostgresBackend.readAllViewTargetVersionsInTxn — Task 8',
-  );
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT entry_type, target_version FROM view_target_versions
+        WHERE view_name = @v
+      '''),
+      parameters: {'v': viewName},
+    );
+    return {for (final row in result) row[0] as String: row[1] as int};
+  }
 
+  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  //   harness; clearViewTargetVersionsInTxn deletes all rows for the given
+  //   view_name without touching rows belonging to other views.
   @override
-  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) =>
-      throw UnimplementedError(
-        'PostgresBackend.clearViewTargetVersionsInTxn — Task 8',
-      );
+  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('DELETE FROM view_target_versions WHERE view_name = @v'),
+      parameters: {'v': viewName},
+    );
+  }
 
   // -------- Task 9: FIFO --------
 
