@@ -57,7 +57,6 @@ void main() {
         userId: 'u1',
         roles: {'admin'},
         activeRole: 'admin',
-        activeSite: 's1',
       );
       final perms = await policy.permissionsFor(p);
       expect(perms.map((x) => x.name).toSet(), <String>{

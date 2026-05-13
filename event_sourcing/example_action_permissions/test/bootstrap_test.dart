@@ -87,7 +87,6 @@ grants:
         userId: 'green-user-1',
         roles: <String>{'GreenTeam'},
         activeRole: 'GreenTeam',
-        activeSite: 'green-workspace',
       );
       final decision = await components.policy.isPermitted(
         principal,

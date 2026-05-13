@@ -46,8 +46,10 @@ class DemoRoutes {
     final response = SessionStartResponse(
       principalRole: _principalRole(principal),
       principalUserId: principal is UserPrincipal ? principal.userId : null,
+      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
+      // reads it back from its own directory record for the wire response.
       principalActiveSite: principal is UserPrincipal
-          ? principal.activeSite
+          ? components.directory.siteFor(principal.userId)
           : null,
       snapshotPermissions: perms.map((p) => p.name).toList()..sort(),
     );

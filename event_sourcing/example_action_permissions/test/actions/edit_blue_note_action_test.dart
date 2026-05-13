@@ -9,7 +9,6 @@ ActionContext _ctx() => ActionContext(
     userId: 'blue-user',
     roles: <String>{'BlueTeam'},
     activeRole: 'BlueTeam',
-    activeSite: 'blue-workspace',
   ),
   security: const SecurityDetails(),
   requestStartedAt: DateTime.utc(2026, 5, 8, 12),

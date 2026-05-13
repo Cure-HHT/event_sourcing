@@ -17,7 +17,6 @@ void main() {
         userId: 'u1',
         roles: {'admin'},
         activeRole: 'admin',
-        activeSite: 's1',
       );
       final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
@@ -29,7 +28,6 @@ void main() {
         userId: 'u1',
         roles: {'admin'},
         activeRole: 'admin',
-        activeSite: 's1',
       );
       expect(await policy.permissionsFor(p), isEmpty);
     });

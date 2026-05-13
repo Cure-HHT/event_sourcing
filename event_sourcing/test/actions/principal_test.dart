@@ -27,21 +27,6 @@ void main() {
         expect((init as UserInitiator).userId, 'u-7');
       });
 
-      test('activeSite is optional and defaults to null', () {
-        const p = Principal.user(userId: 'u-1', roles: {'X'}, activeRole: 'X');
-        expect((p as UserPrincipal).activeSite, isNull);
-      });
-
-      test('activeSite carries through when provided', () {
-        const p = Principal.user(
-          userId: 'u-1',
-          roles: {'X'},
-          activeRole: 'X',
-          activeSite: 'site-A',
-        );
-        expect((p as UserPrincipal).activeSite, 'site-A');
-      });
-
       test('multi-role users pick their activeRole', () {
         const p = Principal.user(
           userId: 'u-1',

@@ -16,7 +16,6 @@ sealed class Principal {
     required String userId,
     required Set<String> roles,
     required String activeRole,
-    String? activeSite,
   }) = UserPrincipal;
 
   const factory Principal.anonymous({String? ipAddress}) = AnonymousPrincipal;
@@ -36,17 +35,12 @@ final class UserPrincipal extends Principal {
     required this.userId,
     required this.roles,
     required this.activeRole,
-    this.activeSite,
   }) : assert(userId != '', 'userId must not be empty'),
        assert(activeRole != '', 'activeRole must not be empty');
 
   final String userId;
   final Set<String> roles;
   final String activeRole;
-
-  /// The site the user has selected for the current session, if any.
-  /// Used by site-scoped permissions in `action_permissions`.
-  final String? activeSite;
 
   @override
   String get id => userId;
