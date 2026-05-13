@@ -1,3 +1,6 @@
+# Local-dev Postgres for the event_sourcing demo and Postgres conformance
+# tests. Bring up with `docker compose up -d --wait` so the next command
+# sees a healthy container; the healthcheck below allows ~40s to ready.
 services:
   postgres:
     image: postgres:16

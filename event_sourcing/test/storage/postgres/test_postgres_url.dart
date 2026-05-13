@@ -1,6 +1,5 @@
-// Implements: EVS-DEV-postgres-backend/D — conformance harness invocation
-// helper. Returns the Postgres URL the harness should connect to, or
-// null when the environment hasn't provided one (skip rather than fail).
+// Implements: EVS-DEV-postgres-backend/D — URL-resolution helper for the
+// conformance harness; returns PG_TEST_URL or null when unset.
 
 import 'dart:io' show Platform;
 
