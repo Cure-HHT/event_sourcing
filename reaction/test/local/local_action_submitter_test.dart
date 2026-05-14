@@ -162,10 +162,10 @@ void main() {
 /// 'greeter' role.
 ///
 /// Uses [EventSeedApplier] directly (no YAML round-trip needed in tests).
-/// [SayHelloAction.permissions] declares `Permission('say_hello',
-/// scope: ScopeClass.global)` — that's the declared set passed to apply().
+/// [SayHelloAction.permissions] declares `Permission('say_hello')` —
+/// that's the declared set passed to apply().
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
-  const sayHelloPerm = Permission('say_hello', scope: ScopeClass.global);
+  const sayHelloPerm = Permission('say_hello');
   const seed = PermissionSeed(
     roles: {'greeter'},
     grants: {

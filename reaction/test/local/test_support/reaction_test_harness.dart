@@ -13,8 +13,9 @@
 //   - EventStore (via openForTest — skips lib-version boot events so
 //     sequence numbers are predictable).
 //   - An ActionRegistry with SayHelloAction.
-//   - A MaterializedViewRoleMatrixReader backed by the store's backend.
-//   - A TableBackedAuthorizationPolicy backed by the reader.
+//   - An empty ScopeClassRegistry (the SayHello action is unscoped).
+//   - A TableBackedAuthorizationPolicy reading projection rows directly
+//     from the backend.
 //   - An ActionDispatcher with the registry, policy, store, and an
 //     InMemoryIdempotencyStore.
 
@@ -25,15 +26,10 @@ import 'package:sembast/sembast_memory.dart';
 ///
 /// Call [open] in `setUp()` and [close] in `tearDown()`.
 class ReactionTestHarness {
-  ReactionTestHarness._({
-    required this.eventStore,
-    required this.dispatcher,
-    required this.roleMatrixReader,
-  });
+  ReactionTestHarness._({required this.eventStore, required this.dispatcher});
 
   final EventStore eventStore;
   final ActionDispatcher dispatcher;
-  final RoleMatrixReader roleMatrixReader;
 
   /// Build a fresh harness. Each call returns a fully-isolated instance.
   static Future<ReactionTestHarness> open() async {
@@ -113,8 +109,19 @@ class ReactionTestHarness {
     );
 
     // --- Permissions ---
-    final roleMatrixReader = MaterializedViewRoleMatrixReader(backend);
-    final policy = TableBackedAuthorizationPolicy(roleMatrixReader);
+    // SayHelloAction's only permission is unscoped (`Permission('say_hello')`),
+    // so the registry needs no scope classes. The policy still requires a
+    // non-null registry instance because ContainmentResolver is composed
+    // eagerly; an empty registry is sufficient for unscoped grants.
+    final scopeClassRegistry = ScopeClassRegistry(
+      classes: const <ScopeClassSpec>[],
+      projectionLookup: (_) => null,
+    );
+    final policy = TableBackedAuthorizationPolicy(
+      backend: backend,
+      scopeClassRegistry: scopeClassRegistry,
+      txnProvider: <T>(fn) => backend.transaction<T>(fn),
+    );
 
     // --- Action dispatcher ---
     final actionRegistry = ActionRegistry()..register(SayHelloAction());
@@ -126,11 +133,7 @@ class ReactionTestHarness {
       idempotency: idempotency,
     );
 
-    return ReactionTestHarness._(
-      eventStore: store,
-      dispatcher: dispatcher,
-      roleMatrixReader: roleMatrixReader,
-    );
+    return ReactionTestHarness._(eventStore: store, dispatcher: dispatcher);
   }
 
   /// Close the EventStore, releasing all resources.
@@ -194,9 +197,7 @@ class SayHelloAction extends Action<HelloSubmission, HelloResult> {
   String get description => 'Say hello — sample action for harness tests.';
 
   @override
-  Set<Permission> get permissions => {
-    const Permission('say_hello', scope: ScopeClass.global),
-  };
+  Set<Permission> get permissions => {const Permission('say_hello')};
 
   @override
   Idempotency get idempotency => Idempotency.optional;

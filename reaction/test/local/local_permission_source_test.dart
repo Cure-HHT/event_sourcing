@@ -16,17 +16,14 @@ void main() {
     late LocalPermissionSource source;
 
     // Define the helper-permission for assertions.
-    const sayHello = Permission('say_hello', scope: ScopeClass.global);
+    const sayHello = Permission('say_hello');
 
     setUp(() async {
       harness = await ReactionTestHarness.open();
       // Seed: 'greeter' role has 'say_hello'.
       await _grantSayHelloToGreeterRole(harness);
 
-      source = LocalPermissionSource(
-        eventStore: harness.eventStore,
-        roleMatrixReader: harness.roleMatrixReader,
-      );
+      source = LocalPermissionSource(eventStore: harness.eventStore);
     });
 
     tearDown(() async {
@@ -145,7 +142,7 @@ void main() {
 /// Seeds the harness's role-permission matrix with 'say_hello' granted to the
 /// 'greeter' role. Copied from local_action_submitter_test.dart.
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
-  const sayHelloPerm = Permission('say_hello', scope: ScopeClass.global);
+  const sayHelloPerm = Permission('say_hello');
   const seed = PermissionSeed(
     roles: {'greeter'},
     grants: {
