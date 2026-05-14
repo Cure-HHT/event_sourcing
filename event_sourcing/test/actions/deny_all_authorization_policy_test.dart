@@ -13,9 +13,9 @@ void main() {
   group('DenyAllAuthorizationPolicy', () {
     test('returns Deny(notGranted) for an authenticated user', () async {
       const policy = DenyAllAuthorizationPolicy.forTests();
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u-1',
-        roles: {'Admin'},
+        roles: const {'Admin'},
         activeRole: 'Admin',
       );
       final result = await policy.isPermitted(p, const Permission('any.thing'));
@@ -34,9 +34,9 @@ void main() {
 
     test('permissionsFor returns empty set', () async {
       const policy = DenyAllAuthorizationPolicy.forTests();
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u-1',
-        roles: {'Admin'},
+        roles: const {'Admin'},
         activeRole: 'Admin',
       );
       expect(await policy.permissionsFor(p), isEmpty);

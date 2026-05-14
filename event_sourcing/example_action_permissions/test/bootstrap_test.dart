@@ -83,9 +83,9 @@ grants:
         usersYaml: _validUsersYaml,
         installIdentifier: '00000000-0000-4000-8000-000000000003',
       );
-      const principal = Principal.user(
+      final principal = Principal.user(
         userId: 'green-user-1',
-        roles: <String>{'GreenTeam'},
+        roles: const <String>{'GreenTeam'},
         activeRole: 'GreenTeam',
       );
       final decision = await components.policy.isPermitted(

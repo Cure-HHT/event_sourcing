@@ -25,9 +25,9 @@ void main() {
     const policy = TableBackedAuthorizationPolicy(reader);
 
     test('Allow when role holds permission', () async {
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u1',
-        roles: {'admin'},
+        roles: const {'admin'},
         activeRole: 'admin',
       );
       final d = await policy.isPermitted(p, const Permission('user.invite'));
@@ -35,9 +35,9 @@ void main() {
     });
 
     test('Deny notGranted when role does not hold permission', () async {
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u1',
-        roles: {'patient'},
+        roles: const {'patient'},
         activeRole: 'patient',
       );
       final d = await policy.isPermitted(p, const Permission('user.invite'));
@@ -53,9 +53,9 @@ void main() {
     });
 
     test('permissionsFor returns the role grants for a user', () async {
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u1',
-        roles: {'admin'},
+        roles: const {'admin'},
         activeRole: 'admin',
       );
       final perms = await policy.permissionsFor(p);

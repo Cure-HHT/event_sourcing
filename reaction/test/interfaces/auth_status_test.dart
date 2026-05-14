@@ -8,12 +8,12 @@ import 'package:reaction/src/interfaces/auth_session.dart';
 void main() {
   group('AuthStatus', () {
     test('Authenticated carries a Principal', () {
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'user-1',
-        roles: {},
+        roles: const {'viewer'},
         activeRole: 'viewer',
       );
-      const status = Authenticated(principal: p);
+      final status = Authenticated(principal: p);
       expect(status.principal, equals(p));
       expect(status, isA<AuthStatus>());
     });

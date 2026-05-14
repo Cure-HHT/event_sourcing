@@ -21,9 +21,9 @@ void main() {
   group('PrincipalAuthValidator contract', () {
     test('accepts a known credential and returns the Principal', () async {
       final validator = _StubValidator({
-        'token-a': const Principal.user(
+        'token-a': Principal.user(
           userId: 'user-a',
-          roles: {},
+          roles: const {'viewer'},
           activeRole: 'viewer',
         ),
       });

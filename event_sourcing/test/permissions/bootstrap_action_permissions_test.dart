@@ -40,9 +40,9 @@ grants:
         expect(boot.isReady, isTrue);
 
         final policy = boot.policy;
-        const p = Principal.user(
+        final p = Principal.user(
           userId: 'u',
-          roles: {'admin'},
+          roles: const {'admin'},
           activeRole: 'admin',
         );
         final d = await policy.isPermitted(p, const Permission('user.invite'));
@@ -68,9 +68,9 @@ grants:
       expect(boot.errors, isNotEmpty);
 
       // FailSafe denies everything.
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u',
-        roles: {'admin'},
+        roles: const {'admin'},
         activeRole: 'admin',
       );
       final d = await boot.policy.isPermitted(

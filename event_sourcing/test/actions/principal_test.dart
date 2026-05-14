@@ -11,9 +11,9 @@ void main() {
   group('Principal', () {
     group('UserPrincipal', () {
       test('id returns userId', () {
-        const p = Principal.user(
+        final p = Principal.user(
           userId: 'u-1',
-          roles: {'Investigator'},
+          roles: const {'Investigator'},
           activeRole: 'Investigator',
         );
         expect(p, isA<UserPrincipal>());
@@ -21,16 +21,20 @@ void main() {
       });
 
       test('toInitiator returns UserInitiator carrying userId', () {
-        const p = Principal.user(userId: 'u-7', roles: {'X'}, activeRole: 'X');
+        final p = Principal.user(
+          userId: 'u-7',
+          roles: const {'X'},
+          activeRole: 'X',
+        );
         final init = p.toInitiator();
         expect(init, isA<UserInitiator>());
         expect((init as UserInitiator).userId, 'u-7');
       });
 
       test('multi-role users pick their activeRole', () {
-        const p = Principal.user(
+        final p = Principal.user(
           userId: 'u-1',
-          roles: {'Investigator', 'Analyst'},
+          roles: const {'Investigator', 'Analyst'},
           activeRole: 'Analyst',
         );
         expect((p as UserPrincipal).roles, hasLength(2));
@@ -47,6 +51,32 @@ void main() {
             userId: emptyId,
             roles: const {'X'},
             activeRole: 'X',
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      });
+
+      test('asserts non-empty activeRole', () {
+        // Non-const local defers assert eval to runtime — see prior test.
+        final emptyRole = ''; // ignore: prefer_const_declarations
+        expect(
+          () => Principal.user(
+            userId: 'u-1',
+            roles: const {'X'},
+            activeRole: emptyRole,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      });
+
+      test('asserts activeRole is in roles', () {
+        // Non-const local defers assert eval to runtime — see prior test.
+        final activeRole = 'Guest'; // ignore: prefer_const_declarations
+        expect(
+          () => Principal.user(
+            userId: 'u-1',
+            roles: const {'Admin'},
+            activeRole: activeRole,
           ),
           throwsA(isA<AssertionError>()),
         );

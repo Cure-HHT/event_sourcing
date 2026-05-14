@@ -97,9 +97,9 @@ class RequiredKeyInviteAction extends InviteUserAction {
 // ---------------------------------------------------------------------------
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'u-admin',
-    roles: {'admin'},
+    roles: const {'admin'},
     activeRole: 'admin',
   ),
   security: const SecurityDetails(),

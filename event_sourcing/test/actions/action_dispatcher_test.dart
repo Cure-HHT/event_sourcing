@@ -25,9 +25,9 @@ import 'fixtures/test_actions.dart'
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'u-1',
-    roles: {'tester'},
+    roles: const {'tester'},
     activeRole: 'tester',
   ),
   security: const SecurityDetails(),

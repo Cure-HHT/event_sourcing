@@ -41,9 +41,9 @@ void main() {
     test(
       'after setActivePrincipal(alice/greeter), current reflects greeter grants',
       () async {
-        const alice = Principal.user(
+        final alice = Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         );
         source.setActivePrincipal(alice);
@@ -59,9 +59,9 @@ void main() {
     );
 
     test('setActivePrincipal(null) clears current to null', () async {
-      const alice = Principal.user(
+      final alice = Principal.user(
         userId: 'alice',
-        roles: {'greeter'},
+        roles: const {'greeter'},
         activeRole: 'greeter',
       );
       source.setActivePrincipal(alice);
@@ -79,9 +79,9 @@ void main() {
 
       // Alice has 'greeter' — should get a non-null snapshot with say_hello.
       source.setActivePrincipal(
-        const Principal.user(
+        Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         ),
       );
@@ -89,7 +89,11 @@ void main() {
 
       // Bob has 'nobody' role — no grants; snapshot has empty grants.
       source.setActivePrincipal(
-        const Principal.user(userId: 'bob', roles: {}, activeRole: 'nobody'),
+        Principal.user(
+          userId: 'bob',
+          roles: const {'nobody'},
+          activeRole: 'nobody',
+        ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -115,9 +119,9 @@ void main() {
     test(
       'stream emits current value to a late subscriber (snapshot-on-listen)',
       () async {
-        const alice = Principal.user(
+        final alice = Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         );
         source.setActivePrincipal(alice);

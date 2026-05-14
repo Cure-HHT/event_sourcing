@@ -5,9 +5,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'green-user-1',
-    roles: <String>{'GreenTeam'},
+    roles: const <String>{'GreenTeam'},
     activeRole: 'GreenTeam',
   ),
   security: const SecurityDetails(),

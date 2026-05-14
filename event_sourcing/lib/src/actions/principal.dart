@@ -12,7 +12,9 @@ import 'package:event_sourcing/src/storage/initiator.dart'
 sealed class Principal {
   const Principal();
 
-  const factory Principal.user({
+  // Not const: the `roles.contains(activeRole)` invariant is not a
+  // potentially-const expression, so `UserPrincipal` cannot be const.
+  factory Principal.user({
     required String userId,
     required Set<String> roles,
     required String activeRole,
@@ -31,12 +33,16 @@ sealed class Principal {
 }
 
 final class UserPrincipal extends Principal {
-  const UserPrincipal({
+  UserPrincipal({
     required this.userId,
     required this.roles,
     required this.activeRole,
   }) : assert(userId != '', 'userId must not be empty'),
-       assert(activeRole != '', 'activeRole must not be empty');
+       assert(activeRole != '', 'activeRole must not be empty'),
+       assert(
+         roles.contains(activeRole),
+         'activeRole must be a member of roles',
+       );
 
   final String userId;
   final Set<String> roles;
