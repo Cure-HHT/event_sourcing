@@ -106,6 +106,14 @@ Future<DemoServerComponents> bootstrapDemoServer({
   //     population is handled synchronously by UserDirectorySeedApplier
   //     (see step 4 below), so no timing window exists between the listener
   //     attach and the first seed append.
+  //
+  //     The substrate's appendInTxn now runs the projection interpreter
+  //     inside the dispatch transaction (see EventStore.appendInTxn), so
+  //     the user_role_scopes view materializes atomically with the
+  //     ProvisionUserAction's user_provisioned event. The earlier
+  //     subscriber-bridge that re-emitted role_assigned via
+  //     eventStore.append is gone — ProvisionUserAction now emits the
+  //     role_assigned event itself.
   eventStore
       .subscribe<StoredEvent>(
         const SubscriptionFilter(
@@ -114,46 +122,11 @@ Future<DemoServerComponents> bootstrapDemoServer({
         ),
         const Events(),
       )
-      .listen((update) async {
+      .listen((update) {
         // Events()-mode subscriptions never emit Snapshot/EndOfReplay/Tombstone;
         // we only act on Delta. Any future variants are intentionally ignored.
         if (update is Delta<StoredEvent>) {
           directoryMaterializer.applyDirect(update.value.data);
-          // Bridge runtime provisioning to the scope-aware authorize path:
-          // when ProvisionUserAction appends a user_provisioned event with
-          // a non-null activeSite, emit the matching role_assigned event
-          // via the public `eventStore.append` path (which projects
-          // user_role_scopes synchronously). Without this bridge the new
-          // user's site-scoped permissions would deny because the
-          // dispatcher's `appendInTxn` does not run the projection
-          // interpreter; the next dispatch would read a user_role_scopes
-          // view that still lacks the new row.
-          //
-          // Idempotent: bootstrapRoleAssignments diffs against the live
-          // view and only emits when the (userId, role, scope) tuple is
-          // missing — replays of user_provisioned (e.g. seed-time re-runs)
-          // never produce duplicate role_assigned events.
-          final payload = update.value.data;
-          final site = payload['activeSite'];
-          if (site is String && site.isNotEmpty) {
-            final userId = payload['userId']! as String;
-            final role = payload['role']! as String;
-            await bootstrapRoleAssignments(
-              eventStore: eventStore,
-              seed: RoleAssignmentSeed(
-                entries: <RoleAssignmentSeedEntry>[
-                  RoleAssignmentSeedEntry(
-                    userId: userId,
-                    role: role,
-                    scope: BoundScope(class_: 'site', value: site),
-                  ),
-                ],
-              ),
-              seedInitiator: const AutomationInitiator(
-                service: 'provision_user_action_bridge',
-              ),
-            );
-          }
         }
       });
 

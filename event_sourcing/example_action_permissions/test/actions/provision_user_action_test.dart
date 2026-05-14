@@ -108,25 +108,60 @@ void main() {
       );
     });
 
-    test('execute emits one user_provisioned event with the payload', () async {
-      final result = await action.execute(
-        const ProvisionUserInput(
-          userId: 'fresh',
-          role: 'GreenTeam',
-          activeSite: 'green-workspace',
-        ),
-        _adminCtx(),
-      );
-      expect(result.events, hasLength(1));
-      final draft = result.events.single;
-      expect(draft.eventType, 'user_provisioned');
-      expect(draft.aggregateType, 'user_directory');
-      expect(draft.entryType, 'user_provisioned');
-      expect(draft.aggregateId, 'fresh');
-      expect(draft.data['userId'], 'fresh');
-      expect(draft.data['role'], 'GreenTeam');
-      expect(draft.data['activeSite'], 'green-workspace');
-      expect(result.result.userId, 'fresh');
-    });
+    test(
+      'execute emits user_provisioned + role_assigned when activeSite is set',
+      () async {
+        final result = await action.execute(
+          const ProvisionUserInput(
+            userId: 'fresh',
+            role: 'GreenTeam',
+            activeSite: 'green-workspace',
+          ),
+          _adminCtx(),
+        );
+        expect(result.events, hasLength(2));
+
+        final provisioned = result.events.singleWhere(
+          (e) => e.eventType == 'user_provisioned',
+        );
+        expect(provisioned.aggregateType, 'user_directory');
+        expect(provisioned.entryType, 'user_provisioned');
+        expect(provisioned.aggregateId, 'fresh');
+        expect(provisioned.data['userId'], 'fresh');
+        expect(provisioned.data['role'], 'GreenTeam');
+        expect(provisioned.data['activeSite'], 'green-workspace');
+
+        // role_assigned event populates the user_role_scopes view in the
+        // dispatch tx, replacing the post-commit subscriber-bridge that
+        // previously had to re-emit role_assigned via eventStore.append.
+        final assigned = result.events.singleWhere(
+          (e) => e.eventType == 'role_assigned',
+        );
+        expect(assigned.aggregateType, 'user_role_scope');
+        expect(assigned.entryType, 'user_role_scope');
+        expect(assigned.data['user_id'], 'fresh');
+        expect(assigned.data['role'], 'GreenTeam');
+        expect((assigned.data['scope']! as Map)['value'], 'green-workspace');
+
+        expect(result.result.userId, 'fresh');
+      },
+    );
+
+    test(
+      'execute emits only user_provisioned when activeSite is null',
+      () async {
+        final result = await action.execute(
+          const ProvisionUserInput(
+            userId: 'admin-2',
+            role: 'Admin',
+            activeSite: null,
+          ),
+          _adminCtx(),
+        );
+        expect(result.events, hasLength(1));
+        expect(result.events.single.eventType, 'user_provisioned');
+        expect(result.events.single.data['activeSite'], isNull);
+      },
+    );
   });
 }

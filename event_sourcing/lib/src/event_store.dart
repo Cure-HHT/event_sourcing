@@ -70,11 +70,17 @@ import 'package:uuid/uuid.dart';
 /// Fire-and-forget trigger into `SyncCycle.call()`.
 typedef EventStoreSyncCycleTrigger = Future<void> Function();
 
-/// Accumulates [StoredEvent]s appended inside a single transaction so that
-/// [EventStore._runInTxnWithPublish] can publish them all to the subscription
-/// bus after the transaction commits. Callers that use [EventStore.appendInTxn]
-/// directly inside their own transaction MUST pass a [PublishCollector] and
-/// use [EventStore.runTransaction] so that subscribers receive delivery.
+/// Accumulates [StoredEvent]s and [AggregateFoldChange]s produced inside a
+/// single transaction so that [EventStore._runInTxnWithPublish] can publish
+/// them to the subscription bus after the transaction commits. Callers that
+/// use [EventStore.appendInTxn] directly inside their own transaction MUST
+/// pass a [PublishCollector] and use [EventStore.runTransaction] so that
+/// subscribers receive delivery.
+///
+/// `appendInTxn` runs the projection interpreter inside the same transaction
+/// as the event append (so action-emitted events update views atomically with
+/// the dispatch), and records the resulting row-change records here for
+/// post-commit publication.
 ///
 /// The type lives in `lib/src/` and is intentionally not re-exported from the
 /// package barrel: external consumers interact with the event store through the
@@ -83,10 +89,17 @@ typedef EventStoreSyncCycleTrigger = Future<void> Function();
 /// transaction via [EventStore.runTransaction] see this type.
 class PublishCollector {
   final List<StoredEvent> _events = <StoredEvent>[];
+  final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
 
   void add(StoredEvent event) => _events.add(event);
 
+  void addRowChanges(Iterable<AggregateFoldChange> changes) =>
+      _rowChanges.addAll(changes);
+
   List<StoredEvent> get events => List<StoredEvent>.unmodifiable(_events);
+
+  List<AggregateFoldChange> get rowChanges =>
+      List<AggregateFoldChange>.unmodifiable(_rowChanges);
 }
 
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
@@ -440,7 +453,8 @@ class EventStore {
   }
 
   /// Internal helper: wraps a [backend.transaction] call with a
-  /// [PublishCollector] and publishes all collected events after commit.
+  /// [PublishCollector] and publishes all collected events and row changes
+  /// after commit.
   Future<T> _runInTxnWithPublish<T>(
     Future<T> Function(Txn txn, PublishCollector collector) body,
   ) async {
@@ -448,6 +462,9 @@ class EventStore {
     final result = await backend.transaction<T>((txn) => body(txn, collector));
     for (final event in collector.events) {
       _subs.publishEvent(event);
+    }
+    for (final change in collector.rowChanges) {
+      _subs.publishRowChange(change);
     }
     return result;
   }
@@ -616,12 +633,14 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
-    List<AggregateFoldChange> rowChanges = <AggregateFoldChange>[];
+    // appendInTxn runs the projection interpreter and threads row-changes
+    // through the collector; _runInTxnWithPublish fires both events and
+    // row changes to subscribers after the transaction commits.
     final event = await _runInTxnWithPublish<StoredEvent?>((
       txn,
       collector,
     ) async {
-      final stored = await appendInTxn(
+      return appendInTxn(
         txn,
         collector: collector,
         entryType: entryType,
@@ -637,20 +656,9 @@ class EventStore {
         changeReason: changeReason,
         dedupeByContent: dedupeByContent,
       );
-      if (stored != null) {
-        rowChanges = await _interpreter.applyEvent(
-          txn: txn,
-          backend: backend,
-          event: stored,
-        );
-      }
-      return stored;
     });
 
     if (event == null) return null;
-    for (final change in rowChanges) {
-      _subs.publishRowChange(change);
-    }
     unawaited(syncCycleTrigger?.call());
     return event;
   }
@@ -863,10 +871,15 @@ class EventStore {
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate.
   ///
-  /// When [collector] is non-null, the persisted event is recorded into it
-  /// so the surrounding [_runInTxnWithPublish] / [runTransaction] call can
-  /// publish it to the subscription bus after commit. Callers that open their
-  /// own transaction via [runTransaction] MUST pass their collector here.
+  /// Runs the projection interpreter inside the same transaction as the
+  /// append, so all matching `ProjectionSpec`s materialize views before
+  /// commit. Any spec throw rolls back the entire append.
+  ///
+  /// When [collector] is non-null, both the persisted event and the
+  /// resulting row changes are recorded into it so the surrounding
+  /// [_runInTxnWithPublish] / [runTransaction] call can publish them to the
+  /// subscription bus after commit. Callers that open their own transaction
+  /// via [runTransaction] MUST pass their collector here.
   Future<StoredEvent?> appendInTxn(
     Txn txn, {
     required String entryType,
@@ -990,6 +1003,20 @@ class EventStore {
     }
 
     collector?.add(event);
+
+    // Run the projection interpreter inside the same transaction so views
+    // materialize atomically with the append. Action-emitted events (via
+    // ActionDispatcher.Stage8 → appendInTxn) MUST update views in-tx so
+    // subsequent dispatches in the same flow read the new view rows; this
+    // was the bug fixed by moving _interpreter.applyEvent inside appendInTxn.
+    final rowChanges = await _interpreter.applyEvent(
+      txn: txn,
+      backend: backend,
+      event: event,
+    );
+    if (collector != null && rowChanges.isNotEmpty) {
+      collector.addRowChanges(rowChanges);
+    }
     return event;
   }
 
@@ -1197,11 +1224,14 @@ class EventStore {
     //   all registered ProjectionSpecs whose interest filter matches the event.
     //   A throw propagates out of `_ingestOneInTxn` and rolls back the entire
     //   ingest transaction (-A all-or-nothing batch atomicity).
-    await _interpreter.applyEvent(
+    final rowChanges = await _interpreter.applyEvent(
       txn: txn,
       backend: backend,
       event: updatedEvent,
     );
+    if (collector != null && rowChanges.isNotEmpty) {
+      collector.addRowChanges(rowChanges);
+    }
 
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,

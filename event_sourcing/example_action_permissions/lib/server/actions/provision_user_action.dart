@@ -1,9 +1,17 @@
 // IMPLEMENTS REQUIREMENTS:
 //
 // Admin-only. Validates uniqueness against the current in-memory directory
-// view. The emitted user_provisioned event is projected back into the
-// UserDirectory by the UserDirectoryMaterializer (run inside the
-// EventStore transaction).
+// view. Emits a user_provisioned event (projected by the
+// UserDirectoryMaterializer subscriber back into the in-memory directory)
+// and — when activeSite is non-null — a role_assigned event so the
+// user_role_scopes view materializes the new user's site-scoped
+// assignment atomically inside the dispatch transaction.
+//
+// The role_assigned event is emitted by the action itself (not by a
+// post-commit subscriber bridge): EventStore.appendInTxn runs the
+// projection interpreter inside the dispatch transaction, so the new
+// user's scope assignment is visible to the very next action that reads
+// user_role_scopes.
 
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:event_sourcing/event_sourcing.dart';
@@ -42,8 +50,10 @@ class ProvisionUserAction
 
   @override
   String get description =>
-      'Admin provisions a new user; emits one user_provisioned event '
-      'that the directory materializer projects into the in-memory map.';
+      'Admin provisions a new user; emits a user_provisioned event '
+      'that the directory materializer projects into the in-memory map, '
+      'and (when activeSite is non-null) a role_assigned event that '
+      'populates the user_role_scopes view inside the dispatch tx.';
 
   @override
   Set<Permission> get permissions => <Permission>{
@@ -94,21 +104,51 @@ class ProvisionUserAction
     ProvisionUserInput input,
     ActionContext ctx,
   ) async {
+    final events = <EventDraft>[
+      EventDraft(
+        aggregateType: 'user_directory',
+        aggregateId: input.userId,
+        entryType: 'user_provisioned',
+        eventType: 'user_provisioned',
+        data: <String, dynamic>{
+          'userId': input.userId,
+          'role': input.role,
+          'activeSite': input.activeSite,
+        },
+      ),
+    ];
+
+    // When activeSite is non-null, emit a role_assigned event so the
+    // user_role_scopes view materializes the new user's site-scoped
+    // assignment inside the dispatch transaction. EventStore.appendInTxn
+    // runs the projection interpreter atomically with the append, so the
+    // very next dispatch reading user_role_scopes sees the new row.
+    final activeSite = input.activeSite;
+    if (activeSite != null && activeSite.isNotEmpty) {
+      final scope = BoundScope(class_: 'site', value: activeSite);
+      final aggregateId = roleAssignmentAggregateId(
+        userId: input.userId,
+        role: input.role,
+        scope: scope,
+      );
+      events.add(
+        EventDraft(
+          aggregateType: 'user_role_scope',
+          aggregateId: aggregateId,
+          entryType: 'user_role_scope',
+          eventType: 'role_assigned',
+          data: RoleAssignedPayload(
+            userId: input.userId,
+            role: input.role,
+            scope: scope,
+          ).toJson(),
+        ),
+      );
+    }
+
     return ExecutionResult<ProvisionUserResult>(
       result: ProvisionUserResult(userId: input.userId),
-      events: <EventDraft>[
-        EventDraft(
-          aggregateType: 'user_directory',
-          aggregateId: input.userId,
-          entryType: 'user_provisioned',
-          eventType: 'user_provisioned',
-          data: <String, dynamic>{
-            'userId': input.userId,
-            'role': input.role,
-            'activeSite': input.activeSite,
-          },
-        ),
-      ],
+      events: events,
     );
   }
 }

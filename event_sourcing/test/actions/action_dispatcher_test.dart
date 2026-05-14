@@ -9,6 +9,9 @@
 // etc.).
 
 import 'package:event_sourcing/event_sourcing.dart';
+// AggregateIdKey and WholePayload are not re-exported from the barrel.
+import 'package:event_sourcing/src/projections/primitives/row_data.dart';
+import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fixtures/test_actions.dart'
@@ -692,6 +695,73 @@ void main() {
     //   This requires a seam in StorageBackend to inject mid-transaction failures.
     //   Without such a seam the rollback semantic is verified only by code inspection
     //   and the Sembast transaction contract. Track as follow-up.
+  });
+
+  // Regression coverage for the EventStore.appendInTxn projection-interpreter
+  // gap surfaced in CUR-1331 Task 25: ActionDispatcher Stage 8 appends action
+  // events via appendInTxn, and prior to the fix the projection interpreter
+  // was NOT invoked, so views were stale until something else (e.g., a
+  // subscriber bridge) re-fed the event through the public append. The fix
+  // moves _interpreter.applyEvent inside appendInTxn so views materialize in
+  // the same transaction as the append.
+  group('Stage 8 — projection materialization inside dispatch tx', () {
+    test('view row is present immediately after dispatch returns', () async {
+      // Register a TableProjectionSpec that watches the test action's
+      // `hello.said` events and writes one row per (aggregateId).
+      final projections = ProjectionRegistry()
+        ..register(
+          TableProjectionSpec(
+            viewName: 'greetings_view',
+            interest: const SubscriptionFilter(
+              eventTypes: <String>{'hello.said'},
+            ),
+            insertEventTypes: const <String>{'hello.said'},
+            removeEventTypes: const <String>{},
+            rowKey: const AggregateIdKey(),
+            rowData: const WholePayload(),
+          ),
+        );
+
+      final store = await bootstrapTestEventStore(projections: projections);
+      final reg = ActionRegistry()..register(HelloAction());
+      final idem = InMemoryIdempotencyStore();
+      final allowDispatcher = ActionDispatcher(
+        registry: reg,
+        authorization: const AlwaysAllowPolicy(),
+        events: store,
+        idempotency: idem,
+      );
+
+      // HelloAction emits an EventDraft with aggregateId
+      // 'greeting-${who}' (see fixtures/test_actions.dart). After
+      // dispatch returns, the view row for that aggregate MUST already
+      // be present — proving the projection ran inside the dispatch
+      // transaction, not via some post-commit subscriber path.
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'in-tx-world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
+
+      final row = await store.backend.transaction(
+        (txn) => store.backend.readViewRowInTxn(
+          txn,
+          'greetings_view',
+          'greeting-in-tx-world',
+        ),
+      );
+      expect(
+        row,
+        isNotNull,
+        reason:
+            'appendInTxn must run the projection interpreter so action-'
+            'emitted events update views inside the dispatch transaction',
+      );
+      expect(row!['who'], 'in-tx-world');
+    });
   });
 
   group('Stages 9+10 — record idempotency + return success', () {
