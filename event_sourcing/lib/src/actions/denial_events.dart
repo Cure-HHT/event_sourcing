@@ -4,6 +4,7 @@
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
 import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/event_draft.dart';
 
 const String _aggregateType = 'action_attempt';
@@ -97,12 +98,21 @@ EventDraft denialValidationDenied({
 /// authorization_denied events SHALL additionally carry `permission_denied`
 /// and (when available) `principal_active_role`; `deny_reason` is an
 /// additional "(when available)" field for richer audit.
+///
+/// [scopeValue], when non-null, is stamped onto the event as
+/// `data['scope']` using `ScopeValue.toJson()`. The dispatcher passes the
+/// resolved scope from `Action.scopeFor` so the audit record carries the
+/// requested scope (for both `notGranted` denials with a valid scope and
+/// `scopeUnresolvable` denials where a class-mismatched scope was
+/// returned). Null when the permission is unscoped, or when scope
+/// resolution failed before producing a `ScopeValue`.
 EventDraft denialAuthorizationDenied({
   required String invocationId,
   required String actionName,
   required Permission permission,
   String? principalActiveRole,
   DenyReason? denyReason,
+  ScopeValue? scopeValue,
   Map<String, Object?>? actionInvocationMetadata,
 }) => EventDraft(
   aggregateId: invocationId,
@@ -116,6 +126,7 @@ EventDraft denialAuthorizationDenied({
     if (principalActiveRole != null)
       'principal_active_role': principalActiveRole,
     if (denyReason != null) 'deny_reason': denyReason.name,
+    if (scopeValue != null) 'scope': scopeValue.toJson(),
   },
   metadata: actionInvocationMetadata,
 );

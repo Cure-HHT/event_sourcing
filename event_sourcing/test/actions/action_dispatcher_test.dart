@@ -14,13 +14,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fixtures/test_actions.dart'
     show
         AlwaysAllowPolicy,
+        AlwaysDenyNotGrantedPolicy,
         BadExecuteAction,
         BadParseAction,
         BadValidateAction,
         HelloAction,
         MultiEventAction,
         OptionalKeyAction,
+        RecordingAllowPolicy,
         RequiredKeyAction,
+        ScopedPatientEditAction,
         TwoPermissionAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 
@@ -379,6 +382,179 @@ void main() {
           _ctx(),
         );
         expect(result, isA<DispatchSuccess<Object?>>());
+      },
+    );
+  });
+
+  group('Stage 6 — authorize scope resolution', () {
+    // Verifies: EVS-PRD-action-dispatch/B (dispatcher resolves scope via
+    // Action.scopeFor for scoped permissions; class-mismatch / null /
+    // TotalWildcardScope deny with DenyReason.scopeUnresolvable)
+    // Verifies: EVS-PRD-action-dispatch/C (authorization_denied stamps
+    // the resolved scope onto data['scope'] when non-null)
+
+    test(
+      'scopeFor returns class-matching BoundScope → Allow falls through',
+      () async {
+        registry.register(ScopedPatientEditAction());
+        final policy = RecordingAllowPolicy();
+        final allowDispatcher = ActionDispatcher(
+          registry: registry,
+          authorization: policy,
+          events: eventStore,
+          idempotency: idempotency,
+        );
+
+        final result = await allowDispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'patient_edit',
+            rawInput: <String, Object?>{'patient_id': 'p-123'},
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchSuccess<Object?>>());
+
+        // Policy received the resolved scope.
+        expect(policy.calls, hasLength(1));
+        final (_, scope) = policy.calls.single;
+        expect(scope, isA<BoundScope>());
+        expect((scope! as BoundScope).class_, 'patient');
+        expect((scope as BoundScope).value, 'p-123');
+      },
+    );
+
+    test('scopeFor returns null → Deny(scopeUnresolvable)', () async {
+      registry.register(const ScopedPatientEditAction(forceNull: true));
+      final allowDispatcher = makeAllowDispatcher(
+        registry,
+        eventStore,
+        idempotency,
+      );
+
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'patient_edit',
+          rawInput: <String, Object?>{'patient_id': 'p-123'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'authorization_denied')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(denials.first.data['deny_reason'], 'scopeUnresolvable');
+      // No scope to stamp when resolution returned null.
+      expect(denials.first.data.containsKey('scope'), isFalse);
+    });
+
+    test(
+      'scopeFor returns class-mismatched BoundScope → Deny(scopeUnresolvable)',
+      () async {
+        registry.register(
+          ScopedPatientEditAction(
+            scopeOverride: const BoundScope(
+              class_: 'patient_group',
+              value: 'pg-7',
+            ),
+          ),
+        );
+        final allowDispatcher = makeAllowDispatcher(
+          registry,
+          eventStore,
+          idempotency,
+        );
+
+        final result = await allowDispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'patient_edit',
+            rawInput: <String, Object?>{'patient_id': 'p-123'},
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        final denials = allEvents
+            .where((e) => e.eventType == 'authorization_denied')
+            .toList();
+        expect(denials, hasLength(1));
+        expect(denials.first.data['deny_reason'], 'scopeUnresolvable');
+        // The class-mismatched scope IS stamped (it's a real ScopeValue,
+        // just not one this permission's scopeClass accepts).
+        final scope = denials.first.data['scope'] as Map<String, Object?>;
+        expect(scope['class'], 'patient_group');
+        expect(scope['value'], 'pg-7');
+      },
+    );
+
+    test(
+      'scopeFor returns TotalWildcardScope → Deny(scopeUnresolvable)',
+      () async {
+        registry.register(
+          ScopedPatientEditAction(scopeOverride: const TotalWildcardScope()),
+        );
+        final allowDispatcher = makeAllowDispatcher(
+          registry,
+          eventStore,
+          idempotency,
+        );
+
+        final result = await allowDispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'patient_edit',
+            rawInput: <String, Object?>{'patient_id': 'p-123'},
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        final denials = allEvents
+            .where((e) => e.eventType == 'authorization_denied')
+            .toList();
+        expect(denials, hasLength(1));
+        expect(denials.first.data['deny_reason'], 'scopeUnresolvable');
+        // TotalWildcardScope IS stamped (toJson returns
+        // `{"wildcard_class": true}`) — it's a real ScopeValue, just one
+        // the dispatcher refuses because it carries no class_ to match.
+        final scope = denials.first.data['scope'] as Map<String, Object?>;
+        expect(scope['wildcard_class'], isTrue);
+      },
+    );
+
+    test(
+      'class-matched scope is stamped onto policy-deny authorization_denied event',
+      () async {
+        registry.register(ScopedPatientEditAction());
+        final denyDispatcher = ActionDispatcher(
+          registry: registry,
+          authorization: const AlwaysDenyNotGrantedPolicy(),
+          events: eventStore,
+          idempotency: idempotency,
+        );
+
+        final result = await denyDispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'patient_edit',
+            rawInput: <String, Object?>{'patient_id': 'p-42'},
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        final denials = allEvents
+            .where((e) => e.eventType == 'authorization_denied')
+            .toList();
+        expect(denials, hasLength(1));
+        expect(denials.first.data['permission_denied'], 'patient.edit');
+        expect(denials.first.data['deny_reason'], 'notGranted');
+        final scope = denials.first.data['scope'] as Map<String, Object?>;
+        expect(scope['class'], 'patient');
+        expect(scope['value'], 'p-42');
       },
     );
   });

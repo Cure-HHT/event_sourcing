@@ -9,7 +9,7 @@ import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
 import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
-    show Deny;
+    show Deny, DenyReason;
 import 'package:event_sourcing/src/actions/authorization_policy.dart';
 import 'package:event_sourcing/src/actions/denial_events.dart';
 import 'package:event_sourcing/src/actions/dispatch_result.dart';
@@ -17,7 +17,9 @@ import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_errors.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
+import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:uuid/uuid.dart';
@@ -178,15 +180,42 @@ class ActionDispatcher {
         : null;
 
     for (final permission in action.permissions) {
-      // TODO(Task 20): wire action.scopeFor(...) into the third argument
-      // so scoped permissions resolve correctly. Task 17 supplies null
-      // here as a minimum-viable bridge so the substrate compiles; this
-      // forces every scoped permission to Deny(scopeUnresolvable) until
-      // Task 20 lands.
+      // Resolve the per-dispatch scope for this permission.
+      //
+      // - Unscoped permission (scopeClass == null): scopeValue stays null;
+      //   policy.isPermitted receives null per its documented invariant.
+      // - Scoped permission: call action.scopeFor and validate the returned
+      //   ScopeValue against the permission's declared scopeClass. Any
+      //   resolution failure (null, TotalWildcard, class mismatch) is a
+      //   Deny(scopeUnresolvable) — a programmer-bug surface in the action.
+      ScopeValue? scopeValue;
+      if (permission.scopeClass != null) {
+        scopeValue = action.scopeFor(permission, parsedInput);
+        final scopeDenyReason = _checkScopeResolution(
+          permission: permission,
+          resolved: scopeValue,
+        );
+        if (scopeDenyReason != null) {
+          // Class mismatch / TotalWildcard: stamp the offending scope so
+          // the audit record carries it. Null resolution: nothing to stamp.
+          final denial = denialAuthorizationDenied(
+            invocationId: invocationId,
+            actionName: action.name,
+            permission: permission,
+            principalActiveRole: principalActiveRole,
+            denyReason: scopeDenyReason,
+            scopeValue: scopeValue,
+            actionInvocationMetadata: invocationMetadata,
+          );
+          await _persistDenial(denial, ctx, flowToken: flowToken);
+          return DispatchResult<Object?>.authorizationDenied(permission);
+        }
+      }
+
       final decision = await authorization.isPermitted(
         principal,
         permission,
-        null,
+        scopeValue,
       );
       if (decision is Deny) {
         final denial = denialAuthorizationDenied(
@@ -195,6 +224,7 @@ class ActionDispatcher {
           permission: decision.permission,
           principalActiveRole: principalActiveRole,
           denyReason: decision.reason,
+          scopeValue: scopeValue,
           actionInvocationMetadata: invocationMetadata,
         );
         await _persistDenial(denial, ctx, flowToken: flowToken);
@@ -307,6 +337,44 @@ class ActionDispatcher {
         return <String, Object?>{'value': result.toString()};
       }
       rethrow;
+    }
+  }
+
+  /// Validates the [resolved] scope returned by `Action.scopeFor` against
+  /// the [permission]'s declared `scopeClass`. Returns null if the scope is
+  /// usable; returns `DenyReason.scopeUnresolvable` for any resolution
+  /// failure the dispatcher must short-circuit on.
+  ///
+  /// Caller has already established that `permission.scopeClass != null`.
+  /// Failure shapes:
+  ///   - null                                     → action didn't supply a
+  ///                                                scope value for a
+  ///                                                scoped permission.
+  ///   - TotalWildcardScope                       → carries no class_ to
+  ///                                                match against
+  ///                                                permission.scopeClass.
+  ///   - BoundScope / ValueWildcardScope with
+  ///     class_ != permission.scopeClass          → scope class mismatch.
+  DenyReason? _checkScopeResolution({
+    required Permission permission,
+    required ScopeValue? resolved,
+  }) {
+    if (resolved == null) {
+      return DenyReason.scopeUnresolvable;
+    }
+    switch (resolved) {
+      case TotalWildcardScope():
+        return DenyReason.scopeUnresolvable;
+      case BoundScope(class_: final cls):
+        if (cls != permission.scopeClass) {
+          return DenyReason.scopeUnresolvable;
+        }
+        return null;
+      case ValueWildcardScope(class_: final cls):
+        if (cls != permission.scopeClass) {
+          return DenyReason.scopeUnresolvable;
+        }
+        return null;
     }
   }
 
