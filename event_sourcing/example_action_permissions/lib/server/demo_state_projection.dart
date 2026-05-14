@@ -32,7 +32,7 @@ class PollingDemoStateProjection implements DemoStateProjection {
     );
     final matrix = await collectMatrixGrants(components.eventStore);
     final directory = components.directory.listEntries();
-    final idem = collectIdempotencyEntries(components.idempotencyStore);
+    final idem = await collectIdempotencyEntries(components.idempotencyStore);
     return InspectSnapshot(
       events: eventsList,
       matrixGrants: matrix,

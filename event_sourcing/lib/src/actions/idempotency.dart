@@ -10,17 +10,31 @@
 enum Idempotency { none, optional, required }
 
 /// A cached dispatch outcome stored in the `IdempotencyStore`.
+///
+/// Carries both the keying tuple — `(actionName, principalId,
+/// idempotencyKey)` — and the cached outcome (`resultJson`,
+/// `emittedEventIds`) along with the timestamps. The keying tuple is
+/// redundant with the lookup arguments on `IdempotencyStore.lookup`,
+/// but it makes `IdempotencyStore.listEntries` self-describing: each
+/// returned entry identifies which cache slot it occupies without the
+/// caller having to thread the key separately.
 //
 // returns this verbatim. `emittedEventIds` is the audit-trail link to the
 // events written by the original dispatch.
 class IdempotencyEntry {
   const IdempotencyEntry({
+    required this.actionName,
+    required this.principalId,
+    required this.idempotencyKey,
     required this.resultJson,
     required this.emittedEventIds,
     required this.recordedAt,
     required this.expiresAt,
   });
 
+  final String actionName;
+  final String principalId;
+  final String idempotencyKey;
   final Map<String, Object?> resultJson;
   final List<String> emittedEventIds;
   final DateTime recordedAt;

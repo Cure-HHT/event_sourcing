@@ -24,6 +24,18 @@ abstract class IdempotencyStore {
   });
 
   Future<int> sweepExpired({DateTime? before});
+
+  /// Enumerate all currently-cached entries, ordered by
+  /// `(actionName, principalId, idempotencyKey)` ascending. Not filtered
+  /// by expiry — callers can compare `IdempotencyEntry.expiresAt`
+  /// against `DateTime.now()` if they want only-fresh entries.
+  ///
+  /// Used by inspector UIs to surface the cache contents (the demo's
+  /// `collectIdempotencyEntries` path goes through here). Returns an
+  /// unmodifiable list. Implementations SHOULD be efficient for cache
+  /// sizes in the low thousands; the contract does not promise
+  /// pagination.
+  Future<List<IdempotencyEntry>> listEntries();
 }
 
 /// In-memory `IdempotencyStore` for tests and per-process state during
@@ -59,6 +71,9 @@ class InMemoryIdempotencyStore implements IdempotencyStore {
     required DateTime expiresAt,
   }) async {
     _entries[_composite(actionName, principalId, key)] = IdempotencyEntry(
+      actionName: actionName,
+      principalId: principalId,
+      idempotencyKey: key,
       resultJson: Map<String, Object?>.unmodifiable(resultJson),
       emittedEventIds: List<String>.unmodifiable(emittedEventIds),
       recordedAt: DateTime.now(),
@@ -77,5 +92,18 @@ class InMemoryIdempotencyStore implements IdempotencyStore {
       _entries.remove(k);
     }
     return keysToRemove.length;
+  }
+
+  @override
+  Future<List<IdempotencyEntry>> listEntries() async {
+    final list = _entries.values.toList()
+      ..sort((a, b) {
+        final ac = a.actionName.compareTo(b.actionName);
+        if (ac != 0) return ac;
+        final pc = a.principalId.compareTo(b.principalId);
+        if (pc != 0) return pc;
+        return a.idempotencyKey.compareTo(b.idempotencyKey);
+      });
+    return List<IdempotencyEntry>.unmodifiable(list);
   }
 }
