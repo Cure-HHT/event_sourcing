@@ -452,7 +452,7 @@ class PostgresBackend extends StorageBackend {
       wheres.add("metadata->'provenance'->0->>'identifier' = @origId");
       params['origId'] = originatorIdentifier;
     }
-    final whereClause = wheres.isEmpty ? '' : 'WHERE ${wheres.join(' AND ')}';
+    final whereClause = _composeWhere(wheres);
     final limitClause = limit == null ? '' : 'LIMIT $limit';
     final sql =
         'SELECT * FROM events $whereClause '
@@ -958,7 +958,7 @@ class PostgresBackend extends StorageBackend {
     }
     final limitClause = limit == null ? '' : 'LIMIT $limit';
     final sql =
-        'SELECT * FROM fifo_entries WHERE ${wheres.join(' AND ')} '
+        'SELECT * FROM fifo_entries ${_composeWhere(wheres)} '
         'ORDER BY sequence_in_queue ASC $limitClause';
     final result = await _pool.execute(Sql.named(sql), parameters: params);
     return result.map(_fifoEntryFromRow).toList(growable: false);
@@ -1458,7 +1458,7 @@ class PostgresBackend extends StorageBackend {
         wheres.add('event_type = ANY(@types)');
         params['types'] = eventTypes.toList();
       }
-      final whereClause = wheres.isEmpty ? '' : 'WHERE ${wheres.join(' AND ')}';
+      final whereClause = _composeWhere(wheres);
       final result = await _pool.execute(
         Sql.named(
           'SELECT * FROM events $whereClause '
@@ -1567,7 +1567,7 @@ class PostgresBackend extends StorageBackend {
       params['curEv'] = decodedCursor.eventId;
     }
 
-    final whereClause = wheres.isEmpty ? '' : 'WHERE ${wheres.join(' AND ')}';
+    final whereClause = _composeWhere(wheres);
     // Fetch limit + 1 to detect "more pages" without a separate
     // COUNT(*); the extra row, if present, is dropped from the page and
     // its predecessor's (recorded_at, event_id) tuple is encoded into
@@ -1788,6 +1788,16 @@ class PostgresBackend extends StorageBackend {
       'got ${raw.runtimeType}',
     );
   }
+}
+
+/// Compose a `WHERE` clause from a list of predicate fragments.
+///
+/// Each fragment is an SQL predicate (e.g., `sequence_number > @afterSeq`)
+/// whose placeholders are bound by the caller through the `parameters:`
+/// map. Returns an empty string when [fragments] is empty.
+String _composeWhere(List<String> fragments) {
+  if (fragments.isEmpty) return '';
+  return 'WHERE ${fragments.join(' AND ')}';
 }
 
 /// Opaque pagination cursor for [PostgresBackend.queryAudit]. Encodes
