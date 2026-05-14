@@ -1,5 +1,7 @@
 // Implements: EVS-PRD-permissions-as-events/A — payload for role_assigned events
 // (user-to-role assignment with scope binding, append-only event in the log).
+// Implements: EVS-PRD-scoped-permissions/C — role_assigned events bind a
+//   user/role to a ScopeValue (sealed-variant JSON) recorded in the log.
 
 import 'package:meta/meta.dart';
 

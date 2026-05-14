@@ -6,6 +6,17 @@
 //   that are themselves recorded as events in the same log.
 // Implements: EVS-PRD-action-dispatch/B — Allow/Deny decisions delivered to
 //   the dispatcher's authorize stage.
+// Implements: EVS-PRD-scoped-permissions/D/F/G — evaluates solely from
+//   event-derived projections; allows when any active-role assignment
+//   matches via equality / wildcard / containment; fails closed on missing
+//   containment rows.
+// Implements: EVS-DEV-scoped-permissions-match-algorithm — first-match-wins
+//   union of active-role assignments; bound, value-wildcard, and total-
+//   wildcard variants handled per Section 2 of spec/scoped-permissions.md.
+// Implements: EVS-DEV-effective-permissions-shape — effectivePermissionsFor
+//   returns EffectiveAuthorization { activeRole, rolePermissions,
+//   scopeAssignments }, and EffectiveAuthorization.empty for non-user
+//   principals.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

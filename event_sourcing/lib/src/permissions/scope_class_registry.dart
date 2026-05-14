@@ -1,4 +1,11 @@
-// Implements: EVS-PRD-permissions-as-events (composition-time validation; refuses cycles, dangling parent refs, missing projection columns)
+// Implements: EVS-PRD-permissions-as-events — composition-time validation;
+//   refuses cycles, dangling parent refs, missing projection columns.
+// Implements: EVS-PRD-scoped-permissions/A/B — apps register their scope classes
+//   here; composition refuses on duplicates, dangling parent refs, missing
+//   columns, and cycles.
+// Implements: EVS-DEV-scope-class-registry-validation — concrete validation
+//   rules (A: duplicate names; B: dangling parentClass; C: projection /
+//   column resolution; D: cycle detection; E: ancestor-chain walk).
 
 import 'package:event_sourcing/event_sourcing.dart';
 

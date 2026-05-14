@@ -9,6 +9,9 @@
 // Implements: EVS-PRD-permissions-as-events/C — the projection is fully
 //   reconstructable from the event log alone; replaying role_assigned /
 //   role_unassigned events reproduces the view deterministically.
+// Implements: EVS-PRD-scoped-permissions/C/D — declares the event-derived
+//   projection the policy reads from at authorize time, sealing scope
+//   evaluation inside the closed-under-events trust model.
 //
 // Row-layout contract (consumed by TableBackedAuthorizationPolicy):
 //   key: event.aggregateId — the canonical-JSON encoding of the

@@ -1,4 +1,9 @@
 // Verifies: EVS-PRD-permissions-as-events (composition-time validation refuses cycles, dangling refs, missing columns)
+// Verifies: EVS-PRD-scoped-permissions/B — composition refuses on duplicates,
+//   dangling refs, missing columns, and cycles.
+// Verifies: EVS-DEV-scope-class-registry-validation/A/B/C/D/E — duplicate-name
+//   refusal, dangling parentClass, projection / column resolution, cycle
+//   detection, and ancestor-chain walk.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';

@@ -1,4 +1,9 @@
 // Verifies: EVS-PRD-permissions-as-events (aggregate-id encoding is collision-free)
+// Verifies: EVS-PRD-scoped-permissions/C — aggregate id deterministically
+//   derived from (user_id, role, scope) via canonical JSON.
+// Verifies: EVS-DEV-role-assignment-aggregate-id/A/B/C — canonical-JSON
+//   encoding shape; distinct tuples yield distinct ids; safe against
+//   segment-encoding ambiguity.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';

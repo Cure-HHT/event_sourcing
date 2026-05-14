@@ -1,4 +1,6 @@
 // Verifies: EVS-PRD-permissions-as-events (role_assigned payload shape)
+// Verifies: EVS-PRD-scoped-permissions/C — role_assigned events bind a
+//   user/role to a ScopeValue (sealed-variant JSON).
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';

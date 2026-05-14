@@ -1,4 +1,8 @@
-// Implements: EVS-PRD-permissions-as-events (effectivePermissionsFor surface for client-side UI gating)
+// Implements: EVS-PRD-permissions-as-events — effectivePermissionsFor surface
+//   for client-side UI gating, derived from event-derived projections.
+// Implements: EVS-DEV-effective-permissions-shape/A/B/D — carries active role,
+//   role permission set, and scope assignments; EffectiveAuthorization.empty
+//   is the empty-active-role canonical instance for anonymous principals.
 
 import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';

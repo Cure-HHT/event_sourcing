@@ -1,5 +1,7 @@
 // Implements: EVS-PRD-permissions-as-events/A — payload for role_unassigned events
 // (user-to-role unassignment with scope binding, append-only event in the log).
+// Implements: EVS-PRD-scoped-permissions/C — role_unassigned events remove a
+//   user/role/scope assignment from the projection, recorded in the log.
 
 import 'package:meta/meta.dart';
 

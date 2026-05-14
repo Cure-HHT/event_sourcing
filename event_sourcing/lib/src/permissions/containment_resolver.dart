@@ -1,4 +1,10 @@
-// Implements: EVS-PRD-permissions-as-events (substrate-evaluated containment lookup via TableProjections; fail-closed on missing row)
+// Implements: EVS-PRD-permissions-as-events — substrate-evaluated containment
+//   lookup via TableProjections; fail-closed on missing row.
+// Implements: EVS-PRD-scoped-permissions/F/G — hierarchy expansion driven by
+//   ContainmentRef projections; missing rows deny rather than fail open.
+// Implements: EVS-DEV-containment-resolver — chain-walk algorithm (A: identity
+//   on equal class; B: null on non-ancestor target; C: per-hop projection
+//   read; D: fail-closed on empty row / missing parent column).
 
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/permissions/scope_class_registry.dart';

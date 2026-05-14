@@ -2,6 +2,15 @@
 // Verifies: EVS-PRD-action-dispatch/B (stages 1–10 in order: lookup, invocation_id, parse, idempotency, validate, authorize, execute, persist, record, return)
 // Verifies: EVS-PRD-action-dispatch/C (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
 // Verifies: EVS-PRD-action-dispatch/D (idempotency cache hit short-circuits; DispatchIdempotencyHit returned; no new events appended)
+// Verifies: EVS-PRD-scoped-permissions/E/H/I (scope resolution, single-tx
+//   authorize+execute+persist, scope stamping on authorization_denied)
+// Verifies: EVS-DEV-transactional-authorize-execute/A/B/C/D (dispatcher
+//   opens one tx for authorize+execute+persist; authorize-stage denial
+//   commits inside the tx; execute / append throw rolls back; revocation
+//   races don't invalidate in-flight dispatches)
+// Verifies: EVS-DEV-scope-unresolvable-denial/A/B/C/D/E (pre-tx scopeFor
+//   invocation; scopeUnresolvable for null / TotalWildcardScope /
+//   class-mismatched returns; scope stamping when one was returned)
 // Uses flutter_test (not package:test) because EventStore depends on
 // Sembast, which requires the Flutter test binding to run in this package.
 // All other tests in event_sourcing/ that touch EventStore use flutter_test

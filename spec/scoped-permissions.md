@@ -550,3 +550,232 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 - `spec/prd-library-charter.md` — the epistemic-layer framing and AOP discipline.
 - `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md` — the projection model this design's match algorithm reads against.
 - Linear: CUR-1331 (this design), CUR-869 (multi-role symptom), CUR-988 (cascading 403 symptom), CUR-1170 (portal cutover, blocked-by), CUR-1192 (origin of the `AuthorizationPolicy` interface), CUR-1317 (libify).
+
+---
+
+## EVS-PRD-scoped-permissions: Scope-aware authorization model
+
+**Level**: prd | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-action-dispatch, EVS-PRD-permissions-as-events
+
+### Assertions
+
+A. The library SHALL register scope classes via a composition-time ScopeClassRegistry; an action's scoped permission SHALL refer to a scope class by registered name.
+
+B. The library SHALL refuse composition when a ScopeClassRegistry contains duplicate names, cycles in containment, a containment ref pointing at an unregistered parent class, or a containment ref naming columns not present in the referenced projection.
+
+C. The library SHALL record user-role-scope assignments as role_assigned / role_unassigned events in the same event log as application state, with aggregate id deterministically derived from (user_id, role, scope) via canonical JSON.
+
+D. The library SHALL evaluate authorization solely from event-derived projections (role_permission_grants, user_role_scopes, and any app-registered containment projections); the policy SHALL NOT consult external authorities.
+
+E. The library SHALL deny scoped permission requests with reason scopeUnresolvable when the action either supplies no scope value, supplies a TotalWildcardScope, or supplies a scope value whose class does not match the permission's declared scope class.
+
+F. The library SHALL allow a scoped permission request when at least one of the user's active-role assignments matches the requested scope value via equality, value-wildcard, total-wildcard, or hierarchy containment expansion.
+
+G. The library SHALL fail closed on missing containment rows: if any hop in the containment chain has no row in its declared projection, the match SHALL return false rather than treating the missing row as a permissive default.
+
+H. The library SHALL evaluate authorize-stage policy reads and the execute-stage event appends inside the same storage transaction; a revocation committed concurrently with an in-flight dispatch SHALL NOT affect that dispatch's outcome.
+
+I. The library SHALL stamp the requested scope value onto authorization_denied events when the scope value was resolvable, so the audit log captures the precise denial circumstance.
+
+### Rationale
+
+Replaces the legacy substrate `ScopeClass { global, site, self }` enum and `Principal.activeSite` with a domain-neutral, app-registered scope-class machinery. See the design prose above for the algorithm and motivating use cases; see `spec/prd-permissions-as-events.md` for the parent obligation around closed-under-events authorization.
+
+---
+
+### Changelog
+
+- 2026-05-14 | d3eee322 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Scope-aware authorization model* | **Hash**: d3eee322
+
+## EVS-DEV-scope-class-registry-validation: Composition-time scope-class registry validation
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `ScopeClassRegistry` SHALL throw `StateError` at construction when two `ScopeClassSpec`s share the same `name`.
+
+B. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentRef.parentClass` names a class that is not in the registry.
+
+C. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentRef.projection` cannot be resolved by the supplied projection lookup, or when its declared `keyColumn` or `parentColumn` is not a column of that projection.
+
+D. `ScopeClassRegistry` SHALL throw `StateError` at construction when the class-containment graph contains a cycle.
+
+E. `ScopeClassRegistry` SHALL expose lookup-by-name and an ancestor-chain walk such that `isAncestor(a, d)` returns true iff `a` appears in `d`'s containment chain (inclusive of `d`).
+
+---
+
+### Changelog
+
+- 2026-05-14 | 4a76c916 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Composition-time scope-class registry validation* | **Hash**: 4a76c916
+
+## EVS-DEV-scope-value-json: Sealed ScopeValue JSON contract
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `BoundScope.toJson` SHALL produce exactly `{"class": <class_>, "value": <value>}`, with no additional keys.
+
+B. `ValueWildcardScope.toJson` SHALL produce exactly `{"class": <class_>, "wildcard_value": true}`, with no additional keys.
+
+C. `TotalWildcardScope.toJson` SHALL produce exactly `{"wildcard_class": true}`, with no additional keys.
+
+D. `ScopeValue.fromJson` SHALL be a complete-on-shape polymorphic decoder: it returns `BoundScope`, `ValueWildcardScope`, or `TotalWildcardScope` for inputs matching exactly one of the three shapes, and SHALL throw `FormatException` for any other object (including objects whose discriminator keys are present but whose value is not the literal `true`, or whose key set is ambiguous between shapes).
+
+E. The round-trip `ScopeValue.fromJson(v.toJson()) == v` SHALL hold for every concrete `ScopeValue` instance constructible via the public constructors.
+
+---
+
+### Changelog
+
+- 2026-05-14 | 1e192982 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Sealed ScopeValue JSON contract* | **Hash**: 1e192982
+
+## EVS-DEV-containment-resolver: Containment-chain walk via TableProjections
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `ContainmentResolver.resolve(from, target)` SHALL return `from` unchanged when `from.class_ == target`.
+
+B. `ContainmentResolver.resolve(from, target)` SHALL return `null` when `target` is not in `from.class_`'s ancestor chain in the registry.
+
+C. `ContainmentResolver.resolve(from, target)` SHALL walk the ancestor chain by reading each hop's `ContainmentRef.projection` (via the injected transactional read), returning the resolved ancestor `BoundScope` at class `target`.
+
+D. `ContainmentResolver.resolve` SHALL return `null` when any hop's projection returns zero rows for the current key, or returns a row whose `parentColumn` is missing, non-string, or empty (fail-closed on missing containment data).
+
+---
+
+### Changelog
+
+- 2026-05-14 | 8b7a3f36 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Containment-chain walk via TableProjections* | **Hash**: 8b7a3f36
+
+## EVS-DEV-scoped-permissions-match-algorithm: TableBackedAuthorizationPolicy match semantics
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `TableBackedAuthorizationPolicy.isPermitted` SHALL deny with `DenyReason.notGranted` when `role_permission_grants` has no row for the principal's `activeRole` and the permission name.
+
+B. `TableBackedAuthorizationPolicy.isPermitted` SHALL deny with `DenyReason.scopeUnresolvable` when `permission.scopeClass != null` xor `scopeValue == null` (the dispatcher's invariant is violated).
+
+C. For an unscoped permission (`scopeClass == null`), a role-level grant SHALL be sufficient: the policy SHALL return `Allow` without reading `user_role_scopes`.
+
+D. For a scoped permission, the policy SHALL allow the request when at least one user-role-scope assignment matches the requested scope under first-match-wins union: assigned `TotalWildcardScope` matches any request; assigned `ValueWildcardScope(class=C)` matches when the request's class equals `C` or descends from `C`; assigned `BoundScope(class=C, value=V)` matches a request with the same `(class, value)`, or a descendant whose containment resolves to `V` at class `C`.
+
+E. The policy SHALL deny with `DenyReason.notGranted` when no assignment matches the requested scope, including when containment resolution returns `null` for every assignment (fail-closed propagation from the resolver).
+
+F. The policy SHALL return `Deny(notGranted)` for principals that are not `UserPrincipal` (anonymous principals have no role assignments).
+
+---
+
+### Changelog
+
+- 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 899af570
+
+## EVS-DEV-effective-permissions-shape: effectivePermissionsFor surface
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `AuthorizationPolicy.effectivePermissionsFor(principal)` SHALL return an `EffectiveAuthorization` carrying the active role, the `Set<Permission>` granted to that role, and the `List<ScopeAssignment>` of the user's scope assignments under that role.
+
+B. `effectivePermissionsFor` SHALL return `EffectiveAuthorization.empty` for principals that are not `UserPrincipal`.
+
+C. `ScopeAssignment` SHALL carry exactly one `ScopeValue` (the assigned scope), so that clients composing the surface against their own projections see assignments as sealed-variant values rather than encoded strings.
+
+D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `rolePermissions` set, and an empty `scopeAssignments` list, and SHALL satisfy structural equality with another empty instance.
+
+---
+
+### Changelog
+
+- 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *effectivePermissionsFor surface* | **Hash**: b688e6ed
+
+## EVS-DEV-transactional-authorize-execute: Dispatch tx encompasses authorize + execute + persist
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-action-dispatch, EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. The dispatcher SHALL open one storage transaction for the authorize, execute, and stage-8 persist phases of a single dispatch; the `AuthorizationPolicy` SHALL receive the active `Txn` so its projection reads share the read-snapshot with the appended events.
+
+B. When the authorize stage produces a `Deny` from within the dispatch transaction, the dispatcher SHALL append the `authorization_denied` event in the same transaction so the policy reads and the recorded denial commit atomically.
+
+C. When the execute stage throws or the stage-8 append throws, the dispatch transaction SHALL be rolled back, and the dispatcher SHALL emit the corresponding denial event (`execution_failed`) in a separate append after the rollback.
+
+D. The transactional posture SHALL ensure that a role or scope revocation committed concurrently with an in-flight dispatch does not change that dispatch's outcome; the revocation SHALL take effect on subsequent dispatches.
+
+---
+
+### Changelog
+
+- 2026-05-14 | 6461dd31 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 6461dd31
+
+## EVS-DEV-role-assignment-aggregate-id: Canonical-JSON aggregate id for role assignments
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `roleAssignmentAggregateId(userId, role, scope)` SHALL return the canonical-JSON (JCS, RFC 8785) encoding of the object `{"user_id": userId, "role": role, "scope": scope.toJson()}`.
+
+B. Distinct `(userId, role, scope)` tuples SHALL produce distinct aggregate ids; identical tuples SHALL produce byte-identical aggregate ids regardless of construction order.
+
+C. The aggregate id SHALL be safe against segment-encoding ambiguity: a userId, role, or scope value containing characters like `:` or `/` SHALL NOT collide with a different tuple's id.
+
+---
+
+### Changelog
+
+- 2026-05-14 | abb4d0a5 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Canonical-JSON aggregate id for role assignments* | **Hash**: abb4d0a5
+
+## EVS-DEV-scope-unresolvable-denial: Dispatcher denial when Action.scopeFor is unusable
+
+**Level**: dev | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-action-dispatch, EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. The dispatcher SHALL invoke `Action.scopeFor(permission, parsedInput)` for every permission whose `scopeClass != null`, before opening the dispatch transaction.
+
+B. The dispatcher SHALL emit an `authorization_denied` event with `deny_reason: scopeUnresolvable` and short-circuit the dispatch when `Action.scopeFor` returns `null` for a scoped permission.
+
+C. The dispatcher SHALL emit an `authorization_denied` event with `deny_reason: scopeUnresolvable` and short-circuit the dispatch when `Action.scopeFor` returns a `TotalWildcardScope` for a scoped permission (the value carries no class to match against the permission's `scopeClass`).
+
+D. The dispatcher SHALL emit an `authorization_denied` event with `deny_reason: scopeUnresolvable` and short-circuit the dispatch when `Action.scopeFor` returns a `ScopeValue` whose `class_` does not equal the permission's declared `scopeClass`.
+
+E. When a scope value was returned (any of cases C or D, but not B), the dispatcher SHALL stamp the offending scope value's JSON onto the denial event's payload under the `scope` key, so the audit log captures the precise denial circumstance.
+
+### Changelog
+
+- 2026-05-14 | 4a2db650 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+
+*End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 4a2db650
