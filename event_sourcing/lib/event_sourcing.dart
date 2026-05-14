@@ -240,6 +240,8 @@ export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show roleAssignmentAggregateId;
+export 'src/permissions/role_unassigned_payload.dart'
+    show RoleUnassignedPayload;
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
