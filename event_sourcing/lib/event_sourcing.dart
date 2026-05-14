@@ -237,6 +237,7 @@ export 'src/permissions/permission_revoked_payload.dart'
     show PermissionRevokedPayload;
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
 export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
+export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show roleAssignmentAggregateId;
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
