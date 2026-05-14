@@ -2,12 +2,13 @@
 
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/permissions/scope_class_registry.dart';
+import 'package:event_sourcing/src/storage/txn.dart';
 
 /// Signature matching `StorageBackend.findViewRowsInTxn`. Passed by the
 /// production policy; unit tests provide a fake.
 typedef FindRowsInTxn =
     Future<List<Map<String, dynamic>>> Function(
-      Object txn,
+      Txn txn,
       String viewName, {
       Map<String, Object?>? where,
       int? limit,
@@ -25,7 +26,7 @@ class ContainmentResolver {
   final FindRowsInTxn findRowsInTxn;
 
   Future<BoundScope?> resolve({
-    required Object txn,
+    required Txn txn,
     required BoundScope from,
     required String target,
   }) async {

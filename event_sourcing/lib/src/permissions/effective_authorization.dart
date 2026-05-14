@@ -1,5 +1,6 @@
 // Implements: EVS-PRD-permissions-as-events (effectivePermissionsFor surface for client-side UI gating)
 
+import 'package:collection/collection.dart';
 import 'package:meta/meta.dart';
 
 import '../actions/permission.dart';
@@ -26,5 +27,27 @@ class EffectiveAuthorization {
     activeRole: '',
     rolePermissions: <Permission>{},
     scopeAssignments: <ScopeAssignment>[],
+  );
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is EffectiveAuthorization &&
+        activeRole == other.activeRole &&
+        const SetEquality<Permission>().equals(
+          rolePermissions,
+          other.rolePermissions,
+        ) &&
+        const ListEquality<ScopeAssignment>().equals(
+          scopeAssignments,
+          other.scopeAssignments,
+        );
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    activeRole,
+    const SetEquality<Permission>().hash(rolePermissions),
+    const ListEquality<ScopeAssignment>().hash(scopeAssignments),
   );
 }

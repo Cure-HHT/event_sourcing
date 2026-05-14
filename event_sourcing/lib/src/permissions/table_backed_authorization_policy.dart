@@ -16,26 +16,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     required this.txnProvider,
   }) : _resolver = ContainmentResolver(
          registry: scopeClassRegistry,
-         // FindRowsInTxn declares its txn param as `Object` (so the
-         // resolver doesn't have to leak the Txn type); the backend's
-         // findViewRowsInTxn takes a concrete `Txn`. Wrap to bridge the
-         // contravariance: every caller of FindRowsInTxn inside the
-         // resolver passes a Txn anyway (the policy hands its own
-         // transaction down), so the downcast is sound.
-         findRowsInTxn:
-             (
-               Object txn,
-               String viewName, {
-               Map<String, Object?>? where,
-               int? limit,
-               int? offset,
-             }) => backend.findViewRowsInTxn(
-               txn as Txn,
-               viewName,
-               where: where,
-               limit: limit,
-               offset: offset,
-             ),
+         findRowsInTxn: backend.findViewRowsInTxn,
        );
 
   final StorageBackend backend;

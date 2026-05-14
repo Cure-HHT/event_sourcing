@@ -8,7 +8,7 @@ class _FakeBackend {
   final Map<String, List<Map<String, dynamic>>> rows;
 
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Object txn,
+    Txn txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
@@ -20,6 +20,10 @@ class _FakeBackend {
         .where((r) => where.entries.every((e) => r[e.key] == e.value))
         .toList();
   }
+}
+
+class _FakeTxn extends Txn {
+  const _FakeTxn();
 }
 
 void main() {
@@ -51,7 +55,7 @@ void main() {
         findRowsInTxn: backend.findViewRowsInTxn,
       );
       final result = await resolver.resolve(
-        txn: Object(),
+        txn: const _FakeTxn(),
         from: const BoundScope(class_: 'patient', value: 'P-42'),
         target: 'site',
       );
@@ -98,7 +102,7 @@ void main() {
         findRowsInTxn: backend.findViewRowsInTxn,
       );
       final result = await resolver.resolve(
-        txn: Object(),
+        txn: const _FakeTxn(),
         from: const BoundScope(class_: 'patient', value: 'P-42'),
         target: 'region',
       );
@@ -130,7 +134,7 @@ void main() {
           findRowsInTxn: backend.findViewRowsInTxn,
         );
         final result = await resolver.resolve(
-          txn: Object(),
+          txn: const _FakeTxn(),
           from: const BoundScope(class_: 'patient', value: 'P-42'),
           target: 'site',
         );
@@ -148,7 +152,7 @@ void main() {
         findRowsInTxn: (_, __, {where, limit, offset}) async => [],
       );
       final result = await resolver.resolve(
-        txn: Object(),
+        txn: const _FakeTxn(),
         from: const BoundScope(class_: 'site', value: 'A'),
         target: 'site',
       );
@@ -168,7 +172,7 @@ void main() {
         findRowsInTxn: (_, __, {where, limit, offset}) async => [],
       );
       final result = await resolver.resolve(
-        txn: Object(),
+        txn: const _FakeTxn(),
         from: const BoundScope(class_: 'site', value: 'A'),
         target: 'lab',
       );
