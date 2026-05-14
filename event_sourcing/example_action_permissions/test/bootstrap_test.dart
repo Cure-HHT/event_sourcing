@@ -91,6 +91,7 @@ grants:
       final decision = await components.policy.isPermitted(
         principal,
         const Permission('help.ask'),
+        null,
       );
       expect(decision, isA<Allow>());
     });

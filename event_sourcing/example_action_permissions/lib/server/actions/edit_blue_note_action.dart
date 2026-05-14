@@ -66,6 +66,12 @@ class EditBlueNoteAction extends Action<EditBlueNoteInput, EditBlueNoteResult> {
   }
 
   @override
+  ScopeValue? scopeFor(Permission perm, EditBlueNoteInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'blue-workspace')
+      : null;
+
+  @override
   Future<ExecutionResult<EditBlueNoteResult>> execute(
     EditBlueNoteInput input,
     ActionContext ctx,

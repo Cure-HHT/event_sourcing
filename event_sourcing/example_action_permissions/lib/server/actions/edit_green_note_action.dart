@@ -67,6 +67,12 @@ class EditGreenNoteAction
   }
 
   @override
+  ScopeValue? scopeFor(Permission perm, EditGreenNoteInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'green-workspace')
+      : null;
+
+  @override
   Future<ExecutionResult<EditGreenNoteResult>> execute(
     EditGreenNoteInput input,
     ActionContext ctx,

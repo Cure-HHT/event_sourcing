@@ -69,12 +69,24 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final directoryMaterializer = UserDirectoryMaterializer(directory: directory);
   final registry = buildDemoActionRegistry(directory: directory);
 
-  // 2. Bootstrap the append-only datastore. The role_permission_grants view
-  //    is driven by rolePermissionGrantsSpec (TableProjectionSpec) via the
-  //    ProjectionRegistry. Every entry type the demo writes must be
-  //    registered up front; missing registrations fail at append.
+  // 2. Bootstrap the append-only datastore. The role_permission_grants and
+  //    user_role_scopes views are driven by their respective
+  //    TableProjectionSpecs via the ProjectionRegistry. Every entry type the
+  //    demo writes must be registered up front; missing registrations fail
+  //    at append.
   final demoProjections = ProjectionRegistry()
-    ..register(rolePermissionGrantsSpec);
+    ..register(rolePermissionGrantsSpec)
+    ..register(userRoleScopesSpec);
+
+  // 2a. ScopeClassRegistry: the demo declares a single top-level scope
+  //     class ('site'). No containment hierarchy is needed (the demo's
+  //     two workspaces are flat). Apps that need parent/child scope
+  //     hierarchies wire a richer registry here; the policy reads it at
+  //     authorize time via ContainmentResolver.
+  final scopeClassRegistry = ScopeClassRegistry(
+    classes: const <ScopeClassSpec>[ScopeClassSpec(name: 'site')],
+    projectionLookup: (_) => null,
+  );
   final datastore = await bootstrapAppendOnlyDatastore(
     backend: backend,
     source: Source(
@@ -102,21 +114,59 @@ Future<DemoServerComponents> bootstrapDemoServer({
         ),
         const Events(),
       )
-      .listen((update) {
+      .listen((update) async {
         // Events()-mode subscriptions never emit Snapshot/EndOfReplay/Tombstone;
         // we only act on Delta. Any future variants are intentionally ignored.
         if (update is Delta<StoredEvent>) {
           directoryMaterializer.applyDirect(update.value.data);
+          // Bridge runtime provisioning to the scope-aware authorize path:
+          // when ProvisionUserAction appends a user_provisioned event with
+          // a non-null activeSite, emit the matching role_assigned event
+          // via the public `eventStore.append` path (which projects
+          // user_role_scopes synchronously). Without this bridge the new
+          // user's site-scoped permissions would deny because the
+          // dispatcher's `appendInTxn` does not run the projection
+          // interpreter; the next dispatch would read a user_role_scopes
+          // view that still lacks the new row.
+          //
+          // Idempotent: bootstrapRoleAssignments diffs against the live
+          // view and only emits when the (userId, role, scope) tuple is
+          // missing — replays of user_provisioned (e.g. seed-time re-runs)
+          // never produce duplicate role_assigned events.
+          final payload = update.value.data;
+          final site = payload['activeSite'];
+          if (site is String && site.isNotEmpty) {
+            final userId = payload['userId']! as String;
+            final role = payload['role']! as String;
+            await bootstrapRoleAssignments(
+              eventStore: eventStore,
+              seed: RoleAssignmentSeed(
+                entries: <RoleAssignmentSeedEntry>[
+                  RoleAssignmentSeedEntry(
+                    userId: userId,
+                    role: role,
+                    scope: BoundScope(class_: 'site', value: site),
+                  ),
+                ],
+              ),
+              seedInitiator: const AutomationInitiator(
+                service: 'provision_user_action_bridge',
+              ),
+            );
+          }
         }
       });
 
   // 3. Apply the role-permission matrix YAML seed. Returns either
   //    PolicyReady(policy) or PolicyFailSafe(errors); on FailSafe the
   //    returned policy denies everything and the errors flow back to the
-  //    caller via DemoServerComponents.policyErrors.
+  //    caller via DemoServerComponents.policyErrors. The scopeClassRegistry
+  //    is forwarded so the seed validator can verify every scoped
+  //    permission references a registered scopeClass.
   final policyBootstrap = await bootstrapActionPermissions(
     eventStore: eventStore,
     declaredPermissions: registry.allDeclaredPermissions,
+    scopeClassRegistry: scopeClassRegistry,
     yamlSource: permissionsYaml,
   );
 
@@ -144,6 +194,29 @@ Future<DemoServerComponents> bootstrapDemoServer({
       initiator: const AutomationInitiator(service: 'user_directory_seed'),
     );
   }
+
+  // 4a. Seed user-role-scope assignments. The user-directory YAML carries
+  //     an `activeSite` per user; for site-scoped permissions to authorize,
+  //     the policy needs a matching `user_role_scopes` row. Translate each
+  //     directory entry with a non-null activeSite into a single
+  //     RoleAssignmentSeedEntry, then have the substrate emit
+  //     role_assigned events idempotently. Users without an activeSite
+  //     (e.g. Admin in the demo seed) get no assignment — they only
+  //     exercise unscoped permissions, which need only the role-permission
+  //     grant.
+  final roleAssignments = <RoleAssignmentSeedEntry>[
+    for (final entry in directory.listEntries())
+      if (entry.activeSite != null)
+        RoleAssignmentSeedEntry(
+          userId: entry.userId,
+          role: entry.role,
+          scope: BoundScope(class_: 'site', value: entry.activeSite!),
+        ),
+  ];
+  await bootstrapRoleAssignments(
+    eventStore: eventStore,
+    seed: RoleAssignmentSeed(entries: roleAssignments),
+  );
 
   // 5. Idempotency cache + dispatcher.
   final idempotencyStore = DemoIdempotencyStore();
@@ -199,6 +272,14 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     id: 'role_permission_grant',
     registeredVersion: 1,
     name: 'Role-Permission Grant',
+  ),
+  // Permissions module emits role_assigned events here via
+  // bootstrapRoleAssignments; the user_role_scopes view (projected by
+  // userRoleScopesSpec) drives the policy's scope-coverage check.
+  EntryTypeDefinition(
+    id: 'user_role_scope',
+    registeredVersion: 1,
+    name: 'User-Role-Scope Assignment',
   ),
   // The dispatcher emits one of these for every denial stage.
   EntryTypeDefinition(

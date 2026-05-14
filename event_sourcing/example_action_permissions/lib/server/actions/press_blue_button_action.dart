@@ -48,6 +48,12 @@ class PressBlueButtonAction extends Action<PressBlueInput, PressBlueResult> {
   }
 
   @override
+  ScopeValue? scopeFor(Permission perm, PressBlueInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'blue-workspace')
+      : null;
+
+  @override
   Future<ExecutionResult<PressBlueResult>> execute(
     PressBlueInput input,
     ActionContext ctx,
