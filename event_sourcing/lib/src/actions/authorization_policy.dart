@@ -7,6 +7,7 @@ import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/permissions/effective_authorization.dart';
+import 'package:event_sourcing/src/storage/txn.dart';
 
 /// Pluggable authorization decision-maker. Concrete impls live in the
 /// permissions module within `event_sourcing`
@@ -19,14 +20,29 @@ abstract class AuthorizationPolicy {
   /// optional [scopeValue]. The dispatcher guarantees scopeValue is
   /// non-null iff permission.scopeClass is non-null; impls may assert
   /// this invariant.
+  ///
+  /// When [txn] is non-null, the policy's projection reads MUST run
+  /// inside that transaction (and therefore against the same storage
+  /// read-snapshot the caller is using for subsequent writes). When
+  /// [txn] is null, the policy opens its own transaction. The
+  /// dispatcher passes its active txn so that authorize + execute share
+  /// a snapshot — a revocation committed mid-flight cannot invalidate
+  /// an authorized dispatch.
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
-    ScopeValue? scopeValue,
-  );
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  });
 
   /// Materials for client-side UI gating and app-side scope-aware
   /// queries: the active role's permission set + the user's scope
   /// assignments under that role.
-  Future<EffectiveAuthorization> effectivePermissionsFor(Principal principal);
+  ///
+  /// [txn] has the same semantics as on [isPermitted]: non-null = run
+  /// reads in the caller's transaction; null = open one internally.
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Txn? txn,
+  });
 }

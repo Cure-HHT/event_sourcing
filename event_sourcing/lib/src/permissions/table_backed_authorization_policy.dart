@@ -34,8 +34,9 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
-    ScopeValue? scopeValue,
-  ) async {
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async {
     // 1. Anonymous principals carry no role assignments.
     if (principal is! UserPrincipal) {
       return Deny(permission: permission, reason: DenyReason.notGranted);
@@ -49,55 +50,68 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
       return Deny(permission: permission, reason: DenyReason.scopeUnresolvable);
     }
 
-    return txnProvider((txn) async {
-      // 3. Role-level grant: does the active role carry this permission name?
-      final grants = await backend.findViewRowsInTxn(
-        txn,
-        'role_permission_grants',
-        where: <String, Object?>{
-          'role': principal.activeRole,
-          'permissionName': permission.name,
-        },
-        limit: 1,
-      );
-      if (grants.isEmpty) {
-        return Deny(permission: permission, reason: DenyReason.notGranted);
-      }
+    // Run the projection reads either in the caller-supplied txn (so
+    // they share the read-snapshot with subsequent appends in that tx)
+    // or open a fresh one via [txnProvider].
+    if (txn != null) {
+      return _evaluate(txn, principal, permission, scopeValue);
+    }
+    return txnProvider(
+      (innerTxn) => _evaluate(innerTxn, principal, permission, scopeValue),
+    );
+  }
 
-      // 4. Unscoped permission: role grant is sufficient.
-      if (permission.scopeClass == null) {
+  /// Pure projection-read body shared by the txn-injected and
+  /// txnProvider-opened paths.
+  Future<AuthorizationDecision> _evaluate(
+    Txn txn,
+    UserPrincipal principal,
+    Permission permission,
+    ScopeValue? scopeValue,
+  ) async {
+    // 3. Role-level grant: does the active role carry this permission name?
+    final grants = await backend.findViewRowsInTxn(
+      txn,
+      'role_permission_grants',
+      where: <String, Object?>{
+        'role': principal.activeRole,
+        'permissionName': permission.name,
+      },
+      limit: 1,
+    );
+    if (grants.isEmpty) {
+      return Deny(permission: permission, reason: DenyReason.notGranted);
+    }
+
+    // 4. Unscoped permission: role grant is sufficient.
+    if (permission.scopeClass == null) {
+      return const Allow();
+    }
+
+    // 5. Scoped permission: enumerate user's assignments under active role.
+    final assignments = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    if (assignments.isEmpty) {
+      return Deny(permission: permission, reason: DenyReason.notGranted);
+    }
+
+    // 6. Match (first-match-wins = union semantics over the assignments).
+    final requested = scopeValue!;
+    for (final row in assignments) {
+      final assignedScope = ScopeValue.fromJson(
+        (row['scope']! as Map).cast<String, Object?>(),
+      );
+      if (await _matches(txn, assigned: assignedScope, requested: requested)) {
         return const Allow();
       }
-
-      // 5. Scoped permission: enumerate user's assignments under active role.
-      final assignments = await backend.findViewRowsInTxn(
-        txn,
-        'user_role_scopes',
-        where: <String, Object?>{
-          'user_id': principal.userId,
-          'role': principal.activeRole,
-        },
-      );
-      if (assignments.isEmpty) {
-        return Deny(permission: permission, reason: DenyReason.notGranted);
-      }
-
-      // 6. Match (first-match-wins = union semantics over the assignments).
-      final requested = scopeValue!;
-      for (final row in assignments) {
-        final assignedScope = ScopeValue.fromJson(
-          (row['scope']! as Map).cast<String, Object?>(),
-        );
-        if (await _matches(
-          txn,
-          assigned: assignedScope,
-          requested: requested,
-        )) {
-          return const Allow();
-        }
-      }
-      return Deny(permission: permission, reason: DenyReason.notGranted);
-    });
+    }
+    return Deny(permission: permission, reason: DenyReason.notGranted);
   }
 
   /// Variant switch for one assignment vs. the requested scope.
@@ -144,46 +158,55 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
-    Principal principal,
-  ) async {
+    Principal principal, {
+    Txn? txn,
+  }) async {
     if (principal is! UserPrincipal) {
       return EffectiveAuthorization.empty;
     }
-    return txnProvider((txn) async {
-      final grants = await backend.findViewRowsInTxn(
-        txn,
-        'role_permission_grants',
-        where: <String, Object?>{'role': principal.activeRole},
-      );
-      final perms = <Permission>{
-        // Permission grants don't store scopeClass (it's a code-registered
-        // attribute on the Permission definition, not per-grant data). Apps
-        // that need full scopeClass info look up against their own Permission
-        // registry; this surface is for UI gating, where matching by name
-        // is sufficient.
-        for (final g in grants) Permission(g['permissionName']! as String),
-      };
-      final assignmentRows = await backend.findViewRowsInTxn(
-        txn,
-        'user_role_scopes',
-        where: <String, Object?>{
-          'user_id': principal.userId,
-          'role': principal.activeRole,
-        },
-      );
-      final assignments = <ScopeAssignment>[
-        for (final r in assignmentRows)
-          ScopeAssignment(
-            scope: ScopeValue.fromJson(
-              (r['scope']! as Map).cast<String, Object?>(),
-            ),
+    if (txn != null) {
+      return _effectiveBody(txn, principal);
+    }
+    return txnProvider((innerTxn) => _effectiveBody(innerTxn, principal));
+  }
+
+  Future<EffectiveAuthorization> _effectiveBody(
+    Txn txn,
+    UserPrincipal principal,
+  ) async {
+    final grants = await backend.findViewRowsInTxn(
+      txn,
+      'role_permission_grants',
+      where: <String, Object?>{'role': principal.activeRole},
+    );
+    final perms = <Permission>{
+      // Permission grants don't store scopeClass (it's a code-registered
+      // attribute on the Permission definition, not per-grant data). Apps
+      // that need full scopeClass info look up against their own Permission
+      // registry; this surface is for UI gating, where matching by name
+      // is sufficient.
+      for (final g in grants) Permission(g['permissionName']! as String),
+    };
+    final assignmentRows = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    final assignments = <ScopeAssignment>[
+      for (final r in assignmentRows)
+        ScopeAssignment(
+          scope: ScopeValue.fromJson(
+            (r['scope']! as Map).cast<String, Object?>(),
           ),
-      ];
-      return EffectiveAuthorization(
-        activeRole: principal.activeRole,
-        rolePermissions: perms,
-        scopeAssignments: assignments,
-      );
-    });
+        ),
+    ];
+    return EffectiveAuthorization(
+      activeRole: principal.activeRole,
+      rolePermissions: perms,
+      scopeAssignments: assignments,
+    );
   }
 }

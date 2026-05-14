@@ -18,6 +18,7 @@ import 'package:event_sourcing/src/actions/scope_value.dart'
     show BoundScope, ScopeValue;
 import 'package:event_sourcing/src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
+import 'package:event_sourcing/src/storage/txn.dart' show Txn;
 
 /// Always-succeeds, emits one event.
 class HelloAction extends Action<Map<String, Object?>, String> {
@@ -174,37 +175,49 @@ class AlwaysAllowPolicy extends AuthorizationPolicy {
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
-    ScopeValue? scopeValue,
-  ) async => const Allow();
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async => const Allow();
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
-    Principal principal,
-  ) async => EffectiveAuthorization.empty;
+    Principal principal, {
+    Txn? txn,
+  }) async => EffectiveAuthorization.empty;
 }
 
-/// Records every (permission, scopeValue) pair the dispatcher passes to
-/// isPermitted; always allows. Used to verify the dispatcher hands the
-/// resolved scope through to the policy.
+/// Records every (permission, scopeValue, txn) tuple the dispatcher
+/// passes to [isPermitted]; always allows. Used to verify the dispatcher
+/// (a) hands the resolved scope through to the policy and (b) injects
+/// the active dispatch transaction so authorize + execute share a
+/// read-snapshot.
 class RecordingAllowPolicy extends AuthorizationPolicy {
   RecordingAllowPolicy();
 
   final List<(Permission, ScopeValue?)> calls = <(Permission, ScopeValue?)>[];
 
+  /// Every [Txn] the dispatcher injected into [isPermitted], in call
+  /// order. Tests assert non-null and identity-equality with the txn the
+  /// dispatcher's [EventStore.runTransaction] body received.
+  final List<Txn?> txns = <Txn?>[];
+
   @override
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
-    ScopeValue? scopeValue,
-  ) async {
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async {
     calls.add((permission, scopeValue));
+    txns.add(txn);
     return const Allow();
   }
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
-    Principal principal,
-  ) async => EffectiveAuthorization.empty;
+    Principal principal, {
+    Txn? txn,
+  }) async => EffectiveAuthorization.empty;
 }
 
 /// Policy that always denies with [DenyReason.notGranted]. Used to verify
@@ -217,13 +230,15 @@ class AlwaysDenyNotGrantedPolicy extends AuthorizationPolicy {
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
-    ScopeValue? scopeValue,
-  ) async => Deny(permission: permission, reason: DenyReason.notGranted);
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async => Deny(permission: permission, reason: DenyReason.notGranted);
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
-    Principal principal,
-  ) async => EffectiveAuthorization.empty;
+    Principal principal, {
+    Txn? txn,
+  }) async => EffectiveAuthorization.empty;
 }
 
 /// Action requiring a scoped permission `patient.edit` (scopeClass:

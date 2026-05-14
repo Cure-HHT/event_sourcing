@@ -797,4 +797,161 @@ void main() {
       },
     );
   });
+
+  // Verifies: EVS-PRD-action-dispatch/B (authorize stage's policy reads
+  // and Stage 8's event appends share one storage transaction, so a
+  // role/scope revocation committed between authorize and append cannot
+  // mid-flight invalidate an authorized dispatch.)
+  group('Stage 6–8 — authorize+execute share one transaction', () {
+    test(
+      'policy.isPermitted receives a non-null Txn injected by the dispatcher',
+      () async {
+        final policy = RecordingAllowPolicy();
+        final d = ActionDispatcher(
+          registry: registry,
+          authorization: policy,
+          events: eventStore,
+          idempotency: idempotency,
+        );
+        final result = await d.dispatch(
+          const ActionSubmission(
+            actionName: 'hello',
+            rawInput: <String, Object?>{'who': 'world'},
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchSuccess<Object?>>());
+
+        expect(policy.txns, hasLength(1));
+        expect(
+          policy.txns.single,
+          isNotNull,
+          reason:
+              'dispatcher must inject its active runTransaction Txn into '
+              'policy.isPermitted so authorize+execute share a snapshot',
+        );
+      },
+    );
+
+    test('two dispatches receive distinct Txn instances (each dispatch opens '
+        'its own backend transaction)', () async {
+      final policy = RecordingAllowPolicy();
+      final d = ActionDispatcher(
+        registry: registry,
+        authorization: policy,
+        events: eventStore,
+        idempotency: idempotency,
+      );
+      await d.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'one'},
+        ),
+        _ctx(),
+      );
+      await d.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'two'},
+        ),
+        _ctx(),
+      );
+
+      expect(policy.txns, hasLength(2));
+      expect(policy.txns[0], isNotNull);
+      expect(policy.txns[1], isNotNull);
+      expect(
+        identical(policy.txns[0], policy.txns[1]),
+        isFalse,
+        reason: 'distinct dispatches must open distinct transactions',
+      );
+    });
+
+    test('both isPermitted calls within one dispatch (TwoPermissionAction) '
+        'receive the SAME Txn instance — proves the policy reads share one '
+        'snapshot across the action\'s permission iteration', () async {
+      registry.register(TwoPermissionAction());
+      final policy = RecordingAllowPolicy();
+      final d = ActionDispatcher(
+        registry: registry,
+        authorization: policy,
+        events: eventStore,
+        idempotency: idempotency,
+      );
+
+      final result = await d.dispatch(
+        const ActionSubmission(
+          actionName: 'two_perms',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
+
+      expect(policy.txns, hasLength(2));
+      expect(policy.txns[0], isNotNull);
+      expect(
+        identical(policy.txns[0], policy.txns[1]),
+        isTrue,
+        reason:
+            'authorize-stage policy reads for multiple permissions in '
+            'one dispatch must share the dispatcher\'s active txn',
+      );
+    });
+
+    test('authorize-stage denial commits the authorization_denied event in '
+        'the dispatch tx (success path: tx is committed even though no '
+        'execute-result events were appended)', () async {
+      // Default `dispatcher` uses DenyAllAuthorizationPolicy.forTests();
+      // HelloAction declares test.hello which gets denied.
+      final result = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchAuthorizationDenied<Object?>>());
+
+      // The denial event must be durably persisted (i.e. the tx was
+      // committed with just the denial in it, not rolled back).
+      final allEvents = await eventStore.backend.findAllEvents();
+      final denials = allEvents
+          .where((e) => e.eventType == 'authorization_denied')
+          .toList();
+      expect(denials, hasLength(1));
+      expect(denials.single.data['permission_denied'], 'test.hello');
+    });
+
+    test('execute-stage failure rolls the dispatch tx back, then emits the '
+        'execution_failed denial in its own (post-rollback) append', () async {
+      registry.register(BadExecuteAction());
+      final allowDispatcher = ActionDispatcher(
+        registry: registry,
+        authorization: const AlwaysAllowPolicy(),
+        events: eventStore,
+        idempotency: idempotency,
+      );
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'bad_execute',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchExecutionFailed<Object?>>());
+
+      // The dispatch tx rolled back, so no greeting events; the
+      // execution_failed denial was appended in its own tx.
+      final allEvents = await eventStore.backend.findAllEvents();
+      final greetings = allEvents
+          .where((e) => e.eventType == 'hello.said')
+          .toList();
+      expect(greetings, isEmpty);
+      final denials = allEvents
+          .where((e) => e.eventType == 'execution_failed')
+          .toList();
+      expect(denials, hasLength(1));
+    });
+  });
 }
