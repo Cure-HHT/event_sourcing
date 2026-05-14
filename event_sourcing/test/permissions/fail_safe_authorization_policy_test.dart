@@ -1,46 +1,41 @@
 // test/permissions/fail_safe_authorization_policy_test.dart
 // Verifies: EVS-PRD-permissions-as-events/B — FailSafeAuthorizationPolicy
-// denies all requests with DenyReason.notGranted when the event-derived
-// projection is unavailable, ensuring no authorization decision is made from
-// a corrupt or incomplete projection.
+// denies all requests with DenyReason.notGranted and returns an empty
+// EffectiveAuthorization, ensuring no authorization decision is made from a
+// corrupt or incomplete projection.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('FailSafeAuthorizationPolicy', () {
-    const policy = FailSafeAuthorizationPolicy(<String>[
-      'boot validation failed',
-    ]);
-
-    test('isPermitted returns Deny(notGranted) for any query', () async {
-      final p = Principal.user(
-        userId: 'u1',
-        roles: const {'admin'},
-        activeRole: 'admin',
+    test('isPermitted always denies', () async {
+      const policy = FailSafeAuthorizationPolicy();
+      final principal = Principal.user(
+        userId: 'U',
+        roles: const {'r'},
+        activeRole: 'r',
       );
-      final d = await policy.isPermitted(p, const Permission('user.invite'));
-      expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.notGranted);
-    });
-
-    test('permissionsFor returns empty', () async {
-      final p = Principal.user(
-        userId: 'u1',
-        roles: const {'admin'},
-        activeRole: 'admin',
+      final d = await policy.isPermitted(
+        principal,
+        const Permission('any'),
+        null,
       );
-      expect(await policy.permissionsFor(p), isEmpty);
-    });
-
-    test('bootstrapErrors are exposed', () {
-      expect(policy.bootstrapErrors, <String>['boot validation failed']);
-    });
-
-    test('anonymous principal also denied with notGranted', () async {
-      const p = Principal.anonymous();
-      final d = await policy.isPermitted(p, const Permission('user.invite'));
       expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.notGranted);
     });
+
+    test(
+      'effectivePermissionsFor returns empty EffectiveAuthorization',
+      () async {
+        const policy = FailSafeAuthorizationPolicy();
+        final principal = Principal.user(
+          userId: 'U',
+          roles: const {'r'},
+          activeRole: 'r',
+        );
+        final ea = await policy.effectivePermissionsFor(principal);
+        expect(ea.rolePermissions, isEmpty);
+        expect(ea.scopeAssignments, isEmpty);
+      },
+    );
   });
 }

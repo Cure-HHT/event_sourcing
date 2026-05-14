@@ -36,7 +36,7 @@ final class PolicyFailSafe extends AuthorizationPolicyBootstrap {
   final List<String> _errors;
 
   @override
-  AuthorizationPolicy get policy => FailSafeAuthorizationPolicy(_errors);
+  AuthorizationPolicy get policy => const FailSafeAuthorizationPolicy();
   @override
   bool get isReady => false;
   @override
