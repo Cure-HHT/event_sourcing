@@ -48,8 +48,14 @@ Future<AuthorizationPolicyBootstrap> bootstrapActionPermissions({
       ? loader.loadFromString(yamlSource)
       : loader.loadFromFile(yamlPath!);
 
-  // 2. Validate.
-  final validation = SeedValidator().validate(seed, declaredPermissions);
+  // 2. Validate. Forward the (optional) scope-class registry so any
+  // permission referencing an unregistered scopeClass surfaces during
+  // bootstrap as a PolicyFailSafe rather than at first dispatch.
+  final validation = SeedValidator().validate(
+    seed,
+    declaredPermissions,
+    scopeClassRegistry: scopeClassRegistry,
+  );
   if (validation is SeedInvalid) {
     return PolicyFailSafe(validation.errors);
   }
