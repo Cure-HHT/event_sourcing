@@ -44,7 +44,10 @@ class ContainmentResolver {
         limit: 1,
       );
       if (rows.isEmpty) return null;
-      final parentValue = rows.single[ref.parentColumn];
+      // rows.first (not .single) because limit: 1 is a backend hint, not a
+      // contract; a backend returning >1 rows must not crash the authorize
+      // stage out of fail-closed.
+      final parentValue = rows.first[ref.parentColumn];
       if (parentValue is! String || parentValue.isEmpty) return null;
       current = BoundScope(class_: ref.parentClass, value: parentValue);
     }
