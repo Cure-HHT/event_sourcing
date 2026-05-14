@@ -75,7 +75,6 @@ void main() {
           data: const PermissionGrantedPayload(
             role: 'admin',
             permissionName: 'user.invite',
-            scope: ScopeClass.global,
           ).toJson(),
           initiator: const AutomationInitiator(service: 'pre-existing'),
         );

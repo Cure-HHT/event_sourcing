@@ -27,10 +27,6 @@ class MaterializedViewRoleMatrixReader implements RoleMatrixReader {
     final rows = await backend.findViewRows(_viewName);
     return rows
         .where((r) => r['role'] == role)
-        // TODO(Task 9): Restore scopeClass round-trip once PermissionGrantedPayload
-        //   carries the registered scope-class identifier instead of the legacy
-        //   ScopeClass enum value. Currently yields unscoped Permission instances
-        //   regardless of the stored scope.
         .map((r) => Permission(r['permissionName']! as String))
         .toSet();
   }

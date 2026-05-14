@@ -22,7 +22,6 @@ void main() {
       const payload = PermissionGrantedPayload(
         role: 'admin',
         permissionName: 'user.invite',
-        scope: ScopeClass.global,
       );
       await eventStore.append(
         entryType: 'role_permission_grant',
@@ -45,7 +44,6 @@ void main() {
         data: const PermissionGrantedPayload(
           role: 'admin',
           permissionName: 'user.invite',
-          scope: ScopeClass.global,
         ).toJson(),
         initiator: const AutomationInitiator(service: 'test'),
       );
@@ -74,7 +72,6 @@ void main() {
           data: PermissionGrantedPayload(
             role: 'admin',
             permissionName: perm,
-            scope: ScopeClass.global,
           ).toJson(),
           initiator: const AutomationInitiator(service: 'test'),
         );

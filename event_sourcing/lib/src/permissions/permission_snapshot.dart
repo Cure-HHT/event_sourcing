@@ -18,7 +18,6 @@ class PermissionSnapshot {
     final grantsList = json['grants']! as List<Object?>;
     final grants = grantsList.map((g) {
       final m = g! as Map<Object?, Object?>;
-      // TODO(Task 9): Restore scopeClass round-trip — see materialized_view_role_matrix_reader.dart
       return Permission(m['name']! as String);
     }).toSet();
     return PermissionSnapshot(
@@ -34,7 +33,6 @@ class PermissionSnapshot {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'role': role,
-    // TODO(Task 9): Restore scopeClass round-trip — see materialized_view_role_matrix_reader.dart
     'grants': grants.map((p) => <String, Object?>{'name': p.name}).toList(),
     'issuedAt': issuedAt.toIso8601String(),
   };

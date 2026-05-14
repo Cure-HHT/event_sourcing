@@ -26,12 +26,11 @@ void main() {
     });
 
     test(
-      'permission_granted upserts view row with role/permissionName/scope',
+      'permission_granted upserts view row with role/permissionName',
       () async {
         const payload = PermissionGrantedPayload(
           role: 'admin',
           permissionName: 'user.invite',
-          scope: ScopeClass.global,
         );
         await eventStore.append(
           entryType: kRolePermissionGrantEntryType,
@@ -53,7 +52,6 @@ void main() {
         expect(row, isNotNull);
         expect(row!['role'], 'admin');
         expect(row['permissionName'], 'user.invite');
-        expect(row['scope'], 'global');
       },
     );
 
@@ -67,7 +65,6 @@ void main() {
         data: const PermissionGrantedPayload(
           role: 'admin',
           permissionName: 'user.invite',
-          scope: ScopeClass.global,
         ).toJson(),
         initiator: const AutomationInitiator(service: 'test'),
       );
@@ -107,7 +104,6 @@ void main() {
         data: const <String, Object?>{
           'role': 'admin',
           'permissionName': 'user.invite',
-          'scope': 'global',
         },
         initiator: const AutomationInitiator(service: 'test'),
       );
@@ -123,7 +119,6 @@ void main() {
       final payload = const PermissionGrantedPayload(
         role: 'admin',
         permissionName: 'user.invite',
-        scope: ScopeClass.global,
       ).toJson();
 
       // Insert twice — second append goes to the same aggregateId.
