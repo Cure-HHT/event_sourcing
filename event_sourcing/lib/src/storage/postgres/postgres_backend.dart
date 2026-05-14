@@ -47,6 +47,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/txn.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
 
@@ -128,7 +129,7 @@ class PostgresBackend extends StorageBackend {
     required String url,
     SslMode sslMode = SslMode.require,
   }) async {
-    final endpoint = _endpointFromUrl(url);
+    final endpoint = endpointFromUrl(url);
     final pool = Pool<void>.withEndpoints([
       endpoint,
     ], settings: PoolSettings(maxConnectionCount: 4, sslMode: sslMode));
@@ -137,7 +138,8 @@ class PostgresBackend extends StorageBackend {
     return backend;
   }
 
-  static Endpoint _endpointFromUrl(String url) {
+  @visibleForTesting
+  static Endpoint endpointFromUrl(String url) {
     final uri = Uri.parse(url);
     final userInfoParts = uri.userInfo.isEmpty
         ? const <String>[]

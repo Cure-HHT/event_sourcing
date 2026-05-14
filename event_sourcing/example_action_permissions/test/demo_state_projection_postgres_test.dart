@@ -32,7 +32,7 @@ void main() {
   }
 
   Future<DemoBackends> factory() async {
-    final endpoint = _endpointFromUrl(url);
+    final endpoint = PostgresBackend.endpointFromUrl(url);
     final tmp = await Connection.open(
       endpoint,
       settings: const ConnectionSettings(sslMode: SslMode.disable),
@@ -50,20 +50,4 @@ void main() {
   }
 
   runDemoStateProjectionTests(factory, label: 'postgres');
-}
-
-Endpoint _endpointFromUrl(String url) {
-  final uri = Uri.parse(url);
-  final userInfoParts = uri.userInfo.isEmpty
-      ? const <String>[]
-      : uri.userInfo.split(':');
-  return Endpoint(
-    host: uri.host,
-    port: uri.port == 0 ? 5432 : uri.port,
-    database: uri.pathSegments.isEmpty ? '' : uri.pathSegments.first,
-    username: userInfoParts.isEmpty ? null : userInfoParts.first,
-    password: userInfoParts.length < 2
-        ? null
-        : userInfoParts.sublist(1).join(':'),
-  );
 }

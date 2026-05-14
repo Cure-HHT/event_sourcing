@@ -72,26 +72,10 @@ void main() {
   });
 }
 
-// TODO(CUR-1330): once @visibleForTesting'd, replace with
-// PostgresBackend.endpointFromUrl + Connection.open(...).
-Future<Connection> _connect(String url) async {
-  final uri = Uri.parse(url);
-  final userInfoParts = uri.userInfo.isEmpty
-      ? const <String>[]
-      : uri.userInfo.split(':');
-  return Connection.open(
-    Endpoint(
-      host: uri.host,
-      port: uri.port == 0 ? 5432 : uri.port,
-      database: uri.pathSegments.isEmpty ? '' : uri.pathSegments.first,
-      username: userInfoParts.isEmpty ? null : userInfoParts.first,
-      password: userInfoParts.length < 2
-          ? null
-          : userInfoParts.sublist(1).join(':'),
-    ),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-}
+Future<Connection> _connect(String url) => Connection.open(
+  PostgresBackend.endpointFromUrl(url),
+  settings: const ConnectionSettings(sslMode: SslMode.disable),
+);
 
 Future<List<String>> _listPublicTables(Connection conn) async {
   final result = await conn.execute(
