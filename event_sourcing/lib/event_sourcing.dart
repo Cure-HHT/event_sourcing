@@ -223,6 +223,8 @@ export 'src/permissions/authorization_policy_bootstrap.dart'
     show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
     show bootstrapActionPermissions;
+export 'src/permissions/bootstrap_role_assignments.dart'
+    show RoleAssignmentSeedResult, bootstrapRoleAssignments;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
 export 'src/permissions/effective_authorization.dart'
@@ -240,6 +242,8 @@ export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show roleAssignmentAggregateId;
+export 'src/permissions/role_assignment_seed.dart'
+    show RoleAssignmentSeed, RoleAssignmentSeedEntry;
 export 'src/permissions/role_unassigned_payload.dart'
     show RoleUnassignedPayload;
 export 'src/permissions/role_permission_grants_spec.dart'
