@@ -64,9 +64,18 @@ Future<List<MatrixGrant>> collectMatrixGrants(EventStore store) async {
     });
 }
 
+/// Inspector-only enumeration of cached idempotency entries.
+///
+/// Only [DemoIdempotencyStore] supports enumerating cache contents (it
+/// is the inspector-friendly variant of the in-memory store). When the
+/// demo runs against a different backend store (e.g.
+/// `PostgresIdempotencyStore`), this function returns an empty list —
+/// the inspector pane shows no entries, but the dispatcher is still
+/// caching outcomes correctly in the backing store.
 List<IdempotencyEntrySummary> collectIdempotencyEntries(
-  DemoIdempotencyStore store,
+  IdempotencyStore store,
 ) {
+  if (store is! DemoIdempotencyStore) return const <IdempotencyEntrySummary>[];
   return store
       .listEntries()
       .map(

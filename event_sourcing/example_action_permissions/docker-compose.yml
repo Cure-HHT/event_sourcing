@@ -1,0 +1,17 @@
+# Local-dev Postgres for the event_sourcing demo and Postgres conformance
+# tests. Bring up with `docker compose up -d --wait` so the next command
+# sees a healthy container; the healthcheck below allows ~40s to ready.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: evs
+      POSTGRES_PASSWORD: evs
+      POSTGRES_DB: evs_demo
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evs -d evs_demo"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
