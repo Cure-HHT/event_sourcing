@@ -178,7 +178,16 @@ class ActionDispatcher {
         : null;
 
     for (final permission in action.permissions) {
-      final decision = await authorization.isPermitted(principal, permission);
+      // TODO(Task 20): wire action.scopeFor(...) into the third argument
+      // so scoped permissions resolve correctly. Task 17 supplies null
+      // here as a minimum-viable bridge so the substrate compiles; this
+      // forces every scoped permission to Deny(scopeUnresolvable) until
+      // Task 20 lands.
+      final decision = await authorization.isPermitted(
+        principal,
+        permission,
+        null,
+      );
       if (decision is Deny) {
         final denial = denialAuthorizationDenied(
           invocationId: invocationId,

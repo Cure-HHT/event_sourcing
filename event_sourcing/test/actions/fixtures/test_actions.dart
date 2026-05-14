@@ -14,6 +14,9 @@ import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show Principal;
+import 'package:event_sourcing/src/actions/scope_value.dart' show ScopeValue;
+import 'package:event_sourcing/src/permissions/effective_authorization.dart'
+    show EffectiveAuthorization;
 
 /// Always-succeeds, emits one event.
 class HelloAction extends Action<Map<String, Object?>, String> {
@@ -170,9 +173,11 @@ class AlwaysAllowPolicy extends AuthorizationPolicy {
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
+    ScopeValue? scopeValue,
   ) async => const Allow();
 
   @override
-  Future<Set<Permission>> permissionsFor(Principal principal) async =>
-      const <Permission>{};
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal,
+  ) async => EffectiveAuthorization.empty;
 }

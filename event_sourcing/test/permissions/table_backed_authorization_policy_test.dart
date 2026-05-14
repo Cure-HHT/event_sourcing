@@ -1,74 +1,312 @@
 // test/permissions/table_backed_authorization_policy_test.dart
 // Verifies: EVS-PRD-permissions-as-events/B — TableBackedAuthorizationPolicy
-// evaluates all authorization decisions from the event-derived role matrix
-// (via RoleMatrixReader); role membership and anonymous principal handling
-// are resolved from projection data alone, with no external authority
-// consulted.
-//
-// NOTE: Scope-precondition assertions previously lived here. Task 5 removed
-// the legacy ScopeClass{global,site,self} session-precondition switch from
-// the policy; Task 17 will reintroduce scope-aware evaluation against a
-// ScopeValue dispatched alongside each Permission. Until then this file
-// covers only the matrix-lookup contract.
+//   evaluates authorization decisions solely from the event-derived
+//   role_permission_grants, user_role_scopes, and containment projections.
+//   The match algorithm covers equality, value-wildcard, total-wildcard,
+//   and hierarchy containment with fail-closed semantics on missing rows.
+// Verifies: EVS-PRD-action-dispatch/B — Allow/Deny decisions surfaced to
+//   the dispatcher's authorize stage.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_support/policy_harness.dart';
+
 void main() {
-  group('TableBackedAuthorizationPolicy', () {
-    const reader = InMemoryRoleMatrixReader(<String, Map<String, Permission>>{
-      'admin': <String, Permission>{
-        'user.invite': Permission('user.invite'),
-        'site.manage': Permission('site.manage', scopeClass: 'site'),
-        'profile.read': Permission('profile.read'),
+  group('TableBackedAuthorizationPolicy match algorithm', () {
+    test('bound site assignment + patient-scoped permission via containment '
+        '-> Allow when patient is at the assigned site', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: {'P-42': 'A'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
+      );
+      expect(decision, isA<Allow>());
+    });
+
+    test('bound site assignment but patient is at a different site '
+        '-> Deny(notGranted)', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: {'P-42': 'B'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
+      );
+      expect(
+        decision,
+        isA<Deny>().having((d) => d.reason, 'reason', DenyReason.notGranted),
+      );
+    });
+
+    test(
+      'TotalWildcardScope assignment -> Allow on any scoped permission',
+      () async {
+        final h = await PolicyHarness.create(
+          grants: [const Grant(role: 'SUP', perm: 'patient.view')],
+          assignments: [
+            const Assignment(
+              userId: 'U2',
+              role: 'SUP',
+              scope: TotalWildcardScope(),
+            ),
+          ],
+          patientToSite: {'P-42': 'A'},
+        );
+        addTearDown(h.close);
+        final decision = await h.policy.isPermitted(
+          h.user('U2', 'SUP'),
+          const Permission('patient.view', scopeClass: 'patient'),
+          const BoundScope(class_: 'patient', value: 'P-42'),
+        );
+        expect(decision, isA<Allow>());
       },
-    });
-    const policy = TableBackedAuthorizationPolicy(reader);
+    );
 
-    test('Allow when role holds permission', () async {
-      final p = Principal.user(
-        userId: 'u1',
-        roles: const {'admin'},
-        activeRole: 'admin',
+    test('ValueWildcardScope(class=site) assignment -> Allow for any patient '
+        'via containment (any site covers any patient at any site)', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U3',
+            role: 'SC',
+            scope: ValueWildcardScope(class_: 'site'),
+          ),
+        ],
+        patientToSite: {'P-42': 'B'},
       );
-      final d = await policy.isPermitted(p, const Permission('user.invite'));
-      expect(d, isA<Allow>());
-    });
-
-    test('Deny notGranted when role does not hold permission', () async {
-      final p = Principal.user(
-        userId: 'u1',
-        roles: const {'patient'},
-        activeRole: 'patient',
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U3', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
       );
-      final d = await policy.isPermitted(p, const Permission('user.invite'));
-      expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.notGranted);
+      expect(decision, isA<Allow>());
     });
 
-    test('Deny notGranted when anonymous principal (no role)', () async {
-      const p = Principal.anonymous();
-      final d = await policy.isPermitted(p, const Permission('user.invite'));
-      expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.notGranted);
-    });
-
-    test('permissionsFor returns the role grants for a user', () async {
-      final p = Principal.user(
-        userId: 'u1',
-        roles: const {'admin'},
-        activeRole: 'admin',
+    test('patient-scoped assignment cannot cover site-scoped permission '
+        '(narrower than) -> Deny', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'site.read')],
+        assignments: [
+          const Assignment(
+            userId: 'U4',
+            role: 'SC',
+            scope: BoundScope(class_: 'patient', value: 'P-42'),
+          ),
+        ],
+        patientToSite: {'P-42': 'A'},
       );
-      final perms = await policy.permissionsFor(p);
-      expect(perms.map((x) => x.name).toSet(), <String>{
-        'user.invite',
-        'site.manage',
-        'profile.read',
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U4', 'SC'),
+        const Permission('site.read', scopeClass: 'site'),
+        const BoundScope(class_: 'site', value: 'A'),
+      );
+      expect(decision, isA<Deny>());
+    });
+
+    test('containment lookup miss -> fail-closed Deny(notGranted)', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: const <String, String>{}, // no row for P-42
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
+      );
+      expect(
+        decision,
+        isA<Deny>().having((d) => d.reason, 'reason', DenyReason.notGranted),
+      );
+    });
+
+    test('union within active role: U1 has SC at site A AND site B; '
+        'P-42 is at B -> Allow', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'B'),
+          ),
+        ],
+        patientToSite: {'P-42': 'B'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
+      );
+      expect(decision, isA<Allow>());
+    });
+
+    test('active role filter: U1 holds SC AND SUP, but activeRole=SC; '
+        'SUP perms are ignored', () async {
+      final h = await PolicyHarness.create(
+        grants: [
+          const Grant(role: 'SC', perm: 'patient.view'),
+          const Grant(role: 'SUP', perm: 'patient.edit'),
+        ],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+          const Assignment(
+            userId: 'U1',
+            role: 'SUP',
+            scope: TotalWildcardScope(),
+          ),
+        ],
+        patientToSite: {'P-42': 'A'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'patient', value: 'P-42'),
+      );
+      expect(
+        decision,
+        isA<Deny>().having((d) => d.reason, 'reason', DenyReason.notGranted),
+      );
+    });
+
+    test('unscoped permission with role grant -> Allow', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'report.generate')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('report.generate'),
+        null,
+      );
+      expect(decision, isA<Allow>());
+    });
+
+    test('unscoped permission without role grant -> Deny', () async {
+      final h = await PolicyHarness.create(
+        grants: const <Grant>[],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('report.generate'),
+        null,
+      );
+      expect(decision, isA<Deny>());
+    });
+  });
+
+  group('TableBackedAuthorizationPolicy.effectivePermissionsFor', () {
+    test('returns active role permissions + user assignments for it', () async {
+      final h = await PolicyHarness.create(
+        grants: [
+          const Grant(role: 'SC', perm: 'patient.edit'),
+          const Grant(role: 'SC', perm: 'patient.view'),
+          const Grant(role: 'OTHER', perm: 'other.thing'),
+        ],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'B'),
+          ),
+          const Assignment(
+            userId: 'U1',
+            role: 'OTHER',
+            scope: TotalWildcardScope(),
+          ),
+        ],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final eff = await h.policy.effectivePermissionsFor(h.user('U1', 'SC'));
+      expect(eff.activeRole, 'SC');
+      expect(eff.rolePermissions.map((p) => p.name).toSet(), <String>{
+        'patient.edit',
+        'patient.view',
+      });
+      expect(eff.scopeAssignments.map((a) => a.scope).toSet(), <ScopeValue>{
+        const BoundScope(class_: 'site', value: 'A'),
+        const BoundScope(class_: 'site', value: 'B'),
       });
     });
 
-    test('permissionsFor returns empty for anonymous principal', () async {
-      const p = Principal.anonymous();
-      expect(await policy.permissionsFor(p), isEmpty);
+    test('returns empty for AnonymousPrincipal', () async {
+      final h = await PolicyHarness.create(
+        grants: const <Grant>[],
+        assignments: const <Assignment>[],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final eff = await h.policy.effectivePermissionsFor(
+        const AnonymousPrincipal(),
+      );
+      expect(eff, equals(EffectiveAuthorization.empty));
     });
   });
 }

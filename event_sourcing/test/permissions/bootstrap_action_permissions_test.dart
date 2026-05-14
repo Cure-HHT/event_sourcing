@@ -45,7 +45,11 @@ grants:
           roles: const {'admin'},
           activeRole: 'admin',
         );
-        final d = await policy.isPermitted(p, const Permission('user.invite'));
+        final d = await policy.isPermitted(
+          p,
+          const Permission('user.invite'),
+          null,
+        );
         expect(d, isA<Allow>());
       },
     );
@@ -76,6 +80,7 @@ grants:
       final d = await boot.policy.isPermitted(
         p,
         const Permission('user.invite'),
+        null,
       );
       expect(d, isA<Deny>());
       expect((d as Deny).reason, DenyReason.notGranted);

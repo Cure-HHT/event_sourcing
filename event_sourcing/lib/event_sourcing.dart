@@ -231,10 +231,6 @@ export 'src/permissions/event_seed_applier.dart'
     show EventSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
     show FailSafeAuthorizationPolicy;
-export 'src/permissions/in_memory_role_matrix_reader.dart'
-    show InMemoryRoleMatrixReader;
-export 'src/permissions/materialized_view_role_matrix_reader.dart'
-    show MaterializedViewRoleMatrixReader;
 export 'src/permissions/permission_granted_payload.dart'
     show PermissionGrantedPayload;
 export 'src/permissions/permission_revoked_payload.dart'
@@ -246,7 +242,6 @@ export 'src/permissions/role_assignment_aggregate_id.dart'
     show roleAssignmentAggregateId;
 export 'src/permissions/role_unassigned_payload.dart'
     show RoleUnassignedPayload;
-export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
 export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
@@ -257,8 +252,6 @@ export 'src/permissions/scope_class_spec.dart'
     show ContainmentRef, ScopeClassSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
-export 'src/permissions/snapshot_role_matrix_reader.dart'
-    show SnapshotRoleMatrixReader;
 export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;

@@ -9,7 +9,8 @@
 //   reconstructable from the event log alone; replaying permission_granted /
 //   permission_revoked events reproduces the view deterministically.
 //
-// Row-layout contract (consumed by MaterializedViewRoleMatrixReader):
+// Row-layout contract (consumed by TableBackedAuthorizationPolicy and
+// EventSeedApplier):
 //   key: event.aggregateId  (e.g. 'admin:user.invite')
 //   columns: {'role', 'permissionName'}  — WholePayload of a
 //     permission_granted event, whose payload is PermissionGrantedPayload.
