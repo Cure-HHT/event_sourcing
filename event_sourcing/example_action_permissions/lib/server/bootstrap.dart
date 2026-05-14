@@ -29,10 +29,11 @@ class DemoServerComponents {
   final AuthorizationPolicy policy;
 
   /// The store the dispatcher records idempotency outcomes into.
-  /// Inspector code (e.g. `collectIdempotencyEntries`) only knows how
-  /// to enumerate `DemoIdempotencyStore`; with other implementations
-  /// (e.g. `PostgresIdempotencyStore`) the inspector pane shows no
-  /// entries but the dispatcher itself still works correctly.
+  /// Inspector code (`collectIdempotencyEntries`) calls
+  /// `IdempotencyStore.listEntries()` — every backend implements it, so
+  /// the inspector pane renders cache contents regardless of which
+  /// concrete store is wired in (DemoIdempotencyStore,
+  /// PostgresIdempotencyStore, etc.).
   final IdempotencyStore idempotencyStore;
 
   /// Empty when the YAML seed validated cleanly. Non-empty when the

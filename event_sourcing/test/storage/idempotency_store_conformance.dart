@@ -179,5 +179,79 @@ void runIdempotencyStoreConformanceTests(
       );
       expect(entry, isNull);
     });
+
+    // Verifies: EVS-PRD-action-dispatch/D — listEntries on an empty
+    //   store returns an empty list (no entries means the inspector
+    //   pane is correctly empty rather than rejecting the request).
+    test('listEntries returns empty on empty store', () async {
+      if (!initialized) return;
+      final entries = await store.listEntries();
+      expect(entries, isEmpty);
+    });
+
+    // Verifies: EVS-PRD-action-dispatch/D — listEntries after one
+    //   record returns a single entry whose keying tuple matches the
+    //   record arguments. Inspector UI relies on the entry carrying
+    //   `(actionName, principalId, idempotencyKey)` directly so it can
+    //   render the cache slot without a separate lookup.
+    test('listEntries returns one entry after one record', () async {
+      if (!initialized) return;
+      await store.record(
+        actionName: 'a',
+        principalId: 'p',
+        key: 'k',
+        resultJson: const {'x': 1},
+        emittedEventIds: const ['evt-1'],
+        expiresAt: DateTime.parse('2099-01-01T00:00:00Z'),
+      );
+      final entries = await store.listEntries();
+      expect(entries, hasLength(1));
+      expect(entries.first.actionName, 'a');
+      expect(entries.first.principalId, 'p');
+      expect(entries.first.idempotencyKey, 'k');
+      expect(entries.first.resultJson['x'], 1);
+      expect(entries.first.emittedEventIds, ['evt-1']);
+    });
+
+    // Verifies: EVS-PRD-action-dispatch/D — listEntries returns every
+    //   recorded entry, ordered by (actionName, principalId,
+    //   idempotencyKey) ascending. The deterministic ordering is what
+    //   makes the inspector UI's render stable across reloads.
+    test('listEntries returns all entries in ascending key order', () async {
+      if (!initialized) return;
+      const expiry = '2099-01-01T00:00:00Z';
+      await store.record(
+        actionName: 'b',
+        principalId: 'p1',
+        key: 'k1',
+        resultJson: const {},
+        emittedEventIds: const [],
+        expiresAt: DateTime.parse(expiry),
+      );
+      await store.record(
+        actionName: 'a',
+        principalId: 'p2',
+        key: 'k2',
+        resultJson: const {},
+        emittedEventIds: const [],
+        expiresAt: DateTime.parse(expiry),
+      );
+      await store.record(
+        actionName: 'a',
+        principalId: 'p1',
+        key: 'k1',
+        resultJson: const {},
+        emittedEventIds: const [],
+        expiresAt: DateTime.parse(expiry),
+      );
+      final entries = await store.listEntries();
+      expect(entries, hasLength(3));
+      expect(
+        entries
+            .map((e) => '${e.actionName}|${e.principalId}|${e.idempotencyKey}')
+            .toList(),
+        ['a|p1|k1', 'a|p2|k2', 'b|p1|k1'],
+      );
+    });
   });
 }

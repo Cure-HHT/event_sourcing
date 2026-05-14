@@ -16,11 +16,17 @@ void main() {
   group('IdempotencyEntry', () {
     test('round-trips fields', () {
       final entry = IdempotencyEntry(
+        actionName: 'demo.action',
+        principalId: 'user-1',
+        idempotencyKey: 'op-key',
         resultJson: const {'ok': true, 'id': 'abc'},
         emittedEventIds: const ['evt-1', 'evt-2'],
         recordedAt: DateTime.parse('2026-04-22T10:00:00Z'),
         expiresAt: DateTime.parse('2026-04-23T10:00:00Z'),
       );
+      expect(entry.actionName, 'demo.action');
+      expect(entry.principalId, 'user-1');
+      expect(entry.idempotencyKey, 'op-key');
       expect(entry.resultJson['ok'], isTrue);
       expect(entry.emittedEventIds, hasLength(2));
       expect(
@@ -31,6 +37,9 @@ void main() {
 
     test('isExpired returns true when expiresAt < now', () {
       final entry = IdempotencyEntry(
+        actionName: 'a',
+        principalId: 'p',
+        idempotencyKey: 'k',
         resultJson: const {},
         emittedEventIds: const [],
         recordedAt: DateTime.parse('2026-01-01T00:00:00Z'),
@@ -44,6 +53,9 @@ void main() {
 
     test('isExpired returns false when expiresAt > now', () {
       final entry = IdempotencyEntry(
+        actionName: 'a',
+        principalId: 'p',
+        idempotencyKey: 'k',
         resultJson: const {},
         emittedEventIds: const [],
         recordedAt: DateTime.parse('2026-01-01T00:00:00Z'),

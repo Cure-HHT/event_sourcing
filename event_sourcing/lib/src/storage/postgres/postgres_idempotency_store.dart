@@ -67,6 +67,9 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     if (result.isEmpty) return null;
     final row = result.first;
     return IdempotencyEntry(
+      actionName: actionName,
+      principalId: principalId,
+      idempotencyKey: key,
       resultJson: Map<String, Object?>.unmodifiable(
         Map<String, dynamic>.from(row[0] as Map),
       ),
@@ -133,5 +136,36 @@ class PostgresIdempotencyStore implements IdempotencyStore {
       parameters: {'c': cutoff},
     );
     return result.affectedRows;
+  }
+
+  // Implements: EVS-PRD-action-dispatch/D — listEntries enumerates every
+  //   currently-cached entry; not filtered by expiry (callers decide).
+  @override
+  Future<List<IdempotencyEntry>> listEntries() async {
+    final result = await _pool.execute(
+      Sql.named('''
+        SELECT action_name, principal_id, idempotency_key,
+               result_json, emitted_event_ids, recorded_at, expires_at
+        FROM idempotency
+        ORDER BY action_name ASC, principal_id ASC, idempotency_key ASC
+      '''),
+    );
+    return List<IdempotencyEntry>.unmodifiable(
+      result.map(
+        (row) => IdempotencyEntry(
+          actionName: row[0] as String,
+          principalId: row[1] as String,
+          idempotencyKey: row[2] as String,
+          resultJson: Map<String, Object?>.unmodifiable(
+            Map<String, dynamic>.from(row[3] as Map),
+          ),
+          emittedEventIds: List<String>.unmodifiable(
+            (row[4] as List).cast<String>(),
+          ),
+          recordedAt: (row[5] as DateTime).toUtc(),
+          expiresAt: (row[6] as DateTime).toUtc(),
+        ),
+      ),
+    );
   }
 }
