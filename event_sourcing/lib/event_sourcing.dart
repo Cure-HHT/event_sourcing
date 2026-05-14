@@ -225,6 +225,8 @@ export 'src/permissions/bootstrap_action_permissions.dart'
     show bootstrapActionPermissions;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
+export 'src/permissions/effective_authorization.dart'
+    show EffectiveAuthorization;
 export 'src/permissions/event_seed_applier.dart'
     show EventSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
@@ -248,6 +250,7 @@ export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
 export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
+export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
 export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
