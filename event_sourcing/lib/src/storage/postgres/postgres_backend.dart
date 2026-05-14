@@ -98,15 +98,18 @@ class PostgresBackend extends StorageBackend {
   //   conformance harness' close subgroup.
   bool _closed = false;
 
-  /// Override the default warning-level diagnostic sink used by FIFO
-  /// methods that no-op on a missing target row ([appendAttempt],
-  /// [markFinal]). Defaults to a `dart:developer` log call at level 900;
-  /// tests may swap this for a buffer or null-sink to assert on the
-  /// no-op-warning behavior. Parallels `SembastBackend.debugLogSink`.
+  /// Visible-for-testing sink for the warning-level diagnostic emitted by
+  /// FIFO methods ([appendAttempt], [markFinal]) when they no-op on a
+  /// missing target row. Defaults to the package-private [_defaultLogSink],
+  /// which writes through `dart:developer` at `level: 900` (warning).
+  /// Tests install a `List<String>.add` closure to capture emitted lines
+  /// without depending on a global logger. Setting this to `null`
+  /// suppresses diagnostics entirely. Parallels
+  /// `SembastBackend.debugLogSink` field by name, shape, and semantics.
   // Implements: EVS-PRD-destinations — appendAttempt/markFinal emit a
   //   warning-level diagnostic when the target row is absent (drain/unjam
   //   or drain/delete race tolerance).
-  void Function(String) logSink = _defaultLogSink;
+  void Function(String)? debugLogSink = _defaultLogSink;
 
   /// Open against [url] using the supplied [sslMode]. Connects, emits
   /// the schema DDL (idempotent on re-open), and returns a ready
@@ -991,7 +994,7 @@ class PostgresBackend extends StorageBackend {
       },
     );
     if (result.affectedRows == 0) {
-      logSink(
+      debugLogSink?.call(
         'appendAttempt: entry $entryId absent from FIFO $destinationId; '
         'skipping (expected during drain/unjam or drain/delete race)',
       );
@@ -1020,7 +1023,7 @@ class PostgresBackend extends StorageBackend {
         parameters: {'dest': destinationId, 'e': entryId},
       );
       if (existing.isEmpty) {
-        logSink(
+        debugLogSink?.call(
           'markFinal: entry $entryId absent from FIFO $destinationId; '
           'skipping (expected during drain/unjam or drain/delete race)',
         );
