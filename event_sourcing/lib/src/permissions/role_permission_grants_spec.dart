@@ -11,15 +11,13 @@
 //
 // Row-layout contract (consumed by MaterializedViewRoleMatrixReader):
 //   key: event.aggregateId  (e.g. 'admin:user.invite')
-//   columns: {'role', 'permissionName', 'scope'}  — WholePayload of a
+//   columns: {'role', 'permissionName'}  — WholePayload of a
 //     permission_granted event, whose payload is PermissionGrantedPayload.
 //
 // Deviation from plan: AggregateIdKey() is used instead of the plan's
-// CompositeKey(['data.role', 'data.permission', 'data.scope']) because:
+// CompositeKey(['data.role', 'data.permission']) because:
 //   1. The payload field is 'permissionName', not 'permission' (plan typo).
-//   2. PermissionRevokedPayload carries no 'scope' field, so a three-segment
-//      CompositeKey would throw on permission_revoked events.
-//   3. The existing row key format ('admin:user.invite') is consumed by
+//   2. The existing row key format ('admin:user.invite') is consumed by
 //      EventSeedApplier; a key-format change would break that reader.
 // AggregateIdKey() preserves the existing row key unchanged.
 //
