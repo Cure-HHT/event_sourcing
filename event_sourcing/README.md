@@ -682,8 +682,8 @@ hash returns `IngestOutcome.duplicate` (NOT thrown) and emits one
 
 Role-permission matrix at `lib/src/permissions/`, persisted as a
 materialized view in this package's event store. Sibling to the actions
-module at `lib/src/actions/`; both share `Permission`, `ScopeClass`,
-`Principal`, `AuthorizationPolicy`, and `AuthorizationDecision`.
+module at `lib/src/actions/`; both share `Permission`, `Principal`,
+`AuthorizationPolicy`, and `AuthorizationDecision`.
 
 **What it does:**
 

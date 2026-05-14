@@ -125,7 +125,6 @@ export 'src/actions/idempotency_store.dart'
 export 'src/actions/permission.dart' show Permission;
 export 'src/actions/principal.dart'
     show Principal, UserPrincipal, AnonymousPrincipal;
-export 'src/actions/scope_class.dart' show ScopeClass;
 export 'src/actions/scope_value.dart'
     show BoundScope, ScopeValue, TotalWildcardScope, ValueWildcardScope;
 
