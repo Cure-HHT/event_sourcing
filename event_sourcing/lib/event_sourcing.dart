@@ -223,6 +223,8 @@ export 'src/permissions/authorization_policy_bootstrap.dart'
     show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
     show bootstrapActionPermissions;
+export 'src/permissions/containment_resolver.dart'
+    show ContainmentResolver, FindRowsInTxn;
 export 'src/permissions/event_seed_applier.dart'
     show EventSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
