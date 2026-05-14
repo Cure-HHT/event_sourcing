@@ -245,6 +245,7 @@ export 'src/permissions/role_unassigned_payload.dart'
 export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
+export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
