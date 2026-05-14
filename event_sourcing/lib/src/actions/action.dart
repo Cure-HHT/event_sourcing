@@ -5,6 +5,7 @@ import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/actions/scope_value.dart';
 
 /// A portal command. Concrete subclasses define one action and one
 /// command shape (`TInput`) and one result shape (`TResult`).
@@ -58,4 +59,16 @@ abstract class Action<TInput, TResult> {
   /// result and the events to persist atomically (one transaction in
   /// the events lib).
   Future<ExecutionResult<TResult>> execute(TInput input, ActionContext ctx);
+
+  /// Per dispatch, supply the scope value for each scoped permission this
+  /// action requires. Pure: no I/O. Returns null for unscoped permissions
+  /// (default impl). For scoped permissions, the returned `ScopeValue`'s
+  /// `scopeClass` MUST equal the permission's declared `scopeClass`;
+  /// mismatch is `Deny(scopeUnresolvable)`.
+  ///
+  /// `TotalWildcardScope` MUST NOT be returned (carries no class_ to
+  /// match against permission.scopeClass); dispatcher denies as
+  /// scopeUnresolvable if returned. `ValueWildcardScope` is technically
+  /// valid when an action genuinely operates on all values of a class.
+  ScopeValue? scopeFor(Permission perm, TInput input) => null;
 }
