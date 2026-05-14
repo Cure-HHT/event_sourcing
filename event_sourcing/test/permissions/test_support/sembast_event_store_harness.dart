@@ -137,12 +137,18 @@ class SembastEventStoreHarness {
       projections.register(spec);
     }
 
+    // Unique source identifier per harness instance so a single test
+    // can build multiple harnesses (e.g., to exercise multi-source
+    // scenarios in Tasks 17/24) without two stores claiming the same
+    // source identity.
+    final sourceId = 'test-instance-${DateTime.now().microsecondsSinceEpoch}';
+
     final eventStore = await EventStore.open(
       storage: backend,
       entryTypes: typeRegistry,
-      source: const Source(
+      source: Source(
         hopId: 'test-server',
-        identifier: 'test-instance-1',
+        identifier: sourceId,
         softwareVersion: 'event_sourcing_test@0.0.0',
       ),
       securityContexts: SembastSecurityContextStore(backend: backend),
