@@ -11,23 +11,26 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/txn.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 
-/// Abstract persistence contract for the mobile event-sourcing pipeline.
+/// Abstract persistence contract for the event-sourcing substrate.
 ///
-/// Two concrete implementations are intended:
+/// Two concrete reference implementations ship in-tree:
 ///
-/// - `SembastBackend` — mobile device (delivered in this package).
-/// - `PostgresBackend` — server-side reuse (future phase).
+/// - `SembastBackend` — mobile / Flutter deployments (sembast-on-disk).
+/// - `PostgresBackend` — server-side deployments (managed Postgres).
 ///
-/// The contract is deliberately Dart-pure: no Sembast or postgres types leak
-/// into the interface, so either backend can be swapped in without changing
-/// callers. Writes are grouped into [transaction] bodies to guarantee
-/// atomicity across the four logical stores (event log, generic view store,
-/// per-destination FIFOs, backend_state KV).
+/// Both pass the same backend-agnostic conformance harness in
+/// `test/storage/storage_backend_conformance.dart`. Additional backends
+/// (IndexedDB, alternative SQL stores) may be supplied by downstream
+/// applications under the same contract.
+///
+/// The contract is deliberately Dart-pure: no sembast or postgres types
+/// leak into the interface, so either backend can be swapped in without
+/// changing callers. Writes are grouped into [transaction] bodies to
+/// guarantee atomicity across the four logical stores (event log, generic
+/// view store, per-destination FIFOs, backend_state KV).
 // Implements: EVS-PRD-portability/D — platform-divergent persistent storage
 //   abstracted behind this Dart-side interface; the consuming application
 //   supplies the concrete implementation per platform.
-// sequence counter (not 'metadata').
-// / clearViewInTxn.
 abstract class StorageBackend {
   const StorageBackend();
 
@@ -43,10 +46,15 @@ abstract class StorageBackend {
 
   // -------- Events --------
 
-  /// Append [event] to the event log and advance the per-device sequence
-  /// counter. Both writes land atomically inside [txn]. Returns an
+  /// Append [event] to the event log inside [txn]. Returns an
   /// [AppendResult] carrying the sequence number that was stamped on the
   /// event and the event hash that was persisted.
+  ///
+  /// [appendEvent] SHALL NOT advance the per-device sequence counter —
+  /// callers MUST have reserved the event's sequence number via
+  /// [nextSequenceNumber] in the same transaction, and [appendEvent]
+  /// simply persists the event under that reservation. See
+  /// [nextSequenceNumber] for the reservation contract.
   // Implements: EVS-PRD-event-log/A — append to the append-only, immutable log.
   // Implements: EVS-PRD-event-log/B — stable total order via sequence counter.
   Future<AppendResult> appendEvent(Txn txn, StoredEvent event);
@@ -160,11 +168,15 @@ abstract class StorageBackend {
 
   // -------- Generic view storage (Phase 4.4) --------
   //
-  // Projection fold interpreters read and write view rows via these methods.
-  // The view namespace is flat — one store per `viewName`, keyed on a caller-
-  // supplied string. The backend does not own schema for view rows; the
-  // fold interpreter and its readers interpret the row map. Reserved view
-  // name: `security_context` (reserved for the sidecar store).
+  // Projection fold interpreters read and write view rows via these
+  // methods. The view namespace is flat — addressed by `(viewName,
+  // rowKey)` from the caller's perspective; the on-disk layout is a
+  // per-backend implementation detail (sembast uses one store per
+  // viewName; postgres uses a single `view_rows` table keyed by
+  // `(view_name, row_key)`). The backend does not own schema for the
+  // row payload; the fold interpreter and its readers interpret the
+  // row map. Reserved view name: `security_context` (reserved for the
+  // sidecar store).
 
   /// Read one row from [viewName] by [key] inside [txn], or null when
   /// the row is absent.
@@ -253,19 +265,19 @@ abstract class StorageBackend {
 
   // -------- FIFO (per destination) --------
 
-  /// Append a batch-shaped entry to destination [destinationId]'s FIFO
-  ///. The batch covers every event in [batch], which MUST
-  /// be non-empty. The returned `FifoEntry` carries the
-  /// backend-assigned `sequence_in_queue` and the constructed
-  /// `event_ids` + `event_id_range` fields.
+  /// Append a batch-shaped entry to destination [destinationId]'s FIFO.
+  /// The batch covers every event in [batch], which MUST be non-empty.
+  /// The returned `FifoEntry` carries the backend-assigned
+  /// `sequence_in_queue` and the constructed `event_ids` +
+  /// `event_id_range` fields.
   ///
   /// The backend opens its own atomic transaction for the write so
   /// callers that are not already composing a larger transaction can
   /// enqueue in one call. Callers composing a larger transaction (e.g.,
   /// replay, fill_batch) use [enqueueFifoTxn] instead.
   ///
-  /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null
-  ///. The two payload shapes are mutually exclusive:
+  /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null.
+  /// The two payload shapes are mutually exclusive:
   ///
   /// - [wirePayload] (3rd-party path) — destination owns the wire format
   ///   and produced opaque bytes via `Destination.transform`. The bytes
@@ -294,7 +306,6 @@ abstract class StorageBackend {
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
   /// destination on first use so `anyFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
-  // shape; native path persists envelope_metadata and nulls wire_payload.
   Future<FifoEntry> enqueueFifo(
     String destinationId,
     List<StoredEvent> batch, {
@@ -314,8 +325,6 @@ abstract class StorageBackend {
   /// Implementations SHALL centralize row-construction logic here;
   /// [enqueueFifo] delegates to [enqueueFifoTxn] inside its own
   /// `transaction((txn) => ...)` wrapper.
-  // (co-atomic with the surrounding transaction; used by fillBatch).
-  // shape on the transactional variant.
   Future<FifoEntry> enqueueFifoTxn(
     Txn txn,
     String destinationId,
@@ -339,7 +348,6 @@ abstract class StorageBackend {
   /// (rather than filtering it out) lets UI surfaces observe the
   /// wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
-  // skips {sent, tombstoned}.
   Future<FifoEntry?> readFifoHead(String destinationId);
 
   /// Enumerate FIFO entries for [destinationId], ordered by
@@ -351,13 +359,12 @@ abstract class StorageBackend {
   /// [destinationId] has no registered FIFO store, returns an empty list
   /// (consistent with [readFifoHead] returning `null` for the same case).
   ///
-  /// Callers SHALL NOT open the `fifo_<destinationId>` sembast store
-  /// directly to read FIFO entries — the store name is an implementation
-  /// detail of the sembast backend and is not part of the public storage
-  /// contract; this method is the supported enumeration API.
-  // afterSequenceInQueue slicing and optional limit; empty list on
-  // unknown destination; no raw-map exposure; sole supported public
-  // enumeration path (no fifo_<id> store reach-around).
+  /// Callers SHALL NOT reach past this method to read FIFO entries — the
+  /// underlying per-destination storage layout is an implementation detail
+  /// of each backend (sembast uses a `fifo_<destinationId>` store; postgres
+  /// uses a single `fifo_entries` table keyed by `destination_id`) and is
+  /// not part of the public storage contract; this method is the
+  /// supported enumeration API.
   Future<List<FifoEntry>> listFifoEntries(
     String destinationId, {
     int? afterSequenceInQueue,
@@ -392,8 +399,7 @@ abstract class StorageBackend {
   /// FIFO store, and SHALL be a no-op when the FIFO store for
   /// `destinationId` does not exist — see the matching
   /// note on [appendAttempt] for the race this closes. Implementations
-  /// SHALL emit a warning-level diagnostic when they no-op
-  ///.
+  /// SHALL emit a warning-level diagnostic when they no-op.
   ///
   /// **Idempotent on matching already-final rows.** When the entry's
   /// current `final_status` equals [status] the call returns without
@@ -443,7 +449,6 @@ abstract class StorageBackend {
   ///
   /// Persisted under `backend_state` key `fill_cursor_<destinationId>`.
   /// Non-transactional, read-only.
-  // backend_state/fill_cursor_<destinationId>, returns -1 when unset.
   Future<int> readFillCursor(String destinationId);
 
   /// Write the per-destination fill cursor for [destinationId] to
@@ -451,14 +456,12 @@ abstract class StorageBackend {
   /// already composing a larger transaction (e.g., fill_batch) SHALL use
   /// [writeFillCursorTxn] to keep the cursor advance co-atomic with the
   /// enqueue / sequence-counter writes it accompanies.
-  // (standalone variant).
   Future<void> writeFillCursor(String destinationId, int sequenceNumber);
 
   /// Write the per-destination fill cursor for [destinationId] to
   /// [sequenceNumber] inside [txn]. Participates in the surrounding
   /// transaction's atomicity: on rollback the cursor reverts to its
   /// pre-transaction value.
-  // (transactional variant; co-atomic with the surrounding transaction).
   Future<void> writeFillCursorTxn(
     Txn txn,
     String destinationId,
@@ -466,16 +469,15 @@ abstract class StorageBackend {
   );
 
   /// Read a single event by `event_id` within [txn]. Returns `null` when no
-  /// event with that id is present. Used by ingest's idempotency check
-  ///. Reads the unified event log; origin-appended events
-  /// and ingest-appended events occupy a single store keyed by
-  /// `sequence_number`.
+  /// event with that id is present. Used by ingest's idempotency check.
+  /// Reads the unified event log; origin-appended events and ingest-
+  /// appended events occupy a single store keyed by `sequence_number`.
   Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId);
 
   /// Read a single event by `event_id` outside any transaction. Returns
-  /// `null` when no event with that id is present. Indexed lookup on the
-  /// sembast backend; abstract contract requires equivalent single-row
-  /// lookup, not a scan.
+  /// `null` when no event with that id is present. The abstract contract
+  /// requires an indexed single-row lookup (the sembast and postgres
+  /// reference impls both use a unique index on `event_id`); not a scan.
   ///
   /// Callers needing read-coherence with writes staged in the same
   /// transaction body SHALL use [findEventByIdInTxn] instead.
@@ -489,7 +491,6 @@ abstract class StorageBackend {
   /// Schedules are persisted under `backend_state` key
   /// `schedule_<destinationId>` as the JSON form produced by
   /// `DestinationSchedule.toJson`.
-  // scheduleOf/setStartDate/setEndDate persistence.
   Future<DestinationSchedule?> readSchedule(String destinationId);
 
   /// Write [schedule] for [destinationId] inside its own atomic
@@ -505,7 +506,6 @@ abstract class StorageBackend {
   /// surrounding transaction's atomicity so a schedule write and the
   /// ops that accompany it (e.g. FIFO-store drop in
   /// `deleteDestination`) commit or roll back together.
-  // setStartDate / setEndDate / deleteDestination.
   Future<void> writeScheduleTxn(
     Txn txn,
     String destinationId,
@@ -517,12 +517,15 @@ abstract class StorageBackend {
   /// one atomic step.
   Future<void> deleteScheduleTxn(Txn txn, String destinationId);
 
-  /// Drop the FIFO store for [destinationId] entirely inside [txn].
-  /// Implementations SHALL remove every row and drop the store itself
-  /// (not just the currently-present records), so a subsequent
-  /// `readFifoHead` on the same id returns null without seeing any
-  /// trailing state.
-  // deleteDestination.
+  /// Drop the FIFO state for [destinationId] entirely inside [txn].
+  /// Implementations SHALL remove every row associated with the
+  /// destination (not just the currently-present records), so a
+  /// subsequent `readFifoHead` on the same id returns null without
+  /// seeing any trailing state. On backends that physically store
+  /// FIFOs in per-destination containers (e.g., the sembast
+  /// `fifo_<destinationId>` store) the container itself is dropped;
+  /// on backends with a shared FIFO table (e.g., postgres
+  /// `fifo_entries`) the matching rows are deleted.
   Future<void> deleteFifoStoreTxn(Txn txn, String destinationId);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
@@ -554,15 +557,13 @@ abstract class StorageBackend {
   /// On `null -> sent` the implementation SHALL stamp
   /// `sent_at = DateTime.now().toUtc()`. On every other transition
   /// `attempts[]` and `sent_at` SHALL be left untouched —
-  /// tombstoneAndRefill preserves the wedged row's attempts[] verbatim
-  ///.
+  /// tombstoneAndRefill preserves the wedged row's attempts[] verbatim.
   ///
   /// Implementations SHALL throw [StateError] when the target row is
   /// absent — callers are expected to have verified existence (via
   /// [readFifoHead] for tombstoneAndRefill) before opening the
   /// transaction, so a missing row at this point indicates a
   /// concurrent delete race that these ops do not close.
-  // preserves attempts[] verbatim.
   Future<void> setFinalStatusTxn(
     Txn txn,
     String destinationId,
@@ -627,7 +628,6 @@ abstract class StorageBackend {
   /// consumers SHALL NOT reach past the abstraction to perform their
   /// own joins. `SembastSecurityContextStore.queryAudit` is a thin
   /// delegator that forwards to this method.
-  // from SecurityContextStore; the same contract holds at this level).
   Future<PagedAudit> queryAudit({
     Initiator? initiator,
     String? flowToken,

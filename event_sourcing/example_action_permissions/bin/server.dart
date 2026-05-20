@@ -1,28 +1,60 @@
 // bin/server.dart
 // IMPLEMENTS REQUIREMENTS:
+//   EVS-DEV-postgres-backend/D — exercises the PostgresBackend +
+//     PostgresIdempotencyStore end-to-end when run with
+//     `--backend=postgres`. Sembast remains the default.
 
 import 'dart:io';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_routes.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:args/args.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:path/path.dart' as p;
+import 'package:sembast/sembast_io.dart';
+import 'package:sembast/sembast_memory.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
 Future<void> main(List<String> args) async {
   final parser = ArgParser()
     ..addOption('port', defaultsTo: '8080', help: 'TCP port to bind on')
+    ..addOption(
+      'backend',
+      allowed: <String>['sembast', 'postgres'],
+      defaultsTo: 'sembast',
+      help: 'Storage backend.',
+    )
+    ..addOption(
+      'postgres-url',
+      help:
+          'Postgres URL (required when --backend=postgres). '
+          'Example: postgres://evs:evs@localhost:5432/evs_demo',
+    )
+    ..addOption(
+      'postgres-ssl-mode',
+      allowed: <String>['disable', 'require', 'verifyFull'],
+      defaultsTo: 'require',
+      help:
+          'SSL mode for the Postgres connection (default: require). '
+          'Use "disable" for local docker-compose without SSL; '
+          '"verifyFull" for full certificate validation against a '
+          'managed Postgres over the public internet.',
+    )
     ..addFlag(
       'ephemeral',
       defaultsTo: false,
-      help: 'Run with an in-memory database (state lost on shutdown)',
+      help:
+          'Run with an in-memory database (state lost on shutdown). '
+          'Sembast-only; ignored for --backend=postgres.',
     )
     ..addOption(
       'data-dir',
       help:
-          'Directory for the persistent DB; defaults to '
-          '\$XDG_DATA_HOME/action_permissions_demo (or ~/.local/share/...)',
+          'Directory for the persistent sembast DB; defaults to '
+          '\$XDG_DATA_HOME/action_permissions_demo (or ~/.local/share/...). '
+          'Ignored for --backend=postgres.',
     )
     ..addOption(
       'permissions-yaml',
@@ -52,29 +84,75 @@ Future<void> main(List<String> args) async {
   }
 
   final port = int.parse(parsed['port'] as String);
+  final backendKind = parsed['backend'] as String;
+  final postgresUrl = parsed['postgres-url'] as String?;
+  final postgresSslMode = switch (parsed['postgres-ssl-mode'] as String) {
+    'disable' => SslMode.disable,
+    'require' => SslMode.require,
+    'verifyFull' => SslMode.verifyFull,
+    _ => throw StateError(
+      'unreachable — ArgParser allowed list constrains this option',
+    ),
+  };
   final ephemeral = parsed['ephemeral'] as bool;
   final permissionsYamlPath = parsed['permissions-yaml'] as String;
   final usersYamlPath = parsed['users-yaml'] as String;
 
-  final dataDir = ephemeral
-      ? Directory.systemTemp.createTempSync('action_permissions_demo_')
-      : _resolveDataDir(parsed['data-dir'] as String?);
+  if (backendKind == 'postgres' &&
+      (postgresUrl == null || postgresUrl.isEmpty)) {
+    stderr.writeln('error: --postgres-url is required when --backend=postgres');
+    exitCode = 64; // EX_USAGE
+    return;
+  }
+
+  // For sembast we need a data directory for the optional persistent
+  // file; for postgres the file system layout is irrelevant but we still
+  // honour --install-id (and read/write a sidecar file when one is not
+  // provided) so identity persists across boots.
+  final dataDir = (backendKind == 'sembast' && !ephemeral)
+      ? _resolveDataDir(parsed['data-dir'] as String?)
+      : Directory.systemTemp.createTempSync('action_permissions_demo_');
   await Directory(dataDir.path).create(recursive: true);
-  final dbPath = p.join(dataDir.path, 'demo.db');
 
   final permissionsYaml = await File(permissionsYamlPath).readAsString();
   final usersYaml = await File(usersYamlPath).readAsString();
 
-  // For non-ephemeral runs the install identifier should persist across
-  // boots so events from the same install share an originator identity.
-  // For demo simplicity: read/write a one-line file in the data dir.
+  // For non-ephemeral sembast runs the install identifier should persist
+  // across boots so events from the same install share an originator
+  // identity. For postgres / ephemeral runs we treat the data dir as a
+  // scratch directory and generate per boot when no override is given.
   final installId =
       (parsed['install-id'] as String?) ??
-      await _resolveInstallId(dataDir, ephemeral: ephemeral);
+      await _resolveInstallId(
+        dataDir,
+        ephemeral: ephemeral || backendKind == 'postgres',
+      );
+
+  final StorageBackend backend;
+  final IdempotencyStore idempotencyStore;
+  final String backendDescription;
+
+  if (backendKind == 'postgres') {
+    final pg = await PostgresBackend.open(
+      url: postgresUrl!,
+      sslMode: postgresSslMode,
+    );
+    backend = pg;
+    idempotencyStore = PostgresIdempotencyStore.over(pg.pool);
+    backendDescription = 'postgres ($postgresUrl, ssl=${postgresSslMode.name})';
+  } else {
+    final dbPath = p.join(dataDir.path, 'demo.db');
+    final Database db = ephemeral
+        ? await databaseFactoryMemory.openDatabase('demo')
+        : await databaseFactoryIo.openDatabase(dbPath);
+    backend = SembastBackend(database: db);
+    idempotencyStore = DemoIdempotencyStore();
+    backendDescription = 'sembast ($dbPath, ephemeral=$ephemeral)';
+  }
 
   final components = await bootstrapDemoServer(
-    dbPath: dbPath,
-    ephemeral: ephemeral,
+    backend: backend,
+    idempotencyStore: idempotencyStore,
     permissionsYaml: permissionsYaml,
     usersYaml: usersYaml,
     installIdentifier: installId,
@@ -102,9 +180,9 @@ Future<void> main(List<String> args) async {
   stdout.writeln(
     'demo server listening on http://${server.address.host}:${server.port}',
   );
+  stdout.writeln('  backend: $backendDescription');
   stdout.writeln('  data dir: ${dataDir.path}');
   stdout.writeln('  install id: $installId');
-  stdout.writeln('  ephemeral: $ephemeral');
 }
 
 Directory _resolveDataDir(String? overridePath) {

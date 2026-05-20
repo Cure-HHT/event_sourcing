@@ -6,7 +6,6 @@
 // list of wire-shape summaries. No HTTP, no JSON encoding here — that
 // happens at the route boundary.
 
-import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:event_sourcing/event_sourcing.dart';
@@ -64,11 +63,19 @@ Future<List<MatrixGrant>> collectMatrixGrants(EventStore store) async {
     });
 }
 
-List<IdempotencyEntrySummary> collectIdempotencyEntries(
-  DemoIdempotencyStore store,
-) {
-  return store
-      .listEntries()
+/// Inspector-only enumeration of cached idempotency entries.
+///
+/// Goes through the `IdempotencyStore.listEntries()` contract, which
+/// every backend implements (in-memory, demo in-memory, postgres). The
+/// inspector pane renders the keying tuple and expiry; cache payloads
+/// (`resultJson`, `emittedEventIds`) are deliberately omitted from
+/// [IdempotencyEntrySummary] to keep the inspector lightweight and avoid
+/// exposing the action's outcome shape over the wire.
+Future<List<IdempotencyEntrySummary>> collectIdempotencyEntries(
+  IdempotencyStore store,
+) async {
+  final entries = await store.listEntries();
+  return entries
       .map(
         (e) => IdempotencyEntrySummary(
           actionName: e.actionName,
@@ -77,5 +84,5 @@ List<IdempotencyEntrySummary> collectIdempotencyEntries(
           expiresAt: e.expiresAt,
         ),
       )
-      .toList();
+      .toList(growable: false);
 }

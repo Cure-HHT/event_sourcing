@@ -11,6 +11,12 @@ consumer is `cure-hht/hht_diary`, which pins this repo by git ref.
 This repo was extracted from `cure-hht/hht_diary` on 2026-05-08
 (CUR-1317). See [README.md](README.md) for the cut-point and roadmap.
 
+As of CUR-1330, the substrate ships two concrete `StorageBackend`
+reference implementations — `SembastBackend` (mobile/Flutter) and
+`PostgresBackend` (server-side) — both passing the same backend-
+agnostic conformance harness. This unblocks the Phase IV portal-server
+cutover.
+
 ## Layout
 
 - `event_sourcing/` — core lib (storage, sync, ingest, materialization,
@@ -185,10 +191,12 @@ The currently-trusted inputs are:
 
 - **`StorageBackend` implementation.** Pluggable interface registered
   at composition time. Trusted for data persistence integrity:
-  correct reads/writes, transaction atomicity, durability. The
-  reference sembast implementation lives in
-  `event_sourcing/lib/src/storage/`. Alternative backends (IndexedDB,
-  Postgres, etc.) are app-supplied; each is the trusted persistence
+  correct reads/writes, transaction atomicity, durability. Two
+  reference impls ship today: `SembastBackend` (mobile,
+  `event_sourcing/lib/src/storage/`) and `PostgresBackend` (server,
+  `event_sourcing/lib/src/storage/postgres/`). Both pass the same
+  backend-agnostic conformance harness. Alternative backends
+  (IndexedDB, etc.) are app-supplied; each is the trusted persistence
   layer for that deployment.
 - **`Destination` outbound transport.** Per-destination delivery
   transport (HTTP, WebSocket, file, etc.) supplied by the app at

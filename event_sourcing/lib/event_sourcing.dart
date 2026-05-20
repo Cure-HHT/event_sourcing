@@ -272,6 +272,8 @@ export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
 export 'src/security/sembast_security_context_store.dart'
     show SembastSecurityContextStore;
+export 'src/security/postgres_security_context_store.dart'
+    show PostgresSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
         // Security-context lifecycle audits (Phase 4.4).
@@ -296,15 +298,18 @@ export 'src/security/system_entry_types.dart'
         kReservedSystemEntryTypeIds,
         kSystemEntryTypes;
 
-// Storage layer — StorageBackend contract, SembastBackend concrete
-// implementation, and the value types that flow through the contract
-// (CUR-1154).
+// Storage layer — StorageBackend contract, the SembastBackend +
+// PostgresBackend concrete implementations, and the value types that
+// flow through the contract (CUR-1154 for the contract; CUR-1330 for
+// the Postgres backend). `ensurePostgresSchema` is intentionally
+// library-private: only `PostgresBackend.open` calls it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/fifo_entry.dart' show EventIdRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
+export 'src/storage/postgres/postgres.dart';
 export 'src/storage/sembast_backend.dart'
     show SembastBackend, SembastBackendTestSupport;
 export 'src/storage/send_result.dart'

@@ -11,8 +11,10 @@
 // ScopeClassRegistry) from the role-permission perimeter.
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
 const String _permissionsYaml = '''
 roles:
@@ -52,9 +54,10 @@ void main() {
     late DemoServerComponents components;
 
     setUp(() async {
+      final db = await databaseFactoryMemory.openDatabase('scope-binding');
       components = await bootstrapDemoServer(
-        dbPath: 'unused',
-        ephemeral: true,
+        backend: SembastBackend(database: db),
+        idempotencyStore: DemoIdempotencyStore(),
         permissionsYaml: _permissionsYaml,
         usersYaml: _usersYaml,
         installIdentifier: '00000000-0000-4000-8000-0000000d1331',

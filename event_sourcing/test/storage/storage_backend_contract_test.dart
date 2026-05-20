@@ -1,7 +1,16 @@
 // Verifies: EVS-PRD-portability/D — StorageBackend interface is implementable
-//   by any concrete backend; contract test uses a pure in-memory double.
-// Verifies: EVS-PRD-event-log/A — successful transaction body commits all
-//   writes atomically; thrown exception rolls back all writes.
+//   by any concrete backend. The general transaction-contract behaviors
+//   (commit, rollback, Txn-after-body, sequential-commit) are lifted into
+//   the backend-agnostic harness in `storage_backend_conformance.dart` and
+//   exercised against every concrete backend.
+//
+// What remains in this file: one test that exercises the *fake* in-memory
+// backend, asserting the implementation choice this fake makes about
+// nested transactions. The abstract contract is silent on whether a
+// backend must support nested transactions; this test documents the
+// fake's chosen behavior (reject) so a future second concrete backend
+// has a known starting point. The matching SembastBackend behavior is
+// covered by the implementation's own integration tests, not here.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -18,98 +27,12 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('StorageBackend contract', () {
+  group('StorageBackend contract — fake-only', () {
     late _InMemoryBackend backend;
 
     setUp(() {
       backend = _InMemoryBackend();
     });
-
-    // commits all writes so they are visible to subsequent reads.
-    test('successful body commits all writes', () async {
-      final event = _sampleEvent(eventId: 'ev-1');
-
-      final result = await backend.transaction((txn) async {
-        await backend.appendEvent(txn, event);
-        return 'ok';
-      });
-
-      expect(result, 'ok');
-      final stored = await backend.findAllEvents();
-      expect(stored.map((e) => e.eventId), ['ev-1']);
-    });
-
-    // back every Txn-bound write so none of them are visible afterwards.
-    test('thrown exception rolls back all writes', () async {
-      await expectLater(
-        backend.transaction((txn) async {
-          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-rollback'));
-          throw StateError('simulated failure');
-        }),
-        throwsStateError,
-      );
-
-      final stored = await backend.findAllEvents();
-      expect(stored, isEmpty);
-    });
-
-    // atomically; nothing from before the throw remains committed.
-    test('mid-body throw rolls back earlier writes too', () async {
-      await expectLater(
-        backend.transaction((txn) async {
-          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-a'));
-          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-b'));
-          throw StateError('simulated failure');
-        }),
-        throwsStateError,
-      );
-
-      expect(await backend.findAllEvents(), isEmpty);
-    });
-
-    // returns raises StateError so accidental escape is detected instead of
-    // silently writing against a closed transaction.
-    test('Txn cannot be used after body returns', () async {
-      late Txn escaped;
-      await backend.transaction((txn) async {
-        escaped = txn;
-      });
-
-      await expectLater(
-        backend.appendEvent(escaped, _sampleEvent(eventId: 'ev-late')),
-        throwsStateError,
-      );
-    });
-
-    test('Txn cannot be used after body throws', () async {
-      late Txn escaped;
-      await expectLater(
-        backend.transaction((txn) async {
-          escaped = txn;
-          throw StateError('boom');
-        }),
-        throwsStateError,
-      );
-
-      await expectLater(
-        backend.appendEvent(escaped, _sampleEvent(eventId: 'ev-late')),
-        throwsStateError,
-      );
-    });
-
-    test(
-      'sequential transactions: second transaction sees first commit',
-      () async {
-        await backend.transaction((txn) async {
-          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-1'));
-        });
-        await backend.transaction((txn) async {
-          await backend.appendEvent(txn, _sampleEvent(eventId: 'ev-2'));
-        });
-        final stored = await backend.findAllEvents();
-        expect(stored.map((e) => e.eventId), ['ev-1', 'ev-2']);
-      },
-    );
 
     // The abstract contract is silent on whether a backend must support
     // nested transactions. This fake backend rejects them (matches Sembast,
@@ -130,29 +53,12 @@ void main() {
 
 // -------- Fake backend --------
 
-StoredEvent _sampleEvent({required String eventId}) => StoredEvent(
-  key: 0,
-  eventId: eventId,
-  aggregateId: 'agg-1',
-  aggregateType: 'note',
-  entryType: 'epistaxis_event',
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
-  eventType: 'Event',
-  sequenceNumber: 0,
-  data: const <String, dynamic>{},
-  metadata: const <String, dynamic>{},
-  initiator: const UserInitiator('u'),
-  clientTimestamp: DateTime.utc(2026, 4, 22),
-  eventHash: 'hash-$eventId',
-);
-
-/// Minimal in-memory backend used only by the contract tests.
+/// Minimal in-memory backend used only by the nested-transaction test.
 ///
-/// Implements just enough behavior to exercise (transaction
-/// atomicity) and -B (Txn lexical scoping). All other methods
-/// throw [UnimplementedError] — the real SembastBackend is covered by
-/// dedicated tests in Tasks 6-8.
+/// Implements just enough behavior to construct a Txn and reject nested
+/// transactions. All other methods throw [UnimplementedError] — the
+/// abstract StorageBackend contract is covered by the backend-agnostic
+/// conformance harness exercising concrete implementations.
 class _InMemoryBackend extends StorageBackend {
   /// Committed state: event_id -> stored event.
   final Map<String, StoredEvent> _events = <String, StoredEvent>{};
@@ -199,33 +105,10 @@ class _InMemoryBackend extends StorageBackend {
     String? entryType,
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
-  }) async {
-    if (afterSequence != null ||
-        limit != null ||
-        originatorHopId != null ||
-        originatorIdentifier != null ||
-        entryType != null ||
-        clientTimestampStart != null ||
-        clientTimestampEnd != null) {
-      throw UnimplementedError(
-        '_InMemoryBackend.findAllEvents does not implement filter parameters; '
-        'this fake is scoped to (transaction atomicity).',
-      );
-    }
-    final sorted = _events.values.toList()
-      ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
-    return sorted;
-  }
+  }) async => throw UnimplementedError();
 
   @override
-  Future<String?> readLatestEventHash(Txn txn) async {
-    _assertOwnValid(txn)._check();
-    final staged = _staged!;
-    if (staged.isEmpty) return null;
-    final sorted = staged.values.toList()
-      ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
-    return sorted.last.eventHash;
-  }
+  Future<String?> readLatestEventHash(Txn txn) => throw UnimplementedError();
 
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
@@ -235,28 +118,7 @@ class _InMemoryBackend extends StorageBackend {
     String? entryType,
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
-  }) async {
-    if (entryType != null ||
-        clientTimestampStart != null ||
-        clientTimestampEnd != null) {
-      throw UnimplementedError(
-        '_InMemoryBackend.findAllEventsInTxn does not implement entry-type '
-        'or client-timestamp filters; this fake is scoped to '
-        '-A+B (transaction atomicity).',
-      );
-    }
-    _assertOwnValid(txn)._check();
-    final staged = _staged!;
-    var sorted = staged.values.toList()
-      ..sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
-    if (afterSequence != null) {
-      sorted = sorted.where((e) => e.sequenceNumber > afterSequence).toList();
-    }
-    if (limit != null && sorted.length > limit) {
-      sorted = sorted.sublist(0, limit);
-    }
-    return sorted;
-  }
+  }) async => throw UnimplementedError();
 
   _InMemoryTxn _assertOwnValid(Txn txn) {
     if (txn is! _InMemoryTxn || txn._backend != this) {
@@ -265,7 +127,7 @@ class _InMemoryBackend extends StorageBackend {
     return txn;
   }
 
-  // The remaining methods are not exercised by the contract tests.
+  // The remaining methods are not exercised by the fake-only test.
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) =>
       throw UnimplementedError();
@@ -377,10 +239,6 @@ class _InMemoryBackend extends StorageBackend {
   @override
   Future<void> writeSchemaVersion(Txn txn, int version) =>
       throw UnimplementedError();
-  // Fill-cursor behavioral tests live in sembast_backend_fifo_test.dart
-  // (-G: default/round-trip/transactional-rollback/per-destination).
-  // When a second StorageBackend implementation lands, replicate those
-  // behaviors here as implementation-agnostic contract tests.
   @override
   Future<int> readFillCursor(String destinationId) =>
       throw UnimplementedError();

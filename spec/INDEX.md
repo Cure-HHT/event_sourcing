@@ -41,6 +41,7 @@
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                             | dev-event-store-open.md                 | 3d07b20f |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                        | dev-find-all-events-extended-filters.md | f24ffdf5 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                            | dev-ingest-promotes-before-fold.md      | a3519bfb |
+| EVS-DEV-postgres-backend                   | Postgres backend reference impl                       | dev-postgres-backend.md                 | b3c3c0ec |
 | EVS-DEV-role-assignment-aggregate-id       | Canonical-JSON aggregate id for role assignments      | scoped-permissions.md                   | abb4d0a5 |
 | EVS-DEV-scope-class-registry-validation    | Composition-time scope-class registry validation      | scoped-permissions.md                   | 4a76c916 |
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable    | scoped-permissions.md                   | 4a2db650 |

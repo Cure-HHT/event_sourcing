@@ -2,52 +2,31 @@
 // Verifies: EVS-PRD-permissions-as-events/B/C
 // Verifies: EVS-PRD-event-log/A/C
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
-const String _validPermissionsYaml = '''
-roles:
-  - Admin
-  - GreenTeam
-  - BlueTeam
-grants:
-  Admin:
-    - users.provision
-  GreenTeam:
-    - help.ask
-    - notes.write.green
-    - buttons.press.green
-    - buttons.press.red
-  BlueTeam:
-    - help.ask
-    - notes.write.blue
-    - buttons.press.blue
-    - buttons.press.red
-''';
+import 'support/demo_bootstrap.dart';
 
-const String _validUsersYaml = '''
-users:
-  - userId: admin-user
-    role: Admin
-    activeSite: null
-  - userId: green-user-1
-    role: GreenTeam
-    activeSite: green-workspace
-  - userId: blue-user
-    role: BlueTeam
-    activeSite: blue-workspace
-''';
-
-void main() {
-  group('PollingDemoStateProjection', () {
+/// Run the projection-test suite against the [factory]-supplied backend
+/// pair. The [label] disambiguates test names when multiple flavors run
+/// in the same `flutter test` invocation.
+void runDemoStateProjectionTests(
+  DemoBackendFactory factory, {
+  required String label,
+}) {
+  group('PollingDemoStateProjection ($label)', () {
     test(
       'snapshot includes seeded matrix, directory, no idempotency yet',
       () async {
+        final backends = await factory();
         final components = await bootstrapDemoServer(
-          dbPath: 'unused',
-          ephemeral: true,
-          permissionsYaml: _validPermissionsYaml,
-          usersYaml: _validUsersYaml,
+          backend: backends.backend,
+          idempotencyStore: backends.idempotencyStore,
+          permissionsYaml: validPermissionsYaml,
+          usersYaml: validUsersYaml,
           installIdentifier: '00000000-0000-4000-8000-000000000010',
         );
         final projection = PollingDemoStateProjection(components: components);
@@ -80,4 +59,16 @@ void main() {
       },
     );
   });
+}
+
+Future<DemoBackends> _sembastFactory() async {
+  final db = await databaseFactoryMemory.openDatabase('demo');
+  return DemoBackends(
+    backend: SembastBackend(database: db),
+    idempotencyStore: DemoIdempotencyStore(),
+  );
+}
+
+void main() {
+  runDemoStateProjectionTests(_sembastFactory, label: 'sembast (memory)');
 }

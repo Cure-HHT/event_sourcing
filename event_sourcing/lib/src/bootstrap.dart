@@ -11,12 +11,15 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/security/postgres_security_context_store.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/storage/storage_backend.dart';
 
 /// Facade returned by `bootstrapAppendOnlyDatastore`. Exposes the four
 /// collaborators an app reads through after startup: the write API
@@ -30,14 +33,14 @@ class AppendOnlyDatastore {
     required this.entryTypes,
     required this.destinations,
     required this.securityContexts,
-    required SembastBackend backend,
+    required StorageBackend backend,
   }) : _backend = backend;
 
   final EventStore eventStore;
   final EntryTypeRegistry entryTypes;
   final DestinationRegistry destinations;
   final SecurityContextStore securityContexts;
-  final SembastBackend _backend;
+  final StorageBackend _backend;
 
   /// Register or update a (`viewName`, `entryType`) → `version` entry in
   /// the persisted `view_target_versions`. Used to add a new entry type
@@ -76,7 +79,7 @@ class AppendOnlyDatastore {
 //   before caller-supplied types.
 //   id throws ArgumentError with "reserved" message.
 Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
-  required SembastBackend backend,
+  required StorageBackend backend,
   required Source source,
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
@@ -99,7 +102,26 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
     typeRegistry.register(defn);
   }
 
-  final securityContexts = SembastSecurityContextStore(backend: backend);
+  // The security-context sidecar is backend-specific. We pick the matching
+  // concrete store by the runtime type of [backend]. Adding a new backend
+  // means shipping a paired SecurityContextStore impl and extending this
+  // dispatch — the substrate refuses to bootstrap on a StorageBackend it
+  // does not know how to pair.
+  final InternalSecurityContextStore securityContexts;
+  if (backend is SembastBackend) {
+    securityContexts = SembastSecurityContextStore(backend: backend);
+  } else if (backend is PostgresBackend) {
+    securityContexts = PostgresSecurityContextStore(backend: backend);
+  } else {
+    throw ArgumentError.value(
+      backend,
+      'backend',
+      'bootstrapAppendOnlyDatastore has no SecurityContextStore paired '
+          'with ${backend.runtimeType}; supply a SembastBackend or '
+          'PostgresBackend, or extend bootstrap to dispatch on a new '
+          'concrete backend type.',
+    );
+  }
   final eventStore = await EventStore.open(
     storage: backend,
     entryTypes: typeRegistry,

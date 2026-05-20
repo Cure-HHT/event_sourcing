@@ -6,58 +6,16 @@
 import 'dart:convert';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_routes.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 import 'package:shelf/shelf.dart';
 
-const String _yamlPermissions = '''
-roles:
-  - Admin
-  - GreenTeam
-  - BlueTeam
-grants:
-  Admin:
-    - users.provision
-  GreenTeam:
-    - help.ask
-    - notes.write.green
-    - buttons.press.green
-    - buttons.press.red
-  BlueTeam:
-    - help.ask
-    - notes.write.blue
-    - buttons.press.blue
-    - buttons.press.red
-''';
-
-const String _yamlUsers = '''
-users:
-  - userId: admin-user
-    role: Admin
-    activeSite: null
-  - userId: green-user-1
-    role: GreenTeam
-    activeSite: green-workspace
-  - userId: blue-user
-    role: BlueTeam
-    activeSite: blue-workspace
-''';
-
-Future<DemoRoutes> _makeRoutes(String installId) async {
-  final components = await bootstrapDemoServer(
-    dbPath: 'unused',
-    ephemeral: true,
-    permissionsYaml: _yamlPermissions,
-    usersYaml: _yamlUsers,
-    installIdentifier: installId,
-  );
-  return DemoRoutes(
-    components: components,
-    projection: PollingDemoStateProjection(components: components),
-  );
-}
+import 'support/demo_bootstrap.dart';
 
 Future<Response> _post(
   DemoRoutes routes,
@@ -83,10 +41,28 @@ Future<Map<String, Object?>> _readJson(Response r) async {
   return jsonDecode(text) as Map<String, Object?>;
 }
 
-void main() {
-  group('DemoRoutes', () {
+/// Run the routes test suite against the [factory]-supplied backend
+/// pair. The [label] disambiguates test names when multiple flavors run
+/// in the same `flutter test` invocation.
+void runDemoRoutesTests(DemoBackendFactory factory, {required String label}) {
+  Future<DemoRoutes> makeRoutes(String installId) async {
+    final backends = await factory();
+    final components = await bootstrapDemoServer(
+      backend: backends.backend,
+      idempotencyStore: backends.idempotencyStore,
+      permissionsYaml: validPermissionsYaml,
+      usersYaml: validUsersYaml,
+      installIdentifier: installId,
+    );
+    return DemoRoutes(
+      components: components,
+      projection: PollingDemoStateProjection(components: components),
+    );
+  }
+
+  group('DemoRoutes ($label)', () {
     test('GET /healthz returns ok', () async {
-      final routes = await _makeRoutes('00000000-0000-4000-8000-000000000020');
+      final routes = await makeRoutes('00000000-0000-4000-8000-000000000020');
       final r = await _get(routes, '/healthz');
       expect(r.statusCode, 200);
       expect(await r.readAsString(), 'ok');
@@ -95,9 +71,7 @@ void main() {
     test(
       'POST /session/start: known userId returns role + site + permissions',
       () async {
-        final routes = await _makeRoutes(
-          '00000000-0000-4000-8000-000000000021',
-        );
+        final routes = await makeRoutes('00000000-0000-4000-8000-000000000021');
         final r = await _post(routes, '/session/start', <String, Object?>{
           'userId': 'green-user-1',
         });
@@ -116,9 +90,7 @@ void main() {
     test(
       'POST /session/start: unknown userId returns Anon role + empty permissions',
       () async {
-        final routes = await _makeRoutes(
-          '00000000-0000-4000-8000-000000000022',
-        );
+        final routes = await makeRoutes('00000000-0000-4000-8000-000000000022');
         final r = await _post(routes, '/session/start', <String, Object?>{
           'userId': 'who-dis',
         });
@@ -133,9 +105,7 @@ void main() {
     test(
       'POST /dispatch: PressGreenButton happy-path returns success',
       () async {
-        final routes = await _makeRoutes(
-          '00000000-0000-4000-8000-000000000023',
-        );
+        final routes = await makeRoutes('00000000-0000-4000-8000-000000000023');
         final r = await _post(routes, '/dispatch', <String, Object?>{
           'actionName': 'PressGreenButtonAction',
           'rawInput': <String, Object?>{},
@@ -153,9 +123,7 @@ void main() {
     test(
       'POST /dispatch: BlueTeam pressing green is authorization_denied',
       () async {
-        final routes = await _makeRoutes(
-          '00000000-0000-4000-8000-000000000024',
-        );
+        final routes = await makeRoutes('00000000-0000-4000-8000-000000000024');
         final r = await _post(routes, '/dispatch', <String, Object?>{
           'actionName': 'PressGreenButtonAction',
           'rawInput': <String, Object?>{},
@@ -173,9 +141,7 @@ void main() {
     test(
       'POST /dispatch: unknown action returns unknown_action denied',
       () async {
-        final routes = await _makeRoutes(
-          '00000000-0000-4000-8000-000000000025',
-        );
+        final routes = await makeRoutes('00000000-0000-4000-8000-000000000025');
         final r = await _post(routes, '/dispatch', <String, Object?>{
           'actionName': 'NoSuchAction',
           'rawInput': <String, Object?>{},
@@ -191,7 +157,7 @@ void main() {
     );
 
     test('GET /_demo/inspect returns InspectSnapshot JSON', () async {
-      final routes = await _makeRoutes('00000000-0000-4000-8000-000000000026');
+      final routes = await makeRoutes('00000000-0000-4000-8000-000000000026');
       final r = await _get(routes, '/_demo/inspect');
       expect(r.statusCode, 200);
       final body = await _readJson(r);
@@ -201,7 +167,7 @@ void main() {
     });
 
     test('lastTrace updates after a dispatch', () async {
-      final routes = await _makeRoutes('00000000-0000-4000-8000-000000000027');
+      final routes = await makeRoutes('00000000-0000-4000-8000-000000000027');
       expect(routes.lastTrace(), isNull);
       await _post(routes, '/dispatch', <String, Object?>{
         'actionName': 'PressGreenButtonAction',
@@ -214,4 +180,16 @@ void main() {
       expect(trace.stages.last, 'return_success');
     });
   });
+}
+
+Future<DemoBackends> _sembastFactory() async {
+  final db = await databaseFactoryMemory.openDatabase('demo');
+  return DemoBackends(
+    backend: SembastBackend(database: db),
+    idempotencyStore: DemoIdempotencyStore(),
+  );
+}
+
+void main() {
+  runDemoRoutesTests(_sembastFactory, label: 'sembast (memory)');
 }

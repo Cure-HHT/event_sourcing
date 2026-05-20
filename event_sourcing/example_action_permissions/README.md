@@ -124,7 +124,8 @@ example_action_permissions/
 - Linux desktop with the GTK packages required by Flutter Linux:
   `libgtk-3-dev`, `libblkid-dev`, `liblzma-dev`, `clang`, `cmake`, `ninja-build`,
   `pkg-config`. On Debian/Ubuntu:
-  ```
+
+  ```text
   sudo apt install clang cmake ninja-build pkg-config libgtk-3-dev \
                    libblkid-dev liblzma-dev
   ```
@@ -136,7 +137,7 @@ launching the demo.
 
 From this package's directory:
 
-```
+```text
 tool/run_demo.sh
 ```
 
@@ -146,7 +147,7 @@ streams from both processes.
 
 To stop:
 
-```
+```text
 tool/stop_demo.sh
 ```
 
@@ -156,6 +157,48 @@ If the scripts do not fit your environment, the manual equivalent is:
 2. In another terminal, run the client:
    `flutter run -d linux --dart-define=DEMO_SERVER_URL=http://127.0.0.1:<port>`.
 3. Stop both with `Ctrl+C` when finished.
+
+## Running on Postgres
+
+The demo server can run against `PostgresBackend` +
+`PostgresIdempotencyStore` instead of the default sembast pair. Same
+actions, same audit, same RBAC — events and idempotency rows persist
+in Postgres tables.
+
+Bring up the local-dev Postgres (the compose file in this directory):
+
+```text
+docker compose up -d --wait
+```
+
+Then start the demo server pointed at it:
+
+```text
+dart run bin/server.dart \
+  --backend=postgres \
+  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-ssl-mode=disable \
+  --port=8080 \
+  --permissions-yaml=tool/permissions.yaml \
+  --users-yaml=tool/users.yaml
+```
+
+For production deployments against a managed Postgres (Cloud SQL, RDS,
+etc.), omit `--postgres-ssl-mode` to use the secure-by-default `require`
+setting, or pass `--postgres-ssl-mode=verifyFull` for full certificate
+validation.
+
+The integration test under `test/postgres_integration_test.dart` is the
+canonical end-to-end check: it boots the demo server in-process against
+the docker-compose Postgres (drops + recreates the `public` schema for
+isolation), dispatches actions over HTTP, and verifies the events land
+in the `events` table and the role-permission view rows land in
+`view_rows`. Gated on `PG_TEST_URL`:
+
+```text
+PG_TEST_URL=postgres://evs:evs@localhost:5432/evs_demo \
+  flutter test test/postgres_integration_test.dart
+```
 
 ## The 10 walkthroughs
 

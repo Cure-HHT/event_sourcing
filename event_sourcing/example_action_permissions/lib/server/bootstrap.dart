@@ -5,14 +5,11 @@
 //   every dispatch denies.
 
 import 'package:action_permissions_demo/server/action_catalog.dart';
-import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:action_permissions_demo/server/user_directory_seed_applier.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';
-import 'package:sembast/sembast_io.dart';
-import 'package:sembast/sembast_memory.dart';
 
 /// Collaborators a running demo server reads through after bootstrap.
 @immutable
@@ -30,7 +27,14 @@ class DemoServerComponents {
   final EventStore eventStore;
   final UserDirectory directory;
   final AuthorizationPolicy policy;
-  final DemoIdempotencyStore idempotencyStore;
+
+  /// The store the dispatcher records idempotency outcomes into.
+  /// Inspector code (`collectIdempotencyEntries`) calls
+  /// `IdempotencyStore.listEntries()` — every backend implements it, so
+  /// the inspector pane renders cache contents regardless of which
+  /// concrete store is wired in (DemoIdempotencyStore,
+  /// PostgresIdempotencyStore, etc.).
+  final IdempotencyStore idempotencyStore;
 
   /// Empty when the YAML seed validated cleanly. Non-empty when the
   /// policy is the FailSafe variant — every dispatch will deny with
@@ -39,28 +43,22 @@ class DemoServerComponents {
   final List<String> policyErrors;
 }
 
-/// Bootstrap a fresh demo server.
-///
-/// [dbPath] is honored only when [ephemeral] is `false`. When [ephemeral] is
-/// `true` the database lives in memory and disappears with the process —
-/// suitable for tests and for ad-hoc demo runs.
+/// Bootstrap a fresh demo server over a caller-supplied [backend] and
+/// [idempotencyStore]. The caller decides which concrete persistence
+/// layer to use (Sembast in-memory / on-disk, Postgres, etc.) and owns
+/// the lifecycle of both — bootstrap neither opens nor closes them.
 ///
 /// [installIdentifier] is the per-installation unique identity stamped onto
 /// `metadata.provenance[0]` of every appended event (see
 /// `Source.identifier`). Production callers persist a UUIDv4 across boots;
 /// tests can pass any UUID-shaped string.
 Future<DemoServerComponents> bootstrapDemoServer({
-  required String dbPath,
-  required bool ephemeral,
+  required StorageBackend backend,
+  required IdempotencyStore idempotencyStore,
   required String permissionsYaml,
   required String usersYaml,
   required String installIdentifier,
 }) async {
-  final Database db = ephemeral
-      ? await databaseFactoryMemory.openDatabase('demo')
-      : await databaseFactoryIo.openDatabase(dbPath);
-  final backend = SembastBackend(database: db);
-
   // 1. Build the action registry up front so we can pass its declared
   //    permissions to the seed validator. The directory the
   //    ProvisionUserAction reads/writes is the same one the materializer
@@ -191,8 +189,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
     seed: RoleAssignmentSeed(entries: roleAssignments),
   );
 
-  // 5. Idempotency cache + dispatcher.
-  final idempotencyStore = DemoIdempotencyStore();
+  // 5. Dispatcher wired through the caller-supplied idempotency store.
   final dispatcher = bootstrapAuditedActions(
     events: eventStore,
     authorization: policyBootstrap.policy,

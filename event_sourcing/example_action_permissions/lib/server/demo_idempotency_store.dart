@@ -1,36 +1,23 @@
 // lib/server/demo_idempotency_store.dart
-// IMPLEMENTS REQUIREMENTS:
-//   adds an inspection-only `listEntries()` for the demo inspector pane.
+//
+// Demo-side `IdempotencyStore` impl used by the action-permissions demo.
+// Same contract as `InMemoryIdempotencyStore` from the substrate, kept
+// as a distinct class so demo wiring can pin it explicitly and so the
+// demo retains a place to add inspector-friendly behavior later if
+// needed. Inspector enumeration goes through the interface method
+// `IdempotencyStore.listEntries()` — no bespoke snapshot type is
+// required.
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:meta/meta.dart';
 
-/// Inspector-only read of one cache slot. Hides `resultJson` /
-/// `emittedEventIds` so the inspector pane never shows the cached
-/// payload itself — only that a slot exists and when it expires.
-@immutable
-class DemoIdempotencyEntrySnapshot {
-  const DemoIdempotencyEntrySnapshot({
-    required this.actionName,
-    required this.principalId,
-    required this.idempotencyKey,
-    required this.expiresAt,
-  });
-
-  final String actionName;
-  final String principalId;
-  final String idempotencyKey;
-  final DateTime expiresAt;
-}
-
-/// In-memory `IdempotencyStore` that exposes a sorted snapshot of every
-/// cached slot for the inspector pane. Same store contract as
-/// `InMemoryIdempotencyStore` — use this in the demo so the inspector
-/// can render the cache.
+/// In-memory `IdempotencyStore` for the action-permissions demo.
+/// Mirrors `InMemoryIdempotencyStore` but kept as a distinct class so
+/// the demo's server-side wiring can refer to it by name. Inspector
+/// enumeration uses the interface's [listEntries] contract.
 class DemoIdempotencyStore implements IdempotencyStore {
   DemoIdempotencyStore();
 
-  final Map<String, _Slot> _slots = <String, _Slot>{};
+  final Map<String, IdempotencyEntry> _entries = <String, IdempotencyEntry>{};
 
   String _composite(String a, String p, String k) => '$a|$p|$k';
 
@@ -41,10 +28,10 @@ class DemoIdempotencyStore implements IdempotencyStore {
     String key, {
     DateTime? now,
   }) async {
-    final slot = _slots[_composite(actionName, principalId, key)];
-    if (slot == null) return null;
-    if (slot.entry.isExpired(now: now ?? DateTime.now())) return null;
-    return slot.entry;
+    final entry = _entries[_composite(actionName, principalId, key)];
+    if (entry == null) return null;
+    if (entry.isExpired(now: now ?? DateTime.now())) return null;
+    return entry;
   }
 
   @override
@@ -52,71 +39,44 @@ class DemoIdempotencyStore implements IdempotencyStore {
     required String actionName,
     required String principalId,
     required String key,
-    required Map<String, dynamic> resultJson,
+    required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
   }) async {
-    _slots[_composite(actionName, principalId, key)] = _Slot(
+    _entries[_composite(actionName, principalId, key)] = IdempotencyEntry(
       actionName: actionName,
       principalId: principalId,
       idempotencyKey: key,
-      entry: IdempotencyEntry(
-        resultJson: Map<String, dynamic>.unmodifiable(resultJson),
-        emittedEventIds: List<String>.unmodifiable(emittedEventIds),
-        recordedAt: DateTime.now(),
-        expiresAt: expiresAt,
-      ),
+      resultJson: Map<String, Object?>.unmodifiable(resultJson),
+      emittedEventIds: List<String>.unmodifiable(emittedEventIds),
+      recordedAt: DateTime.now(),
+      expiresAt: expiresAt,
     );
   }
 
   @override
   Future<int> sweepExpired({DateTime? before}) async {
     final cutoff = before ?? DateTime.now();
-    final keys = _slots.entries
-        .where((e) => e.value.entry.isExpired(now: cutoff))
+    final keys = _entries.entries
+        .where((e) => e.value.isExpired(now: cutoff))
         .map((e) => e.key)
         .toList();
     for (final k in keys) {
-      _slots.remove(k);
+      _entries.remove(k);
     }
     return keys.length;
   }
 
-  /// Inspector-only snapshot of every cache entry. Sorted by
-  /// (actionName, principalId, idempotencyKey).
-  List<DemoIdempotencyEntrySnapshot> listEntries() {
-    final list =
-        _slots.values
-            .map(
-              (s) => DemoIdempotencyEntrySnapshot(
-                actionName: s.actionName,
-                principalId: s.principalId,
-                idempotencyKey: s.idempotencyKey,
-                expiresAt: s.entry.expiresAt,
-              ),
-            )
-            .toList()
-          ..sort((a, b) {
-            final ac = a.actionName.compareTo(b.actionName);
-            if (ac != 0) return ac;
-            final pc = a.principalId.compareTo(b.principalId);
-            if (pc != 0) return pc;
-            return a.idempotencyKey.compareTo(b.idempotencyKey);
-          });
-    return list;
+  @override
+  Future<List<IdempotencyEntry>> listEntries() async {
+    final list = _entries.values.toList()
+      ..sort((a, b) {
+        final ac = a.actionName.compareTo(b.actionName);
+        if (ac != 0) return ac;
+        final pc = a.principalId.compareTo(b.principalId);
+        if (pc != 0) return pc;
+        return a.idempotencyKey.compareTo(b.idempotencyKey);
+      });
+    return List<IdempotencyEntry>.unmodifiable(list);
   }
-}
-
-class _Slot {
-  const _Slot({
-    required this.actionName,
-    required this.principalId,
-    required this.idempotencyKey,
-    required this.entry,
-  });
-
-  final String actionName;
-  final String principalId;
-  final String idempotencyKey;
-  final IdempotencyEntry entry;
 }
