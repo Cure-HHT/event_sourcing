@@ -9,8 +9,8 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('SeedValidator', () {
     final declared = <Permission>{
-      const Permission('user.invite', scope: ScopeClass.global),
-      const Permission('patient.read', scope: ScopeClass.global),
+      const Permission('user.invite'),
+      const Permission('patient.read'),
     };
 
     test('SeedValid for clean seed', () {
@@ -67,9 +67,7 @@ void main() {
     });
 
     test('rejects permission name containing colon', () {
-      final declared2 = <Permission>{
-        const Permission('user:invite', scope: ScopeClass.global),
-      };
+      final declared2 = <Permission>{const Permission('user:invite')};
       const seed = PermissionSeed(
         roles: <String>{'admin'},
         grants: <String, Set<String>>{
@@ -78,5 +76,91 @@ void main() {
       );
       expect(SeedValidator().validate(seed, declared2), isA<SeedInvalid>());
     });
+
+    test('rejects seed referencing a permission whose scopeClass is not '
+        'registered in ScopeClassRegistry', () {
+      final declared = <Permission>{
+        const Permission('patient.edit', scopeClass: 'patient'),
+      };
+      final registry = ScopeClassRegistry(
+        classes: const [ScopeClassSpec(name: 'site')], // 'patient' absent
+        projectionLookup: (_) => null,
+      );
+      const seed = PermissionSeed(
+        roles: <String>{'SC'},
+        grants: <String, Set<String>>{
+          'SC': <String>{'patient.edit'},
+        },
+      );
+      final result = SeedValidator().validate(
+        seed,
+        declared,
+        scopeClassRegistry: registry,
+      );
+      expect(result, isA<SeedInvalid>());
+      expect((result as SeedInvalid).errors.single, contains('patient'));
+    });
+
+    test('accepts seed where all referenced scopeClasses are registered', () {
+      final declared = <Permission>{
+        const Permission('patient.edit', scopeClass: 'patient'),
+      };
+      final registry = ScopeClassRegistry(
+        classes: const [
+          ScopeClassSpec(name: 'site'),
+          ScopeClassSpec(
+            name: 'patient',
+            containedIn: ContainmentRef(
+              parentClass: 'site',
+              projection: 'patient_site',
+              keyColumn: 'patient_id',
+              parentColumn: 'site_id',
+            ),
+          ),
+        ],
+        projectionLookup: (_) => const _MinimalDescriptor(),
+      );
+      const seed = PermissionSeed(
+        roles: <String>{'SC'},
+        grants: <String, Set<String>>{
+          'SC': <String>{'patient.edit'},
+        },
+      );
+      final result = SeedValidator().validate(
+        seed,
+        declared,
+        scopeClassRegistry: registry,
+      );
+      expect(result, isA<SeedValid>());
+    });
+
+    test('unscoped permissions are not checked against the registry', () {
+      // When permission has scopeClass == null, the registry is irrelevant.
+      final declared = <Permission>{const Permission('report.generate')};
+      final registry = ScopeClassRegistry(
+        classes: const [],
+        projectionLookup: (_) => null,
+      );
+      const seed = PermissionSeed(
+        roles: <String>{'SC'},
+        grants: <String, Set<String>>{
+          'SC': <String>{'report.generate'},
+        },
+      );
+      final result = SeedValidator().validate(
+        seed,
+        declared,
+        scopeClassRegistry: registry,
+      );
+      expect(result, isA<SeedValid>());
+    });
   });
+}
+
+/// Minimal projection descriptor whose columns cover the test
+/// `ContainmentRef` (so `ScopeClassRegistry` accepts the registration).
+class _MinimalDescriptor implements ScopeProjectionDescriptor {
+  const _MinimalDescriptor();
+  @override
+  Set<String> get columns => const {'patient_id', 'site_id'};
 }

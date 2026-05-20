@@ -205,6 +205,31 @@ abstract class StorageBackend {
     int? offset,
   });
 
+  /// Iterate rows in [viewName] inside [txn] optionally filtered by
+  /// column equality. `where` is interpreted as "every key/value pair
+  /// must match the row's column of that name." A null or empty
+  /// [where] applies no filtering. Returns rows in unspecified order;
+  /// callers needing sort must sort the result.
+  ///
+  /// Used by the authorization policy to enumerate `user_role_scopes`
+  /// for the current `(userId, role)` inside the dispatch transaction
+  /// so that the authorize-stage read sees the same snapshot as the
+  /// execute-stage append.
+  // Implements: EVS-PRD-permissions-as-events — closed-under-events
+  //   evaluation: the authorize stage reads scope state from the same
+  //   transaction the execute stage appends into, so the decision is
+  //   reproducible from (events, lib_version) under the same backend
+  //   transaction.
+  // Implements: EVS-PRD-action-dispatch — single-transaction authorize +
+  //   execute path requires a transactional multi-row view-read primitive.
+  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+    Txn txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  });
+
   /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
   Future<void> clearViewInTxn(Txn txn, String viewName);
 

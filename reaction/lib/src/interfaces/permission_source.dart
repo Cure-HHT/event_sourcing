@@ -14,10 +14,11 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///
 /// Two impls ship with `reaction`:
 ///
-/// - [LocalPermissionSource] (in-process): wraps existing
-///   `RoleMatrixReader` + `PermissionSnapshot` machinery; subscribes
-///   to the `RolePermissionGrants` view via local `subscribe<T>`;
-///   recomputes the snapshot when relevant rows change.
+/// - [LocalPermissionSource] (in-process): subscribes to the
+///   `RolePermissionGrants` view via local `subscribe<T>`; on each
+///   relevant update (or principal change) reads the projection rows
+///   directly via `EventStore.backend.findViewRows` and rebuilds the
+///   [PermissionSnapshot] for the active principal's `activeRole`.
 /// - [RemotePermissionSource] (cross-process; Plan B-remote): initial
 ///   HTTP GET `/permissions/snapshot?principalId=...`; subsequent
 ///   updates via the multiplexed WS subscription on the same

@@ -36,7 +36,7 @@ class EditBlueNoteAction extends Action<EditBlueNoteInput, EditBlueNoteResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('notes.write.blue', scope: ScopeClass.site),
+    const Permission('notes.write.blue', scopeClass: 'site'),
   };
 
   @override
@@ -64,6 +64,12 @@ class EditBlueNoteAction extends Action<EditBlueNoteInput, EditBlueNoteResult> {
       throw ArgumentError.value(input.title, 'title', 'must be non-empty');
     }
   }
+
+  @override
+  ScopeValue? scopeFor(Permission perm, EditBlueNoteInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'blue-workspace')
+      : null;
 
   @override
   Future<ExecutionResult<EditBlueNoteResult>> execute(

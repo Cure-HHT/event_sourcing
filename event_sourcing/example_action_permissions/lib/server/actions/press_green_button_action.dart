@@ -33,7 +33,7 @@ class PressGreenButtonAction extends Action<PressGreenInput, PressGreenResult> {
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('buttons.press.green', scope: ScopeClass.site),
+    const Permission('buttons.press.green', scopeClass: 'site'),
   };
 
   @override
@@ -47,6 +47,12 @@ class PressGreenButtonAction extends Action<PressGreenInput, PressGreenResult> {
   void validate(PressGreenInput input) {
     // no-op: PressGreenInput has no fields to validate.
   }
+
+  @override
+  ScopeValue? scopeFor(Permission perm, PressGreenInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'green-workspace')
+      : null;
 
   @override
   Future<ExecutionResult<PressGreenResult>> execute(

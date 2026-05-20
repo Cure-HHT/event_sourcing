@@ -4,7 +4,7 @@ import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/deny_all_authorization_policy.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
+import 'package:event_sourcing/src/permissions/effective_authorization.dart';
 import 'package:test/test.dart';
 
 // DenyAllAuthorizationPolicy is convenience scaffolding without a
@@ -14,14 +14,15 @@ void main() {
   group('DenyAllAuthorizationPolicy', () {
     test('returns Deny(notGranted) for an authenticated user', () async {
       const policy = DenyAllAuthorizationPolicy.forTests();
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u-1',
-        roles: {'Admin'},
+        roles: const {'Admin'},
         activeRole: 'Admin',
       );
       final result = await policy.isPermitted(
         p,
-        const Permission('any.thing', scope: ScopeClass.global),
+        const Permission('any.thing'),
+        null,
       );
       expect(result, isA<Deny>());
       expect((result as Deny).reason, DenyReason.notGranted);
@@ -33,20 +34,24 @@ void main() {
       const p = Principal.anonymous();
       final result = await policy.isPermitted(
         p,
-        const Permission('any.thing', scope: ScopeClass.global),
+        const Permission('any.thing'),
+        null,
       );
       expect(result, isA<Deny>());
       expect((result as Deny).reason, DenyReason.notGranted);
     });
 
-    test('permissionsFor returns empty set', () async {
+    test('effectivePermissionsFor returns empty', () async {
       const policy = DenyAllAuthorizationPolicy.forTests();
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u-1',
-        roles: {'Admin'},
+        roles: const {'Admin'},
         activeRole: 'Admin',
       );
-      expect(await policy.permissionsFor(p), isEmpty);
+      expect(
+        await policy.effectivePermissionsFor(p),
+        equals(EffectiveAuthorization.empty),
+      );
     });
   });
 }

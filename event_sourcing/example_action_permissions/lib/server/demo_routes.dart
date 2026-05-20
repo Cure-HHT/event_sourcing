@@ -41,15 +41,27 @@ class DemoRoutes {
     final body = jsonDecode(await req.readAsString()) as Map<String, Object?>;
     final ssReq = SessionStartRequest.fromJson(body);
     final principal = components.directory.resolve(ssReq.userId);
-    final perms = await components.policy.permissionsFor(principal);
+    final effective = await components.policy.effectivePermissionsFor(
+      principal,
+    );
 
     final response = SessionStartResponse(
       principalRole: _principalRole(principal),
       principalUserId: principal is UserPrincipal ? principal.userId : null,
+      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
+      // reads it back from its own directory record for the wire response.
       principalActiveSite: principal is UserPrincipal
-          ? principal.activeSite
+          ? components.directory.siteFor(principal.userId)
           : null,
-      snapshotPermissions: perms.map((p) => p.name).toList()..sort(),
+      // effectivePermissionsFor returns an EffectiveAuthorization that
+      // carries the role's permission set AND the user's scope
+      // assignments. The wire response surfaces just the permission
+      // names (UI gating only needs to ask "does the user's role carry
+      // permission X?"); scope-by-scope display is left to richer
+      // clients consuming the substrate directly.
+      snapshotPermissions:
+          effective.rolePermissions.map((Permission p) => p.name).toList()
+            ..sort(),
     );
     return Response.ok(jsonEncode(response.toJson()), headers: _jsonHeaders);
   }

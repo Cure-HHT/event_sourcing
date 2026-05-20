@@ -125,7 +125,8 @@ export 'src/actions/idempotency_store.dart'
 export 'src/actions/permission.dart' show Permission;
 export 'src/actions/principal.dart'
     show Principal, UserPrincipal, AnonymousPrincipal;
-export 'src/actions/scope_class.dart' show ScopeClass;
+export 'src/actions/scope_value.dart'
+    show BoundScope, ScopeValue, TotalWildcardScope, ValueWildcardScope;
 
 // bootstrapAppendOnlyDatastore — single entry point for app main() to wire
 // the storage backend, EntryTypeRegistry, destinations, security context
@@ -197,6 +198,21 @@ export 'src/projections/rebuild.dart' show rebuildView;
 export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
+// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
+// when an app declares its own projections. Re-exported because they are the
+// public API surface for defining projection shape, not internal implementation.
+export 'src/projections/primitives/row_key.dart'
+    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+export 'src/projections/primitives/row_data.dart'
+    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+export 'src/projections/primitives/derived_field.dart'
+    show
+        ConstantValue,
+        DerivedField,
+        DerivedFieldComputation,
+        DottedPathLookup,
+        FallbackValue,
+        FirstEventTimestamp;
 
 // Promoters — entry-type version promotion chains for schema migration.
 export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
@@ -222,27 +238,39 @@ export 'src/permissions/authorization_policy_bootstrap.dart'
     show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
     show bootstrapActionPermissions;
+export 'src/permissions/bootstrap_role_assignments.dart'
+    show RoleAssignmentSeedResult, bootstrapRoleAssignments;
+export 'src/permissions/containment_resolver.dart'
+    show ContainmentResolver, FindRowsInTxn;
+export 'src/permissions/effective_authorization.dart'
+    show EffectiveAuthorization;
 export 'src/permissions/event_seed_applier.dart'
     show EventSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
     show FailSafeAuthorizationPolicy;
-export 'src/permissions/in_memory_role_matrix_reader.dart'
-    show InMemoryRoleMatrixReader;
-export 'src/permissions/materialized_view_role_matrix_reader.dart'
-    show MaterializedViewRoleMatrixReader;
 export 'src/permissions/permission_granted_payload.dart'
     show PermissionGrantedPayload;
 export 'src/permissions/permission_revoked_payload.dart'
     show PermissionRevokedPayload;
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
 export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
-export 'src/permissions/role_matrix_reader.dart' show RoleMatrixReader;
+export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
+export 'src/permissions/role_assignment_aggregate_id.dart'
+    show roleAssignmentAggregateId;
+export 'src/permissions/role_assignment_seed.dart'
+    show RoleAssignmentSeed, RoleAssignmentSeedEntry;
+export 'src/permissions/role_unassigned_payload.dart'
+    show RoleUnassignedPayload;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
+export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
+export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
+export 'src/permissions/scope_class_registry.dart'
+    show ScopeClassRegistry, ScopeProjectionDescriptor;
+export 'src/permissions/scope_class_spec.dart'
+    show ContainmentRef, ScopeClassSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
-export 'src/permissions/snapshot_role_matrix_reader.dart'
-    show SnapshotRoleMatrixReader;
 export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;

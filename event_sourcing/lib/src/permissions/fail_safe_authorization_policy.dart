@@ -1,25 +1,25 @@
-// lib/src/permissions/fail_safe_authorization_policy.dart
-// Implements: EVS-PRD-permissions-as-events/B — safe fallback implementation
-// of AuthorizationPolicy used when bootstrap validation fails; denies all
-// requests with DenyReason.bootstrapFailure so that no authorization decision
-// is made from a corrupt or incomplete event-derived projection.
+// Implements: EVS-PRD-action-dispatch/B (fail-safe policy denies everything
+//   when bootstrap fails; preserves the closed-set of authorize outcomes)
+// Implements: EVS-PRD-permissions-as-events/B (no decisions consult any
+//   authority outside the log; the empty result is the only safe answer
+//   when projections are unavailable)
 
 import 'package:event_sourcing/event_sourcing.dart';
 
 class FailSafeAuthorizationPolicy implements AuthorizationPolicy {
-  const FailSafeAuthorizationPolicy(this.bootstrapErrors);
-  final List<String> bootstrapErrors;
+  const FailSafeAuthorizationPolicy();
 
   @override
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
-    Permission perm,
-  ) async {
-    return Deny(permission: perm, reason: DenyReason.bootstrapFailure);
-  }
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async => Deny(permission: permission, reason: DenyReason.notGranted);
 
   @override
-  Future<Set<Permission>> permissionsFor(Principal principal) async {
-    return const <Permission>{};
-  }
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Txn? txn,
+  }) async => EffectiveAuthorization.empty;
 }

@@ -35,9 +35,7 @@ class InviteUserAction extends Action<Map<String, Object?>, String> {
   String get description => 'Invite a user by email address.';
 
   @override
-  Set<Permission> get permissions => {
-    const Permission('user.invite', scope: ScopeClass.global),
-  };
+  Set<Permission> get permissions => {const Permission('user.invite')};
 
   @override
   Idempotency get idempotency => Idempotency.optional;
@@ -99,9 +97,9 @@ class RequiredKeyInviteAction extends InviteUserAction {
 // ---------------------------------------------------------------------------
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'u-admin',
-    roles: {'admin'},
+    roles: const {'admin'},
     activeRole: 'admin',
   ),
   security: const SecurityDetails(),

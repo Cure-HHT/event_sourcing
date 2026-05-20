@@ -9,7 +9,6 @@ import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
 
 class _NoOpAction extends Action<Map<String, Object?>, String> {
@@ -20,9 +19,7 @@ class _NoOpAction extends Action<Map<String, Object?>, String> {
   String get description => 'A no-op for testing.';
 
   @override
-  Set<Permission> get permissions => {
-    const Permission('test.noop', scope: ScopeClass.global),
-  };
+  Set<Permission> get permissions => {const Permission('test.noop')};
 
   @override
   Idempotency get idempotency => Idempotency.none;

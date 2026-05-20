@@ -38,8 +38,9 @@
 /// - [LocalAuthSession] — holds a [Principal] directly.
 /// - [LocalActionSubmitter] — wraps `ActionDispatcher.dispatch`.
 /// - [LocalViewSource] — wraps `EventStore.subscribe<T>`.
-/// - [LocalPermissionSource] — wraps the `RoleMatrixReader` +
-///   `PermissionSnapshot` machinery.
+/// - [LocalPermissionSource] — subscribes to the substrate's
+///   `role_permission_grants` view and reads the projection rows
+///   directly to build [PermissionSnapshot]s for the active principal.
 ///
 /// Remote impls + wire protocol land in Plan B-remote; the pure-Dart
 /// shelf server lands in Plan C; Flutter widgets land in Plan D.

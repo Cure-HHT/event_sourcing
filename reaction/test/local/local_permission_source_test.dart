@@ -16,17 +16,14 @@ void main() {
     late LocalPermissionSource source;
 
     // Define the helper-permission for assertions.
-    const sayHello = Permission('say_hello', scope: ScopeClass.global);
+    const sayHello = Permission('say_hello');
 
     setUp(() async {
       harness = await ReactionTestHarness.open();
       // Seed: 'greeter' role has 'say_hello'.
       await _grantSayHelloToGreeterRole(harness);
 
-      source = LocalPermissionSource(
-        eventStore: harness.eventStore,
-        roleMatrixReader: harness.roleMatrixReader,
-      );
+      source = LocalPermissionSource(eventStore: harness.eventStore);
     });
 
     tearDown(() async {
@@ -41,9 +38,9 @@ void main() {
     test(
       'after setActivePrincipal(alice/greeter), current reflects greeter grants',
       () async {
-        const alice = Principal.user(
+        final alice = Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         );
         source.setActivePrincipal(alice);
@@ -59,9 +56,9 @@ void main() {
     );
 
     test('setActivePrincipal(null) clears current to null', () async {
-      const alice = Principal.user(
+      final alice = Principal.user(
         userId: 'alice',
-        roles: {'greeter'},
+        roles: const {'greeter'},
         activeRole: 'greeter',
       );
       source.setActivePrincipal(alice);
@@ -79,9 +76,9 @@ void main() {
 
       // Alice has 'greeter' — should get a non-null snapshot with say_hello.
       source.setActivePrincipal(
-        const Principal.user(
+        Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         ),
       );
@@ -89,7 +86,11 @@ void main() {
 
       // Bob has 'nobody' role — no grants; snapshot has empty grants.
       source.setActivePrincipal(
-        const Principal.user(userId: 'bob', roles: {}, activeRole: 'nobody'),
+        Principal.user(
+          userId: 'bob',
+          roles: const {'nobody'},
+          activeRole: 'nobody',
+        ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 100));
 
@@ -115,9 +116,9 @@ void main() {
     test(
       'stream emits current value to a late subscriber (snapshot-on-listen)',
       () async {
-        const alice = Principal.user(
+        final alice = Principal.user(
           userId: 'alice',
-          roles: {'greeter'},
+          roles: const {'greeter'},
           activeRole: 'greeter',
         );
         source.setActivePrincipal(alice);
@@ -141,7 +142,7 @@ void main() {
 /// Seeds the harness's role-permission matrix with 'say_hello' granted to the
 /// 'greeter' role. Copied from local_action_submitter_test.dart.
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
-  const sayHelloPerm = Permission('say_hello', scope: ScopeClass.global);
+  const sayHelloPerm = Permission('say_hello');
   const seed = PermissionSeed(
     roles: {'greeter'},
     grants: {

@@ -18,14 +18,7 @@ class PermissionSnapshot {
     final grantsList = json['grants']! as List<Object?>;
     final grants = grantsList.map((g) {
       final m = g! as Map<Object?, Object?>;
-      final scopeName = m['scope']! as String;
-      return Permission(
-        m['name']! as String,
-        scope: ScopeClass.values.firstWhere(
-          (s) => s.name == scopeName,
-          orElse: () => throw FormatException('unknown scope $scopeName'),
-        ),
-      );
+      return Permission(m['name']! as String);
     }).toSet();
     return PermissionSnapshot(
       role: json['role']! as String,
@@ -40,9 +33,7 @@ class PermissionSnapshot {
 
   Map<String, Object?> toJson() => <String, Object?>{
     'role': role,
-    'grants': grants
-        .map((p) => <String, Object?>{'name': p.name, 'scope': p.scope.name})
-        .toList(),
+    'grants': grants.map((p) => <String, Object?>{'name': p.name}).toList(),
     'issuedAt': issuedAt.toIso8601String(),
   };
 }

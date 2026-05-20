@@ -7,11 +7,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'green-user-1',
-    roles: <String>{'GreenTeam'},
+    roles: const <String>{'GreenTeam'},
     activeRole: 'GreenTeam',
-    activeSite: 'green-workspace',
   ),
   security: const SecurityDetails(),
   requestStartedAt: DateTime.utc(2026, 5, 8, 12),
@@ -21,11 +20,11 @@ void main() {
   group('PressRedAlarmAction', () {
     final action = PressRedAlarmAction();
 
-    test('declares self-scoped buttons.press.red, idempotency required', () {
+    test('declares unscoped buttons.press.red, idempotency required', () {
       expect(action.name, 'PressRedAlarmAction');
       expect(
         action.permissions,
-        contains(const Permission('buttons.press.red', scope: ScopeClass.self)),
+        contains(const Permission('buttons.press.red')),
       );
       expect(action.idempotency, Idempotency.required);
     });

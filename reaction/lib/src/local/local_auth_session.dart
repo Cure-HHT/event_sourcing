@@ -14,10 +14,12 @@ import 'package:reaction/src/interfaces/auth_session.dart';
 /// [UserPrincipal.userId] directly — there is no credential validation
 /// (mobile-install case has no JWT).
 ///
-/// The constructed [UserPrincipal] has empty roles and a
-/// [defaultActiveRole]-valued `activeRole`. Roles get attached
-/// substrate-side via permission events; consumers configure the
-/// activeRole name via the constructor.
+/// The constructed [UserPrincipal] has `roles: {defaultActiveRole}`
+/// and `activeRole: defaultActiveRole`. The `UserPrincipal` invariant
+/// requires `activeRole` to be a member of `roles`; the session does
+/// not know any other roles. Substrate-side permission events drive
+/// grant lookups; consumers configure the role name via the
+/// constructor.
 ///
 /// Status flips between [Authenticated] and [NotAuthenticated]; never
 /// [Expired] (no credential expiration concept in-process — the
@@ -57,7 +59,7 @@ class LocalAuthSession implements AuthSession {
         : Authenticated(
             principal: Principal.user(
               userId: credential,
-              roles: const {},
+              roles: {defaultActiveRole},
               activeRole: defaultActiveRole,
             ),
           );

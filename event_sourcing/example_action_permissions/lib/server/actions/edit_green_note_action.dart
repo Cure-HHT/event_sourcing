@@ -37,7 +37,7 @@ class EditGreenNoteAction
 
   @override
   Set<Permission> get permissions => <Permission>{
-    const Permission('notes.write.green', scope: ScopeClass.site),
+    const Permission('notes.write.green', scopeClass: 'site'),
   };
 
   @override
@@ -65,6 +65,12 @@ class EditGreenNoteAction
       throw ArgumentError.value(input.title, 'title', 'must be non-empty');
     }
   }
+
+  @override
+  ScopeValue? scopeFor(Permission perm, EditGreenNoteInput input) =>
+      perm.scopeClass == 'site'
+      ? const BoundScope(class_: 'site', value: 'green-workspace')
+      : null;
 
   @override
   Future<ExecutionResult<EditGreenNoteResult>> execute(

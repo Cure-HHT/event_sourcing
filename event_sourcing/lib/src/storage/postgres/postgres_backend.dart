@@ -626,6 +626,53 @@ class PostgresBackend extends StorageBackend {
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
+  // Implements: EVS-DEV-postgres-backend/B — in-txn multi-row read with
+  //   optional column-equality filter; required by the scoped-permissions
+  //   authorize stage so its policy reads and the dispatch's event-append
+  //   share one read-consistent snapshot. The `where` map is compiled into
+  //   `row_data ->> $key_param = $value_param` predicates AND-composed; both
+  //   key and value are passed as parameters (Postgres accepts a text-type
+  //   parameter as the right operand of ->>), so caller-supplied keys
+  //   cannot be interpolated into SQL. Null `where` or an empty map
+  //   returns every row in the view (paging via limit/offset).
+  // Implements: EVS-PRD-permissions-as-events
+  // Implements: EVS-PRD-action-dispatch
+  @override
+  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+    Txn txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  }) async {
+    final session = _asPgTxn(txn).session;
+    final params = <String, Object?>{'v': viewName};
+    final whereClauses = <String>['view_name = @v'];
+    if (where != null) {
+      var i = 0;
+      for (final entry in where.entries) {
+        final keyParam = 'wk$i';
+        final valParam = 'wv$i';
+        whereClauses.add('row_data ->> @$keyParam = @$valParam');
+        params[keyParam] = entry.key;
+        params[valParam] = entry.value?.toString();
+        i++;
+      }
+    }
+    final limitClause = limit == null ? '' : 'LIMIT $limit';
+    final offsetClause = offset == null ? '' : 'OFFSET $offset';
+    final result = await session.execute(
+      Sql.named('''
+        SELECT row_data FROM view_rows
+        WHERE ${whereClauses.join(' AND ')}
+        ORDER BY row_key ASC
+        $limitClause $offsetClause
+      '''),
+      parameters: params,
+    );
+    return result.map((r) => _asJsonMap(r[0])).toList();
+  }
+
   // Implements: EVS-DEV-postgres-backend/B — delete all rows for a view
   //   without touching other views (WHERE view_name = @v).
   @override

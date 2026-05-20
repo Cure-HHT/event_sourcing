@@ -5,11 +5,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'green-user-1',
-    roles: <String>{'GreenTeam'},
+    roles: const <String>{'GreenTeam'},
     activeRole: 'GreenTeam',
-    activeSite: 'green-workspace',
   ),
   security: const SecurityDetails(),
   requestStartedAt: DateTime.utc(2026, 5, 8, 12),
@@ -23,7 +22,7 @@ void main() {
       expect(action.name, 'EditGreenNoteAction');
       expect(
         action.permissions,
-        contains(const Permission('notes.write.green', scope: ScopeClass.site)),
+        contains(const Permission('notes.write.green', scopeClass: 'site')),
       );
       expect(action.idempotency, Idempotency.optional);
     });

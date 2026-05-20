@@ -5,6 +5,7 @@ import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/actions/scope_value.dart';
 
 /// A portal command. Concrete subclasses define one action and one
 /// command shape (`TInput`) and one result shape (`TResult`).
@@ -58,4 +59,22 @@ abstract class Action<TInput, TResult> {
   /// result and the events to persist atomically (one transaction in
   /// the events lib).
   Future<ExecutionResult<TResult>> execute(TInput input, ActionContext ctx);
+
+  /// Per dispatch, supply the scope value for each scoped permission this
+  /// action requires. Pure: no I/O. Returns null for unscoped permissions
+  /// (default impl).
+  ///
+  /// For scoped permissions, the returned value MUST be a `BoundScope`
+  /// whose `class_` equals the permission's declared `scopeClass`. The
+  /// dispatcher denies with `scopeUnresolvable` if the action returns:
+  /// null, a `TotalWildcardScope`, a `ValueWildcardScope`, or a
+  /// `BoundScope` whose class disagrees with the permission's scope class.
+  ///
+  /// (Wildcard request scopes are deliberately not honored in v1: the
+  /// match algorithm walks assignments and checks each one against a
+  /// concrete `BoundScope` target. Wildcards belong on the assignment
+  /// side, not the request side. If a future action genuinely needs to
+  /// authorize "any value of a class," that's a library extension under
+  /// Append-Only Primitives, not a `scopeFor` return-type change.)
+  ScopeValue? scopeFor(Permission perm, TInput input) => null;
 }

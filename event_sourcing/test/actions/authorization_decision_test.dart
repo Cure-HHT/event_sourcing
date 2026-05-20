@@ -3,7 +3,6 @@
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
-import 'package:event_sourcing/src/actions/scope_class.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -21,7 +20,7 @@ void main() {
 
     test('Deny carries permission + reason', () {
       const d = Deny(
-        permission: Permission('user.invite', scope: ScopeClass.global),
+        permission: Permission('user.invite'),
         reason: DenyReason.notGranted,
       );
       expect(d.permission.name, 'user.invite');
@@ -37,12 +36,11 @@ void main() {
       expect(desc, 'allow');
     });
 
-    test('DenyReason has three values', () {
-      expect(DenyReason.values, hasLength(3));
+    test('DenyReason has two values', () {
+      expect(DenyReason.values, hasLength(2));
       expect(DenyReason.values.toSet(), {
         DenyReason.notGranted,
-        DenyReason.sessionPreconditionMissing,
-        DenyReason.bootstrapFailure,
+        DenyReason.scopeUnresolvable,
       });
     });
   });

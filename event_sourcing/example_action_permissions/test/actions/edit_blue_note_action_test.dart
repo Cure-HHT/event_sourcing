@@ -5,11 +5,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ActionContext _ctx() => ActionContext(
-  principal: const Principal.user(
+  principal: Principal.user(
     userId: 'blue-user',
-    roles: <String>{'BlueTeam'},
+    roles: const <String>{'BlueTeam'},
     activeRole: 'BlueTeam',
-    activeSite: 'blue-workspace',
   ),
   security: const SecurityDetails(),
   requestStartedAt: DateTime.utc(2026, 5, 8, 12),
@@ -23,7 +22,7 @@ void main() {
       expect(action.name, 'EditBlueNoteAction');
       expect(
         action.permissions,
-        contains(const Permission('notes.write.blue', scope: ScopeClass.site)),
+        contains(const Permission('notes.write.blue', scopeClass: 'site')),
       );
       expect(action.idempotency, Idempotency.optional);
     });

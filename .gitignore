@@ -49,5 +49,6 @@
 # Superpowers brainstorming working files (visual companion mockups, etc.)
 .superpowers/
 
-# elspais MCP runtime cache (daemon state, regenerated on demand)
+# elspais MCP runtime cache and daemon state. The persistent config lives
+# in .elspais.toml (tracked); only the runtime directory is ignored.
 .elspais/

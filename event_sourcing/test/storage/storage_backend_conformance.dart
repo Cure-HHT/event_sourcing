@@ -1034,6 +1034,112 @@ void _registerViewRowTests(
       expect(skip2, hasLength(3));
     });
 
+    // Verifies: EVS-PRD-permissions-as-events — multi-row in-txn read is
+    //   the substrate primitive that lets the scoped-permissions authorize
+    //   stage enumerate user_role_scopes inside the dispatch transaction
+    //   (so the authorize-stage read and the execute-stage append share
+    //   one read-consistent snapshot).
+    // Verifies: EVS-PRD-action-dispatch — same dispatch-transaction
+    //   coherence requirement on the authorize side.
+    test('findViewRowsInTxn returns rows matching column equality filter '
+        'inside a transaction', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.upsertViewRowInTxn(txn, 'demo_findviewrows', 'k1', {
+          'user_id': 'U1',
+          'role': 'SC',
+        });
+        await backend.upsertViewRowInTxn(txn, 'demo_findviewrows', 'k2', {
+          'user_id': 'U1',
+          'role': 'SUP',
+        });
+        await backend.upsertViewRowInTxn(txn, 'demo_findviewrows', 'k3', {
+          'user_id': 'U2',
+          'role': 'SC',
+        });
+      });
+      final rows = await backend.transaction(
+        (txn) => backend.findViewRowsInTxn(
+          txn,
+          'demo_findviewrows',
+          where: {'user_id': 'U1', 'role': 'SC'},
+        ),
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single['user_id'], 'U1');
+      expect(rows.single['role'], 'SC');
+    });
+
+    test('findViewRowsInTxn with null where returns all rows '
+        '(limit/offset apply)', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        for (var i = 0; i < 5; i++) {
+          await backend.upsertViewRowInTxn(txn, 'v_nullwhere', 'k$i', {'i': i});
+        }
+      });
+      final all = await backend.transaction(
+        (txn) => backend.findViewRowsInTxn(txn, 'v_nullwhere'),
+      );
+      expect(all, hasLength(5));
+      final two = await backend.transaction(
+        (txn) => backend.findViewRowsInTxn(txn, 'v_nullwhere', limit: 2),
+      );
+      expect(two, hasLength(2));
+      final skip2 = await backend.transaction(
+        (txn) => backend.findViewRowsInTxn(
+          txn,
+          'v_nullwhere',
+          limit: 100,
+          offset: 2,
+        ),
+      );
+      expect(skip2, hasLength(3));
+    });
+
+    test('findViewRowsInTxn with empty where returns all rows '
+        '(no filtering)', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.upsertViewRowInTxn(txn, 'v_emptywhere', 'k1', {'a': 1});
+        await backend.upsertViewRowInTxn(txn, 'v_emptywhere', 'k2', {'a': 2});
+      });
+      final rows = await backend.transaction(
+        (txn) => backend.findViewRowsInTxn(
+          txn,
+          'v_emptywhere',
+          where: const <String, Object?>{},
+        ),
+      );
+      expect(rows, hasLength(2));
+    });
+
+    test(
+      'findViewRowsInTxn sees uncommitted writes from same transaction',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final rows = await backend.transaction((txn) async {
+          await backend.upsertViewRowInTxn(txn, 'v_coherent', 'k1', {
+            'user_id': 'U1',
+          });
+          await backend.upsertViewRowInTxn(txn, 'v_coherent', 'k2', {
+            'user_id': 'U2',
+          });
+          return backend.findViewRowsInTxn(
+            txn,
+            'v_coherent',
+            where: {'user_id': 'U1'},
+          );
+        });
+        expect(rows, hasLength(1));
+        expect(rows.single['user_id'], 'U1');
+      },
+    );
+
     test('clearViewInTxn empties one view without touching others', () async {
       if (!initializedOf()) return;
       final backend = backendOf();

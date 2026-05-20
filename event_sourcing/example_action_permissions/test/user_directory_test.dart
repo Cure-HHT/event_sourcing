@@ -30,14 +30,17 @@ void main() {
       expect(user.userId, 'green-user-1');
       expect(user.activeRole, 'GreenTeam');
       expect(user.roles, <String>{'GreenTeam'});
-      expect(user.activeSite, 'green-workspace');
+      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
+      // exposes it via the directory record instead.
+      expect(dir.siteFor('green-user-1'), 'green-workspace');
     });
 
-    test('resolve uses null activeSite when upserted without one', () {
+    test('siteFor returns null when upserted without an activeSite', () {
       final dir = UserDirectory();
       dir.upsert(userId: 'admin-user', role: 'Admin', activeSite: null);
       final p = dir.resolve('admin-user') as UserPrincipal;
-      expect(p.activeSite, isNull);
+      expect(p.userId, 'admin-user');
+      expect(dir.siteFor('admin-user'), isNull);
     });
 
     test('listEntries returns alphabetically sorted snapshot', () {

@@ -15,7 +15,13 @@ import 'package:sembast/sembast_memory.dart';
 /// entry types (`action_denial` and `greeting`) that `HelloAction` and
 /// `MultiEventAction` emit. Returns a fresh instance on every call so
 /// tests are isolated.
-Future<EventStore> bootstrapTestEventStore() async {
+///
+/// [projections] may be supplied to register projection specs that watch
+/// the test-emitted events — used by the dispatch-materialization test
+/// to confirm that views update inside the dispatch transaction.
+Future<EventStore> bootstrapTestEventStore({
+  ProjectionRegistry? projections,
+}) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'dispatcher-${DateTime.now().microsecondsSinceEpoch}.db',
   );
@@ -60,5 +66,6 @@ Future<EventStore> bootstrapTestEventStore() async {
       softwareVersion: 'event_sourcing_test@0.0.0',
     ),
     securityContexts: securityContexts,
+    projections: projections,
   );
 }

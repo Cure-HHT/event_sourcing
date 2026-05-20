@@ -78,7 +78,6 @@ class EventSeedApplier {
         data: PermissionGrantedPayload(
           role: role,
           permissionName: permName,
-          scope: perm.scope,
         ).toJson(),
         initiator: seedInitiator,
       );

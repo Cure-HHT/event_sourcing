@@ -2,10 +2,10 @@
 // LocalPermissionSource derives the snapshot from the substrate's
 // RolePermissionGrants projection (B), and re-fetches + re-emits when
 // the active Principal changes via setActivePrincipal (E).
-// Subscribes to the role_permission_grants view; builds
-// PermissionSnapshot from the active Principal's activeRole via
-// RoleMatrixReader.grantsForRole. Stream honors snapshot-on-listen
-// via per-listener forwarding.
+// Subscribes to the role_permission_grants view; builds PermissionSnapshot
+// from the active Principal's activeRole by reading the projection rows
+// directly via EventStore.backend.findViewRows. Stream honors
+// snapshot-on-listen via per-listener forwarding.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -19,6 +19,10 @@ import 'package:reaction/src/interfaces/permission_source.dart';
 /// 2. The substrate's `role_permission_grants` view emits a [Delta] or
 ///    [Tombstone] update (permission grant/revoke for any role).
 ///
+/// Grants are read directly from the `role_permission_grants` projection
+/// via `eventStore.backend.findViewRows` — the same projection the
+/// substrate's [TableBackedAuthorizationPolicy] reads at authorize time.
+///
 /// `current` is null until [setActivePrincipal] is called (or after
 /// clearing with `setActivePrincipal(null)`).
 ///
@@ -29,10 +33,7 @@ import 'package:reaction/src/interfaces/permission_source.dart';
 /// the internal stream controller. After [dispose], the source must not be
 /// used.
 class LocalPermissionSource implements PermissionSource {
-  LocalPermissionSource({
-    required this.eventStore,
-    required this.roleMatrixReader,
-  }) {
+  LocalPermissionSource({required this.eventStore}) {
     _grantsSub = eventStore
         .subscribe<Map<String, Object?>>(
           const SubscriptionFilter(),
@@ -50,7 +51,6 @@ class LocalPermissionSource implements PermissionSource {
   }
 
   final EventStore eventStore;
-  final RoleMatrixReader roleMatrixReader;
 
   Principal? _principal;
   PermissionSnapshot? _current;
@@ -108,9 +108,25 @@ class LocalPermissionSource implements PermissionSource {
       _setNull();
       return;
     }
-    final grants = await roleMatrixReader.grantsForRole(activeRole);
+    // Read the role_permission_grants projection directly, filtered to
+    // the active role inside a single backend transaction. Each row is
+    // {'role': <role>, 'permissionName': <name>} (see
+    // rolePermissionGrantsSpec). Scope-class metadata is attached at
+    // Action.permissions declaration time, not stored in the grants
+    // projection.
+    final rows = await eventStore.backend
+        .transaction<List<Map<String, dynamic>>>(
+          (txn) => eventStore.backend.findViewRowsInTxn(
+            txn,
+            'role_permission_grants',
+            where: <String, Object?>{'role': activeRole},
+          ),
+        );
+    final grants = <Permission>{
+      for (final r in rows) Permission(r['permissionName']! as String),
+    };
     // Guard against a race: verify the principal is still the same after
-    // the async grantsForRole call returns.
+    // the async findViewRows call returns.
     if (!identical(_principal, p)) return;
     final snapshot = PermissionSnapshot(
       role: activeRole,

@@ -33,23 +33,22 @@ grants:
 ''';
         final boot = await bootstrapActionPermissions(
           eventStore: eventStore,
-          declaredPermissions: <Permission>{
-            const Permission('user.invite', scope: ScopeClass.global),
-          },
+          declaredPermissions: <Permission>{const Permission('user.invite')},
           yamlSource: yaml,
         );
         expect(boot, isA<PolicyReady>());
         expect(boot.isReady, isTrue);
 
         final policy = boot.policy;
-        const p = Principal.user(
+        final p = Principal.user(
           userId: 'u',
-          roles: {'admin'},
+          roles: const {'admin'},
           activeRole: 'admin',
         );
         final d = await policy.isPermitted(
           p,
-          const Permission('user.invite', scope: ScopeClass.global),
+          const Permission('user.invite'),
+          null,
         );
         expect(d, isA<Allow>());
       },
@@ -65,9 +64,7 @@ grants:
 ''';
       final boot = await bootstrapActionPermissions(
         eventStore: eventStore,
-        declaredPermissions: <Permission>{
-          const Permission('user.invite', scope: ScopeClass.global),
-        },
+        declaredPermissions: <Permission>{const Permission('user.invite')},
         yamlSource: yaml,
       );
       expect(boot, isA<PolicyFailSafe>());
@@ -75,17 +72,18 @@ grants:
       expect(boot.errors, isNotEmpty);
 
       // FailSafe denies everything.
-      const p = Principal.user(
+      final p = Principal.user(
         userId: 'u',
-        roles: {'admin'},
+        roles: const {'admin'},
         activeRole: 'admin',
       );
       final d = await boot.policy.isPermitted(
         p,
-        const Permission('user.invite', scope: ScopeClass.global),
+        const Permission('user.invite'),
+        null,
       );
       expect(d, isA<Deny>());
-      expect((d as Deny).reason, DenyReason.bootstrapFailure);
+      expect((d as Deny).reason, DenyReason.notGranted);
     });
 
     test('re-bootstrap with same yaml is idempotent (no new events)', () async {
@@ -96,9 +94,7 @@ grants:
   admin:
     - user.invite
 ''';
-      final declared = <Permission>{
-        const Permission('user.invite', scope: ScopeClass.global),
-      };
+      final declared = <Permission>{const Permission('user.invite')};
       await bootstrapActionPermissions(
         eventStore: eventStore,
         declaredPermissions: declared,

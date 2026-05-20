@@ -4,12 +4,24 @@
 // Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
 // Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
 // Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
+// Implements: EVS-PRD-scoped-permissions/E/H/I — dispatcher resolves the
+//   per-permission scope, wraps authorize+execute+persist in one storage
+//   transaction, and stamps the resolved scope onto authorization_denied
+//   events when it was non-null.
+// Implements: EVS-DEV-transactional-authorize-execute — single dispatch
+//   tx covers Stage 6 policy reads, Stage 7 execute, and Stage 8 appends;
+//   authorize-stage denials commit inside the tx; execute / append throws
+//   roll back and emit execution_failed in a separate append.
+// Implements: EVS-DEV-scope-unresolvable-denial — pre-tx invocation of
+//   Action.scopeFor, denial with scopeUnresolvable for null /
+//   TotalWildcardScope / class-mismatched returns, and scope stamping
+//   onto the denial event when one was returned.
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
 import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
-    show Deny;
+    show Deny, DenyReason;
 import 'package:event_sourcing/src/actions/authorization_policy.dart';
 import 'package:event_sourcing/src/actions/denial_events.dart';
 import 'package:event_sourcing/src/actions/dispatch_result.dart';
@@ -17,7 +29,9 @@ import 'package:event_sourcing/src/actions/execution_result.dart';
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_errors.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
+import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:uuid/uuid.dart';
@@ -171,55 +185,135 @@ class ActionDispatcher {
       return DispatchResult<Object?>.validationDenied(err);
     }
 
-    // Stage 6: authorize
+    // Stage 6: authorize (pre-tx scope-resolution check).
+    //
+    // Resolving the per-dispatch scope and validating it against the
+    // permission's declared scopeClass is a pure, in-process check —
+    // no projection reads. We do it BEFORE opening the dispatch tx so
+    // the failure path (programmer bug in Action.scopeFor) doesn't
+    // pay the cost of opening a tx for a single denial append.
     final principal = ctx.principal;
     final principalActiveRole = principal is UserPrincipal
         ? principal.activeRole
         : null;
 
-    for (final permission in action.permissions) {
-      final decision = await authorization.isPermitted(principal, permission);
-      if (decision is Deny) {
-        final denial = denialAuthorizationDenied(
-          invocationId: invocationId,
-          actionName: action.name,
-          permission: decision.permission,
-          principalActiveRole: principalActiveRole,
-          denyReason: decision.reason,
-          actionInvocationMetadata: invocationMetadata,
+    // Resolved per-permission scopes, in iteration order, to hand to
+    // the policy inside the tx. List<ScopeValue?> because unscoped
+    // permissions contribute a null entry. `action.permissions` is a
+    // Set<Permission>, but {…}-literal Sets in Dart preserve insertion
+    // order; we materialize to a List so the in-tx loop indexes in O(1)
+    // and so the order matches the resolved-scopes order.
+    final permissionList = action.permissions.toList(growable: false);
+    final resolvedScopes = <ScopeValue?>[];
+    for (final permission in permissionList) {
+      ScopeValue? scopeValue;
+      if (permission.scopeClass != null) {
+        scopeValue = action.scopeFor(permission, parsedInput);
+        final scopeDenyReason = _checkScopeResolution(
+          permission: permission,
+          resolved: scopeValue,
         );
-        await _persistDenial(denial, ctx, flowToken: flowToken);
-        return DispatchResult<Object?>.authorizationDenied(decision.permission);
+        if (scopeDenyReason != null) {
+          // Class mismatch / TotalWildcard: stamp the offending scope so
+          // the audit record carries it. Null resolution: nothing to stamp.
+          final denial = denialAuthorizationDenied(
+            invocationId: invocationId,
+            actionName: action.name,
+            permission: permission,
+            principalActiveRole: principalActiveRole,
+            denyReason: scopeDenyReason,
+            scopeValue: scopeValue,
+            actionInvocationMetadata: invocationMetadata,
+          );
+          await _persistDenial(denial, ctx, flowToken: flowToken);
+          return DispatchResult<Object?>.authorizationDenied(permission);
+        }
       }
+      resolvedScopes.add(scopeValue);
     }
 
-    // Stage 7: execute
-    //
-    // The registry stores Action<Object?, Object?> so action.execute
-    // already returns ExecutionResult<Object?> — no cast needed.
-    late ExecutionResult<Object?> executionResult;
-    try {
-      executionResult = await action.execute(parsedInput, ctx);
-    } on Object catch (err) {
-      final denial = denialExecutionFailed(
-        invocationId: invocationId,
-        actionName: action.name,
-        error: err,
-        actionInvocationMetadata: invocationMetadata,
-      );
-      await _persistDenial(denial, ctx, flowToken: flowToken);
-      return DispatchResult<Object?>.executionFailed(err);
-    }
-
-    // Stage 8: atomic persist of all events in one transaction.
+    // Stage 6 (policy reads) + Stage 7 (execute) + Stage 8 (persist) run
+    // in a single dispatch transaction. The policy receives the active
+    // [Txn] so its projection reads share the read-snapshot with the
+    // event appends — a role/scope revocation committed by another
+    // dispatch between authorize-reads and append takes effect on
+    // subsequent dispatches, not the in-flight one.
     final emittedEventIds = <String>[];
     final initiator = ctx.principal.toInitiator();
-    final security = executionResult.securityDetailsOverride ?? ctx.security;
+    DispatchResult<Object?>? authorizationDenial;
+    ExecutionResult<Object?>? executionResultHolder;
+    Object? executeError;
+
     try {
-      // runTransaction wraps backend.transaction and publishes all collected
-      // events to the subscription bus after commit, so subscribers receive
-      // delivery without a manual publishAppended loop.
-      await events.runTransaction((txn, collector) async {
+      await events.runTransaction<void>((txn, collector) async {
+        // Stage 6: policy-level authorize, inside the dispatch tx.
+        for (var i = 0; i < permissionList.length; i++) {
+          final permission = permissionList[i];
+          final scopeValue = resolvedScopes[i];
+          final decision = await authorization.isPermitted(
+            principal,
+            permission,
+            scopeValue,
+            txn: txn,
+          );
+          if (decision is Deny) {
+            final denial = denialAuthorizationDenied(
+              invocationId: invocationId,
+              actionName: action.name,
+              permission: decision.permission,
+              principalActiveRole: principalActiveRole,
+              denyReason: decision.reason,
+              scopeValue: scopeValue,
+              actionInvocationMetadata: invocationMetadata,
+            );
+            // Append the denial event in the same tx so the policy reads
+            // and their recorded outcome commit atomically.
+            await events.appendInTxn(
+              txn,
+              collector: collector,
+              entryType: denial.entryType,
+              aggregateId: denial.aggregateId,
+              aggregateType: denial.aggregateType,
+              eventType: denial.eventType,
+              data: denial.data,
+              initiator: ctx.principal.toInitiator(),
+              flowToken: denial.flowToken ?? flowToken,
+              metadata: denial.metadata,
+              security: ctx.security,
+              checkpointReason: null,
+              changeReason: null,
+              dedupeByContent: false,
+            );
+            authorizationDenial = DispatchResult<Object?>.authorizationDenied(
+              decision.permission,
+            );
+            return; // commit the tx with just the denial event recorded.
+          }
+        }
+
+        // Stage 7: execute, inside the dispatch tx. A throw here
+        // bubbles out of runTransaction and rolls the tx back; we
+        // capture the error and emit the execution_failed denial in
+        // a separate append after the rollback (see catch block).
+        //
+        // We use a captured local for the error rather than letting the
+        // raw exception propagate so the post-tx catch can short-circuit
+        // its denial-emission path without conflating with backend
+        // transaction-internal failures.
+        late ExecutionResult<Object?> executionResult;
+        try {
+          executionResult = await action.execute(parsedInput, ctx);
+        } on Object catch (err) {
+          executeError = err;
+          // Rethrow to abort the tx; the post-tx handler will emit the
+          // execution_failed denial event.
+          rethrow;
+        }
+        executionResultHolder = executionResult;
+
+        // Stage 8: append the execute-result events in the same tx.
+        final security =
+            executionResult.securityDetailsOverride ?? ctx.security;
         for (final draft in executionResult.events) {
           final mergedMetadata = <String, Object?>{
             ...?draft.metadata,
@@ -248,17 +342,28 @@ class ActionDispatcher {
         }
       });
     } on Object catch (err) {
-      // Transaction rolled back by Sembast; emit a separate execution_failed
-      // denial event AFTER the rollback so it is durably persisted.
+      // Transaction was rolled back by the backend. Distinguish:
+      //   - execute() threw  → emit execution_failed denial (we captured
+      //                        the original error in executeError).
+      //   - append/other     → still surface as execution_failed; the
+      //                        original error is what the backend
+      //                        rethrew.
+      final reportedError = executeError ?? err;
       final denial = denialExecutionFailed(
         invocationId: invocationId,
         actionName: action.name,
-        error: err,
+        error: reportedError,
         actionInvocationMetadata: invocationMetadata,
       );
       await _persistDenial(denial, ctx, flowToken: flowToken);
-      return DispatchResult<Object?>.executionFailed(err);
+      return DispatchResult<Object?>.executionFailed(reportedError);
     }
+
+    // Authorize-stage denial committed; return the captured outcome.
+    if (authorizationDenial != null) {
+      return authorizationDenial!;
+    }
+    final executionResult = executionResultHolder!;
 
     // Stage 9: record idempotency
     if (action.idempotency != Idempotency.none && idempotencyKey != null) {
@@ -298,6 +403,44 @@ class ActionDispatcher {
         return <String, Object?>{'value': result.toString()};
       }
       rethrow;
+    }
+  }
+
+  /// Validates the [resolved] scope returned by `Action.scopeFor` against
+  /// the [permission]'s declared `scopeClass`. Returns null if the scope is
+  /// usable; returns `DenyReason.scopeUnresolvable` for any resolution
+  /// failure the dispatcher must short-circuit on.
+  ///
+  /// Caller has already established that `permission.scopeClass != null`.
+  /// Failure shapes:
+  ///   - null                                     → action didn't supply a
+  ///                                                scope value for a
+  ///                                                scoped permission.
+  ///   - TotalWildcardScope                       → carries no class_ to
+  ///                                                match against
+  ///                                                permission.scopeClass.
+  ///   - BoundScope / ValueWildcardScope with
+  ///     class_ != permission.scopeClass          → scope class mismatch.
+  DenyReason? _checkScopeResolution({
+    required Permission permission,
+    required ScopeValue? resolved,
+  }) {
+    if (resolved == null) {
+      return DenyReason.scopeUnresolvable;
+    }
+    switch (resolved) {
+      case TotalWildcardScope():
+        return DenyReason.scopeUnresolvable;
+      case BoundScope(class_: final cls):
+        if (cls != permission.scopeClass) {
+          return DenyReason.scopeUnresolvable;
+        }
+        return null;
+      case ValueWildcardScope(class_: final cls):
+        if (cls != permission.scopeClass) {
+          return DenyReason.scopeUnresolvable;
+        }
+        return null;
     }
   }
 

@@ -43,9 +43,9 @@ void main() {
     late LocalActionSubmitter submitter;
 
     // Alice has 'greeter' as her active role — matches the seeded grant.
-    const alice = Principal.user(
+    final alice = Principal.user(
       userId: 'alice',
-      roles: {'greeter'},
+      roles: const {'greeter'},
       activeRole: 'greeter',
     );
 
@@ -91,10 +91,10 @@ void main() {
     });
 
     test('authorization denial returns DispatchAuthorizationDenied', () async {
-      // Bob has no active role — not granted say_hello.
-      const bob = Principal.user(
+      // Bob's active role 'nobody' has no grants seeded — say_hello denied.
+      final bob = Principal.user(
         userId: 'bob',
-        roles: {},
+        roles: const {'nobody'},
         activeRole: 'nobody',
       );
       authSession = _StubAuthSession(bob);
@@ -162,10 +162,10 @@ void main() {
 /// 'greeter' role.
 ///
 /// Uses [EventSeedApplier] directly (no YAML round-trip needed in tests).
-/// [SayHelloAction.permissions] declares `Permission('say_hello',
-/// scope: ScopeClass.global)` — that's the declared set passed to apply().
+/// [SayHelloAction.permissions] declares `Permission('say_hello')` —
+/// that's the declared set passed to apply().
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
-  const sayHelloPerm = Permission('say_hello', scope: ScopeClass.global);
+  const sayHelloPerm = Permission('say_hello');
   const seed = PermissionSeed(
     roles: {'greeter'},
     grants: {

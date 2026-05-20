@@ -21,9 +21,14 @@ final class SeedInvalid extends SeedValidationResult {
 }
 
 class SeedValidator {
-  SeedValidationResult validate(PermissionSeed seed, Set<Permission> declared) {
+  SeedValidationResult validate(
+    PermissionSeed seed,
+    Set<Permission> declared, {
+    ScopeClassRegistry? scopeClassRegistry,
+  }) {
     final errors = <String>[];
-    final declaredNames = declared.map((p) => p.name).toSet();
+    final declaredByName = {for (final p in declared) p.name: p};
+    final declaredNames = declaredByName.keys.toSet();
 
     for (final role in seed.roles) {
       if (role.contains(':')) {
@@ -55,6 +60,33 @@ class SeedValidator {
         if (!declaredNames.contains(perm)) {
           errors.add(
             'permission "$perm" granted to "${entry.key}" not declared by any Action',
+          );
+        }
+      }
+    }
+
+    // Scope-class registry check: any permission granted by the seed that
+    // declares a scopeClass must resolve against the supplied registry.
+    // Skipped when no registry is supplied (legacy/unscoped callers).
+    if (scopeClassRegistry != null) {
+      // Track the (perm, scopeClass) pairs already reported so a
+      // permission granted to multiple roles only produces one error.
+      final reported = <String>{};
+      for (final entry in seed.grants.entries) {
+        for (final permName in entry.value) {
+          final perm = declaredByName[permName];
+          final scopeClass = perm?.scopeClass;
+          if (scopeClass == null) continue;
+          if (scopeClassRegistry.byName(scopeClass) != null) continue;
+          final key = '$permName::$scopeClass';
+          if (!reported.add(key)) continue;
+          final registered = scopeClassRegistry.all
+              .map((c) => c.name)
+              .join(', ');
+          errors.add(
+            'permission "$permName" declares scopeClass '
+            '"$scopeClass" which is not in ScopeClassRegistry '
+            '(registered classes: $registered)',
           );
         }
       }

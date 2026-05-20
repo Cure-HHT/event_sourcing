@@ -29,9 +29,9 @@ void main() {
             rawInput: <String, Object?>{},
           ),
           ActionContext(
-            principal: const Principal.user(
+            principal: Principal.user(
               userId: 'u',
-              roles: {'r'},
+              roles: const {'r'},
               activeRole: 'r',
             ),
             security: const SecurityDetails(),

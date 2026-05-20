@@ -1,52 +1,246 @@
 // lib/src/permissions/table_backed_authorization_policy.dart
-// Implements: EVS-PRD-permissions-as-events/B — evaluates all authorization
-//   decisions solely from the event-derived role matrix exposed via
-//   RoleMatrixReader (projection-based lookup); no external authority is
-//   consulted at decision time.
+// Implements: EVS-PRD-permissions-as-events/B — evaluates authorization
+//   decisions solely from event-derived projections (role_permission_grants,
+//   user_role_scopes, and containment projections via ContainmentResolver).
+// Implements: EVS-PRD-permissions-as-events/A — reads grants and assignments
+//   that are themselves recorded as events in the same log.
+// Implements: EVS-PRD-action-dispatch/B — Allow/Deny decisions delivered to
+//   the dispatcher's authorize stage.
+// Implements: EVS-PRD-scoped-permissions/D/F/G — evaluates solely from
+//   event-derived projections; allows when any active-role assignment
+//   matches via equality / wildcard / containment; fails closed on missing
+//   containment rows.
+// Implements: EVS-DEV-scoped-permissions-match-algorithm — first-match-wins
+//   union of active-role assignments; bound, value-wildcard, and total-
+//   wildcard variants handled per Section 2 of spec/scoped-permissions.md.
+// Implements: EVS-DEV-effective-permissions-shape — effectivePermissionsFor
+//   returns EffectiveAuthorization { activeRole, rolePermissions,
+//   scopeAssignments }, and EffectiveAuthorization.empty for non-user
+//   principals.
 
 import 'package:event_sourcing/event_sourcing.dart';
 
 class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
-  const TableBackedAuthorizationPolicy(this._reader);
-  final RoleMatrixReader _reader;
+  TableBackedAuthorizationPolicy({
+    required this.backend,
+    required this.scopeClassRegistry,
+    required this.txnProvider,
+  }) : _resolver = ContainmentResolver(
+         registry: scopeClassRegistry,
+         findRowsInTxn: backend.findViewRowsInTxn,
+       );
+
+  final StorageBackend backend;
+  final ScopeClassRegistry scopeClassRegistry;
+
+  /// In production the dispatcher passes the active storage transaction
+  /// (so authorize + execute run inside the same backend transaction).
+  /// Tests can pass a one-shot supplier that opens a tx per call:
+  /// `<T>(fn) => backend.transaction<T>(fn)`.
+  final Future<T> Function<T>(Future<T> Function(Txn txn)) txnProvider;
+
+  final ContainmentResolver _resolver;
 
   @override
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
-    Permission perm,
-  ) async {
-    if (!_scopePreconditionMet(principal, perm.scope)) {
-      return Deny(
-        permission: perm,
-        reason: DenyReason.sessionPreconditionMissing,
-      );
-    }
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Txn? txn,
+  }) async {
+    // 1. Anonymous principals carry no role assignments.
     if (principal is! UserPrincipal) {
-      // AnonymousPrincipal has no role — nothing in the matrix can be
-      // granted to them.
-      return Deny(permission: perm, reason: DenyReason.notGranted);
+      return Deny(permission: permission, reason: DenyReason.notGranted);
     }
-    final granted = await _reader.isGranted(principal.activeRole, perm.name);
-    return granted
-        ? const Allow()
-        : Deny(permission: perm, reason: DenyReason.notGranted);
+
+    // 2. Invariants on the (permission, scopeValue) pair. The dispatcher
+    // already validates these before calling isPermitted; this is
+    // defense-in-depth for callers that invoke the policy directly
+    // (tests, app-side gating helpers, etc.). Mismatches surface as
+    // scopeUnresolvable rather than silently grant or deny on stale
+    // data.
+    //
+    // (a) presence — scopeValue non-null iff permission.scopeClass non-null.
+    if ((permission.scopeClass == null) != (scopeValue == null)) {
+      return Deny(permission: permission, reason: DenyReason.scopeUnresolvable);
+    }
+    // (b) shape — a non-null scopeValue for a scoped permission MUST be a
+    // BoundScope whose class_ matches permission.scopeClass. TotalWildcardScope
+    // carries no class to match against; ValueWildcardScope from the caller
+    // side has no defined semantics in the v1 match algorithm. Either is
+    // treated as a programmer bug.
+    if (scopeValue != null) {
+      if (scopeValue is! BoundScope) {
+        return Deny(
+          permission: permission,
+          reason: DenyReason.scopeUnresolvable,
+        );
+      }
+      if (scopeValue.class_ != permission.scopeClass) {
+        return Deny(
+          permission: permission,
+          reason: DenyReason.scopeUnresolvable,
+        );
+      }
+    }
+
+    // Run the projection reads either in the caller-supplied txn (so
+    // they share the read-snapshot with subsequent appends in that tx)
+    // or open a fresh one via [txnProvider].
+    if (txn != null) {
+      return _evaluate(txn, principal, permission, scopeValue);
+    }
+    return txnProvider(
+      (innerTxn) => _evaluate(innerTxn, principal, permission, scopeValue),
+    );
+  }
+
+  /// Pure projection-read body shared by the txn-injected and
+  /// txnProvider-opened paths.
+  Future<AuthorizationDecision> _evaluate(
+    Txn txn,
+    UserPrincipal principal,
+    Permission permission,
+    ScopeValue? scopeValue,
+  ) async {
+    // 3. Role-level grant: does the active role carry this permission name?
+    final grants = await backend.findViewRowsInTxn(
+      txn,
+      'role_permission_grants',
+      where: <String, Object?>{
+        'role': principal.activeRole,
+        'permissionName': permission.name,
+      },
+      limit: 1,
+    );
+    if (grants.isEmpty) {
+      return Deny(permission: permission, reason: DenyReason.notGranted);
+    }
+
+    // 4. Unscoped permission: role grant is sufficient.
+    if (permission.scopeClass == null) {
+      return const Allow();
+    }
+
+    // 5. Scoped permission: enumerate user's assignments under active role.
+    final assignments = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    if (assignments.isEmpty) {
+      return Deny(permission: permission, reason: DenyReason.notGranted);
+    }
+
+    // 6. Match (first-match-wins = union semantics over the assignments).
+    final requested = scopeValue!;
+    for (final row in assignments) {
+      final assignedScope = ScopeValue.fromJson(
+        (row['scope']! as Map).cast<String, Object?>(),
+      );
+      if (await _matches(txn, assigned: assignedScope, requested: requested)) {
+        return const Allow();
+      }
+    }
+    return Deny(permission: permission, reason: DenyReason.notGranted);
+  }
+
+  /// Variant switch for one assignment vs. the requested scope.
+  ///
+  /// - TotalWildcardScope assignment matches everything.
+  /// - ValueWildcardScope(class=A) matches any requested BoundScope whose
+  ///   class is A or whose class has A as an ancestor.
+  /// - BoundScope(class=A, value=V) matches a requested BoundScope with
+  ///   the same (class, value), OR matches a descendant class whose
+  ///   containment resolves to V at class A.
+  Future<bool> _matches(
+    Txn txn, {
+    required ScopeValue assigned,
+    required ScopeValue requested,
+  }) async {
+    // The dispatcher contract is that requested scopes from action.scopeFor
+    // are always BoundScope (concrete subjects). Defensive bail-out keeps
+    // a future change here fail-closed rather than overgranting.
+    if (requested is! BoundScope) return false;
+
+    switch (assigned) {
+      case TotalWildcardScope():
+        return true;
+      case ValueWildcardScope(class_: final ac):
+        if (ac == requested.class_) return true;
+        if (scopeClassRegistry.isAncestor(ac, requested.class_)) {
+          // Any value of an ancestor class matches any descendant.
+          return true;
+        }
+        return false;
+      case BoundScope(class_: final ac, value: final av):
+        if (ac == requested.class_ && av == requested.value) return true;
+        if (scopeClassRegistry.isAncestor(ac, requested.class_)) {
+          final resolved = await _resolver.resolve(
+            txn: txn,
+            from: requested,
+            target: ac,
+          );
+          return resolved?.value == av;
+        }
+        return false;
+    }
   }
 
   @override
-  Future<Set<Permission>> permissionsFor(Principal principal) async {
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Txn? txn,
+  }) async {
     if (principal is! UserPrincipal) {
-      return const <Permission>{};
+      return EffectiveAuthorization.empty;
     }
-    final all = await _reader.grantsForRole(principal.activeRole);
-    return all.where((p) => _scopePreconditionMet(principal, p.scope)).toSet();
+    if (txn != null) {
+      return _effectiveBody(txn, principal);
+    }
+    return txnProvider((innerTxn) => _effectiveBody(innerTxn, principal));
   }
 
-  bool _scopePreconditionMet(Principal p, ScopeClass scope) {
-    return switch (scope) {
-      ScopeClass.global => true,
-      ScopeClass.site => p is UserPrincipal && p.activeSite != null,
-      // UserPrincipal has a non-empty userId by invariant; anonymous has none.
-      ScopeClass.self => p is UserPrincipal,
+  Future<EffectiveAuthorization> _effectiveBody(
+    Txn txn,
+    UserPrincipal principal,
+  ) async {
+    final grants = await backend.findViewRowsInTxn(
+      txn,
+      'role_permission_grants',
+      where: <String, Object?>{'role': principal.activeRole},
+    );
+    final perms = <Permission>{
+      // Permission grants don't store scopeClass (it's a code-registered
+      // attribute on the Permission definition, not per-grant data). Apps
+      // that need full scopeClass info look up against their own Permission
+      // registry; this surface is for UI gating, where matching by name
+      // is sufficient.
+      for (final g in grants) Permission(g['permissionName']! as String),
     };
+    final assignmentRows = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    final assignments = <ScopeAssignment>[
+      for (final r in assignmentRows)
+        ScopeAssignment(
+          scope: ScopeValue.fromJson(
+            (r['scope']! as Map).cast<String, Object?>(),
+          ),
+        ),
+    ];
+    return EffectiveAuthorization(
+      activeRole: principal.activeRole,
+      rolePermissions: perms,
+      scopeAssignments: assignments,
+    );
   }
 }

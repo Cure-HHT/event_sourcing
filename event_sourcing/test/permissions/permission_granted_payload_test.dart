@@ -2,42 +2,25 @@
 // Verifies: EVS-PRD-permissions-as-events/A — the permission_granted event
 // payload round-trips faithfully through JSON, confirming that grant events
 // can be durably recorded in and replayed from the event log.
-import 'package:event_sourcing/event_sourcing.dart' show ScopeClass;
 import 'package:event_sourcing/src/permissions/permission_granted_payload.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('PermissionGrantedPayload', () {
-    test('round-trips through JSON', () {
-      const payload = PermissionGrantedPayload(
-        role: 'admin',
-        permissionName: 'user.invite',
-        scope: ScopeClass.global,
+    test('toJson/fromJson round-trips', () {
+      const p = PermissionGrantedPayload(
+        role: 'SC',
+        permissionName: 'patient.edit',
       );
-      final json = payload.toJson();
-      final parsed = PermissionGrantedPayload.fromJson(json);
-      expect(parsed.role, 'admin');
-      expect(parsed.permissionName, 'user.invite');
-      expect(parsed.scope, ScopeClass.global);
+      final j = p.toJson();
+      expect(j, {'role': 'SC', 'permissionName': 'patient.edit'});
+      expect(PermissionGrantedPayload.fromJson(j), equals(p));
     });
 
-    test('scope serializes by enum name', () {
-      const payload = PermissionGrantedPayload(
-        role: 'patient',
-        permissionName: 'diary.submit',
-        scope: ScopeClass.self,
-      );
-      expect(payload.toJson()['scope'], 'self');
-    });
-
-    test('rejects unknown scope on parse', () {
+    test('fromJson throws on missing role', () {
       expect(
-        () => PermissionGrantedPayload.fromJson(const <String, Object?>{
-          'role': 'x',
-          'permissionName': 'y',
-          'scope': 'not_a_scope',
-        }),
-        throwsA(isA<FormatException>()),
+        () => PermissionGrantedPayload.fromJson({'permissionName': 'x'}),
+        throwsA(anyOf(isA<TypeError>(), isA<FormatException>())),
       );
     });
   });

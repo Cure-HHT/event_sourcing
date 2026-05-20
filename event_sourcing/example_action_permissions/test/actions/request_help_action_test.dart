@@ -16,10 +16,7 @@ void main() {
 
     test('declares name, global help.ask permission, idempotency none', () {
       expect(action.name, 'RequestHelpAction');
-      expect(
-        action.permissions,
-        contains(const Permission('help.ask', scope: ScopeClass.global)),
-      );
+      expect(action.permissions, contains(const Permission('help.ask')));
       expect(action.idempotency, Idempotency.none);
     });
 
