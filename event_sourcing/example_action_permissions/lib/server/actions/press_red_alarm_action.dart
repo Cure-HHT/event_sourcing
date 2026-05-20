@@ -32,8 +32,9 @@ class PressRedAlarmAction extends Action<RedAlarmInput, RedAlarmResult> {
 
   @override
   String get description =>
-      'Any authenticated user fires the red alarm. Self-scoped; '
-      'requires idempotency key to prevent button-mash double-fires.';
+      'Any authenticated user fires the red alarm. Unscoped (no '
+      'scopeClass on Permission); requires idempotency key to prevent '
+      'button-mash double-fires.';
 
   @override
   Set<Permission> get permissions => <Permission>{

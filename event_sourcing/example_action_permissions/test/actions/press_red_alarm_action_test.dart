@@ -20,7 +20,7 @@ void main() {
   group('PressRedAlarmAction', () {
     final action = PressRedAlarmAction();
 
-    test('declares self-scoped buttons.press.red, idempotency required', () {
+    test('declares unscoped buttons.press.red, idempotency required', () {
       expect(action.name, 'PressRedAlarmAction');
       expect(
         action.permissions,
