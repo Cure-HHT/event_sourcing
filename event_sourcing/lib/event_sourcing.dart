@@ -198,6 +198,21 @@ export 'src/projections/rebuild.dart' show rebuildView;
 export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
+// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
+// when an app declares its own projections. Re-exported because they are the
+// public API surface for defining projection shape, not internal implementation.
+export 'src/projections/primitives/row_key.dart'
+    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+export 'src/projections/primitives/row_data.dart'
+    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+export 'src/projections/primitives/derived_field.dart'
+    show
+        ConstantValue,
+        DerivedField,
+        DerivedFieldComputation,
+        DottedPathLookup,
+        FallbackValue,
+        FirstEventTimestamp;
 
 // Promoters — entry-type version promotion chains for schema migration.
 export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
