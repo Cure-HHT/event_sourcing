@@ -630,8 +630,11 @@ class PostgresBackend extends StorageBackend {
   //   optional column-equality filter; required by the scoped-permissions
   //   authorize stage so its policy reads and the dispatch's event-append
   //   share one read-consistent snapshot. The `where` map is compiled into
-  //   `row_data ->> key = value` predicates AND-composed; null `where` or
-  //   an empty map returns every row in the view (paging via limit/offset).
+  //   `row_data ->> $key_param = $value_param` predicates AND-composed; both
+  //   key and value are passed as parameters (Postgres accepts a text-type
+  //   parameter as the right operand of ->>), so caller-supplied keys
+  //   cannot be interpolated into SQL. Null `where` or an empty map
+  //   returns every row in the view (paging via limit/offset).
   // Implements: EVS-PRD-permissions-as-events
   // Implements: EVS-PRD-action-dispatch
   @override
@@ -648,9 +651,11 @@ class PostgresBackend extends StorageBackend {
     if (where != null) {
       var i = 0;
       for (final entry in where.entries) {
-        final p = 'w$i';
-        whereClauses.add('row_data ->> ${'\''}${entry.key}${'\''} = @$p');
-        params[p] = entry.value?.toString();
+        final keyParam = 'wk$i';
+        final valParam = 'wv$i';
+        whereClauses.add('row_data ->> @$keyParam = @$valParam');
+        params[keyParam] = entry.key;
+        params[valParam] = entry.value?.toString();
         i++;
       }
     }

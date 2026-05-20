@@ -62,13 +62,19 @@ abstract class Action<TInput, TResult> {
 
   /// Per dispatch, supply the scope value for each scoped permission this
   /// action requires. Pure: no I/O. Returns null for unscoped permissions
-  /// (default impl). For scoped permissions, the returned `ScopeValue`'s
-  /// `scopeClass` MUST equal the permission's declared `scopeClass`;
-  /// mismatch is `Deny(scopeUnresolvable)`.
+  /// (default impl).
   ///
-  /// `TotalWildcardScope` MUST NOT be returned (carries no class_ to
-  /// match against permission.scopeClass); dispatcher denies as
-  /// scopeUnresolvable if returned. `ValueWildcardScope` is technically
-  /// valid when an action genuinely operates on all values of a class.
+  /// For scoped permissions, the returned value MUST be a `BoundScope`
+  /// whose `class_` equals the permission's declared `scopeClass`. The
+  /// dispatcher denies with `scopeUnresolvable` if the action returns:
+  /// null, a `TotalWildcardScope`, a `ValueWildcardScope`, or a
+  /// `BoundScope` whose class disagrees with the permission's scope class.
+  ///
+  /// (Wildcard request scopes are deliberately not honored in v1: the
+  /// match algorithm walks assignments and checks each one against a
+  /// concrete `BoundScope` target. Wildcards belong on the assignment
+  /// side, not the request side. If a future action genuinely needs to
+  /// authorize "any value of a class," that's a library extension under
+  /// Append-Only Primitives, not a `scopeFor` return-type change.)
   ScopeValue? scopeFor(Permission perm, TInput input) => null;
 }

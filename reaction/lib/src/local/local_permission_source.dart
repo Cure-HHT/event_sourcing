@@ -108,18 +108,22 @@ class LocalPermissionSource implements PermissionSource {
       _setNull();
       return;
     }
-    // Read the role_permission_grants projection directly: each row is
+    // Read the role_permission_grants projection directly, filtered to
+    // the active role inside a single backend transaction. Each row is
     // {'role': <role>, 'permissionName': <name>} (see
-    // rolePermissionGrantsSpec). Filter to the active role and build a
-    // Set<Permission> of unscoped grants — scope-class metadata is
-    // attached at Action.permissions declaration time, not stored in
-    // the grants projection.
-    final rows = await eventStore.backend.findViewRows(
-      'role_permission_grants',
-    );
+    // rolePermissionGrantsSpec). Scope-class metadata is attached at
+    // Action.permissions declaration time, not stored in the grants
+    // projection.
+    final rows = await eventStore.backend
+        .transaction<List<Map<String, dynamic>>>(
+          (txn) => eventStore.backend.findViewRowsInTxn(
+            txn,
+            'role_permission_grants',
+            where: <String, Object?>{'role': activeRole},
+          ),
+        );
     final grants = <Permission>{
-      for (final r in rows)
-        if (r['role'] == activeRole) Permission(r['permissionName']! as String),
+      for (final r in rows) Permission(r['permissionName']! as String),
     };
     // Guard against a race: verify the principal is still the same after
     // the async findViewRows call returns.

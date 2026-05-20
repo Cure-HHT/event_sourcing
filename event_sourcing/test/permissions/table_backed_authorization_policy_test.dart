@@ -265,6 +265,70 @@ void main() {
       );
       expect(decision, isA<Deny>());
     });
+
+    // Defense-in-depth: the dispatcher validates scope shape/class
+    // before calling isPermitted, but a direct caller (test, gating
+    // helper, etc.) might pass mismatched values. The policy must
+    // fail-closed with scopeUnresolvable rather than silently grant
+    // or evaluate against stale assignments.
+
+    test('direct call with scoped permission + non-BoundScope scope value '
+        '-> Deny(scopeUnresolvable)', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: const <String, String>{'P-42': 'A'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const TotalWildcardScope(),
+      );
+      expect(
+        decision,
+        isA<Deny>().having(
+          (d) => d.reason,
+          'reason',
+          DenyReason.scopeUnresolvable,
+        ),
+      );
+    });
+
+    test('direct call with BoundScope whose class disagrees with '
+        'permission.scopeClass -> Deny(scopeUnresolvable)', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'patient.edit')],
+        assignments: [
+          const Assignment(
+            userId: 'U1',
+            role: 'SC',
+            scope: BoundScope(class_: 'site', value: 'A'),
+          ),
+        ],
+        patientToSite: const <String, String>{'P-42': 'A'},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('patient.edit', scopeClass: 'patient'),
+        const BoundScope(class_: 'site', value: 'A'),
+      );
+      expect(
+        decision,
+        isA<Deny>().having(
+          (d) => d.reason,
+          'reason',
+          DenyReason.scopeUnresolvable,
+        ),
+      );
+    });
   });
 
   group('TableBackedAuthorizationPolicy.effectivePermissionsFor', () {

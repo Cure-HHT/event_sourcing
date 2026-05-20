@@ -53,12 +53,35 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
       return Deny(permission: permission, reason: DenyReason.notGranted);
     }
 
-    // 2. Invariant: scopeValue non-null iff permission.scopeClass non-null.
-    // Mismatch is a programmer bug (Action.scopeFor disagrees with
-    // Permission.scopeClass) — surface it as scopeUnresolvable rather
-    // than silently grant or deny on stale data.
+    // 2. Invariants on the (permission, scopeValue) pair. The dispatcher
+    // already validates these before calling isPermitted; this is
+    // defense-in-depth for callers that invoke the policy directly
+    // (tests, app-side gating helpers, etc.). Mismatches surface as
+    // scopeUnresolvable rather than silently grant or deny on stale
+    // data.
+    //
+    // (a) presence — scopeValue non-null iff permission.scopeClass non-null.
     if ((permission.scopeClass == null) != (scopeValue == null)) {
       return Deny(permission: permission, reason: DenyReason.scopeUnresolvable);
+    }
+    // (b) shape — a non-null scopeValue for a scoped permission MUST be a
+    // BoundScope whose class_ matches permission.scopeClass. TotalWildcardScope
+    // carries no class to match against; ValueWildcardScope from the caller
+    // side has no defined semantics in the v1 match algorithm. Either is
+    // treated as a programmer bug.
+    if (scopeValue != null) {
+      if (scopeValue is! BoundScope) {
+        return Deny(
+          permission: permission,
+          reason: DenyReason.scopeUnresolvable,
+        );
+      }
+      if (scopeValue.class_ != permission.scopeClass) {
+        return Deny(
+          permission: permission,
+          reason: DenyReason.scopeUnresolvable,
+        );
+      }
     }
 
     // Run the projection reads either in the caller-supplied txn (so
