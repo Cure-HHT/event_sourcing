@@ -1,6 +1,7 @@
 // reaction/test/e2e/test_support/reaction_remote_test_harness.dart
 import 'dart:io';
 
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/remote/remote_scope.dart';
 import 'package:reaction/src/server/auth_middleware.dart';
 import 'package:reaction/src/server/reaction_handlers.dart';
@@ -42,17 +43,25 @@ class ReactionRemoteTestHarness {
       policy: substrate.dispatcher.authorization,
     );
 
-    final router = Router()
+    // HTTP routes are gated by Bearer-token auth middleware. The WS
+    // upgrade path (`/subscriptions`) is NOT — credentials arrive
+    // in-band via the first WS AuthMsg (see RemoteConnection._connect
+    // and subscriptionsWithValidator's docstring) because Flutter web
+    // cannot attach an Authorization header during a WS upgrade.
+    final httpRouter = Router()
       ..get('/me', reaction.me)
       ..post('/actions', reaction.actions)
-      ..get('/permissions/snapshot', reaction.permissions)
-      ..get('/subscriptions', reaction.subscriptionsWithValidator(validator));
+      ..get('/permissions/snapshot', reaction.permissions);
 
-    final pipeline = const Pipeline()
+    final httpPipeline = const Pipeline()
         .addMiddleware(authMiddleware(validator))
-        .addHandler(router.call);
+        .addHandler(httpRouter.call);
 
-    final httpServer = await shelf_io.serve(pipeline, '127.0.0.1', 0);
+    final topRouter = Router()
+      ..get('/subscriptions', reaction.subscriptionsWithValidator(validator))
+      ..mount('/', httpPipeline);
+
+    final httpServer = await shelf_io.serve(topRouter.call, '127.0.0.1', 0);
 
     final scope = RemoteScope(
       baseUrl: Uri.parse('http://127.0.0.1:${httpServer.port}'),
@@ -71,5 +80,30 @@ class ReactionRemoteTestHarness {
     await reaction.dispose(); // stops AuthzWatcher
     await httpServer.close(force: true);
     await substrate.close();
+  }
+
+  /// Seed a `role_permission_grants` row by appending a
+  /// `permission_granted` event. Used to authorize action dispatch
+  /// (`Permission('say_hello')`) or view subscription
+  /// (`Permission('view:notes_today')`) in e2e tests, where the
+  /// harness's [TrustingAuthValidator] surfaces every credential as
+  /// the configured `defaultActiveRole` (`'install'`) but
+  /// [TableBackedAuthorizationPolicy] still requires a matching grant
+  /// row.
+  Future<void> grantPermission({
+    required String role,
+    required String permission,
+  }) async {
+    await substrate.eventStore.append(
+      entryType: 'role_permission_grant',
+      aggregateType: 'role_permission_grant',
+      aggregateId: '$role:$permission',
+      eventType: 'permission_granted',
+      data: PermissionGrantedPayload(
+        role: role,
+        permissionName: permission,
+      ).toJson(),
+      initiator: const AutomationInitiator(service: 'test'),
+    );
   }
 }

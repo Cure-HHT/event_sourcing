@@ -17,17 +17,7 @@ void main() {
     // any non-empty credential; the unscoped Permission('say_hello') needs
     // a matching grant in the role_permission_grants projection before
     // TableBackedAuthorizationPolicy will Allow.
-    await h.substrate.eventStore.append(
-      entryType: 'role_permission_grant',
-      aggregateType: 'role_permission_grant',
-      aggregateId: 'install:say_hello',
-      eventType: 'permission_granted',
-      data: const PermissionGrantedPayload(
-        role: 'install',
-        permissionName: 'say_hello',
-      ).toJson(),
-      initiator: const AutomationInitiator(service: 'test'),
-    );
+    await h.grantPermission(role: 'install', permission: 'say_hello');
     h.scope.authSession.setCredential('alice');
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
   });
