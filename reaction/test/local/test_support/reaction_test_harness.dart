@@ -182,10 +182,17 @@ class HelloSubmission {
 }
 
 /// Result for [SayHelloAction].
+///
+/// `toJson` makes the result JSON-encodable so the wire codec
+/// (`DispatchResultCodec.encode`) can emit it as the success payload
+/// when the action is dispatched through the HTTP `/actions` route in
+/// e2e tests. Local-only tests don't exercise this path.
 class HelloResult {
   const HelloResult({required this.greeting});
 
   final String greeting;
+
+  Map<String, Object?> toJson() => <String, Object?>{'greeting': greeting};
 }
 
 /// Accepts `{name: <str>}`, validates non-empty, emits one `greeting` event.
