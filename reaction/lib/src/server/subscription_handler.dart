@@ -11,6 +11,7 @@ import 'dart:convert';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';
+import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
 import 'package:reaction/src/wire/update_codec.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -59,6 +60,7 @@ void runSubscriptionHandler({
   required AuthorizationPolicy policy,
   required ViewScopeRegistry viewScopes,
   required ViewPermissionNamer viewPermissionNamer,
+  required WsConnectionRegistry connectionRegistry,
 }) {
   _ConnectionState(
     channel: channel,
@@ -67,6 +69,7 @@ void runSubscriptionHandler({
     policy: policy,
     viewScopes: viewScopes,
     viewPermissionNamer: viewPermissionNamer,
+    connectionRegistry: connectionRegistry,
   ).start();
 }
 
@@ -78,6 +81,7 @@ class _ConnectionState {
     required this.policy,
     required this.viewScopes,
     required this.viewPermissionNamer,
+    required this.connectionRegistry,
   });
 
   final WebSocketChannel channel;
@@ -86,6 +90,7 @@ class _ConnectionState {
   final AuthorizationPolicy policy;
   final ViewScopeRegistry viewScopes;
   final ViewPermissionNamer viewPermissionNamer;
+  final WsConnectionRegistry connectionRegistry;
 
   Principal? _principal;
   final Map<String, StreamSubscription<Update<Map<String, Object?>>>> _subs =
@@ -156,6 +161,7 @@ class _ConnectionState {
       final principalId = principal is UserPrincipal
           ? principal.userId
           : principal.id;
+      connectionRegistry.register(principalId, channel);
       _send(
         SubscriptionMessages.encodeServer(AuthOkMsg(principalId: principalId)),
       );
@@ -304,5 +310,12 @@ class _ConnectionState {
       await sub.cancel();
     }
     _subs.clear();
+    final principal = _principal;
+    if (principal != null) {
+      final principalId = principal is UserPrincipal
+          ? principal.userId
+          : principal.id;
+      connectionRegistry.unregister(principalId, channel);
+    }
   }
 }

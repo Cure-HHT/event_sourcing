@@ -13,6 +13,7 @@ import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/subscription_handler.dart';
 import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';
+import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:stream_channel/stream_channel.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -154,12 +155,14 @@ void main() {
   late _StubEventStore store;
   late _StubPolicy policy;
   late ViewScopeRegistry viewScopes;
+  late WsConnectionRegistry connectionRegistry;
 
   setUp(() {
     validator = TrustingAuthValidator(defaultActiveRole: 'install');
     store = _StubEventStore();
     policy = _StubPolicy();
     viewScopes = ViewScopeRegistry();
+    connectionRegistry = WsConnectionRegistry();
   });
 
   Future<Map<String, Object?>> recvJson(
@@ -183,6 +186,7 @@ void main() {
       policy: policy,
       viewScopes: viewScopes,
       viewPermissionNamer: (v) => 'view:$v',
+      connectionRegistry: connectionRegistry,
     );
 
     pair.clientSide.sink.add(
@@ -205,6 +209,7 @@ void main() {
       policy: policy,
       viewScopes: viewScopes,
       viewPermissionNamer: (v) => 'view:$v',
+      connectionRegistry: connectionRegistry,
     );
 
     pair.clientSide.sink.add(
