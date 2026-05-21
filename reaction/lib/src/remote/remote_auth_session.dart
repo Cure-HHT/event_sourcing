@@ -15,14 +15,19 @@ class RemoteAuthSession implements AuthSession {
 
   final RemoteConnection connection;
   AuthStatus _current;
-  final StreamController<AuthStatus> _ctl =
+  final StreamController<AuthStatus> _controller =
       StreamController<AuthStatus>.broadcast();
+
+  /// Monotonic generation counter, bumped on every [setCredential] call.
+  /// In-flight [_validate] responses are discarded if a newer
+  /// [setCredential] has fired in the meantime (last-writer-wins).
+  int _credentialGen = 0;
 
   @override
   AuthStatus get current => _current;
 
   @override
-  Stream<AuthStatus> get stream => _ctl.stream;
+  Stream<AuthStatus> get stream => _controller.stream;
 
   @override
   Principal? get principal {
@@ -32,6 +37,7 @@ class RemoteAuthSession implements AuthSession {
 
   @override
   void setCredential(String? credential) {
+    _credentialGen++;
     connection.setCredential(credential);
     if (credential == null) {
       _transition(const NotAuthenticated());
@@ -49,9 +55,12 @@ class RemoteAuthSession implements AuthSession {
   void onWireUnauthorized() => _transition(const Expired());
 
   Future<void> _validate() async {
+    final gen = _credentialGen;
     final res = await connection.httpGet(
       connection.baseUrl.replace(path: '/me'),
     );
+    // Drop stale responses: a newer setCredential has superseded us.
+    if (gen != _credentialGen) return;
     if (res.statusCode == 200) {
       final principal = PrincipalCodec.decode(
         jsonDecode(res.body) as Map<String, Object?>,
@@ -66,11 +75,11 @@ class RemoteAuthSession implements AuthSession {
 
   void _transition(AuthStatus next) {
     _current = next;
-    _ctl.add(next);
+    if (!_controller.isClosed) _controller.add(next);
   }
 
   @override
   Future<void> dispose() async {
-    await _ctl.close();
+    if (!_controller.isClosed) await _controller.close();
   }
 }
