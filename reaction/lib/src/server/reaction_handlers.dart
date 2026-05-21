@@ -32,17 +32,29 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 ///   viewScopeRegistry: portalViewScopes,
 /// );
 ///
-/// final router = Router()
+/// // HTTP routes are gated by the consumer's auth middleware (it
+/// // reads the Bearer header and attaches a Principal to the request
+/// // context). The WS upgrade path (`/subscriptions`) is NOT —
+/// // credentials arrive in-band via the first WS AuthMsg (see
+/// // [subscriptionsWithValidator]) because Flutter web cannot attach
+/// // an Authorization header during a WS upgrade. Mounting the WS
+/// // route behind HTTP-bearer middleware would reject every upgrade
+/// // with HTTP 401.
+/// final httpRouter = Router()
 ///   ..get('/api/v1/portal/me',                   reaction.me)
 ///   ..post('/api/v1/portal/actions',             reaction.actions)
-///   ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
-///   ..get('/api/v1/portal/subscriptions',
-///         reaction.subscriptionsWithValidator(validator));
+///   ..get('/api/v1/portal/permissions/snapshot', reaction.permissions);
 ///
-/// final pipeline = const Pipeline()
+/// final httpPipeline = const Pipeline()
 ///     .addMiddleware(consumerAuthMiddleware)
-///     .addHandler(router.call);
-/// await shelf_io.serve(pipeline, '0.0.0.0', 8080);
+///     .addHandler(httpRouter.call);
+///
+/// final topRouter = Router()
+///   ..get('/api/v1/portal/subscriptions',
+///         reaction.subscriptionsWithValidator(validator))
+///   ..mount('/', httpPipeline);
+///
+/// await shelf_io.serve(topRouter.call, '0.0.0.0', 8080);
 /// ```
 class ReactionHandlers {
   ReactionHandlers({
