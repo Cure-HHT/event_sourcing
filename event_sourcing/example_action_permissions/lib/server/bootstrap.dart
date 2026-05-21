@@ -115,7 +115,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
   eventStore
       .subscribe<StoredEvent>(
         const SubscriptionFilter(
-          entryTypes: <String>['user_provisioned'],
+          entryTypes: <String>{'user_provisioned'},
           eventTypes: <String>{'user_provisioned'},
         ),
         const Events(),

@@ -1347,6 +1347,16 @@ Explicitly out of scope for this plan but anticipated:
   multiple consumers converge on the same JWT shape (e.g., a
   `reaction_firebase_auth` package), a concrete validator could ship
   separately from `reaction` proper. Same pluggability discipline.
+- **Cross-process predicates.** `SubscriptionFilter.predicate` is a
+  Dart closure and cannot be serialized over the wire; the wire codec
+  drops it on encode (decoded remote filters always have
+  `predicate == null`). If a future consumer needs predicate-based
+  filtering on remote subscriptions, the recommended path is a
+  named-predicate registry: register the predicate with the same
+  string identifier on both the client and the server (via
+  `ReactionHandlers` config), and the wire ships only the identifier.
+  Today no consumer uses `SubscriptionFilter.predicate`, so this is
+  documented as a future path rather than specified.
 
 ## Roadmap impact and sequencing
 

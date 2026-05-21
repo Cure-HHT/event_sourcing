@@ -254,10 +254,10 @@ Future<void> promoteViewSnapshots({
 /// Returns the entry-type ids the [interest] filter names explicitly.
 ///
 /// `SubscriptionFilter.entryTypes` is `null` for "match any user entry
-/// type" and an empty list for "match nothing". Seeding only applies
+/// type" and an empty set for "match nothing". Seeding only applies
 /// to explicitly-named entry types (so we have something concrete to
-/// seed against); a null or empty list yields no seeding rows.
-List<String> _interestEntryTypes(SubscriptionFilter interest) {
+/// seed against); a null or empty set yields no seeding rows.
+Iterable<String> _interestEntryTypes(SubscriptionFilter interest) {
   final entryTypes = interest.entryTypes;
   if (entryTypes == null || entryTypes.isEmpty) return const <String>[];
   return entryTypes;

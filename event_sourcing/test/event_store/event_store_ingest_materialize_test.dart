@@ -21,7 +21,7 @@ import 'package:uuid/uuid.dart';
 
 const _kToyViewSpec = AggregateProjectionSpec(
   viewName: 'toy_view',
-  interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
+  interest: SubscriptionFilter(entryTypes: <String>{'demo_note'}),
   tombstoneEventTypes: <String>{'tombstone'},
 );
 

@@ -81,12 +81,12 @@ void main() {
       final auditDest = FakeDestination(
         id: 'audit-mirror',
         filter: const SubscriptionFilter(
-          entryTypes: <String>[],
+          entryTypes: <String>{},
           includeSystemEvents: true,
         ),
       );
       // User destination uses the default (includeSystemEvents=false)
-      // and a null entryTypes list (matches all user events).
+      // and a null entryTypes set (matches all user events).
       final userDest = FakeDestination(
         id: 'user-stream',
         filter: const SubscriptionFilter(),
@@ -233,7 +233,7 @@ void main() {
         // Caller mistakenly listed a reserved id. The flag still
         // governs admission — the reserved id is rejected by matches.
         filter: const SubscriptionFilter(
-          entryTypes: [kDestinationRegisteredEntryType],
+          entryTypes: {kDestinationRegisteredEntryType},
         ),
       );
       await ds.destinations.addDestination(dest, initiator: _user);

@@ -354,7 +354,7 @@ void main() {
       final auditMirror = NativeDestination(
         id: 'audit_mirror',
         filter: const SubscriptionFilter(
-          entryTypes: <String>[],
+          entryTypes: <String>{},
           includeSystemEvents: true,
         ),
         batchCapacity: 10,

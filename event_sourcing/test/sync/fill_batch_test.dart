@@ -403,7 +403,7 @@ void main() {
       );
       final dest = FakeDestination(
         id: 'fake',
-        filter: const SubscriptionFilter(entryTypes: ['epistaxis_event']),
+        filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       await fillBatch(

@@ -25,7 +25,7 @@ const _kEntryType = 'sample_event';
 
 const _kAggSpec = AggregateProjectionSpec(
   viewName: 'toy_view',
-  interest: SubscriptionFilter(entryTypes: <String>[_kEntryType]),
+  interest: SubscriptionFilter(entryTypes: <String>{_kEntryType}),
   tombstoneEventTypes: <String>{'tombstone'},
 );
 

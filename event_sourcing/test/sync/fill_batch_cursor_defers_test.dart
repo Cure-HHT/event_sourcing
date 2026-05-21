@@ -192,7 +192,7 @@ void main() {
 
       final dest = FakeDestination(
         id: 'bug-scenario',
-        filter: const SubscriptionFilter(entryTypes: ['epistaxis_event']),
+        filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
 
       // First tick: candidates [e1, e2, e3].
@@ -388,7 +388,7 @@ void main() {
 
       final dest = FakeDestination(
         id: 'sub',
-        filter: const SubscriptionFilter(entryTypes: ['epistaxis_event']),
+        filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
 
       await fillBatch(

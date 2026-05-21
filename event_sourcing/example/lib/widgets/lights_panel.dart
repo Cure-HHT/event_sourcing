@@ -43,11 +43,11 @@ class _LightsPanelState extends State<LightsPanel> {
     _eventsSub = widget.eventStore
         .subscribe<StoredEvent>(
           const SubscriptionFilter(
-            entryTypes: <String>[
+            entryTypes: <String>{
               'red_button_pressed',
               'green_button_pressed',
               'blue_button_pressed',
-            ],
+            },
           ),
           const Events(),
         )

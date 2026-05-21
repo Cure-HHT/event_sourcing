@@ -22,7 +22,7 @@ class _Fixture {
 
 // Build an AggregateProjectionSpec that matches [entryTypeIds]. Used to
 // populate 'toy_view' for tests that verify view-row production.
-AggregateProjectionSpec _toyViewSpec(List<String> entryTypeIds) =>
+AggregateProjectionSpec _toyViewSpec(Set<String> entryTypeIds) =>
     AggregateProjectionSpec(
       viewName: 'toy_view',
       interest: SubscriptionFilter(entryTypes: entryTypeIds),
@@ -59,7 +59,7 @@ Future<_Fixture> _setup({
     final materializableIds = effectiveDefs
         .where((d) => d.materialize)
         .map((d) => d.id)
-        .toList();
+        .toSet();
     if (materializableIds.isNotEmpty) {
       projections = ProjectionRegistry()
         ..register(_toyViewSpec(materializableIds));

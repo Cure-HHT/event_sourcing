@@ -40,13 +40,13 @@ const _kLights = EntryTypeDefinition(
 
 const _kNotesSpec = AggregateProjectionSpec(
   viewName: 'notes',
-  interest: SubscriptionFilter(entryTypes: <String>['note']),
+  interest: SubscriptionFilter(entryTypes: <String>{'note'}),
   tombstoneEventTypes: <String>{},
 );
 
 const _kLightsSpec = AggregateProjectionSpec(
   viewName: 'lights',
-  interest: SubscriptionFilter(entryTypes: <String>['lights']),
+  interest: SubscriptionFilter(entryTypes: <String>{'lights'}),
   tombstoneEventTypes: <String>{},
 );
 
