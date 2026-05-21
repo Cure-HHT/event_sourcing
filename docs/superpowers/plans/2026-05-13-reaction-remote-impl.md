@@ -343,21 +343,31 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/principal_codec.dart';
 
 void main() {
-  test('round-trips UserPrincipal with activeRole', () {
-    const original = UserPrincipal(
+  test('round-trips UserPrincipal', () {
+    final original = UserPrincipal(
       userId: 'u-123',
+      roles: const {'study-coordinator', 'supervisor'},
       activeRole: 'study-coordinator',
     );
     final json = PrincipalCodec.encode(original);
-    final decoded = PrincipalCodec.decode(json);
-    expect(decoded, original);
+    final decoded = PrincipalCodec.decode(json) as UserPrincipal;
+    expect(decoded.userId, 'u-123');
+    expect(decoded.roles, original.roles);
+    expect(decoded.activeRole, 'study-coordinator');
   });
 
-  test('round-trips SystemPrincipal', () {
-    const original = SystemPrincipal();
+  test('round-trips AnonymousPrincipal with ipAddress', () {
+    const original = AnonymousPrincipal(ipAddress: '198.51.100.7');
     final json = PrincipalCodec.encode(original);
-    final decoded = PrincipalCodec.decode(json);
-    expect(decoded, original);
+    final decoded = PrincipalCodec.decode(json) as AnonymousPrincipal;
+    expect(decoded.ipAddress, '198.51.100.7');
+  });
+
+  test('round-trips AnonymousPrincipal without ipAddress', () {
+    const original = AnonymousPrincipal();
+    final json = PrincipalCodec.encode(original);
+    final decoded = PrincipalCodec.decode(json) as AnonymousPrincipal;
+    expect(decoded.ipAddress, isNull);
   });
 
   test('decode rejects unknown principal kind', () {
@@ -385,39 +395,48 @@ import 'package:event_sourcing/event_sourcing.dart';
 
 import 'envelope.dart';
 
-/// JSON codec for [Principal]. UserPrincipal and SystemPrincipal are
-/// distinguished by a "kind" discriminator.
+/// JSON codec for the substrate's sealed [Principal] type.
+/// UserPrincipal and AnonymousPrincipal are distinguished by a
+/// "kind" discriminator. UserPrincipal carries `userId`, `roles`
+/// (a set), and `activeRole` (with the invariant
+/// `roles.contains(activeRole)`).
 ///
 /// Wire shape:
-///   {"kind": "user", "userId": "...", "activeRole": "..."}
-///   {"kind": "system"}
+///   {"kind":"user","userId":"...","roles":["..."],"activeRole":"..."}
+///   {"kind":"anonymous"} | {"kind":"anonymous","ipAddress":"..."}
 class PrincipalCodec {
   const PrincipalCodec._();
 
   static Map<String, Object?> encode(Principal p) {
-    if (p is UserPrincipal) {
-      return {
-        'kind': 'user',
-        'userId': p.userId,
-        'activeRole': p.activeRole,
-      };
-    } else if (p is SystemPrincipal) {
-      return {'kind': 'system'};
-    } else {
-      throw FormatException('unknown Principal type: ${p.runtimeType}');
-    }
+    return switch (p) {
+      UserPrincipal() => {
+          'kind': 'user',
+          'userId': p.userId,
+          'roles': p.roles.toList()..sort(),
+          'activeRole': p.activeRole,
+        },
+      AnonymousPrincipal() => {
+          'kind': 'anonymous',
+          if (p.ipAddress != null) 'ipAddress': p.ipAddress,
+        },
+    };
   }
 
   static Principal decode(Map<String, Object?> json) {
     final kind = requireString(json, 'kind');
     switch (kind) {
       case 'user':
+        final rolesList = json['roles'];
+        if (rolesList is! List) {
+          throw FormatException('missing or non-list "roles": $rolesList');
+        }
         return UserPrincipal(
           userId: requireString(json, 'userId'),
+          roles: rolesList.cast<String>().toSet(),
           activeRole: requireString(json, 'activeRole'),
         );
-      case 'system':
-        return const SystemPrincipal();
+      case 'anonymous':
+        return AnonymousPrincipal(ipAddress: readString(json, 'ipAddress'));
       default:
         throw FormatException('unknown principal kind: $kind');
     }
@@ -868,7 +887,16 @@ git commit -m "[CUR-1317] reaction wire: ActionSubmission JSON codec"
 - Create: `reaction/lib/src/wire/dispatch_result_codec.dart`
 - Create: `reaction/test/wire/dispatch_result_codec_test.dart`
 
-`DispatchResult<TResult>` is a sealed type. The wire codec handles each variant by type discriminator. `Success` carries `appendedEvents: List<StoredEvent>` — those need their own JSON encoding too (defined here as a private helper).
+`DispatchResult<TResult>` is a sealed type with seven variants
+(CUR-1331 delivered): `DispatchSuccess`, `DispatchUnknownAction`,
+`DispatchParseDenied`, `DispatchValidationDenied`,
+`DispatchAuthorizationDenied`, `DispatchExecutionFailed`,
+`DispatchIdempotencyHit`. The wire codec dispatches per variant on a
+`"type"` discriminator. `DispatchSuccess` carries
+`appendedEvents: List<StoredEvent>` — encoded inline via a private
+helper. Read the substrate source at
+`event_sourcing/lib/src/actions/dispatch_result.dart` to confirm
+field names before writing tests.
 
 - [ ] **Step 1: Write tests for each variant**
 
@@ -879,8 +907,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/dispatch_result_codec.dart';
 
 void main() {
-  test('round-trips Success', () {
-    final original = Success<Object?>(
+  test('round-trips DispatchSuccess', () {
+    final original = DispatchSuccess<Object?>(
       result: {'echo': 'hello'},
       appendedEvents: [
         StoredEvent(
@@ -894,8 +922,8 @@ void main() {
           payload: const {'title': 'x'},
           clientTimestamp: DateTime.utc(2026, 5, 13, 10, 0, 0),
           recordedTimestamp: DateTime.utc(2026, 5, 13, 10, 0, 1),
-          initiator: const UserPrincipal(
-            userId: 'u-1', activeRole: 'install'),
+          initiator: UserPrincipal(
+            userId: 'u-1', roles: {'install'}, activeRole: 'install'),
           chainHash: 'hash-1',
           payloadHash: 'phash-1',
           source: const Source(
@@ -907,15 +935,15 @@ void main() {
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'success');
     final decoded = DispatchResultCodec.decode(json);
-    expect(decoded, isA<Success<Object?>>());
-    final s = decoded as Success<Object?>;
+    expect(decoded, isA<DispatchSuccess<Object?>>());
+    final s = decoded as DispatchSuccess<Object?>;
     expect(s.result, {'echo': 'hello'});
     expect(s.appendedEvents, hasLength(1));
     expect(s.appendedEvents.first.eventId, 'evt-1');
   });
 
-  test('round-trips AuthorizationDenied', () {
-    final original = AuthorizationDenied(
+  test('round-trips DispatchAuthorizationDenied with scope', () {
+    final original = DispatchAuthorizationDenied(
       reason: DenyReason.notGranted,
       permission: const Permission('note.edit', scopeClass: 'patient'),
       scope: const BoundScope(class_: 'patient', value: 'p-1'),
@@ -923,28 +951,58 @@ void main() {
     );
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'authorization_denied');
-    final decoded = DispatchResultCodec.decode(json);
-    expect(decoded, isA<AuthorizationDenied>());
-    final d = decoded as AuthorizationDenied;
+    final d = DispatchResultCodec.decode(json)
+        as DispatchAuthorizationDenied;
     expect(d.permission.name, 'note.edit');
     expect(d.scope, isA<BoundScope>());
   });
 
-  test('round-trips InputInvalid', () {
-    final original = InputInvalid(message: 'missing field "title"');
+  test('round-trips DispatchUnknownAction', () {
+    final original = DispatchUnknownAction<Object?>(
+        actionName: 'noSuchAction');
     final json = DispatchResultCodec.encode(original);
-    expect(json['type'], 'input_invalid');
-    final decoded = DispatchResultCodec.decode(json);
-    expect(decoded, isA<InputInvalid>());
-    expect((decoded as InputInvalid).message, 'missing field "title"');
+    expect(json['type'], 'unknown_action');
+    expect(DispatchResultCodec.decode(json),
+        isA<DispatchUnknownAction<Object?>>());
   });
 
-  test('round-trips ActionFailed', () {
-    final original = ActionFailed(message: 'sembast write failed');
+  test('round-trips DispatchParseDenied', () {
+    final original = DispatchParseDenied<Object?>(
+        message: 'invalid input shape');
     final json = DispatchResultCodec.encode(original);
-    expect(json['type'], 'action_failed');
-    final decoded = DispatchResultCodec.decode(json);
-    expect(decoded, isA<ActionFailed>());
+    expect(json['type'], 'parse_denied');
+    expect(DispatchResultCodec.decode(json),
+        isA<DispatchParseDenied<Object?>>());
+  });
+
+  test('round-trips DispatchValidationDenied', () {
+    final original = DispatchValidationDenied<Object?>(
+        message: 'missing field "title"');
+    final json = DispatchResultCodec.encode(original);
+    expect(json['type'], 'validation_denied');
+    expect((DispatchResultCodec.decode(json)
+            as DispatchValidationDenied).message,
+        'missing field "title"');
+  });
+
+  test('round-trips DispatchExecutionFailed', () {
+    final original = DispatchExecutionFailed<Object?>(
+        message: 'sembast write failed');
+    final json = DispatchResultCodec.encode(original);
+    expect(json['type'], 'execution_failed');
+    expect(DispatchResultCodec.decode(json),
+        isA<DispatchExecutionFailed<Object?>>());
+  });
+
+  test('round-trips DispatchIdempotencyHit', () {
+    final original = DispatchIdempotencyHit<Object?>(
+      result: {'echo': 'cached'},
+      cachedAt: DateTime.utc(2026, 5, 13),
+    );
+    final json = DispatchResultCodec.encode(original);
+    expect(json['type'], 'idempotency_hit');
+    expect(DispatchResultCodec.decode(json),
+        isA<DispatchIdempotencyHit<Object?>>());
   });
 }
 ```
@@ -970,57 +1028,86 @@ import 'principal_codec.dart';
 /// as JSON-friendly Map<String, Object?>; the client deserializes
 /// further if needed (the substrate's existing pattern).
 ///
-/// Wire shape per variant:
-///   {"type": "success", "result": <jsonable>,
-///    "appendedEvents": [<StoredEvent json>, ...]}
-///   {"type": "authorization_denied", "reason": "...",
-///    "permission": <Permission json>, "scope": <ScopeValue json|null>,
-///    "detail": "..."}
-///   {"type": "input_invalid", "message": "..."}
-///   {"type": "action_failed", "message": "..."}
+/// Wire shapes per variant (per CUR-1331 delivered DispatchResult):
+///   {"type":"success", "result":<jsonable>,
+///    "appendedEvents":[<StoredEvent json>, ...]}
+///   {"type":"unknown_action", "actionName":"..."}
+///   {"type":"parse_denied", "message":"..."}
+///   {"type":"validation_denied", "message":"..."}
+///   {"type":"authorization_denied", "reason":"...",
+///    "permission":<Permission json>, "scope":<ScopeValue json|null>,
+///    "detail":"..."}
+///   {"type":"execution_failed", "message":"..."}
+///   {"type":"idempotency_hit", "result":<jsonable>,
+///    "cachedAt":"<iso8601>"}
 class DispatchResultCodec {
   const DispatchResultCodec._();
 
   static Map<String, Object?> encode(DispatchResult<Object?> r) {
-    if (r is Success<Object?>) {
-      return {
-        'type': 'success',
-        'result': r.result,
-        'appendedEvents':
-            r.appendedEvents.map(_encodeStoredEvent).toList(),
-      };
-    } else if (r is AuthorizationDenied) {
-      return {
-        'type': 'authorization_denied',
-        'reason': _encodeDenyReason(r.reason),
-        'permission': _encodePermission(r.permission),
-        'scope': r.scope == null ? null : _encodeScopeValue(r.scope!),
-        'detail': r.detail,
-      };
-    } else if (r is InputInvalid) {
-      return {'type': 'input_invalid', 'message': r.message};
-    } else if (r is ActionFailed) {
-      return {'type': 'action_failed', 'message': r.message};
-    } else {
-      throw FormatException('unknown DispatchResult: ${r.runtimeType}');
-    }
+    return switch (r) {
+      DispatchSuccess<Object?>() => {
+          'type': 'success',
+          'result': r.result,
+          'appendedEvents':
+              r.appendedEvents.map(_encodeStoredEvent).toList(),
+        },
+      DispatchUnknownAction<Object?>() => {
+          'type': 'unknown_action',
+          'actionName': r.actionName,
+        },
+      DispatchParseDenied<Object?>() => {
+          'type': 'parse_denied',
+          'message': r.message,
+        },
+      DispatchValidationDenied<Object?>() => {
+          'type': 'validation_denied',
+          'message': r.message,
+        },
+      DispatchAuthorizationDenied<Object?>() => {
+          'type': 'authorization_denied',
+          'reason': _encodeDenyReason(r.reason),
+          'permission': _encodePermission(r.permission),
+          'scope': r.scope == null ? null : _encodeScopeValue(r.scope!),
+          'detail': r.detail,
+        },
+      DispatchExecutionFailed<Object?>() => {
+          'type': 'execution_failed',
+          'message': r.message,
+        },
+      DispatchIdempotencyHit<Object?>() => {
+          'type': 'idempotency_hit',
+          'result': r.result,
+          'cachedAt': r.cachedAt.toIso8601String(),
+        },
+    };
   }
 
   static DispatchResult<Object?> decode(Map<String, Object?> json) {
     final type = readType(json);
     switch (type) {
       case 'success':
-        final events = (json['appendedEvents'] as List)
-            .cast<Map<String, Object?>>()
-            .map(_decodeStoredEvent)
-            .toList();
-        return Success<Object?>(
+        return DispatchSuccess<Object?>(
           result: json['result'],
-          appendedEvents: events,
+          appendedEvents: (json['appendedEvents'] as List)
+              .cast<Map<String, Object?>>()
+              .map(_decodeStoredEvent)
+              .toList(),
+        );
+      case 'unknown_action':
+        return DispatchUnknownAction<Object?>(
+          actionName: requireString(json, 'actionName'),
+        );
+      case 'parse_denied':
+        return DispatchParseDenied<Object?>(
+          message: requireString(json, 'message'),
+        );
+      case 'validation_denied':
+        return DispatchValidationDenied<Object?>(
+          message: requireString(json, 'message'),
         );
       case 'authorization_denied':
         final scopeJson = json['scope'];
-        return AuthorizationDenied(
+        return DispatchAuthorizationDenied<Object?>(
           reason: _decodeDenyReason(requireString(json, 'reason')),
           permission: _decodePermission(requireMap(json, 'permission')),
           scope: scopeJson == null
@@ -1028,10 +1115,15 @@ class DispatchResultCodec {
               : _decodeScopeValue(scopeJson as Map<String, Object?>),
           detail: readString(json, 'detail'),
         );
-      case 'input_invalid':
-        return InputInvalid(message: requireString(json, 'message'));
-      case 'action_failed':
-        return ActionFailed(message: requireString(json, 'message'));
+      case 'execution_failed':
+        return DispatchExecutionFailed<Object?>(
+          message: requireString(json, 'message'),
+        );
+      case 'idempotency_hit':
+        return DispatchIdempotencyHit<Object?>(
+          result: json['result'],
+          cachedAt: DateTime.parse(requireString(json, 'cachedAt')),
+        );
       default:
         throw FormatException('unknown DispatchResult type: $type');
     }
@@ -2107,7 +2199,7 @@ class _StubDispatcher implements ActionDispatcher {
 void main() {
   test('returns 200 + DispatchResult JSON on success', () async {
     final dispatcher = _StubDispatcher(
-      Success<Object?>(result: {'echo': 'hi'}, appendedEvents: const []),
+      DispatchSuccess<Object?>(result: {'echo': 'hi'}, appendedEvents: const []),
     );
     final handler = actionRouteHandler(dispatcher: dispatcher);
     final submission = const ActionSubmission(
@@ -2120,13 +2212,13 @@ void main() {
       Uri.parse('http://x/actions'),
       body: body,
       context: {'reaction.principal':
-          const UserPrincipal(userId: 'u-1', activeRole: 'install')},
+          UserPrincipal(userId: 'u-1', roles: {'install'}, activeRole: 'install')},
     );
     final res = await handler(req);
     expect(res.statusCode, 200);
     final decoded = DispatchResultCodec.decode(
         jsonDecode(await res.readAsString()) as Map<String, Object?>);
-    expect(decoded, isA<Success<Object?>>());
+    expect(decoded, isA<DispatchSuccess<Object?>>());
     expect(dispatcher.lastSubmission?.actionName, 'sayHello');
     expect((dispatcher.lastCtx!.principal as UserPrincipal).userId, 'u-1');
   });
@@ -2134,14 +2226,14 @@ void main() {
   test('returns 400 on malformed body', () async {
     final handler = actionRouteHandler(
       dispatcher: _StubDispatcher(
-        Success<Object?>(result: null, appendedEvents: const [])),
+        DispatchSuccess<Object?>(result: null, appendedEvents: const [])),
     );
     final req = Request(
       'POST',
       Uri.parse('http://x/actions'),
       body: '{not json',
       context: {'reaction.principal':
-          const UserPrincipal(userId: 'u-1', activeRole: 'install')},
+          UserPrincipal(userId: 'u-1', roles: {'install'}, activeRole: 'install')},
     );
     final res = await handler(req);
     expect(res.statusCode, 400);
@@ -2150,7 +2242,7 @@ void main() {
   test('returns 500 when no Principal in context', () async {
     final handler = actionRouteHandler(
       dispatcher: _StubDispatcher(
-        Success<Object?>(result: null, appendedEvents: const [])),
+        DispatchSuccess<Object?>(result: null, appendedEvents: const [])),
     );
     final req = Request(
       'POST',
@@ -2263,7 +2355,7 @@ void main() {
       'GET',
       Uri.parse('http://x/me'),
       context: {'reaction.principal':
-          const UserPrincipal(userId: 'u-1', activeRole: 'install')},
+          UserPrincipal(userId: 'u-1', roles: {'install'}, activeRole: 'install')},
     );
     final res = await handler(req);
     expect(res.statusCode, 200);
@@ -2376,7 +2468,7 @@ void main() {
       'GET',
       Uri.parse('http://x/permissions/snapshot'),
       context: {'reaction.principal':
-          const UserPrincipal(userId: 'u-1', activeRole: 'install')},
+          UserPrincipal(userId: 'u-1', roles: {'install'}, activeRole: 'install')},
     );
     final res = await handler(req);
     expect(res.statusCode, 200);
@@ -3860,7 +3952,7 @@ void main() {
       connection: connWithClient(_Client((req) =>
         req.url.path == '/me'
           ? http.Response(jsonEncode(PrincipalCodec.encode(
-              const UserPrincipal(userId: 'alice', activeRole: 'install'))), 200)
+              UserPrincipal(userId: 'alice', roles: {'install'}, activeRole: 'install'))), 200)
           : http.Response('', 404),
       )),
     );
@@ -3868,7 +3960,7 @@ void main() {
     await Future.delayed(const Duration(milliseconds: 50));
     expect(session.current, isA<Authenticated>());
     expect((session.current as Authenticated).principal,
-        const UserPrincipal(userId: 'alice', activeRole: 'install'));
+        UserPrincipal(userId: 'alice', roles: {'install'}, activeRole: 'install'));
   });
 
   test('setCredential(cred) on 401 transitions to Expired', () async {
@@ -3884,7 +3976,7 @@ void main() {
     final session = RemoteAuthSession(
       connection: connWithClient(_Client((_) =>
         http.Response(jsonEncode(PrincipalCodec.encode(
-          const UserPrincipal(userId: 'a', activeRole: 'install'))), 200))),
+          UserPrincipal(userId: 'a', roles: {'install'}, activeRole: 'install'))), 200))),
     );
     session.setCredential('alice');
     await Future.delayed(const Duration(milliseconds: 50));
@@ -4599,7 +4691,7 @@ void main() {
     );
     expect(s, isA<Authenticated>());
     expect((s as Authenticated).principal,
-        const UserPrincipal(userId: 'alice', activeRole: 'install'));
+        UserPrincipal(userId: 'alice', roles: {'install'}, activeRole: 'install'));
   });
 
   test('setCredential(null) returns to NotAuthenticated', () async {
@@ -4656,8 +4748,8 @@ void main() {
     final result = await h.scope.actionSubmitter.submit(
       const ActionSubmission(actionName: 'sayHello', rawInput: {'name': 'A'}),
     );
-    expect(result, isA<Success<Object?>>());
-    final s = result as Success<Object?>;
+    expect(result, isA<DispatchSuccess<Object?>>());
+    final s = result as DispatchSuccess<Object?>;
     expect(s.appendedEvents, isNotEmpty);
   });
 
@@ -4724,14 +4816,20 @@ void main() {
   test('subscribe receives Snapshot x N -> EOR -> Delta sequence', () async {
     // (1) Pre-populate with N=2 notes via direct substrate append.
     await h.substrate.eventStore.append(
-      aggregateId: 'note-1', entryType: 'note',
-      eventType: 'note_updated', payload: {'title': 'first'},
-      principal: const UserPrincipal(userId: 'alice', activeRole: 'install'),
+      aggregateType: 'note', aggregateId: 'note-1',
+      entryType: 'note', eventType: 'note_updated',
+      data: {'title': 'first'},
+      initiator: UserPrincipal(
+          userId: 'alice', roles: {'install'},
+          activeRole: 'install').toInitiator(),
     );
     await h.substrate.eventStore.append(
-      aggregateId: 'note-2', entryType: 'note',
-      eventType: 'note_updated', payload: {'title': 'second'},
-      principal: const UserPrincipal(userId: 'alice', activeRole: 'install'),
+      aggregateType: 'note', aggregateId: 'note-2',
+      entryType: 'note', eventType: 'note_updated',
+      data: {'title': 'second'},
+      initiator: UserPrincipal(
+          userId: 'alice', roles: {'install'},
+          activeRole: 'install').toInitiator(),
     );
 
     // (2) Subscribe.
@@ -4751,9 +4849,12 @@ void main() {
 
     // (4) Append a third note; expect a Delta after EOR.
     await h.substrate.eventStore.append(
-      aggregateId: 'note-3', entryType: 'note',
-      eventType: 'note_updated', payload: {'title': 'third'},
-      principal: const UserPrincipal(userId: 'alice', activeRole: 'install'),
+      aggregateType: 'note', aggregateId: 'note-3',
+      entryType: 'note', eventType: 'note_updated',
+      data: {'title': 'third'},
+      initiator: UserPrincipal(
+          userId: 'alice', roles: {'install'},
+          activeRole: 'install').toInitiator(),
     );
     await Future.delayed(const Duration(milliseconds: 200));
     expect(replay.last, isA<Delta<Map<String, Object?>>>());
@@ -4762,9 +4863,12 @@ void main() {
 
   test('mapper transforms rows client-side', () async {
     await h.substrate.eventStore.append(
-      aggregateId: 'note-1', entryType: 'note',
-      eventType: 'note_updated', payload: {'title': 'hello'},
-      principal: const UserPrincipal(userId: 'alice', activeRole: 'install'),
+      aggregateType: 'note', aggregateId: 'note-1',
+      entryType: 'note', eventType: 'note_updated',
+      data: {'title': 'hello'},
+      initiator: UserPrincipal(
+          userId: 'alice', roles: {'install'},
+          activeRole: 'install').toInitiator(),
     );
     final stream = h.scope.viewSource.watch<String>(
       viewName: 'notes_today',
