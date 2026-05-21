@@ -2152,13 +2152,13 @@ class _StubDispatcher implements ActionDispatcher {
   ActionContext? lastCtx;
 
   @override
-  Future<DispatchResult<TResult>> dispatch<TResult>(
+  Future<DispatchResult<Object?>> dispatch(
     ActionSubmission submission,
     ActionContext ctx,
   ) async {
     lastSubmission = submission;
     lastCtx = ctx;
-    return response as DispatchResult<TResult>;
+    return response;
   }
 }
 
@@ -2273,7 +2273,7 @@ Handler actionRouteHandler({
       security: const SecurityDetails(),
       requestStartedAt: clock(),
     );
-    final result = await dispatcher.dispatch<Object?>(submission, ctx);
+    final result = await dispatcher.dispatch(submission, ctx);
     return Response.ok(
       jsonEncode(DispatchResultCodec.encode(result)),
       headers: {'Content-Type': 'application/json'},
