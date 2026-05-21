@@ -64,9 +64,11 @@ Out of scope (deferred):
   boundary discipline; see "Trust boundary expansion" below.
 - v1.1 `resume-from-sequence` reconnect optimization — wire format
   reserves space; not implemented here.
-- Reactive re-narrowing of active subscriptions on permission grant
-  change — deferred to CUR-1331 impl follow-up (the call site that
-  will already be re-shaped by scope-aware permission consulting).
+- Reactive re-narrowing of active subscriptions' `aggregates`
+  filters mid-stream (mutating an open `subscribe<T>` to narrow it).
+  The chosen mid-session permission-change handling (force-logout
+  on revocation + stale-data signal on expansion / containment
+  change) avoids this entirely; see Section 4.
 - Snapshot pagination for very large views (PRD Open Question 1).
 - Connection-state observability stream on the client
   (`Stream<ConnectionState>` for "Reconnecting…" UX) — defer to v1.1.
@@ -159,6 +161,9 @@ reaction/lib/src/
     me_handler.dart                GET /me handler factory
     permission_handler.dart        GET /permissions/snapshot factory
     subscription_handler.dart      WS upgrade; per-conn state; relay
+    ws_connection_registry.dart    Map<userId, Set<WebSocketChannel>>
+    authz_watcher.dart             Server-wide watcher; force-logout on
+                                   revocation, stale_data on expansion
     validators/
       trusting_auth_validator.dart Dev/test only
 ```
@@ -179,7 +184,11 @@ The top-level `reaction.dart` barrel grows exports for:
   `RemoteViewSource`, `RemotePermissionSource`.
 - `ReactionHandlers` (the config bundle).
 - `authMiddleware`, `principalFromContext` (optional auth helpers).
+- `WsConnectionRegistry` (exposed on `ReactionHandlers.connectionRegistry`
+  for ops visibility — connection counts per user, etc.).
 - `TrustingAuthValidator`.
+- `AuthzWatcher` stays package-private; consumers interact with it
+  via `ReactionHandlers.watchContainment(...)`.
 
 Wire types stay package-private (not exported from `reaction.dart`).
 Codec functions are internal to the package.
@@ -276,6 +285,17 @@ without breaking change.
 
 {"type": "end_of_replay", "subscriptionId": "<UUID>", "sequence": N}
 
+// Stale-data signal: server tells the client that some of its
+// cached scope state may be out of date (e.g., a role assignment
+// just expanded the user's scope, or a containment projection
+// re-parented an aggregate the user holds). The client should
+// resubscribe to refresh; the server does NOT force-resub.
+// Reason is informational for client UX; the server may also send
+// this with no reason for "something changed; refresh if you care."
+{"type": "stale_data",
+ "reason": "permission_added" | "role_assigned"
+         | "containment_changed" | null }
+
 // Out-of-band (not tied to any one subscription):
 {"type": "error", "code": "internal_error" | "protocol_error",
  "message": "<human-readable; for logging>"}
@@ -303,6 +323,14 @@ JSON shape notes:
   to `AuthStatus.Expired`. Client does NOT reconnect.
 - `4002 server_shutting_down` — graceful; client reconnects with
   backoff.
+- `4003 permissions_changed` — the user's role or held-role
+  permissions changed mid-session in a way that narrows their
+  access (`role_unassigned` for this user; `permission_revoked`
+  from a role this user holds). The client maps this to
+  `AuthStatus.Expired` and refetches `/me` on reconnect to get a
+  fresh `Principal` reflecting the new role/permission state. The
+  credential itself is still valid (no JWT revocation) — the
+  staleness is in the cached server-side authorization context.
 - `1011 internal_error` — server bug; client reconnects.
 - `1006 abnormal_closure` (network drop) — client reconnects with
   backoff.
@@ -600,6 +628,8 @@ On message in AWAITING_AUTH:
     state = AUTHENTICATED
     principal = result
     Send {type: auth_ok, principalId: P.id}
+    Register this WS in the server-wide connection registry
+    under principal.userId (so the AuthzWatcher can find it).
   On AuthenticationDenied:
     close 4001 auth_rejected
 
@@ -617,13 +647,133 @@ On message in AUTHENTICATED:
 
 On disconnect:
   Cancel every substrate sub registered against this connection.
+  Remove this WS from the server-wide connection registry.
   Release connection state.
 ```
 
 The only per-connection state is `{principal, Map<subscriptionId,
-StreamSubscription>}` — no permission projection mirror is
-maintained server-side. See the "Why no per-Principal permission
-cache" entry in the Decisions section for the rationale.
+StreamSubscription>}`. The server also maintains a single top-level
+connection registry `Map<userId, Set<WebSocketChannel>>` so the
+AuthzWatcher (described below) can route messages and close-frames
+to the right connections. Neither is a permission-state mirror; see
+"Why no per-Principal permission cache" in the Decisions section.
+
+### AuthzWatcher: mid-session permission/scope changes
+
+Once a WS subscription is open, its row-level narrowing is frozen at
+the substrate-subscription level: the substrate's `subscribe<T>` was
+constructed with a particular `aggregates` set, and changing the
+filter on a running stream isn't supported. So changes to the
+Principal's authorization state between subscribe-time and
+disconnect need handling at the wire layer.
+
+The reaction server runs **one** server-wide substrate subscription
+— the AuthzWatcher — on the substrate's permission and
+role-assignment event types:
+
+```text
+authzWatcher = eventStore.subscribe<Map<String, Object?>>(
+  SubscriptionFilter(aggregateTypes: {
+    'role_permission_grant',  // permission_granted, permission_revoked
+    'user_role_scope',        // role_assigned, role_unassigned
+  }),
+  EventsMode(),
+)
+
+On each Update<T> from this watcher (a substrate event):
+  Decode payload + eventType.
+  Determine which (userId, action) tuples are affected:
+    'role_unassigned'    payload['user_id']           -> hard logout
+    'role_assigned'      payload['user_id']           -> stale_data
+    'permission_revoked' for any user holding this role -> hard logout
+    'permission_granted' for any user holding this role -> stale_data
+  For each affected userId:
+    Look up the registry's Set<WebSocketChannel> for that userId.
+    For each channel:
+      hard logout  -> sink.close(4003, 'permissions_changed')
+                      (the WS disconnect handler does the rest)
+      stale_data   -> send {type: stale_data, reason: <reason>}
+```
+
+The watcher is **a single subscription on the server-wide
+substrate**, not per-connection. At portal scale this is one
+substrate subscription serving the entire shelf process. No state
+mirror is maintained.
+
+Determining which users hold a given role (for `permission_*`
+events) requires a one-time lookup at watcher-event time: read the
+substrate's `role_permission_grants` projection to find the role's
+current grants, then walk the connection registry's userIds and
+check which Principal's `activeRole` matches. At portal scale (~20
+users) the walk is trivial.
+
+### Force logout vs stale-data signal: when each applies
+
+The asymmetry is principled. Different event categories warrant
+different wire responses:
+
+| Event                  | Effect on user's access     | Wire response       |
+| ---------------------- | --------------------------- | ------------------- |
+| `role_unassigned`      | narrows (security)          | close 4003          |
+| `permission_revoked`   | narrows (security)          | close 4003          |
+| `role_assigned`        | expands (UX-only)           | `stale_data` msg    |
+| `permission_granted`   | expands (UX-only)           | `stale_data` msg    |
+| containment change     | data-driven; either dir     | `stale_data` msg    |
+| any other event        | not security-affecting      | (no signal)         |
+
+The force-logout response is for **admin-driven security-narrowing**:
+the user is currently authorized to see things they shouldn't, and
+the admin's intent is to remove that access. Closing the WS clears
+the client-side state immediately; the client reconnects, refetches
+`/me`, and reopens subscriptions against the new (narrower)
+authorization.
+
+The stale-data response is for **UX-only freshness gaps**: the user
+is currently authorized to see *less* than they could, or the change
+is data-driven (a patient moved sites) rather than security-driven.
+Either way, the client is showing a fresh-but-incomplete view, not
+a stale-but-overprivileged one. The signal lets the client decide
+whether to refresh (some UIs may not care; some may show a "data
+updated, refresh?" affordance).
+
+**Containment changes are NOT in the AuthzWatcher's filter.** The
+watcher only sees role and permission events. Containment projection
+changes (e.g., `patient_site_index` updates) trigger their own
+signal path:
+
+- Optional: deployments register containment projections with the
+  reaction server (`AuthzWatcher.watchContainment(projectionName)`),
+  and the server opens an additional substrate subscription per
+  registered containment projection.
+- When that subscription emits an Update<T>, every connected user
+  whose role uses scope-classes that traverse this containment
+  projection gets a `stale_data` message with
+  `reason: containment_changed`.
+
+This is per-deployment opt-in: if patient_site_index changes are
+common (routine trial operations) and you don't want every change
+spamming every connected coordinator with a stale_data message,
+don't register it. If they're infrequent and you want the freshness
+signal, do. Default: containment projections are NOT watched.
+
+### Race window
+
+There is a small staleness window between the substrate committing a
+permission-changing event and the AuthzWatcher firing the close /
+stale_data. Concretely:
+
+```text
+T+0:   Substrate commits role_unassigned event.
+T+ε:   AuthzWatcher subscription receives the Update<T>.
+T+ε+δ: Server closes affected WS connections with 4003.
+[T, T+ε+δ]: revoked user can still receive events through their
+           still-open substrate subscriptions.
+```
+
+The window is single-digit milliseconds in practice (substrate event
+propagation latency). Far smaller than the original snapshot-at-
+subscribe window (bounded by token TTL, ~minutes). Acceptable for
+the deployment classes this lib targets.
 
 ### Per-subscription authorization (Approach B, aligned to CUR-1331)
 
@@ -778,20 +928,27 @@ atomicity end-to-end).
 
 ### Disposal
 
-There is no `ReactionHandlers.dispose()` — the bundle holds no
-lifecycle-owning resources beyond closures over the substrate handles
-the consumer already owns. Per-connection cleanup (cancelling every
-substrate subscription registered against a closing WS) happens
-automatically when the WS channel's stream closes; the
+`ReactionHandlers` owns one lifecycle-bound resource: the server-wide
+`AuthzWatcher` subscription started in its constructor. Consumers
+call `await reaction.dispose()` on graceful shutdown to cancel that
+subscription. Per-connection cleanup (cancelling each connection's
+substrate subscriptions, unregistering from the connection registry)
+happens automatically when each WS channel's stream closes; the
 `subscription_handler` registers an `onDone` listener for exactly
 that purpose.
 
-Graceful shutdown of the consumer's HTTP server is the consumer's
-concern; once `shelf_io`'s `HttpServer` stops accepting connections,
-open WS connections close, their `onDone` fires, and substrate
-subscriptions cancel. Substrate cleanup (`eventStore.close()` etc.)
-remains the consumer's responsibility — same as in the integrated
-case.
+Graceful shutdown sequence:
+
+1. Consumer stops `shelf_io`'s `HttpServer` from accepting new
+   connections.
+2. Open WS connections close (consumer may force-close with 4002
+   server_shutting_down).
+3. Each connection's `onDone` fires; substrate subs cancel;
+   connection unregisters from `connectionRegistry`.
+4. Consumer calls `await reaction.dispose()`; the AuthzWatcher's
+   substrate subscription cancels.
+5. Substrate cleanup (`eventStore.close()` etc.) remains the
+   consumer's responsibility — same as in the integrated case.
 
 ### What `ReactionHandlers` does NOT do
 
@@ -941,13 +1098,36 @@ Each PRD assertion gets at least one
 - HTTP timeout: client respects a configurable timeout; surfaces
   `TransportException`.
 
+### Mid-session permission-change tests
+
+The AuthzWatcher's behavior gets dedicated coverage:
+
+- **Force-logout on `role_unassigned`:** open a subscription, append
+  a `role_unassigned` event for the connected user, assert the WS
+  closes with `4003 permissions_changed` within 200 ms.
+- **Force-logout on `permission_revoked`:** seed a user with role X,
+  open subscriptions, append a `permission_revoked` event for a
+  permission held by role X, assert all connections for users with
+  role X close with `4003`.
+- **Stale-data signal on `role_assigned`:** open subscriptions,
+  append a `role_assigned` event for the connected user, assert
+  the client receives a `stale_data` envelope with
+  `reason: role_assigned` (subscription stays open).
+- **Stale-data signal on `permission_granted` to held role:** same
+  shape; `reason: permission_added`.
+- **Containment change does NOT emit stale_data by default:** seed
+  the harness without watching `patient_site_index`; append a
+  re-parenting event; assert no `stale_data` is emitted to
+  connected users.
+- **Containment-watch opt-in emits stale_data:** as above but with
+  `watchContainment('patient_site_index')`; assert `stale_data`
+  with `reason: containment_changed`.
+
 ### What's NOT tested in this plan
 
 - Production validators (Firebase JWT, Auth0, linking-code) — tested
   in app code per the trust-boundary discipline.
 - Snapshot pagination — PRD Open Question 1 defer.
-- Reactive re-narrowing on permission grant change — deferred to
-  CUR-1331 impl follow-up.
 
 ## Trust boundary expansion
 
@@ -1050,14 +1230,57 @@ optimization has no measurable benefit; (b) the cache would
 introduce per-connection state (cache mirror + substrate
 subscription managing it) that has to be cleaned up on disconnect
 and managed against race conditions when grants change
-mid-decision; (c) the cache infrastructure is exactly what would
-be needed for **reactive re-narrowing** of active subscriptions
-on permission change, which is explicitly deferred (Open Q1)
-to a CUR-1331 impl follow-up. Building the cache without that
-follow-up benefit is dead weight. Each `subscribe` message thus
-calls into `policy.isPermitted` / `effectivePermissionsFor`
-fresh; the only per-connection state is the active `Principal`
-and the `Map<subscriptionId, StreamSubscription>` registry.
+mid-decision. Each `subscribe` message thus calls into
+`policy.isPermitted` / `effectivePermissionsFor` fresh; the only
+per-connection state is the active `Principal` and the
+`Map<subscriptionId, StreamSubscription>` registry. Mid-session
+permission changes are handled by the AuthzWatcher (see below),
+not by mirroring permission state per-connection.
+
+**Why force-logout on revocation but stale-data signal on grant
+expansion / containment change?** Three design alternatives were
+considered for handling mid-session permission changes:
+
+1. *Snapshot at subscribe-time (silent fail-open)*: do nothing;
+   accept that revoked users continue receiving events until they
+   reconnect (token expiry, network drop, manual logout). Bounds
+   the staleness window only by token TTL — minutes in practice.
+   Rejected for v1: too long a window for security-narrowing
+   admin actions.
+2. *Reactive re-narrowing*: on permission change, mutate the open
+   subscription's `aggregates` filter and emit `tombstone` /
+   `snapshot` envelopes to clean up the client-side view. Cleanest
+   semantics but introduces per-subscription state-machine
+   complexity (which aggregates are now-out-of-scope; which are
+   newly-in-scope; how to handle a tombstone that's just a
+   narrowing vs a real delete). Substantial impl surface.
+3. *Force logout + stale-data signal* (chosen): on security-
+   narrowing events (revocation), close the WS with `4003
+   permissions_changed`; the client reconnects, re-fetches `/me`,
+   and re-opens subscriptions against the new, narrower
+   authorization. On UX-only events (grant expansion, containment
+   change), send a `stale_data` message; the client decides
+   whether to refresh. The wire stays simple: existing
+   close-frames + one new envelope type. The server's state
+   addition is a single connection registry
+   (`Map<userId, Set<WebSocketChannel>>`) plus one server-wide
+   AuthzWatcher subscription. No per-connection permission
+   mirror; no re-narrowing logic.
+
+The chosen approach captures the asymmetric intent: admin-driven
+security-narrowing is the only thing serious enough to interrupt a
+user mid-session; UX-only updates can be deferred to the client's
+discretion. The "intent vs incidental" distinction is principled:
+when an admin revokes a role, they intend to reduce that user's
+access; when an admin re-parents a patient, they intend to move the
+patient, and any access change is incidental.
+
+Containment changes default to NOT being watched by the AuthzWatcher
+because they're frequent (routine trial operations) and watching
+them would emit `stale_data` to every connected coordinator on every
+patient move — operationally noisy. Deployments opt in via
+`AuthzWatcher.watchContainment(projectionName)` if they want the
+freshness signal.
 
 **Why first-message WS auth instead of upgrade-header auth?**
 Flutter web's `WebSocket` constructor cannot set custom headers on
@@ -1084,41 +1307,19 @@ from similar systems; cheap to keep idle WS open for 30s.
 
 ## Open questions
 
-1. **Reactive re-narrowing of active subscriptions on permission /
-   scope-assignment / containment change.** Today's design snapshots
-   the row-level narrowing at subscribe-time and does not react to
-   subsequent changes in `role_permission_grants`, `user_role_scopes`,
-   OR the scope-class containment projections (e.g.,
-   `patient_site_index`). Under CUR-1331's scope model this becomes
-   more semantically load-bearing than under flat permissions:
-   re-parenting a patient under a different site, revoking a
-   `(user, role, scope)` assignment, or revoking a role-to-permission
-   grant should immediately narrow live subscriptions — but doesn't
-   in v1. The reaction server can take this on as a follow-up after
-   CUR-1331 impl lands by subscribing to the relevant projections
-   per-connection and recomputing each open subscription's
-   `effectiveAggregates` when those projections change. The wire
-   doesn't need new envelopes: the server can simply emit additional
-   `tombstone` envelopes when an aggregate falls out of scope, or
-   close the subscription with a `subscription_denied` envelope on
-   `role_permission_grants` revocation. The client-side `Stream`
-   already handles both. Pinned as a follow-up after CUR-1331 impl
-   ships; defensible to launch v1 without it because portal scale is
-   small and grant revocations are rare relative to subscription
-   lifetime.
-2. **`Principal` wire encoding canonicalization.** The codec must
+1. **`Principal` wire encoding canonicalization.** The codec must
    handle future `Principal` field additions without breaking older
    clients. Tentative rule: unknown fields are preserved opaquely on
    decode + re-encode (lossless), known fields are typed. Settled
    during implementation as we encounter the case.
-3. **HTTP timeout defaults.** What's the right out-of-the-box
+2. **HTTP timeout defaults.** What's the right out-of-the-box
    timeout for action submissions and snapshot fetches? 30 seconds
    suggested as a placeholder; refine when we have measurement.
-4. **Reconnect backoff parameters.** 250ms initial, 30s cap,
+3. **Reconnect backoff parameters.** 250ms initial, 30s cap,
    doubling is a placeholder. Validate during testing; expose
    override via `RemoteScope` constructor parameter (`reconnectBackoff`)
    so deployments can tune.
-5. **Concurrent subscribes during reconnect.** If the client opens
+4. **Concurrent subscribes during reconnect.** If the client opens
    `watch<T>` while the WS is in backoff, behavior should be: queue
    the subscribe message until reconnection completes, then send.
    Confirm during implementation.

@@ -895,6 +895,397 @@ the substrate.
 
 ---
 
+## Provisional: cross-process client/server deployments
+
+> **Status note.** This chapter describes a layer that is **designed
+> but not yet shipped in code**. The substrate itself is complete and
+> works exactly as the rest of this guide describes. The
+> client/server layer — a sibling package called `reaction` — has its
+> in-process `Local*` half shipped (already used by the substrate's
+> demos) and its cross-process `Remote*`-plus-server half specified in
+> `spec/reaction-remote.md`, with an implementation plan in
+> `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md`. Names,
+> shapes, and details may shift between now and the impl landing on
+> `main`. Treat this chapter as a design walkthrough; trust the
+> design-doc paths above for the latest.
+
+Everything covered so far assumes one process. The Flutter app you
+build runs the substrate directly: it opens an `EventStore`, holds the
+`ActionDispatcher`, registers projections, and reads view rows out of
+its local sembast database. This is the entirety of a mobile-only
+deployment — one install, one log, one principal.
+
+Many real deployments are not shaped that way. A clinical-trial
+portal, for example, has Study Coordinators and Supervisors using a
+Flutter web app from their browsers, talking to a portal server that
+runs the substrate against a Postgres database. The browser is too
+constrained to run a full `EventStore` and shouldn't anyway — the
+portal database is the authoritative log for that deployment. The
+substrate is single-process; the deployment is two-process. Something
+has to bridge them.
+
+That something is `reaction`. It's a sibling package, not part of
+`event_sourcing` itself, because adding HTTP + WebSocket + shelf
+dependencies to the substrate would force them on every consumer
+including embedded-only mobile callers. The substrate stays narrow;
+`reaction` layers the wire on top.
+
+### Why is this a different problem from the integrated app?
+
+Splitting a process boundary down the middle of an event-sourced
+application introduces five concerns that a single-process app
+sidesteps entirely. Each one shows up as a load-bearing piece of the
+design.
+
+**1. Identity becomes a wire concern.** Whatever process the
+deployment already uses to authenticate browser clients — Firebase,
+an in-house OAuth flow, a portal-issued linking code — is also the
+process that hands the server an identity for the substrate to use.
+The substrate has no built-in opinion about credential format; it
+just requires the deployment to supply a `PrincipalAuthValidator`
+that turns whatever string arrives over the wire into a `Principal`.
+The lib ships `TrustingAuthValidator` for dev/test (accepts any
+non-empty string as the user ID). Production deployments mount their
+own validator at server-boot time. The substrate's existing
+"Principal on faith" trust gap (enumerated in CLAUDE.md) is closed
+from outside by this validator, which becomes a new enumerated trust
+input alongside `StorageBackend` and `Destination`.
+
+That's all that changes from the substrate's perspective. Nothing
+inside the substrate gains authentication logic. The wire layer
+brokers identity in; the substrate trusts the result the same way it
+always has.
+
+**2. The reactive primitive has to cross a wire.**
+
+The substrate's `subscribe<T>` returns a `Stream<Update<T>>` with
+atomic snapshot-then-deltas semantics: `Snapshot<T>` × N →
+`EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞. That stream
+is the substrate's central reactive guarantee.
+
+A browser-side widget can't subscribe directly to a server-side
+substrate. The wire's job is to deliver the same stream faithfully:
+the receiver should see exactly the sequence of `Update<T>` values a
+co-located in-process subscriber would see, in the same order, with
+the same atomicity. The wire is a relay, not a re-interpretation —
+this is the load-bearing "no third epistemic layer" promise pinned by
+`spec/reaction-remote.md`'s charter section.
+
+Concretely: the wire ships each `Update<T>` as a JSON envelope over a
+multiplexed WebSocket. Rows transit as opaque `Map<String, Object?>`;
+the consumer's mapper applies client-side, just like in the
+in-process case. The server runs `eventStore.subscribe<T>` per
+accepted subscription and relays envelopes through a per-connection
+write queue that preserves per-subscription ordering on the wire.
+
+**3. Read-path authorization happens at the wire.**
+
+In the integrated case, a UI gating decision ("can this user see
+patient P-42?") happens client-side against the locally-known
+permission state. There's no risk: the user already has the entire
+log in front of them, and the UI is just choosing what to render.
+
+Cross-process, the server *must* enforce. A browser-side filter on a
+WebSocket subscription is a UI affordance, not a security boundary.
+The portal server must compose the requesting Principal's permitted
+scope into the substrate `subscribe<T>` filter so events outside
+scope never travel over the wire.
+
+`reaction`'s server applies what the design spec calls "Approach B":
+two-tier authorization at the moment of subscribe.
+
+- **View-level deny.** Does the Principal hold the permission named
+  by this view? (Substrate default: `view:<viewName>`; deployments
+  override.) If not, close the subscription request with a
+  `subscription_denied` envelope. The client distinguishes "you can't
+  see this view" from "nothing matches your scope" cleanly.
+- **Row-level narrowing.** AND-merge the Principal's
+  `scopeAssignments` (from `EffectiveAuthorization`) into the
+  requested `aggregates` filter, expanding through `ContainmentRef`
+  projections where the view's scope class is an ancestor of the
+  user's assignment. The expansion is the same `ContainmentResolver`
+  the substrate uses for action authorization — read-path and
+  write-path use the same scope mechanism, by design.
+
+This is also why CUR-1331's scope-aware permissions had to land
+before the wire layer's implementation. The wire's per-subscription
+narrowing consults `EffectiveAuthorization.scopeAssignments` and
+walks containment projections; without the scope-aware substrate
+underneath, the wire would only have role-to-permission grants to
+filter by, which can't express "the patients at the sites this user
+covers."
+
+**4. The closed-under-events guarantee splits cleanly.**
+
+A nice surprise: nothing about the wire layer breaks the substrate's
+closed-under-events story. Action outcomes (success vs.
+`DispatchAuthorizationDenied`) are still produced by the same
+dispatcher with the same `Principal`, recorded into the same log,
+reproducible from `(events, lib_version)`.
+
+What the wire adds is an *external* trust input (the
+`PrincipalAuthValidator`) that determines which `Principal` the
+substrate sees. That input is enumerated and named, the same way
+`StorageBackend` is. State reconstruction-from-the-log still holds
+*under the recorded Principal*; what the validator does on the way in
+is a deployment concern, the same way what the storage backend does
+to durability is a deployment concern.
+
+The substrate doesn't need to know about the wire at all. It receives
+calls from local code that happens to have been forwarded by shelf
+routes from a browser — but those calls look identical to calls from
+an embedded mobile app. This is what "substrate-agnostic" means in
+practice: the dispatcher, the projection model, the permissions
+machinery all behave identically whether the originating click was in
+a Flutter app or a browser two thousand miles away.
+
+**5. Network failure is no longer a substrate problem; it's a UX
+problem.**
+
+In the integrated case, an action either dispatches or doesn't — the
+in-process call returns a `DispatchResult` synchronously. A
+subscription delivers events until the app closes.
+
+Cross-process, the wire fails sometimes. WebSocket connections drop
+on tab toggles, network changes, idle timeouts. HTTP requests time
+out. Tokens expire.
+
+`reaction`'s v1 baseline is the simplest correct posture: on WS drop,
+the client reconnects with exponential backoff and re-subscribes from
+scratch — server re-runs `subscribe<T>`, ships `Snapshot × N → EOR →
+Delta…` again. The widget sees a brief flash of skeleton/loading as
+the snapshot replays. The wire reserves space for a v1.1
+"resume-from-sequence" optimization that re-tails from the
+client-known sequence instead of replaying the snapshot; that's
+non-breaking and can ship later.
+
+Auth expiry is the parallel concern. The wire surfaces it explicitly:
+HTTP 401 from any route and a `4001 auth_rejected` close-frame on
+WebSocket both flip the `AuthSession` status to `Expired`. The UI
+distinguishes "log in again" (expired) from "log in" (never had a
+session) — useful enough that `AuthStatus` is a sealed three-variant
+type (`NotAuthenticated`, `Authenticated`, `Expired`) and consumer
+code switch-exhausts over it.
+
+### Four interfaces that absorb the difference
+
+The point of `reaction` is that *consumer code shouldn't have to
+change* between the integrated and cross-process deployments. Widget
+code that calls a `submit()` and watches a `Stream<Update<T>>` should
+be source-identical whether the underlying impl is local or remote.
+
+Four interfaces hold that line. They live in `reaction`'s public
+surface; both `Local*` and `Remote*` impls of each exist.
+
+- **`AuthSession`** — credential lifecycle. Surfaces `AuthStatus`
+  (`Authenticated` carrying the validated `Principal`,
+  `NotAuthenticated`, `Expired`). `setCredential(String?)` to log in
+  or out. The active `Principal` flows from here into the other
+  three.
+- **`ActionSubmitter`** — `Future<DispatchResult> submit(ActionSubmission)`.
+  Local impl wraps `ActionDispatcher.dispatch`; Remote impl POSTs to
+  `/actions`.
+- **`ViewSource`** — `Stream<Update<T>> watch<T>(...)`. Local impl
+  wraps `EventStore.subscribe<T>`; Remote impl multiplexes a
+  client-chosen `subscriptionId` over the shared WS.
+- **`PermissionSource`** — `PermissionSnapshot? get current` plus a
+  `Stream`. Local impl reads the `role_permission_grants` projection
+  directly; Remote impl fetches the snapshot from
+  `/permissions/snapshot` and updates over the WS.
+
+Widgets and other consumers depend only on these. The deployment
+choice — composing `LocalScope` (in-process bundle) versus
+`RemoteScope` (HTTP+WS bundle) — happens once at app boot. Everything
+downstream is shape-identical.
+
+### Server-side adapters
+
+There's no separate "reaction server" process. There's no
+`ReactionServer` class either. The lib ships **shelf-compatible
+handlers** that you mount inside whatever server you already have.
+
+The expected consumers — `portal_server` and `diary_server` in
+`hht_diary` — already run `shelf` + `shelf_router` with their own
+middleware pipelines (Firebase auth, OpenTelemetry, CORS, request
+logging). The plan is to **replace** most of their existing bespoke
+REST handlers with reaction handlers, not add a parallel routing
+subtree alongside them. Today each server has 30+ hand-written
+handlers, each doing its own business logic against Postgres
+directly. Post-migration, those collapse to about five generic
+reaction handlers, with the per-feature business logic moving into
+substrate `Action`s — same dispatch pipeline, same audit trail, same
+permission story as a single-process app.
+
+What `reaction` exposes to make that work:
+
+```text
+reaction/lib/src/server/
+  reaction_handlers.dart      ReactionHandlers(eventStore, dispatcher,
+                                                policy, viewScopeRegistry)
+                                .me            -> shelf.Handler
+                                .actions       -> shelf.Handler
+                                .permissions   -> shelf.Handler
+                                .subscriptions -> shelf.Handler  (WS upgrade)
+
+  auth_middleware.dart        authMiddleware(PrincipalAuthValidator)
+                                -> shelf.Middleware
+                              principalFromContext(Request)
+                                -> Principal?
+
+  trusting_auth_validator.dart TrustingAuthValidator   (dev/test only)
+```
+
+A consumer mounts the handlers into their existing router however
+they like:
+
+```text
+final reaction = ReactionHandlers(
+  eventStore: store, dispatcher: dispatcher,
+  policy: policy, viewScopeRegistry: portalViewScopes,
+);
+
+final router = Router()
+  // The portal's existing custom routes:
+  ..get('/api/v1/sponsor/config', sponsorConfigHandler)
+  ..post('/api/v1/auth/login', loginHandler)         // pre-auth
+  // The reaction handlers, mounted however the portal likes:
+  ..get('/api/v1/portal/me',                  reaction.me)
+  ..post('/api/v1/portal/actions',            reaction.actions)
+  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
+  ..get('/api/v1/portal/subscriptions',       reaction.subscriptions);
+```
+
+Authentication composes with whatever the consumer is already doing.
+The portal_server already runs Firebase ID-token middleware on its
+authenticated routes; reaction's handlers just read `Principal` from
+the request context via `principalFromContext(req)`. The portal's
+existing Firebase middleware populates that context, and reaction's
+handlers consume it — one auth flow, two route consumers. For
+deployments that don't have their own middleware yet (early demos,
+local dev), `authMiddleware(TrustingAuthValidator(...))` is a
+one-liner; reaction will use it identically.
+
+`ReactionHandlers` is a config bundle, not a server. It doesn't own
+the `EventStore`, doesn't own the `ActionDispatcher`, doesn't own
+the HTTP server lifecycle. It holds the four substrate handles + the
+view-scope registry so each handler closure doesn't have to take
+them individually. Beyond that it imposes no structure on the
+consumer.
+
+The WebSocket handler is the only piece with non-trivial state —
+per-connection it tracks the authenticated `Principal`, the set of
+active subscriptions, and the substrate `subscribe<T>` streams it's
+relaying. That state lives inside the closure
+`reaction.subscriptions` returns; consumer code doesn't see it.
+Connection cleanup (cancel all subscriptions on WS close) is
+automatic.
+
+### What happens when permissions change mid-session
+
+A subtle question this design has to answer: a client opens a
+subscription, is happily receiving updates, and an admin revokes the
+client's role. What happens?
+
+The natural answers point in three directions. The substrate's
+`subscribe<T>` was opened with an `aggregates` filter set at
+subscribe-time; that filter doesn't change once the stream is
+running. So "the existing subscription continues delivering events"
+is the default behavior — which silently shows revoked users data
+they shouldn't see, until they reconnect.
+
+The design's response is **asymmetric**, on the principle that
+admin-driven security-narrowing is the only kind of permission
+change serious enough to interrupt a user mid-session:
+
+- **`role_unassigned` for this user, or `permission_revoked` from a
+  role this user holds:** the reaction server closes the WS with a
+  new close-frame code `4003 permissions_changed`. The client
+  treats this like a token expiry — refetches `/me`, gets a fresh
+  `Principal` reflecting the new role/permission state, reopens
+  subscriptions against the new (narrower) authorization. From the
+  user's perspective: a brief "your role was updated; please log in
+  again" prompt. Security gap closed within milliseconds of the
+  revocation committing.
+
+- **`role_assigned` for this user, or `permission_granted` to a
+  role this user holds:** the server sends a `stale_data` envelope
+  on the open WS (a one-bit signal: "your cached scope state may be
+  out of date"). The subscription stays open; the client decides
+  whether to refresh. The user is currently authorized to see
+  *less* than they could — that's a UX freshness issue, not a
+  security one, so it doesn't warrant interrupting them.
+
+- **Containment-projection changes** (a patient was re-parented from
+  one site to another — the user's effective scope shifted as a
+  side-effect of data movement, not an admin security action):
+  by default, no signal. Routine trial operations would otherwise
+  emit `stale_data` to every connected coordinator on every patient
+  move. Deployments that want the freshness signal can opt in with
+  `reaction.watchContainment('patient_site_index')` (or whatever
+  containment projection matters); off by default.
+
+Mechanically, the server runs **one** additional substrate
+subscription — the `AuthzWatcher` — filtered to permission and
+role-assignment event types (`role_permission_grant`,
+`user_role_scope`). On each event it decides "this is a revocation"
+(close affected WS connections with 4003) or "this is an expansion"
+(send `stale_data` to affected WS connections). The watcher needs a
+way to find "affected" connections, so the server maintains a
+top-level `Map<userId, Set<WebSocketChannel>>` registry; each WS
+connection registers on `auth_ok` and unregisters on disconnect.
+
+This is the design's first concession to "the wire is a relay, not
+just a relay" — the wire layer now actively translates substrate
+events into wire signals. But it's a substrate-shaped translation:
+the watcher uses the same `subscribe<T>` primitive every other
+reactive consumer does, and the resulting wire messages are existing
+envelope types plus one new (`stale_data`). No re-narrowing of
+active subscription filters, no per-subscription state machine, no
+new epistemic layer.
+
+The earlier draft of this design had the WS handler open a per-
+Principal subscription on `auth_ok` to keep a fresh in-memory mirror
+of the Principal's `EffectiveAuthorization` — effectively a server-
+side permission cache. That was rejected because the cache adds
+real complexity (per-connection state, mirror-vs-projection races)
+for negligible benefit at portal scale (substrate policy queries
+are sub-millisecond and subscribe messages are infrequent). The
+mid-session-change handling described here is a different mechanism
+with a different goal: it doesn't cache permission state, it
+reacts to permission events.
+
+### Reading order from here
+
+If you're building toward a cross-process deployment, the canonical
+references are:
+
+- `spec/reaction-remote.md` — the design spec for the wire layer.
+  Pins the protocol envelope shapes, the connection lifecycle, the
+  per-subscription authorization mechanism, and the trust-boundary
+  expansion. Read this before the impl plan.
+- `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
+  task-by-task implementation plan, gated on CUR-1331 (the
+  scope-aware permissions impl this chapter's authz mechanism
+  consults). Tells you what's getting built, in what order, with what
+  tests.
+- `spec/prd-reaction.md` — the PRD-level requirements for `reaction`'s
+  four interfaces, the wire transport, and the future Flutter widget
+  layer (`reaction_widgets`, also out of scope for this chapter).
+- `reaction/lib/src/local/` — the already-shipped `Local*` impls of
+  the four interfaces. Read these to understand how the substrate-
+  agnostic seam composes against the in-process substrate — the
+  `Remote*` impls are mirror images of these, just with HTTP/WS
+  instead of direct method calls.
+
+Until the impl lands, the only working `reaction` code is the local
+half. The substrate's two demos
+(`event_sourcing/example_action_permissions/` and
+`event_sourcing/example/`) exercise it in-process. The cross-process
+half exists on paper; this chapter will lose its provisional marker
+when the code does too.
+
+---
+
 ## A note on file layout
 
 Once you've read the above, the canonical place to look for working code
