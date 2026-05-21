@@ -1,13 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:http/http.dart' as http;
+import 'package:reaction/src/wire/subscription_messages.dart';
+import 'package:reaction/src/wire/update_codec.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 /// Shared wire-state across the four Remote* impls of one RemoteScope.
 /// Owns:
 ///   - HTTP client + bearer header injection from current credential.
-///   - WebSocket lifecycle (Task 20: lazy connect; close on last unsub
-///     + grace period).
-///   - Subscription registry (Task 20, keyed by client-chosen UUID v4).
-///   - Reconnect loop (Task 20).
+///   - WebSocket lifecycle (lazy connect; close on last unsub + grace
+///     period).
+///   - Subscription registry (keyed by client-chosen UUID v4).
+///   - Baseline reconnect-on-drop (errors all subs; full
+///     exponential-backoff reconnect deferred to e2e tests).
 class RemoteConnection {
   RemoteConnection({
     required this.baseUrl,
@@ -20,12 +27,15 @@ class RemoteConnection {
   final Uri baseUrl;
   final http.Client _httpClient;
   final WebSocketChannel Function(Uri) wsFactory;
-  // ignore: unused_field
   final Duration _idleGrace;
 
   String? _credential;
-  // ignore: unused_field
   bool _disposed = false;
+
+  WebSocketChannel? _channel;
+  Future<void>? _connecting;
+  final Map<String, StreamController<Update<Map<String, Object?>>>> _subs = {};
+  Timer? _idleCloseTimer;
 
   /// Currently-stored credential. Null if not authenticated.
   String? get credential => _credential;
@@ -59,9 +69,119 @@ class RemoteConnection {
     return baseUrl.replace(scheme: wsScheme, path: '/subscriptions');
   }
 
+  /// Open a subscription against the WS connection. Returns a stream
+  /// that emits Update<Map<String, Object?>> envelopes for this
+  /// subscriptionId. The mapper is applied client-side by
+  /// RemoteViewSource (this connection method works in untyped maps).
+  Stream<Update<Map<String, Object?>>> openSubscription({
+    required String subscriptionId,
+    required String viewName,
+    SubscriptionFilter? filter,
+    Set<String>? aggregates,
+  }) {
+    final controller = StreamController<Update<Map<String, Object?>>>(
+      onCancel: () => _closeSubscription(subscriptionId),
+    );
+    _subs[subscriptionId] = controller;
+    _idleCloseTimer?.cancel();
+    _idleCloseTimer = null;
+    _ensureConnected().then((_) {
+      _sendClient(
+        SubscribeMsg(
+          subscriptionId: subscriptionId,
+          viewName: viewName,
+          filter: filter,
+          aggregates: aggregates,
+        ),
+      );
+    });
+    return controller.stream;
+  }
+
+  Future<void> _ensureConnected() async {
+    if (_disposed) throw StateError('connection disposed');
+    if (_channel != null) return;
+    _connecting ??= _connect();
+    await _connecting;
+    _connecting = null;
+  }
+
+  Future<void> _connect() async {
+    final channel = wsFactory(wsUrl);
+    _channel = channel;
+    channel.stream.listen(
+      _onMessage,
+      onDone: _onWsClosed,
+      onError: (_) => _onWsClosed(),
+      cancelOnError: false,
+    );
+    _sendClient(AuthMsg(credential: _credential ?? ''));
+  }
+
+  void _sendClient(ClientMessage m) {
+    _channel?.sink.add(jsonEncode(SubscriptionMessages.encodeClient(m)));
+  }
+
+  void _onMessage(dynamic raw) {
+    final json = jsonDecode(raw as String) as Map<String, Object?>;
+    final type = json['type'] as String?;
+    if (type == 'auth_ok') return;
+    if (type == 'subscription_denied' || type == 'error') {
+      final subId = json['subscriptionId'] as String?;
+      if (subId != null) {
+        _subs[subId]?.addError(
+          'subscription_denied: ${json['reason'] ?? json['message']}',
+        );
+        _subs.remove(subId)?.close();
+      }
+      return;
+    }
+    // Otherwise: Update<T> envelope routed by subscriptionId.
+    final subId = UpdateCodec.subscriptionIdOf(json);
+    final ctrl = _subs[subId];
+    if (ctrl != null) {
+      ctrl.add(UpdateCodec.decode(json));
+    }
+  }
+
+  void _onWsClosed() {
+    _channel = null;
+    for (final ctrl in _subs.values) {
+      ctrl.addError('wire_disconnected');
+    }
+    // Reconnect on next openSubscription / explicit reconnect call.
+    // Baseline behavior: subs error out; client decides whether to retry.
+    // Full exponential-backoff reconnect deferred to e2e/reconnect_test.dart.
+  }
+
+  void _closeSubscription(String subscriptionId) {
+    _subs.remove(subscriptionId);
+    _sendClient(UnsubscribeMsg(subscriptionId: subscriptionId));
+    _maybeScheduleIdleClose();
+  }
+
+  void _maybeScheduleIdleClose() {
+    if (_subs.isEmpty) {
+      _idleCloseTimer?.cancel();
+      _idleCloseTimer = Timer(_idleGrace, () {
+        _channel?.sink.close(1000, 'normal');
+        _channel = null;
+      });
+    }
+  }
+
   Future<void> dispose() async {
     _disposed = true;
+    _idleCloseTimer?.cancel();
+    // Snapshot controllers before close: onCancel callbacks mutate
+    // _subs via _closeSubscription, so we cannot iterate _subs directly.
+    final controllers = _subs.values.toList();
+    _subs.clear();
+    for (final ctrl in controllers) {
+      await ctrl.close();
+    }
+    await _channel?.sink.close(1000, 'normal');
+    _channel = null;
     _httpClient.close();
-    // WS cleanup added in Task 20.
   }
 }
