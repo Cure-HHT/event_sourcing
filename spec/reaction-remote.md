@@ -228,6 +228,62 @@ credential is opaque to the lib (passed directly to
 `PrincipalAuthValidator.authenticate`). The substrate sees only the
 validated `Principal` that the validator returns.
 
+#### DispatchResult wire shape (`POST /actions` response body)
+
+The substrate's `DispatchResult<TResult>` is a sealed type with seven
+variants. The wire codec dispatches per variant on a `"type"`
+discriminator and otherwise mirrors the substrate field names directly.
+All variants ship as flat JSON objects:
+
+```text
+{"type": "success",
+ "result": <jsonable TResult>,
+ "emittedEventIds": ["<eventId>", ...]}
+
+{"type": "unknown_action",
+ "requestedName": "<the actionName the client submitted>"}
+
+{"type": "parse_denied",
+ "error": "<string; see lossy-error note>"}
+
+{"type": "validation_denied",
+ "error": "<string; see lossy-error note>"}
+
+{"type": "authorization_denied",
+ "permission": {"name": "<permName>",
+                "scopeClass": "<class>" | null}}
+
+{"type": "execution_failed",
+ "error": "<string; see lossy-error note>"}
+
+{"type": "idempotency_hit",
+ "cachedResult": <jsonable TResult>,
+ "priorEmittedEventIds": ["<eventId>", ...]}
+```
+
+JSON shape notes:
+
+- `success` ships only the substrate's `emittedEventIds` (a list of
+  event-id strings), NOT full `StoredEvent` envelopes. Consumers that
+  want the full Layer 1 fact data for an appended event subscribe to
+  the relevant view stream and observe the resulting `Update<T>`.
+- `unknown_action.requestedName` mirrors the substrate's
+  `DispatchUnknownAction.requestedName` (the name the client asked for).
+- `parse_denied`, `validation_denied`, and `execution_failed` each carry
+  a single `error` field. The substrate field is `Object error`; the
+  wire codec emits `error.toString()` and decodes it back as the raw
+  String. **This is lossy** — see Future work for the structured-error
+  path.
+- `authorization_denied` carries only the substrate's `Permission`
+  (inlined `{name, scopeClass}`). The substrate's
+  `DispatchAuthorizationDenied` carries no `DenyReason` / `scope` /
+  `detail` — those fields belonged to an earlier, richer variant that
+  was simplified.
+- `idempotency_hit` ships `cachedResult` + `priorEmittedEventIds`
+  (mirroring the substrate's `DispatchIdempotencyHit.cachedResult` and
+  `priorEmittedEventIds`). No `cachedAt` timestamp — the substrate does
+  not retain one.
+
 ### WebSocket upgrade — `GET /subscriptions`
 
 Auth lives in the first WS message rather than the upgrade headers
@@ -321,9 +377,6 @@ JSON shape notes:
   from the substrate; client applies its consumer-supplied mapper.
   Server-side mapping would break domain-neutrality (server would need
   to know every consumer type) — rejected.
-- `DispatchResult.Success.appendedEvents[]` carries `StoredEvent`
-  envelopes with full Layer 1 fact data (hash, sequence, initiator
-  Principal, etc.). The codec preserves all fields.
 
 ### Close frames
 
@@ -1365,6 +1418,18 @@ Explicitly out of scope for this plan but anticipated:
   `ReactionHandlers` config), and the wire ships only the identifier.
   Today no consumer uses `SubscriptionFilter.predicate`, so this is
   documented as a future path rather than specified.
+- **Structured error encoding.** `DispatchParseDenied`,
+  `DispatchValidationDenied`, and `DispatchExecutionFailed` each carry
+  a substrate `error: Object` field. The wire codec encodes errors via
+  `error.toString()`; on decode, the error field is reconstructed as
+  the raw String (the substrate's `Object` field accepts it).
+  Consequence: structured error types do not round-trip with their
+  full structure. If a future consumer needs richer error info on the
+  client, the recommended path is either (a) the substrate adopts a
+  sealed `Error` type the wire can encode/decode generically, or
+  (b) an `ErrorCodec` extension point that consumers register on both
+  sides (analogous to the named-predicate path). Today no consumer
+  requires structured errors, so this is documented as a future path.
 
 ## Roadmap impact and sequencing
 

@@ -933,14 +933,28 @@ git commit -m "[CUR-1317] reaction wire: ActionSubmission JSON codec"
 - Create: `reaction/lib/src/wire/dispatch_result_codec.dart`
 - Create: `reaction/test/wire/dispatch_result_codec_test.dart`
 
-`DispatchResult<TResult>` is a sealed type with seven variants
-(CUR-1331 delivered): `DispatchSuccess`, `DispatchUnknownAction`,
-`DispatchParseDenied`, `DispatchValidationDenied`,
-`DispatchAuthorizationDenied`, `DispatchExecutionFailed`,
-`DispatchIdempotencyHit`. The wire codec dispatches per variant on a
-`"type"` discriminator. `DispatchSuccess` carries
-`appendedEvents: List<StoredEvent>` — encoded inline via a private
-helper. Read the substrate source at
+`DispatchResult<TResult>` is a sealed type with seven variants:
+`DispatchSuccess`, `DispatchUnknownAction`, `DispatchParseDenied`,
+`DispatchValidationDenied`, `DispatchAuthorizationDenied`,
+`DispatchExecutionFailed`, `DispatchIdempotencyHit`. All constructors
+are positional. The wire codec dispatches per variant on a `"type"`
+discriminator and mirrors the substrate field names directly:
+
+- `DispatchSuccess(result, emittedEventIds: List<String>)` — the
+  substrate returns event-id strings, not full `StoredEvent`s.
+- `DispatchUnknownAction(requestedName: String)`.
+- `DispatchParseDenied(error: Object)`,
+  `DispatchValidationDenied(error: Object)`,
+  `DispatchExecutionFailed(error: Object)` — the substrate carries
+  opaque `Object error`; the wire encodes it via `error.toString()`
+  (lossy — see `spec/reaction-remote.md` Future work).
+- `DispatchAuthorizationDenied(permission: Permission)` — only the
+  permission (substrate type carries no `DenyReason` / `scope` /
+  `detail`).
+- `DispatchIdempotencyHit(cachedResult, priorEmittedEventIds:
+  List<String>)` — no `cachedAt` timestamp.
+
+Read the substrate source at
 `event_sourcing/lib/src/actions/dispatch_result.dart` to confirm
 field names before writing tests.
 
@@ -954,101 +968,100 @@ import 'package:reaction/src/wire/dispatch_result_codec.dart';
 
 void main() {
   test('round-trips DispatchSuccess', () {
-    final original = DispatchSuccess<Object?>(
-      result: {'echo': 'hello'},
-      appendedEvents: [
-        StoredEvent(
-          sequence: 1,
-          eventId: 'evt-1',
-          aggregateType: 'note',
-          aggregateId: 'agg-1',
-          entryType: 'note',
-          entryTypeVersion: 1,
-          eventType: 'note_updated',
-          payload: const {'title': 'x'},
-          clientTimestamp: DateTime.utc(2026, 5, 13, 10, 0, 0),
-          recordedTimestamp: DateTime.utc(2026, 5, 13, 10, 0, 1),
-          initiator: UserPrincipal(
-            userId: 'u-1', roles: {'install'}, activeRole: 'install'),
-          chainHash: 'hash-1',
-          payloadHash: 'phash-1',
-          source: const Source(
-            identifier: 'install-x', softwareVersion: 'test-1'),
-          metadata: const {},
-        ),
-      ],
+    const original = DispatchSuccess<Object?>(
+      {'echo': 'hello'},
+      ['evt-1', 'evt-2'],
     );
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'success');
-    final decoded = DispatchResultCodec.decode(json);
-    expect(decoded, isA<DispatchSuccess<Object?>>());
-    final s = decoded as DispatchSuccess<Object?>;
-    expect(s.result, {'echo': 'hello'});
-    expect(s.appendedEvents, hasLength(1));
-    expect(s.appendedEvents.first.eventId, 'evt-1');
-  });
-
-  test('round-trips DispatchAuthorizationDenied with scope', () {
-    final original = DispatchAuthorizationDenied(
-      reason: DenyReason.notGranted,
-      permission: const Permission('note.edit', scopeClass: 'patient'),
-      scope: const BoundScope(class_: 'patient', value: 'p-1'),
-      detail: 'no scope assignment',
-    );
-    final json = DispatchResultCodec.encode(original);
-    expect(json['type'], 'authorization_denied');
-    final d = DispatchResultCodec.decode(json)
-        as DispatchAuthorizationDenied;
-    expect(d.permission.name, 'note.edit');
-    expect(d.scope, isA<BoundScope>());
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchSuccess<Object?>;
+    expect(decoded.result, {'echo': 'hello'});
+    expect(decoded.emittedEventIds, ['evt-1', 'evt-2']);
   });
 
   test('round-trips DispatchUnknownAction', () {
-    final original = DispatchUnknownAction<Object?>(
-        actionName: 'noSuchAction');
+    const original = DispatchUnknownAction<Object?>('noSuchAction');
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'unknown_action');
-    expect(DispatchResultCodec.decode(json),
-        isA<DispatchUnknownAction<Object?>>());
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchUnknownAction<Object?>;
+    expect(decoded.requestedName, 'noSuchAction');
   });
 
-  test('round-trips DispatchParseDenied', () {
-    final original = DispatchParseDenied<Object?>(
-        message: 'invalid input shape');
+  test('round-trips DispatchParseDenied (error -> string)', () {
+    const original = DispatchParseDenied<Object?>('invalid input shape');
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'parse_denied');
-    expect(DispatchResultCodec.decode(json),
-        isA<DispatchParseDenied<Object?>>());
+    expect(json['error'], 'invalid input shape');
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchParseDenied<Object?>;
+    expect(decoded.error, 'invalid input shape');
   });
 
-  test('round-trips DispatchValidationDenied', () {
-    final original = DispatchValidationDenied<Object?>(
-        message: 'missing field "title"');
+  test('round-trips DispatchValidationDenied (error -> string)', () {
+    const original = DispatchValidationDenied<Object?>('missing field "title"');
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'validation_denied');
-    expect((DispatchResultCodec.decode(json)
-            as DispatchValidationDenied).message,
-        'missing field "title"');
+    expect(json['error'], 'missing field "title"');
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchValidationDenied<Object?>;
+    expect(decoded.error, 'missing field "title"');
   });
 
-  test('round-trips DispatchExecutionFailed', () {
-    final original = DispatchExecutionFailed<Object?>(
-        message: 'sembast write failed');
+  test('round-trips DispatchAuthorizationDenied with scoped permission', () {
+    const original = DispatchAuthorizationDenied<Object?>(
+      Permission('note.edit', scopeClass: 'patient'),
+    );
+    final json = DispatchResultCodec.encode(original);
+    expect(json['type'], 'authorization_denied');
+    final decoded =
+        DispatchResultCodec.decode(json)
+            as DispatchAuthorizationDenied<Object?>;
+    expect(decoded.permission.name, 'note.edit');
+    expect(decoded.permission.scopeClass, 'patient');
+  });
+
+  test('round-trips DispatchAuthorizationDenied with unscoped permission', () {
+    const original = DispatchAuthorizationDenied<Object?>(
+      Permission('admin.all'),
+    );
+    final json = DispatchResultCodec.encode(original);
+    final decoded =
+        DispatchResultCodec.decode(json)
+            as DispatchAuthorizationDenied<Object?>;
+    expect(decoded.permission.name, 'admin.all');
+    expect(decoded.permission.scopeClass, isNull);
+  });
+
+  test('round-trips DispatchExecutionFailed (error -> string)', () {
+    const original = DispatchExecutionFailed<Object?>('sembast write failed');
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'execution_failed');
-    expect(DispatchResultCodec.decode(json),
-        isA<DispatchExecutionFailed<Object?>>());
+    expect(json['error'], 'sembast write failed');
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchExecutionFailed<Object?>;
+    expect(decoded.error, 'sembast write failed');
   });
 
   test('round-trips DispatchIdempotencyHit', () {
-    final original = DispatchIdempotencyHit<Object?>(
-      result: {'echo': 'cached'},
-      cachedAt: DateTime.utc(2026, 5, 13),
+    const original = DispatchIdempotencyHit<Object?>(
+      {'echo': 'cached'},
+      ['evt-7'],
     );
     final json = DispatchResultCodec.encode(original);
     expect(json['type'], 'idempotency_hit');
-    expect(DispatchResultCodec.decode(json),
-        isA<DispatchIdempotencyHit<Object?>>());
+    final decoded =
+        DispatchResultCodec.decode(json) as DispatchIdempotencyHit<Object?>;
+    expect(decoded.cachedResult, {'echo': 'cached'});
+    expect(decoded.priorEmittedEventIds, ['evt-7']);
+  });
+
+  test('decode rejects unknown type', () {
+    expect(
+      () => DispatchResultCodec.decode({'type': 'mystery'}),
+      throwsA(isA<FormatException>()),
+    );
   });
 }
 ```
@@ -1061,70 +1074,81 @@ flutter test test/wire/dispatch_result_codec_test.dart
 
 - [ ] **Step 3: Implement dispatch_result_codec.dart**
 
-This codec composes several smaller codecs (`StoredEvent`, `Permission`, `ScopeValue`). Define inline helpers since these are private to this file.
+The substrate's `DispatchResult` carries either a typed result + emitted
+event IDs (success / idempotency hit), an opaque `Object` error (parse /
+validation / execution denials), or a `Permission` (authorization
+denial). The codec mirrors those fields directly; the only helper it
+needs is for `Permission` (no `toJson` on the substrate type).
 
 ```dart
 // reaction/lib/src/wire/dispatch_result_codec.dart
 import 'package:event_sourcing/event_sourcing.dart';
 
 import 'envelope.dart';
-import 'principal_codec.dart';
 
-/// JSON codec for [DispatchResult<TResult>]. The result is encoded
-/// as JSON-friendly Map<String, Object?>; the client deserializes
-/// further if needed (the substrate's existing pattern).
+/// JSON codec for the substrate's [DispatchResult]. The substrate type
+/// carries either a typed result + emitted event IDs (on success /
+/// idempotency hits), an opaque `Object` error (on parse / validation /
+/// execution denials), or a [Permission] (on authorization denial).
 ///
-/// Wire shapes per variant (per CUR-1331 delivered DispatchResult):
-///   {"type":"success", "result":<jsonable>,
-///    "appendedEvents":[<StoredEvent json>, ...]}
-///   {"type":"unknown_action", "actionName":"..."}
-///   {"type":"parse_denied", "message":"..."}
-///   {"type":"validation_denied", "message":"..."}
-///   {"type":"authorization_denied", "reason":"...",
-///    "permission":<Permission json>, "scope":<ScopeValue json|null>,
-///    "detail":"..."}
-///   {"type":"execution_failed", "message":"..."}
-///   {"type":"idempotency_hit", "result":<jsonable>,
-///    "cachedAt":"<iso8601>"}
+/// Wire shapes per variant (all carry a `type` discriminator):
+///   success              + result (jsonable) + emittedEventIds (List<String>)
+///   unknown_action       + requestedName
+///   parse_denied         + error (string; lossy — see below)
+///   validation_denied    + error (string; lossy — see below)
+///   authorization_denied + permission ({name, scopeClass: nullable})
+///   execution_failed     + error (string; lossy — see below)
+///   idempotency_hit      + cachedResult (jsonable) + priorEmittedEventIds
+///                          (List<String>)
+///
+/// **Error encoding is lossy.** The substrate's parse/validation/
+/// execution variants carry `Object error` (so an action can throw any
+/// structured error type). On the wire the codec emits `error.toString()`
+/// and the decoded variant carries that String as its `error` field
+/// (Object accepts String). Custom error types do NOT round-trip with
+/// their full structure. See `spec/reaction-remote.md` "Future work" for
+/// the named-error / sealed-Error path if structured errors over the
+/// wire are ever required.
+///
+/// `result` and `cachedResult` are typed `TResult` on the substrate; on
+/// the wire we carry whatever JSON-friendly value the action produced.
+/// The codec is bound to `DispatchResult<Object?>`; consumers ascribe
+/// further on the client side.
 class DispatchResultCodec {
   const DispatchResultCodec._();
 
   static Map<String, Object?> encode(DispatchResult<Object?> r) {
     return switch (r) {
       DispatchSuccess<Object?>() => {
-          'type': 'success',
-          'result': r.result,
-          'appendedEvents':
-              r.appendedEvents.map(_encodeStoredEvent).toList(),
-        },
+        'type': 'success',
+        'result': r.result,
+        'emittedEventIds': r.emittedEventIds,
+      },
       DispatchUnknownAction<Object?>() => {
-          'type': 'unknown_action',
-          'actionName': r.actionName,
-        },
+        'type': 'unknown_action',
+        'requestedName': r.requestedName,
+      },
       DispatchParseDenied<Object?>() => {
-          'type': 'parse_denied',
-          'message': r.message,
-        },
+        'type': 'parse_denied',
+        'error': r.error.toString(),
+      },
       DispatchValidationDenied<Object?>() => {
-          'type': 'validation_denied',
-          'message': r.message,
-        },
+        'type': 'validation_denied',
+        'error': r.error.toString(),
+      },
       DispatchAuthorizationDenied<Object?>() => {
-          'type': 'authorization_denied',
-          'reason': _encodeDenyReason(r.reason),
-          'permission': _encodePermission(r.permission),
-          'scope': r.scope == null ? null : _encodeScopeValue(r.scope!),
-          'detail': r.detail,
-        },
+        'type': 'authorization_denied',
+        'permission': _encodePermission(r.permission),
+      },
       DispatchExecutionFailed<Object?>() => {
-          'type': 'execution_failed',
-          'message': r.message,
-        },
+        'type': 'execution_failed',
+        'error': r.error.toString(),
+      },
       DispatchIdempotencyHit<Object?>() => {
-          'type': 'idempotency_hit',
-          'result': r.result,
-          'cachedAt': r.cachedAt.toIso8601String(),
-        },
+        'type': 'idempotency_hit',
+        'cachedResult': r.cachedResult,
+        'priorEmittedEventIds': r.priorEmittedEventIds,
+      },
     };
   }
 
@@ -1133,148 +1157,44 @@ class DispatchResultCodec {
     switch (type) {
       case 'success':
         return DispatchSuccess<Object?>(
-          result: json['result'],
-          appendedEvents: (json['appendedEvents'] as List)
-              .cast<Map<String, Object?>>()
-              .map(_decodeStoredEvent)
-              .toList(),
+          json['result'],
+          (json['emittedEventIds']! as List).cast<String>(),
         );
       case 'unknown_action':
         return DispatchUnknownAction<Object?>(
-          actionName: requireString(json, 'actionName'),
+          requireString(json, 'requestedName'),
         );
       case 'parse_denied':
-        return DispatchParseDenied<Object?>(
-          message: requireString(json, 'message'),
-        );
+        return DispatchParseDenied<Object?>(requireString(json, 'error'));
       case 'validation_denied':
-        return DispatchValidationDenied<Object?>(
-          message: requireString(json, 'message'),
-        );
+        return DispatchValidationDenied<Object?>(requireString(json, 'error'));
       case 'authorization_denied':
-        final scopeJson = json['scope'];
         return DispatchAuthorizationDenied<Object?>(
-          reason: _decodeDenyReason(requireString(json, 'reason')),
-          permission: _decodePermission(requireMap(json, 'permission')),
-          scope: scopeJson == null
-              ? null
-              : _decodeScopeValue(scopeJson as Map<String, Object?>),
-          detail: readString(json, 'detail'),
+          _decodePermission(requireMap(json, 'permission')),
         );
       case 'execution_failed':
-        return DispatchExecutionFailed<Object?>(
-          message: requireString(json, 'message'),
-        );
+        return DispatchExecutionFailed<Object?>(requireString(json, 'error'));
       case 'idempotency_hit':
         return DispatchIdempotencyHit<Object?>(
-          result: json['result'],
-          cachedAt: DateTime.parse(requireString(json, 'cachedAt')),
+          json['cachedResult'],
+          (json['priorEmittedEventIds']! as List).cast<String>(),
         );
       default:
         throw FormatException('unknown DispatchResult type: $type');
     }
   }
 
-  // --- StoredEvent helpers (private to this file) ---
-
-  static Map<String, Object?> _encodeStoredEvent(StoredEvent e) => {
-        'sequence': e.sequence,
-        'eventId': e.eventId,
-        'aggregateType': e.aggregateType,
-        'aggregateId': e.aggregateId,
-        'entryType': e.entryType,
-        'entryTypeVersion': e.entryTypeVersion,
-        'eventType': e.eventType,
-        'payload': e.payload,
-        'clientTimestamp': e.clientTimestamp.toIso8601String(),
-        'recordedTimestamp': e.recordedTimestamp.toIso8601String(),
-        'initiator': PrincipalCodec.encode(e.initiator),
-        'chainHash': e.chainHash,
-        'payloadHash': e.payloadHash,
-        'source': {
-          'identifier': e.source.identifier,
-          'softwareVersion': e.source.softwareVersion,
-        },
-        'metadata': e.metadata,
-      };
-
-  static StoredEvent _decodeStoredEvent(Map<String, Object?> j) {
-    final src = requireMap(j, 'source');
-    return StoredEvent(
-      sequence: requireInt(j, 'sequence'),
-      eventId: requireString(j, 'eventId'),
-      aggregateType: requireString(j, 'aggregateType'),
-      aggregateId: requireString(j, 'aggregateId'),
-      entryType: requireString(j, 'entryType'),
-      entryTypeVersion: requireInt(j, 'entryTypeVersion'),
-      eventType: requireString(j, 'eventType'),
-      payload: requireMap(j, 'payload'),
-      clientTimestamp: DateTime.parse(requireString(j, 'clientTimestamp')),
-      recordedTimestamp: DateTime.parse(requireString(j, 'recordedTimestamp')),
-      initiator: PrincipalCodec.decode(requireMap(j, 'initiator')),
-      chainHash: requireString(j, 'chainHash'),
-      payloadHash: requireString(j, 'payloadHash'),
-      source: Source(
-        identifier: requireString(src, 'identifier'),
-        softwareVersion: requireString(src, 'softwareVersion'),
-      ),
-      metadata: requireMap(j, 'metadata'),
-    );
-  }
-
-  // --- Permission helpers ---
+  // --- Permission helpers (substrate Permission has no toJson) ---
 
   static Map<String, Object?> _encodePermission(Permission p) => {
-        'name': p.name,
-        'scopeClass': p.scopeClass,
-      };
+    'name': p.name,
+    'scopeClass': p.scopeClass,
+  };
 
   static Permission _decodePermission(Map<String, Object?> j) => Permission(
-        requireString(j, 'name'),
-        scopeClass: readString(j, 'scopeClass'),
-      );
-
-  // --- ScopeValue helpers (CUR-1331 sealed type) ---
-
-  static Map<String, Object?> _encodeScopeValue(ScopeValue v) {
-    if (v is BoundScope) {
-      return {'class': v.class_, 'value': v.value};
-    } else if (v is ValueWildcardScope) {
-      return {'class': v.class_, 'wildcard_value': true};
-    } else if (v is TotalWildcardScope) {
-      return {'wildcard_class': true};
-    } else {
-      throw FormatException('unknown ScopeValue: ${v.runtimeType}');
-    }
-  }
-
-  static ScopeValue _decodeScopeValue(Map<String, Object?> j) {
-    if (j['wildcard_class'] == true) return const TotalWildcardScope();
-    if (j['wildcard_value'] == true) {
-      return ValueWildcardScope(class_: requireString(j, 'class'));
-    }
-    return BoundScope(
-      class_: requireString(j, 'class'),
-      value: requireString(j, 'value'),
-    );
-  }
-
-  // --- DenyReason helpers ---
-
-  static String _encodeDenyReason(DenyReason r) {
-    switch (r) {
-      case DenyReason.notGranted: return 'not_granted';
-      case DenyReason.scopeUnresolvable: return 'scope_unresolvable';
-    }
-  }
-
-  static DenyReason _decodeDenyReason(String s) {
-    switch (s) {
-      case 'not_granted': return DenyReason.notGranted;
-      case 'scope_unresolvable': return DenyReason.scopeUnresolvable;
-      default: throw FormatException('unknown DenyReason: $s');
-    }
-  }
+    requireString(j, 'name'),
+    scopeClass: readString(j, 'scopeClass'),
+  );
 }
 ```
 
@@ -1288,7 +1208,7 @@ flutter test test/wire/dispatch_result_codec_test.dart
 
 ```bash
 git add reaction/lib/src/wire/dispatch_result_codec.dart reaction/test/wire/dispatch_result_codec_test.dart
-git commit -m "[CUR-1317] reaction wire: DispatchResult JSON codec (4 variants)"
+git commit -m "[CUR-1317] reaction wire: DispatchResult JSON codec (7 variants)"
 ```
 
 ### Task 9: EffectiveAuthorization codec
@@ -2245,7 +2165,7 @@ class _StubDispatcher implements ActionDispatcher {
 void main() {
   test('returns 200 + DispatchResult JSON on success', () async {
     final dispatcher = _StubDispatcher(
-      DispatchSuccess<Object?>(result: {'echo': 'hi'}, appendedEvents: const []),
+      const DispatchSuccess<Object?>({'echo': 'hi'}, []),
     );
     final handler = actionRouteHandler(dispatcher: dispatcher);
     final submission = const ActionSubmission(
@@ -2272,7 +2192,7 @@ void main() {
   test('returns 400 on malformed body', () async {
     final handler = actionRouteHandler(
       dispatcher: _StubDispatcher(
-        DispatchSuccess<Object?>(result: null, appendedEvents: const [])),
+        const DispatchSuccess<Object?>(null, [])),
     );
     final req = Request(
       'POST',
@@ -2288,7 +2208,7 @@ void main() {
   test('returns 500 when no Principal in context', () async {
     final handler = actionRouteHandler(
       dispatcher: _StubDispatcher(
-        DispatchSuccess<Object?>(result: null, appendedEvents: const [])),
+        const DispatchSuccess<Object?>(null, [])),
     );
     final req = Request(
       'POST',
@@ -4796,7 +4716,7 @@ void main() {
     );
     expect(result, isA<DispatchSuccess<Object?>>());
     final s = result as DispatchSuccess<Object?>;
-    expect(s.appendedEvents, isNotEmpty);
+    expect(s.emittedEventIds, isNotEmpty);
   });
 
   test('throws TransportException when not authenticated', () async {
