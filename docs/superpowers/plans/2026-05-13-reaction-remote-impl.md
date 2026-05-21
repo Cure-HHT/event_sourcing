@@ -589,65 +589,83 @@ import 'package:reaction/src/wire/update_codec.dart';
 
 void main() {
   test('round-trips Snapshot envelope', () {
-    final original = Snapshot<Map<String, Object?>>(
-      aggregateId: 'agg-1',
-      row: const {'title': 'hello'},
+    const original = Snapshot<Map<String, Object?>>(
+      value: {'aggregateId': 'agg-1', 'title': 'hello'},
       sequence: 42,
     );
-    final json = UpdateCodec.encode(
-      original,
-      subscriptionId: 'sub-1',
-    );
+    final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
     expect(json['type'], 'snapshot');
     expect(json['subscriptionId'], 'sub-1');
     expect(json['sequence'], 42);
-    expect(json['aggregateId'], 'agg-1');
-    expect(json['row'], {'title': 'hello'});
+    expect(json['value'], {'aggregateId': 'agg-1', 'title': 'hello'});
 
     final decoded = UpdateCodec.decode(json) as Snapshot<Map<String, Object?>>;
-    expect(decoded.aggregateId, 'agg-1');
-    expect(decoded.row, {'title': 'hello'});
+    expect(decoded.value, {'aggregateId': 'agg-1', 'title': 'hello'});
     expect(decoded.sequence, 42);
   });
 
+  test('round-trips Snapshot envelope with null value', () {
+    const original = Snapshot<Map<String, Object?>>(value: null, sequence: 7);
+    final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
+    expect(json['type'], 'snapshot');
+    expect(json['value'], isNull);
+    expect(json.containsKey('value'), isTrue);
+
+    final decoded = UpdateCodec.decode(json) as Snapshot<Map<String, Object?>>;
+    expect(decoded.value, isNull);
+    expect(decoded.sequence, 7);
+  });
+
   test('round-trips Delta envelope', () {
-    final original = Delta<Map<String, Object?>>(
-      aggregateId: 'agg-1',
-      row: const {'title': 'world'},
+    const original = Delta<Map<String, Object?>>(
+      value: {'aggregateId': 'agg-1', 'title': 'world'},
       sequence: 43,
+      cause: 'event-abc',
     );
     final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
     expect(json['type'], 'delta');
+    expect(json['sequence'], 43);
+    expect(json['value'], {'aggregateId': 'agg-1', 'title': 'world'});
+    expect(json['cause'], 'event-abc');
+
     final decoded = UpdateCodec.decode(json) as Delta<Map<String, Object?>>;
-    expect(decoded.aggregateId, 'agg-1');
-    expect(decoded.row, {'title': 'world'});
+    expect(decoded.value, {'aggregateId': 'agg-1', 'title': 'world'});
     expect(decoded.sequence, 43);
+    expect(decoded.cause, 'event-abc');
   });
 
   test('round-trips Tombstone envelope', () {
-    final original = Tombstone<Map<String, Object?>>(
+    const original = Tombstone<Map<String, Object?>>(
       aggregateId: 'agg-1',
       sequence: 44,
     );
     final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
     expect(json['type'], 'tombstone');
+    expect(json['aggregateId'], 'agg-1');
+    expect(json['sequence'], 44);
+
     final decoded = UpdateCodec.decode(json) as Tombstone<Map<String, Object?>>;
     expect(decoded.aggregateId, 'agg-1');
     expect(decoded.sequence, 44);
   });
 
   test('round-trips EndOfReplay envelope', () {
-    final original = EndOfReplay<Map<String, Object?>>(sequence: 45);
+    const original = EndOfReplay<Map<String, Object?>>(sequence: 45);
     final json = UpdateCodec.encode(original, subscriptionId: 'sub-1');
     expect(json['type'], 'end_of_replay');
+    expect(json['sequence'], 45);
     expect(json.containsKey('aggregateId'), isFalse);
-    final decoded = UpdateCodec.decode(json) as EndOfReplay<Map<String, Object?>>;
+    expect(json.containsKey('value'), isFalse);
+    expect(json.containsKey('cause'), isFalse);
+
+    final decoded =
+        UpdateCodec.decode(json) as EndOfReplay<Map<String, Object?>>;
     expect(decoded.sequence, 45);
   });
 
   test('decode reads subscriptionId from envelope', () {
     final encoded = UpdateCodec.encode(
-      EndOfReplay<Map<String, Object?>>(sequence: 1),
+      const EndOfReplay<Map<String, Object?>>(sequence: 1),
       subscriptionId: 'sub-xyz',
     );
     expect(UpdateCodec.subscriptionIdOf(encoded), 'sub-xyz');
@@ -655,8 +673,11 @@ void main() {
 
   test('decode rejects unknown type', () {
     expect(
-      () => UpdateCodec.decode({'type': 'unknown', 'subscriptionId': 'x',
-                                'sequence': 1}),
+      () => UpdateCodec.decode({
+        'type': 'unknown',
+        'subscriptionId': 'x',
+        'sequence': 1,
+      }),
       throwsA(isA<FormatException>()),
     );
   });
@@ -683,10 +704,19 @@ import 'envelope.dart';
 ///
 /// Wire shape per variant (all include "type", "subscriptionId",
 /// "sequence"):
-///   snapshot      + "aggregateId" + "row"
-///   delta         + "aggregateId" + "row"
+///   snapshot      + "value" (nullable map; the materialized row, or
+///                            null when the substrate emitted a null
+///                            value)
+///   delta         + "value" (map) + "cause" (event id that caused
+///                            this delta)
 ///   tombstone     + "aggregateId"
 ///   end_of_replay (no extra fields)
+///
+/// [Snapshot.value] and [Delta.value] carry the mapped row, which by
+/// `AggregateProjectionSpec` convention contains the aggregateId as a
+/// column — so the wire does not duplicate aggregateId for those
+/// variants. [Tombstone] has no row, so it ships aggregateId
+/// explicitly.
 class UpdateCodec {
   const UpdateCodec._();
 
@@ -699,16 +729,15 @@ class UpdateCodec {
         'type': 'snapshot',
         'subscriptionId': subscriptionId,
         'sequence': u.sequence,
-        'aggregateId': u.aggregateId,
-        'row': u.row,
+        'value': u.value,
       };
     } else if (u is Delta<Map<String, Object?>>) {
       return {
         'type': 'delta',
         'subscriptionId': subscriptionId,
         'sequence': u.sequence,
-        'aggregateId': u.aggregateId,
-        'row': u.row,
+        'value': u.value,
+        'cause': u.cause,
       };
     } else if (u is Tombstone<Map<String, Object?>>) {
       return {
@@ -734,15 +763,14 @@ class UpdateCodec {
     switch (type) {
       case 'snapshot':
         return Snapshot<Map<String, Object?>>(
-          aggregateId: requireString(json, 'aggregateId'),
-          row: requireMap(json, 'row'),
+          value: _readNullableMap(json, 'value'),
           sequence: sequence,
         );
       case 'delta':
         return Delta<Map<String, Object?>>(
-          aggregateId: requireString(json, 'aggregateId'),
-          row: requireMap(json, 'row'),
+          value: requireMap(json, 'value'),
           sequence: sequence,
+          cause: requireString(json, 'cause'),
         );
       case 'tombstone':
         return Tombstone<Map<String, Object?>>(
@@ -760,6 +788,24 @@ class UpdateCodec {
   /// Used by RemoteConnection to route incoming envelopes.
   static String subscriptionIdOf(Map<String, Object?> json) =>
       requireString(json, 'subscriptionId');
+
+  /// Reads a nullable map field. Returns null when the key is present
+  /// with a null value (the explicit-null case for [Snapshot.value]).
+  /// Throws on a present-but-non-map value.
+  static Map<String, Object?>? _readNullableMap(
+    Map<String, Object?> json,
+    String key,
+  ) {
+    if (!json.containsKey(key)) {
+      throw FormatException('missing "$key"');
+    }
+    final v = json[key];
+    if (v == null) return null;
+    if (v is! Map) {
+      throw FormatException('non-map "$key": $v');
+    }
+    return Map<String, Object?>.from(v);
+  }
 }
 ```
 
@@ -3259,7 +3305,7 @@ class AuthzWatcher {
 
   void _handleCoreEvent(Update<Map<String, Object?>> update) {
     if (update is! Delta<Map<String, Object?>>) return;
-    final payload = update.row;
+    final payload = update.value;
     final eventType = payload['eventType'] as String?;
     switch (eventType) {
       case 'role_unassigned':
@@ -3744,7 +3790,7 @@ Extends RemoteConnection with WS open/close/route logic. Reconnect-on-drop lands
     pair.serverSide.sink.add(jsonEncode({'type':'auth_ok','principalId':'alice'}));
     pair.serverSide.sink.add(jsonEncode({
       'type':'snapshot','subscriptionId':'sub-1','sequence':1,
-      'aggregateId':'a-1','row':{'k':'v'},
+      'value':{'aggregateId':'a-1','k':'v'},
     }));
 
     final updates = await stream.take(1).toList();
@@ -4280,16 +4326,16 @@ class RemoteViewSource implements ViewSource {
       T Function(Map<String, Object?>) mapper) {
     return (u) {
       if (u is Snapshot<Map<String, Object?>>) {
+        // Snapshot.value is nullable on the substrate; preserve null.
         return Snapshot<T>(
-          aggregateId: u.aggregateId,
-          row: mapper(u.row),
+          value: u.value == null ? null : mapper(u.value as Map<String, Object?>),
           sequence: u.sequence,
         );
       } else if (u is Delta<Map<String, Object?>>) {
         return Delta<T>(
-          aggregateId: u.aggregateId,
-          row: mapper(u.row),
+          value: mapper(u.value),
           sequence: u.sequence,
+          cause: u.cause,
         );
       } else if (u is Tombstone<Map<String, Object?>>) {
         return Tombstone<T>(
@@ -4876,7 +4922,7 @@ void main() {
     );
     final snap = await stream
         .firstWhere((u) => u is Snapshot<String>) as Snapshot<String>;
-    expect(snap.row, 'hello');
+    expect(snap.value, 'hello');
   });
 }
 ```

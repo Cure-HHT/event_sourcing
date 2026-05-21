@@ -275,10 +275,10 @@ without breaking change.
 
 // Update<T> envelopes — every envelope carries subscriptionId + sequence:
 {"type": "snapshot",  "subscriptionId": "<UUID>", "sequence": N,
- "aggregateId": "<id>", "row": {...Map<String,Object?>...}}
+ "value": {...Map<String,Object?>...} | null}
 
 {"type": "delta",     "subscriptionId": "<UUID>", "sequence": N,
- "aggregateId": "<id>", "row": {...Map<String,Object?>...}}
+ "value": {...Map<String,Object?>...}, "cause": "<eventId>"}
 
 {"type": "tombstone", "subscriptionId": "<UUID>", "sequence": N,
  "aggregateId": "<id>"}
@@ -307,12 +307,20 @@ JSON shape notes:
   No nested polymorphic wrappers. Codec dispatch on `"type"`.
 - `sequence` is the substrate's monotonic event sequence at the
   moment the update was generated (PRD assertion B).
-- `aggregateId` appears on `snapshot` / `delta` / `tombstone` but NOT
-  on `end_of_replay` (per-subscription marker, not per-row).
-- `row` is the raw `Map<String, Object?>` from the substrate; client
-  applies its consumer-supplied mapper. Server-side mapping would
-  break domain-neutrality (server would need to know every consumer
-  type) — rejected.
+- `snapshot` and `delta` carry `value` (the materialized row, which by
+  `AggregateProjectionSpec` convention contains `aggregateId` as a
+  column); `tombstone` has no row and ships `aggregateId` directly;
+  `end_of_replay` is a per-subscription marker and carries neither.
+- `snapshot.value` is nullable on the wire — the substrate's
+  `Snapshot<T>.value` is `T?` and the wire preserves the explicit-null
+  case (key present, value `null`).
+- `delta.cause` is the substrate's event id that produced this delta
+  (substrate `Delta<T>.cause`). Required on the wire; surfaces the
+  Layer 1 fact of "which append generated this update."
+- `value` (on snapshot / delta) is the raw `Map<String, Object?>` row
+  from the substrate; client applies its consumer-supplied mapper.
+  Server-side mapping would break domain-neutrality (server would need
+  to know every consumer type) — rejected.
 - `DispatchResult.Success.appendedEvents[]` carries `StoredEvent`
   envelopes with full Layer 1 fact data (hash, sequence, initiator
   Principal, etc.). The codec preserves all fields.
