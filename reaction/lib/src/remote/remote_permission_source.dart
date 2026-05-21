@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:http/http.dart' as http;
 import 'package:reaction/src/interfaces/auth_session.dart';
 import 'package:reaction/src/interfaces/permission_source.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
@@ -79,7 +80,17 @@ class RemotePermissionSource implements PermissionSource {
     if (_disposed) return;
     final gen = _fetchGen;
     final url = connection.baseUrl.replace(path: '/permissions/snapshot');
-    final res = await connection.httpGet(url);
+    final http.Response res;
+    try {
+      res = await connection.httpGet(url);
+    } catch (_) {
+      // Transport error (server gone, connection severed mid-request,
+      // DNS, etc.): treat the same as a non-200 — leave current state
+      // untouched. This also covers the dispose-race window where the
+      // underlying http client is closed while a fetch triggered by a
+      // just-observed Authenticated transition is in flight.
+      return;
+    }
     // Drop stale responses: a newer auth transition has superseded us,
     // or we've been disposed.
     if (gen != _fetchGen || _disposed) return;
