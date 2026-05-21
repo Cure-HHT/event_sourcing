@@ -145,6 +145,26 @@ void main() {
     expect(errors, isEmpty);
   });
 
+  test('_validate transport failure leaves state untouched', () async {
+    // Client whose /me send() always throws — simulates transport
+    // failure (server gone, connection severed, dispose-race where
+    // the http client is closed mid-request, etc.).
+    final client = _Client((_) => throw http.ClientException('boom'));
+    final session = RemoteAuthSession(connection: connWithClient(client));
+    final errors = <Object>[];
+    await runZonedGuarded(() async {
+      session.setCredential('alice');
+      // Pump long enough for the unawaited _validate() to throw and
+      // be caught inside the impl.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }, (e, st) => errors.add(e));
+    // No state transition: the catch must swallow the exception and
+    // leave the session in its initial NotAuthenticated state.
+    expect(session.current, isA<NotAuthenticated>());
+    // And no uncaught error escaped into the zone.
+    expect(errors, isEmpty);
+  });
+
   test('rapid setCredential flips: stale /me response is discarded', () async {
     final client = _GatedClient(
       (_) => http.Response(

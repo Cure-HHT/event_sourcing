@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:http/http.dart' as http;
 import 'package:reaction/src/interfaces/auth_session.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/principal_codec.dart';
@@ -56,9 +57,17 @@ class RemoteAuthSession implements AuthSession {
 
   Future<void> _validate() async {
     final gen = _credentialGen;
-    final res = await connection.httpGet(
-      connection.baseUrl.replace(path: '/me'),
-    );
+    final http.Response res;
+    try {
+      res = await connection.httpGet(connection.baseUrl.replace(path: '/me'));
+    } catch (_) {
+      // Transport error (server gone, connection severed mid-request,
+      // DNS, etc.): treat the same as a non-200 / other-status branch
+      // — leave current state untouched. This also covers the dispose-
+      // race window where the underlying http client is closed while
+      // a /me validate fired by setCredential is still in flight.
+      return;
+    }
     // Drop stale responses: a newer setCredential has superseded us.
     if (gen != _credentialGen) return;
     if (res.statusCode == 200) {
