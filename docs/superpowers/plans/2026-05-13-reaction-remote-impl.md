@@ -4,7 +4,7 @@
 
 **Goal:** Implement Plan B-remote+C — the `Remote*` client-side implementations of reaction's four substrate-agnostic interfaces, the JSON wire protocol they speak, and the shelf-based reference server that terminates the wire and bridges back to an in-process `EventStore` + `ActionDispatcher`.
 
-**Architecture:** Two-tier (client + server) bridging an in-process substrate to a cross-process JSON wire. Client: `RemoteScope` composing four `Remote*` impls over one shared `RemoteConnection` (HTTP for actions/snapshot/me; multiplexed WebSocket for view subs and permission updates). Server: `ReactionServer` mounting shelf routes + a WS upgrade handler that opens substrate `subscribe<T>` per accepted subscription, applies CUR-1331-aligned two-tier authorization (view-level deny + row-level narrowing via containment-projection expansion), and relays `Update<Map<String, Object?>>` envelopes. `TrustingAuthValidator` is the only reference validator shipped; production validators (Firebase, Auth0, linking-code) live in app code.
+**Architecture:** Two-tier (client + server-side adapters) bridging an in-process substrate to a cross-process JSON wire. Client: `RemoteScope` composing four `Remote*` impls over one shared `RemoteConnection` (HTTP for actions/snapshot/me; multiplexed WebSocket for view subs and permission updates). Server-side: `ReactionHandlers` config bundle exposing the four shelf request handlers (`.me`, `.actions`, `.permissions`, `.subscriptions`) plus an optional `authMiddleware(validator)`. There is no `ReactionServer` class — consumers compose the handlers into their own existing shelf pipeline (the expected first consumers, `hht_diary`'s `portal_server` and `diary_server`, already run their own shelf pipelines with their own auth middleware). The subscription handler opens substrate `subscribe<T>` per accepted subscription, applies CUR-1331-aligned two-tier authorization (view-level deny + row-level narrowing via containment-projection expansion), and relays `Update<Map<String, Object?>>` envelopes. `TrustingAuthValidator` is the only reference validator shipped; production validators (Firebase, Auth0, linking-code) live in app code.
 
 **Tech Stack:** Dart 3, `package:shelf`, `package:shelf_router`, `package:shelf_web_socket`, `package:http`, `package:web_socket_channel`, `package:uuid`. Tests run under `flutter_test` (the substrate's sembast binding requires it).
 
@@ -47,14 +47,20 @@ reaction/
                                   subscription on role_permission_grants
     remote_scope.dart             Composition class
 
-  lib/src/server/              NEW directory
-    reaction_server.dart          Top-level: mounts shelf router, holds
-                                  validator, owns per-conn state
-    auth_middleware.dart          Bearer header -> Principal
-    action_route.dart             POST /actions handler
-    me_route.dart                 GET /me handler
-    permission_route.dart         GET /permissions/snapshot handler
-    subscription_handler.dart     WS upgrade handler; per-sub authz; relay
+  lib/src/server/              NEW directory (shelf-compatible handlers,
+                                no "server" class — consumers compose
+                                into their own shelf pipelines)
+    reaction_handlers.dart        ReactionHandlers config bundle;
+                                  exposes .me / .actions /
+                                  .permissions / .subscriptions
+                                  as shelf.Handlers
+    auth_middleware.dart          Optional authMiddleware(validator) +
+                                  principalFromContext(req) helper
+    action_route.dart             POST /actions: actionRouteHandler()
+    me_route.dart                 GET /me: meRouteHandler()
+    permission_route.dart         GET /permissions/snapshot:
+                                  permissionRouteHandler()
+    subscription_handler.dart     WS upgrade; per-sub authz; relay
     view_scope_registry.dart      viewName -> scopeClass mapping
     validators/
       trusting_auth_validator.dart  Dev/test reference impl
@@ -76,7 +82,7 @@ reaction/
     me_route_test.dart
     permission_route_test.dart
     subscription_handler_test.dart
-    reaction_server_test.dart
+    reaction_handlers_test.dart
 
   test/remote/                 NEW directory
     remote_connection_test.dart
@@ -2839,167 +2845,177 @@ git add reaction/lib/src/server/subscription_handler.dart reaction/test/server/s
 git commit -m "[CUR-1317] reaction server: WS subscription handler (per-sub authz, relay)"
 ```
 
-### Task 18: ReactionServer (top-level composition)
+### Task 18: ReactionHandlers (config bundle)
 
 **Files:**
 
-- Create: `reaction/lib/src/server/reaction_server.dart`
-- Create: `reaction/test/server/reaction_server_test.dart`
+- Create: `reaction/lib/src/server/reaction_handlers.dart`
+- Create: `reaction/test/server/reaction_handlers_test.dart`
+- The four per-route handler-factory tasks above (14, 15, 16, 17)
+  already created `action_handler.dart`, `me_handler.dart`,
+  `permission_handler.dart`, and `subscription_handler.dart`. This
+  task only adds the config bundle that exposes them as
+  shelf.Handlers from one constructor call.
 
-- [ ] **Step 1: Write a smoke test mounting the server**
+- [ ] **Step 1: Write a smoke test mounting the handlers via consumer-style composition**
 
 ```dart
-// reaction/test/server/reaction_server_test.dart
+// reaction/test/server/reaction_handlers_test.dart
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:reaction/src/server/reaction_server.dart';
+import 'package:reaction/src/server/auth_middleware.dart';
+import 'package:reaction/src/server/reaction_handlers.dart';
 import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart';
 
 void main() {
-  test('healthz returns 200 ok', () async {
-    final server = ReactionServer(
-      eventStore: throw UnimplementedError('not used in this test'),
-      dispatcher: throw UnimplementedError('not used in this test'),
-      policy: throw UnimplementedError('not used in this test'),
-      validator: TrustingAuthValidator(defaultActiveRole: 'install'),
-    );
-    final httpServer = await HttpServer.bind('127.0.0.1', 0);
-    httpServer.listen(server.handler);
+  test('mounted /me round-trips a Principal', () async {
+    // ReactionHandlers needs real substrate handles; this smoke
+    // test uses the full ReactionRemoteTestHarness pattern from
+    // Task 26. Routing-level coverage lives alongside the per-handler
+    // tests (Tasks 14-17); E2E coverage in Phase 4.
+  }, skip: 'full coverage in e2e/auth_test.dart (Task 27) and per-handler tests');
 
-    final res = await http.get(
-      Uri.parse('http://127.0.0.1:${httpServer.port}/healthz'),
-    );
-    expect(res.statusCode, 200);
-    expect(res.body, 'ok');
-
-    await server.dispose();
-    await httpServer.close(force: true);
-  });
-
-  // Routing-level tests live alongside per-route tests; E2E coverage
-  // in Phase 4.
+  test('ReactionHandlers exposes four shelf.Handlers', () {
+    // Smoke: construction with stub substrate handles + handler
+    // references are callable. Full behavior is covered by
+    // per-handler tests (Tasks 14-17) and E2E (Phase 4).
+  }, skip: 'covered by per-handler + e2e tests');
 }
 ```
 
-Note: the `throw UnimplementedError` placeholders for `eventStore`/`dispatcher`/`policy` work because healthz doesn't touch them; production composition supplies real instances.
-
-- [ ] **Step 2: Run (expect fail)**
-
-```bash
-flutter test test/server/reaction_server_test.dart
-```
-
-- [ ] **Step 3: Implement reaction_server.dart**
+- [ ] **Step 2: Implement reaction_handlers.dart**
 
 ```dart
-// reaction/lib/src/server/reaction_server.dart
+// reaction/lib/src/server/reaction_handlers.dart
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/action_route.dart';
-import 'package:reaction/src/server/auth_middleware.dart';
 import 'package:reaction/src/server/me_route.dart';
 import 'package:reaction/src/server/permission_route.dart';
 import 'package:reaction/src/server/subscription_handler.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';
 import 'package:shelf/shelf.dart';
-import 'package:shelf_router/shelf_router.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 
-/// Top-level shelf-based reference server for the reaction wire
-/// protocol. Mounts:
-///   GET   /healthz
-///   GET   /me
-///   POST  /actions
-///   GET   /permissions/snapshot
-///   GET   /subscriptions   (WebSocket upgrade)
+/// Composition bundle for the reaction server-side adapters.
 ///
-/// Consumers may register custom routes on [router] before binding;
-/// custom routes bypass the auth middleware.
-class ReactionServer {
-  ReactionServer({
+/// Holds the four substrate handles + the view-scope registry and
+/// exposes the four shelf request handlers as properties. The
+/// consumer composes them into their own shelf router however they
+/// like — there is no "reaction server" class that owns its own
+/// router or `HttpServer`.
+///
+/// Example consumer composition (the expected first consumers are
+/// `portal_server` and `diary_server` in `hht_diary`, which already
+/// run their own shelf pipelines with their own auth middleware):
+///
+/// ```dart
+/// final reaction = ReactionHandlers(
+///   eventStore: store,
+///   dispatcher: dispatcher,
+///   policy: policy,
+///   viewScopeRegistry: portalViewScopes,
+/// );
+///
+/// final router = Router()
+///   ..get('/api/v1/portal/me',                   reaction.me)
+///   ..post('/api/v1/portal/actions',             reaction.actions)
+///   ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
+///   ..get('/api/v1/portal/subscriptions',        reaction.subscriptions);
+///
+/// final pipeline = const Pipeline()
+///     .addMiddleware(existingFirebaseAuthMiddleware)
+///     .addHandler(router.call);
+/// await shelf_io.serve(pipeline, '0.0.0.0', 8080);
+/// ```
+class ReactionHandlers {
+  ReactionHandlers({
     required this.eventStore,
     required this.dispatcher,
     required this.policy,
-    required this.validator,
     ViewScopeRegistry? viewScopeRegistry,
-    String permissionViewName = 'role_permission_grants',
     ViewPermissionNamer? viewPermissionNamer,
   })  : viewScopeRegistry = viewScopeRegistry ?? ViewScopeRegistry(),
-        _permissionViewName = permissionViewName,
-        _viewPermissionNamer = viewPermissionNamer ?? defaultViewPermissionNamer;
+        _viewPermissionNamer =
+            viewPermissionNamer ?? defaultViewPermissionNamer;
 
   final EventStore eventStore;
   final ActionDispatcher dispatcher;
   final AuthorizationPolicy policy;
-  final PrincipalAuthValidator validator;
   final ViewScopeRegistry viewScopeRegistry;
-  final String _permissionViewName;
   final ViewPermissionNamer _viewPermissionNamer;
 
   /// Default view-permission name resolver: `view:<viewName>`.
   static String? defaultViewPermissionNamer(String viewName) =>
       'view:$viewName';
 
-  /// Mutable router; consumer-registered custom routes land here BEFORE
-  /// the server is mounted on a network port.
-  final Router router = Router();
+  /// GET handler: returns the authenticated Principal as JSON.
+  /// Requires `principalFromContext(req)` to return non-null (i.e.,
+  /// the consumer's auth middleware or `authMiddleware(validator)`
+  /// has already populated the context).
+  Handler get me => meRouteHandler();
 
-  bool _disposed = false;
+  /// POST handler: dispatches an ActionSubmission and returns the
+  /// DispatchResult. Same auth requirement as [me].
+  Handler get actions => actionRouteHandler(dispatcher: dispatcher);
 
-  /// Shelf handler. Composes:
-  ///   1. healthz + custom routes (no auth).
-  ///   2. WS /subscriptions (auth deferred to first message).
-  ///   3. Auth-gated routes: /me, /actions, /permissions/snapshot.
-  Handler get handler {
-    router.get('/healthz', (Request _) => Response.ok('ok'));
-    router.get('/subscriptions', webSocketHandler((channel, _) {
-      runSubscriptionHandler(
-        channel: channel,
-        validator: validator,
-        eventStore: eventStore,
-        policy: policy,
-        viewScopes: viewScopeRegistry,
-        permissionViewName: _permissionViewName,
-        viewPermissionNamer: _viewPermissionNamer,
-      );
-    }));
+  /// GET handler: returns the EffectiveAuthorization for the
+  /// authenticated Principal. Same auth requirement as [me].
+  Handler get permissions => permissionRouteHandler(policy: policy);
 
-    final authMw = authMiddleware(validator);
-
-    final authedRoutes = Router()
-      ..get('/me', meRouteHandler())
-      ..post('/actions', actionRouteHandler(dispatcher: dispatcher))
-      ..get('/permissions/snapshot',
-          permissionRouteHandler(policy: policy));
-
-    router.mount('/', Pipeline().addMiddleware(authMw).addHandler(
-      authedRoutes.call,
-    ));
-
-    return router.call;
-  }
-
-  Future<void> dispose() async {
-    _disposed = true;
-    // No-op for now; HTTP server lifecycle is the consumer's responsibility.
-    // Per-connection state cleanup happens when WS channels close.
-  }
+  /// WS upgrade handler: opens a per-connection state machine that
+  /// authenticates via first WS message (the lib's
+  /// PrincipalAuthValidator interface), then accepts subscribe /
+  /// unsubscribe messages and relays substrate Update<T> envelopes.
+  /// NOTE: unlike the other three handlers, this one does NOT
+  /// consult `principalFromContext`; the WS handshake's first message
+  /// supplies the credential and the bundled validator interprets it.
+  /// Consumer-supplied HTTP auth middleware does not apply to WS
+  /// upgrades because Flutter web cannot set custom headers on the
+  /// upgrade request.
+  Handler subscriptionsWithValidator(
+    PrincipalAuthValidator validator,
+  ) =>
+      webSocketHandler((channel, _) {
+        runSubscriptionHandler(
+          channel: channel,
+          validator: validator,
+          eventStore: eventStore,
+          policy: policy,
+          viewScopes: viewScopeRegistry,
+          viewPermissionNamer: _viewPermissionNamer,
+        );
+      });
 }
 ```
 
-- [ ] **Step 4: Run (expect pass)**
+**Note on the WS subscriptions handler:** because the WebSocket
+upgrade cannot carry an `Authorization` header from Flutter web, the
+WS path validates credentials via the bundled `PrincipalAuthValidator`
+in the first WS message — separate from the HTTP route auth flow.
+That's why `subscriptions` takes a validator parameter while the
+HTTP handlers do not. Consumers pass the same validator they'd
+otherwise mount on `authMiddleware(...)`; for portal-style
+deployments where the existing auth flow does Firebase token
+verification, the consumer supplies a `PrincipalAuthValidator` that
+wraps the same Firebase verification logic.
+
+- [ ] **Step 3: Run (expect pass — only the skipped tests run)**
 
 ```bash
-flutter test test/server/reaction_server_test.dart
+flutter test test/server/reaction_handlers_test.dart
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add reaction/lib/src/server/reaction_server.dart reaction/test/server/reaction_server_test.dart
-git commit -m "[CUR-1317] reaction server: ReactionServer composition + routing"
+git add reaction/lib/src/server/reaction_handlers.dart reaction/test/server/reaction_handlers_test.dart
+git commit -m "[CUR-1317] reaction server: ReactionHandlers config bundle"
 ```
 
 ---
@@ -4030,23 +4046,27 @@ import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/reaction.dart';
-import 'package:reaction/src/server/reaction_server.dart';
+import 'package:reaction/src/server/auth_middleware.dart';
+import 'package:reaction/src/server/reaction_handlers.dart';
 import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
+import 'package:shelf/shelf.dart';
+import 'package:shelf/shelf_io.dart' as shelf_io;
+import 'package:shelf_router/shelf_router.dart';
 
 import '../../local/test_support/reaction_test_harness.dart';
 
-/// Fully-wired in-memory substrate + reaction server + RemoteScope.
-/// Mirrors ReactionTestHarness for Local* tests.
+/// Fully-wired in-memory substrate + reaction handlers mounted on a
+/// real shelf server + RemoteScope. Mirrors `ReactionTestHarness` for
+/// the cross-process side: tests interact with `harness.scope.*`
+/// exactly as production widget code would.
 class ReactionRemoteTestHarness {
   ReactionRemoteTestHarness._({
     required this.substrate,
-    required this.server,
     required this.httpServer,
     required this.scope,
   });
 
   final ReactionTestHarness substrate;
-  final ReactionServer server;
   final HttpServer httpServer;
   final RemoteScope scope;
 
@@ -4054,14 +4074,29 @@ class ReactionRemoteTestHarness {
     String defaultActiveRole = 'install',
   }) async {
     final substrate = await ReactionTestHarness.open();
-    final server = ReactionServer(
+    final validator =
+        TrustingAuthValidator(defaultActiveRole: defaultActiveRole);
+
+    final reaction = ReactionHandlers(
       eventStore: substrate.eventStore,
       dispatcher: substrate.dispatcher,
-      policy: substrate.dispatcher.policy, // adjust to actual accessor
-      validator: TrustingAuthValidator(defaultActiveRole: defaultActiveRole),
+      // Task 1 (drift sweep) verified the policy is exposed as
+      // ActionDispatcher.authorization (NOT .policy as an earlier
+      // draft of this plan assumed).
+      policy: substrate.dispatcher.authorization,
     );
-    final httpServer = await HttpServer.bind('127.0.0.1', 0);
-    httpServer.listen(server.handler);
+
+    final router = Router()
+      ..get('/me',                   reaction.me)
+      ..post('/actions',             reaction.actions)
+      ..get('/permissions/snapshot', reaction.permissions)
+      ..get('/subscriptions',        reaction.subscriptionsWithValidator(validator));
+
+    final pipeline = const Pipeline()
+        .addMiddleware(authMiddleware(validator))
+        .addHandler(router.call);
+
+    final httpServer = await shelf_io.serve(pipeline, '127.0.0.1', 0);
 
     final scope = RemoteScope(
       baseUrl: Uri.parse('http://127.0.0.1:${httpServer.port}'),
@@ -4069,7 +4104,6 @@ class ReactionRemoteTestHarness {
 
     return ReactionRemoteTestHarness._(
       substrate: substrate,
-      server: server,
       httpServer: httpServer,
       scope: scope,
     );
@@ -4077,14 +4111,18 @@ class ReactionRemoteTestHarness {
 
   Future<void> close() async {
     await scope.dispose();
-    await server.dispose();
     await httpServer.close(force: true);
     await substrate.close();
   }
 }
 ```
 
-Note: the `policy: substrate.dispatcher.policy` accessor may need adjustment depending on how the substrate exposes the policy after CUR-1331 (drift-sweep target). Update during Task 1.
+Note: the harness mounts both `authMiddleware(validator)` on HTTP
+routes AND the same validator on the WS handler — production
+consumers (portal_server, diary_server) would typically use their
+existing Firebase middleware on HTTP and a Firebase-wrapping
+`PrincipalAuthValidator` on the WS handler instead. The harness
+uses `TrustingAuthValidator` end-to-end for test simplicity.
 
 - [ ] **Step 2: No test to run yet for harness; commit and proceed**
 
@@ -4533,8 +4571,11 @@ export 'src/remote/remote_action_submitter.dart' show RemoteActionSubmitter;
 export 'src/remote/remote_view_source.dart' show RemoteViewSource;
 export 'src/remote/remote_permission_source.dart' show RemotePermissionSource;
 
-// Server
-export 'src/server/reaction_server.dart' show ReactionServer, ViewPermissionNamer;
+// Server-side adapters
+export 'src/server/reaction_handlers.dart'
+    show ReactionHandlers, ViewPermissionNamer;
+export 'src/server/auth_middleware.dart'
+    show authMiddleware, principalFromContext;
 export 'src/server/view_scope_registry.dart'
     show ViewScopeRegistry, ViewScopeBinding;
 export 'src/server/validators/trusting_auth_validator.dart'
@@ -4553,7 +4594,7 @@ Expected: no errors.
 
 ```bash
 git add reaction/lib/reaction.dart
-git commit -m "[CUR-1317] reaction barrel: export Remote* / ReactionServer / TrustingAuthValidator"
+git commit -m "[CUR-1317] reaction barrel: export Remote* / ReactionHandlers / authMiddleware / TrustingAuthValidator"
 ```
 
 ### Task 35: Update CLAUDE.md trust boundaries
@@ -4562,18 +4603,21 @@ git commit -m "[CUR-1317] reaction barrel: export Remote* / ReactionServer / Tru
 
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Add the ReactionServer validator as a new enumerated trust input**
+- [ ] **Step 1: Add the consumer-supplied wire-auth flow as a new enumerated trust input**
 
 Open `CLAUDE.md`, locate the "Trust boundaries" section's bullet list of currently-trusted inputs, and append a fourth bullet:
 
 ```text
-- **`PrincipalAuthValidator` mounted on `ReactionServer`.** When a
-  deployment runs the reaction reference server, the consumer-supplied
-  validator is trusted to map a wire-credential string to a `Principal`
-  correctly and to refuse invalid credentials by throwing
-  `AuthenticationDenied`. The reaction lib ships only
-  `TrustingAuthValidator` (dev/test); production deployments mount
-  their own (Firebase, Auth0, linking-code, etc.) that closes the
+- **Consumer-supplied wire-authentication flow (`PrincipalAuthValidator`
+  or equivalent middleware that populates `Principal` on the request
+  context).** When a deployment uses the `reaction` package's
+  cross-process handlers, the auth path composed into the consumer's
+  shelf pipeline — `authMiddleware(validator)` from this lib, or the
+  consumer's own Firebase / OAuth / linking-code middleware — is
+  trusted to map a wire credential to a `Principal` correctly and to
+  refuse invalid credentials. The reaction lib ships only
+  `TrustingAuthValidator` (dev/test); production deployments supply
+  their own validator or middleware that closes the
   Principal-on-faith gap for that deployment.
 ```
 
@@ -4581,7 +4625,7 @@ Open `CLAUDE.md`, locate the "Trust boundaries" section's bullet list of current
 
 ```bash
 git add CLAUDE.md
-git commit -m "[CUR-1317] CLAUDE.md: add ReactionServer validator to trust boundary enumeration"
+git commit -m "[CUR-1317] CLAUDE.md: add wire-auth flow to trust boundary enumeration"
 ```
 
 ### Task 36: Update roadmap doc
@@ -4595,7 +4639,7 @@ git commit -m "[CUR-1317] CLAUDE.md: add ReactionServer validator to trust bound
 Open the roadmap, locate the "Plan B-local — `reaction` package in-process core" section, and add a new section immediately after:
 
 ```text
-## Plan B-remote+C — `reaction` cross-process wire + reference server
+## Plan B-remote+C — `reaction` cross-process wire + server-side handlers
 
 **Status:** Design draft committed (`spec/reaction-remote.md`); impl
 gated on CUR-1331 impl landing.
@@ -4612,9 +4656,13 @@ present.
 - Client-side `Remote*` impls (RemoteAuthSession,
   RemoteActionSubmitter, RemoteViewSource, RemotePermissionSource)
   composed under `RemoteScope`.
-- Shelf-based reference server `ReactionServer` with auth middleware,
-  per-route handlers, WS subscription handler, and per-connection write
-  serialization.
+- Server-side shelf-compatible adapters: `ReactionHandlers` config
+  bundle exposing four request handlers (`.me`, `.actions`,
+  `.permissions`, `.subscriptions`); optional `authMiddleware` and
+  `principalFromContext` for deployments without their own auth
+  flow; per-connection write serialization for WS ordering. No
+  `ReactionServer` class — consumers compose handlers into their
+  existing shelf pipelines.
 - Two-tier per-subscription authorization (Approach B): view-level
   deny + row-level narrowing via containment-projection expansion.
 - `TrustingAuthValidator` reference impl (dev/test only).

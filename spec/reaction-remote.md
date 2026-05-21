@@ -51,9 +51,9 @@ In scope:
   envelope shapes, close-frame semantics, reconnect strategy.
 - Client-side composition: `RemoteScope`, shared `RemoteConnection`,
   per-impl lifecycle for the four `Remote*` classes.
-- Server-side composition: `ReactionServer`, auth middleware, WS
-  upgrade handler, per-subscription authorization mechanism,
-  per-connection write serialization, custom-route registration.
+- Server-side composition: `ReactionHandlers` config bundle,
+  optional `authMiddleware`, WS upgrade handler, per-subscription
+  authorization mechanism, per-connection write serialization.
 - Reference auth validator (`TrustingAuthValidator`) for dev/test.
 - Testing strategy across codec, server-unit, and end-to-end layers.
 
@@ -148,23 +148,37 @@ reaction/lib/src/
     remote_connection.dart         Shared WS lifecycle, lazy connect,
                                    close on last unsubscribe + 30s grace
     remote_scope.dart              Composition class
-  server/          (NEW; shelf-based reference server)
-    reaction_server.dart           Top-level; mounts routes, holds
-                                   validator, owns per-conn state
-    auth_middleware.dart           Bearer header -> Principal
-    action_route.dart              POST /actions
-    me_route.dart                  GET /me
-    permission_route.dart          GET /permissions/snapshot
-    subscription_handler.dart      WS upgrade; per-sub authz; relay
+  server/          (NEW; shelf-compatible handlers, no "server" class)
+    reaction_handlers.dart         ReactionHandlers config bundle;
+                                   exposes .me / .actions /
+                                   .permissions / .subscriptions
+                                   as shelf.Handlers
+    auth_middleware.dart           Optional authMiddleware(validator)
+                                   + principalFromContext(req) helper
+    action_handler.dart            POST /actions handler factory
+    me_handler.dart                GET /me handler factory
+    permission_handler.dart        GET /permissions/snapshot factory
+    subscription_handler.dart      WS upgrade; per-conn state; relay
     validators/
       trusting_auth_validator.dart Dev/test only
 ```
+
+There is intentionally no `ReactionServer` class. Existing consumers
+(`hht_diary`'s `portal_server`, `diary_server`) already run their own
+`shelf` + `shelf_router` pipelines with deployment-specific
+middleware (Firebase auth, OpenTelemetry, CORS, request logging);
+they compose `reaction`'s handlers into their existing routers
+directly. The "server" is whatever consumer-owned shelf app the
+handlers are mounted into; `reaction` itself never calls
+`shelf_io.serve` and never owns an `HttpServer`. See
+"Decisions and alternatives rejected" for the full rationale.
 
 The top-level `reaction.dart` barrel grows exports for:
 
 - `RemoteScope`, `RemoteAuthSession`, `RemoteActionSubmitter`,
   `RemoteViewSource`, `RemotePermissionSource`.
-- `ReactionServer`.
+- `ReactionHandlers` (the config bundle).
+- `authMiddleware`, `principalFromContext` (optional auth helpers).
 - `TrustingAuthValidator`.
 
 Wire types stay package-private (not exported from `reaction.dart`).
@@ -457,78 +471,122 @@ subscription cancelled.
 5. After `dispose()`, calling anything on the scope or its impls
    throws `StateError`.
 
-## Section 4 — Server lifecycle
+## Section 4 — Server-side composition
 
-### `ReactionServer` (composition class)
+### `ReactionHandlers` (config bundle)
+
+There is no `ReactionServer` class. The lib exposes a config bundle
+that holds the four substrate handles + the view-scope registry and
+surfaces one shelf `Handler` per route:
 
 ```dart
-final server = ReactionServer(
-  eventStore: store,            // already-opened substrate
-  dispatcher: dispatcher,       // already-constructed ActionDispatcher
-  validator: TrustingAuthValidator(
-    defaultActiveRole: 'install',
-  ),
+final reaction = ReactionHandlers(
+  eventStore: store,           // already-opened substrate
+  dispatcher: dispatcher,      // already-constructed ActionDispatcher
+  policy: policy,              // AuthorizationPolicy
+  viewScopeRegistry: viewScopes,
   // Optional:
-  permissionViewName: 'role_permission_grants',
-  viewPermissionNamer: ReactionServer.defaultViewPermissionNamer,
+  viewPermissionNamer: ReactionHandlers.defaultViewPermissionNamer,
 );
 
-// Mount on shelf:
-final handler = server.handler;
-final httpServer = await shelf_io.serve(handler, 'localhost', 8080);
+// `reaction.me` / `.actions` / `.permissions` / `.subscriptions`
+// are shelf.Handlers. The consumer composes them into THEIR router
+// however they like:
+final router = Router()
+  // Consumer's custom routes:
+  ..get('/api/v1/sponsor/config', sponsorConfigHandler)
+  ..post('/api/v1/auth/login',    loginHandler)         // pre-auth
+  // Reaction handlers, mounted wherever the consumer chooses:
+  ..get('/api/v1/portal/me',                   reaction.me)
+  ..post('/api/v1/portal/actions',             reaction.actions)
+  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
+  ..get('/api/v1/portal/subscriptions',        reaction.subscriptions);
 
-// Custom routes (resolves PRD Open Q4):
-server.router.get('/login', loginHandler);
-server.router.post('/linking-code/redeem', redeemHandler);
-// Custom routes bypass reaction's auth middleware; consumer owns
-// their semantics (login is by definition pre-auth).
+final pipeline = const Pipeline()
+    .addMiddleware(existingFirebaseAuthMiddleware) // consumer-supplied
+    .addHandler(router.call);
 
-// On shutdown:
-await server.dispose();
+await shelf_io.serve(pipeline, '0.0.0.0', 8080);
 ```
 
-**Resolving PRD Open Q4 (custom-route registration):** exposing the
-`Router` directly is simpler than `addCustomRoute(...)`, gives the
-consumer full shelf semantics (middleware, sub-routers, request
-introspection), and matches how `shelf_router` is typically used.
-The wrapper API surface stays small.
+`ReactionHandlers` does not call `shelf_io.serve`, does not own an
+`HttpServer`, does not own an `EventStore` or `ActionDispatcher` or
+`AuthorizationPolicy`. Those stay consumer-owned. It bundles the
+four substrate handles so each handler factory closure doesn't have
+to take them individually; beyond that, it imposes no structure on
+the consumer's app shape.
 
-The `viewPermissionNamer` parameter maps a viewName to the required
+The `viewPermissionNamer` parameter maps a `viewName` to the required
 view-level permission name. Default:
 `(viewName) => 'view:$viewName'`. Override per-deployment to relax
 particular views (e.g., make `notes_today` require no view-level
-perm — pure row-level scoping) or remap names.
+permission — pure row-level scoping) or remap names.
 
-### Route table
+### Canonical route table
+
+The lib does not enforce paths — consumers mount the handlers
+wherever they like. The canonical paths the design assumes (and the
+Remote* impls' URL templates use) are:
 
 ```text
-GET   /healthz              -> 'ok' (no auth)
+GET   /healthz              -> consumer-supplied; recommended
 GET   /me                   -> JSON Principal (auth required)
 POST  /actions              -> dispatch + JSON DispatchResult (auth)
 GET   /permissions/snapshot -> JSON EffectiveAuthorization (auth)
 GET   /subscriptions        -> WS upgrade (auth via first WS msg)
 ```
 
-Plus any custom routes registered on `server.router`.
+Consumers that mount under a path prefix (e.g.,
+`/api/v1/portal/...`) configure the `Remote*` impls' `baseUrl`
+parameter accordingly. There is no `/healthz` handler in
+`ReactionHandlers` — the consumer's existing healthz route serves
+that purpose. The lib does not impose one.
 
-### Auth middleware (HTTP path)
+### Auth: composing with consumer middleware
+
+The reaction handlers read the active `Principal` from the shelf
+request context via `principalFromContext(req)`. Two ways the
+context gets populated:
+
+1. **Consumer-supplied auth middleware already attaches `Principal`.**
+   Portal_server's existing Firebase middleware extracts and verifies
+   the Firebase ID token, looks up the user, and attaches a
+   `Principal` to the request context. Reaction's handlers read that
+   `Principal` directly. No `reaction`-supplied middleware is needed.
+
+2. **Mount `reaction`'s `authMiddleware(validator)` on routes the
+   consumer is authenticating itself.** For deployments without an
+   existing auth flow (dev, demo, embedded test), the lib's
+   `authMiddleware(PrincipalAuthValidator)` reads
+   `Authorization: Bearer <credential>`, calls
+   `validator.authenticate`, and attaches the resulting `Principal`.
+
+Either path produces the same result from the handlers' point of
+view: `principalFromContext(req)` returns a non-null `Principal` on
+authenticated requests. If neither has run, the handler returns 401.
 
 ```text
-1. Read Authorization: Bearer <credential> header.
-2. If missing -> 401.
-3. Invoke validator.authenticate(credential).
-   - Principal returned -> attach to Request context; proceed.
-   - AuthenticationDenied -> 401 (opaque body).
-   - Other exception -> 500 (log internally; opaque to wire).
-```
+authMiddleware(PrincipalAuthValidator) shelf.Middleware:
+  1. Read Authorization: Bearer <credential> header.
+  2. If missing -> 401.
+  3. Invoke validator.authenticate(credential).
+     - Principal returned -> attach to context; proceed.
+     - AuthenticationDenied -> 401 (opaque body).
+     - Other exception -> 500 (log internally; opaque to wire).
 
-Mounted on every route except `/healthz`, `/subscriptions`, and
-consumer-registered custom routes.
+principalFromContext(Request) -> Principal?:
+  Reads the same key authMiddleware writes. Consumer-supplied
+  middleware that wants to interoperate writes to the same key.
+```
 
 ### WebSocket upgrade handler
 
 The `/subscriptions` route accepts the HTTP upgrade then runs a
-per-connection state machine:
+per-connection state machine. The WS handshake's first message
+carries the auth credential (browsers cannot set custom headers on
+the WebSocket upgrade, so first-message auth is the only uniform
+shape across Flutter native and Flutter web). The handler depends
+on the supplied `PrincipalAuthValidator` to interpret it.
 
 ```text
 On upgrade:
@@ -536,28 +594,36 @@ On upgrade:
   Spawn message loop.
 
 On message in AWAITING_AUTH:
-  if msg.type != 'auth' -> close 4001
+  if msg.type != 'auth' -> close 4001 auth_rejected
   Invoke validator.authenticate(msg.credential).
   On Principal:
     state = AUTHENTICATED
+    principal = result
     Send {type: auth_ok, principalId: P.id}
-    Open per-Principal EffectiveAuthorization subscription (so view-
-    level authz checks have fresh data without re-querying).
   On AuthenticationDenied:
     close 4001 auth_rejected
 
 On message in AUTHENTICATED:
   switch msg.type:
-    'subscribe'   -> run per-sub authorization (see below)
+    'subscribe'   -> run per-sub authorization (see below);
+                     each authorization decision is a fresh
+                     call into policy.isPermitted /
+                     effectivePermissionsFor against the substrate
+                     (no per-Principal state cached on the
+                     connection — see Decisions section)
     'unsubscribe' -> look up by id; cancel substrate sub; remove
                      from registry
     default       -> send {type: error, code: protocol_error, ...}
 
 On disconnect:
-  Cancel all substrate subs for this connection.
-  Cancel the per-Principal EffectiveAuthorization subscription.
+  Cancel every substrate sub registered against this connection.
   Release connection state.
 ```
+
+The only per-connection state is `{principal, Map<subscriptionId,
+StreamSubscription>}` — no permission projection mirror is
+maintained server-side. See the "Why no per-Principal permission
+cache" entry in the Decisions section for the rationale.
 
 ### Per-subscription authorization (Approach B, aligned to CUR-1331)
 
@@ -655,14 +721,14 @@ On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
 ```
 
 **New configuration surface introduced here: `viewScopeRegistry`.**
-The reaction server needs a `viewName -> ScopeClass` mapping for the
-row-level narrowing step. This is composition-time data the
+The reaction handlers need a `viewName -> ScopeClass` mapping for
+the row-level narrowing step. This is composition-time data the
 consumer supplies alongside `viewPermissionNamer`; the lib does NOT
 bake in a default beyond "no view-scope, no narrowing." Concrete
 shape lands in the impl ticket; provisional sketch:
 
 ```text
-ReactionServer(
+ReactionHandlers(
   ...,
   viewScopeRegistry: ViewScopeRegistry()
     ..register(
@@ -712,24 +778,36 @@ atomicity end-to-end).
 
 ### Disposal
 
-`server.dispose()`:
+There is no `ReactionHandlers.dispose()` — the bundle holds no
+lifecycle-owning resources beyond closures over the substrate handles
+the consumer already owns. Per-connection cleanup (cancelling every
+substrate subscription registered against a closing WS) happens
+automatically when the WS channel's stream closes; the
+`subscription_handler` registers an `onDone` listener for exactly
+that purpose.
 
-1. Stops `shelf_io` from accepting new connections.
-2. For every open WS: close-frame `4002 server_shutting_down`,
-   cancel all substrate subs for that connection.
-3. Drain in-flight HTTP responses.
-4. Substrate cleanup (`eventStore.close()` etc.) remains the
-   consumer's responsibility; the server does not own the substrate.
+Graceful shutdown of the consumer's HTTP server is the consumer's
+concern; once `shelf_io`'s `HttpServer` stops accepting connections,
+open WS connections close, their `onDone` fires, and substrate
+subscriptions cancel. Substrate cleanup (`eventStore.close()` etc.)
+remains the consumer's responsibility — same as in the integrated
+case.
 
-### What `ReactionServer` does NOT do
+### What `ReactionHandlers` does NOT do
 
 - Does not open or close the `EventStore` (consumer-owned).
 - Does not construct the `ActionDispatcher` (consumer calls
-  `dispatcher.dispatch`; the server just routes to it).
-- Does not embed a default validator — `validator` is a required
-  constructor parameter.
-- Does not provide a CLI entry-point or `main()` — the consumer
-  composes shelf hosting in their own binary.
+  `dispatcher.dispatch`; the handlers just route to it).
+- Does not own an `HttpServer` or call `shelf_io.serve` —
+  the consumer composes their own shelf pipeline.
+- Does not impose paths — the canonical paths the design uses are
+  recommendations; the consumer mounts handlers wherever they like
+  and configures the `Remote*` impls' `baseUrl` accordingly.
+- Does not mandate a `PrincipalAuthValidator` — for deployments
+  whose existing auth middleware already populates `Principal` on
+  the request context (e.g., portal_server's Firebase middleware),
+  `authMiddleware(validator)` is not mounted at all and no validator
+  is required.
 
 ## Section 5 — Testing strategy
 
@@ -738,12 +816,14 @@ atomicity end-to-end).
 ```text
 +-------------------------------------+
 |  E2E roundtrip tests        ~25     |
-|  (full RemoteScope <-> ReactionServer
-|   with in-memory substrate)         |
+|  (full RemoteScope <-> handlers     |
+|   mounted on shelf, in-memory       |
+|   substrate)                        |
 +-------------------------------------+
 |  Server-side unit tests     ~30     |
-|  (ReactionServer + shelf,           |
-|   minimal HTTP/WS client per case)  |
+|  (individual handler factories      |
+|   exercised against stub dispatcher |
+|   / stub policy, no shelf required) |
 +-------------------------------------+
 |  Codec round-trip tests     ~40     |
 |  (pure; one per envelope type +     |
@@ -760,9 +840,13 @@ Sibling to the existing `ReactionTestHarness`. Composes:
    `notes_today` projection, `SayHelloAction`. Reuses
    `ReactionTestHarness` fixture data.
 2. `ActionDispatcher`.
-3. `ReactionServer` with `TrustingAuthValidator`.
-4. `shelf_io` bound to ephemeral port (port=0); records the port.
-5. `RemoteScope` against `http://localhost:<port>`.
+3. `ReactionHandlers` over the substrate handles.
+4. A `Router` composing `authMiddleware(TrustingAuthValidator(...))`
+   over the four reaction handlers — the same shape a consumer would
+   use in production but with the dev/test validator instead of
+   their production one.
+5. `shelf_io` bound to ephemeral port (port=0); records the port.
+6. `RemoteScope` against `http://localhost:<port>`.
 
 Tests interact with `harness.scope.authSession` etc. exactly as
 production code would. The shelf server is real (not mocked); the
@@ -872,20 +956,23 @@ trust input that CLAUDE.md's "Trust boundaries" section should
 record alongside `StorageBackend`, `Destination`, and the
 Principal-on-faith gap:
 
-- **`PrincipalAuthValidator` implementation mounted on
-  `ReactionServer`.** Pluggable interface registered at server-boot
-  time. Trusted to map a wire-credential string to a `Principal`
-  correctly; trusted to refuse invalid credentials by throwing
-  `AuthenticationDenied`. The reaction lib ships only
-  `TrustingAuthValidator` (dev/test); production deployments mount
-  their own validator that closes the Principal-on-faith gap for
-  that deployment.
+- **`PrincipalAuthValidator` (or equivalent consumer middleware)
+  that populates `Principal` on the request context.** Whatever
+  authentication path is composed into the consumer's shelf
+  pipeline — `authMiddleware(validator)` from this lib, or the
+  consumer's own Firebase / OAuth / linking-code middleware — is
+  trusted to map a wire credential to a `Principal` correctly and
+  to refuse invalid credentials. The reaction lib ships only
+  `TrustingAuthValidator` (dev/test); production deployments
+  supply their own validator or their own middleware that closes
+  the Principal-on-faith gap for that deployment.
 
 From the substrate's POV (the four `lib/` packages in this repo),
 nothing changes — the substrate still sees `Principal` values it
-trusts. The reaction server is what closes the gap *externally*,
-inside a single deployment. A different deployment with a different
-validator gets different trust semantics.
+trusts. The consumer's auth middleware (whether from this lib or
+not) is what closes the gap *externally*, inside a single
+deployment. A different deployment with different middleware gets
+different trust semantics.
 
 Adding this to CLAUDE.md is a follow-up action; the trust-boundary
 enumeration is the right place.
@@ -929,11 +1016,48 @@ through containment projections drive row-level narrowing). C
 timing/count side-channels and violates substrate-shaped filter
 composition.
 
-**Why expose `server.router` directly rather than
-`addCustomRoute(...)`?** Simpler; matches how `shelf_router` is
-typically used; gives consumers full shelf semantics (middleware,
-sub-routers, request introspection); keeps the wrapper API surface
-small. Resolves PRD Open Q4.
+**Why no `ReactionServer` class? Why ship handlers + middleware
+directly?** The expected first consumers — `portal_server` and
+`diary_server` in `hht_diary` — already run their own
+`shelf` + `shelf_router` pipelines with deployment-specific
+middleware (Firebase auth, OpenTelemetry, CORS, logging). Forcing
+them to mount a `ReactionServer.handler` would either (a) put the
+reaction routes in an awkward nested subtree separate from their
+other routes, or (b) reduce `ReactionServer` to a property bag for
+extracting individual handlers — which is what `ReactionHandlers`
+just is, more honestly. The collapse-not-add migration story
+(the consumers' existing 30+ bespoke REST handlers shrink to ~5
+reaction handlers plus a few stragglers) makes the "framework
+wrapper" approach actively unhelpful: the consumer wants the
+reaction handlers *interleaved* with their own remaining routes,
+not segregated under a different mount point. Resolves what was
+previously called PRD Open Q4 (custom-route registration) by
+making the question moot — every route is a custom route from
+the consumer's perspective; the lib just supplies the four that
+implement the wire.
+
+**Why no per-Principal permission cache on the WS connection?**
+An earlier draft of this design opened a per-Principal
+`EffectiveAuthorization` subscription on `auth_ok` to keep a fresh
+in-memory copy of the Principal's permissions for fast lookup on
+each `subscribe` message — effectively a server-side cache mirroring
+the substrate's permission projection. Rejected for v1: (a)
+`policy.isPermitted` and `policy.effectivePermissionsFor` against
+`findViewRowsInTxn` are sub-millisecond for the row counts in
+question, and `subscribe` messages are not high-frequency (a portal
+user opens a handful of panels per session, not thousands), so the
+optimization has no measurable benefit; (b) the cache would
+introduce per-connection state (cache mirror + substrate
+subscription managing it) that has to be cleaned up on disconnect
+and managed against race conditions when grants change
+mid-decision; (c) the cache infrastructure is exactly what would
+be needed for **reactive re-narrowing** of active subscriptions
+on permission change, which is explicitly deferred (Open Q1)
+to a CUR-1331 impl follow-up. Building the cache without that
+follow-up benefit is dead weight. Each `subscribe` message thus
+calls into `policy.isPermitted` / `effectivePermissionsFor`
+fresh; the only per-connection state is the active `Principal`
+and the `Map<subscriptionId, StreamSubscription>` registry.
 
 **Why first-message WS auth instead of upgrade-header auth?**
 Flutter web's `WebSocket` constructor cannot set custom headers on
@@ -1014,8 +1138,10 @@ Explicitly out of scope for this plan but anticipated:
   scale demands it. Wire shape: `{"type":"snapshot_batch", ...}` or
   similar; details when implemented.
 - **Server-side metrics + observability hooks.** Connection counts,
-  subscription counts, message rates, errors. Probably a
-  `ReactionServer.metrics` getter feeding a consumer-supplied sink.
+  subscription counts, message rates, errors. Probably exposed by
+  `ReactionHandlers` as a `metrics` getter feeding a consumer-supplied
+  sink (or per-handler counters that the consumer's existing
+  OpenTelemetry middleware can pick up).
 - **`JwtAuthValidator` reference impl in a sibling lib.** If
   multiple consumers converge on the same JWT shape (e.g., a
   `reaction_firebase_auth` package), a concrete validator could ship
