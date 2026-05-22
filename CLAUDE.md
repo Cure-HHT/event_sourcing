@@ -213,8 +213,24 @@ The currently-trusted inputs are:
   authentication flow (no `authentication_attempted` event type)
   and no outbound `AuthenticationProvider` pluggable interface, so
   identity claims live entirely outside the closed-under-events
-  guarantee. Closing this gap is future work; not in scope for
-  Phase I.
+  guarantee. The fourth bullet below is the wire-side closure of
+  this gap for cross-process deployments (the `reaction` package
+  composes a consumer-supplied validator into its shelf pipeline);
+  in-process deployments still bear the Principal-on-faith trust
+  input. Full substrate-level closure (an
+  `AuthenticationProvider` pluggable interface that participates
+  in the closed-under-events guarantee) remains future work.
+- **Consumer-supplied wire-authentication flow (`PrincipalAuthValidator`
+  or equivalent middleware that populates `Principal` on the request
+  context).** When a deployment uses the `reaction` package's
+  cross-process handlers, the auth path composed into the consumer's
+  shelf pipeline — `authMiddleware(validator)` from this lib, or the
+  consumer's own Firebase / OAuth / linking-code middleware — is
+  trusted to map a wire credential to a `Principal` correctly and to
+  refuse invalid credentials. The reaction lib ships only
+  `TrustingAuthValidator` (dev/test); production deployments supply
+  their own validator or middleware that closes the
+  Principal-on-faith gap for that deployment.
 
 Everything else — projection rules (`ProjectionSpec`), promoter rules
 (`PromoterSpec`), policy logic (in-lib for v1, see Architectural
