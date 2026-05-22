@@ -9,7 +9,7 @@
 /// See `spec/prd-reaction.md` (in the parent repo) for the architectural
 /// spec.
 ///
-/// ## What this package provides (Plan B-local — in-process only)
+/// ## What this package provides
 ///
 /// Five transport-agnostic interfaces:
 ///
@@ -23,7 +23,7 @@
 /// - [PermissionSource] — per-Principal view of the substrate's
 ///   `RolePermissionGrants` projection.
 /// - [PrincipalAuthValidator] — server-side credential validation seam
-///   (consumed by Plan C's reaction server module).
+///   (consumed by [ReactionHandlers] on the server side).
 ///
 /// Two state types:
 ///
@@ -33,7 +33,7 @@
 /// - [IdempotencyKeyGenerator] — UUID v4 by default
 ///   ([Uuid4IdempotencyKeyGenerator]).
 ///
-/// Four in-process Local implementations:
+/// Four in-process Local implementations (Plan B-local):
 ///
 /// - [LocalAuthSession] — holds a [Principal] directly.
 /// - [LocalActionSubmitter] — wraps `ActionDispatcher.dispatch`.
@@ -42,8 +42,37 @@
 ///   `role_permission_grants` view and reads the projection rows
 ///   directly to build [PermissionSnapshot]s for the active principal.
 ///
-/// Remote impls + wire protocol land in Plan B-remote; the pure-Dart
-/// shelf server lands in Plan C; Flutter widgets land in Plan D.
+/// Four cross-process Remote implementations + a connection scope
+/// (Plan B-remote), wiring the same four interfaces over HTTP +
+/// WebSocket against a [ReactionHandlers]-hosted server:
+///
+/// - [RemoteScope] — per-connection composition root that owns the
+///   shared HTTP client + multiplexed WS connection.
+/// - [RemoteAuthSession], [RemoteActionSubmitter], [RemoteViewSource],
+///   [RemotePermissionSource] — the four interfaces wired to that
+///   scope.
+///
+/// Server-side adapters (Plan C) for hosting the wire protocol from
+/// any shelf pipeline:
+///
+/// - [ReactionHandlers] — composition bundle exposing `me` /
+///   `actions` / `permissions` / `subscriptions` shelf handlers
+///   against a substrate (`EventStore` + `ActionDispatcher` +
+///   `AuthorizationPolicy`). Optional [ViewPermissionNamer] customizes
+///   the view-level authorization name.
+/// - [authMiddleware] + [principalFromContext] — bearer-token auth
+///   middleware backed by any [PrincipalAuthValidator].
+/// - [ViewScopeRegistry] / [ViewScopeBinding] — declarative bindings
+///   from `(viewName, filter)` to a row-level [Permission] namer.
+/// - [WsConnectionRegistry] — book-keeping for live WS connections so
+///   the server can force-logout principals on credential revocation.
+/// - [TrustingAuthValidator] — test-only `PrincipalAuthValidator`
+///   that accepts any bearer token and surfaces the requested role.
+///   Production deployments supply their own validator (Firebase,
+///   Auth0, JWT, etc.).
+///
+/// Flutter widgets land in Plan D (separate `reaction_widgets`
+/// package).
 library;
 
 // Interfaces
@@ -67,3 +96,24 @@ export 'src/local/local_action_submitter.dart' show LocalActionSubmitter;
 export 'src/local/local_auth_session.dart' show LocalAuthSession;
 export 'src/local/local_permission_source.dart' show LocalPermissionSource;
 export 'src/local/local_view_source.dart' show LocalViewSource;
+
+// Remote impls
+export 'src/remote/remote_action_submitter.dart' show RemoteActionSubmitter;
+export 'src/remote/remote_auth_session.dart' show RemoteAuthSession;
+export 'src/remote/remote_permission_source.dart' show RemotePermissionSource;
+export 'src/remote/remote_scope.dart' show RemoteScope;
+export 'src/remote/remote_view_source.dart' show RemoteViewSource;
+
+// Server-side adapters
+export 'src/server/auth_middleware.dart'
+    show authMiddleware, principalFromContext;
+export 'src/server/reaction_handlers.dart'
+    show ReactionHandlers, ViewPermissionNamer;
+export 'src/server/validators/trusting_auth_validator.dart'
+    show TrustingAuthValidator;
+export 'src/server/view_scope_registry.dart'
+    show ViewScopeBinding, ViewScopeRegistry;
+export 'src/server/ws_connection_registry.dart' show WsConnectionRegistry;
+
+// AuthzWatcher is package-private; consumers interact via
+// ReactionHandlers.watchContainment(...).

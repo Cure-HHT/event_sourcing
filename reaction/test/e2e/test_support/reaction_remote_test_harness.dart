@@ -2,10 +2,7 @@
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:reaction/src/remote/remote_scope.dart';
-import 'package:reaction/src/server/auth_middleware.dart';
-import 'package:reaction/src/server/reaction_handlers.dart';
-import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
+import 'package:reaction/reaction.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';

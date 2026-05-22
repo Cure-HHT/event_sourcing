@@ -12,6 +12,13 @@ import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_web_socket/shelf_web_socket.dart';
 
+// Re-export the typedef so consumers can pass a custom namer using only
+// `package:reaction/reaction.dart` (the barrel exports
+// [ViewPermissionNamer] from this file rather than from the package-
+// private `subscription_handler.dart`).
+export 'package:reaction/src/server/subscription_handler.dart'
+    show ViewPermissionNamer;
+
 /// Composition bundle for the reaction server-side adapters.
 ///
 /// Holds the four substrate handles + the view-scope registry and
