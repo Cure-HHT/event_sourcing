@@ -895,19 +895,16 @@ the substrate.
 
 ---
 
-## Provisional: cross-process client/server deployments
+## Cross-process client/server deployments
 
-> **Status note.** This chapter describes a layer that is **designed
-> but not yet shipped in code**. The substrate itself is complete and
-> works exactly as the rest of this guide describes. The
-> client/server layer — a sibling package called `reaction` — has its
-> in-process `Local*` half shipped (already used by the substrate's
-> demos) and its cross-process `Remote*`-plus-server half specified in
-> `spec/reaction-remote.md`, with an implementation plan in
-> `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md`. Names,
-> shapes, and details may shift between now and the impl landing on
-> `main`. Treat this chapter as a design walkthrough; trust the
-> design-doc paths above for the latest.
+> **Status note.** Both halves of the `reaction` package have now
+> shipped: the in-process `Local*` impls (used by the substrate's
+> demos) and the cross-process `Remote*`-plus-server half. The
+> normative spec lives at `spec/reaction-remote.md`; the
+> implementation lives under `reaction/lib/src/remote/` and
+> `reaction/lib/src/server/`, exercised by the package's unit and
+> end-to-end test suites. Names and shapes match this chapter as
+> shipped on `main`.
 
 Everything covered so far assumes one process. The Flutter app you
 build runs the substrate directly: it opens an `EventStore`, holds the
@@ -1259,30 +1256,29 @@ reacts to permission events.
 If you're building toward a cross-process deployment, the canonical
 references are:
 
-- `spec/reaction-remote.md` — the design spec for the wire layer.
+- `spec/reaction-remote.md` — the normative spec for the wire layer.
   Pins the protocol envelope shapes, the connection lifecycle, the
   per-subscription authorization mechanism, and the trust-boundary
-  expansion. Read this before the impl plan.
-- `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
-  task-by-task implementation plan, gated on CUR-1331 (the
-  scope-aware permissions impl this chapter's authz mechanism
-  consults). Tells you what's getting built, in what order, with what
-  tests.
+  expansion.
 - `spec/prd-reaction.md` — the PRD-level requirements for `reaction`'s
   four interfaces, the wire transport, and the future Flutter widget
   layer (`reaction_widgets`, also out of scope for this chapter).
-- `reaction/lib/src/local/` — the already-shipped `Local*` impls of
-  the four interfaces. Read these to understand how the substrate-
-  agnostic seam composes against the in-process substrate — the
-  `Remote*` impls are mirror images of these, just with HTTP/WS
-  instead of direct method calls.
+- `reaction/lib/src/local/` — the `Local*` impls of the four
+  interfaces. Read these to understand how the substrate-agnostic seam
+  composes against the in-process substrate.
+- `reaction/lib/src/remote/` and `reaction/lib/src/server/` — the
+  `Remote*`-plus-server half. Mirror images of the `Local*` impls,
+  just with HTTP/WS instead of direct method calls.
+- `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
+  historical task-by-task implementation plan; preserved as a record
+  of how the work was structured and what was built in what order.
 
-Until the impl lands, the only working `reaction` code is the local
-half. The substrate's two demos
-(`event_sourcing/example_action_permissions/` and
-`event_sourcing/example/`) exercise it in-process. The cross-process
-half exists on paper; this chapter will lose its provisional marker
-when the code does too.
+Both halves of `reaction` are shipped and tested. The substrate's
+two demos (`event_sourcing/example_action_permissions/` and
+`event_sourcing/example/`) exercise the in-process `Local*` impls;
+the cross-process `Remote*`-plus-server half is exercised by
+`reaction/test/` (unit tests under `test/remote/` and `test/server/`,
+end-to-end tests under `test/e2e/`).
 
 ---
 
