@@ -85,9 +85,20 @@ class _HomeScreenState extends State<HomeScreen> {
           rawInput: <String, Object?>{'title': title},
         ),
       );
-      if (mounted) {
-        setState(() => _flash = 'submit_note → ${result.runtimeType}');
-      }
+      final message = switch (result) {
+        DispatchSuccess<Object?>() => 'Note submitted.',
+        DispatchAuthorizationDenied<Object?>(:final permission) =>
+          'Denied: $permission',
+        DispatchValidationDenied<Object?>(:final error) => 'Invalid: $error',
+        DispatchParseDenied<Object?>(:final error) => 'Invalid: $error',
+        DispatchUnknownAction<Object?>(:final requestedName) =>
+          'Unknown action: $requestedName',
+        DispatchIdempotencyHit<Object?>() =>
+          'Already submitted (idempotency cache hit).',
+        DispatchExecutionFailed<Object?>(:final error) =>
+          'Execution failed: $error',
+      };
+      if (mounted) setState(() => _flash = message);
     } on TransportException catch (e) {
       if (mounted) setState(() => _flash = 'transport: ${e.message}');
     }
@@ -95,20 +106,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _revokeMyRole() async {
     final principal = widget.scope.authSession.principal;
-    if (principal is! UserPrincipal) return;
+    if (principal is! UserPrincipal) {
+      if (mounted) setState(() => _flash = 'Not signed in as a user.');
+      return;
+    }
     // Out-of-band admin endpoint — bypasses the action pipeline so the
     // revocation isn't gated by the user's own permissions.
     final url = widget.baseUrl.replace(
       path: '/admin/revoke',
       queryParameters: <String, String>{'user': principal.userId},
     );
+    final client = http.Client();
     try {
-      await http.post(url);
+      await client.post(url);
       if (mounted) {
         setState(() => _flash = 'revoke requested for ${principal.userId}');
       }
     } catch (e) {
       if (mounted) setState(() => _flash = 'revoke failed: $e');
+    } finally {
+      client.close();
     }
   }
 
@@ -185,13 +202,11 @@ class _NotesAccumulator extends ChangeNotifier {
 
   void apply(Update<Note> update) {
     switch (update) {
-      case Snapshot<Note>(:final value) when value != null:
-        _byId[value.id] = value;
-        notifyListeners();
-      case Snapshot<Note>():
+      case Snapshot<Note>(:final value):
         // value == null is unusual but possible (e.g. tombstoned row in
-        // replay). Nothing to add.
-        break;
+        // replay). Nothing to add in that case.
+        if (value != null) _byId[value.id] = value;
+        notifyListeners();
       case EndOfReplay<Note>():
         _replayComplete = true;
         notifyListeners();

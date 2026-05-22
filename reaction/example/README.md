@@ -60,6 +60,8 @@ The server binds `127.0.0.1:8080` by default. Override with
 ```sh
 cd reaction/example
 flutter create .          # first time only, to scaffold linux/ etc.
+                          # (creates linux/, android/, web/, ...; only linux/
+                          # is needed for the demo — delete the rest if you like)
 flutter run -d linux -t lib/client/main.dart
 ```
 
