@@ -43,7 +43,7 @@ export 'package:reaction/src/server/subscription_handler.dart'
 /// // reads the Bearer header and attaches a Principal to the request
 /// // context). The WS upgrade path (`/subscriptions`) is NOT —
 /// // credentials arrive in-band via the first WS AuthMsg (see
-/// // [subscriptionsWithValidator]) because Flutter web cannot attach
+/// // [subscriptions]) because Flutter web cannot attach
 /// // an Authorization header during a WS upgrade. Mounting the WS
 /// // route behind HTTP-bearer middleware would reject every upgrade
 /// // with HTTP 401.
@@ -58,7 +58,7 @@ export 'package:reaction/src/server/subscription_handler.dart'
 ///
 /// final topRouter = Router()
 ///   ..get('/api/v1/portal/subscriptions',
-///         reaction.subscriptionsWithValidator(validator))
+///         reaction.subscriptions(validator))
 ///   ..mount('/', httpPipeline);
 ///
 /// await shelf_io.serve(topRouter.call, '0.0.0.0', 8080);
@@ -123,7 +123,7 @@ class ReactionHandlers {
   /// from Flutter web — credentials arrive in the first WS message.
   /// Consumers typically wrap the same auth logic used in their HTTP
   /// auth middleware in a `PrincipalAuthValidator` and pass it here.
-  Handler subscriptionsWithValidator(PrincipalAuthValidator validator) =>
+  Handler subscriptions(PrincipalAuthValidator validator) =>
       webSocketHandler((channel, _) {
         runSubscriptionHandler(
           channel: channel,
