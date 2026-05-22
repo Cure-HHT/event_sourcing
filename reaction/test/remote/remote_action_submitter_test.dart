@@ -4,8 +4,6 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:reaction/reaction.dart';
-import 'package:reaction/src/remote/remote_action_submitter.dart';
-import 'package:reaction/src/remote/remote_auth_session.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/principal_codec.dart';
 

@@ -1,7 +1,6 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
-import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
 
 void main() {
   test('accepts non-empty credential as Principal userId', () async {
