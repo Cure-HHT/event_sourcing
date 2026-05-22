@@ -29,6 +29,20 @@ class RemoteConnection {
   final WebSocketChannel Function(Uri) wsFactory;
   final Duration _idleGrace;
 
+  /// Invoked when the WS channel closes with an auth-related close
+  /// code (4001 auth_rejected, 4003 permissions_changed). Wired by
+  /// [RemoteScope] to [RemoteAuthSession.onAuthRejected], which flips
+  /// the session to [Expired]. Other close codes (1000 normal, 1006
+  /// abnormal, 1011 server-internal-error, etc.) are treated as wire
+  /// drops, not auth changes, and do not invoke this callback.
+  ///
+  /// Implemented as a settable field rather than a constructor
+  /// parameter because [RemoteAuthSession] takes a [RemoteConnection]
+  /// at construction time, and Dart forbids referencing
+  /// `this`-instance fields inside an initializer-list closure — so
+  /// the wiring must happen post-construction in [RemoteScope]'s body.
+  void Function()? onAuthClose;
+
   String? _credential;
   bool _disposed = false;
 
@@ -145,7 +159,19 @@ class RemoteConnection {
   }
 
   void _onWsClosed() {
+    // Capture the close code BEFORE nulling _channel: the server-side
+    // AuthzWatcher signals mid-session auth-revocations via WS close
+    // frames (4001 auth_rejected on credential rejection at connect-
+    // time, 4003 permissions_changed on mid-session role_unassigned /
+    // permission_revoked), and we must route those into
+    // RemoteAuthSession.onAuthRejected so the session flips to
+    // Expired. Other close codes (1000 normal, 1006 abnormal, etc.)
+    // are wire drops, not auth changes.
+    final code = _channel?.closeCode;
     _channel = null;
+    if (code == 4001 || code == 4003) {
+      onAuthClose?.call();
+    }
     for (final ctrl in _subs.values) {
       ctrl.addError('wire_disconnected');
     }

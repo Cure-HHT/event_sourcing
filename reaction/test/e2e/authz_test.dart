@@ -2,17 +2,19 @@
 // Verifies: EVS-PRD-cross-process-event-transport/E (per-sub authz)
 // + mid-session permission-change handling (force-logout + stale_data).
 //
-// Status: this file ships test 1 expanded (view-level deny). The
-// remaining scenarios are kept as skipped scaffolds:
+// Status: ships two tests expanded today:
+//   1) view-level deny at subscribe time, and
+//   2) role_unassigned mid-subscription → server closes WS with 4003 →
+//      client RemoteAuthSession flips to Expired.
+// The remaining scenarios are kept as skipped scaffolds:
 //   - row-level scope narrowing requires CUR-1331 scoped-permission
 //     fixture wiring on the harness;
-//   - force-logout / stale_data scenarios additionally require the
-//     RemoteConnection client to surface the 4003 'permissions_changed'
-//     close-frame back to RemoteAuthSession (today
-//     RemoteConnection._onWsClosed errors all subs with
-//     'wire_disconnected' regardless of close code, and there is no
-//     auth-session callback wired through RemoteScope). Closing that
-//     gap is impl work outside Task 32; tracking as a follow-up.
+//   - permission_revoked closing-all-affected-users is identical
+//     server-side to role_unassigned (same _forceLogout path) but
+//     requires policy fixtures to seed the right (role, perm) state;
+//   - stale_data scenarios (role_assigned, permission_granted,
+//     containment) require client-side stale_data envelope handling
+//     which is not yet wired through the RemoteScope.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -72,15 +74,71 @@ void main() {
   // RemoteAuthSession.onAuthRejected, plus stale_data envelope
   // handling on the client.
 
-  test(
-    'role_unassigned mid-subscription closes WS with 4003',
-    () async {
-      // Open subscription as alice. Append role_unassigned for alice.
-      // Assert: WS closes with code 4003 within 200ms; AuthSession
-      // flips to Expired.
-    },
-    skip: 'expand with CUR-1331 fixtures + client-side 4003 close-frame wiring',
-  );
+  test('role_unassigned mid-subscription closes WS with 4003', () async {
+    final h = await ReactionRemoteTestHarness.open();
+    addTearDown(h.close);
+
+    // Seed view perm + authenticate.
+    await h.grantPermission(role: 'install', permission: 'view:notes_today');
+    h.scope.authSession.setCredential('alice');
+    await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+
+    // Open subscription and await EOR — this round-trips through the
+    // WS handler and registers alice's connection in the
+    // WsConnectionRegistry so the AuthzWatcher can find it later.
+    final stream = h.scope.viewSource.watch<Map<String, Object?>>(
+      viewName: 'notes_today',
+      mapper: (m) => m,
+    );
+    final updates = <Update<Map<String, Object?>>>[];
+    final errors = <Object>[];
+    final sub = stream.listen(updates.add, onError: errors.add);
+    // Wait for the snapshot/EOR to settle.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    // Append role_unassigned for alice. AuthzWatcher matches on
+    // aggregateType=user_role_scope + eventType=role_unassigned and
+    // closes alice's WS connection with 4003.
+    const userId = 'alice';
+    const role = 'install';
+    const scope = BoundScope(class_: 'site', value: 'A');
+    await h.substrate.eventStore.append(
+      entryType: 'user_role_scope',
+      aggregateType: 'user_role_scope',
+      aggregateId: roleAssignmentAggregateId(
+        userId: userId,
+        role: role,
+        scope: scope,
+      ),
+      eventType: 'role_unassigned',
+      data: const RoleUnassignedPayload(
+        userId: userId,
+        role: role,
+        scope: scope,
+      ).toJson(),
+      initiator: const AutomationInitiator(service: 'test'),
+    );
+
+    // Wait for the WS close-frame to arrive on the client and for the
+    // RemoteConnection.onAuthClose callback (wired in RemoteScope) to
+    // flip RemoteAuthSession to Expired.
+    await h.scope.authSession.stream
+        .firstWhere((s) => s is Expired)
+        .timeout(const Duration(seconds: 2));
+    // Pump once more so the error-out-subs loop inside _onWsClosed
+    // delivers 'wire_disconnected' onto the subscription stream
+    // (onAuthClose is fired first, then the loop runs).
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(h.scope.authSession.current, isA<Expired>());
+    // Subscription is wire-errored by the same _onWsClosed path.
+    expect(
+      errors.any((e) => e.toString().contains('wire_disconnected')),
+      isTrue,
+    );
+
+    await sub.cancel();
+  });
 
   test(
     'permission_revoked from held role closes all affected users',

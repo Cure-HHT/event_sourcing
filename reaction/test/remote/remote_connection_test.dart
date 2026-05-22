@@ -24,7 +24,10 @@ class _FakeHttpClient extends http.BaseClient {
 
 /// In-process pair of [WebSocketChannel]s for tests: anything the
 /// `clientSide` sink emits arrives on `serverSide.stream`, and vice
-/// versa.
+/// versa. The two `_MemChannel` halves share a `_CloseCodeCell`, so a
+/// `clientSide.sink.close(code, _)` on either end (or a test-driven
+/// `setClientCloseCode(code)`) becomes observable as
+/// `clientSide.closeCode` from the perspective of the side under test.
 class _Pair {
   _Pair() {
     _clientToServer = StreamController<Object?>();
@@ -32,17 +35,28 @@ class _Pair {
     serverSide = _MemChannel(
       stream: _clientToServer.stream,
       rawSink: _serverToClient.sink,
+      closeCell: _serverCloseCell,
     );
     clientSide = _MemChannel(
       stream: _serverToClient.stream,
       rawSink: _clientToServer.sink,
+      closeCell: _clientCloseCell,
     );
   }
 
   late final StreamController<Object?> _clientToServer;
   late final StreamController<Object?> _serverToClient;
-  late final WebSocketChannel serverSide;
-  late final WebSocketChannel clientSide;
+  final _CloseCodeCell _clientCloseCell = _CloseCodeCell();
+  final _CloseCodeCell _serverCloseCell = _CloseCodeCell();
+  late final _MemChannel serverSide;
+  late final _MemChannel clientSide;
+
+  /// Simulate the server-side closing the WS with a specific code,
+  /// surfacing it on `clientSide.closeCode` and ending its stream.
+  Future<void> serverCloseClient(int code) async {
+    _clientCloseCell.code = code;
+    await _serverToClient.close();
+  }
 
   Future<void> close() async {
     await _clientToServer.close();
@@ -50,15 +64,22 @@ class _Pair {
   }
 }
 
+class _CloseCodeCell {
+  int? code;
+}
+
 class _MemChannel extends StreamChannelMixin<dynamic>
     implements WebSocketChannel {
   _MemChannel({
     required Stream<Object?> stream,
     required StreamSink<Object?> rawSink,
+    required _CloseCodeCell closeCell,
   }) : _stream = stream,
+       _closeCell = closeCell,
        sink = _MemSink(rawSink);
 
   final Stream<Object?> _stream;
+  final _CloseCodeCell _closeCell;
 
   @override
   Stream<dynamic> get stream => _stream;
@@ -67,7 +88,7 @@ class _MemChannel extends StreamChannelMixin<dynamic>
   final WebSocketSink sink;
 
   @override
-  int? get closeCode => null;
+  int? get closeCode => _closeCell.code;
 
   @override
   String? get closeReason => null;
@@ -208,4 +229,74 @@ void main() {
       await conn.dispose();
     },
   );
+
+  group('_onWsClosed close-code routing', () {
+    for (final code in [4001, 4003]) {
+      test('WS close with code $code invokes onAuthClose', () async {
+        final pair = _Pair();
+        addTearDown(pair.close);
+        var authCloseCount = 0;
+        final conn =
+            RemoteConnection(
+                baseUrl: Uri.parse('http://localhost:0'),
+                httpClient: _FakeHttpClient(),
+                wsFactory: (_) => pair.clientSide,
+              )
+              ..onAuthClose = () {
+                authCloseCount++;
+              }
+              ..setCredential('alice');
+
+        // Drain server-inbound traffic so the connection's flush
+        // doesn't hang on an undrained listener.
+        pair.serverSide.stream.listen((_) {});
+
+        // Open a sub to drive _ensureConnected -> _connect, which
+        // attaches the onDone handler that fires _onWsClosed.
+        // Listen with onError to absorb the 'wire_disconnected' error
+        // that _onWsClosed forwards into every open sub controller;
+        // otherwise the error escapes as an uncaught exception.
+        conn
+            .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+            .listen((_) {}, onError: (_) {});
+        await Future<void>.delayed(Duration.zero);
+
+        // Simulate server-initiated close with the auth-related code.
+        await pair.serverCloseClient(code);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(authCloseCount, 1);
+        await conn.dispose();
+      });
+    }
+
+    test('WS close with code 1000 does NOT invoke onAuthClose', () async {
+      final pair = _Pair();
+      addTearDown(pair.close);
+      var authCloseCount = 0;
+      final conn =
+          RemoteConnection(
+              baseUrl: Uri.parse('http://localhost:0'),
+              httpClient: _FakeHttpClient(),
+              wsFactory: (_) => pair.clientSide,
+            )
+            ..onAuthClose = () {
+              authCloseCount++;
+            }
+            ..setCredential('alice');
+
+      pair.serverSide.stream.listen((_) {});
+      conn
+          .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+          .listen((_) {}, onError: (_) {});
+      await Future<void>.delayed(Duration.zero);
+
+      // Normal close (1000): not an auth-revocation signal.
+      await pair.serverCloseClient(1000);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(authCloseCount, 0);
+      await conn.dispose();
+    });
+  });
 }

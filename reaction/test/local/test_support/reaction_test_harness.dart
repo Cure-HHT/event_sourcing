@@ -70,6 +70,21 @@ class ReactionTestHarness {
           materialize: false,
         ),
       )
+      // Required so e2e/authz_test.dart can append role_assigned /
+      // role_unassigned events for the AuthzWatcher to react to. The
+      // user_role_scopes projection itself is registered below so the
+      // TableBackedAuthorizationPolicy can read scope assignments
+      // (currently the policy reads from a sembast view that exists
+      // either way — empty rows mean no scope grants, which is fine
+      // for the harness's TrustingAuthValidator-based tests).
+      ..register(
+        const EntryTypeDefinition(
+          id: 'user_role_scope',
+          registeredVersion: 1,
+          name: 'User-Role-Scope Assignment',
+          materialize: false,
+        ),
+      )
       // Required by ActionDispatcher for denial-stage audit events.
       ..register(
         const EntryTypeDefinition(

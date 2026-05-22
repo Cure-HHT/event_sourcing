@@ -21,7 +21,13 @@ class RemoteScope {
          httpClient: httpClient ?? http.Client(),
          wsFactory: wsFactory ?? IOWebSocketChannel.connect,
        ) {
+    // Wire 4001/4003 close-frame routing AFTER _connection is built
+    // and BEFORE the first WS open: the lazy connect path is driven
+    // by openSubscription(), and _auth is assigned on the next line,
+    // so the callback will resolve a non-null _auth whenever the
+    // server force-closes the WS with an auth-related code.
     _auth = RemoteAuthSession(connection: _connection);
+    _connection.onAuthClose = () => _auth.onAuthRejected();
     _submitter = RemoteActionSubmitter(
       connection: _connection,
       authSession: _auth,
