@@ -151,6 +151,102 @@ void main() {
   });
 
   test(
+    'after force-logout, re-login + submit denies via substrate membership check',
+    () async {
+      // Pins the full reaction round-trip the substrate trust-model fix
+      // (62b2bcc) was responding to: a user submits an action successfully,
+      // an admin revokes their role mid-session, the AuthzWatcher closes
+      // their WS, the user re-logs-in as the same identity, and the
+      // substrate's membership gate denies the second submit. Without this
+      // test, a regression in either the policy's user_role_scopes lookup
+      // or the AuthzWatcher's projection trigger could silently re-
+      // introduce the original bug.
+      final h = await ReactionRemoteTestHarness.open();
+      addTearDown(h.close);
+
+      // Seed install->say_hello permission + (alice, install) membership.
+      // The harness's TrustingAuthValidator surfaces any non-empty
+      // credential as activeRole='install'.
+      await h.grantPermission(role: 'install', permission: 'say_hello');
+      await h.assignRole(userId: 'alice', role: 'install');
+
+      // First login: succeeds.
+      h.scope.authSession.setCredential('alice');
+      await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+
+      // First submit: dispatch authorizes (alice holds 'install', role
+      // grants 'say_hello').
+      final firstResult = await h.scope.actionSubmitter.submit(
+        const ActionSubmission(
+          actionName: 'say_hello',
+          rawInput: {'name': 'alice'},
+        ),
+      );
+      expect(firstResult, isA<DispatchSuccess<Object?>>());
+
+      // Open a subscription so alice's WS connection is registered in the
+      // server's WsConnectionRegistry — without this the AuthzWatcher has
+      // nothing to force-close. Use the same view-permission seeded
+      // elsewhere in this file for consistency.
+      await h.grantPermission(role: 'install', permission: 'view:notes_today');
+      final stream = h.scope.viewSource.watch<Map<String, Object?>>(
+        viewName: 'notes_today',
+        mapper: (m) => m,
+      );
+      final sub = stream.listen((_) {}, onError: (_) {});
+      // Wait for snapshot/EOR to settle.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      // Revoke alice's role via the substrate, mirroring what an
+      // /admin/revoke route would do in a real app.
+      await h.substrate.eventStore.append(
+        entryType: 'user_role_scope',
+        aggregateType: 'user_role_scope',
+        aggregateId: roleAssignmentAggregateId(
+          userId: 'alice',
+          role: 'install',
+          scope: const TotalWildcardScope(),
+        ),
+        eventType: 'role_unassigned',
+        data: const RoleUnassignedPayload(
+          userId: 'alice',
+          role: 'install',
+          scope: TotalWildcardScope(),
+        ).toJson(),
+        initiator: const AutomationInitiator(service: 'test-revoke'),
+      );
+
+      // AuthzWatcher closes alice's WS; client RemoteAuthSession flips
+      // to Expired.
+      await h.scope.authSession.stream
+          .firstWhere((s) => s is Expired)
+          .timeout(const Duration(seconds: 2));
+      await sub.cancel();
+
+      // Re-login as alice. The TrustingAuthValidator still accepts the
+      // credential (the substrate's role_unassigned is invisible to it),
+      // and authSession transitions back to Authenticated.
+      h.scope.authSession.setCredential('alice');
+      await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+
+      // Second submit: the substrate's membership gate (no user_role_scopes
+      // row for (alice, install)) returns DispatchAuthorizationDenied. This
+      // is the exact path the trust-model fix wired up.
+      final secondResult = await h.scope.actionSubmitter.submit(
+        const ActionSubmission(
+          actionName: 'say_hello',
+          rawInput: {'name': 'alice after revoke'},
+        ),
+      );
+      expect(secondResult, isA<DispatchAuthorizationDenied<Object?>>());
+      expect(
+        (secondResult as DispatchAuthorizationDenied<Object?>).permission.name,
+        equals('say_hello'),
+      );
+    },
+  );
+
+  test(
     'permission_revoked from held role closes all affected users',
     () async {
       // Open subs as alice (role X) and bob (role X). Append
