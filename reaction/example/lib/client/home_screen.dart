@@ -48,7 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final stream = widget.scope.viewSource.watch<Note>(
       viewName: 'notes_today',
       mapper: (row) => Note(
-        id: row['aggregate_id']! as String,
+        id: row['aggregateId']! as String,
         title: row['title']! as String,
       ),
     );
