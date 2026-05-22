@@ -1047,22 +1047,28 @@ Cross-process, the wire fails sometimes. WebSocket connections drop
 on tab toggles, network changes, idle timeouts. HTTP requests time
 out. Tokens expire.
 
-`reaction`'s v1 baseline is the simplest correct posture: on WS drop,
-the client reconnects with exponential backoff and re-subscribes from
-scratch — server re-runs `subscribe<T>`, ships `Snapshot × N → EOR →
-Delta…` again. The widget sees a brief flash of skeleton/loading as
-the snapshot replays. The wire reserves space for a v1.1
-"resume-from-sequence" optimization that re-tails from the
-client-known sequence instead of replaying the snapshot; that's
-non-breaking and can ship later.
+`reaction`'s v1 baseline is intentionally minimal: on WS drop,
+existing subscription streams surface a `'wire_disconnected'` error
+and the next `watch<T>` call reopens the connection lazily, replaying
+`Snapshot × N → EOR → Delta…` from scratch. The widget sees a brief
+flash of skeleton/loading while the snapshot replays. Consumer code
+decides whether and when to retry — the substrate stays out of policy
+decisions about reconnect timing.
+
+The wire reserves space for two natural v1.1 follow-ups:
+exponential-backoff auto-reconnect of existing subs without requiring
+a fresh `watch<T>` call, and a "resume-from-sequence" optimization
+that re-tails from the client-known sequence instead of replaying the
+snapshot. Both are non-breaking and can ship later.
 
 Auth expiry is the parallel concern. The wire surfaces it explicitly:
-HTTP 401 from any route and a `4001 auth_rejected` close-frame on
-WebSocket both flip the `AuthSession` status to `Expired`. The UI
-distinguishes "log in again" (expired) from "log in" (never had a
-session) — useful enough that `AuthStatus` is a sealed three-variant
-type (`NotAuthenticated`, `Authenticated`, `Expired`) and consumer
-code switch-exhausts over it.
+HTTP 401 from any route and either a `4001 auth_rejected` or `4003
+permissions_changed` close-frame on WebSocket flip the `AuthSession`
+status to `Expired`. (See *What happens when permissions change
+mid-session* below for when 4003 fires.) The UI distinguishes "log in
+again" (expired) from "log in" (never had a session) — useful enough
+that `AuthStatus` is a sealed three-variant type (`NotAuthenticated`,
+`Authenticated`, `Expired`) and consumer code switch-exhausts over it.
 
 ### Four interfaces that absorb the difference
 
@@ -1122,7 +1128,7 @@ reaction/lib/src/server/
                                 .me            -> shelf.Handler
                                 .actions       -> shelf.Handler
                                 .permissions   -> shelf.Handler
-                                .subscriptions -> shelf.Handler  (WS upgrade)
+                                .subscriptions(validator) -> shelf.Handler  (WS upgrade)
 
   auth_middleware.dart        authMiddleware(PrincipalAuthValidator)
                                 -> shelf.Middleware
@@ -1141,15 +1147,29 @@ final reaction = ReactionHandlers(
   policy: policy, viewScopeRegistry: portalViewScopes,
 );
 
-final router = Router()
+// HTTP routes go behind the portal's existing auth middleware (it
+// reads the Bearer header and attaches a Principal to the request
+// context). The WS route is registered on the outer router with NO
+// middleware — the WS upgrade path cannot carry an Authorization
+// header from Flutter web; credentials arrive in the first WS
+// message and are validated by the supplied PrincipalAuthValidator.
+final httpRouter = Router()
   // The portal's existing custom routes:
   ..get('/api/v1/sponsor/config', sponsorConfigHandler)
   ..post('/api/v1/auth/login', loginHandler)         // pre-auth
-  // The reaction handlers, mounted however the portal likes:
-  ..get('/api/v1/portal/me',                  reaction.me)
-  ..post('/api/v1/portal/actions',            reaction.actions)
-  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
-  ..get('/api/v1/portal/subscriptions',       reaction.subscriptions);
+  // The reaction HTTP handlers, gated by the portal's auth middleware:
+  ..get('/api/v1/portal/me',                   reaction.me)
+  ..post('/api/v1/portal/actions',             reaction.actions)
+  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions);
+
+final httpPipeline = const Pipeline()
+    .addMiddleware(portalAuthMiddleware)
+    .addHandler(httpRouter.call);
+
+final topRouter = Router()
+  ..get('/api/v1/portal/subscriptions',
+        reaction.subscriptions(validator))
+  ..mount('/', httpPipeline);
 ```
 
 Authentication composes with whatever the consumer is already doing.
