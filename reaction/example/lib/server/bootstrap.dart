@@ -73,6 +73,12 @@ Future<BootstrapResult> bootstrap() async {
   // --- Projections ---
   final projections = ProjectionRegistry()
     ..register(rolePermissionGrantsSpec)
+    // The TableBackedAuthorizationPolicy now reads user_role_scopes to
+    // verify (userId, activeRole) membership on every authorize call
+    // (closed-under-events trust model): the Principal's activeRole
+    // claim from TrustingAuthValidator is not honoured until a
+    // `role_assigned` event is in the log for that user.
+    ..register(userRoleScopesSpec)
     ..register(notesTodayProjection);
 
   // --- Security context store ---
@@ -122,6 +128,40 @@ Future<BootstrapResult> bootstrap() async {
       data: PermissionGrantedPayload(
         role: 'editor',
         permissionName: perm,
+      ).toJson(),
+      initiator: const AutomationInitiator(service: 'reaction-example-seed'),
+    );
+  }
+
+  // --- Seed user-role-scope assignments for the demo's known users ---
+  //
+  // The substrate verifies (userId, activeRole) membership against
+  // user_role_scopes for every authorize call — without these
+  // role_assigned events, alice/bob/carol log in but every action is
+  // denied with `Denied: submit_note`. We seed a TotalWildcardScope
+  // assignment for each: it covers the demo's unscoped permissions
+  // without over-granting any scoped one (the demo has none).
+  //
+  // Trying to log in as any OTHER username (e.g. `dave`) succeeds at
+  // the auth-validator boundary (TrustingAuthValidator accepts any
+  // non-empty credential) but then the substrate refuses to honour the
+  // claimed `editor` role — every dispatch denies. That demonstrates
+  // the closed-under-events trust model: identity is auth's job, but
+  // role-membership comes from the event log.
+  for (final userId in const <String>['alice', 'bob', 'carol']) {
+    await eventStore.append(
+      entryType: 'user_role_scope',
+      aggregateType: 'user_role_scope',
+      aggregateId: roleAssignmentAggregateId(
+        userId: userId,
+        role: 'editor',
+        scope: const TotalWildcardScope(),
+      ),
+      eventType: 'role_assigned',
+      data: RoleAssignedPayload(
+        userId: userId,
+        role: 'editor',
+        scope: const TotalWildcardScope(),
       ).toJson(),
       initiator: const AutomationInitiator(service: 'reaction-example-seed'),
     );

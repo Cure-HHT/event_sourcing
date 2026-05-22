@@ -245,6 +245,68 @@ void main() {
       expect(decision, isA<Allow>());
     });
 
+    // Substrate-verified role-membership gate (closed-under-events trust
+    // model): even when the role grants the permission, an unscoped
+    // permission check must Deny if the principal holds no
+    // user_role_scopes assignment for the claimed activeRole. The
+    // Principal's `roles`/`activeRole` fields are user-supplied
+    // requests, not substrate-trusted assertions.
+    test('unscoped permission with role grant but principal holds no '
+        'user_role_scopes row for activeRole -> Deny(notGranted)', () async {
+      final h = await PolicyHarness.create(
+        // SC has the unscoped report.generate permission ...
+        grants: [const Grant(role: 'SC', perm: 'report.generate')],
+        // ... but U1 has NO user_role_scopes assignment for SC.
+        // (A different user U2 holds SC, to keep the projection
+        // non-empty and prove the where-clause is what filters U1
+        // out.)
+        assignments: [
+          const Assignment(
+            userId: 'U2',
+            role: 'SC',
+            scope: TotalWildcardScope(),
+          ),
+        ],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final decision = await h.policy.isPermitted(
+        h.user('U1', 'SC'),
+        const Permission('report.generate'),
+        null,
+      );
+      expect(
+        decision,
+        isA<Deny>().having(
+          (Deny d) => d.reason,
+          'reason',
+          DenyReason.notGranted,
+        ),
+      );
+    });
+
+    // Same gate for the effectivePermissionsFor surface: a Principal
+    // claiming an activeRole they don't hold sees empty permissions,
+    // not the role's grants leaking through the unverified claim.
+    test('effectivePermissionsFor returns empty for principal holding no '
+        'user_role_scopes row under claimed activeRole', () async {
+      final h = await PolicyHarness.create(
+        grants: [const Grant(role: 'SC', perm: 'report.generate')],
+        assignments: [
+          // U2 holds SC; U1 does not.
+          const Assignment(
+            userId: 'U2',
+            role: 'SC',
+            scope: TotalWildcardScope(),
+          ),
+        ],
+        patientToSite: const <String, String>{},
+      );
+      addTearDown(h.close);
+      final eff = await h.policy.effectivePermissionsFor(h.user('U1', 'SC'));
+      expect(eff, equals(EffectiveAuthorization.empty));
+    });
+
     test('unscoped permission without role grant -> Deny', () async {
       final h = await PolicyHarness.create(
         grants: const <Grant>[],

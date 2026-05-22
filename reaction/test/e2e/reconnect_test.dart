@@ -26,6 +26,8 @@ void main() {
     // handler's view-level authz check allows the subscribe. Mirrors
     // view_test.dart's setUp.
     await h.grantPermission(role: 'install', permission: 'view:notes_today');
+    // Substrate-verified role membership: seed alice -> install.
+    await h.assignRole(userId: 'alice', role: 'install');
     h.scope.authSession.setCredential('alice');
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
   });

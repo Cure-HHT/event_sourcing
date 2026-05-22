@@ -166,7 +166,7 @@ void main() {
     );
 
     test(
-      'admin-user (no activeSite) has no scope assignments seeded',
+      'admin-user (no activeSite) gets a TotalWildcardScope membership row',
       () async {
         final principal = Principal.user(
           userId: 'admin-user',
@@ -174,13 +174,20 @@ void main() {
           activeRole: 'Admin',
         );
         final eff = await components.policy.effectivePermissionsFor(principal);
-        // Admin gets users.provision (unscoped) and no scope assignments
-        // because admin-user has activeSite: null in users.yaml.
+        // Admin gets users.provision (unscoped). The substrate now
+        // requires every principal to hold a verified `user_role_scopes`
+        // row for their activeRole (closed-under-events trust model):
+        // the demo bootstrap therefore seeds admin-user with a
+        // TotalWildcardScope assignment, which acts as "role-membership
+        // without a site binding." This unlocks unscoped permissions
+        // (users.provision) without over-granting any scoped permission
+        // — the Admin role doesn't carry any in the demo's matrix.
         expect(
           eff.rolePermissions.map((Permission p) => p.name).toSet(),
           <String>{'users.provision'},
         );
-        expect(eff.scopeAssignments, isEmpty);
+        expect(eff.scopeAssignments, hasLength(1));
+        expect(eff.scopeAssignments.single.scope, const TotalWildcardScope());
       },
     );
   });

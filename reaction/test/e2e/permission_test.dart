@@ -23,13 +23,16 @@ void main() {
   });
 
   test('granted permissions appear in the snapshot', () async {
-    // Seed the grant after the initial setUp fetch, then bounce the
-    // credential to force a re-fetch and observe the new grant in the
-    // refreshed snapshot. Subscribe to the auth stream BEFORE
-    // setCredential(null), because that path is synchronous — a
-    // listener attached after the call will miss the NotAuthenticated
-    // transition.
+    // Seed the grant + role membership after the initial setUp fetch,
+    // then bounce the credential to force a re-fetch and observe the new
+    // grant in the refreshed snapshot. The substrate now requires a
+    // `user_role_scopes` row for (alice, install) before
+    // effectivePermissionsFor returns anything for the activeRole.
+    // Subscribe to the auth stream BEFORE setCredential(null), because
+    // that path is synchronous — a listener attached after the call
+    // will miss the NotAuthenticated transition.
     await h.grantPermission(role: 'install', permission: 'say_hello');
+    await h.assignRole(userId: 'alice', role: 'install');
     final naFuture = h.scope.authSession.stream.firstWhere(
       (s) => s is NotAuthenticated,
     );

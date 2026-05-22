@@ -98,6 +98,11 @@ class ReactionTestHarness {
     // --- Projections ---
     final projections = ProjectionRegistry()
       ..register(rolePermissionGrantsSpec)
+      // The TableBackedAuthorizationPolicy reads user_role_scopes for
+      // role-membership verification on every authorize call (closed-
+      // under-events trust model): the Principal's `activeRole` claim is
+      // not honoured until a `role_assigned` event is in the log.
+      ..register(userRoleScopesSpec)
       ..register(
         const AggregateProjectionSpec(
           viewName: 'notes_today',
@@ -154,6 +159,34 @@ class ReactionTestHarness {
   /// Close the EventStore, releasing all resources.
   Future<void> close() async {
     await eventStore.close();
+  }
+
+  /// Convenience: append a `role_assigned` event so the substrate's
+  /// authorization policy treats [userId] as actually holding [role] —
+  /// required ever since the policy gained substrate-verified role
+  /// membership (closed-under-events trust model). Defaults to a
+  /// [TotalWildcardScope] so unscoped actions like `say_hello` authorize.
+  Future<void> seedRoleAssigned({
+    required String userId,
+    required String role,
+    ScopeValue scope = const TotalWildcardScope(),
+  }) async {
+    await eventStore.append(
+      entryType: 'user_role_scope',
+      aggregateType: 'user_role_scope',
+      aggregateId: roleAssignmentAggregateId(
+        userId: userId,
+        role: role,
+        scope: scope,
+      ),
+      eventType: 'role_assigned',
+      data: RoleAssignedPayload(
+        userId: userId,
+        role: role,
+        scope: scope,
+      ).toJson(),
+      initiator: const AutomationInitiator(service: 'reaction_test_seed'),
+    );
   }
 
   /// Convenience: append a `note` event to the store.

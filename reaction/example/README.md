@@ -73,9 +73,14 @@ REACTION_SERVER_URL=http://10.0.0.5:8080 flutter run -d linux ...
 
 ## What to try
 
-1. Enter any username (e.g. `alice`) and click **Sign in**. The
-   server's `TrustingAuthValidator` accepts the credential and gives
-   you the `editor` role.
+1. Sign in as one of the **pre-provisioned demo users** —
+   `alice`, `bob`, or `carol`. The `TrustingAuthValidator` accepts
+   any non-empty credential as a `userId`, but the substrate now
+   verifies role-membership against the event log: only userIds with
+   a seeded `role_assigned` event are honoured under the `editor`
+   role. Try logging in as `dave` to see the substrate refuse —
+   the auth boundary succeeds but every action denies because no
+   `user_role_scopes` row binds `dave` to `editor`.
 2. Type a title, click **Submit**. A `submit_note` action dispatches;
    the resulting `note_created` event flows into the `notes_today`
    view; your `StreamBuilder` re-renders.
@@ -83,7 +88,11 @@ REACTION_SERVER_URL=http://10.0.0.5:8080 flutter run -d linux ...
    the server appends `role_unassigned` for your userId; the
    `AuthzWatcher` closes your WS with code 4003; `RemoteAuthSession`
    flips to `Expired`; the app routes you to a "Your session expired"
-   screen.
+   screen. If you sign back in as the same user, the substrate now
+   sees no `user_role_scopes` row for them — submits deny with
+   `Denied: submit_note`. That round-trip is the closed-under-events
+   trust loop: identity is auth's job, role-membership comes from
+   the log.
 
 ## Smoke test
 

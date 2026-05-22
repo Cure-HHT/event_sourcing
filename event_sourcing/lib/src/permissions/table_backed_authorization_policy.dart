@@ -103,7 +103,27 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     Permission permission,
     ScopeValue? scopeValue,
   ) async {
-    // 3. Role-level grant: does the active role carry this permission name?
+    // 3. Role-membership: verify the principal actually holds the claimed
+    // activeRole via user_role_scopes. The Principal's `roles` and
+    // `activeRole` fields are a user-supplied request ("which hat am I
+    // wearing right now"), not a substrate-trusted assertion — the
+    // substrate independently derives role-membership from the event log
+    // before honouring any permission under that role. This read also
+    // doubles as the scope-assignment enumeration consumed by step 6
+    // for scoped permissions.
+    final assignments = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    if (assignments.isEmpty) {
+      return Deny(permission: permission, reason: DenyReason.notGranted);
+    }
+
+    // 4. Role-level grant: does the active role carry this permission name?
     final grants = await backend.findViewRowsInTxn(
       txn,
       'role_permission_grants',
@@ -117,25 +137,14 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
       return Deny(permission: permission, reason: DenyReason.notGranted);
     }
 
-    // 4. Unscoped permission: role grant is sufficient.
+    // 5. Unscoped permission: verified role-membership + role grant is
+    // sufficient.
     if (permission.scopeClass == null) {
       return const Allow();
     }
 
-    // 5. Scoped permission: enumerate user's assignments under active role.
-    final assignments = await backend.findViewRowsInTxn(
-      txn,
-      'user_role_scopes',
-      where: <String, Object?>{
-        'user_id': principal.userId,
-        'role': principal.activeRole,
-      },
-    );
-    if (assignments.isEmpty) {
-      return Deny(permission: permission, reason: DenyReason.notGranted);
-    }
-
-    // 6. Match (first-match-wins = union semantics over the assignments).
+    // 6. Scoped permission: match the requested scope against the
+    // already-fetched assignments (first-match-wins = union semantics).
     final requested = scopeValue!;
     for (final row in assignments) {
       final assignedScope = ScopeValue.fromJson(
@@ -208,6 +217,21 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     Txn txn,
     UserPrincipal principal,
   ) async {
+    // Role-membership gate: if the substrate has no user_role_scopes
+    // assignment for (userId, activeRole), the principal does not
+    // effectively hold that role — return empty rather than leaking the
+    // role's permissions based on the Principal's unverified claim.
+    final assignmentRows = await backend.findViewRowsInTxn(
+      txn,
+      'user_role_scopes',
+      where: <String, Object?>{
+        'user_id': principal.userId,
+        'role': principal.activeRole,
+      },
+    );
+    if (assignmentRows.isEmpty) {
+      return EffectiveAuthorization.empty;
+    }
     final grants = await backend.findViewRowsInTxn(
       txn,
       'role_permission_grants',
@@ -221,14 +245,6 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
       // is sufficient.
       for (final g in grants) Permission(g['permissionName']! as String),
     };
-    final assignmentRows = await backend.findViewRowsInTxn(
-      txn,
-      'user_role_scopes',
-      where: <String, Object?>{
-        'user_id': principal.userId,
-        'role': principal.activeRole,
-      },
-    );
     final assignments = <ScopeAssignment>[
       for (final r in assignmentRows)
         ScopeAssignment(

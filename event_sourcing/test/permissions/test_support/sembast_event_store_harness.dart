@@ -32,6 +32,7 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/permissions/role_permission_grants_spec.dart';
+import 'package:event_sourcing/src/permissions/user_role_scopes_spec.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
@@ -88,7 +89,9 @@ Future<EventStore> buildInMemoryEventStore() async {
   final backend = SembastBackend(database: db);
 
   final typeRegistry = _buildEntryTypeRegistry();
-  final projections = ProjectionRegistry()..register(rolePermissionGrantsSpec);
+  final projections = ProjectionRegistry()
+    ..register(rolePermissionGrantsSpec)
+    ..register(userRoleScopesSpec);
 
   return EventStore.open(
     storage: backend,

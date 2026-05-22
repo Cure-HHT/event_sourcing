@@ -16,8 +16,11 @@ void main() {
     // The harness's TrustingAuthValidator returns activeRole='install' for
     // any non-empty credential; the unscoped Permission('say_hello') needs
     // a matching grant in the role_permission_grants projection before
-    // TableBackedAuthorizationPolicy will Allow.
+    // TableBackedAuthorizationPolicy will Allow. The substrate also
+    // requires a `user_role_scopes` row binding (alice, install) — the
+    // Principal's activeRole claim is no longer trusted standalone.
     await h.grantPermission(role: 'install', permission: 'say_hello');
+    await h.assignRole(userId: 'alice', role: 'install');
     h.scope.authSession.setCredential('alice');
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
   });

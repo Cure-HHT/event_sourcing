@@ -39,6 +39,26 @@ grants:
         expect(boot, isA<PolicyReady>());
         expect(boot.isReady, isTrue);
 
+        // Substrate now verifies user-role membership via user_role_scopes
+        // (closed-under-events trust model): the Principal's activeRole
+        // claim is not honoured until a role_assigned event is in the log.
+        await eventStore.append(
+          entryType: 'user_role_scope',
+          aggregateType: 'user_role_scope',
+          aggregateId: roleAssignmentAggregateId(
+            userId: 'u',
+            role: 'admin',
+            scope: const TotalWildcardScope(),
+          ),
+          eventType: 'role_assigned',
+          data: const RoleAssignedPayload(
+            userId: 'u',
+            role: 'admin',
+            scope: TotalWildcardScope(),
+          ).toJson(),
+          initiator: const AutomationInitiator(service: 'test'),
+        );
+
         final policy = boot.policy;
         final p = Principal.user(
           userId: 'u',

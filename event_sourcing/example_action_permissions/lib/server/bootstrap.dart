@@ -166,23 +166,29 @@ Future<DemoServerComponents> bootstrapDemoServer({
     );
   }
 
-  // 4a. Seed user-role-scope assignments. The user-directory YAML carries
-  //     an `activeSite` per user; for site-scoped permissions to authorize,
-  //     the policy needs a matching `user_role_scopes` row. Translate each
-  //     directory entry with a non-null activeSite into a single
-  //     RoleAssignmentSeedEntry, then have the substrate emit
-  //     role_assigned events idempotently. Users without an activeSite
-  //     (e.g. Admin in the demo seed) get no assignment — they only
-  //     exercise unscoped permissions, which need only the role-permission
-  //     grant.
+  // 4a. Seed user-role-scope assignments. The substrate now verifies
+  //     user-role membership via `user_role_scopes` for EVERY permission
+  //     check (scoped and unscoped) — the Principal's `activeRole` claim
+  //     is no longer trusted standalone. So every directory entry needs
+  //     a `role_assigned` event, regardless of whether the user holds any
+  //     site-scoped permissions:
+  //       * users with `activeSite != null` get a BoundScope assignment
+  //         (covers their site-scoped permissions);
+  //       * users with `activeSite == null` (e.g. Admin in the demo seed)
+  //         get a `TotalWildcardScope` assignment, which the substrate
+  //         treats as "role-membership without a site binding" —
+  //         sufficient for unscoped permissions like `users.provision`,
+  //         and does not over-grant any scoped permission they don't hold
+  //         at the role level.
   final roleAssignments = <RoleAssignmentSeedEntry>[
     for (final entry in directory.listEntries())
-      if (entry.activeSite != null)
-        RoleAssignmentSeedEntry(
-          userId: entry.userId,
-          role: entry.role,
-          scope: BoundScope(class_: 'site', value: entry.activeSite!),
-        ),
+      RoleAssignmentSeedEntry(
+        userId: entry.userId,
+        role: entry.role,
+        scope: entry.activeSite != null
+            ? BoundScope(class_: 'site', value: entry.activeSite!)
+            : const TotalWildcardScope(),
+      ),
   ];
   await bootstrapRoleAssignments(
     eventStore: eventStore,

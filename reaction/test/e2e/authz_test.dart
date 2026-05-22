@@ -78,8 +78,18 @@ void main() {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);
 
-    // Seed view perm + authenticate.
+    // Seed view perm + role membership + authenticate. The substrate now
+    // requires a `user_role_scopes` row for (alice, install) before any
+    // permission check authorizes. We seed with the same scope the
+    // role_unassigned appended below targets, so that unassign actually
+    // removes alice's only membership row (proving the AuthzWatcher
+    // reacts to the projection becoming empty).
     await h.grantPermission(role: 'install', permission: 'view:notes_today');
+    await h.assignRole(
+      userId: 'alice',
+      role: 'install',
+      scope: const BoundScope(class_: 'site', value: 'A'),
+    );
     h.scope.authSession.setCredential('alice');
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
 

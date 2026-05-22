@@ -103,4 +103,19 @@ class ReactionRemoteTestHarness {
       initiator: const AutomationInitiator(service: 'test'),
     );
   }
+
+  /// Seed a `user_role_scopes` row by appending a `role_assigned`
+  /// event. The substrate now verifies (userId, activeRole) membership
+  /// against this view on every authorize call (closed-under-events
+  /// trust model): the Principal's `activeRole` claim from
+  /// [TrustingAuthValidator] is not honoured until this row exists.
+  /// Defaults to [TotalWildcardScope] so unscoped actions authorize
+  /// without requiring callers to think about scope semantics.
+  Future<void> assignRole({
+    required String userId,
+    required String role,
+    ScopeValue scope = const TotalWildcardScope(),
+  }) async {
+    await substrate.seedRoleAssigned(userId: userId, role: role, scope: scope);
+  }
 }

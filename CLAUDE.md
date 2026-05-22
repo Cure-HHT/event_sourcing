@@ -204,22 +204,29 @@ The currently-trusted inputs are:
   for honouring the FIFO queue's delivery semantics. The substrate
   does not verify that the transport delivered the event to its
   remote endpoint correctly; only that the FIFO queue advanced.
-- **Caller-supplied `Principal` on action submissions and event
-  metadata.** Currently accepted on faith: the substrate does not
-  authenticate the `Principal` claimed in an `ActionSubmission`,
-  nor the `initiator` recorded on appended events. The calling
-  application is trusted to supply correct identity. **This is a
-  known incomplete boundary** — the substrate has no inbound
-  authentication flow (no `authentication_attempted` event type)
-  and no outbound `AuthenticationProvider` pluggable interface, so
-  identity claims live entirely outside the closed-under-events
-  guarantee. The fourth bullet below is the wire-side closure of
-  this gap for cross-process deployments (the `reaction` package
-  composes a consumer-supplied validator into its shelf pipeline);
-  in-process deployments still bear the Principal-on-faith trust
-  input. Full substrate-level closure (an
-  `AuthenticationProvider` pluggable interface that participates
-  in the closed-under-events guarantee) remains future work.
+- **Caller-supplied `Principal.userId` on action submissions and
+  event metadata.** Identity is still accepted on faith — the
+  substrate does not authenticate which user the caller claims to be
+  (`Principal.userId`), nor the `initiator` recorded on appended
+  events. The calling application is trusted to supply correct
+  identity. The fourth bullet below is the wire-side closure of this
+  gap for cross-process deployments (the `reaction` package composes
+  a consumer-supplied validator into its shelf pipeline); in-process
+  deployments still bear the userId-on-faith trust input. Full
+  substrate-level closure (an `AuthenticationProvider` pluggable
+  interface that participates in the closed-under-events guarantee)
+  remains future work.
+
+  Note the narrow scope of this gap: the `Principal.activeRole`
+  field is **not** trusted. The substrate verifies the (userId,
+  activeRole) binding against the `user_role_scopes` projection
+  before honouring any permission under that role — auth-time claims
+  of role membership are derived from the event log, not from
+  whatever the caller passed. `Principal.roles` (the set of roles
+  the user might switch to) is informational only and not consulted
+  during authorization; the policy only reads `userId` and
+  `activeRole`. So the trust gap is concretely "trust userId; derive
+  everything else from the log."
 - **Consumer-supplied wire-authentication flow (`PrincipalAuthValidator`
   or equivalent middleware that populates `Principal` on the request
   context).** When a deployment uses the `reaction` package's

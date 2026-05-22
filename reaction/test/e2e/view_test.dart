@@ -18,6 +18,9 @@ void main() {
     // 'install'; TableBackedAuthorizationPolicy still requires a matching
     // grant row.
     await h.grantPermission(role: 'install', permission: 'view:notes_today');
+    // The substrate verifies (userId, activeRole) membership against
+    // user_role_scopes for every authorize call — seed alice -> install.
+    await h.assignRole(userId: 'alice', role: 'install');
     h.scope.authSession.setCredential('alice');
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
   });
