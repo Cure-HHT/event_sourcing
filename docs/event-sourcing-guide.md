@@ -136,6 +136,14 @@ absolute. The library guarantees them:
 - One row per aggregate, materialized by deep-merging successive
   payloads.
 
+One more piece worth knowing: the substrate's job ends at "the event
+log says X". For action authorization, that means the substrate
+verifies `(userId, activeRole)` against `user_role_scopes` — the auth
+layer's responsibility is to identify the user; everything else (which
+roles, which scopes, which permissions) is derived from the log.
+`Principal.userId` is trusted on faith from auth; `Principal.activeRole`
+is a user-chosen "which hat" that the substrate independently verifies.
+
 Most of what you'll write deals with Layer 2: declaring projections,
 defining actions, configuring permissions. Layer 1 is what you fall back
 to when an app needs an interpretation different from the library's
@@ -193,10 +201,15 @@ share a single transaction:
    transaction has not been opened yet.
 4. **Authorize and persist.** Inside a fresh storage transaction, for
    each `Permission` in turn, the dispatcher asks the policy whether
-   the principal has the grant (unscoped permissions check
-   role-permission grants; scoped permissions pass the resolved scope
-   value from step 3). The first Deny stops the pipeline and produces
-   an authorization-denial event committed inside the same transaction
+   the principal has the grant. The policy first verifies the
+   principal actually holds the claimed `activeRole` by reading
+   `user_role_scopes` — the substrate doesn't trust the Principal's
+   role claim, only its `userId`, and the same membership check runs
+   for scoped and unscoped permissions. It then checks the
+   role-permission grant, and for scoped permissions also matches the
+   resolved scope value from step 3 against the user's assignments.
+   The first Deny stops the pipeline and produces an
+   authorization-denial event committed inside the same transaction
    as the policy's projection reads — the audit log records the
    precise snapshot the decision saw.
 5. **Execute.** Still inside the same transaction, the dispatcher
@@ -349,16 +362,23 @@ real match against the event-derived projections.
 1. If `principal` is not a `UserPrincipal` (i.e., anonymous): return
    `Deny(notGranted)`. The substrate has no notion of anonymous
    assignments.
-2. Look up `role_permission_grants` for
+2. Look up `user_role_scopes` for
+   `(principal.userId, principal.activeRole)` to get all assignments
+   under the claimed active role. If empty: `Deny(notGranted)` — the
+   principal claims to be acting as a role they don't actually hold
+   according to the log. The substrate verifies this independently of
+   whatever the auth layer told it; auth's only contract is to identify
+   the `userId`. (See "Two layers of trust" — this is the substrate's
+   response to the question "is this user actually wearing the hat they
+   say they are?")
+3. Look up `role_permission_grants` for
    `(principal.activeRole, permission.name)`. If no grant exists for
    the active role: `Deny(notGranted)`.
-3. If the permission is unscoped: `Allow`.
-4. Otherwise look up `user_role_scopes` for
-   `(principal.userId, principal.activeRole)` to get all assignments
-   under the active role. If empty: `Deny(notGranted)`.
+4. If the permission is unscoped: `Allow`.
 5. The semantics are "at least one assignment must cover the
    requested scope," and the substrate implements this by iterating
-   the assignments and returning `Allow` on the first match:
+   the assignments from step 2 and returning `Allow` on the first
+   match:
    - `TotalWildcardScope` covers anything.
    - `ValueWildcardScope(class: C)` covers any scope of class C, and
      any class that is a descendant of C in the containment graph.
@@ -679,6 +699,16 @@ final invoiceSpec = AggregateProjectionSpec(
 Successive events whose payloads include `{amount: 100}` then
 `{status: 'paid'}` produce a row `{amount: 100, status: 'paid'}`.
 Missing keys preserve prior values; explicit `null` clears.
+
+The substrate stamps several auto-columns on every aggregate-projection
+row: `aggregateId` (the canonical id of the aggregate; matches
+`event.aggregateId`), `latestEventId`, `updatedAt`,
+`firstEventTimestamp`, and `sequence`. The names are camelCase on the
+row map. They sit alongside the columns derived from your event data,
+and consumers' row mappers can read them directly. Note that the
+substrate's event-row storage uses snake_case keys (`aggregate_id`,
+etc.) — those are stored events, not projection rows. The
+projection-row convention is the one you write mappers against.
 
 ## Subscribing to state
 
@@ -1222,7 +1252,16 @@ change serious enough to interrupt a user mid-session:
   subscriptions against the new (narrower) authorization. From the
   user's perspective: a brief "your role was updated; please log in
   again" prompt. Security gap closed within milliseconds of the
-  revocation committing.
+  revocation committing. If the user signs in again with the same
+  credential, the auth layer can mint a Principal as before —
+  `TrustingAuthValidator` accepts any non-empty credential, and a
+  production Firebase validator only verifies token freshness, not
+  role state. But the substrate's policy reads `user_role_scopes` on
+  every dispatch and now sees no row for the revoked role, so any
+  action submission under that role denies with
+  `DispatchAuthorizationDenied(<permission>)`. Re-login succeeds;
+  submitting doesn't. The closed-under-events trust model holds
+  without any cooperation from the auth layer.
 
 - **`role_assigned` for this user, or `permission_granted` to a
   role this user holds:** the server sends a `stale_data` envelope
