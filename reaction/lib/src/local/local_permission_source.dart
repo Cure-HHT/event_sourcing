@@ -1,11 +1,11 @@
 // Implements: EVS-PRD-permission-snapshot-source/B/E —
 // LocalPermissionSource derives the snapshot from the substrate's
-// RolePermissionGrants projection (B), and re-fetches + re-emits when
-// the active Principal changes via setActivePrincipal (E).
-// Subscribes to the role_permission_grants view; builds PermissionSnapshot
-// from the active Principal's activeRole by reading the projection rows
-// directly via EventStore.backend.findViewRows. Stream honors
-// snapshot-on-listen via per-listener forwarding.
+// permissions projections via [AuthorizationPolicy.effectivePermissionsFor]
+// (B), and re-fetches + re-emits when the active Principal changes via
+// setActivePrincipal (E).
+// Subscribes to both the role_permission_grants view and the
+// user_role_scopes view so the snapshot refreshes when either the role's
+// grant matrix OR the active principal's membership in that role changes.
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -17,23 +17,29 @@ import 'package:reaction/src/interfaces/permission_source.dart';
 ///
 /// 1. [setActivePrincipal] changes the active principal, OR
 /// 2. The substrate's `role_permission_grants` view emits a [Delta] or
-///    [Tombstone] update (permission grant/revoke for any role).
+///    [Tombstone] update (permission grant/revoke for any role), OR
+/// 3. The substrate's `user_role_scopes` view emits a [Delta] or
+///    [Tombstone] update (role assignment/unassignment for any user).
 ///
-/// Grants are read directly from the `role_permission_grants` projection
-/// via `eventStore.backend.findViewRows` — the same projection the
-/// substrate's [TableBackedAuthorizationPolicy] reads at authorize time.
+/// The snapshot is derived via [AuthorizationPolicy.effectivePermissionsFor],
+/// which routes through the same membership-aware logic the substrate's
+/// authorize stage uses. This is the divergence-closing parity with
+/// `RemotePermissionSource`, which goes through `/permissions/snapshot`
+/// on the server (also a thin wrapper around `effectivePermissionsFor`).
 ///
 /// `current` is null until [setActivePrincipal] is called (or after
 /// clearing with `setActivePrincipal(null)`).
 ///
 /// If the active Principal is [AnonymousPrincipal] (no `activeRole`),
-/// `current` is null — the substrate has no notion of anonymous permissions.
+/// or if the principal has no `user_role_scopes` membership row for the
+/// claimed `activeRole`, `current` is null — the substrate refuses to
+/// honour an unverified role claim.
 ///
-/// Disposal: call [dispose] to cancel the substrate subscription and close
-/// the internal stream controller. After [dispose], the source must not be
-/// used.
+/// Disposal: call [dispose] to cancel the substrate subscriptions and
+/// close the internal stream controller. After [dispose], the source
+/// must not be used.
 class LocalPermissionSource implements PermissionSource {
-  LocalPermissionSource({required this.eventStore}) {
+  LocalPermissionSource({required this.eventStore, required this.policy}) {
     _grantsSub = eventStore
         .subscribe<Map<String, Object?>>(
           const SubscriptionFilter(),
@@ -48,15 +54,31 @@ class LocalPermissionSource implements PermissionSource {
             unawaited(_recompute());
           }
         });
+    _userRoleScopesSub = eventStore
+        .subscribe<Map<String, Object?>>(
+          const SubscriptionFilter(),
+          AggregateMode<Map<String, Object?>>(
+            viewName: 'user_role_scopes',
+            mapper: (m) => m,
+          ),
+        )
+        .listen((update) {
+          if (update is Delta<Map<String, Object?>> ||
+              update is Tombstone<Map<String, Object?>>) {
+            unawaited(_recompute());
+          }
+        });
   }
 
   final EventStore eventStore;
+  final AuthorizationPolicy policy;
 
   Principal? _principal;
   PermissionSnapshot? _current;
   final StreamController<PermissionSnapshot?> _controller =
       StreamController<PermissionSnapshot?>.broadcast();
   StreamSubscription<Update<Map<String, Object?>>>? _grantsSub;
+  StreamSubscription<Update<Map<String, Object?>>>? _userRoleScopesSub;
 
   @override
   PermissionSnapshot? get current => _current;
@@ -98,39 +120,22 @@ class LocalPermissionSource implements PermissionSource {
       _setNull();
       return;
     }
-    // Extract the active role: UserPrincipal has a non-nullable activeRole;
-    // AnonymousPrincipal has no active role concept — treat as null.
-    final activeRole = switch (p) {
-      UserPrincipal(:final activeRole) => activeRole,
-      AnonymousPrincipal() => null,
-    };
-    if (activeRole == null) {
+    // Delegate to the substrate's AuthorizationPolicy, which enforces
+    // role-membership against user_role_scopes before returning grants.
+    // For non-UserPrincipals (AnonymousPrincipal) and for users who
+    // don't actually hold their claimed activeRole, the policy returns
+    // EffectiveAuthorization.empty (activeRole == '').
+    final effective = await policy.effectivePermissionsFor(p);
+    // Guard against a race: verify the principal is still the same after
+    // the async policy call returns.
+    if (!identical(_principal, p)) return;
+    if (effective.activeRole.isEmpty) {
       _setNull();
       return;
     }
-    // Read the role_permission_grants projection directly, filtered to
-    // the active role inside a single backend transaction. Each row is
-    // {'role': <role>, 'permissionName': <name>} (see
-    // rolePermissionGrantsSpec). Scope-class metadata is attached at
-    // Action.permissions declaration time, not stored in the grants
-    // projection.
-    final rows = await eventStore.backend
-        .transaction<List<Map<String, dynamic>>>(
-          (txn) => eventStore.backend.findViewRowsInTxn(
-            txn,
-            'role_permission_grants',
-            where: <String, Object?>{'role': activeRole},
-          ),
-        );
-    final grants = <Permission>{
-      for (final r in rows) Permission(r['permissionName']! as String),
-    };
-    // Guard against a race: verify the principal is still the same after
-    // the async findViewRows call returns.
-    if (!identical(_principal, p)) return;
     final snapshot = PermissionSnapshot(
-      role: activeRole,
-      grants: grants,
+      role: effective.activeRole,
+      grants: effective.rolePermissions,
       issuedAt: DateTime.now(),
     );
     _current = snapshot;
@@ -146,6 +151,8 @@ class LocalPermissionSource implements PermissionSource {
   Future<void> dispose() async {
     await _grantsSub?.cancel();
     _grantsSub = null;
+    await _userRoleScopesSub?.cancel();
+    _userRoleScopesSub = null;
     if (!_controller.isClosed) await _controller.close();
   }
 }

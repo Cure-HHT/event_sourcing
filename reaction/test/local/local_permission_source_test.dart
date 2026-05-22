@@ -22,8 +22,17 @@ void main() {
       harness = await ReactionTestHarness.open();
       // Seed: 'greeter' role has 'say_hello'.
       await _grantSayHelloToGreeterRole(harness);
+      // Seed: alice and bob hold the roles they claim below. The substrate
+      // (and therefore LocalPermissionSource via effectivePermissionsFor)
+      // refuses to honour an activeRole claim without a user_role_scopes
+      // membership row.
+      await harness.seedRoleAssigned(userId: 'alice', role: 'greeter');
+      await harness.seedRoleAssigned(userId: 'bob', role: 'nobody');
 
-      source = LocalPermissionSource(eventStore: harness.eventStore);
+      source = LocalPermissionSource(
+        eventStore: harness.eventStore,
+        policy: harness.dispatcher.authorization,
+      );
     });
 
     tearDown(() async {
@@ -136,6 +145,26 @@ void main() {
         );
       },
     );
+
+    test('principal claiming a role without user_role_scopes membership '
+        'gets null snapshot (divergence-closing parity with Remote)', () async {
+      // Carol claims the 'greeter' role — which has the say_hello grant —
+      // but no role_assigned event has been appended for (carol, greeter).
+      // The substrate's effectivePermissionsFor returns
+      // EffectiveAuthorization.empty in that case; LocalPermissionSource
+      // must surface that as a null snapshot (not a snapshot leaking the
+      // role's permissions to a user who doesn't actually hold the role).
+      final carol = Principal.user(
+        userId: 'carol',
+        roles: const {'greeter'},
+        activeRole: 'greeter',
+      );
+      source.setActivePrincipal(carol);
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(source.current, isNull);
+    });
   });
 }
 
