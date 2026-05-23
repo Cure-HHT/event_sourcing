@@ -1,16 +1,25 @@
 // reaction/example/lib/server/bootstrap.dart
 //
-// Composes the substrate (in-memory sembast) + ReactionHandlers + a
-// thin `/admin/revoke` demo endpoint into a single shelf Router and
-// returns a dispose() callback.
+// Composes the substrate (in-memory sembast) + ReactionHandlers +
+// per-user role-aware auth + a `/admin/revoke` demo endpoint into a
+// single shelf Router, and returns a dispose() callback.
 //
-// Mirrors `reaction/test/e2e/test_support/reaction_remote_test_harness.dart`
-// but stripped to one ProjectionSpec, one Action, and one extra admin
-// route. State is ephemeral — every server restart begins fresh.
+// The example exercises the substrate's full permission model:
+//
+//   - Three roles (viewer, editor, admin) seeded with different grants
+//   - One scope class (`workspace`) with two values (`west`, `east`)
+//   - Four seeded users with different assignments — see _seedUsers
+//   - Three actions: `submit_note` (workspace-scoped),
+//     `assign_role` and `unassign_role` (admin, unscoped)
+//   - One unscoped data view: `notes_today` (rows carry their workspace)
+//
+// State is ephemeral — every server restart begins fresh.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/reaction.dart';
 import 'package:reaction_example/server/notes_projection.dart';
+import 'package:reaction_example/server/role_admin_actions.dart';
+import 'package:reaction_example/server/role_aware_auth_validator.dart';
 import 'package:reaction_example/server/submit_note_action.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:shelf/shelf.dart';
@@ -26,9 +35,46 @@ class BootstrapResult {
   final Future<void> Function() dispose;
 }
 
-/// Wire up an ephemeral in-memory substrate, register the demo action
-/// and projection, seed the `editor` role's grants, and compose the
-/// reaction HTTP + WS pipeline plus the demo `/admin/revoke` route.
+/// Single source of truth for the demo's seeded users + their starting
+/// role/scope assignments. Surfaced as a typed list so tests and the
+/// /admin/revoke handler can introspect it without duplicating the seed
+/// definition.
+class _SeededUser {
+  const _SeededUser({
+    required this.userId,
+    required this.role,
+    required this.scope,
+  });
+  final String userId;
+  final String role;
+  final ScopeValue scope;
+}
+
+const List<_SeededUser> _seedUsers = <_SeededUser>[
+  // alice / bob are workspace-bound editors — alice can submit notes in
+  // 'west' only, bob in 'east' only. Demonstrates BoundScope grants.
+  _SeededUser(
+    userId: 'alice',
+    role: 'editor',
+    scope: BoundScope(class_: 'workspace', value: 'west'),
+  ),
+  _SeededUser(
+    userId: 'bob',
+    role: 'editor',
+    scope: BoundScope(class_: 'workspace', value: 'east'),
+  ),
+  // carol is admin with TotalWildcardScope — covers assign_role
+  // (unscoped) AND submit_note in any workspace.
+  _SeededUser(userId: 'carol', role: 'admin', scope: TotalWildcardScope()),
+  // dave is a viewer (read-only). Has view:notes_today but no
+  // submit_note; the UI hides the submit form for him.
+  _SeededUser(userId: 'dave', role: 'viewer', scope: TotalWildcardScope()),
+];
+
+/// Wire up an ephemeral in-memory substrate, register the demo actions,
+/// projections, scope classes, role grants, and user-role-scope
+/// assignments, then compose the reaction HTTP+WS pipeline plus the
+/// `/admin/revoke` demo route.
 Future<BootstrapResult> bootstrap() async {
   // --- Storage: in-memory sembast (ephemeral). ---
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -52,8 +98,6 @@ Future<BootstrapResult> bootstrap() async {
         name: 'Role-Permission Grant',
       ),
     )
-    // Required by AuthzWatcher (force-logout path) and by the demo's
-    // /admin/revoke endpoint.
     ..register(
       const EntryTypeDefinition(
         id: 'user_role_scope',
@@ -73,11 +117,6 @@ Future<BootstrapResult> bootstrap() async {
   // --- Projections ---
   final projections = ProjectionRegistry()
     ..register(rolePermissionGrantsSpec)
-    // The TableBackedAuthorizationPolicy now reads user_role_scopes to
-    // verify (userId, activeRole) membership on every authorize call
-    // (closed-under-events trust model): the Principal's activeRole
-    // claim from TrustingAuthValidator is not honoured until a
-    // `role_assigned` event is in the log for that user.
     ..register(userRoleScopesSpec)
     ..register(notesTodayProjection);
 
@@ -97,11 +136,12 @@ Future<BootstrapResult> bootstrap() async {
     projections: projections,
   );
 
-  // --- Permissions ---
-  // The demo's two permissions (`submit_note`, `view:notes_today`) are
-  // both unscoped, so an empty ScopeClassRegistry is sufficient.
+  // --- Scope classes: one top-level class `workspace`. ---
+  // No containment: the demo doesn't model parent-of-workspace, so a
+  // bare ScopeClassSpec is the minimum viable registration. The class
+  // appears in BoundScope.class_ on role_assigned/submit_note dispatch.
   final scopeClassRegistry = ScopeClassRegistry(
-    classes: const <ScopeClassSpec>[],
+    classes: const <ScopeClassSpec>[ScopeClassSpec(name: 'workspace')],
     projectionLookup: (_) => null,
   );
   final policy = TableBackedAuthorizationPolicy(
@@ -115,69 +155,89 @@ Future<BootstrapResult> bootstrap() async {
     events: eventStore,
     authorization: policy,
     idempotency: InMemoryIdempotencyStore(),
-    actions: <Action<Object?, Object?>>[SubmitNoteAction()],
+    actions: <Action<Object?, Object?>>[
+      SubmitNoteAction(),
+      const AssignRoleAction(),
+      const UnassignRoleAction(),
+    ],
   );
 
-  // --- Seed role grants: editor -> {submit_note, view:notes_today} ---
-  for (final perm in const <String>['submit_note', 'view:notes_today']) {
-    await eventStore.append(
-      entryType: 'role_permission_grant',
-      aggregateType: 'role_permission_grant',
-      aggregateId: 'editor:$perm',
-      eventType: 'permission_granted',
-      data: PermissionGrantedPayload(
-        role: 'editor',
-        permissionName: perm,
-      ).toJson(),
-      initiator: const AutomationInitiator(service: 'reaction-example-seed'),
-    );
+  // --- Seed role-permission grants ---
+  //
+  // viewer  -> {view:notes_today}
+  // editor  -> {view:notes_today, submit_note}
+  // admin   -> {view:notes_today, submit_note, assign_role,
+  //             unassign_role, view:user_role_scopes,
+  //             view:role_permission_grants}
+  //
+  // The admin role gets `view:user_role_scopes` so the admin-panel UI
+  // can subscribe to the seeded assignments view (default
+  // ViewPermissionNamer is `view:<viewName>`); seed accordingly.
+  const Map<String, List<String>> rolePerms = <String, List<String>>{
+    'viewer': <String>['view:notes_today'],
+    'editor': <String>['view:notes_today', 'submit_note'],
+    'admin': <String>[
+      'view:notes_today',
+      'submit_note',
+      'assign_role',
+      'unassign_role',
+      'view:user_role_scopes',
+      'view:role_permission_grants',
+    ],
+  };
+  for (final entry in rolePerms.entries) {
+    final role = entry.key;
+    for (final perm in entry.value) {
+      await eventStore.append(
+        entryType: 'role_permission_grant',
+        aggregateType: 'role_permission_grant',
+        aggregateId: '$role:$perm',
+        eventType: 'permission_granted',
+        data: PermissionGrantedPayload(
+          role: role,
+          permissionName: perm,
+        ).toJson(),
+        initiator: const AutomationInitiator(service: 'reaction-example-seed'),
+      );
+    }
   }
 
-  // --- Seed user-role-scope assignments for the demo's known users ---
-  //
-  // The substrate verifies (userId, activeRole) membership against
-  // user_role_scopes for every authorize call — without these
-  // role_assigned events, alice/bob/carol log in but every action is
-  // denied with `Denied: submit_note`. We seed a TotalWildcardScope
-  // assignment for each: it covers the demo's unscoped permissions
-  // without over-granting any scoped one (the demo has none).
-  //
-  // Trying to log in as any OTHER username (e.g. `dave`) succeeds at
-  // the auth-validator boundary (TrustingAuthValidator accepts any
-  // non-empty credential) but then the substrate refuses to honour the
-  // claimed `editor` role — every dispatch denies. That demonstrates
-  // the closed-under-events trust model: identity is auth's job, but
-  // role-membership comes from the event log.
-  for (final userId in const <String>['alice', 'bob', 'carol']) {
+  // --- Seed user-role-scope assignments ---
+  for (final user in _seedUsers) {
     await eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
       aggregateId: roleAssignmentAggregateId(
-        userId: userId,
-        role: 'editor',
-        scope: const TotalWildcardScope(),
+        userId: user.userId,
+        role: user.role,
+        scope: user.scope,
       ),
       eventType: 'role_assigned',
       data: RoleAssignedPayload(
-        userId: userId,
-        role: 'editor',
-        scope: const TotalWildcardScope(),
+        userId: user.userId,
+        role: user.role,
+        scope: user.scope,
       ).toJson(),
       initiator: const AutomationInitiator(service: 'reaction-example-seed'),
     );
   }
 
   // --- Reaction handlers ---
-  final validator = TrustingAuthValidator(defaultActiveRole: 'editor');
+  //
+  // RoleAwareTrustingValidator reads `user_role_scopes` at authenticate-
+  // time and picks the highest-privileged role the user holds: alice
+  // and bob both surface as `editor`, carol as `admin`, dave as
+  // `viewer`. Unknown bearers (any non-empty string with no role
+  // assignment) come back as AnonymousPrincipal — substrate then denies
+  // every action against them, demonstrating the closed-under-events
+  // trust model end-to-end.
+  final validator = RoleAwareTrustingValidator(backend: backend);
   final reactionHandlers = ReactionHandlers(
     eventStore: eventStore,
     dispatcher: dispatcher,
     policy: policy,
   );
 
-  // HTTP routes are gated by Bearer-token auth middleware. The WS
-  // upgrade path (`/subscriptions`) is NOT — credentials arrive
-  // in-band via the first WS AuthMsg.
   final httpRouter = Router()
     ..get('/me', reactionHandlers.me)
     ..post('/actions', reactionHandlers.actions)
@@ -187,33 +247,46 @@ Future<BootstrapResult> bootstrap() async {
       .addMiddleware(authMiddleware(validator))
       .addHandler(httpRouter.call);
 
-  // /admin/revoke appends a role_unassigned event so the AuthzWatcher
-  // closes the user's WS with 4003 → client RemoteAuthSession flips to
-  // Expired → UI routes to the expired screen.
-  //
-  // DEMO ONLY: in production, this would be gated behind admin auth.
+  // /admin/revoke is the no-auth admin escape hatch retained from the
+  // original force-logout demo: it appends a role_unassigned event for
+  // the supplied user, AuthzWatcher closes their WS with 4003, the
+  // client flips to Expired. Production deployments wouldn't expose
+  // this — the in-app `unassign_role` action (admin-gated) is the
+  // primary mechanism. Useful for testing the force-logout path
+  // without first acquiring an admin session.
   Future<Response> revokeHandler(Request request) async {
     final userId = request.url.queryParameters['user'];
     if (userId == null || userId.isEmpty) {
       return Response(400, body: 'missing ?user=<userId>');
     }
+    final user = _seedUsers.firstWhere(
+      (u) => u.userId == userId,
+      orElse: () => const _SeededUser(
+        userId: '',
+        role: 'editor',
+        scope: TotalWildcardScope(),
+      ),
+    );
+    if (user.userId.isEmpty) {
+      return Response(404, body: 'unknown user $userId\n');
+    }
     await eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
       aggregateId: roleAssignmentAggregateId(
-        userId: userId,
-        role: 'editor',
-        scope: const TotalWildcardScope(),
+        userId: user.userId,
+        role: user.role,
+        scope: user.scope,
       ),
       eventType: 'role_unassigned',
       data: RoleUnassignedPayload(
-        userId: userId,
-        role: 'editor',
-        scope: const TotalWildcardScope(),
+        userId: user.userId,
+        role: user.role,
+        scope: user.scope,
       ).toJson(),
       initiator: const AutomationInitiator(service: 'reaction-example-admin'),
     );
-    return Response.ok('revoked role for $userId\n');
+    return Response.ok('revoked ${user.role} for ${user.userId}\n');
   }
 
   final topRouter = Router()
