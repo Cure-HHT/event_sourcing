@@ -3,7 +3,8 @@
 // Authenticated home screen. Composes five sections:
 //
 //   - IdentityBar      — userId + activeRole + "Sign out" / "Force-logout"
-//   - PermissionsCard  — current PermissionSnapshot.grants, live via stream
+//   - PermissionsCard  — current EffectiveAuthorization (role permissions +
+//                        scope assignments), live via stream
 //   - NotesList        — reactive notes_today view with workspace tag
 //   - SubmitNoteForm   — workspace dropdown + title + submit button,
 //                        permission-gated via PermissionSource.stream
@@ -11,7 +12,7 @@
 //                        lists user_role_scopes view + grant/revoke forms
 //
 // Every section that depends on the user's permissions wraps in a
-// StreamBuilder<PermissionSnapshot?> on PermissionSource.stream so a
+// StreamBuilder<EffectiveAuthorization?> on PermissionSource.stream so a
 // server-pushed stale_data envelope (handled in RemoteConnection +
 // RemoteScope) flows through to a live UI update — alice's submit form
 // gains 'east' the moment carol grants her access.
@@ -87,14 +88,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final principal = widget.scope.authSession.principal;
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: StreamBuilder<PermissionSnapshot?>(
+      child: StreamBuilder<EffectiveAuthorization?>(
         stream: widget.scope.permissionSource.stream,
         initialData: widget.scope.permissionSource.current,
         builder: (context, snapshot) {
           final snap = snapshot.data;
           final isAdmin =
               snap != null &&
-              snap.grants.contains(const Permission('assign_role'));
+              snap.rolePermissions.contains(const Permission('assign_role'));
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
@@ -148,7 +149,7 @@ class _IdentityBar extends StatelessWidget {
   });
 
   final Principal? principal;
-  final PermissionSnapshot? snapshot;
+  final EffectiveAuthorization? snapshot;
   final VoidCallback onSignOut;
   final VoidCallback onForceLogout;
 
@@ -157,7 +158,7 @@ class _IdentityBar extends StatelessWidget {
     final userId = principal is UserPrincipal
         ? (principal as UserPrincipal).userId
         : '(anonymous)';
-    final role = snapshot?.role ?? '(loading)';
+    final role = snapshot?.activeRole ?? '(loading)';
     return Row(
       children: <Widget>[
         Expanded(
@@ -178,22 +179,31 @@ class _IdentityBar extends StatelessWidget {
 }
 
 /// Compact permission display so the user can see what their active
-/// role grants. Updates live via the enclosing StreamBuilder.
+/// role grants AND which scopes they're assigned. Updates live via the
+/// enclosing StreamBuilder.
 class _PermissionsCard extends StatelessWidget {
   const _PermissionsCard({required this.snapshot});
 
-  final PermissionSnapshot? snapshot;
+  final EffectiveAuthorization? snapshot;
 
   @override
   Widget build(BuildContext context) {
     final snap = snapshot;
-    final body = snap == null
-        ? const Text('(loading permissions…)')
-        : Text(
-            snap.grants.isEmpty
-                ? '(no permissions)'
-                : 'Permissions: ${(snap.grants.map((p) => p.name).toList()..sort()).join(", ")}',
-          );
+    final Widget body;
+    if (snap == null) {
+      body = const Text('(loading permissions…)');
+    } else {
+      final permsText = snap.rolePermissions.isEmpty
+          ? '(no permissions)'
+          : 'Permissions: ${(snap.rolePermissions.map((p) => p.name).toList()..sort()).join(", ")}';
+      final scopesText = snap.scopeAssignments.isEmpty
+          ? 'Scopes: (none)'
+          : 'Scopes: ${snap.scopeAssignments.map((a) => a.scope.toString()).join(", ")}';
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[Text(permsText), Text(scopesText)],
+      );
+    }
     return Container(
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(

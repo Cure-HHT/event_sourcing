@@ -1,17 +1,18 @@
 // reaction/example/lib/client/submit_note_form.dart
 //
-// Submit-note form gated on PermissionSnapshot. If the active user
+// Submit-note form gated on EffectiveAuthorization. If the active user
 // holds Permission('submit_note'), shows a workspace dropdown + title
 // field + submit button. Otherwise renders a read-only "no submit
 // access" notice.
 //
-// The form does NOT pre-filter the workspace dropdown by the user's
-// scope assignments — PermissionSnapshot does not carry per-scope
-// detail. We offer the full known-workspaces list and let the
-// substrate enforce: an unauthorized workspace returns
-// DispatchAuthorizationDenied, which surfaces in the parent's flash.
-// This is the right shape pedagogically — per-dispatch scope checks
-// are visibly server-side, not "the UI was wrong."
+// Pre-filter UX: the dropdown walks the user's scopeAssignments to
+// label workspaces the user is actually scoped to (no suffix) vs ones
+// they are not ('(no permission)' suffix). The unauthorized entries
+// are still selectable on purpose, so the demo can still show the
+// substrate-side denial path — a "wrong workspace" submission returns
+// DispatchAuthorizationDenied from the substrate, which surfaces in
+// the parent's flash. This is the right shape pedagogically: the
+// substrate is the perimeter, the UI is a courtesy.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';
@@ -28,7 +29,7 @@ class SubmitNoteForm extends StatefulWidget {
   });
 
   final ActionSubmitter actionSubmitter;
-  final PermissionSnapshot? snapshot;
+  final EffectiveAuthorization? snapshot;
   final ValueChanged<String?> onFlash;
 
   @override
@@ -77,11 +78,44 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
     };
   }
 
+  /// Compute which known workspaces are scoped to the active user under
+  /// their active role. Walks `scopeAssignments` for assignments that
+  /// could authorize a `BoundScope(workspace, X)` action:
+  ///
+  /// - [TotalWildcardScope] — covers every workspace.
+  /// - [ValueWildcardScope]`(class_: 'workspace')` — covers every
+  ///   workspace.
+  /// - [BoundScope]`(class_: 'workspace', value: X)` — covers exactly X.
+  ///
+  /// Returned set may include workspace identifiers the demo doesn't
+  /// know about (e.g., if the server seeds a 'mars' scope). The
+  /// dropdown intersects with `kKnownWorkspaces` for what to show.
+  Set<String> _authorizedWorkspaces(EffectiveAuthorization snapshot) {
+    final result = <String>{};
+    for (final assignment in snapshot.scopeAssignments) {
+      final scope = assignment.scope;
+      switch (scope) {
+        case TotalWildcardScope():
+          result.addAll(kKnownWorkspaces);
+        case ValueWildcardScope(class_: 'workspace'):
+          result.addAll(kKnownWorkspaces);
+        case BoundScope(class_: 'workspace', :final value):
+          result.add(value);
+        case BoundScope():
+        case ValueWildcardScope():
+          // Other scope classes don't authorize workspace-scoped submits.
+          break;
+      }
+    }
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final snap = widget.snapshot;
     final hasSubmit =
-        snap != null && snap.grants.contains(const Permission('submit_note'));
+        snap != null &&
+        snap.rolePermissions.contains(const Permission('submit_note'));
     if (!hasSubmit) {
       return Container(
         padding: const EdgeInsets.all(8),
@@ -91,6 +125,7 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
         ),
       );
     }
+    final authorized = _authorizedWorkspaces(snap);
     return Row(
       children: <Widget>[
         DropdownButton<String>(
@@ -100,7 +135,12 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
           },
           items: <DropdownMenuItem<String>>[
             for (final ws in kKnownWorkspaces)
-              DropdownMenuItem<String>(value: ws, child: Text(ws)),
+              DropdownMenuItem<String>(
+                value: ws,
+                child: Text(
+                  authorized.contains(ws) ? ws : '$ws (no permission)',
+                ),
+              ),
           ],
         ),
         const SizedBox(width: 8),
