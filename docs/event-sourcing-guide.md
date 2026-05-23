@@ -1121,10 +1121,13 @@ surface; both `Local*` and `Remote*` impls of each exist.
 - **`ViewSource`** — `Stream<Update<T>> watch<T>(...)`. Local impl
   wraps `EventStore.subscribe<T>`; Remote impl multiplexes a
   client-chosen `subscriptionId` over the shared WS.
-- **`PermissionSource`** — `PermissionSnapshot? get current` plus a
-  `Stream`. Local impl reads the `role_permission_grants` projection
-  directly; Remote impl fetches the snapshot from
-  `/permissions/snapshot` and updates over the WS.
+- **`PermissionSource`** — `EffectiveAuthorization? get current` plus
+  a `Stream`. Carries the active role's permissions and the user's
+  scope assignments so UI code can both gate affordances and
+  pre-filter scoped lists. Local impl reads the
+  `role_permission_grants` + `user_role_scopes` projections through
+  `AuthorizationPolicy.effectivePermissionsFor`; Remote impl fetches
+  from `/permissions/snapshot` and refreshes over the WS.
 
 Widgets and other consumers depend only on these. The deployment
 choice — composing `LocalScope` (in-process bundle) versus

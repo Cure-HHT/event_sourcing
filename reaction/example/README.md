@@ -32,9 +32,9 @@ that updates when permissions change mid-session.
   push a `stale_data` envelope; the client's `RemotePermissionSource`
   re-fetches `/permissions/snapshot` so UI gating updates live.
 - **Reactive UI** — every part of the home screen that depends on the
-  user's permissions wraps in `StreamBuilder<PermissionSnapshot?>` on
-  `PermissionSource.stream`. The admin panel becomes visible the moment
-  an `assign_role` grant lands.
+  user's permissions wraps in `StreamBuilder<EffectiveAuthorization?>`
+  on `PermissionSource.stream`. The admin panel becomes visible the
+  moment an `assign_role` grant lands.
 
 ## Seeded users
 
@@ -148,17 +148,20 @@ For the force-logout path:
 
 ## What the substrate enforces vs the UI gates
 
-The example deliberately keeps UI gating coarse — workspace dropdowns
-offer every known workspace, including ones the user can't submit to.
-Per-dispatch authorization happens at the substrate; denials surface in
-the flash. This makes the substrate's role visible: a "wrong workspace"
-isn't a UI bug, it's the policy doing its job.
+The example labels workspaces the user is NOT scoped to as
+`(no permission)` in the dropdown — read from
+`EffectiveAuthorization.scopeAssignments` on the live snapshot — but
+keeps them selectable. Per-dispatch authorization still happens at the
+substrate; trying a `(no permission)` workspace produces
+`DispatchAuthorizationDenied` and the flash surfaces the denial. This
+makes the substrate's role visible: a "wrong workspace" isn't a UI
+bug, it's the policy doing its job, and the UI pre-filter is a
+courtesy.
 
-Finer-grained UI filtering (only-workspaces-I-can-submit-to) would
-require the `EffectiveAuthorization.scopeAssignments` payload, which
-the substrate exposes via `/permissions/snapshot`. `PermissionSource`
-narrows this to role+grants today; a Phase-II extension could surface
-the scope detail to clients without a separate fetch.
+Production apps choosing strict pre-filtering (hide unauthorized
+workspaces entirely) would `.where()` `kKnownWorkspaces` by the same
+`scopeAssignments` walk used here. The substrate-side denial path
+remains the perimeter either way.
 
 ## Smoke test
 

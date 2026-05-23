@@ -112,11 +112,10 @@ rationale.
 ### 4. Permission policy stays substrate code
 
 Per-subscription authorization consults the substrate's existing
-`RolePermissionGrants` projection. The reaction server introduces no
-parallel policy mechanism; it composes substrate filter primitives
-based on the requesting Principal's `EffectiveAuthorization` (the
-substrate type that, post-CUR-1331, replaces the legacy
-`PermissionSnapshot`).
+`role_permission_grants` and `user_role_scopes` projections. The
+reaction server introduces no parallel policy mechanism; it composes
+substrate filter primitives based on the requesting Principal's
+`EffectiveAuthorization`.
 
 ### 5. Append-Only Primitives discipline applies to the wire
 
@@ -540,10 +539,8 @@ Two-phase load:
    `RemoteConnection`) on `viewName: "role_permission_grants"`,
    filtered to the active Principal's rows. Each incoming
    `Update<Map<String, Object?>>` is converted via the same
-   `EffectiveAuthorization` reducer the `LocalPermissionSource` uses.
-   (Note: `LocalPermissionSource` currently uses the legacy
-   `PermissionSnapshot` type; CUR-1331 impl renames + reshapes that
-   reducer. The Plan B-remote+C impl absorbs the consequence.)
+   `EffectiveAuthorization` reducer the `LocalPermissionSource` uses
+   (`AuthorizationPolicy.effectivePermissionsFor`).
 
 When `AuthSession` flips to `Expired` or `NotAuthenticated`:
 `current` → `null`, snapshot stream emits `null`, underlying WS
