@@ -1,11 +1,20 @@
 // reaction/example/lib/client/home_screen.dart
 //
-// Authenticated home screen. Three responsibilities:
-//   1) Show the current Principal + a "Revoke my role" button.
-//   2) Accept a new note title and submit it through the scope's
-//      ActionSubmitter.
-//   3) Render the live `notes_today` view by accumulating the
-//      Snapshot/Delta/Tombstone stream into a `List<Note>`.
+// Authenticated home screen. Composes five sections:
+//
+//   - IdentityBar      — userId + activeRole + "Sign out" / "Force-logout"
+//   - PermissionsCard  — current PermissionSnapshot.grants, live via stream
+//   - NotesList        — reactive notes_today view with workspace tag
+//   - SubmitNoteForm   — workspace dropdown + title + submit button,
+//                        permission-gated via PermissionSource.stream
+//   - AdminPanel       — visible iff active role holds Permission('assign_role'),
+//                        lists user_role_scopes view + grant/revoke forms
+//
+// Every section that depends on the user's permissions wraps in a
+// StreamBuilder<PermissionSnapshot?> on PermissionSource.stream so a
+// server-pushed stale_data envelope (handled in RemoteConnection +
+// RemoteScope) flows through to a live UI update — alice's submit form
+// gains 'east' the moment carol grants her access.
 
 import 'dart:async';
 
@@ -14,22 +23,24 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:reaction/reaction.dart';
 
-/// A single note row (deduplicated by aggregate id).
-class Note {
-  const Note({required this.id, required this.title});
+import 'admin_panel.dart';
+import 'notes_list.dart';
+import 'submit_note_form.dart';
 
-  final String id;
-  final String title;
-}
+/// Workspaces known to the demo's bootstrap seed. The UI offers all
+/// three; server-side scope enforcement decides per-dispatch whether
+/// each is authorized for the active user. The deliberate redundancy
+/// ('mars' is never seeded) demonstrates that scope checks happen at
+/// the substrate, not at the UI: any user can ASK to submit there, the
+/// substrate denies with DispatchAuthorizationDenied.
+const List<String> kKnownWorkspaces = <String>['west', 'east', 'mars'];
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({required this.scope, required this.baseUrl, super.key});
 
   final RemoteScope scope;
 
-  /// Server base URL for the out-of-band `/admin/revoke` endpoint
-  /// (which sits outside the reaction action pipeline by design — see
-  /// bootstrap.dart's comment "DEMO ONLY").
+  /// Server base URL for the out-of-band `/admin/revoke` demo endpoint.
   final Uri baseUrl;
 
   @override
@@ -37,81 +48,21 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final TextEditingController _titleController = TextEditingController();
-  final _NotesAccumulator _notes = _NotesAccumulator();
-  late final StreamSubscription<Update<Note>> _notesSub;
   String? _flash;
 
-  @override
-  void initState() {
-    super.initState();
-    final stream = widget.scope.viewSource.watch<Note>(
-      viewName: 'notes_today',
-      mapper: (row) => Note(
-        id: row['aggregateId']! as String,
-        title: row['title']! as String,
-      ),
-    );
-    _notesSub = stream.listen(
-      _notes.apply,
-      onError: (Object err) {
-        if (mounted) setState(() => _flash = 'stream error: $err');
-      },
-    );
-    _notes.addListener(_onNotesChanged);
+  void _setFlash(String? message) {
+    if (mounted) setState(() => _flash = message);
   }
 
-  void _onNotesChanged() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    _notes.removeListener(_onNotesChanged);
-    unawaited(_notesSub.cancel());
-    _notes.dispose();
-    _titleController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submitNote() async {
-    final title = _titleController.text.trim();
-    if (title.isEmpty) return;
-    _titleController.clear();
-    try {
-      final result = await widget.scope.actionSubmitter.submit(
-        ActionSubmission(
-          actionName: 'submit_note',
-          rawInput: <String, Object?>{'title': title},
-        ),
-      );
-      final message = switch (result) {
-        DispatchSuccess<Object?>() => 'Note submitted.',
-        DispatchAuthorizationDenied<Object?>(:final permission) =>
-          'Denied: $permission',
-        DispatchValidationDenied<Object?>(:final error) => 'Invalid: $error',
-        DispatchParseDenied<Object?>(:final error) => 'Invalid: $error',
-        DispatchUnknownAction<Object?>(:final requestedName) =>
-          'Unknown action: $requestedName',
-        DispatchIdempotencyHit<Object?>() =>
-          'Already submitted (idempotency cache hit).',
-        DispatchExecutionFailed<Object?>(:final error) =>
-          'Execution failed: $error',
-      };
-      if (mounted) setState(() => _flash = message);
-    } on TransportException catch (e) {
-      if (mounted) setState(() => _flash = 'transport: ${e.message}');
-    }
-  }
-
-  Future<void> _revokeMyRole() async {
+  Future<void> _forceLogout() async {
     final principal = widget.scope.authSession.principal;
     if (principal is! UserPrincipal) {
-      if (mounted) setState(() => _flash = 'Not signed in as a user.');
+      _setFlash('Not signed in as a user.');
       return;
     }
-    // Out-of-band admin endpoint — bypasses the action pipeline so the
-    // revocation isn't gated by the user's own permissions.
+    // Out-of-band admin endpoint: revokes the SEEDED assignment for
+    // this user (their starting role + scope from bootstrap), which
+    // closes the WS with 4003 and flips the session to Expired.
     final url = widget.baseUrl.replace(
       path: '/admin/revoke',
       queryParameters: <String, String>{'user': principal.userId},
@@ -119,102 +70,137 @@ class _HomeScreenState extends State<HomeScreen> {
     final client = http.Client();
     try {
       await client.post(url);
-      if (mounted) {
-        setState(() => _flash = 'revoke requested for ${principal.userId}');
-      }
+      _setFlash('Force-logout requested for ${principal.userId}.');
     } catch (e) {
-      if (mounted) setState(() => _flash = 'revoke failed: $e');
+      _setFlash('force-logout failed: $e');
     } finally {
       client.close();
     }
   }
 
+  void _signOut() {
+    widget.scope.authSession.setCredential(null);
+  }
+
   @override
   Widget build(BuildContext context) {
     final principal = widget.scope.authSession.principal;
-    final userId = principal is UserPrincipal ? principal.userId : '(none)';
-    final notes = _notes.notes;
-
     return Padding(
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Row(
+      child: StreamBuilder<PermissionSnapshot?>(
+        stream: widget.scope.permissionSource.stream,
+        initialData: widget.scope.permissionSource.current,
+        builder: (context, snapshot) {
+          final snap = snapshot.data;
+          final isAdmin =
+              snap != null &&
+              snap.grants.contains(const Permission('assign_role'));
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              Expanded(child: Text('Logged in as: $userId')),
-              TextButton(
-                onPressed: _revokeMyRole,
-                child: const Text('Revoke my role'),
+              _IdentityBar(
+                principal: principal,
+                snapshot: snap,
+                onSignOut: _signOut,
+                onForceLogout: _forceLogout,
               ),
-            ],
-          ),
-          const Divider(),
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: TextField(
-                  controller: _titleController,
-                  decoration: const InputDecoration(
-                    labelText: 'New note title',
+              const Divider(),
+              _PermissionsCard(snapshot: snap),
+              const SizedBox(height: 12),
+              SubmitNoteForm(
+                actionSubmitter: widget.scope.actionSubmitter,
+                snapshot: snap,
+                onFlash: _setFlash,
+              ),
+              if (_flash != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _flash!,
+                    style: const TextStyle(color: Colors.grey),
                   ),
-                  onSubmitted: (_) => _submitNote(),
                 ),
-              ),
-              const SizedBox(width: 8),
-              ElevatedButton(
-                onPressed: _submitNote,
-                child: const Text('Submit'),
-              ),
+              const SizedBox(height: 12),
+              if (isAdmin) ...<Widget>[
+                AdminPanel(
+                  viewSource: widget.scope.viewSource,
+                  actionSubmitter: widget.scope.actionSubmitter,
+                  onFlash: _setFlash,
+                ),
+                const SizedBox(height: 12),
+              ],
+              Expanded(child: NotesList(viewSource: widget.scope.viewSource)),
             ],
-          ),
-          if (_flash != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(_flash!, style: const TextStyle(color: Colors.grey)),
-            ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: _notes.replayComplete
-                ? ListView.builder(
-                    itemCount: notes.length,
-                    itemBuilder: (context, i) => ListTile(
-                      title: Text(notes[i].title),
-                      subtitle: Text(notes[i].id),
-                    ),
-                  )
-                : const Center(child: CircularProgressIndicator()),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 }
 
-/// Accumulates `Update<Note>` envelopes into a flat list. Notifies
-/// listeners on every state change.
-class _NotesAccumulator extends ChangeNotifier {
-  final Map<String, Note> _byId = <String, Note>{};
-  bool _replayComplete = false;
+/// Top bar: identity + role + scope summary + sign-out + force-logout.
+class _IdentityBar extends StatelessWidget {
+  const _IdentityBar({
+    required this.principal,
+    required this.snapshot,
+    required this.onSignOut,
+    required this.onForceLogout,
+  });
 
-  bool get replayComplete => _replayComplete;
-  List<Note> get notes => _byId.values.toList(growable: false);
+  final Principal? principal;
+  final PermissionSnapshot? snapshot;
+  final VoidCallback onSignOut;
+  final VoidCallback onForceLogout;
 
-  void apply(Update<Note> update) {
-    switch (update) {
-      case Snapshot<Note>(:final value):
-        // value == null is unusual but possible (e.g. tombstoned row in
-        // replay). Nothing to add in that case.
-        if (value != null) _byId[value.id] = value;
-        notifyListeners();
-      case EndOfReplay<Note>():
-        _replayComplete = true;
-        notifyListeners();
-      case Delta<Note>(:final value):
-        _byId[value.id] = value;
-        notifyListeners();
-      case Tombstone<Note>(:final aggregateId):
-        if (_byId.remove(aggregateId) != null) notifyListeners();
-    }
+  @override
+  Widget build(BuildContext context) {
+    final userId = principal is UserPrincipal
+        ? (principal as UserPrincipal).userId
+        : '(anonymous)';
+    final role = snapshot?.role ?? '(loading)';
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: Text(
+            'Signed in: $userId — role: $role',
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ),
+        TextButton(
+          onPressed: onForceLogout,
+          child: const Text('Force-logout (revoke seed)'),
+        ),
+        const SizedBox(width: 8),
+        TextButton(onPressed: onSignOut, child: const Text('Sign out')),
+      ],
+    );
+  }
+}
+
+/// Compact permission display so the user can see what their active
+/// role grants. Updates live via the enclosing StreamBuilder.
+class _PermissionsCard extends StatelessWidget {
+  const _PermissionsCard({required this.snapshot});
+
+  final PermissionSnapshot? snapshot;
+
+  @override
+  Widget build(BuildContext context) {
+    final snap = snapshot;
+    final body = snap == null
+        ? const Text('(loading permissions…)')
+        : Text(
+            snap.grants.isEmpty
+                ? '(no permissions)'
+                : 'Permissions: ${(snap.grants.map((p) => p.name).toList()..sort()).join(", ")}',
+          );
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.blueGrey.shade50,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: body,
+    );
   }
 }

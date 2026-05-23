@@ -3,8 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:reaction/reaction.dart';
 
-/// Login screen: enter any username; the server's TrustingAuthValidator
-/// accepts it verbatim and surfaces an `editor` role.
+/// Login screen: enter one of the seeded usernames (alice, bob, carol,
+/// dave) — the server's RoleAwareTrustingValidator reads
+/// `user_role_scopes` and surfaces the user's highest-privileged role
+/// (admin > editor > viewer). Any other non-empty string authenticates
+/// as anonymous, with which every action is denied.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({required this.scope, this.message, super.key});
 
@@ -53,7 +56,9 @@ class _LoginScreenState extends State<LoginScreen> {
             controller: _controller,
             decoration: const InputDecoration(
               labelText: 'Username',
-              hintText: 'alice',
+              hintText: 'alice / bob / carol / dave',
+              helperText:
+                  'alice/bob: editor (west/east). carol: admin. dave: viewer.',
             ),
             onSubmitted: (_) => _signIn(),
           ),

@@ -238,7 +238,8 @@ void main() {
       bearer: 'alice',
     );
     expect(aliceSnap['activeRole'], 'editor');
-    final perms = (aliceSnap['rolePermissions']! as List).cast<Map>();
+    final perms = (aliceSnap['rolePermissions']! as List)
+        .cast<Map<String, Object?>>();
     final names = perms.map((p) => p['name']).toSet();
     expect(names, containsAll(<String>['submit_note', 'view:notes_today']));
 
@@ -247,7 +248,8 @@ void main() {
       bearer: 'carol',
     );
     expect(carolSnap['activeRole'], 'admin');
-    final carolPerms = (carolSnap['rolePermissions']! as List).cast<Map>();
+    final carolPerms = (carolSnap['rolePermissions']! as List)
+        .cast<Map<String, Object?>>();
     final carolNames = carolPerms.map((p) => p['name']).toSet();
     expect(
       carolNames,
