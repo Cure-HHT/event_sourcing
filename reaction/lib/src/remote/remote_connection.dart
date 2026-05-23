@@ -43,6 +43,19 @@ class RemoteConnection {
   /// the wiring must happen post-construction in [RemoteScope]'s body.
   void Function()? onAuthClose;
 
+  /// Invoked when the server pushes a `stale_data` envelope on the
+  /// shared WS connection. The envelope is connection-scoped (not
+  /// keyed to any one subscription): the server's `AuthzWatcher` emits
+  /// it on security-EXPANDING changes (`role_assigned`,
+  /// `permission_granted`) and on opt-in containment updates. Wired by
+  /// [RemoteScope] to trigger a [RemotePermissionSource] re-fetch so
+  /// UI gating updates without waiting for the next [Authenticated]
+  /// transition.
+  ///
+  /// Settable field for the same `this`-in-initializer-closure reason
+  /// as [onAuthClose].
+  void Function(String? reason)? onStaleData;
+
   String? _credential;
   bool _disposed = false;
 
@@ -148,6 +161,17 @@ class RemoteConnection {
         );
         _subs.remove(subId)?.close();
       }
+      return;
+    }
+    if (type == 'stale_data') {
+      // Connection-scoped notification: the server's AuthzWatcher tells
+      // us SOME of our cached authorization state may be stale (a
+      // role_assigned / permission_granted / containment change
+      // expanded what we can see). Not subscription-scoped — the
+      // envelope carries `reason` only, no subscriptionId. Hand off to
+      // the wired callback ([RemoteScope] routes this to
+      // [RemotePermissionSource.refresh] so UI gating updates live).
+      onStaleData?.call(json['reason'] as String?);
       return;
     }
     // Otherwise: Update<T> envelope routed by subscriptionId.

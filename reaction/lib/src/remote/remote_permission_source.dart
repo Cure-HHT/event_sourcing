@@ -17,9 +17,14 @@ import 'package:reaction/src/wire/effective_authorization_codec.dart';
 ///
 /// Clears to `null` when the auth session leaves Authenticated.
 ///
-/// The WS-driven invalidation path (re-fetch when the server pushes a
-/// permissions update) is intentionally deferred to Phase 4 e2e; this
-/// impl is the HTTP-snapshot half only.
+/// Mid-session refresh: [refresh] re-fetches the snapshot and is wired
+/// by [RemoteScope] to the server's `stale_data` envelope (emitted by
+/// the AuthzWatcher on security-EXPANDING changes — `role_assigned`,
+/// `permission_granted`, containment changes — see
+/// `spec/reaction-remote.md` "Mid-session permission changes"). UI
+/// gating that wraps `stream` therefore updates live as the user's
+/// permissions broaden, in addition to the initial fetch on
+/// Authenticated.
 class RemotePermissionSource implements PermissionSource {
   RemotePermissionSource({
     required this.connection,
@@ -74,6 +79,24 @@ class RemotePermissionSource implements PermissionSource {
       _current = null;
       if (!_controller.isClosed) _controller.add(null);
     }
+  }
+
+  /// Re-fetch the snapshot if currently authenticated. No-op otherwise
+  /// (when the session is not Authenticated, [current] is already
+  /// `null` and there is nothing on the server to read with our
+  /// credential). Wired by [RemoteScope] to the WS `stale_data`
+  /// envelope so security-EXPANDING permission changes propagate to
+  /// the UI without waiting for the next Authenticated transition.
+  ///
+  /// Bumps the generation counter so any in-flight Authenticated-
+  /// triggered fetch is superseded; the last writer wins. Quiet on
+  /// transport errors (same shape as the Authenticated-transition
+  /// path).
+  Future<void> refresh() async {
+    if (_disposed) return;
+    if (authSession.current is! Authenticated) return;
+    _fetchGen++;
+    await _fetchSnapshot();
   }
 
   Future<void> _fetchSnapshot() async {

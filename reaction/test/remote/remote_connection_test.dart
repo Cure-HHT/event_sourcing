@@ -270,6 +270,40 @@ void main() {
       });
     }
 
+    test('stale_data envelope invokes onStaleData with reason', () async {
+      final pair = _Pair();
+      addTearDown(pair.close);
+      final reasons = <String?>[];
+      final conn =
+          RemoteConnection(
+              baseUrl: Uri.parse('http://localhost:0'),
+              httpClient: _FakeHttpClient(),
+              wsFactory: (_) => pair.clientSide,
+            )
+            ..onStaleData = reasons.add
+            ..setCredential('alice');
+
+      pair.serverSide.stream.listen((_) {});
+      // Open a sub to drive _ensureConnected -> _connect (which wires
+      // _onMessage).
+      conn
+          .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+          .listen((_) {}, onError: (_) {});
+      await Future<void>.delayed(Duration.zero);
+
+      pair.serverSide.sink.add(
+        jsonEncode({'type': 'auth_ok', 'principalId': 'alice'}),
+      );
+      pair.serverSide.sink.add(
+        jsonEncode({'type': 'stale_data', 'reason': 'role_assigned'}),
+      );
+      pair.serverSide.sink.add(jsonEncode({'type': 'stale_data'}));
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(reasons, ['role_assigned', null]);
+      await conn.dispose();
+    });
+
     test('WS close with code 1000 does NOT invoke onAuthClose', () async {
       final pair = _Pair();
       addTearDown(pair.close);

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:http/http.dart' as http;
 import 'package:reaction/src/interfaces/action_submitter.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';
@@ -37,6 +39,13 @@ class RemoteScope {
       connection: _connection,
       authSession: _auth,
     );
+    // Route the server-pushed stale_data envelope into a permission
+    // re-fetch. The server emits this on security-EXPANDING changes
+    // (role_assigned, permission_granted, containment update); the
+    // re-fetch updates `_perms.current` so UI gating reacts live —
+    // without it, the client would only learn about its widened
+    // permissions on the next Authenticated transition.
+    _connection.onStaleData = (_) => unawaited(_perms.refresh());
   }
 
   final RemoteConnection _connection;
