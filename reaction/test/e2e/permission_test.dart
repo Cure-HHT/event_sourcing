@@ -42,9 +42,9 @@ void main() {
     await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
 
     final snap = await h.scope.permissionSource.stream.firstWhere(
-      (s) => s != null && s.grants.isNotEmpty,
+      (s) => s != null && s.rolePermissions.isNotEmpty,
     );
-    expect(snap!.role, 'install');
-    expect(snap.grants.any((p) => p.name == 'say_hello'), isTrue);
+    expect(snap!.activeRole, 'install');
+    expect(snap.rolePermissions.any((p) => p.name == 'say_hello'), isTrue);
   });
 }

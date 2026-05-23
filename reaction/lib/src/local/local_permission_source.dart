@@ -12,8 +12,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 
 import 'package:reaction/src/interfaces/permission_source.dart';
 
-/// In-process [PermissionSource] impl. Recomputes a [PermissionSnapshot]
-/// for the active [Principal]'s `activeRole` whenever:
+/// In-process [PermissionSource] impl. Recomputes an
+/// [EffectiveAuthorization] for the active [Principal]'s `activeRole`
+/// whenever:
 ///
 /// 1. [setActivePrincipal] changes the active principal, OR
 /// 2. The substrate's `role_permission_grants` view emits a [Delta] or
@@ -74,25 +75,25 @@ class LocalPermissionSource implements PermissionSource {
   final AuthorizationPolicy policy;
 
   Principal? _principal;
-  PermissionSnapshot? _current;
-  final StreamController<PermissionSnapshot?> _controller =
-      StreamController<PermissionSnapshot?>.broadcast();
+  EffectiveAuthorization? _current;
+  final StreamController<EffectiveAuthorization?> _controller =
+      StreamController<EffectiveAuthorization?>.broadcast();
   StreamSubscription<Update<Map<String, Object?>>>? _grantsSub;
   StreamSubscription<Update<Map<String, Object?>>>? _userRoleScopesSub;
 
   @override
-  PermissionSnapshot? get current => _current;
+  EffectiveAuthorization? get current => _current;
 
   @override
-  Stream<PermissionSnapshot?> get stream {
+  Stream<EffectiveAuthorization?> get stream {
     // Per-listener wrapper: emits _current synchronously on subscribe
     // (snapshot-on-listen contract), then forwards all subsequent updates
     // from the broadcast controller. A dedicated per-listener controller is
     // used so that the forward subscription is held open while the listener
     // is active and no events are lost to broadcast-stream buffering gaps.
-    late StreamController<PermissionSnapshot?> per;
-    StreamSubscription<PermissionSnapshot?>? forwardSub;
-    per = StreamController<PermissionSnapshot?>(
+    late StreamController<EffectiveAuthorization?> per;
+    StreamSubscription<EffectiveAuthorization?>? forwardSub;
+    per = StreamController<EffectiveAuthorization?>(
       onListen: () {
         per.add(_current);
         forwardSub = _controller.stream.listen(per.add, onDone: per.close);
@@ -133,13 +134,8 @@ class LocalPermissionSource implements PermissionSource {
       _setNull();
       return;
     }
-    final snapshot = PermissionSnapshot(
-      role: effective.activeRole,
-      grants: effective.rolePermissions,
-      issuedAt: DateTime.now(),
-    );
-    _current = snapshot;
-    if (!_controller.isClosed) _controller.add(snapshot);
+    _current = effective;
+    if (!_controller.isClosed) _controller.add(effective);
   }
 
   void _setNull() {

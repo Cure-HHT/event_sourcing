@@ -21,7 +21,8 @@
 ///   (the substrate's `Update<T>` stream: Snapshot × N → EndOfReplay →
 ///   Delta/Tombstone × ∞).
 /// - [PermissionSource] — per-Principal view of the substrate's
-///   `RolePermissionGrants` projection.
+///   [EffectiveAuthorization] (active role + role permissions + scope
+///   assignments).
 /// - [PrincipalAuthValidator] — server-side credential validation seam
 ///   (consumed by [ReactionHandlers] on the server side).
 ///
@@ -39,8 +40,9 @@
 /// - [LocalActionSubmitter] — wraps `ActionDispatcher.dispatch`.
 /// - [LocalViewSource] — wraps `EventStore.subscribe<T>`.
 /// - [LocalPermissionSource] — subscribes to the substrate's
-///   `role_permission_grants` view and reads the projection rows
-///   directly to build [PermissionSnapshot]s for the active principal.
+///   `role_permission_grants` and `user_role_scopes` views and routes
+///   through `AuthorizationPolicy.effectivePermissionsFor` to derive
+///   the [EffectiveAuthorization] for the active principal.
 ///
 /// Four cross-process Remote implementations + a connection scope
 /// (Plan B-remote), wiring the same four interfaces over HTTP +
