@@ -7,7 +7,7 @@ stabilizes)
 **Linear**: CUR-1317 (libify); impl ticket TBD
 **Elaborates**: `spec/prd-reaction.md` PRDs `EVS-PRD-auth-session`,
 `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`,
-`EVS-PRD-permission-snapshot-source`, and
+`EVS-PRD-permission-source`, and
 `EVS-PRD-cross-process-event-transport`.
 **Depends on**: `spec/scoped-permissions.md` (CUR-1331) for the
 `AuthorizationPolicy`, `EffectiveAuthorization`, and `ScopeValue`
@@ -1112,7 +1112,7 @@ Each PRD assertion gets at least one
 - `/D` source-identical: same `watch<T>` call pattern produces
   equivalent `Stream<Update<T>>` from Local vs Remote.
 
-**`EVS-PRD-permission-snapshot-source`**:
+**`EVS-PRD-permission-source`**:
 
 - `/C` initial HTTP GET seeds; WS subscription reflects subsequent
   changes.

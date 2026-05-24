@@ -12,7 +12,7 @@
 | EVS-PRD-action-submitter              | Action Submitter                | prd-reaction.md                      | 22898b0a |
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 9c087173 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | cd11dd12 |
-| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | cc74d38e |
+| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | fbe2d2d4 |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | ec656743 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | da8f0f0b |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | b49cdace |
@@ -20,7 +20,7 @@
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 6b89020b |
 | EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 02028dcf |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization   | prd-multi-source-canonicalization.md | 3e087d41 |
-| EVS-PRD-permission-snapshot-source    | Permission Snapshot Source      | prd-reaction.md                      | 81edb261 |
+| EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | a215639f |
 | EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 9165094d |
 | EVS-PRD-portability                   | Portability                     | prd-portability.md                   | edf3c977 |
 | EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | 4755ef8b |

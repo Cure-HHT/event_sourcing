@@ -1,5 +1,5 @@
 // reaction/test/e2e/permission_test.dart
-// Verifies: EVS-PRD-permission-snapshot-source/C/E
+// Verifies: EVS-PRD-permission-source/C/E
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 

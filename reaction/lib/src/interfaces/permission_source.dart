@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-permission-snapshot-source/A/D — defines the
+// Implements: EVS-PRD-permission-source/A/D — defines the
 // PermissionSource interface (A: current synchronous getter +
 // Stream<EffectiveAuthorization?> + dispose) and the rule that the
 // active Principal is sourced from a co-mounted AuthSession, with no

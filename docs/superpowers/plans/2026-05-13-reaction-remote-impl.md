@@ -4872,7 +4872,7 @@ git commit -m "[CUR-1317] reaction e2e: view subscription Snapshot/EOR/Delta tes
 
 ```dart
 // reaction/test/e2e/permission_test.dart
-// Verifies: EVS-PRD-permission-snapshot-source/C/E
+// Verifies: EVS-PRD-permission-source/C/E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -5286,7 +5286,7 @@ git commit -m "[CUR-1317] Plan B-remote+C: final verification sweeps"
 - EVS-PRD-auth-session A-G → Tasks 21, 27.
 - EVS-PRD-action-submitter A-E → Tasks 7, 8, 14, 22, 28.
 - EVS-PRD-view-subscriber A-D → Tasks 5, 6, 17, 23, 29.
-- EVS-PRD-permission-snapshot-source A-E → Tasks 9, 16, 24, 30.
+- EVS-PRD-permission-source A-E → Tasks 9, 16, 24, 30.
 - EVS-PRD-cross-process-event-transport A-G → Tasks 3-10 (codecs A/B); 17 (D/E); 8 (F); 29 (C); 23 (G).
 
 Trust boundary expansion → Task 35.

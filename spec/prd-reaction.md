@@ -67,7 +67,7 @@ The PRDs below are best read in this order on first contact, because each later 
 1. `EVS-PRD-auth-session` — the credential lifecycle other PRDs assume.
 2. `EVS-PRD-action-submitter` — the simplest of the three transport-bridging interfaces.
 3. `EVS-PRD-view-subscriber` — the substrate's `Update<T>` stream made transport-agnostic.
-4. `EVS-PRD-permission-snapshot-source` — per-Principal projection access.
+4. `EVS-PRD-permission-source` — per-Principal projection access.
 5. `EVS-PRD-cross-process-event-transport` — the wire envelope shared by the Remote impls of the three above.
 6. `EVS-PRD-reaction-widget-contract` — the Flutter widget layer that consumes all four interfaces.
 
@@ -176,7 +176,7 @@ D. Consumer code that depends only on the `ViewSource` interface SHALL be source
 
 *End* *View Subscriber* | **Hash**: b6801679
 
-## EVS-PRD-permission-snapshot-source: Permission Snapshot Source
+## EVS-PRD-permission-source: Permission Source
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-permissions-as-events
@@ -205,7 +205,7 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 **Why does the Remote impl piggyback on the same wire as `RemoteViewSource` (C)?** `RolePermissionGrants` is just another substrate view. Treating its updates as ordinary view subscriptions means the wire transport has one mechanism for all reactive data, not two. The `RemotePermissionSource` is, internally, a thin specialization of `RemoteViewSource` over the `RolePermissionGrants` view filtered to the active `Principal`.
 
-*End* *Permission Snapshot Source* | **Hash**: a215639f
+*End* *Permission Source* | **Hash**: a215639f
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
@@ -249,7 +249,7 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
-**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-snapshot-source, EVS-PRD-view-subscriber
+**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-view-subscriber
 
 ### Purpose
 
