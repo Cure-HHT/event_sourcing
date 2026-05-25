@@ -151,9 +151,15 @@ reaction/lib/src/
     remote_scope.dart              Composition class
   server/          (NEW; shelf-compatible handlers, no "server" class)
     reaction_handlers.dart         ReactionHandlers config bundle;
-                                   exposes .me / .actions /
-                                   .permissions / .subscriptions
-                                   as shelf.Handlers
+                                   exposes .me / .actions / .permissions
+                                   as shelf.Handler getters and
+                                   .subscriptions(validator) as a
+                                   shelf.Handler factory (the validator
+                                   is passed per-call because the WS
+                                   upgrade path cannot carry an
+                                   Authorization header from Flutter
+                                   web — auth happens in the first WS
+                                   message)
     auth_middleware.dart           Optional authMiddleware(validator)
                                    + principalFromContext(req) helper
     action_handler.dart            POST /actions handler factory
@@ -575,9 +581,11 @@ final reaction = ReactionHandlers(
   viewPermissionNamer: ReactionHandlers.defaultViewPermissionNamer,
 );
 
-// `reaction.me` / `.actions` / `.permissions` / `.subscriptions`
-// are shelf.Handlers. The consumer composes them into THEIR router
-// however they like:
+// `reaction.me` / `.actions` / `.permissions` are shelf.Handler
+// getters; `.subscriptions(validator)` is a shelf.Handler factory
+// that takes the per-call validator (see "Why per-call validator on
+// subscriptions" below). The consumer composes them into THEIR
+// router however they like:
 final router = Router()
   // Consumer's custom routes:
   ..get('/api/v1/sponsor/config', sponsorConfigHandler)
@@ -586,7 +594,8 @@ final router = Router()
   ..get('/api/v1/portal/me',                   reaction.me)
   ..post('/api/v1/portal/actions',             reaction.actions)
   ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
-  ..get('/api/v1/portal/subscriptions',        reaction.subscriptions);
+  ..get('/api/v1/portal/subscriptions',
+        reaction.subscriptions(validator));
 
 final pipeline = const Pipeline()
     .addMiddleware(existingFirebaseAuthMiddleware) // consumer-supplied
@@ -594,6 +603,21 @@ final pipeline = const Pipeline()
 
 await shelf_io.serve(pipeline, '0.0.0.0', 8080);
 ```
+
+**Why `subscriptions` is a method (taking `validator`) and the other
+three are getters?** The HTTP routes (`/me`, `/actions`,
+`/permissions/snapshot`) read the active `Principal` from the request
+context as populated by upstream shelf middleware — either the
+consumer's existing auth middleware or the lib-supplied
+`authMiddleware(validator)`. The WS upgrade path cannot follow that
+pattern: Flutter web's `WebSocket` constructor cannot set custom
+headers on the handshake, so the credential cannot ride in an
+`Authorization` header and HTTP-bearer middleware mounted in front of
+the WS route would reject every upgrade with 401. The credential
+arrives in the first WS message after the upgrade completes; the
+handler therefore needs the `PrincipalAuthValidator` directly, and
+the cleanest place to inject it is the factory call site where the
+handler is composed into the router.
 
 `ReactionHandlers` does not call `shelf_io.serve`, does not own an
 `HttpServer`, does not own an `EventStore` or `ActionDispatcher` or

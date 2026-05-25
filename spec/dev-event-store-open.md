@@ -1,6 +1,6 @@
 # EVS-DEV-event-store-open: EventStore.open boot flow
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-event-log
 
 ## Purpose
@@ -15,7 +15,7 @@ B. `EventStore.open` SHALL emit `lib_version_initialized` on first boot under a 
 
 C. `EventStore.open` SHALL emit `lib_version_changed` on subsequent transitions to a library version different from the most recent one recorded in the log.
 
-D. `EventStore.open` SHALL refuse to construct an instance under a library version older than the most recent recorded version, throwing `DowngradeRefusedError` before any state mutation.
+D. `EventStore.open` SHALL refuse to construct an instance under a library version older than the most recent recorded version, throwing `DowngradeRefusedError` before any state mutation, unless the caller explicitly passes `allowDowngrade: true`, in which case the older instance opens normally; the asymmetry exists so downgrade is a deliberate decision, not the default.
 
 E. The boot-time pass (downgrade check, view-target-versions seeding, snapshot promotion, library-version event emission) SHALL execute inside a single `storage.transaction(...)` so its mutations are atomic with respect to peer readers.
 
@@ -25,4 +25,4 @@ E. The boot-time pass (downgrade check, view-target-versions seeding, snapshot p
 
 **Why one transaction?** Boot-time mutations (view-target-versions seeding, snapshot promotion writes, library-version event append) all read state derived from each other. Doing them in separate transactions admits torn intermediate states visible to concurrent readers. The single-transaction discipline preserves the closed-under-events guarantee that state at any sequence is reconstructable from the log.
 
-*End* *EventStore.open boot flow* | **Hash**: 3d07b20f
+*End* *EventStore.open boot flow* | **Hash**: c0cd7e1a
