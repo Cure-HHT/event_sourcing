@@ -1,7 +1,6 @@
-// Implements: EVS-PRD-subscription remote-server side — WS subscription
-// state machine (AWAITING_AUTH -> AUTHENTICATED), per-subscribe two-tier
-// authorization (Approach B), and per-connection serialized relay of
-// substrate Update envelopes.
+// WS subscription state machine (AWAITING_AUTH -> AUTHENTICATED),
+// per-subscribe two-tier authorization (Approach B), and per-connection
+// serialized relay of substrate Update envelopes.
 //
 // Package-private; not exported from reaction.dart.
 //
