@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-cross-process-event-transport/E — supplies the
+//   viewName -> scope-class binding the subscription handler consults
+//   when narrowing each per-subscription request to the requesting
+//   Principal's EffectiveAuthorization.
+
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// Maps a substrate [ProjectionSpec.viewName] to its scope-class

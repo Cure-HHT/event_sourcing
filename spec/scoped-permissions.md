@@ -698,6 +698,7 @@ Reusing the assignment row set for the scope-match step keeps the cost a single 
 
 ### Changelog
 
+- 2026-05-24 | 87555bb8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
 
@@ -722,6 +723,7 @@ D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `ro
 
 ### Changelog
 
+- 2026-05-24 | deab9862 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
 

@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-action-submitter/C — RemoteActionSubmitter submits
+//   via HTTP POST /actions and decodes the DispatchResult from the
+//   response body via DispatchResultCodec.
+// Implements: EVS-PRD-action-submitter/D — every outbound submission
+//   includes the bearer credential from the co-mounted AuthSession
+//   (RemoteConnection.httpPost injects it on every call).
+// Implements: EVS-PRD-cross-process-event-transport/F — wire-level
+//   bearer credential carriage on action submission.
+
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

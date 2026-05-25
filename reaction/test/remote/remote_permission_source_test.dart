@@ -3,6 +3,9 @@
 // the test runner surfaces breakage if the file is removed or fails to
 // load. Full coverage of two-phase load + AuthSession dependency lives
 // in e2e/permission_test.dart in Phase 4.
+//
+// Verifies: EVS-PRD-permission-source/A/D/E — Remote impl surface;
+//   full per-assertion coverage in e2e/permission_test.dart.
 // ignore_for_file: unused_import
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/remote/remote_permission_source.dart';

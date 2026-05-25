@@ -3,6 +3,9 @@
 // the test runner surfaces breakage if the file is removed or fails to
 // load. Real coverage of the mapper round-trip lives in
 // e2e/view_test.dart in Phase 4.
+//
+// Verifies: EVS-PRD-view-subscriber/C — full mapper round-trip covered
+//   in e2e/view_test.dart.
 // ignore_for_file: unused_import
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

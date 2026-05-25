@@ -8,6 +8,10 @@
 // Verifies: EVS-PRD-permissions-as-events/C — re-running bootstrap with the
 //   same yaml is idempotent (no new events), confirming the log alone
 //   suffices to reconstruct permission state.
+// Verifies: EVS-DEV-bootstrap-action-permissions/A/B/C/D — full YAML-seeded
+//   bootstrap behavior: missing-grant event emission (A), PolicyFailSafe on
+//   parse/validation failure (B), PolicyReady wrapping
+//   TableBackedAuthorizationPolicy on success (C), idempotent on re-run (D).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

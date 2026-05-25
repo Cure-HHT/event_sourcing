@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-cross-process-event-transport — composition smoke
+//   test for ReactionHandlers; full per-handler coverage in sibling
+//   *_route_test.dart and subscription_handler_test.dart, E2E coverage
+//   in test/e2e/*.
+
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

@@ -1,3 +1,11 @@
+// Verifies: EVS-PRD-auth-session/C — invokes
+//   PrincipalAuthValidator.authenticate on the bearer credential and
+//   attaches the resulting Principal to the request context.
+// Verifies: EVS-PRD-auth-session/E — HTTP 401 on missing/bad credential
+//   is the wire signal the Remote AuthSession maps to Expired.
+// Verifies: EVS-PRD-cross-process-event-transport/F — bearer credential
+//   is the required wire-level authentication carriage.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/server/auth_middleware.dart';

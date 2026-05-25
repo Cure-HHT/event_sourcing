@@ -1,3 +1,18 @@
+// Implements: EVS-PRD-cross-process-event-transport — composition of the
+//   four interface PRDs into one client-side bundle: RemoteScope assembles
+//   RemoteAuthSession, RemoteActionSubmitter, RemoteViewSource, and
+//   RemotePermissionSource over a shared RemoteConnection, and routes
+//   auth-related WS close-frame codes (4001 / 4003) to the auth session.
+// Implements: EVS-PRD-auth-session/G — the AuthSession's active Principal
+//   is exposed via authSession to actionSubmitter, viewSource, and
+//   permissionSource consumers; the composition guarantees a single
+//   source of truth.
+// Implements: EVS-PRD-action-submitter/E — composition mirrors the Local
+//   side so source-identical consumer code works against either.
+// Implements: EVS-PRD-view-subscriber/D — same.
+// Implements: EVS-PRD-permission-source/D — Principal is sourced from the
+//   co-mounted AuthSession (no direct setPrincipal on PermissionSource).
+
 import 'dart:async';
 
 import 'package:http/http.dart' as http;

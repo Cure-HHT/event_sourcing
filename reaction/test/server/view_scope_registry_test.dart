@@ -1,3 +1,7 @@
+// Verifies: EVS-PRD-cross-process-event-transport/E — ViewScopeRegistry
+//   provides the viewName -> scope-class binding the subscription
+//   handler uses for per-subscription row-level narrowing.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';

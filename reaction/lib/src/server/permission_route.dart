@@ -1,3 +1,10 @@
+// Implements: EVS-PRD-permission-source/C — server side of the
+//   /permissions/snapshot HTTP route that RemotePermissionSource fetches
+//   on every Authenticated transition.
+// Implements: EVS-PRD-permissions-as-events/B — evaluates the snapshot
+//   via AuthorizationPolicy.effectivePermissionsFor (which reads only
+//   from substrate event-derived projections).
+
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

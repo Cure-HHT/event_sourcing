@@ -1,3 +1,9 @@
+// Verifies: EVS-PRD-auth-session/A/G — server returns the validated
+//   Principal which the Remote AuthSession exposes as
+//   AuthStatus.Authenticated and downstream interfaces consult.
+// Verifies: EVS-PRD-cross-process-event-transport/A — Principal codec
+//   round-trip through the GET /me response body.
+
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

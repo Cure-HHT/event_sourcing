@@ -1,3 +1,9 @@
+// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+//   Principal wire envelopes.
+// Implements: EVS-PRD-auth-session/A — wire shape of the GET /me
+//   response that the Remote AuthSession decodes into the Authenticated
+//   Principal.
+
 import 'package:event_sourcing/event_sourcing.dart';
 
 import 'envelope.dart';

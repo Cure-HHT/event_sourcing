@@ -6,6 +6,23 @@
 // containment changes, sends a stale_data envelope (UX-only).
 //
 // Package-private; not exported from reaction.dart.
+//
+// Implements: EVS-DEV-authz-watcher/A — role_unassigned -> close
+//   4003 permissions_changed for every connection registered for that
+//   userId in WsConnectionRegistry.
+// Implements: EVS-DEV-authz-watcher/B — permission_revoked from a role
+//   R closes 4003 every connection whose registered Principal's
+//   activeRole == R (verified via policy.effectivePermissionsFor).
+// Implements: EVS-DEV-authz-watcher/C — role_assigned -> stale_data
+//   with reason: role_assigned; permission_granted to a held role ->
+//   stale_data with reason: permission_added; neither closes the WS.
+// Implements: EVS-DEV-authz-watcher/D — containment-projection changes
+//   emit no signal by default; watchContainment(aggregateType) opts a
+//   projection in and emits stale_data with reason: containment_changed.
+// Implements: EVS-DEV-authz-watcher/E — exactly one substrate
+//   subscription for the core (role_permission_grant, user_role_scope)
+//   event types, plus one per opted-in containment projection; per-
+//   connection state lives in WsConnectionRegistry.
 
 import 'dart:async';
 import 'dart:convert';

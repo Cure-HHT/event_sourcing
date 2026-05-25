@@ -7,6 +7,13 @@
 // shape requires substrate fixtures + close-frame capture that we
 // defer to the Phase 4 e2e harness (test/e2e/authz_test.dart). Stubs
 // remain here as a checklist of the behavior surface to cover.
+//
+// Verifies: EVS-DEV-authz-watcher/A/B/C/D/E — force-logout on
+//   role_unassigned and permission_revoked, stale_data on role_assigned
+//   and permission_granted, containment opt-in via watchContainment,
+//   single server-wide substrate subscription. Coverage currently
+//   skipped (see note above); the e2e harness exercises the same
+//   assertions end-to-end.
 
 import 'package:flutter_test/flutter_test.dart';
 

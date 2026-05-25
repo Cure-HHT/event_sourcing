@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+//   ActionSubmission wire envelopes; round-trip preserves all fields.
+// Implements: EVS-PRD-action-submitter/C — wire shape consumed by
+//   POST /actions.
+
 import 'package:event_sourcing/event_sourcing.dart';
 
 import 'envelope.dart';

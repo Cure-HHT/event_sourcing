@@ -1,3 +1,9 @@
+// Verifies: EVS-PRD-auth-session/A — RemoteAuthSession exposes current,
+//   stream, setCredential, principal.
+// Verifies: EVS-PRD-auth-session/B — AuthStatus sealed-type variants.
+// Verifies: EVS-PRD-auth-session/E — HTTP 401 from GET /me and
+//   WS close-frame 4001 / 4003 both transition to Expired.
+
 import 'dart:async';
 import 'dart:convert';
 

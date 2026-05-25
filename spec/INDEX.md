@@ -35,10 +35,12 @@
 | ID                                         | Title                                                 | File                                    | Hash     |
 | ------------------------------------------ | ----------------------------------------------------- | --------------------------------------- | -------- |
 | EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append           | dev-append-stamps-registered-version.md | 17d2982d |
+| EVS-DEV-authz-watcher                      | Mid-session permission-change signalling              | reaction-remote.md                      | add96480 |
+| EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                 | prd-permissions-as-events.md            | fe9d9a46 |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections           | scoped-permissions.md                   | 8b7a3f36 |
-| EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                       | scoped-permissions.md                   | b688e6ed |
+| EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                       | scoped-permissions.md                   | deab9862 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                  | dev-entry-type-downgrade-refusal.md     | 7b577371 |
-| EVS-DEV-event-store-open                   | EventStore.open boot flow                             | dev-event-store-open.md                 | 3d07b20f |
+| EVS-DEV-event-store-open                   | EventStore.open boot flow                             | dev-event-store-open.md                 | c0cd7e1a |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                        | dev-find-all-events-extended-filters.md | f24ffdf5 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                            | dev-ingest-promotes-before-fold.md      | a3519bfb |
 | EVS-DEV-postgres-backend                   | Postgres backend reference impl                       | dev-postgres-backend.md                 | b3c3c0ec |
@@ -46,7 +48,7 @@
 | EVS-DEV-scope-class-registry-validation    | Composition-time scope-class registry validation      | scoped-permissions.md                   | 4a76c916 |
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable    | scoped-permissions.md                   | 4a2db650 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                       | scoped-permissions.md                   | 1e192982 |
-| EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics        | scoped-permissions.md                   | 899af570 |
+| EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics        | scoped-permissions.md                   | 87555bb8 |
 | EVS-DEV-snapshot-promotion-on-open         | Snapshot promotion at EventStore.open                 | dev-snapshot-promotion-on-open.md       | 62425b7b |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist | scoped-permissions.md                   | 6461dd31 |
 | EVS-DEV-view-target-versions-seeding       | view_target_versions seeding at boot                  | dev-view-target-versions-seeding.md     | eb373312 |

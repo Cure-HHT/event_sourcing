@@ -1,3 +1,16 @@
+// Implements: EVS-PRD-cross-process-event-transport/A — drives codec
+//   round-trip on the wire (Update<T> envelopes decoded via UpdateCodec
+//   and routed to per-subscription StreamControllers).
+// Implements: EVS-PRD-cross-process-event-transport/B — every routed
+//   envelope carries sequence + subscriptionId end-to-end.
+// Implements: EVS-PRD-cross-process-event-transport/D — multiplexes
+//   multiple concurrent subscriptions over one WebSocket connection,
+//   distinguishing them by client-chosen UUID v4 subscriptionId.
+// Implements: EVS-PRD-cross-process-event-transport/F — injects the
+//   bearer credential into every HTTP POST and into the first WS auth
+//   message; httpPost adds Authorization: Bearer header when a
+//   credential is set.
+
 import 'dart:async';
 import 'dart:convert';
 

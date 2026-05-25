@@ -1,3 +1,6 @@
+// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+//   SubscriptionFilter (carried inside SubscribeMsg envelopes).
+
 import 'package:event_sourcing/event_sourcing.dart';
 
 /// JSON codec for [SubscriptionFilter]. Encodes the three allow-list

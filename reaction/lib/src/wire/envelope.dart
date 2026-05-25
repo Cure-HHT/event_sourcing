@@ -1,3 +1,7 @@
+// Implements: EVS-PRD-cross-process-event-transport/A — shared
+//   discriminator/extraction primitives every JSON envelope codec
+//   reuses for type-tag dispatch and field validation.
+
 /// Discriminator and primitive-extraction helpers shared by all wire
 /// codecs. Package-private; never exported from reaction.dart.
 

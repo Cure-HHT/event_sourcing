@@ -1,3 +1,10 @@
+// Implements: EVS-PRD-cross-process-event-transport — composition bundle
+//   for the server side of the wire: exposes .me, .actions, .permissions
+//   as shelf.Handler getters and .subscriptions(validator) as a factory.
+// Implements: EVS-DEV-authz-watcher/E — owns the single server-wide
+//   AuthzWatcher instance and the connection registry it uses; lifecycle
+//   bound to the handlers' constructor / dispose pair.
+
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';

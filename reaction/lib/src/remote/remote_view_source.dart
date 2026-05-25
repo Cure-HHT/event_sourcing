@@ -1,3 +1,19 @@
+// Implements: EVS-PRD-view-subscriber/C — RemoteViewSource consumes the
+//   cross-process wire (via RemoteConnection.openSubscription) and
+//   applies the consumer-supplied row mapper client-side, mapping
+//   incoming Update<Map<String, Object?>> envelopes to Update<T>.
+// Implements: EVS-PRD-cross-process-event-transport/A — drives Update<T>
+//   envelope codec round-trip through the WS.
+// Implements: EVS-PRD-cross-process-event-transport/B — each opened
+//   subscription is keyed by a client-chosen UUID v4 subscriptionId,
+//   carried on every envelope.
+// Implements: EVS-PRD-cross-process-event-transport/D — multiple
+//   concurrent watch() calls share one RemoteConnection's WS.
+// Implements: EVS-PRD-cross-process-event-transport/G — no server-side
+//   mapping; the wire ships Map<String, Object?> rows and the consumer
+//   applies their mapper here, preserving Layer-2 invariance with
+//   LocalViewSource.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/view_source.dart';
 import 'package:reaction/src/remote/remote_connection.dart';

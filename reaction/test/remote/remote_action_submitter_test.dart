@@ -1,3 +1,10 @@
+// Verifies: EVS-PRD-action-submitter/C — RemoteActionSubmitter submits
+//   via HTTP POST /actions and decodes the DispatchResult.
+// Verifies: EVS-PRD-action-submitter/D — bearer credential on every
+//   outbound POST.
+// Verifies: EVS-PRD-cross-process-event-transport/A/F — codec
+//   round-trip + bearer-credential carriage.
+
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';

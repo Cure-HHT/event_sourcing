@@ -1,5 +1,8 @@
 // Verifies: WsConnectionRegistry tracks connections by userId and
 // supports multi-connection-per-user fan-out for AuthzWatcher routing.
+//
+// Verifies: EVS-DEV-authz-watcher/A/B/C/E — the per-userId index the
+//   AuthzWatcher routes close-frames and stale_data envelopes through.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/server/ws_connection_registry.dart';

@@ -1,3 +1,12 @@
+// Implements: EVS-PRD-auth-session/C — invokes
+//   PrincipalAuthValidator.authenticate on the bearer credential and
+//   attaches the resulting Principal to the request context (or surfaces
+//   AuthenticationDenied as 401).
+// Implements: EVS-PRD-auth-session/E — HTTP 401 on credential failure
+//   is the wire signal the RemoteAuthSession maps to AuthStatus.Expired.
+// Implements: EVS-PRD-cross-process-event-transport/F — bearer-credential
+//   carriage on HTTP routes.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:shelf/shelf.dart';

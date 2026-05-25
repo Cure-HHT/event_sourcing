@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+//   for every DispatchResult variant preserves all fields.
+// Verifies: EVS-PRD-action-submitter/C — wire shape of the POST
+//   /actions response body.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/dispatch_result_codec.dart';

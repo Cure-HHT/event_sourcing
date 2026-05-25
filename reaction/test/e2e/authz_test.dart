@@ -1,6 +1,11 @@
 // reaction/test/e2e/authz_test.dart
 // Verifies: EVS-PRD-cross-process-event-transport/E (per-sub authz)
 // + mid-session permission-change handling (force-logout + stale_data).
+// Verifies: EVS-DEV-authz-watcher/A/B/C/D — end-to-end coverage of the
+//   mid-session permission-change envelope-routing behavior the
+//   AuthzWatcher implements (force-logout on role_unassigned /
+//   permission_revoked; stale_data on role_assigned / permission_granted;
+//   containment opt-in via watchContainment).
 //
 // Status: ships two tests expanded today:
 //   1) view-level deny at subscribe time, and

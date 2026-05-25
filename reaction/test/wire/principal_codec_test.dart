@@ -1,3 +1,8 @@
+// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+//   for the sealed Principal type.
+// Verifies: EVS-PRD-auth-session/A — wire shape of GET /me response
+//   body that RemoteAuthSession decodes into the Authenticated Principal.
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/principal_codec.dart';

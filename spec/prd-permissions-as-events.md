@@ -1,6 +1,6 @@
 # EVS-PRD-permissions-as-events: Permissions as Events
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -28,3 +28,25 @@ C. The permission state at any point in the log SHALL be reconstructable from th
 **Where do external identity providers fit?** At the ingest boundary. An identity assertion from an external system enters the log as an event ("X authenticated via provider P at time T"); from there it participates in projections like any other event. External systems become event sources, not decision-time consultants.
 
 *End* *Permissions as Events* | **Hash**: 9165094d
+
+## EVS-DEV-bootstrap-action-permissions: YAML-seeded role/permission bootstrap
+
+**Level**: DEV | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-permissions-as-events
+
+### Assertions
+
+A. `bootstrapActionPermissions` SHALL load a declarative role/permission seed (from `yamlPath` or `yamlSource`) and SHALL append a `permission_granted` event into the substrate log for every (role, permission) pair declared in the seed that is not already present in the `role_permission_grants` projection.
+
+B. On seed parse failure or validation failure (unknown permission name, scope-class reference not registered, etc.), `bootstrapActionPermissions` SHALL return a `PolicyFailSafe` whose `.policy` is a `FailSafeAuthorizationPolicy` that denies every `isPermitted` call with `DenyReason.notGranted` and returns `EffectiveAuthorization.empty` from every `effectivePermissionsFor` call.
+
+C. On success, `bootstrapActionPermissions` SHALL return a `PolicyReady` whose `.policy` is a `TableBackedAuthorizationPolicy` reading directly from the substrate's `role_permission_grants` and `user_role_scopes` projections (i.e., evaluating decisions solely from the event-derived projections per `EVS-PRD-permissions-as-events/B`).
+
+D. Seed application SHALL be idempotent: re-running `bootstrapActionPermissions` against an `EventStore` whose log already contains all grants declared in the seed SHALL emit zero new `permission_granted` events. (The closed-under-events guarantee in `EVS-PRD-permissions-as-events/C` requires that the event log alone is sufficient; idempotent seeding ensures bootstrap composes safely into normal startup paths.)
+
+### Changelog
+
+- 2026-05-24 | fe9d9a46 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Initial authoring; locks in shipped bootstrapActionPermissions surface
+
+*End* *YAML-seeded role/permission bootstrap* | **Hash**: fe9d9a46

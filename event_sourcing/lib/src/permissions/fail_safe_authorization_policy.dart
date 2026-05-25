@@ -3,6 +3,10 @@
 // Implements: EVS-PRD-permissions-as-events/B (no decisions consult any
 //   authority outside the log; the empty result is the only safe answer
 //   when projections are unavailable)
+// Implements: EVS-DEV-bootstrap-action-permissions/B — the
+//   FailSafeAuthorizationPolicy that PolicyFailSafe wraps: every
+//   isPermitted call denies with DenyReason.notGranted; every
+//   effectivePermissionsFor call returns EffectiveAuthorization.empty.
 
 import 'package:event_sourcing/event_sourcing.dart';
 
