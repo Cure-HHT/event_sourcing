@@ -22,6 +22,12 @@ cutover.
 - `event_sourcing/` — core lib (storage, sync, ingest, materialization,
   action dispatch, permissions). Contains two intra-lib demos under
   `example/` and `example_action_permissions/`.
+- `reaction/` — substrate-agnostic action submission, view subscription,
+  permission snapshots, and credential lifecycle for apps built on
+  `event_sourcing`. Pure Dart at runtime; ships local in-process
+  implementations (Plan B-local) plus wire codecs and Remote/Server
+  handlers for cross-process deployments (Plan B-remote). The Flutter
+  widget layer `reaction_widgets` sits on top in downstream consumers.
 - `canonical_json_jcs/` — JCS (RFC 8785).
 - `provenance/` — append-only provenance chain types.
 - `spec/` — formal requirements in EVS namespace (PRD level today;
@@ -35,6 +41,7 @@ cutover.
 
 The path-deps inside `event_sourcing/pubspec.yaml` point at
 `../canonical_json_jcs` and `../provenance` — siblings at repo root.
+`reaction/pubspec.yaml` depends on `../event_sourcing` the same way.
 
 ## Architectural commitments (load-bearing)
 
