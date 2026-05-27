@@ -12,7 +12,6 @@
 // library has imposed no format. A future regression that introduced
 // JWT parsing or a typed `Credential` wrapper would fail here at
 // compile or run time.
-import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
