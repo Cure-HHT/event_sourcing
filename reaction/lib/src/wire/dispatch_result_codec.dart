@@ -21,6 +21,10 @@ import 'envelope.dart';
 ///   execution_failed     + error (string; lossy — see below)
 ///   idempotency_hit      + cachedResult (jsonable) + priorEmittedEventIds
 ///                          (List<String>)
+///   idempotency_mismatch + actionName + idempotencyKey
+///                          + cachedRawInputHash + submittedRawInputHash
+///                          (SHA-256 hex of the canonical-JSON inputs;
+///                           the inputs themselves are not on the wire)
 ///
 /// **Error encoding is lossy.** The substrate's parse/validation/
 /// execution variants carry `Object error` (so an action can throw any
@@ -70,6 +74,13 @@ class DispatchResultCodec {
         'cachedResult': r.cachedResult,
         'priorEmittedEventIds': r.priorEmittedEventIds,
       },
+      DispatchIdempotencyMismatch<Object?>() => {
+        'type': 'idempotency_mismatch',
+        'actionName': r.actionName,
+        'idempotencyKey': r.idempotencyKey,
+        'cachedRawInputHash': r.cachedRawInputHash,
+        'submittedRawInputHash': r.submittedRawInputHash,
+      },
     };
   }
 
@@ -99,6 +110,13 @@ class DispatchResultCodec {
         return DispatchIdempotencyHit<Object?>(
           json['cachedResult'],
           (json['priorEmittedEventIds']! as List).cast<String>(),
+        );
+      case 'idempotency_mismatch':
+        return DispatchIdempotencyMismatch<Object?>(
+          actionName: requireString(json, 'actionName'),
+          idempotencyKey: requireString(json, 'idempotencyKey'),
+          cachedRawInputHash: requireString(json, 'cachedRawInputHash'),
+          submittedRawInputHash: requireString(json, 'submittedRawInputHash'),
         );
       default:
         throw FormatException('unknown DispatchResult type: $type');

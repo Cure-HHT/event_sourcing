@@ -2,6 +2,7 @@
 // Verifies: EVS-PRD-action-dispatch/B (stages 1–10 in order: lookup, invocation_id, parse, idempotency, validate, authorize, execute, persist, record, return)
 // Verifies: EVS-PRD-action-dispatch/C (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
 // Verifies: EVS-PRD-action-dispatch/D (idempotency cache hit short-circuits; DispatchIdempotencyHit returned; no new events appended)
+// Verifies: EVS-PRD-action-dispatch/E (Stage 4 content-mismatch detection: same key + different rawInput emits idempotency_mismatch denial and returns DispatchIdempotencyMismatch; same key + same rawInput still returns DispatchIdempotencyHit; missing/none idempotency policy bypasses the comparison entirely)
 // Verifies: EVS-PRD-scoped-permissions/E/H/I (scope resolution, single-tx
 //   authorize+execute+persist, scope stamping on authorization_denied)
 // Verifies: EVS-DEV-transactional-authorize-execute/A/B/C/D (dispatcher
@@ -248,6 +249,283 @@ void main() {
         final eventCountAfter =
             (await eventStore.backend.findAllEvents()).length;
         expect(eventCountAfter, equals(eventCountBefore));
+      },
+    );
+
+    test(
+      'idempotency content match (same key, same rawInput) returns DispatchIdempotencyHit; no new events',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/E — same rawInput is the
+        // intended retry; cache hit short-circuits and the audit log
+        // gets no new event.
+        await idempotency.record(
+          actionName: 'requires_key',
+          principalId: 'u-1',
+          key: 'k-match',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['prior-event-id-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          // canonicalize({'who': 'tester'}) = '{"who":"tester"}'
+          rawInputCanonicalJson: '{"who":"tester"}',
+        );
+
+        final eventCountBefore =
+            (await eventStore.backend.findAllEvents()).length;
+
+        final result = await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'requires_key',
+            rawInput: <String, Object?>{'who': 'tester'},
+            idempotencyKey: 'k-match',
+          ),
+          _ctx(),
+        );
+
+        expect(result, isA<DispatchIdempotencyHit<Object?>>());
+        final hit = result as DispatchIdempotencyHit<Object?>;
+        expect(hit.priorEmittedEventIds, contains('prior-event-id-1'));
+
+        // No idempotency_mismatch event emitted.
+        final allEvents = await eventStore.backend.findAllEvents();
+        expect(
+          allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
+          isEmpty,
+        );
+        expect(allEvents, hasLength(eventCountBefore));
+      },
+    );
+
+    test(
+      'idempotency content mismatch (same key, different rawInput) emits '
+      'idempotency_mismatch denial and returns DispatchIdempotencyMismatch',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/E — same key + different
+        // content is the audit-relevant collision; substrate emits a
+        // denial event with hashed inputs and returns the mismatch
+        // variant.
+        await idempotency.record(
+          actionName: 'requires_key',
+          principalId: 'u-1',
+          key: 'k-mismatch',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['prior-event-id-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          rawInputCanonicalJson: '{"who":"original"}',
+        );
+
+        final result = await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'requires_key',
+            rawInput: <String, Object?>{'who': 'DIFFERENT'},
+            idempotencyKey: 'k-mismatch',
+          ),
+          _ctx(),
+        );
+
+        expect(result, isA<DispatchIdempotencyMismatch<Object?>>());
+        final mismatch = result as DispatchIdempotencyMismatch<Object?>;
+        expect(mismatch.actionName, 'requires_key');
+        expect(mismatch.idempotencyKey, 'k-mismatch');
+        // SHA-256 hex is 64 lowercase hex chars.
+        expect(mismatch.cachedRawInputHash, hasLength(64));
+        expect(mismatch.submittedRawInputHash, hasLength(64));
+        expect(
+          mismatch.cachedRawInputHash,
+          isNot(equals(mismatch.submittedRawInputHash)),
+        );
+
+        // Exactly one idempotency_mismatch denial event was appended.
+        final allEvents = await eventStore.backend.findAllEvents();
+        final denials = allEvents
+            .where((e) => e.eventType == 'idempotency_mismatch')
+            .toList();
+        expect(denials, hasLength(1));
+        expect(denials.single.data['action_name'], 'requires_key');
+        expect(denials.single.data['idempotency_key'], 'k-mismatch');
+        expect(
+          denials.single.data['cached_raw_input_hash'],
+          mismatch.cachedRawInputHash,
+        );
+        expect(
+          denials.single.data['submitted_raw_input_hash'],
+          mismatch.submittedRawInputHash,
+        );
+        // The denial event carries the dispatcher-generated invocation id
+        // (proves it went through the standard denial path).
+        expect(denials.single.metadata['action_invocation_id'], isA<String>());
+      },
+    );
+
+    test(
+      'idempotency mismatch is keyed on canonical JSON, not raw dict order',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/E — JCS canonicalization
+        // means key-order, whitespace, and number normalization do not
+        // create false mismatches.
+        // canonicalize({'a': 1, 'b': 2}) == canonicalize({'b': 2, 'a': 1})
+        await idempotency.record(
+          actionName: 'requires_key',
+          principalId: 'u-1',
+          key: 'k-order',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['evt-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          rawInputCanonicalJson: '{"a":1,"b":2,"who":"tester"}',
+        );
+
+        final result = await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'requires_key',
+            // Map literal order varies from what was stored, but JCS
+            // sorts keys so canonical form is the same.
+            rawInput: <String, Object?>{'b': 2, 'who': 'tester', 'a': 1},
+            idempotencyKey: 'k-order',
+          ),
+          _ctx(),
+        );
+        expect(result, isA<DispatchIdempotencyHit<Object?>>());
+      },
+    );
+
+    test('legacy cache entry without rawInputCanonicalJson returns '
+        'DispatchIdempotencyHit (forward-compat, no false mismatch)', () async {
+      // Verifies: EVS-PRD-action-dispatch/E — rows that pre-date the
+      // canonical-JSON column on the store row fall back to plain
+      // cache-hit semantics. Substrate must never raise a false
+      // mismatch against an entry it didn't capture the canonical
+      // form of.
+      await idempotency.record(
+        actionName: 'requires_key',
+        principalId: 'u-1',
+        key: 'k-legacy',
+        resultJson: const <String, dynamic>{'cached': true},
+        emittedEventIds: const ['prior-evt'],
+        expiresAt: DateTime.now().add(const Duration(hours: 1)),
+        // rawInputCanonicalJson intentionally omitted (legacy row).
+      );
+
+      final result = await dispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'requires_key',
+          rawInput: <String, Object?>{'who': 'anything-goes'},
+          idempotencyKey: 'k-legacy',
+        ),
+        _ctx(),
+      );
+
+      expect(result, isA<DispatchIdempotencyHit<Object?>>());
+      final allEvents = await eventStore.backend.findAllEvents();
+      expect(
+        allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
+        isEmpty,
+      );
+    });
+
+    test(
+      'different idempotency keys do not interfere — distinct cache slots',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/D regression — the mismatch
+        // check is per-(actionName, principalId, idempotencyKey); a
+        // different key under the same action falls through.
+        await idempotency.record(
+          actionName: 'requires_key',
+          principalId: 'u-1',
+          key: 'k-aaa',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['evt-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          rawInputCanonicalJson: '{"who":"original"}',
+        );
+
+        // Different key + different content → cache miss → no
+        // idempotency_mismatch denial. (The action's authorization is
+        // denied by DenyAllAuthorizationPolicy.forTests, which is fine
+        // — we only assert here that no idempotency_mismatch fired.)
+        await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'requires_key',
+            rawInput: <String, Object?>{'who': 'OTHER'},
+            idempotencyKey: 'k-bbb',
+          ),
+          _ctx(),
+        );
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        expect(
+          allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'idempotency.optional with no key bypasses mismatch detection',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/E regression — Idempotency.
+        // optional with no key supplied must skip Stage 4 entirely,
+        // even if an entry with a similar key happens to exist for a
+        // different policy.
+        registry.register(OptionalKeyAction());
+
+        await idempotency.record(
+          actionName: 'optional_key',
+          principalId: 'u-1',
+          key: 'k-opt',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['evt-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          rawInputCanonicalJson: '{"who":"original"}',
+        );
+
+        // Submit with no idempotencyKey; mismatch path must not fire
+        // (authorize is denied by the default policy, which is fine).
+        await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'optional_key',
+            rawInput: <String, Object?>{'who': 'TOTALLY-DIFFERENT'},
+          ),
+          _ctx(),
+        );
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        expect(
+          allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'idempotency.none with key supplied bypasses mismatch detection',
+      () async {
+        // Verifies: EVS-PRD-action-dispatch/E regression — Idempotency.
+        // none ignores the supplied key (no Stage-4 lookup at all),
+        // even if a stale entry exists with a different content under
+        // a different action's namespace.
+        await idempotency.record(
+          actionName: 'hello',
+          principalId: 'u-1',
+          key: 'k-none',
+          resultJson: const <String, dynamic>{'cached': true},
+          emittedEventIds: const ['evt-1'],
+          expiresAt: DateTime.now().add(const Duration(hours: 1)),
+          rawInputCanonicalJson: '{"who":"original"}',
+        );
+
+        await dispatcher.dispatch(
+          const ActionSubmission(
+            actionName: 'hello',
+            rawInput: <String, Object?>{'who': 'TOTALLY-DIFFERENT'},
+            idempotencyKey: 'k-none',
+          ),
+          _ctx(),
+        );
+
+        final allEvents = await eventStore.backend.findAllEvents();
+        expect(
+          allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
+          isEmpty,
+        );
       },
     );
 
@@ -853,8 +1131,63 @@ void main() {
         );
         expect(entry, isNotNull);
         expect(entry!.emittedEventIds, equals(success.emittedEventIds));
+        // Verifies: EVS-PRD-action-dispatch/E — Stage 9 stamps the
+        // canonical-JSON form of rawInput so a subsequent retry can be
+        // content-compared. The rawInput here is {'who': 'required-
+        // world'}; JCS sorts keys and uses no whitespace.
+        expect(entry.rawInputCanonicalJson, '{"who":"required-world"}');
       },
     );
+
+    test('Stage 9 -> Stage 4 round-trip: recorded canonical JSON drives the '
+        'next dispatch into the cache-hit branch (no mismatch)', () async {
+      // Verifies: EVS-PRD-action-dispatch/E — end-to-end loop. First
+      // dispatch records; second dispatch hits the cache and the
+      // content comparison succeeds.
+      //
+      // Use DateTime.now() for the context (not the fixed _ctx()
+      // timestamp) so the recorded entry's expiresAt is in the future
+      // relative to the lookup's now=DateTime.now().
+      final ctx = ActionContext(
+        principal: Principal.user(
+          userId: 'u-1',
+          roles: const {'tester'},
+          activeRole: 'tester',
+        ),
+        security: const SecurityDetails(),
+        requestStartedAt: DateTime.now(),
+      );
+      final first = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'requires_key',
+          rawInput: <String, Object?>{'who': 'roundtrip', 'q': 7},
+          idempotencyKey: 'k-rt',
+        ),
+        ctx,
+      );
+      expect(first, isA<DispatchSuccess<Object?>>());
+      final firstSuccess = first as DispatchSuccess<Object?>;
+
+      final eventsBefore = (await eventStore.backend.findAllEvents()).length;
+
+      // Re-submit identically; expect cache hit, no new events.
+      final second = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'requires_key',
+          // Map literal order intentionally swapped — JCS canonicalizes
+          // the key order, so this is still the same content.
+          rawInput: <String, Object?>{'q': 7, 'who': 'roundtrip'},
+          idempotencyKey: 'k-rt',
+        ),
+        ctx,
+      );
+      expect(second, isA<DispatchIdempotencyHit<Object?>>());
+      final hit = second as DispatchIdempotencyHit<Object?>;
+      expect(hit.priorEmittedEventIds, firstSuccess.emittedEventIds);
+
+      final eventsAfter = (await eventStore.backend.findAllEvents()).length;
+      expect(eventsAfter, eventsBefore);
+    });
 
     test(
       'Idempotency.none + key supplied → no idempotency entry recorded',

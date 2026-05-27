@@ -98,6 +98,40 @@ void main() {
     expect(decoded.priorEmittedEventIds, ['evt-7']);
   });
 
+  test('round-trips DispatchIdempotencyMismatch', () {
+    // Verifies: EVS-PRD-action-dispatch/E — wire shape carries
+    // (actionName, idempotencyKey, cachedRawInputHash, submittedRawInputHash);
+    // the original rawInput values are NOT on the wire.
+    const original = DispatchIdempotencyMismatch<Object?>(
+      actionName: 'submit_note',
+      idempotencyKey: 'k1',
+      cachedRawInputHash:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      submittedRawInputHash:
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    );
+    final json = DispatchResultCodec.encode(original);
+    expect(json['type'], 'idempotency_mismatch');
+    expect(json['actionName'], 'submit_note');
+    expect(json['idempotencyKey'], 'k1');
+    expect(
+      json['cachedRawInputHash'],
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(
+      json['submittedRawInputHash'],
+      'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    );
+
+    final decoded =
+        DispatchResultCodec.decode(json)
+            as DispatchIdempotencyMismatch<Object?>;
+    expect(decoded.actionName, 'submit_note');
+    expect(decoded.idempotencyKey, 'k1');
+    expect(decoded.cachedRawInputHash, original.cachedRawInputHash);
+    expect(decoded.submittedRawInputHash, original.submittedRawInputHash);
+  });
+
   test('decode rejects unknown type', () {
     expect(
       () => DispatchResultCodec.decode({'type': 'mystery'}),

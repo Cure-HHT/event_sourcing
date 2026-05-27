@@ -1,6 +1,7 @@
 // Verifies: EVS-PRD-action-dispatch/B (sealed DispatchResult variants cover every pipeline stage)
 // Verifies: EVS-PRD-action-dispatch/C (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
 // Verifies: EVS-PRD-action-dispatch/D (DispatchIdempotencyHit carries cachedResult + priorEmittedEventIds)
+// Verifies: EVS-PRD-action-dispatch/E (DispatchIdempotencyMismatch carries actionName, idempotencyKey, and SHA-256 hashes of both canonical-JSON inputs)
 
 import 'package:event_sourcing/src/actions/dispatch_result.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
@@ -59,6 +60,21 @@ void main() {
       expect(r, isA<DispatchIdempotencyHit<Map<String, dynamic>>>());
     });
 
+    test('idempotencyMismatch carries action name, key, and hashes', () {
+      const r = DispatchResult<int>.idempotencyMismatch(
+        actionName: 'submit_note',
+        idempotencyKey: 'k1',
+        cachedRawInputHash: 'aaaa',
+        submittedRawInputHash: 'bbbb',
+      );
+      expect(r, isA<DispatchIdempotencyMismatch<int>>());
+      r as DispatchIdempotencyMismatch<int>;
+      expect(r.actionName, 'submit_note');
+      expect(r.idempotencyKey, 'k1');
+      expect(r.cachedRawInputHash, 'aaaa');
+      expect(r.submittedRawInputHash, 'bbbb');
+    });
+
     test('sealed: switch is exhaustive', () {
       const r = DispatchResult<int>.success(1, []);
       final desc = switch (r) {
@@ -69,6 +85,7 @@ void main() {
         DispatchAuthorizationDenied<int>() => 'authz',
         DispatchExecutionFailed<int>() => 'execfail',
         DispatchIdempotencyHit<int>() => 'hit',
+        DispatchIdempotencyMismatch<int>() => 'mismatch',
       };
       expect(desc, 'success');
     });

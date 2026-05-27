@@ -163,6 +163,8 @@ class _AdminPanelState extends State<AdminPanel> {
         DispatchUnknownAction<Object?>(:final requestedName) =>
           'Unknown action: $requestedName',
         DispatchIdempotencyHit<Object?>() => 'Already submitted.',
+        DispatchIdempotencyMismatch<Object?>() =>
+          'Same idempotency key submitted with different content.',
         DispatchExecutionFailed<Object?>(:final error) =>
           'Execution failed: $error',
       });

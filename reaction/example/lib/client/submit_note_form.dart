@@ -73,6 +73,9 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
       DispatchUnknownAction<Object?>(:final requestedName) =>
         'Unknown action: $requestedName',
       DispatchIdempotencyHit<Object?>() => 'Already submitted.',
+      DispatchIdempotencyMismatch<Object?>() =>
+        'Same idempotency key submitted with different content; '
+            'denied to preserve the audit trail.',
       DispatchExecutionFailed<Object?>(:final error) =>
         'Execution failed: $error',
     };

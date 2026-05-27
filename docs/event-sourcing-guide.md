@@ -661,18 +661,23 @@ matching-content cache hit):
 - `Action.idempotencyTtl` controls how long the cache entry is
   considered fresh; after expiry, the same key+input behaves like a
   brand-new submission.
-- **Known divergence from PRD-action-dispatch/E.** The spec says a
-  submission with the same `(actionName, principalId, idempotencyKey)`
-  but different `rawInput` from a still-cached prior submission
-  SHALL produce a denial event. The v1 substrate does not yet
-  implement that content-mismatch detection — the lookup returns
-  the cached outcome regardless of whether the new submission's
-  content matches the original. Adding the mismatched-content
-  denial path is a known follow-up; the comment in
-  `event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart`
-  documents the boundary (the store overwrites on conflict; the
-  dispatcher would be the right place to detect mismatch and emit
-  the denial event before the store is called).
+- **Content-mismatch detection (PRD-action-dispatch/E).** A submission
+  reusing an unexpired `(actionName, principalId, idempotencyKey)` with
+  a different `rawInput` is NOT silently absorbed. Stage 4
+  canonicalizes the submitted `rawInput` (RFC 8785 JCS) and compares
+  it against the cached entry's `rawInputCanonicalJson`. On match the
+  dispatcher returns `DispatchIdempotencyHit` (cache hit, no new
+  events). On mismatch the dispatcher emits an `idempotency_mismatch`
+  denial event and returns `DispatchIdempotencyMismatch`. The denial
+  event's payload carries SHA-256 hashes of both canonical-JSON
+  inputs (`cached_raw_input_hash`, `submitted_raw_input_hash`), the
+  `action_name`, and the `idempotency_key`; the inputs themselves
+  are deliberately NOT persisted (they may contain sensitive data).
+  Legacy cache entries — rows recorded before
+  `raw_input_canonical_json` shipped on the storage row — fall back
+  to the plain cache-hit behavior on lookup; the substrate never
+  raises a false `idempotency_mismatch` against an entry whose
+  canonical form it didn't capture.
 
 ## Defining a projection
 
@@ -849,7 +854,7 @@ own bookkeeping. But you can: every `StoredEvent` exposes them, and
 
 Every dispatch that fails records a denial event under
 `aggregateType: action_attempt`, `entryType: action_denial`, with one
-of five `eventType` values. The aggregate id is the dispatcher-
+of six `eventType` values. The aggregate id is the dispatcher-
 generated `invocationId` (also stamped onto
 `metadata.action_invocation_id`), so a query for the denial and any
 successful events from the same dispatch joins on a single id.
@@ -901,6 +906,20 @@ Per-eventType payload fields under `data`:
     returned (the offending value, not a successful match). Per
     `EVS-DEV-scope-unresolvable-denial/E`, this lets the audit log
     capture the precise denial circumstance.
+- **`idempotency_mismatch`** — Stage-4 content-mismatch failure. An
+  unexpired cache entry exists for `(action_name, principal_id,
+  idempotency_key)` but the submitted `rawInput`'s canonical-JSON
+  differs from the cached value (see PRD-action-dispatch/E above).
+  - `action_name` — the registered name.
+  - `idempotency_key` — the colliding key.
+  - `cached_raw_input_hash` — SHA-256 hex digest of the cached
+    entry's canonical-JSON `rawInput`.
+  - `submitted_raw_input_hash` — SHA-256 hex digest of the current
+    submission's canonical-JSON `rawInput`.
+  The full inputs are deliberately NOT carried in the payload —
+  they may contain sensitive data and the hashes are sufficient for
+  auditors to correlate the collision with the cached entry and the
+  original submission's recorded events.
 - **`execution_failed`** — Stage-7 (execute) or Stage-8 (persist)
   failure. The action's `execute` threw, or the transaction rolled
   back during the post-execute append.

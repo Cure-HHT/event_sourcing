@@ -147,6 +147,11 @@ class DemoRoutes {
         'parse',
         'idempotency_hit',
       ],
+      DispatchIdempotencyMismatch() => const <String>[
+        'lookup',
+        'parse',
+        'idempotency_mismatch',
+      ],
       DispatchValidationDenied() => const <String>[
         'lookup',
         'parse',
@@ -233,6 +238,15 @@ class DemoRoutes {
           actionInvocationId: '',
           priorEventIds: priorEmittedEventIds,
           priorResult: _resultToJson(cachedResult),
+        ),
+      DispatchIdempotencyMismatch(:final actionName, :final idempotencyKey) =>
+        DispatchResponseDenied(
+          denialKind: 'idempotency_mismatch',
+          actionInvocationId: '',
+          errorClass: 'IdempotencyMismatch',
+          errorMessageSanitized:
+              'idempotency key "$idempotencyKey" for action '
+              '"$actionName" was reused with different content',
         ),
     };
   }

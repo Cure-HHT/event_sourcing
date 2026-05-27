@@ -103,6 +103,7 @@ export 'src/actions/denial_events.dart'
         denialValidationDenied,
         denialAuthorizationDenied,
         denialExecutionFailed,
+        denialIdempotencyMismatch,
         sanitizeErrorMessage;
 export 'src/actions/deny_all_authorization_policy.dart'
     show DenyAllAuthorizationPolicy;
@@ -111,6 +112,7 @@ export 'src/actions/dispatch_result.dart'
         DispatchAuthorizationDenied,
         DispatchExecutionFailed,
         DispatchIdempotencyHit,
+        DispatchIdempotencyMismatch,
         DispatchParseDenied,
         DispatchResult,
         DispatchSuccess,

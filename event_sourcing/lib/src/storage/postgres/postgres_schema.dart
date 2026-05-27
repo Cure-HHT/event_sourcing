@@ -145,15 +145,23 @@ CREATE TABLE IF NOT EXISTS security_context (
 
 // --- Idempotency ----------------------------------------------------------
 
+// `raw_input_canonical_json` (TEXT, nullable) carries the RFC-8785
+// canonicalization of the original submission's `rawInput`, recorded so
+// the dispatcher can detect same-key, different-content collisions
+// (EVS-PRD-action-dispatch/E). NULL is the legacy / forward-compat
+// shape: rows recorded before this column shipped fall back to plain
+// cache-hit semantics — no false `idempotency_mismatch` is raised for
+// entries the substrate couldn't capture the canonical form of.
 const String _idempotencyTable = '''
 CREATE TABLE IF NOT EXISTS idempotency (
-  action_name        TEXT         NOT NULL,
-  principal_id       TEXT         NOT NULL,
-  idempotency_key    TEXT         NOT NULL,
-  result_json        JSONB        NOT NULL,
-  emitted_event_ids  JSONB        NOT NULL,
-  recorded_at        TIMESTAMPTZ  NOT NULL,
-  expires_at         TIMESTAMPTZ  NOT NULL,
+  action_name               TEXT         NOT NULL,
+  principal_id              TEXT         NOT NULL,
+  idempotency_key           TEXT         NOT NULL,
+  result_json               JSONB        NOT NULL,
+  emitted_event_ids         JSONB        NOT NULL,
+  recorded_at               TIMESTAMPTZ  NOT NULL,
+  expires_at                TIMESTAMPTZ  NOT NULL,
+  raw_input_canonical_json  TEXT,
   PRIMARY KEY (action_name, principal_id, idempotency_key)
 )
 ''';

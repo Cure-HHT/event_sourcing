@@ -78,6 +78,50 @@ void runIdempotencyStoreConformanceTests(
       expect(entry.emittedEventIds, ['evt-1']);
     });
 
+    // Verifies: EVS-PRD-action-dispatch/E — record persists
+    //   rawInputCanonicalJson alongside the cached outcome and lookup
+    //   returns it, so the dispatcher can drive its content-mismatch
+    //   check against any store implementation.
+    test('record then lookup round-trips rawInputCanonicalJson', () async {
+      if (!initialized) return;
+      await store.record(
+        actionName: 'a',
+        principalId: 'p',
+        key: 'k',
+        resultJson: const {'x': 1},
+        emittedEventIds: const ['evt-1'],
+        expiresAt: DateTime.parse('2099-01-01T00:00:00Z'),
+        rawInputCanonicalJson: '{"a":1,"who":"original"}',
+      );
+      final entry = await store.lookup('a', 'p', 'k');
+      expect(entry, isNotNull);
+      expect(entry!.rawInputCanonicalJson, '{"a":1,"who":"original"}');
+    });
+
+    // Verifies: EVS-PRD-action-dispatch/E — omitting
+    //   rawInputCanonicalJson at record time persists null (forward-
+    //   compat: callers that don't supply canonical JSON, e.g. legacy
+    //   rows or test harnesses, get a null on lookup; the dispatcher
+    //   falls back to the plain cache-hit behavior).
+    test(
+      'record without rawInputCanonicalJson leaves it null on lookup',
+      () async {
+        if (!initialized) return;
+        await store.record(
+          actionName: 'a',
+          principalId: 'p',
+          key: 'k',
+          resultJson: const {},
+          emittedEventIds: const [],
+          expiresAt: DateTime.parse('2099-01-01T00:00:00Z'),
+          // rawInputCanonicalJson intentionally omitted
+        );
+        final entry = await store.lookup('a', 'p', 'k');
+        expect(entry, isNotNull);
+        expect(entry!.rawInputCanonicalJson, isNull);
+      },
+    );
+
     // Verifies: EVS-PRD-action-dispatch/D — entries are keyed by
     //   (action, principal, key); a different key for the same
     //   (action, principal) misses.
