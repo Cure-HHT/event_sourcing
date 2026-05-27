@@ -180,27 +180,44 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     // a future change here fail-closed rather than overgranting.
     if (requested is! BoundScope) return false;
 
-    switch (assigned) {
-      case TotalWildcardScope():
-        return true;
-      case ValueWildcardScope(class_: final ac):
-        if (ac == requested.class_) return true;
-        if (scopeClassRegistry.isAncestor(ac, requested.class_)) {
+    // The class gate (does the assigned scope's class equal-or-ancestor the
+    // requested class?) is the single tested source of truth shared with the
+    // read path; see scopeClassMatch in event_sourcing. This method then
+    // does its own value-equality / containment resolution on top of it.
+    final match = scopeClassMatch(
+      assigned,
+      requested.class_,
+      scopeClassRegistry,
+    );
+    switch (match) {
+      case ScopeClassMatch.doesNotApply:
+        return false;
+      case ScopeClassMatch.appliesExact:
+        switch (assigned) {
+          // Total/value wildcard: any value of the exact class matches.
+          case TotalWildcardScope():
+          case ValueWildcardScope():
+            return true;
+          case BoundScope(value: final av):
+            return av == requested.value;
+        }
+      case ScopeClassMatch.appliesViaAncestor:
+        switch (assigned) {
+          // Not reachable for a total wildcard (always appliesExact); handle
+          // defensively to keep the switch exhaustive and fail-open-safe.
+          case TotalWildcardScope():
+            return true;
           // Any value of an ancestor class matches any descendant.
-          return true;
+          case ValueWildcardScope():
+            return true;
+          case BoundScope(class_: final ac, value: final av):
+            final resolved = await _resolver.resolve(
+              txn: txn,
+              from: requested,
+              target: ac,
+            );
+            return resolved?.value == av;
         }
-        return false;
-      case BoundScope(class_: final ac, value: final av):
-        if (ac == requested.class_ && av == requested.value) return true;
-        if (scopeClassRegistry.isAncestor(ac, requested.class_)) {
-          final resolved = await _resolver.resolve(
-            txn: txn,
-            from: requested,
-            target: ac,
-          );
-          return resolved?.value == av;
-        }
-        return false;
     }
   }
 
