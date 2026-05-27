@@ -135,6 +135,22 @@ settings-event-driven authority transitions, app-supplied
 canonicalization rule grammar. Don't conflate. Conditional mutations
 work today within Phase I's single-canonical-authority bounds.
 
+### Tempted to: treat "target already equals newValue" as an unconditional NoOpAccept
+
+**Don't.** It's only a no-op if it's *your own* prior attempt landing
+again (a retry). If a distinct operation finds the target value already
+present because *another actor* wrote it, accepting it as a no-op
+silently drops the caller's intent — the classic lost-update bug.
+Concretely: two clients each read a counter at 0 and each dispatch
+`0 → 1`. The first applies (counter is now 1). If the second sees
+`current == newValue` and accepts a no-op, two increment intents
+produce a final value of 1 instead of 2. NoOpAccept MUST be scoped to
+operation identity (same correlation token as a prior confirmed
+application); a distinct operation whose target coincidentally matches
+the current value is a Conflict, forcing the caller to re-read and
+re-decide. This is why the precheck branches on operation identity, not
+on bare value equality.
+
 ### Tempted to: ship conditional mutations as a substrate-wide opt-in flag
 
 **Don't.** Per-action, not per-substrate. An app that has both event-
@@ -193,16 +209,35 @@ storage transaction the executor will eventually append into:
    on Postgres, equivalent transaction semantics on Sembast).
 2. Compare each `expectedFields` entry against the actual row state.
 3. Branch on the result:
-   - **All match** → proceed to executor invocation.
-   - **All expected values already equal `newValues`** → NoOpAccept; do
-     not invoke executor; emit a `mutation_already_applied` event for
-     audit purposes; return success indication so the caller's retry
-     loop terminates.
+   - **All `expectedFields` match the current row** → proceed to
+     executor invocation (Applied).
+   - **Target already equals `newValues`** → branch on *operation
+     identity*, NOT on bare value equality:
+     - If this dispatch carries the same operation-identity correlation
+       token as a prior confirmed application of this mutation to this
+       row → NoOpAccept: the caller's own earlier attempt already
+       landed (a retry, a network-replay). Do not re-invoke the
+       executor; emit `mutation_already_applied`; return success so the
+       caller's retry loop terminates.
+     - If this is a *distinct* operation whose target coincidentally
+       matches the current value → **Conflict, not NoOpAccept**. The
+       caller's intent has not been satisfied just because the value
+       already reads `newValues` — another actor produced that value.
+       Surface a conflict so the caller re-reads and re-decides.
+       Collapsing this case into NoOpAccept silently drops the second
+       intent: the classic lost-update bug (see "you might be tempted
+       to" below).
    - **Some field is neither `expectedPrior` nor `newValue`** →
      Conflict; do not invoke executor; emit a `mutation_conflict` event
      carrying the proposal details and the actual observed state;
      return `DispatchMutationConflict` so the caller (or its
      conflict-resolution layer) can react.
+
+The operation-identity correlation token is the same idempotency-key
+correlation the dispatcher already threads through event-emission
+actions. NoOpAccept is scoped to "I am observing the result of *my
+own* prior attempt"; everything else that finds the target value
+already present is a genuine concurrency conflict.
 
 Three new sealed `DispatchResult` variants ship: `DispatchMutationApplied`,
 `DispatchMutationNoOpAccept`, `DispatchMutationConflict`. They sit
@@ -231,8 +266,15 @@ This is the load-bearing section. The cross-install flow:
 >
 > When App1's substrate sees App2's proposal during sync:
 >
-> - App1 runs its own conditional-mutation precheck against X's current
->   state.
+> - App1 **serializes** incoming proposals for X and evaluates each one
+>   against X's canonical state *at the moment App1 evaluates it* — NOT
+>   the state App2 observed when it composed the proposal. The CAS
+>   invariant is "compare against canonical-current at confirmation
+>   time", evaluated in arrival order at the canonical authority. If
+>   App1's own user (or an earlier proposal) changed X between App2's
+>   read and App1's evaluation, App2's proposal no longer matches and
+>   conflicts — App1 never confirms a stale proposal over an
+>   intervening canonical update.
 > - On match: App1 emits a `mutation_confirmed` event (App1 as
 >   originator), advancing X's canonical state to the proposed
 >   `newValues`. The chain inside App1 stays consistent.
