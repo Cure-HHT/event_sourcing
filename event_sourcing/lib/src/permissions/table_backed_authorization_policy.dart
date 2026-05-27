@@ -4,6 +4,11 @@
 //   user_role_scopes, and containment projections via ContainmentResolver).
 // Implements: EVS-PRD-permissions-as-events/A — reads grants and assignments
 //   that are themselves recorded as events in the same log.
+// Implements: EVS-PRD-permissions-as-events/D — this policy IS the substrate's
+//   policy code; v1 ships exactly one AuthorizationPolicy implementation
+//   (this one, plus FailSafeAuthorizationPolicy for the boot-failure path)
+//   and apps do not register alternatives. Alternative policy mechanisms
+//   require lib extension under the Append-Only Primitives discipline.
 // Implements: EVS-PRD-action-dispatch/B — Allow/Deny decisions delivered to
 //   the dispatcher's authorize stage.
 // Implements: EVS-PRD-scoped-permissions/D/F/G — evaluates solely from

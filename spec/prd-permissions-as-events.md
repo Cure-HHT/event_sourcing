@@ -17,6 +17,8 @@ B. The library SHALL evaluate authorization decisions solely from its own event-
 
 C. The permission state at any point in the log SHALL be reconstructable from the log alone.
 
+D. The `AuthorizationPolicy` implementation evaluating decisions SHALL live in library code; applications SHALL NOT supply alternative policy implementations at composition time. Apps declare the permissions an action requires via `Action.permissions` and seed grants/assignments via events (`permission_granted`, `role_assigned`); they do NOT supply Allow/Deny logic. Alternative policy mechanisms (e.g., ABAC, rule engines, attribute-based scope evaluators) SHALL be introduced through library extension under the Append-Only Primitives discipline (a new shipped policy type with frozen semantics), NOT through app-side replacement.
+
 ## Rationale
 
 **Why are permissions events rather than rows in an IAM table?** A permission system that lives outside the event log can drift from the audit story without leaving evidence: a row updated, a role re-scoped, an entry deleted, all without the kind of immutable record the rest of the system produces. Putting permission grants and role assignments into the log subjects them to the same append-only, hash-chained, auditable treatment as every other state change.
@@ -27,7 +29,11 @@ C. The permission state at any point in the log SHALL be reconstructable from th
 
 **Where do external identity providers fit?** At the ingest boundary. An identity assertion from an external system enters the log as an event ("X authenticated via provider P at time T"); from there it participates in projections like any other event. External systems become event sources, not decision-time consultants.
 
-*End* *Permissions as Events* | **Hash**: 9165094d
+**Why is policy itself substrate code, not an app-supplied callback (assertion D)?** Closed-under-events (assertion C) requires that every Allow/Deny outcome be reproducible from `(events, lib_version)` alone. An app-supplied policy callback would make the Allow/Deny outcome depend on application code at the point of decision: the same log replayed against the same library version could produce different outcomes if the app's policy code had evolved. The closed-under-events guarantee would no longer hold for action outcomes. By pinning the policy mechanism in library code, both the *inputs* to the decision (the projections it reads) and the *decision function itself* are part of the substrate's epistemic surface — and any change to either is visible as a `lib_version_changed` event. Apps still customize what's permitted: they declare `Action.permissions` per action, register `ScopeClassSpec`s, and seed `permission_granted` / `role_assigned` events. They do not, however, write Allow/Deny logic.
+
+**Why is the alternative-mechanism path "library extension under Append-Only Primitives"?** If a deployment genuinely needs a policy mechanism the role/permission/scope model can't express (e.g., attribute-based access control over arbitrary event-derived facts), the right move is to ship a new policy type *in library code*, named, with frozen semantics. That preserves the closed-under-events guarantee — outcomes still depend only on `(events, lib_version)` — and the new type's existence is itself part of the substrate's versioned surface. App-side replacement would break the guarantee; lib-side extension reinforces it.
+
+*End* *Permissions as Events* | **Hash**: 5617d92d
 
 ## EVS-DEV-bootstrap-action-permissions: YAML-seeded role/permission bootstrap
 
