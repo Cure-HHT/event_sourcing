@@ -645,6 +645,35 @@ Things to notice:
   carries an `idempotencyKey`, and it caches the outcome so retries
   return the original result without re-emitting events.
 
+A few things worth knowing about idempotency-on-identifier (the
+matching-content cache hit):
+
+- The cache is keyed by `(actionName, principalId, idempotencyKey)`.
+  Two different principals submitting under the same key do not
+  collide; cross-user idempotency is intentionally not a thing.
+- A retry with the same `(actionName, principalId, idempotencyKey)`
+  while the cache entry is unexpired short-circuits at Stage 4: the
+  dispatcher returns a `DispatchIdempotencyHit` whose `cachedResult`
+  matches the original outcome's result map and whose
+  `priorEmittedEventIds` matches the original events. The dispatcher
+  does NOT re-run parse, validate, authorize, or execute, and it
+  emits no new events to the log.
+- `Action.idempotencyTtl` controls how long the cache entry is
+  considered fresh; after expiry, the same key+input behaves like a
+  brand-new submission.
+- **Known divergence from PRD-action-dispatch/E.** The spec says a
+  submission with the same `(actionName, principalId, idempotencyKey)`
+  but different `rawInput` from a still-cached prior submission
+  SHALL produce a denial event. The v1 substrate does not yet
+  implement that content-mismatch detection — the lookup returns
+  the cached outcome regardless of whether the new submission's
+  content matches the original. Adding the mismatched-content
+  denial path is a known follow-up; the comment in
+  `event_sourcing/lib/src/storage/postgres/postgres_idempotency_store.dart`
+  documents the boundary (the store overwrites on conflict; the
+  dispatcher would be the right place to detect mismatch and emit
+  the denial event before the store is called).
+
 ## Defining a projection
 
 You don't write a fold function. You describe what to listen to and how
@@ -815,6 +844,76 @@ You generally don't read most of these — they exist for the substrate's
 own bookkeeping. But you can: every `StoredEvent` exposes them, and
 `backend.findAllEvents(...)` lets you query the log by `entryType`,
 `originatorId`, `clientTimestamp` range, and so on.
+
+### Denial event payloads
+
+Every dispatch that fails records a denial event under
+`aggregateType: action_attempt`, `entryType: action_denial`, with one
+of five `eventType` values. The aggregate id is the dispatcher-
+generated `invocationId` (also stamped onto
+`metadata.action_invocation_id`), so a query for the denial and any
+successful events from the same dispatch joins on a single id.
+
+Common fields stamped by the dispatcher:
+
+- `metadata.action_invocation_id` and `metadata.action_name` on every
+  denial event (per "Every event carries a metadata record" above).
+- `flowToken` is preserved if the caller supplied one.
+- `error_message_sanitized` is run through a sanitizer that strips
+  stack-trace lines, file URIs, and absolute paths so the audit log
+  doesn't accidentally leak filesystem layout into long-lived
+  storage.
+
+Per-eventType payload fields under `data`:
+
+- **`unknown_action`** — Stage-1 lookup failure. The submitted action
+  name was not in the registry.
+  - `requested_name` — the name as supplied by the caller.
+- **`parse_denied`** — Stage-3 parse failure. `Action.parseInput`
+  threw, or Stage-pre-3 caught `Idempotency.required` with no key.
+  - `action_name` — the registered name.
+  - `error_class` — the runtime type of the thrown error
+    (typically `FormatException`, `ArgumentError`, or
+    `MissingIdempotencyKeyError`).
+  - `error_message_sanitized` — the error's stringified message,
+    sanitized.
+- **`validation_denied`** — Stage-5 validation failure.
+  `Action.validate` threw.
+  - `action_name`, `error_class`, `error_message_sanitized` as
+    above.
+  - `field_path` (optional) — when the validation throw was an
+    `ArgumentError` whose `name` is set, the dispatcher stamps it
+    here for audit drill-down.
+- **`authorization_denied`** — Stage-6 authorization failure. Used
+  for both `notGranted` (policy said no) and `scopeUnresolvable`
+  (the dispatcher's pre-policy scope-resolution check failed: see
+  `EVS-DEV-scope-unresolvable-denial`).
+  - `action_name` — the registered name.
+  - `permission_denied` — the `Permission.name` that was denied.
+  - `principal_active_role` (optional) — present when the principal
+    is a `UserPrincipal`; the `activeRole` they claimed.
+  - `deny_reason` (optional) — `DenyReason.name` for richer audit
+    (`notGranted`, `scopeUnresolvable`, etc.).
+  - `scope` (optional) — when the dispatcher had a resolved
+    `ScopeValue` to record, its `toJson()` payload is stamped here.
+    This fires for `notGranted` denials with a valid scope AND for
+    `scopeUnresolvable` denials where a class-mismatched scope was
+    returned (the offending value, not a successful match). Per
+    `EVS-DEV-scope-unresolvable-denial/E`, this lets the audit log
+    capture the precise denial circumstance.
+- **`execution_failed`** — Stage-7 (execute) or Stage-8 (persist)
+  failure. The action's `execute` threw, or the transaction rolled
+  back during the post-execute append.
+  - `action_name`, `error_class`, `error_message_sanitized` as
+    above.
+
+Denial events are appended through the same `EventStore.appendInTxn`
+path as success events, with the same hash-chain stamping and
+provenance machinery; they are first-class citizens of the audit
+log. The only structural difference is the `aggregateType` /
+`entryType` pair — which lets retention sweeps, audit dashboards, and
+ingest filters separate "what the system rejected" from "what the
+system accepted" without parsing the payload.
 
 ### The library records its own version in the log
 
