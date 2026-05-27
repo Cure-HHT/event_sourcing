@@ -77,6 +77,7 @@ class ReactionHandlers {
     required this.policy,
     ViewScopeRegistry? viewScopeRegistry,
     ViewPermissionNamer? viewPermissionNamer,
+    this.scopeClassRegistry,
   }) : viewScopeRegistry = viewScopeRegistry ?? ViewScopeRegistry(),
        connectionRegistry = WsConnectionRegistry(),
        _viewPermissionNamer =
@@ -92,6 +93,15 @@ class ReactionHandlers {
   final EventStore eventStore;
   final ActionDispatcher dispatcher;
   final AuthorizationPolicy policy;
+
+  /// Scope-class hierarchy, supplied so the subscription handler's
+  /// row-level narrowing mirrors the write-path policy's
+  /// class-and-ancestry matching. When `null`, row narrowing falls back
+  /// to exact-class matching only (conservative-correct: never
+  /// over-grants). Pass the same `ScopeClassRegistry` used to construct
+  /// the `TableBackedAuthorizationPolicy` for full write-path parity.
+  final ScopeClassRegistry? scopeClassRegistry;
+
   final ViewScopeRegistry viewScopeRegistry;
   final WsConnectionRegistry connectionRegistry;
   final ViewPermissionNamer _viewPermissionNamer;
@@ -140,6 +150,7 @@ class ReactionHandlers {
           viewScopes: viewScopeRegistry,
           viewPermissionNamer: _viewPermissionNamer,
           connectionRegistry: connectionRegistry,
+          scopeClassRegistry: scopeClassRegistry,
         );
       });
 

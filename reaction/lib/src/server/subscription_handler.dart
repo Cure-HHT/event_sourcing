@@ -76,6 +76,7 @@ void runSubscriptionHandler({
   required ViewScopeRegistry viewScopes,
   required ViewPermissionNamer viewPermissionNamer,
   required WsConnectionRegistry connectionRegistry,
+  ScopeClassRegistry? scopeClassRegistry,
 }) {
   _ConnectionState(
     channel: channel,
@@ -85,6 +86,7 @@ void runSubscriptionHandler({
     viewScopes: viewScopes,
     viewPermissionNamer: viewPermissionNamer,
     connectionRegistry: connectionRegistry,
+    scopeClassRegistry: scopeClassRegistry,
   ).start();
 }
 
@@ -97,6 +99,7 @@ class _ConnectionState {
     required this.viewScopes,
     required this.viewPermissionNamer,
     required this.connectionRegistry,
+    required this.scopeClassRegistry,
   });
 
   final WebSocketChannel channel;
@@ -106,6 +109,13 @@ class _ConnectionState {
   final ViewScopeRegistry viewScopes;
   final ViewPermissionNamer viewPermissionNamer;
   final WsConnectionRegistry connectionRegistry;
+
+  /// Scope-class hierarchy used to mirror the write-path policy's
+  /// class-and-ancestry matching when narrowing rows. When `null`,
+  /// `_expandAssignments` falls back to exact-class matching only
+  /// (conservative-correct: under-grants the ancestor-wildcard case,
+  /// never over-grants).
+  final ScopeClassRegistry? scopeClassRegistry;
 
   Principal? _principal;
   final Map<String, StreamSubscription<Update<Map<String, Object?>>>> _subs =
@@ -285,36 +295,73 @@ class _ConnectionState {
 
   /// Expand the principal's scope assignments through [binding] into
   /// the set of aggregate IDs covered. Returns `null` for "unrestricted"
-  /// (no row-level narrowing required) when any assignment is a
-  /// `TotalWildcardScope` or `ValueWildcardScope` against the view's
-  /// scope class.
+  /// (no row-level narrowing required).
   ///
-  /// `BoundScope` assignments are passed through the binding's
-  /// `aggregateIdResolver`; resolver-returns-null entries are treated
-  /// as "needs containment expansion" and silently skipped here —
-  /// `ContainmentResolver` plumbing arrives in a follow-up task.
+  /// Mirrors the write-path policy's `_matches`
+  /// (`TableBackedAuthorizationPolicy`) class-and-ancestry semantics so
+  /// that the read path cannot over-grant relative to the write path.
+  /// Each assignment is checked against the view binding's [scopeClass]
+  /// BEFORE it is consumed:
+  ///
+  /// - `TotalWildcardScope` → genuinely unrestricted (no class). Returns
+  ///   `null`.
+  /// - `ValueWildcardScope(class_: c)` → unrestricted ONLY IF `c` equals
+  ///   the view's scope class OR `c` is an ancestor of it (per the
+  ///   [scopeClassRegistry]). An unrelated class (e.g. a 'site' wildcard
+  ///   on a 'patient' view) is skipped, NOT treated as unrestricted.
+  /// - `BoundScope(class_: c, value: v)` → resolved through the binding's
+  ///   `aggregateIdResolver` ONLY on an exact class match (`c == scope
+  ///   class`). Resolver-returns-null entries are skipped (direct
+  ///   translation unavailable).
+  ///
+  /// When [scopeClassRegistry] is `null`, the ancestor check is skipped:
+  /// only exact-class `ValueWildcardScope` grants unrestricted. This is
+  /// conservative-correct (under-grants the legitimate ancestor case,
+  /// never over-grants).
+  ///
+  /// Ancestor `BoundScope`s (e.g. `BoundScope('site', 'site-A')` on a
+  /// 'patient' view) require `ContainmentResolver` expansion to enumerate
+  /// "patients at site-A"; that plumbing is deferred to a follow-up task,
+  /// so such assignments are conservatively SKIPPED here (under-grant,
+  /// never over-grant). This is intentional, not a bug.
   Set<String>? _expandAssignments({
     required List<ScopeAssignment> assignments,
     required ViewScopeBinding binding,
   }) {
-    if (assignments.any((a) => a.scope is TotalWildcardScope)) {
-      return null;
-    }
+    final registry = scopeClassRegistry;
     final result = <String>{};
     for (final a in assignments) {
       final scope = a.scope;
-      if (scope is BoundScope) {
-        final aggId = binding.aggregateIdResolver(scope);
-        if (aggId != null) {
-          result.add(aggId);
-        }
-        // null = resolver couldn't directly translate; needs the
-        // containment resolver, wired in a follow-up.
-      } else if (scope is ValueWildcardScope) {
-        // Wildcard over this scope class = no row-level narrowing
-        // applicable for this assignment (the user covers every
-        // aggregate in the class).
-        return null;
+      switch (scope) {
+        case TotalWildcardScope():
+          // No class on a total wildcard: genuinely unrestricted.
+          return null;
+        case ValueWildcardScope(class_: final c):
+          final matchesClass =
+              c == binding.scopeClass ||
+              (registry?.isAncestor(c, binding.scopeClass) ?? false);
+          if (matchesClass) {
+            // Covers every aggregate in (or descended from) this class:
+            // no row-level narrowing applicable.
+            return null;
+          }
+          // Unrelated class (e.g. a 'site' wildcard on a 'patient' view):
+          // grants nothing here. Keep scanning the other assignments.
+          break;
+        case BoundScope(class_: final c):
+          if (c != binding.scopeClass) {
+            // Class mismatch. An ancestor BoundScope would need
+            // ContainmentResolver expansion (deferred — see doc above);
+            // a same-or-narrower mismatch grants nothing. Skip.
+            break;
+          }
+          final aggId = binding.aggregateIdResolver(scope);
+          if (aggId != null) {
+            result.add(aggId);
+          }
+          // null = resolver couldn't directly translate; needs the
+          // containment resolver, wired in a follow-up.
+          break;
       }
     }
     return result;
