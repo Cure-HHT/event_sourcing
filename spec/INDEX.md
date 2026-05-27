@@ -20,8 +20,8 @@
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 6b89020b |
 | EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 02028dcf |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization   | prd-multi-source-canonicalization.md | 3e087d41 |
-| EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | a215639f |
-| EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 9165094d |
+| EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | 1fa3332a |
+| EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 5617d92d |
 | EVS-PRD-portability                   | Portability                     | prd-portability.md                   | edf3c977 |
 | EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | 4755ef8b |
 | EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | d21c8301 |
@@ -40,7 +40,7 @@
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections           | scoped-permissions.md                   | 8b7a3f36 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                       | scoped-permissions.md                   | deab9862 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                  | dev-entry-type-downgrade-refusal.md     | 7b577371 |
-| EVS-DEV-event-store-open                   | EventStore.open boot flow                             | dev-event-store-open.md                 | c0cd7e1a |
+| EVS-DEV-event-store-open                   | EventStore.open boot flow                             | dev-event-store-open.md                 | 98a3dab0 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                        | dev-find-all-events-extended-filters.md | f24ffdf5 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                            | dev-ingest-promotes-before-fold.md      | a3519bfb |
 | EVS-DEV-postgres-backend                   | Postgres backend reference impl                       | dev-postgres-backend.md                 | b3c3c0ec |

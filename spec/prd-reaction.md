@@ -189,7 +189,7 @@ Consumer code needs to gate UI affordances on whether the active `Principal` hol
 
 A. The library SHALL define a `PermissionSource` interface that exposes the current `EffectiveAuthorization` for the active `Principal` (synchronous getter, nullable) and a `Stream<EffectiveAuthorization?>` of snapshot updates.
 
-B. The library SHALL ship a `LocalPermissionSource` implementation that derives the snapshot from the substrate's existing `RolePermissionGrants` projection.
+B. The library SHALL ship a `LocalPermissionSource` implementation that derives the snapshot via `AuthorizationPolicy.effectivePermissionsFor`. The policy in turn reads the `role_permission_grants` and `user_role_scopes` projections — verifying both that the active role grants the permission AND that the user is currently assigned to that active role. `PermissionSource.current` surfaces `EffectiveAuthorization` directly; no intermediate lossy `PermissionSnapshot` type exists.
 
 C. The library SHALL ship a `RemotePermissionSource` implementation that fetches the initial snapshot via a documented HTTP endpoint and reflects subsequent permission changes via the same wire-side subscription mechanism the `RemoteViewSource` uses.
 
@@ -205,7 +205,9 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 **Why does the Remote impl piggyback on the same wire as `RemoteViewSource` (C)?** `RolePermissionGrants` is just another substrate view. Treating its updates as ordinary view subscriptions means the wire transport has one mechanism for all reactive data, not two. The `RemotePermissionSource` is, internally, a thin specialization of `RemoteViewSource` over the `RolePermissionGrants` view filtered to the active `Principal`.
 
-*End* *Permission Source* | **Hash**: a215639f
+**Why route through `AuthorizationPolicy.effectivePermissionsFor` rather than reading `role_permission_grants` directly (B)?** An earlier draft of `LocalPermissionSource` read `role_permission_grants` and built the snapshot from grants alone. That bypassed the membership gate — a Principal claiming `activeRole: 'admin'` would see admin permissions even if no `user_role_scopes` row bound that user to the admin role. The trust-model fix (substrate commit `62b2bcc`) moved the membership check into `AuthorizationPolicy.effectivePermissionsFor`, which now reads BOTH projections; the `LocalPermissionSource` realignment (commit `2bb5c03`) routes through the policy so local and remote sources compute identical snapshots. This realizes the closed-under-events trust model (see `EVS-PRD-library-charter` narrative chapter "Closed under events"): the substrate refuses to honour an unverified role claim, regardless of which `PermissionSource` impl serves the snapshot.
+
+*End* *Permission Source* | **Hash**: 1fa3332a
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
@@ -250,6 +252,8 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-view-subscriber
+
+> **Implementation status:** Designed; `reaction_widgets` package not yet implemented (Plan D). The assertions below are normative — they are the contract the future package MUST satisfy when built. Audit tooling SHOULD treat coverage gaps here as "package not yet built", not as drift between spec and shipped code.
 
 ### Purpose
 
