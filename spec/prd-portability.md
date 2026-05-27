@@ -27,4 +27,13 @@ D. The library SHALL abstract platform-divergent capabilities (persistent storag
 
 **Why abstract platform-divergent capabilities?** Some capabilities genuinely differ across platforms — file-system storage on the Dart VM vs. IndexedDB on web vs. application-private directories on mobile; HTTP via dart:io on the VM vs. dart:html on web; notification delivery via push services on mobile vs. OS notifications on desktop vs. browser notifications on web. The library cannot pick any single platform's API without breaking the others. By defining Dart-side interfaces (storage, transport, notification) and accepting application-supplied implementations, the library stays platform-agnostic while letting consumers adapt to whatever their target environment provides.
 
+## Future work
+
+- **Horizontal scaling beyond a single backend instance.** The reference `PostgresBackend` (and the abstract `StorageBackend` contract) target a single backing store per substrate instance. The IoT scenario (`docs/scenarios/iot-sensor-network.md`) reaches volumes — millions of events per day per fleet — where a single-Postgres deployment runs out of headroom. Two paths exist today, both load-bearing the same `event_sourcing` library:
+
+  1. **Substrate-per-shard** — deploy one substrate per logical shard (per-farm, per-tenant, per-region), with an app-layer aggregator subscribing across shards via separate `RemoteScope` connections. Works today; the audit story is "per-shard log" rather than "one global log," which is the right answer for tenant-isolated deployments.
+  2. **Backend-side partitioning** — a hypothetical `ShardedPostgresBackend` (or similar) that partitions the event table across multiple Postgres instances by `(originatorId, aggregateType)` or by sequence range, presenting the substrate with a single logical `StorageBackend`. This is out of scope for v1: it requires a non-trivial sequence-number coordination strategy across shards, and the hash chain's per-installation linearity is what makes integrity verifiable in the first place.
+
+  The substrate's commitment is that v1 ships one reference `StorageBackend` per supported deployment shape (`SembastBackend` on mobile, `PostgresBackend` on server) and any horizontal-partitioning impl is a downstream extension under the same trust-boundary discipline (CLAUDE.md, "Trust boundaries"). Cited here so future work doesn't quietly assume "obviously you'd shard Postgres" without engaging with the hash-chain-integrity costs.
+
 *End* *Portability* | **Hash**: edf3c977
