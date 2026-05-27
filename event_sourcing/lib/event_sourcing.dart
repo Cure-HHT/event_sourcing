@@ -266,6 +266,8 @@ export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
 export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
+export 'src/permissions/scope_class_match.dart'
+    show ScopeClassMatch, scopeClassMatch;
 export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
