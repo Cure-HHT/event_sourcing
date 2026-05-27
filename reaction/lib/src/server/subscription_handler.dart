@@ -297,9 +297,11 @@ class _ConnectionState {
   /// the set of aggregate IDs covered. Returns `null` for "unrestricted"
   /// (no row-level narrowing required).
   ///
-  /// Mirrors the write-path policy's `_matches`
-  /// (`TableBackedAuthorizationPolicy`) class-and-ancestry semantics so
-  /// that the read path cannot over-grant relative to the write path.
+  /// The class gate (equals-or-ancestor) is computed by the shared
+  /// `scopeClassMatch` helper in event_sourcing — the single tested source
+  /// of truth that the write-path policy's `_matches`
+  /// (`TableBackedAuthorizationPolicy`) also obeys, so the read path cannot
+  /// over-grant relative to the write path by construction.
   /// Each assignment is checked against the view binding's [scopeClass]
   /// BEFORE it is consumed:
   ///
@@ -332,36 +334,72 @@ class _ConnectionState {
     final result = <String>{};
     for (final a in assignments) {
       final scope = a.scope;
-      switch (scope) {
-        case TotalWildcardScope():
-          // No class on a total wildcard: genuinely unrestricted.
-          return null;
-        case ValueWildcardScope(class_: final c):
-          final matchesClass =
-              c == binding.scopeClass ||
-              (registry?.isAncestor(c, binding.scopeClass) ?? false);
-          if (matchesClass) {
-            // Covers every aggregate in (or descended from) this class:
-            // no row-level narrowing applicable.
-            return null;
-          }
-          // Unrelated class (e.g. a 'site' wildcard on a 'patient' view):
-          // grants nothing here. Keep scanning the other assignments.
+
+      // A total wildcard carries no class: genuinely unrestricted, before
+      // the class gate even comes into play.
+      if (scope is TotalWildcardScope) {
+        return null;
+      }
+
+      // The class gate (equals-or-ancestor of the view's scope class) is the
+      // single tested source of truth shared with the write path; see
+      // scopeClassMatch in event_sourcing. When the registry is null we
+      // cannot compute ancestry, so we fall back to exact-class-only matching
+      // (conservative: under-grants the ancestor case, never over-grants —
+      // see the doc comment above).
+      final ScopeClassMatch match;
+      if (registry == null) {
+        // No registry → ancestry is unknowable. Exact-class match only;
+        // everything else is conservatively does-not-apply.
+        final scopeClass = switch (scope) {
+          TotalWildcardScope() => null, // unreachable; handled above
+          ValueWildcardScope(class_: final c) => c,
+          BoundScope(class_: final c) => c,
+        };
+        match = scopeClass == binding.scopeClass
+            ? ScopeClassMatch.appliesExact
+            : ScopeClassMatch.doesNotApply;
+      } else {
+        match = scopeClassMatch(scope, binding.scopeClass, registry);
+      }
+
+      switch (match) {
+        case ScopeClassMatch.doesNotApply:
+          // Unrelated class (e.g. a 'site' wildcard on a 'patient' view, or a
+          // cross-class bound scope): grants nothing here. Keep scanning.
           break;
-        case BoundScope(class_: final c):
-          if (c != binding.scopeClass) {
-            // Class mismatch. An ancestor BoundScope would need
-            // ContainmentResolver expansion (deferred — see doc above);
-            // a same-or-narrower mismatch grants nothing. Skip.
-            break;
+        case ScopeClassMatch.appliesExact:
+          switch (scope) {
+            case TotalWildcardScope():
+              // Unreachable (handled above), but keeps the switch exhaustive.
+              return null;
+            case ValueWildcardScope():
+              // Covers every aggregate in this class: no narrowing applies.
+              return null;
+            case BoundScope():
+              final aggId = binding.aggregateIdResolver(scope);
+              if (aggId != null) {
+                result.add(aggId);
+              }
+            // null = resolver couldn't directly translate; needs the
+            // containment resolver, wired in a follow-up.
           }
-          final aggId = binding.aggregateIdResolver(scope);
-          if (aggId != null) {
-            result.add(aggId);
+        case ScopeClassMatch.appliesViaAncestor:
+          switch (scope) {
+            case TotalWildcardScope():
+              // Unreachable (handled above); keeps the switch exhaustive.
+              return null;
+            case ValueWildcardScope():
+              // Ancestor wildcard covers the whole descendant class: no
+              // narrowing applies. (Preserves prior read-path behavior.)
+              return null;
+            case BoundScope():
+              // An ancestor BoundScope (e.g. BoundScope('site', 'site-A') on
+              // a 'patient' view) needs ContainmentResolver expansion to
+              // enumerate the descendants; that plumbing arrives in a
+              // follow-up, so skip conservatively (under-grant, never over).
+              break;
           }
-          // null = resolver couldn't directly translate; needs the
-          // containment resolver, wired in a follow-up.
-          break;
       }
     }
     return result;
