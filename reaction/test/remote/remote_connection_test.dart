@@ -239,6 +239,84 @@ void main() {
     },
   );
 
+  test(
+    'SubscribeMsg is not sent until auth_ok arrives (slow validator)',
+    () async {
+      final pair = _Pair();
+      addTearDown(pair.close);
+      final conn = RemoteConnection(
+        baseUrl: Uri.parse('http://localhost:0'),
+        httpClient: _FakeHttpClient(),
+        wsFactory: (_) => pair.clientSide,
+      );
+      conn.setCredential('alice');
+
+      // Record the order/types of messages the server receives. With a
+      // slow validator the server holds off on auth_ok; the client must
+      // NOT push a subscribe in the meantime (pre-fix it would, and the
+      // server would treat it as an auth-protocol violation).
+      final serverInbound = <String>[];
+      pair.serverSide.stream.listen((raw) {
+        final type = (jsonDecode(raw as String) as Map)['type'] as String?;
+        if (type != null) serverInbound.add(type);
+      });
+
+      conn
+          .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+          .listen((_) {}, onError: (_) {});
+
+      // Let the auth message flush and give the client ample time to (if
+      // it were buggy) race ahead with a subscribe before auth_ok.
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(serverInbound, [
+        'auth',
+      ], reason: 'subscribe must not precede auth_ok');
+
+      // Now the (slow) validator completes: server acks auth.
+      pair.serverSide.sink.add(
+        jsonEncode({'type': 'auth_ok', 'principalId': 'alice'}),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(serverInbound, [
+        'auth',
+        'subscribe',
+      ], reason: 'subscribe flushes only after auth_ok');
+      await conn.dispose();
+    },
+  );
+
+  test('handshake failure (ws drops before auth_ok) errors the subscription '
+      'instead of hanging', () async {
+    final pair = _Pair();
+    addTearDown(pair.close);
+    final conn = RemoteConnection(
+      baseUrl: Uri.parse('http://localhost:0'),
+      httpClient: _FakeHttpClient(),
+      wsFactory: (_) => pair.clientSide,
+    );
+    conn.setCredential('alice');
+    pair.serverSide.stream.listen((_) {});
+
+    final errored = Completer<Object>();
+    conn
+        .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+        .listen(
+          (_) {},
+          onError: (Object e) {
+            if (!errored.isCompleted) errored.complete(e);
+          },
+        );
+    await Future<void>.delayed(Duration.zero);
+
+    // Server closes with 4001 before ever sending auth_ok.
+    await pair.serverCloseClient(4001);
+
+    final err = await errored.future.timeout(const Duration(seconds: 2));
+    expect(err, isNotNull);
+    await conn.dispose();
+  });
+
   group('_onWsClosed close-code routing', () {
     for (final code in [4001, 4003]) {
       test('WS close with code $code invokes onAuthClose', () async {

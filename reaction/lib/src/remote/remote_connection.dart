@@ -74,6 +74,18 @@ class RemoteConnection {
 
   WebSocketChannel? _channel;
   Future<void>? _connecting;
+
+  /// Completes when the server acks the first-WS-message auth with
+  /// `auth_ok`. `_ensureConnected` awaits this BEFORE returning so that
+  /// queued `openSubscription` calls cannot flush a `SubscribeMsg` while
+  /// the server is still running its (possibly slow, network-backed)
+  /// validator — a subscribe arriving pre-auth is treated as an
+  /// auth-protocol violation and the server closes with 4001. Completes
+  /// with an error if the socket closes (4001/4003 or a wire drop)
+  /// before `auth_ok` arrives, so awaiters don't hang forever. Reset on
+  /// each (re)connect.
+  Completer<void>? _authComplete;
+
   final Map<String, StreamController<Update<Map<String, Object?>>>> _subs = {};
   Timer? _idleCloseTimer;
 
@@ -125,30 +137,52 @@ class RemoteConnection {
     _subs[subscriptionId] = controller;
     _idleCloseTimer?.cancel();
     _idleCloseTimer = null;
-    _ensureConnected().then((_) {
-      _sendClient(
-        SubscribeMsg(
-          subscriptionId: subscriptionId,
-          viewName: viewName,
-          filter: filter,
-          aggregates: aggregates,
-        ),
-      );
-    });
+    _ensureConnected().then(
+      (_) {
+        _sendClient(
+          SubscribeMsg(
+            subscriptionId: subscriptionId,
+            viewName: viewName,
+            filter: filter,
+            aggregates: aggregates,
+          ),
+        );
+      },
+      // If the handshake failed (socket dropped before auth_ok), surface
+      // it on this subscription's stream instead of leaving an unhandled
+      // async error. _onWsClosed already errored any subs registered at
+      // close time; this covers the open-after-close ordering.
+      onError: (Object e) {
+        final ctrl = _subs.remove(subscriptionId);
+        if (ctrl != null && !ctrl.isClosed) {
+          ctrl
+            ..addError(e)
+            ..close();
+        }
+      },
+    );
     return controller.stream;
   }
 
   Future<void> _ensureConnected() async {
     if (_disposed) throw StateError('connection disposed');
-    if (_channel != null) return;
+    // A live channel that has already completed its auth handshake is
+    // ready immediately. While auth is still in flight (`_authComplete`
+    // not yet done) fall through to await it via `_connecting`.
+    if (_channel != null && (_authComplete?.isCompleted ?? true)) return;
     _connecting ??= _connect();
-    await _connecting;
-    _connecting = null;
+    try {
+      await _connecting;
+    } finally {
+      _connecting = null;
+    }
   }
 
   Future<void> _connect() async {
     final channel = wsFactory(wsUrl);
     _channel = channel;
+    final authComplete = Completer<void>();
+    _authComplete = authComplete;
     channel.stream.listen(
       _onMessage,
       onDone: _onWsClosed,
@@ -156,6 +190,11 @@ class RemoteConnection {
       cancelOnError: false,
     );
     _sendClient(AuthMsg(credential: _credential ?? ''));
+    // Block connection-readiness on the server's auth ack so queued
+    // subscriptions don't race ahead of authentication. Resolved in
+    // [_onMessage] on `auth_ok`; failed in [_onWsClosed] if the socket
+    // drops first.
+    await authComplete.future;
   }
 
   void _sendClient(ClientMessage m) {
@@ -165,7 +204,13 @@ class RemoteConnection {
   void _onMessage(dynamic raw) {
     final json = jsonDecode(raw as String) as Map<String, Object?>;
     final type = json['type'] as String?;
-    if (type == 'auth_ok') return;
+    if (type == 'auth_ok') {
+      // Server acked auth: unblock _ensureConnected so queued
+      // subscriptions can flush.
+      final ac = _authComplete;
+      if (ac != null && !ac.isCompleted) ac.complete();
+      return;
+    }
     if (type == 'subscription_denied' || type == 'error') {
       final subId = json['subscriptionId'] as String?;
       if (subId != null) {
@@ -206,6 +251,14 @@ class RemoteConnection {
     // are wire drops, not auth changes.
     final code = _channel?.closeCode;
     _channel = null;
+    // If the socket dropped before `auth_ok`, fail the in-flight
+    // handshake so any awaiting `_ensureConnected` (and the
+    // `openSubscription` chained on it) errors out rather than hanging.
+    final ac = _authComplete;
+    if (ac != null && !ac.isCompleted) {
+      ac.completeError(StateError('ws closed before auth_ok (code: $code)'));
+    }
+    _authComplete = null;
     if (code == 4001 || code == 4003) {
       onAuthClose?.call();
     }
@@ -236,6 +289,12 @@ class RemoteConnection {
   Future<void> dispose() async {
     _disposed = true;
     _idleCloseTimer?.cancel();
+    // Fail any in-flight handshake so awaiters don't hang past dispose.
+    final ac = _authComplete;
+    if (ac != null && !ac.isCompleted) {
+      ac.completeError(StateError('connection disposed'));
+    }
+    _authComplete = null;
     // Snapshot controllers before close: onCancel callbacks mutate
     // _subs via _closeSubscription, so we cannot iterate _subs directly.
     final controllers = _subs.values.toList();
