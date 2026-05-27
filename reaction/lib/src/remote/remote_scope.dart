@@ -25,7 +25,6 @@ import 'package:reaction/src/remote/remote_auth_session.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/remote/remote_permission_source.dart';
 import 'package:reaction/src/remote/remote_view_source.dart';
-import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 class RemoteScope {
@@ -36,7 +35,14 @@ class RemoteScope {
   }) : _connection = RemoteConnection(
          baseUrl: baseUrl,
          httpClient: httpClient ?? http.Client(),
-         wsFactory: wsFactory ?? IOWebSocketChannel.connect,
+         // Platform-neutral default: WebSocketChannel.connect uses
+         // conditional imports to pick the io/html channel per platform,
+         // so importing `package:reaction/reaction.dart` (which barrel-
+         // exports RemoteScope) does not drag `dart:io` into a Flutter
+         // web build. The reaction protocol authenticates via the first
+         // WS message (not upgrade headers) precisely so web — which
+         // cannot set WS headers — is supported.
+         wsFactory: wsFactory ?? WebSocketChannel.connect,
        ) {
     // Wire 4001/4003 close-frame routing AFTER _connection is built
     // and BEFORE the first WS open: the lazy connect path is driven
