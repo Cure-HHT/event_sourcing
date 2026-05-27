@@ -9,6 +9,8 @@
 library;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
+    show ensurePostgresSchema;
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
@@ -68,6 +70,55 @@ void main() {
       addTearDown(b2.close);
       // No throw is the assertion. Implicitly: second open SHALL not
       // raise "relation already exists".
+    });
+
+    test('ensurePostgresSchema backfills raw_input_canonical_json on a '
+        'pre-existing idempotency table (idempotent ALTER)', () async {
+      // Provision the LEGACY idempotency table shape — i.e. without the
+      // raw_input_canonical_json column, as a database created before
+      // that column shipped would have. CREATE TABLE IF NOT EXISTS in
+      // ensurePostgresSchema is a no-op against it, so before the fix
+      // the column would never be added and lookup()'s SELECT of it
+      // raised "column does not exist".
+      final conn = await _connect(url);
+      addTearDown(conn.close);
+      await conn.execute('''
+          CREATE TABLE idempotency (
+            action_name      TEXT         NOT NULL,
+            principal_id     TEXT         NOT NULL,
+            idempotency_key  TEXT         NOT NULL,
+            result_json      JSONB        NOT NULL,
+            emitted_event_ids JSONB       NOT NULL,
+            recorded_at      TIMESTAMPTZ  NOT NULL,
+            expires_at       TIMESTAMPTZ  NOT NULL,
+            PRIMARY KEY (action_name, principal_id, idempotency_key)
+          )
+        ''');
+
+      // Run the schema ensure (idempotent ALTER backfills the column).
+      await conn.runTx(ensurePostgresSchema);
+
+      // The column now exists.
+      final cols = await conn.execute(
+        'SELECT column_name FROM information_schema.columns '
+        "WHERE table_schema = 'public' AND table_name = 'idempotency'",
+      );
+      final names = cols.map((r) => r[0]! as String).toSet();
+      expect(names, contains('raw_input_canonical_json'));
+
+      // And a lookup that SELECTs the column succeeds (no "column does
+      // not exist") rather than erroring — a clean miss on empty data.
+      final pool = Pool<void>.withEndpoints(
+        [PostgresBackend.endpointFromUrl(url)],
+        settings: const PoolSettings(
+          maxConnectionCount: 1,
+          sslMode: SslMode.disable,
+        ),
+      );
+      addTearDown(pool.close);
+      final store = PostgresIdempotencyStore.over(pool);
+      final hit = await store.lookup('a', 'p', 'k');
+      expect(hit, isNull);
     });
   });
 }
