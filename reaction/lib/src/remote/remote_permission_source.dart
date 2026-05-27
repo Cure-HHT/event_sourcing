@@ -131,6 +131,17 @@ class RemotePermissionSource implements PermissionSource {
       final effective = EffectiveAuthorizationCodec.decode(
         jsonDecode(res.body) as Map<String, Object?>,
       );
+      // Mirror LocalPermissionSource: the policy returns
+      // EffectiveAuthorization.empty (activeRole == '') for principals
+      // who don't actually hold their claimed activeRole. Map that to
+      // `null` so `current` matches the in-process reference impl —
+      // otherwise UI code treating non-null `current` as
+      // "loaded/authorized" diverges between Local and Remote.
+      if (effective.activeRole.isEmpty) {
+        _current = null;
+        if (!_controller.isClosed) _controller.add(null);
+        return;
+      }
       _current = effective;
       if (!_controller.isClosed) _controller.add(effective);
     }
