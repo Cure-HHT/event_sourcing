@@ -31,6 +31,8 @@ The widget layer consumes these public types from `package:reaction/reaction.dar
 |---|---|---|
 | `AuthSession` | `interfaces/auth_session.dart` | `AuthStatus get current; Stream<AuthStatus> get stream; void setCredential(String?); Principal? get principal; Future<void> dispose();` |
 | `AuthStatus` | same | sealed: `Authenticated({required Principal principal})`, `NotAuthenticated()`, `Expired()` |
+| `Principal` | substrate, re-exported | **sealed** with factory ctors: `Principal.user({required String userId, required String activeRole, required Set<String> roles})` and `Principal.anonymous({String? ipAddress})`. Concrete `UserPrincipal`/`AnonymousPrincipal` final classes. NOT directly constructible via `const Principal(...)`. |
+| `LocalAuthSession` | `local/local_auth_session.dart` | `LocalAuthSession({String defaultActiveRole = 'install'})` — principal is built lazily by `setCredential(...)` |
 | `ActionSubmitter` | `interfaces/action_submitter.dart` | `Future<DispatchResult<Object?>> submit(ActionSubmission)` |
 | `ViewSource` | `interfaces/view_source.dart` | `Stream<Update<T>> watch<T>({required String viewName, required T Function(Map<String, Object?>) mapper, SubscriptionFilter? filter, Set<String>? aggregates})` — all named; `filter` is optional/nullable |
 | `PermissionSource` | `interfaces/permission_source.dart` | `EffectiveAuthorization? get current; Stream<EffectiveAuthorization?> get stream; Future<void> dispose();` |
@@ -1487,8 +1489,8 @@ void main() {
       final sub = fake.authSession.stream.listen(received.add);
 
       fake.driveAuthStatus(const NotAuthenticated());
-      fake.driveAuthStatus(const Authenticated(
-          principal: Principal(userId: 'u', activeRole: 'r', roles: {'r'})));
+      fake.driveAuthStatus(Authenticated(
+          principal: Principal.user(userId: 'u', activeRole: 'r', roles: const {'r'})));
       await pumpEventQueue();
 
       expect(received.length, 2);
