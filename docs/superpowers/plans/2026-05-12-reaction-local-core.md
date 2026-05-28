@@ -8,7 +8,7 @@
 
 **Tech Stack:** Dart 3.x (sealed classes, exhaustive switch). `package:event_sourcing` (path-dep). `package:uuid` for v4 idempotency keys. Tests use `flutter_test` (matches existing `event_sourcing` test pattern — Sembast-backed integration tests need Flutter test binding). No HTTP/WS dependencies in this plan (those land in Plan B-remote).
 
-**Spec reference:** `spec/prd-reaction.md` — primarily the PRDs `EVS-PRD-auth-session`, `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`, `EVS-PRD-permission-snapshot-source`. Cross-system context in the same file's overview sections.
+**Spec reference:** `spec/prd-reaction.md` — primarily the PRDs `EVS-PRD-auth-session`, `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`, `EVS-PRD-permission-source`. Cross-system context in the same file's overview sections.
 
 **Scope check:** This plan covers the **client-side in-process pieces only**. Wire codecs and Remote impls are deferred to Plan B-remote. The pure-Dart shelf server is deferred to Plan C. The Flutter widget layer is deferred to Plan D.
 
@@ -569,7 +569,7 @@ Refs: spec/prd-reaction.md (EVS-PRD-view-subscriber)."
 - Create: `reaction/lib/src/interfaces/permission_source.dart`
 - (No standalone test file — verified by `LocalPermissionSource` tests in Task 12.)
 
-**Spec ref:** `spec/prd-reaction.md` § `EVS-PRD-permission-snapshot-source`.
+**Spec ref:** `spec/prd-reaction.md` § `EVS-PRD-permission-source`.
 
 - [ ] **Step 1: Create `reaction/lib/src/interfaces/permission_source.dart`**
 
@@ -628,7 +628,7 @@ Per-Principal scoped read of the substrate's RolePermissionGrants
 projection. Active Principal is read from the wired-in AuthSession
 externally (no setPrincipal mutator on this interface).
 
-Refs: spec/prd-reaction.md (EVS-PRD-permission-snapshot-source)."
+Refs: spec/prd-reaction.md (EVS-PRD-permission-source)."
 ```
 
 ---
@@ -1941,7 +1941,7 @@ interface) is wired externally by ReActionScope (Plan D) to follow
 AuthSession.principal. Recomputes the snapshot on grants-view
 deltas.
 
-Refs: spec/prd-reaction.md (EVS-PRD-permission-snapshot-source)."
+Refs: spec/prd-reaction.md (EVS-PRD-permission-source)."
 ```
 
 ---
@@ -2229,7 +2229,7 @@ Refs: spec/prd-reaction.md."
 
 Run BEFORE declaring the plan complete:
 
-- [ ] Each of the 5 spec PRDs (`EVS-PRD-auth-session`, `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`, `EVS-PRD-permission-snapshot-source`, `EVS-PRD-cross-process-event-transport`) has a task covering the in-process scope. The cross-process PRD is split across plans; this plan owns the in-process side.
+- [ ] Each of the 5 spec PRDs (`EVS-PRD-auth-session`, `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`, `EVS-PRD-permission-source`, `EVS-PRD-cross-process-event-transport`) has a task covering the in-process scope. The cross-process PRD is split across plans; this plan owns the in-process side.
 - [ ] No `TODO`/`TBD`/`fill in` placeholders. Verify: `grep -n 'TBD\|TODO\|fill in' docs/superpowers/plans/2026-05-12-reaction-local-core.md`. (Self-review-checklist references are NOT placeholders; they're documentation of the verification.)
 - [ ] Identifier consistency across tasks:
   - `LocalAuthSession`, `LocalActionSubmitter`, `LocalViewSource`, `LocalPermissionSource` — spelled identically everywhere.

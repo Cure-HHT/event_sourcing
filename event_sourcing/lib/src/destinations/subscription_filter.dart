@@ -2,6 +2,7 @@
 // event-selection predicate that determines which events are enqueued to a
 // given destination (entry_type / event_type / aggregate_type allow-lists +
 // optional escape-hatch predicate).
+import 'package:collection/collection.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
@@ -20,10 +21,10 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 ///    default), system events are rejected by [matches] regardless of
 ///    [entryTypes] content. /
 /// 2. [entryTypes] — allow-list over `event.entry_type` for user events.
-///    `null` means "any user entry type"; an **empty list** means
+///    `null` means "any user entry type"; an **empty set** means
 ///    "nothing matches" (the distinction is deliberate; ).
 ///    Reserved system entry types route through [includeSystemEvents]
-///    and never consult this list.
+///    and never consult this set.
 /// 3. [eventTypes] — allow-list over `event.event_type` with the same
 ///    null-vs-empty semantics as [entryTypes].
 /// 4. [aggregateTypes] — allow-list over `event.aggregateType`. `null`
@@ -52,10 +53,10 @@ class SubscriptionFilter {
   });
 
   /// Allow-list over `event.entry_type` for user events. `null` = match
-  /// all user entry types; `[]` = match no user entry types. Reserved
-  /// system entry types ignore this list and route through
+  /// all user entry types; an empty set = match no user entry types.
+  /// Reserved system entry types ignore this set and route through
   /// [includeSystemEvents].
-  final List<String>? entryTypes;
+  final Set<String>? entryTypes;
 
   /// Allow-list over `event.event_type`. `null` = match all event types;
   /// an empty set = match no event types.
@@ -124,4 +125,38 @@ class SubscriptionFilter {
     }
     return true;
   }
+
+  /// Structural equality over the three allow-list sets plus value
+  /// equality on [includeSystemEvents]. Predicate equality is
+  /// **identity-based** (`identical(predicate, other.predicate)`) — two
+  /// distinct closures with the same source are NOT equal, even if they
+  /// would return the same value for every event. Closures have no
+  /// defensible structural equality in Dart, so identity is the most
+  /// honest semantic: a deliberate choice, not an oversight. Equality
+  /// is primarily useful for codec round-trip assertions and config
+  /// diffs; subscriptions that need predicate equivalence should use a
+  /// named-predicate registry instead.
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other.runtimeType != runtimeType) return false;
+    return other is SubscriptionFilter &&
+        const SetEquality<String>().equals(entryTypes, other.entryTypes) &&
+        const SetEquality<String>().equals(eventTypes, other.eventTypes) &&
+        const SetEquality<String>().equals(
+          aggregateTypes,
+          other.aggregateTypes,
+        ) &&
+        includeSystemEvents == other.includeSystemEvents &&
+        identical(predicate, other.predicate);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    const SetEquality<String>().hash(entryTypes),
+    const SetEquality<String>().hash(eventTypes),
+    const SetEquality<String>().hash(aggregateTypes),
+    includeSystemEvents,
+    identityHashCode(predicate),
+  );
 }

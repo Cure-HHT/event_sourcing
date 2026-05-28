@@ -82,13 +82,17 @@ The scope-class mechanism is **domain-neutral**: the substrate ships the registr
 |              TableBackedAuthorizationPolicy                    |
 |                                                                |
 |  isPermitted(P, perm, scope):                                  |
-|    1. role_permission_grants where role == P.activeRole        |
-|       AND permission_name == perm.name -> exist?               |
-|    2. user_role_scopes where user_id == P.userId               |
+|    1. user_role_scopes where user_id == P.userId               |
 |       AND role == P.activeRole -> assignments                  |
-|    3. for each assignment, run match (equality / wildcard /    |
-|       containment via ContainmentResolver)                     |
-|    4. first match -> Allow ; no match -> Deny(notGranted)      |
+|       (membership gate; empty -> Deny(notGranted))             |
+|    2. role_permission_grants where role == P.activeRole        |
+|       AND permission_name == perm.name -> exist?               |
+|       (empty -> Deny(notGranted))                              |
+|    3. if perm.scopeClass == null -> Allow (unscoped grant      |
+|       suffices once membership is verified)                    |
+|    4. for each assignment from step 1, run match (equality /   |
+|       wildcard / containment via ContainmentResolver)          |
+|    5. first match -> Allow ; no match -> Deny(notGranted)      |
 +----------------------------------------------------------------+
 ```
 
@@ -525,6 +529,8 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 
 - **F7 — Substrate-defined CRUD Action templates per `ProjectionSpec`.** The substrate knows projection row shapes; it could in principle define standard create/update/delete Action classes per registered `ProjectionSpec`, with field-level permissions derived from the row shape. This is a substantial Layer-2 convention extension — a separate brainstorming exercise of its own scope. Not bundled into CUR-1331. The v1 design here (one Permission per Action) is forward-compatible: F6 and F7 both layer as additional ways to declare grants and unfold to individual `(permission, scopeClass)` pairs at evaluation time without changing the match algorithm or grant data model.
 
+- **F8 — Per-row authorization predicate (`RowFilterSpec`).** Today's model authorizes *actions* against scopes; a row a user can read is determined at view-subscription time by the projection's scope contract or by the view-level `ViewScopeRegistry` binding in `reaction`. Some domains need *per-row* visibility predicates that cannot be reduced to a single scope: the multiplayer-game scenario (`docs/scenarios/multiplayer-game.md`) needs "you can only read your own hand of cards, not the opponent's, even though both rows are in the same `hands` view." The shape of the primitive (working name `RowFilterSpec`, attached to a `ProjectionSpec` or a `ViewScopeBinding`) would let a projection or binding declare a row-level visibility predicate evaluated against `(principal, row, effectiveAuthorization)`; rows that fail evaluation are suppressed from subscriptions and reads. Today's workaround is to make every privacy boundary its own aggregate so view-level scoping suffices; this works but multiplies aggregates and projections. F8 ships as an AOP-discipline primitive when a real use case arrives; the multiplayer-game scenario is the motivating sketch.
+
 ## Decisions considered and rejected
 
 - **Hardcoded substrate scope-class enum extended with `patient`.** Rejected: violates the lib's domain-neutral commitment. The same charter clause that says "Diary belongs in hht_diary" applies to "Site / Patient" as named substrate concepts. Generalizing to app-registered `ScopeClassSpec`s is the correct cleanup.
@@ -555,7 +561,7 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 
 ## EVS-PRD-scoped-permissions: Scope-aware authorization model
 
-**Level**: prd | **Status**: Active | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch, EVS-PRD-permissions-as-events
 
 ### Assertions
@@ -592,7 +598,7 @@ Replaces the legacy substrate `ScopeClass { global, site, self }` enum and `Prin
 
 ## EVS-DEV-scope-class-registry-validation: Composition-time scope-class registry validation
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -617,7 +623,7 @@ E. `ScopeClassRegistry` SHALL expose lookup-by-name and an ancestor-chain walk s
 
 ## EVS-DEV-scope-value-json: Sealed ScopeValue JSON contract
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -642,7 +648,7 @@ E. The round-trip `ScopeValue.fromJson(v.toJson()) == v` SHALL hold for every co
 
 ## EVS-DEV-containment-resolver: Containment-chain walk via TableProjections
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -665,7 +671,7 @@ D. `ContainmentResolver.resolve` SHALL return `null` when any hop's projection r
 
 ## EVS-DEV-scoped-permissions-match-algorithm: TableBackedAuthorizationPolicy match semantics
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -674,7 +680,7 @@ A. `TableBackedAuthorizationPolicy.isPermitted` SHALL deny with `DenyReason.notG
 
 B. `TableBackedAuthorizationPolicy.isPermitted` SHALL deny with `DenyReason.scopeUnresolvable` when `permission.scopeClass != null` xor `scopeValue == null` (the dispatcher's invariant is violated).
 
-C. For an unscoped permission (`scopeClass == null`), a role-level grant SHALL be sufficient: the policy SHALL return `Allow` without reading `user_role_scopes`.
+C. The policy SHALL read `user_role_scopes` for `(principal.userId, principal.activeRole)` BEFORE evaluating the role-permission grant. If no row exists, the policy SHALL return `Deny(notGranted)` for both scoped and unscoped permissions — auth-time claims of role membership are not trusted; the `(userId, activeRole)` binding is verified against the substrate's event-derived projection. For scoped permissions, the row set is reused for the scope-match step (no second query).
 
 D. For a scoped permission, the policy SHALL allow the request when at least one user-role-scope assignment matches the requested scope under first-match-wins union: assigned `TotalWildcardScope` matches any request; assigned `ValueWildcardScope(class=C)` matches when the request's class equals `C` or descends from `C`; assigned `BoundScope(class=C, value=V)` matches a request with the same `(class, value)`, or a descendant whose containment resolves to `V` at class `C`.
 
@@ -684,22 +690,32 @@ F. The policy SHALL return `Deny(notGranted)` for principals that are not `UserP
 
 ---
 
+### Rationale
+
+The membership-first gate in assertion C closes a trust hole that existed in the policy's pre-`62b2bcc` shape, where unscoped permissions short-circuited on the role-permission-grant read and never consulted `user_role_scopes`. That earlier shape implicitly trusted the caller-supplied `Principal.activeRole` — anyone who could submit an action could claim any role and exercise that role's unscoped permissions, regardless of whether the substrate had ever recorded a `role_assigned` event binding them to it.
+
+The substrate's trust model (see CLAUDE.md, "Trust boundaries") trusts only `Principal.userId`; everything else, including which roles the user holds, is derivable from the event log. Reading `user_role_scopes` first restores that discipline: the `(userId, activeRole)` binding is verified against the event-derived projection before any permission is honoured under that role. The check is uniform — scoped and unscoped permissions both pay the cost — because the alternative (special-casing unscoped permissions) is the exact bug this commit fixed.
+
+Reusing the assignment row set for the scope-match step keeps the cost a single projection read per `isPermitted` call regardless of whether the permission is scoped, preserving the dispatcher's per-action latency budget.
+
 ### Changelog
 
+- 2026-05-24 | 87555bb8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
 
-*End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 899af570
+*End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 87555bb8
 
 ## EVS-DEV-effective-permissions-shape: effectivePermissionsFor surface
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
 
 A. `AuthorizationPolicy.effectivePermissionsFor(principal)` SHALL return an `EffectiveAuthorization` carrying the active role, the `Set<Permission>` granted to that role, and the `List<ScopeAssignment>` of the user's scope assignments under that role.
 
-B. `effectivePermissionsFor` SHALL return `EffectiveAuthorization.empty` for principals that are not `UserPrincipal`.
+B. `effectivePermissionsFor` SHALL return `EffectiveAuthorization.empty` for principals that are not `UserPrincipal`, AND for `UserPrincipal`s whose `(userId, activeRole)` binding is absent from `user_role_scopes` — the substrate independently verifies role membership before reporting any permissions held under that role, mirroring the membership gate in `isPermitted`.
 
 C. `ScopeAssignment` SHALL carry exactly one `ScopeValue` (the assigned scope), so that clients composing the surface against their own projections see assignments as sealed-variant values rather than encoded strings.
 
@@ -709,13 +725,15 @@ D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `ro
 
 ### Changelog
 
+- 2026-05-24 | deab9862 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
 
-*End* *effectivePermissionsFor surface* | **Hash**: b688e6ed
+*End* *effectivePermissionsFor surface* | **Hash**: deab9862
 
 ## EVS-DEV-transactional-authorize-execute: Dispatch tx encompasses authorize + execute + persist
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch, EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -738,7 +756,7 @@ D. The transactional posture SHALL ensure that a role or scope revocation commit
 
 ## EVS-DEV-role-assignment-aggregate-id: Canonical-JSON aggregate id for role assignments
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-scoped-permissions
 
 ### Assertions
@@ -759,7 +777,7 @@ C. The aggregate id SHALL be safe against segment-encoding ambiguity: a userId, 
 
 ## EVS-DEV-scope-unresolvable-denial: Dispatcher denial when Action.scopeFor is unusable
 
-**Level**: dev | **Status**: Active | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch, EVS-PRD-scoped-permissions
 
 ### Assertions

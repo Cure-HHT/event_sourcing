@@ -68,7 +68,7 @@ void main() {
         ..register(
           const AggregateProjectionSpec(
             viewName: 'notes',
-            interest: SubscriptionFilter(entryTypes: <String>[_kNoteEntryType]),
+            interest: SubscriptionFilter(entryTypes: <String>{_kNoteEntryType}),
             tombstoneEventTypes: <String>{},
           ),
         );
@@ -111,7 +111,7 @@ void main() {
             const AggregateProjectionSpec(
               viewName: 'notes',
               interest: SubscriptionFilter(
-                entryTypes: <String>[_kNoteEntryType],
+                entryTypes: <String>{_kNoteEntryType},
               ),
               tombstoneEventTypes: <String>{},
             ),
@@ -183,14 +183,14 @@ void main() {
         ..register(
           const AggregateProjectionSpec(
             viewName: 'view_a',
-            interest: SubscriptionFilter(entryTypes: <String>[_kNoteEntryType]),
+            interest: SubscriptionFilter(entryTypes: <String>{_kNoteEntryType}),
             tombstoneEventTypes: <String>{},
           ),
         )
         ..register(
           const AggregateProjectionSpec(
             viewName: 'view_b',
-            interest: SubscriptionFilter(entryTypes: <String>[_kNoteEntryType]),
+            interest: SubscriptionFilter(entryTypes: <String>{_kNoteEntryType}),
             tombstoneEventTypes: <String>{},
           ),
         );

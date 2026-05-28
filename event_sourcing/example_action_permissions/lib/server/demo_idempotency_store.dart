@@ -42,6 +42,7 @@ class DemoIdempotencyStore implements IdempotencyStore {
     required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
+    String? rawInputCanonicalJson,
   }) async {
     _entries[_composite(actionName, principalId, key)] = IdempotencyEntry(
       actionName: actionName,
@@ -51,6 +52,7 @@ class DemoIdempotencyStore implements IdempotencyStore {
       emittedEventIds: List<String>.unmodifiable(emittedEventIds),
       recordedAt: DateTime.now(),
       expiresAt: expiresAt,
+      rawInputCanonicalJson: rawInputCanonicalJson,
     );
   }
 

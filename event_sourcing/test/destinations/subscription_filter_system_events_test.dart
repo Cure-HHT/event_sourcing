@@ -41,7 +41,7 @@ void main() {
     // regardless of entryTypes content.
     test('includeSystemEvents=false rejects system events '
         'regardless of entryTypes', () {
-      const f = SubscriptionFilter(entryTypes: ['demo_note']);
+      const f = SubscriptionFilter(entryTypes: {'demo_note'});
       expect(f.includeSystemEvents, isFalse);
       expect(f.matches(_systemEvent()), isFalse);
     });
@@ -50,7 +50,7 @@ void main() {
     test('includeSystemEvents=true admits system events even '
         'with empty entryTypes', () {
       const f = SubscriptionFilter(
-        entryTypes: <String>[],
+        entryTypes: <String>{},
         includeSystemEvents: true,
       );
       expect(f.matches(_systemEvent()), isTrue);
@@ -61,7 +61,7 @@ void main() {
     test('includeSystemEvents=true still applies entryTypes '
         'for user events', () {
       const f = SubscriptionFilter(
-        entryTypes: ['demo_note'],
+        entryTypes: {'demo_note'},
         includeSystemEvents: true,
       );
       expect(f.matches(_userEvent('demo_note')), isTrue);
@@ -69,7 +69,7 @@ void main() {
     });
 
     test('default includeSystemEvents is false', () {
-      const f = SubscriptionFilter(entryTypes: ['demo_note']);
+      const f = SubscriptionFilter(entryTypes: {'demo_note'});
       expect(f.includeSystemEvents, isFalse);
     });
 

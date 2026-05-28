@@ -41,7 +41,7 @@ void main() {
     });
 
     test('entryTypes allow-list selects by entry_type', () {
-      const f = SubscriptionFilter(entryTypes: ['epistaxis_event']);
+      const f = SubscriptionFilter(entryTypes: {'epistaxis_event'});
       expect(f.matches(_mkEvent(entryType: 'epistaxis_event')), isTrue);
       expect(f.matches(_mkEvent(entryType: 'nose_hht_survey')), isFalse);
     });
@@ -56,7 +56,7 @@ void main() {
     // Intersection: both allow-lists must match when both are set.
     test('entryTypes AND eventTypes — both must match', () {
       const f = SubscriptionFilter(
-        entryTypes: ['epistaxis_event'],
+        entryTypes: {'epistaxis_event'},
         eventTypes: {'finalized'},
       );
       expect(
@@ -79,11 +79,11 @@ void main() {
       );
     });
 
-    // (list of length 0 = match nothing). This guards the foot-gun where
-    // an unintended `[]` default would accept an event by accident.
-    test('empty entryTypes list matches nothing '
+    // (set of length 0 = match nothing). This guards the foot-gun where
+    // an unintended `{}` default would accept an event by accident.
+    test('empty entryTypes set matches nothing '
         '(distinct from null)', () {
-      const emptyEntryTypes = SubscriptionFilter(entryTypes: []);
+      const emptyEntryTypes = SubscriptionFilter(entryTypes: {});
       expect(emptyEntryTypes.matches(_mkEvent()), isFalse);
       expect(
         emptyEntryTypes.matches(_mkEvent(entryType: 'nose_hht_survey')),
@@ -116,7 +116,7 @@ void main() {
     test('predicate is not invoked when allow-lists fail', () {
       var predicateCalls = 0;
       final f = SubscriptionFilter(
-        entryTypes: const ['epistaxis_event'],
+        entryTypes: const {'epistaxis_event'},
         predicate: (event) {
           predicateCalls += 1;
           return true;
@@ -133,7 +133,7 @@ void main() {
     // All three constraints compose: entryTypes + eventTypes + predicate.
     test('all three constraints compose (AND)', () {
       final f = SubscriptionFilter(
-        entryTypes: const ['epistaxis_event'],
+        entryTypes: const {'epistaxis_event'},
         eventTypes: const {'finalized'},
         predicate: (event) => event.aggregateId == 'agg-1',
       );

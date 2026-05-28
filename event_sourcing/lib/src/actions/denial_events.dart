@@ -1,5 +1,6 @@
 // Implements: EVS-PRD-action-dispatch/C (denial event factories that record the outcome for every failed dispatch stage)
 // Implements: EVS-PRD-action-dispatch/B (one factory per stage: unknown-action, parse, validate, authorize, execute)
+// Implements: EVS-PRD-action-dispatch/E (denialIdempotencyMismatch records the conflict when the same (action, principal, key) is reused with different rawInput; the payload carries SHA-256 hashes of the cached and submitted canonical-JSON inputs, NOT the inputs themselves, so the audit log does not leak potentially-sensitive payloads)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;
@@ -127,6 +128,37 @@ EventDraft denialAuthorizationDenied({
       'principal_active_role': principalActiveRole,
     if (denyReason != null) 'deny_reason': denyReason.name,
     if (scopeValue != null) 'scope': scopeValue.toJson(),
+  },
+  metadata: actionInvocationMetadata,
+);
+
+/// Stage 4 (idempotency cache lookup) mismatch: the cache holds an entry
+/// for `(actionName, principalId, idempotencyKey)` but the submission's
+/// canonical-JSON `rawInput` differs from the cached value.
+///
+/// Per EVS-PRD-action-dispatch/E, this is a denial — silently overwriting
+/// or silently returning the cached outcome would absorb a consumer bug
+/// or attack and leave no audit trail. The payload carries SHA-256
+/// hashes of both canonical-JSON inputs (the full inputs may be
+/// sensitive); auditors correlate the hashes against the cached entry
+/// and the original submission's recorded events.
+EventDraft denialIdempotencyMismatch({
+  required String invocationId,
+  required String actionName,
+  required String idempotencyKey,
+  required String cachedRawInputHash,
+  required String submittedRawInputHash,
+  Map<String, Object?>? actionInvocationMetadata,
+}) => EventDraft(
+  aggregateId: invocationId,
+  aggregateType: _aggregateType,
+  entryType: _entryType,
+  eventType: 'idempotency_mismatch',
+  data: <String, dynamic>{
+    'action_name': actionName,
+    'idempotency_key': idempotencyKey,
+    'cached_raw_input_hash': cachedRawInputHash,
+    'submitted_raw_input_hash': submittedRawInputHash,
   },
   metadata: actionInvocationMetadata,
 );

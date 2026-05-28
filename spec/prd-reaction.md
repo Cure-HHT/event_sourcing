@@ -67,13 +67,13 @@ The PRDs below are best read in this order on first contact, because each later 
 1. `EVS-PRD-auth-session` — the credential lifecycle other PRDs assume.
 2. `EVS-PRD-action-submitter` — the simplest of the three transport-bridging interfaces.
 3. `EVS-PRD-view-subscriber` — the substrate's `Update<T>` stream made transport-agnostic.
-4. `EVS-PRD-permission-snapshot-source` — per-Principal projection access.
+4. `EVS-PRD-permission-source` — per-Principal projection access.
 5. `EVS-PRD-cross-process-event-transport` — the wire envelope shared by the Remote impls of the three above.
 6. `EVS-PRD-reaction-widget-contract` — the Flutter widget layer that consumes all four interfaces.
 
 ## EVS-PRD-auth-session: Auth Session
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ### Purpose
@@ -116,7 +116,7 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 ## EVS-PRD-action-submitter: Action Submitter
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch, EVS-PRD-library-charter
 
 ### Purpose
@@ -149,7 +149,7 @@ E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be s
 
 ## EVS-PRD-view-subscriber: View Subscriber
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
@@ -176,20 +176,20 @@ D. Consumer code that depends only on the `ViewSource` interface SHALL be source
 
 *End* *View Subscriber* | **Hash**: b6801679
 
-## EVS-PRD-permission-snapshot-source: Permission Snapshot Source
+## EVS-PRD-permission-source: Permission Source
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-permissions-as-events
 
 ### Purpose
 
-Consumer code needs to gate UI affordances on whether the active `Principal` holds a given permission, and to react when the permission set changes (because the active `Principal` changed, or because grants were modified). The `PermissionSource` interface exposes the substrate's per-`Principal` `PermissionSnapshot` to widget code via a synchronous getter and a `Stream` of updates.
+Consumer code needs to gate UI affordances on whether the active `Principal` holds a given permission, react when the permission set changes (because the active `Principal` changed, or because grants were modified), and pre-filter scoped item lists by the user's scope assignments. The `PermissionSource` interface exposes the substrate's per-`Principal` `EffectiveAuthorization` to widget code via a synchronous getter and a `Stream` of updates.
 
 ### Assertions
 
-A. The library SHALL define a `PermissionSource` interface that exposes the current `PermissionSnapshot` for the active `Principal` (synchronous getter, nullable) and a `Stream<PermissionSnapshot?>` of snapshot updates.
+A. The library SHALL define a `PermissionSource` interface that exposes the current `EffectiveAuthorization` for the active `Principal` (synchronous getter, nullable) and a `Stream<EffectiveAuthorization?>` of snapshot updates.
 
-B. The library SHALL ship a `LocalPermissionSource` implementation that derives the snapshot from the substrate's existing `RolePermissionGrants` projection.
+B. The library SHALL ship a `LocalPermissionSource` implementation that derives the snapshot via `AuthorizationPolicy.effectivePermissionsFor`. The policy in turn reads the `role_permission_grants` and `user_role_scopes` projections — verifying both that the active role grants the permission AND that the user is currently assigned to that active role. `PermissionSource.current` surfaces `EffectiveAuthorization` directly; no intermediate lossy `PermissionSnapshot` type exists.
 
 C. The library SHALL ship a `RemotePermissionSource` implementation that fetches the initial snapshot via a documented HTTP endpoint and reflects subsequent permission changes via the same wire-side subscription mechanism the `RemoteViewSource` uses.
 
@@ -205,11 +205,13 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 **Why does the Remote impl piggyback on the same wire as `RemoteViewSource` (C)?** `RolePermissionGrants` is just another substrate view. Treating its updates as ordinary view subscriptions means the wire transport has one mechanism for all reactive data, not two. The `RemotePermissionSource` is, internally, a thin specialization of `RemoteViewSource` over the `RolePermissionGrants` view filtered to the active `Principal`.
 
-*End* *Permission Snapshot Source* | **Hash**: 81edb261
+**Why route through `AuthorizationPolicy.effectivePermissionsFor` rather than reading `role_permission_grants` directly (B)?** An earlier draft of `LocalPermissionSource` read `role_permission_grants` and built the snapshot from grants alone. That bypassed the membership gate — a Principal claiming `activeRole: 'admin'` would see admin permissions even if no `user_role_scopes` row bound that user to the admin role. The trust-model fix (substrate commit `62b2bcc`) moved the membership check into `AuthorizationPolicy.effectivePermissionsFor`, which now reads BOTH projections; the `LocalPermissionSource` realignment (commit `2bb5c03`) routes through the policy so local and remote sources compute identical snapshots. This realizes the closed-under-events trust model (see `EVS-PRD-library-charter` narrative chapter "Closed under events"): the substrate refuses to honour an unverified role claim, regardless of which `PermissionSource` impl serves the snapshot.
+
+*End* *Permission Source* | **Hash**: 1fa3332a
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
@@ -226,7 +228,7 @@ C. The server-side wire handler SHALL preserve the substrate's snapshot-then-del
 
 D. The server-side wire handler SHALL accept multiple concurrent subscription requests from a single client over a single WebSocket connection, distinguishing them by client-assigned subscription identifier.
 
-E. The server-side wire handler SHALL apply Principal-scoped authorization to each subscription request before opening the underlying `subscribe<T>`, consulting the requesting Principal's `PermissionSnapshot`.
+E. The server-side wire handler SHALL apply Principal-scoped authorization to each subscription request before opening the underlying `subscribe<T>`, consulting the requesting Principal's `EffectiveAuthorization`.
 
 F. Action submission over HTTP POST SHALL carry the bearer credential from the requesting client's `AuthSession` in an authentication header.
 
@@ -238,18 +240,20 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 
 **Why multiplex subscriptions over one WebSocket (D)?** A portal user typically opens 3–10 concurrent subscriptions (one per visible panel). One connection per subscription would burn browser connections (HTTP/1.1 limits ~6 per origin) and add per-subscription handshake latency. Multiplexing over one connection is the standard reactive-UI pattern and matches what frameworks like Phoenix LiveView, Apollo, and others do.
 
-**Why is per-subscription authorization the server's job (E)?** A portal user must not be able to subscribe to events about participants they are not assigned to. The server consults the requesting `Principal`'s `PermissionSnapshot` (which itself derives from the substrate's `RolePermissionGrants`) and adjusts the underlying `subscribe<T>` filter accordingly — typically by restricting the `aggregates` set or composing additional filter clauses. The substrate provides the filter primitives; `reaction` provides the gate.
+**Why is per-subscription authorization the server's job (E)?** A portal user must not be able to subscribe to events about participants they are not assigned to. The server consults the requesting `Principal`'s `EffectiveAuthorization` (which itself derives from the substrate's `role_permission_grants` and `user_role_scopes` projections) and adjusts the underlying `subscribe<T>` filter accordingly — typically by restricting the `aggregates` set or composing additional filter clauses. The substrate provides the filter primitives; `reaction` provides the gate.
 
 **Why is "no new epistemic layer" (G) load-bearing?** The substrate's Charter Assertion I (Layer 1 facts vs Layer 2 conventions) commits to documenting which guarantees are absolute (cryptographic, structural) versus which are library-provided defaults. The wire ships Layer-1 facts (sequenced `Update<T>` instances with intact ordering and identity); the receiver applies the *same* Layer-2 conventions the sender applies (same `ProjectionSpec` interpretation). The wire does not author a third layer of interpretation. Without this assertion, a future "wire-side optimization" could quietly re-interpret events differently than the in-process path, breaking consumer assumptions.
 
 **Why isn't action-submission idempotency-key handling pinned here?** Idempotency is the substrate's existing dispatcher concern (`EVS-PRD-action-dispatch`) and the widget-side key-generation policy (`EVS-PRD-reaction-widget-contract`-E). The wire just carries the key as an `idempotencyKey` field on the `ActionSubmission`. No special wire treatment is needed.
 
-*End* *Cross-Process Event Transport* | **Hash**: cc74d38e
+*End* *Cross-Process Event Transport* | **Hash**: fbe2d2d4
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
-**Level**: prd | **Status**: Draft | **Implements**: -
-**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-snapshot-source, EVS-PRD-view-subscriber
+**Level**: PRD | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-view-subscriber
+
+> **Implementation status:** Designed; `reaction_widgets` package not yet implemented (Plan D). The assertions below are normative — they are the contract the future package MUST satisfy when built. Audit tooling SHOULD treat coverage gaps here as "package not yet built", not as drift between spec and shipped code.
 
 ### Purpose
 

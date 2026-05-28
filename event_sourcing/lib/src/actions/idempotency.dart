@@ -1,4 +1,5 @@
 // Implements: EVS-PRD-action-dispatch/D (Idempotency enum declares the per-action policy; IdempotencyEntry carries the cached outcome)
+// Implements: EVS-PRD-action-dispatch/E (IdempotencyEntry.rawInputCanonicalJson lets the dispatcher detect same-key, different-content collisions; nullable for forward-compatibility with rows that pre-date the column)
 
 /// Per-action declaration of how the dispatcher treats `idempotencyKey`.
 ///
@@ -30,6 +31,7 @@ class IdempotencyEntry {
     required this.emittedEventIds,
     required this.recordedAt,
     required this.expiresAt,
+    this.rawInputCanonicalJson,
   });
 
   final String actionName;
@@ -39,6 +41,20 @@ class IdempotencyEntry {
   final List<String> emittedEventIds;
   final DateTime recordedAt;
   final DateTime expiresAt;
+
+  /// EVS-PRD-action-dispatch/E: canonical-JSON (RFC 8785) encoding of the
+  /// original submission's `rawInput`. The dispatcher compares this
+  /// against the current submission's canonical-JSON `rawInput` at
+  /// Stage 4 — match → return [DispatchIdempotencyHit]; mismatch →
+  /// emit `idempotency_mismatch` denial event and return
+  /// [DispatchIdempotencyMismatch].
+  ///
+  /// Nullable for forward-compatibility: rows recorded before this
+  /// field shipped have no canonical JSON to compare against. The
+  /// dispatcher treats `null` as "no mismatch detection possible" and
+  /// falls back to the cache-hit behavior — never raising a false
+  /// `idempotency_mismatch` against a legacy entry.
+  final String? rawInputCanonicalJson;
 
   bool isExpired({required DateTime now}) => !expiresAt.isAfter(now);
 }

@@ -62,18 +62,18 @@ Future<_PaneHandle> _mkPane({
   final primary = DemoDestination(
     id: 'Primary',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[
+      entryTypes: <String>{
         'demo_note',
         'red_button_pressed',
         'green_button_pressed',
-      ],
+      },
     ),
   );
   final secondary = DemoDestination(
     id: 'Secondary',
     allowHardDelete: true,
     filter: const SubscriptionFilter(
-      entryTypes: <String>['green_button_pressed', 'blue_button_pressed'],
+      entryTypes: <String>{'green_button_pressed', 'blue_button_pressed'},
     ),
   );
   // Two parallel native destinations — user payloads vs system audits —
@@ -81,19 +81,19 @@ Future<_PaneHandle> _mkPane({
   final nativeUser = NativeDemoDestination(
     id: 'NativeUser',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[
+      entryTypes: <String>{
         'demo_note',
         'red_button_pressed',
         'green_button_pressed',
         'blue_button_pressed',
-      ],
+      },
     ),
     bridge: bridge,
   );
   final nativeAudit = NativeDemoDestination(
     id: 'NativeAudit',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[],
+      entryTypes: <String>{},
       includeSystemEvents: true,
     ),
     bridge: bridge,

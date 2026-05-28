@@ -1,4 +1,5 @@
 // Implements: EVS-PRD-action-dispatch/D (IdempotencyStore is the pluggable cache: lookup hit → same outcome; record stores the result after successful dispatch)
+// Implements: EVS-PRD-action-dispatch/E (record persists rawInputCanonicalJson alongside the result; lookup returns it so the dispatcher can detect same-key, different-content collisions)
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 
@@ -14,6 +15,16 @@ abstract class IdempotencyStore {
     DateTime? now,
   });
 
+  /// Record a dispatch outcome under `(actionName, principalId, key)`.
+  ///
+  /// [rawInputCanonicalJson] is the RFC-8785 canonicalization of the
+  /// submission's `rawInput` at the time of recording. The dispatcher
+  /// stamps it so a subsequent lookup with the same key but different
+  /// content can be detected (EVS-PRD-action-dispatch/E). It is
+  /// nullable for callers (e.g. test harnesses) that don't need the
+  /// mismatch detection; persisting null is equivalent to "this entry
+  /// can't be content-compared", and the dispatcher falls back to
+  /// returning a cache hit regardless of content.
   Future<void> record({
     required String actionName,
     required String principalId,
@@ -21,6 +32,7 @@ abstract class IdempotencyStore {
     required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
+    String? rawInputCanonicalJson,
   });
 
   Future<int> sweepExpired({DateTime? before});
@@ -69,6 +81,7 @@ class InMemoryIdempotencyStore implements IdempotencyStore {
     required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
+    String? rawInputCanonicalJson,
   }) async {
     _entries[_composite(actionName, principalId, key)] = IdempotencyEntry(
       actionName: actionName,
@@ -78,6 +91,7 @@ class InMemoryIdempotencyStore implements IdempotencyStore {
       emittedEventIds: List<String>.unmodifiable(emittedEventIds),
       recordedAt: DateTime.now(),
       expiresAt: expiresAt,
+      rawInputCanonicalJson: rawInputCanonicalJson,
     );
   }
 

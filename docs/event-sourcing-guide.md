@@ -136,6 +136,14 @@ absolute. The library guarantees them:
 - One row per aggregate, materialized by deep-merging successive
   payloads.
 
+One more piece worth knowing: the substrate's job ends at "the event
+log says X". For action authorization, that means the substrate
+verifies `(userId, activeRole)` against `user_role_scopes` — the auth
+layer's responsibility is to identify the user; everything else (which
+roles, which scopes, which permissions) is derived from the log.
+`Principal.userId` is trusted on faith from auth; `Principal.activeRole`
+is a user-chosen "which hat" that the substrate independently verifies.
+
 Most of what you'll write deals with Layer 2: declaring projections,
 defining actions, configuring permissions. Layer 1 is what you fall back
 to when an app needs an interpretation different from the library's
@@ -193,10 +201,15 @@ share a single transaction:
    transaction has not been opened yet.
 4. **Authorize and persist.** Inside a fresh storage transaction, for
    each `Permission` in turn, the dispatcher asks the policy whether
-   the principal has the grant (unscoped permissions check
-   role-permission grants; scoped permissions pass the resolved scope
-   value from step 3). The first Deny stops the pipeline and produces
-   an authorization-denial event committed inside the same transaction
+   the principal has the grant. The policy first verifies the
+   principal actually holds the claimed `activeRole` by reading
+   `user_role_scopes` — the substrate doesn't trust the Principal's
+   role claim, only its `userId`, and the same membership check runs
+   for scoped and unscoped permissions. It then checks the
+   role-permission grant, and for scoped permissions also matches the
+   resolved scope value from step 3 against the user's assignments.
+   The first Deny stops the pipeline and produces an
+   authorization-denial event committed inside the same transaction
    as the policy's projection reads — the audit log records the
    precise snapshot the decision saw.
 5. **Execute.** Still inside the same transaction, the dispatcher
@@ -349,16 +362,23 @@ real match against the event-derived projections.
 1. If `principal` is not a `UserPrincipal` (i.e., anonymous): return
    `Deny(notGranted)`. The substrate has no notion of anonymous
    assignments.
-2. Look up `role_permission_grants` for
+2. Look up `user_role_scopes` for
+   `(principal.userId, principal.activeRole)` to get all assignments
+   under the claimed active role. If empty: `Deny(notGranted)` — the
+   principal claims to be acting as a role they don't actually hold
+   according to the log. The substrate verifies this independently of
+   whatever the auth layer told it; auth's only contract is to identify
+   the `userId`. (See "Two layers of trust" — this is the substrate's
+   response to the question "is this user actually wearing the hat they
+   say they are?")
+3. Look up `role_permission_grants` for
    `(principal.activeRole, permission.name)`. If no grant exists for
    the active role: `Deny(notGranted)`.
-3. If the permission is unscoped: `Allow`.
-4. Otherwise look up `user_role_scopes` for
-   `(principal.userId, principal.activeRole)` to get all assignments
-   under the active role. If empty: `Deny(notGranted)`.
+4. If the permission is unscoped: `Allow`.
 5. The semantics are "at least one assignment must cover the
    requested scope," and the substrate implements this by iterating
-   the assignments and returning `Allow` on the first match:
+   the assignments from step 2 and returning `Allow` on the first
+   match:
    - `TotalWildcardScope` covers anything.
    - `ValueWildcardScope(class: C)` covers any scope of class C, and
      any class that is a descendant of C in the containment graph.
@@ -625,6 +645,40 @@ Things to notice:
   carries an `idempotencyKey`, and it caches the outcome so retries
   return the original result without re-emitting events.
 
+A few things worth knowing about idempotency-on-identifier (the
+matching-content cache hit):
+
+- The cache is keyed by `(actionName, principalId, idempotencyKey)`.
+  Two different principals submitting under the same key do not
+  collide; cross-user idempotency is intentionally not a thing.
+- A retry with the same `(actionName, principalId, idempotencyKey)`
+  while the cache entry is unexpired short-circuits at Stage 4: the
+  dispatcher returns a `DispatchIdempotencyHit` whose `cachedResult`
+  matches the original outcome's result map and whose
+  `priorEmittedEventIds` matches the original events. The dispatcher
+  does NOT re-run parse, validate, authorize, or execute, and it
+  emits no new events to the log.
+- `Action.idempotencyTtl` controls how long the cache entry is
+  considered fresh; after expiry, the same key+input behaves like a
+  brand-new submission.
+- **Content-mismatch detection (PRD-action-dispatch/E).** A submission
+  reusing an unexpired `(actionName, principalId, idempotencyKey)` with
+  a different `rawInput` is NOT silently absorbed. Stage 4
+  canonicalizes the submitted `rawInput` (RFC 8785 JCS) and compares
+  it against the cached entry's `rawInputCanonicalJson`. On match the
+  dispatcher returns `DispatchIdempotencyHit` (cache hit, no new
+  events). On mismatch the dispatcher emits an `idempotency_mismatch`
+  denial event and returns `DispatchIdempotencyMismatch`. The denial
+  event's payload carries SHA-256 hashes of both canonical-JSON
+  inputs (`cached_raw_input_hash`, `submitted_raw_input_hash`), the
+  `action_name`, and the `idempotency_key`; the inputs themselves
+  are deliberately NOT persisted (they may contain sensitive data).
+  Legacy cache entries — rows recorded before
+  `raw_input_canonical_json` shipped on the storage row — fall back
+  to the plain cache-hit behavior on lookup; the substrate never
+  raises a false `idempotency_mismatch` against an entry whose
+  canonical form it didn't capture.
+
 ## Defining a projection
 
 You don't write a fold function. You describe what to listen to and how
@@ -679,6 +733,16 @@ final invoiceSpec = AggregateProjectionSpec(
 Successive events whose payloads include `{amount: 100}` then
 `{status: 'paid'}` produce a row `{amount: 100, status: 'paid'}`.
 Missing keys preserve prior values; explicit `null` clears.
+
+The substrate stamps several auto-columns on every aggregate-projection
+row: `aggregateId` (the canonical id of the aggregate; matches
+`event.aggregateId`), `latestEventId`, `updatedAt`,
+`firstEventTimestamp`, and `sequence`. The names are camelCase on the
+row map. They sit alongside the columns derived from your event data,
+and consumers' row mappers can read them directly. Note that the
+substrate's event-row storage uses snake_case keys (`aggregate_id`,
+etc.) — those are stored events, not projection rows. The
+projection-row convention is the one you write mappers against.
 
 ## Subscribing to state
 
@@ -786,6 +850,90 @@ own bookkeeping. But you can: every `StoredEvent` exposes them, and
 `backend.findAllEvents(...)` lets you query the log by `entryType`,
 `originatorId`, `clientTimestamp` range, and so on.
 
+### Denial event payloads
+
+Every dispatch that fails records a denial event under
+`aggregateType: action_attempt`, `entryType: action_denial`, with one
+of six `eventType` values. The aggregate id is the dispatcher-
+generated `invocationId` (also stamped onto
+`metadata.action_invocation_id`), so a query for the denial and any
+successful events from the same dispatch joins on a single id.
+
+Common fields stamped by the dispatcher:
+
+- `metadata.action_invocation_id` and `metadata.action_name` on every
+  denial event (per "Every event carries a metadata record" above).
+- `flowToken` is preserved if the caller supplied one.
+- `error_message_sanitized` is run through a sanitizer that strips
+  stack-trace lines, file URIs, and absolute paths so the audit log
+  doesn't accidentally leak filesystem layout into long-lived
+  storage.
+
+Per-eventType payload fields under `data`:
+
+- **`unknown_action`** — Stage-1 lookup failure. The submitted action
+  name was not in the registry.
+  - `requested_name` — the name as supplied by the caller.
+- **`parse_denied`** — Stage-3 parse failure. `Action.parseInput`
+  threw, or Stage-pre-3 caught `Idempotency.required` with no key.
+  - `action_name` — the registered name.
+  - `error_class` — the runtime type of the thrown error
+    (typically `FormatException`, `ArgumentError`, or
+    `MissingIdempotencyKeyError`).
+  - `error_message_sanitized` — the error's stringified message,
+    sanitized.
+- **`validation_denied`** — Stage-5 validation failure.
+  `Action.validate` threw.
+  - `action_name`, `error_class`, `error_message_sanitized` as
+    above.
+  - `field_path` (optional) — when the validation throw was an
+    `ArgumentError` whose `name` is set, the dispatcher stamps it
+    here for audit drill-down.
+- **`authorization_denied`** — Stage-6 authorization failure. Used
+  for both `notGranted` (policy said no) and `scopeUnresolvable`
+  (the dispatcher's pre-policy scope-resolution check failed: see
+  `EVS-DEV-scope-unresolvable-denial`).
+  - `action_name` — the registered name.
+  - `permission_denied` — the `Permission.name` that was denied.
+  - `principal_active_role` (optional) — present when the principal
+    is a `UserPrincipal`; the `activeRole` they claimed.
+  - `deny_reason` (optional) — `DenyReason.name` for richer audit
+    (`notGranted`, `scopeUnresolvable`, etc.).
+  - `scope` (optional) — when the dispatcher had a resolved
+    `ScopeValue` to record, its `toJson()` payload is stamped here.
+    This fires for `notGranted` denials with a valid scope AND for
+    `scopeUnresolvable` denials where a class-mismatched scope was
+    returned (the offending value, not a successful match). Per
+    `EVS-DEV-scope-unresolvable-denial/E`, this lets the audit log
+    capture the precise denial circumstance.
+- **`idempotency_mismatch`** — Stage-4 content-mismatch failure. An
+  unexpired cache entry exists for `(action_name, principal_id,
+  idempotency_key)` but the submitted `rawInput`'s canonical-JSON
+  differs from the cached value (see PRD-action-dispatch/E above).
+  - `action_name` — the registered name.
+  - `idempotency_key` — the colliding key.
+  - `cached_raw_input_hash` — SHA-256 hex digest of the cached
+    entry's canonical-JSON `rawInput`.
+  - `submitted_raw_input_hash` — SHA-256 hex digest of the current
+    submission's canonical-JSON `rawInput`.
+  The full inputs are deliberately NOT carried in the payload —
+  they may contain sensitive data and the hashes are sufficient for
+  auditors to correlate the collision with the cached entry and the
+  original submission's recorded events.
+- **`execution_failed`** — Stage-7 (execute) or Stage-8 (persist)
+  failure. The action's `execute` threw, or the transaction rolled
+  back during the post-execute append.
+  - `action_name`, `error_class`, `error_message_sanitized` as
+    above.
+
+Denial events are appended through the same `EventStore.appendInTxn`
+path as success events, with the same hash-chain stamping and
+provenance machinery; they are first-class citizens of the audit
+log. The only structural difference is the `aggregateType` /
+`entryType` pair — which lets retention sweeps, audit dashboards, and
+ingest filters separate "what the system rejected" from "what the
+system accepted" without parsing the payload.
+
 ### The library records its own version in the log
 
 On the first boot against a fresh storage backend, the substrate
@@ -892,6 +1040,425 @@ The library aligns with FDA 21 CFR Part 11's ALCOA+ principles:
 
 You don't have to do anything to get any of this. It's structural in
 the substrate.
+
+---
+
+## Cross-process client/server deployments
+
+> **Status note.** Both halves of the `reaction` package have now
+> shipped: the in-process `Local*` impls (used by the substrate's
+> demos) and the cross-process `Remote*`-plus-server half. The
+> normative spec lives at `spec/reaction-remote.md`; the
+> implementation lives under `reaction/lib/src/remote/` and
+> `reaction/lib/src/server/`, exercised by the package's unit and
+> end-to-end test suites. Names and shapes match this chapter as
+> shipped on `main`.
+
+Everything covered so far assumes one process. The Flutter app you
+build runs the substrate directly: it opens an `EventStore`, holds the
+`ActionDispatcher`, registers projections, and reads view rows out of
+its local sembast database. This is the entirety of a mobile-only
+deployment — one install, one log, one principal.
+
+Many real deployments are not shaped that way. A clinical-trial
+portal, for example, has Study Coordinators and Supervisors using a
+Flutter web app from their browsers, talking to a portal server that
+runs the substrate against a Postgres database. The browser is too
+constrained to run a full `EventStore` and shouldn't anyway — the
+portal database is the authoritative log for that deployment. The
+substrate is single-process; the deployment is two-process. Something
+has to bridge them.
+
+That something is `reaction`. It's a sibling package, not part of
+`event_sourcing` itself, because adding HTTP + WebSocket + shelf
+dependencies to the substrate would force them on every consumer
+including embedded-only mobile callers. The substrate stays narrow;
+`reaction` layers the wire on top.
+
+### Why is this a different problem from the integrated app?
+
+Splitting a process boundary down the middle of an event-sourced
+application introduces five concerns that a single-process app
+sidesteps entirely. Each one shows up as a load-bearing piece of the
+design.
+
+**1. Identity becomes a wire concern.** Whatever process the
+deployment already uses to authenticate browser clients — Firebase,
+an in-house OAuth flow, a portal-issued linking code — is also the
+process that hands the server an identity for the substrate to use.
+The substrate has no built-in opinion about credential format; it
+just requires the deployment to supply a `PrincipalAuthValidator`
+that turns whatever string arrives over the wire into a `Principal`.
+The lib ships `TrustingAuthValidator` for dev/test (accepts any
+non-empty string as the user ID). Production deployments mount their
+own validator at server-boot time. The substrate's existing
+"Principal on faith" trust gap (enumerated in CLAUDE.md) is closed
+from outside by this validator, which becomes a new enumerated trust
+input alongside `StorageBackend` and `Destination`.
+
+That's all that changes from the substrate's perspective. Nothing
+inside the substrate gains authentication logic. The wire layer
+brokers identity in; the substrate trusts the result the same way it
+always has.
+
+**2. The reactive primitive has to cross a wire.**
+
+The substrate's `subscribe<T>` returns a `Stream<Update<T>>` with
+atomic snapshot-then-deltas semantics: `Snapshot<T>` × N →
+`EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞. That stream
+is the substrate's central reactive guarantee.
+
+A browser-side widget can't subscribe directly to a server-side
+substrate. The wire's job is to deliver the same stream faithfully:
+the receiver should see exactly the sequence of `Update<T>` values a
+co-located in-process subscriber would see, in the same order, with
+the same atomicity. The wire is a relay, not a re-interpretation —
+this is the load-bearing "no third epistemic layer" promise pinned by
+`spec/reaction-remote.md`'s charter section.
+
+Concretely: the wire ships each `Update<T>` as a JSON envelope over a
+multiplexed WebSocket. Rows transit as opaque `Map<String, Object?>`;
+the consumer's mapper applies client-side, just like in the
+in-process case. The server runs `eventStore.subscribe<T>` per
+accepted subscription and relays envelopes through a per-connection
+write queue that preserves per-subscription ordering on the wire.
+
+**3. Read-path authorization happens at the wire.**
+
+In the integrated case, a UI gating decision ("can this user see
+patient P-42?") happens client-side against the locally-known
+permission state. There's no risk: the user already has the entire
+log in front of them, and the UI is just choosing what to render.
+
+Cross-process, the server *must* enforce. A browser-side filter on a
+WebSocket subscription is a UI affordance, not a security boundary.
+The portal server must compose the requesting Principal's permitted
+scope into the substrate `subscribe<T>` filter so events outside
+scope never travel over the wire.
+
+`reaction`'s server applies what the design spec calls "Approach B":
+two-tier authorization at the moment of subscribe.
+
+- **View-level deny.** Does the Principal hold the permission named
+  by this view? (Substrate default: `view:<viewName>`; deployments
+  override.) If not, close the subscription request with a
+  `subscription_denied` envelope. The client distinguishes "you can't
+  see this view" from "nothing matches your scope" cleanly.
+- **Row-level narrowing.** AND-merge the Principal's
+  `scopeAssignments` (from `EffectiveAuthorization`) into the
+  requested `aggregates` filter, expanding through `ContainmentRef`
+  projections where the view's scope class is an ancestor of the
+  user's assignment. The expansion is the same `ContainmentResolver`
+  the substrate uses for action authorization — read-path and
+  write-path use the same scope mechanism, by design.
+
+This is also why CUR-1331's scope-aware permissions had to land
+before the wire layer's implementation. The wire's per-subscription
+narrowing consults `EffectiveAuthorization.scopeAssignments` and
+walks containment projections; without the scope-aware substrate
+underneath, the wire would only have role-to-permission grants to
+filter by, which can't express "the patients at the sites this user
+covers."
+
+**4. The closed-under-events guarantee splits cleanly.**
+
+A nice surprise: nothing about the wire layer breaks the substrate's
+closed-under-events story. Action outcomes (success vs.
+`DispatchAuthorizationDenied`) are still produced by the same
+dispatcher with the same `Principal`, recorded into the same log,
+reproducible from `(events, lib_version)`.
+
+What the wire adds is an *external* trust input (the
+`PrincipalAuthValidator`) that determines which `Principal` the
+substrate sees. That input is enumerated and named, the same way
+`StorageBackend` is. State reconstruction-from-the-log still holds
+*under the recorded Principal*; what the validator does on the way in
+is a deployment concern, the same way what the storage backend does
+to durability is a deployment concern.
+
+The substrate doesn't need to know about the wire at all. It receives
+calls from local code that happens to have been forwarded by shelf
+routes from a browser — but those calls look identical to calls from
+an embedded mobile app. This is what "substrate-agnostic" means in
+practice: the dispatcher, the projection model, the permissions
+machinery all behave identically whether the originating click was in
+a Flutter app or a browser two thousand miles away.
+
+**5. Network failure is no longer a substrate problem; it's a UX
+problem.**
+
+In the integrated case, an action either dispatches or doesn't — the
+in-process call returns a `DispatchResult` synchronously. A
+subscription delivers events until the app closes.
+
+Cross-process, the wire fails sometimes. WebSocket connections drop
+on tab toggles, network changes, idle timeouts. HTTP requests time
+out. Tokens expire.
+
+`reaction`'s v1 baseline is intentionally minimal: on WS drop,
+existing subscription streams surface a `'wire_disconnected'` error
+and the next `watch<T>` call reopens the connection lazily, replaying
+`Snapshot × N → EOR → Delta…` from scratch. The widget sees a brief
+flash of skeleton/loading while the snapshot replays. Consumer code
+decides whether and when to retry — the substrate stays out of policy
+decisions about reconnect timing.
+
+The wire reserves space for two natural v1.1 follow-ups:
+exponential-backoff auto-reconnect of existing subs without requiring
+a fresh `watch<T>` call, and a "resume-from-sequence" optimization
+that re-tails from the client-known sequence instead of replaying the
+snapshot. Both are non-breaking and can ship later.
+
+Auth expiry is the parallel concern. The wire surfaces it explicitly:
+HTTP 401 from any route and either a `4001 auth_rejected` or `4003
+permissions_changed` close-frame on WebSocket flip the `AuthSession`
+status to `Expired`. (See *What happens when permissions change
+mid-session* below for when 4003 fires.) The UI distinguishes "log in
+again" (expired) from "log in" (never had a session) — useful enough
+that `AuthStatus` is a sealed three-variant type (`NotAuthenticated`,
+`Authenticated`, `Expired`) and consumer code switch-exhausts over it.
+
+### Four interfaces that absorb the difference
+
+The point of `reaction` is that *consumer code shouldn't have to
+change* between the integrated and cross-process deployments. Widget
+code that calls a `submit()` and watches a `Stream<Update<T>>` should
+be source-identical whether the underlying impl is local or remote.
+
+Four interfaces hold that line. They live in `reaction`'s public
+surface; both `Local*` and `Remote*` impls of each exist.
+
+- **`AuthSession`** — credential lifecycle. Surfaces `AuthStatus`
+  (`Authenticated` carrying the validated `Principal`,
+  `NotAuthenticated`, `Expired`). `setCredential(String?)` to log in
+  or out. The active `Principal` flows from here into the other
+  three.
+- **`ActionSubmitter`** — `Future<DispatchResult> submit(ActionSubmission)`.
+  Local impl wraps `ActionDispatcher.dispatch`; Remote impl POSTs to
+  `/actions`.
+- **`ViewSource`** — `Stream<Update<T>> watch<T>(...)`. Local impl
+  wraps `EventStore.subscribe<T>`; Remote impl multiplexes a
+  client-chosen `subscriptionId` over the shared WS.
+- **`PermissionSource`** — `EffectiveAuthorization? get current` plus
+  a `Stream`. Carries the active role's permissions and the user's
+  scope assignments so UI code can both gate affordances and
+  pre-filter scoped lists. Local impl reads the
+  `role_permission_grants` + `user_role_scopes` projections through
+  `AuthorizationPolicy.effectivePermissionsFor`; Remote impl fetches
+  from `/permissions/snapshot` and refreshes over the WS.
+
+Widgets and other consumers depend only on these. The deployment
+choice — composing `LocalScope` (in-process bundle) versus
+`RemoteScope` (HTTP+WS bundle) — happens once at app boot. Everything
+downstream is shape-identical.
+
+### Server-side adapters
+
+There's no separate "reaction server" process. There's no
+`ReactionServer` class either. The lib ships **shelf-compatible
+handlers** that you mount inside whatever server you already have.
+
+The expected consumers — `portal_server` and `diary_server` in
+`hht_diary` — already run `shelf` + `shelf_router` with their own
+middleware pipelines (Firebase auth, OpenTelemetry, CORS, request
+logging). The plan is to **replace** most of their existing bespoke
+REST handlers with reaction handlers, not add a parallel routing
+subtree alongside them. Today each server has 30+ hand-written
+handlers, each doing its own business logic against Postgres
+directly. Post-migration, those collapse to about five generic
+reaction handlers, with the per-feature business logic moving into
+substrate `Action`s — same dispatch pipeline, same audit trail, same
+permission story as a single-process app.
+
+What `reaction` exposes to make that work:
+
+```text
+reaction/lib/src/server/
+  reaction_handlers.dart      ReactionHandlers(eventStore, dispatcher,
+                                                policy, viewScopeRegistry)
+                                .me            -> shelf.Handler
+                                .actions       -> shelf.Handler
+                                .permissions   -> shelf.Handler
+                                .subscriptions(validator) -> shelf.Handler  (WS upgrade)
+
+  auth_middleware.dart        authMiddleware(PrincipalAuthValidator)
+                                -> shelf.Middleware
+                              principalFromContext(Request)
+                                -> Principal?
+
+  trusting_auth_validator.dart TrustingAuthValidator   (dev/test only)
+```
+
+A consumer mounts the handlers into their existing router however
+they like:
+
+```text
+final reaction = ReactionHandlers(
+  eventStore: store, dispatcher: dispatcher,
+  policy: policy, viewScopeRegistry: portalViewScopes,
+);
+
+// HTTP routes go behind the portal's existing auth middleware (it
+// reads the Bearer header and attaches a Principal to the request
+// context). The WS route is registered on the outer router with NO
+// middleware — the WS upgrade path cannot carry an Authorization
+// header from Flutter web; credentials arrive in the first WS
+// message and are validated by the supplied PrincipalAuthValidator.
+final httpRouter = Router()
+  // The portal's existing custom routes:
+  ..get('/api/v1/sponsor/config', sponsorConfigHandler)
+  ..post('/api/v1/auth/login', loginHandler)         // pre-auth
+  // The reaction HTTP handlers, gated by the portal's auth middleware:
+  ..get('/api/v1/portal/me',                   reaction.me)
+  ..post('/api/v1/portal/actions',             reaction.actions)
+  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions);
+
+final httpPipeline = const Pipeline()
+    .addMiddleware(portalAuthMiddleware)
+    .addHandler(httpRouter.call);
+
+final topRouter = Router()
+  ..get('/api/v1/portal/subscriptions',
+        reaction.subscriptions(validator))
+  ..mount('/', httpPipeline);
+```
+
+Authentication composes with whatever the consumer is already doing.
+The portal_server already runs Firebase ID-token middleware on its
+authenticated routes; reaction's handlers just read `Principal` from
+the request context via `principalFromContext(req)`. The portal's
+existing Firebase middleware populates that context, and reaction's
+handlers consume it — one auth flow, two route consumers. For
+deployments that don't have their own middleware yet (early demos,
+local dev), `authMiddleware(TrustingAuthValidator(...))` is a
+one-liner; reaction will use it identically.
+
+`ReactionHandlers` is a config bundle, not a server. It doesn't own
+the `EventStore`, doesn't own the `ActionDispatcher`, doesn't own
+the HTTP server lifecycle. It holds the four substrate handles + the
+view-scope registry so each handler closure doesn't have to take
+them individually. Beyond that it imposes no structure on the
+consumer.
+
+The WebSocket handler is the only piece with non-trivial state —
+per-connection it tracks the authenticated `Principal`, the set of
+active subscriptions, and the substrate `subscribe<T>` streams it's
+relaying. That state lives inside the closure
+`reaction.subscriptions` returns; consumer code doesn't see it.
+Connection cleanup (cancel all subscriptions on WS close) is
+automatic.
+
+### What happens when permissions change mid-session
+
+A subtle question this design has to answer: a client opens a
+subscription, is happily receiving updates, and an admin revokes the
+client's role. What happens?
+
+The natural answers point in three directions. The substrate's
+`subscribe<T>` was opened with an `aggregates` filter set at
+subscribe-time; that filter doesn't change once the stream is
+running. So "the existing subscription continues delivering events"
+is the default behavior — which silently shows revoked users data
+they shouldn't see, until they reconnect.
+
+The design's response is **asymmetric**, on the principle that
+admin-driven security-narrowing is the only kind of permission
+change serious enough to interrupt a user mid-session:
+
+- **`role_unassigned` for this user, or `permission_revoked` from a
+  role this user holds:** the reaction server closes the WS with a
+  new close-frame code `4003 permissions_changed`. The client
+  treats this like a token expiry — refetches `/me`, gets a fresh
+  `Principal` reflecting the new role/permission state, reopens
+  subscriptions against the new (narrower) authorization. From the
+  user's perspective: a brief "your role was updated; please log in
+  again" prompt. Security gap closed within milliseconds of the
+  revocation committing. If the user signs in again with the same
+  credential, the auth layer can mint a Principal as before —
+  `TrustingAuthValidator` accepts any non-empty credential, and a
+  production Firebase validator only verifies token freshness, not
+  role state. But the substrate's policy reads `user_role_scopes` on
+  every dispatch and now sees no row for the revoked role, so any
+  action submission under that role denies with
+  `DispatchAuthorizationDenied(<permission>)`. Re-login succeeds;
+  submitting doesn't. The closed-under-events trust model holds
+  without any cooperation from the auth layer.
+
+- **`role_assigned` for this user, or `permission_granted` to a
+  role this user holds:** the server sends a `stale_data` envelope
+  on the open WS (a one-bit signal: "your cached scope state may be
+  out of date"). The subscription stays open; the client decides
+  whether to refresh. The user is currently authorized to see
+  *less* than they could — that's a UX freshness issue, not a
+  security one, so it doesn't warrant interrupting them.
+
+- **Containment-projection changes** (a patient was re-parented from
+  one site to another — the user's effective scope shifted as a
+  side-effect of data movement, not an admin security action):
+  by default, no signal. Routine trial operations would otherwise
+  emit `stale_data` to every connected coordinator on every patient
+  move. Deployments that want the freshness signal can opt in with
+  `reaction.watchContainment('patient_site_index')` (or whatever
+  containment projection matters); off by default.
+
+Mechanically, the server runs **one** additional substrate
+subscription — the `AuthzWatcher` — filtered to permission and
+role-assignment event types (`role_permission_grant`,
+`user_role_scope`). On each event it decides "this is a revocation"
+(close affected WS connections with 4003) or "this is an expansion"
+(send `stale_data` to affected WS connections). The watcher needs a
+way to find "affected" connections, so the server maintains a
+top-level `Map<userId, Set<WebSocketChannel>>` registry; each WS
+connection registers on `auth_ok` and unregisters on disconnect.
+
+This is the design's first concession to "the wire is a relay, not
+just a relay" — the wire layer now actively translates substrate
+events into wire signals. But it's a substrate-shaped translation:
+the watcher uses the same `subscribe<T>` primitive every other
+reactive consumer does, and the resulting wire messages are existing
+envelope types plus one new (`stale_data`). No re-narrowing of
+active subscription filters, no per-subscription state machine, no
+new epistemic layer.
+
+The earlier draft of this design had the WS handler open a per-
+Principal subscription on `auth_ok` to keep a fresh in-memory mirror
+of the Principal's `EffectiveAuthorization` — effectively a server-
+side permission cache. That was rejected because the cache adds
+real complexity (per-connection state, mirror-vs-projection races)
+for negligible benefit at portal scale (substrate policy queries
+are sub-millisecond and subscribe messages are infrequent). The
+mid-session-change handling described here is a different mechanism
+with a different goal: it doesn't cache permission state, it
+reacts to permission events.
+
+### Reading order from here
+
+If you're building toward a cross-process deployment, the canonical
+references are:
+
+- `spec/reaction-remote.md` — the normative spec for the wire layer.
+  Pins the protocol envelope shapes, the connection lifecycle, the
+  per-subscription authorization mechanism, and the trust-boundary
+  expansion.
+- `spec/prd-reaction.md` — the PRD-level requirements for `reaction`'s
+  four interfaces, the wire transport, and the future Flutter widget
+  layer (`reaction_widgets`, also out of scope for this chapter).
+- `reaction/lib/src/local/` — the `Local*` impls of the four
+  interfaces. Read these to understand how the substrate-agnostic seam
+  composes against the in-process substrate.
+- `reaction/lib/src/remote/` and `reaction/lib/src/server/` — the
+  `Remote*`-plus-server half. Mirror images of the `Local*` impls,
+  just with HTTP/WS instead of direct method calls.
+- `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
+  historical task-by-task implementation plan; preserved as a record
+  of how the work was structured and what was built in what order.
+
+Both halves of `reaction` are shipped and tested. The substrate's
+two demos (`event_sourcing/example_action_permissions/` and
+`event_sourcing/example/`) exercise the in-process `Local*` impls;
+the cross-process `Remote*`-plus-server half is exercised by
+`reaction/test/` (unit tests under `test/remote/` and `test/server/`,
+end-to-end tests under `test/e2e/`).
 
 ---
 

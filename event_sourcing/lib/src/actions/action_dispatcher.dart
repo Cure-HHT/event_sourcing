@@ -2,6 +2,7 @@
 // Implements: EVS-PRD-action-dispatch/B (parse → validate → authorize → execute → record, in that order)
 // Implements: EVS-PRD-action-dispatch/C (every dispatch produces a recorded outcome: success events or denial event)
 // Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
+// Implements: EVS-PRD-action-dispatch/E (Stage 4 compares the submitted rawInput's canonical JSON against the cached entry's rawInputCanonicalJson; mismatch emits idempotency_mismatch denial and returns DispatchIdempotencyMismatch)
 // Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
 // Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
 // Implements: EVS-PRD-scoped-permissions/E/H/I — dispatcher resolves the
@@ -17,6 +18,10 @@
 //   TotalWildcardScope / class-mismatched returns, and scope stamping
 //   onto the denial event when one was returned.
 
+import 'dart:convert' show utf8;
+
+import 'package:canonical_json_jcs/canonical_json_jcs.dart';
+import 'package:crypto/crypto.dart' show sha256;
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/action_registry.dart';
 import 'package:event_sourcing/src/actions/action_submission.dart';
@@ -69,8 +74,14 @@ class ActionDispatcher {
   ///   Stage 3 — call `action.parseInput(rawInput)`; on throw, emit
   ///             `parse_denied` and return [DispatchParseDenied].
   ///   Stage 4 — idempotency cache lookup for non-none policies with a
-  ///             key; on hit, return [DispatchIdempotencyHit] with no
-  ///             new event emitted.
+  ///             key. On hit, compare the submitted rawInput's canonical
+  ///             JSON (RFC 8785) against the cached
+  ///             `rawInputCanonicalJson`:
+  ///               - match (or cached entry has no canonical JSON, i.e.
+  ///                 a forward-compat legacy entry) →
+  ///                 [DispatchIdempotencyHit] with no new event emitted;
+  ///               - mismatch → emit `idempotency_mismatch` denial
+  ///                 event and return [DispatchIdempotencyMismatch].
   ///   Stage 5 — call `action.validate(parsedInput)`; on throw, emit
   ///             `validation_denied` and return [DispatchValidationDenied].
   ///   Stage 6 — for each `action.permissions`, await
@@ -155,17 +166,52 @@ class ActionDispatcher {
     // Stage 4: idempotency cache lookup
     // Skip entirely for Idempotency.none; also skip if no key was supplied
     // (covers Idempotency.optional with no key).
+    //
+    // Compute the submitted rawInput's canonical-JSON once here. It is
+    // used both for the cache-hit content comparison (this stage) and,
+    // on the success path, for recording alongside the cached outcome
+    // (Stage 9) so a subsequent retry can be content-compared.
+    String? submittedCanonicalJson;
     if (action.idempotency != Idempotency.none && idempotencyKey != null) {
+      submittedCanonicalJson = canonicalize(rawInput);
       final entry = await idempotency.lookup(
         action.name,
         ctx.principal.id,
         idempotencyKey,
       );
       if (entry != null) {
-        // Cache hit — short-circuit; no new events emitted.
-        return DispatchResult<Object?>.idempotencyHit(
-          entry.resultJson,
-          entry.emittedEventIds,
+        // Cache hit. Compare submitted canonical JSON against the
+        // cached value to detect EVS-PRD-action-dispatch/E
+        // mismatched-content collisions. A cached entry without a
+        // recorded canonical JSON (rawInputCanonicalJson == null) is a
+        // forward-compat legacy row — fall back to the plain cache-hit
+        // behaviour so we don't synthesise a false denial.
+        final cachedCanonicalJson = entry.rawInputCanonicalJson;
+        if (cachedCanonicalJson == null ||
+            cachedCanonicalJson == submittedCanonicalJson) {
+          // Match (or legacy entry) — short-circuit; no new events emitted.
+          return DispatchResult<Object?>.idempotencyHit(
+            entry.resultJson,
+            entry.emittedEventIds,
+          );
+        }
+        // Mismatch: emit denial and return DispatchIdempotencyMismatch.
+        final cachedHash = _sha256Hex(cachedCanonicalJson);
+        final submittedHash = _sha256Hex(submittedCanonicalJson);
+        final denial = denialIdempotencyMismatch(
+          invocationId: invocationId,
+          actionName: action.name,
+          idempotencyKey: idempotencyKey,
+          cachedRawInputHash: cachedHash,
+          submittedRawInputHash: submittedHash,
+          actionInvocationMetadata: invocationMetadata,
+        );
+        await _persistDenial(denial, ctx, flowToken: flowToken);
+        return DispatchResult<Object?>.idempotencyMismatch(
+          actionName: action.name,
+          idempotencyKey: idempotencyKey,
+          cachedRawInputHash: cachedHash,
+          submittedRawInputHash: submittedHash,
         );
       }
       // Cache miss — fall through to Stage 5+.
@@ -375,6 +421,10 @@ class ActionDispatcher {
         resultJson: resultJson,
         emittedEventIds: emittedEventIds,
         expiresAt: ctx.requestStartedAt.add(action.idempotencyTtl),
+        // submittedCanonicalJson was computed in Stage 4 above; persist
+        // it so subsequent retries can be content-compared against the
+        // original submission (EVS-PRD-action-dispatch/E).
+        rawInputCanonicalJson: submittedCanonicalJson,
       );
     }
 
@@ -384,6 +434,14 @@ class ActionDispatcher {
       emittedEventIds,
     );
   }
+
+  /// SHA-256 hex digest of [canonicalJson] (a string already produced by
+  /// the substrate's RFC-8785 canonicalizer). Used to stamp opaque
+  /// fingerprints onto `idempotency_mismatch` denial events so the audit
+  /// log records WHICH content collided without persisting the
+  /// (potentially sensitive) inputs themselves.
+  static String _sha256Hex(String canonicalJson) =>
+      sha256.convert(utf8.encode(canonicalJson)).toString();
 
   /// Converts an action result to a JSON-serializable map for idempotency
   /// recording. Handles null, `Map<String, Object?>`, objects with `.toJson()`,

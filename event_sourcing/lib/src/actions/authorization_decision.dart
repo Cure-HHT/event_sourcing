@@ -33,9 +33,13 @@ final class Deny extends AuthorizationDecision {
 //
 // Closed enum. Adding a value here is a deliberate code-plus-REQ change.
 enum DenyReason {
-  /// Principal's active role doesn't carry the permission, OR no scope
+  /// Authorization failed for one of the closed-under-events reasons:
+  /// the principal holds no `user_role_scopes` assignment for the
+  /// claimed activeRole (substrate-verified role membership); OR the
+  /// active role doesn't carry the permission name; OR no scope
   /// assignment under that role covers the requested scope (including
-  /// the fail-closed containment-miss case).
+  /// the fail-closed containment-miss case). All three collapse to
+  /// the same reason: "no event-derived row covers this request."
   notGranted,
 
   /// `Action.scopeFor` returned null for a scoped permission, or

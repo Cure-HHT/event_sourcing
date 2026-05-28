@@ -8,6 +8,10 @@
 // Verifies: EVS-PRD-permissions-as-events/C — re-running bootstrap with the
 //   same yaml is idempotent (no new events), confirming the log alone
 //   suffices to reconstruct permission state.
+// Verifies: EVS-DEV-bootstrap-action-permissions/A/B/C/D — full YAML-seeded
+//   bootstrap behavior: missing-grant event emission (A), PolicyFailSafe on
+//   parse/validation failure (B), PolicyReady wrapping
+//   TableBackedAuthorizationPolicy on success (C), idempotent on re-run (D).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -38,6 +42,26 @@ grants:
         );
         expect(boot, isA<PolicyReady>());
         expect(boot.isReady, isTrue);
+
+        // Substrate now verifies user-role membership via user_role_scopes
+        // (closed-under-events trust model): the Principal's activeRole
+        // claim is not honoured until a role_assigned event is in the log.
+        await eventStore.append(
+          entryType: 'user_role_scope',
+          aggregateType: 'user_role_scope',
+          aggregateId: roleAssignmentAggregateId(
+            userId: 'u',
+            role: 'admin',
+            scope: const TotalWildcardScope(),
+          ),
+          eventType: 'role_assigned',
+          data: const RoleAssignedPayload(
+            userId: 'u',
+            role: 'admin',
+            scope: TotalWildcardScope(),
+          ).toJson(),
+          initiator: const AutomationInitiator(service: 'test'),
+        );
 
         final policy = boot.policy;
         final p = Principal.user(

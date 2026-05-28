@@ -72,7 +72,8 @@ void main() {
     );
 
     test(
-      'one principal replays its own key -> idempotencyHit; the other principal still gets fresh success',
+      'one principal replays its own key with identical content -> '
+      'idempotencyHit; the other principal still gets fresh success',
       () async {
         const sharedKey = 'shared-key-67890';
 
@@ -82,10 +83,13 @@ void main() {
           idempotencyKey: sharedKey,
           userId: 'green-user-1',
         );
+        // Identical rawInput on replay — cache hit per
+        // EVS-PRD-action-dispatch/D. (Changing rawInput here would now
+        // be EVS-PRD-action-dispatch/E mismatch — exercised in the
+        // separate idempotency_mismatch walkthrough below.)
         final r1b = await harness.dispatch(
-          // green-user-1 replays — should hit cache.
           actionName: 'PressRedAlarmAction',
-          rawInput: <String, Object?>{'reason': 'g1-replay'},
+          rawInput: <String, Object?>{'reason': 'g1-first'},
           idempotencyKey: sharedKey,
           userId: 'green-user-1',
         );
@@ -106,6 +110,60 @@ void main() {
             .where((e) => e.eventType == 'red_alarm_pressed')
             .toList();
         expect(alarms, hasLength(2));
+      },
+    );
+
+    // Verifies: EVS-PRD-action-dispatch/E — same (principal, action,
+    // key) tuple with DIFFERENT rawInput produces a denial (not a
+    // silent overwrite or stale cache hit), and the denial is
+    // surfaced on the wire as DispatchResponseDenied with
+    // denialKind=idempotency_mismatch. Audit log gets one
+    // idempotency_mismatch event for the collision; no second
+    // red_alarm_pressed event is emitted.
+    test(
+      'replay with same key but different rawInput -> '
+      'idempotency_mismatch denial; original cache entry preserved',
+      () async {
+        const sharedKey = 'shared-key-mismatch';
+
+        final r1 = await harness.dispatch(
+          actionName: 'PressRedAlarmAction',
+          rawInput: <String, Object?>{'reason': 'original'},
+          idempotencyKey: sharedKey,
+          userId: 'green-user-1',
+        );
+        final r2 = await harness.dispatch(
+          actionName: 'PressRedAlarmAction',
+          rawInput: <String, Object?>{'reason': 'TOTALLY-DIFFERENT'},
+          idempotencyKey: sharedKey,
+          userId: 'green-user-1',
+        );
+
+        expect(r1, isA<DispatchResponseSuccess>());
+        expect(r2, isA<DispatchResponseDenied>());
+        expect(
+          (r2 as DispatchResponseDenied).denialKind,
+          'idempotency_mismatch',
+        );
+
+        final snap = await harness.inspect();
+
+        // Exactly one red_alarm_pressed event (the original) — the
+        // mismatch did NOT produce a new domain event.
+        final alarms = snap.events
+            .where((e) => e.eventType == 'red_alarm_pressed')
+            .toList();
+        expect(alarms, hasLength(1));
+
+        // Exactly one idempotency_mismatch denial event recorded in
+        // the audit log; the `data` payload contents are exercised by
+        // the substrate-level dispatcher tests, not this walkthrough
+        // (the demo's `StoredEventSummary` projection deliberately
+        // doesn't surface event data).
+        final mismatches = snap.events
+            .where((e) => e.eventType == 'idempotency_mismatch')
+            .toList();
+        expect(mismatches, hasLength(1));
       },
     );
   });

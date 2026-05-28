@@ -103,6 +103,7 @@ export 'src/actions/denial_events.dart'
         denialValidationDenied,
         denialAuthorizationDenied,
         denialExecutionFailed,
+        denialIdempotencyMismatch,
         sanitizeErrorMessage;
 export 'src/actions/deny_all_authorization_policy.dart'
     show DenyAllAuthorizationPolicy;
@@ -111,6 +112,7 @@ export 'src/actions/dispatch_result.dart'
         DispatchAuthorizationDenied,
         DispatchExecutionFailed,
         DispatchIdempotencyHit,
+        DispatchIdempotencyMismatch,
         DispatchParseDenied,
         DispatchResult,
         DispatchSuccess,
@@ -253,7 +255,6 @@ export 'src/permissions/permission_granted_payload.dart'
 export 'src/permissions/permission_revoked_payload.dart'
     show PermissionRevokedPayload;
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
-export 'src/permissions/permission_snapshot.dart' show PermissionSnapshot;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show roleAssignmentAggregateId;
@@ -265,6 +266,8 @@ export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
 export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
+export 'src/permissions/scope_class_match.dart'
+    show ScopeClassMatch, scopeClassMatch;
 export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'

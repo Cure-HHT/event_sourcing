@@ -688,11 +688,10 @@ module at `lib/src/actions/`; both share `Permission`, `Principal`,
 **What it does:**
 
 - `TableBackedAuthorizationPolicy` answers the dispatcher's `isPermitted`
-  query against a `RoleMatrixReader`. Three reader impls:
-  `MaterializedViewRoleMatrixReader` (server-side, queries the
-  `role_permission_grants` view), `SnapshotRoleMatrixReader` (client-side,
-  wraps a `PermissionSnapshot` received at session start), and
-  `InMemoryRoleMatrixReader` (test fixtures + FailSafe backing).
+  query by reading the `role_permission_grants` and `user_role_scopes`
+  views directly. Client-side gating uses the same policy via
+  `effectivePermissionsFor`, which `reaction`'s `PermissionSource`
+  exposes as an `EffectiveAuthorization`.
 - The matrix lives in the event log: `permission_granted` and
   `permission_revoked` events drive a `RolePermissionGrantsMaterializer`
   that maintains the view in the same transaction as the appending event.

@@ -39,6 +39,12 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   //   `expires_at` MUST NOT be returned by lookup, even before
   //   sweepExpired physically removes them. The `expires_at > @cutoff`
   //   predicate enforces this at read time.
+  // Implements: EVS-PRD-action-dispatch/E — returns
+  //   `rawInputCanonicalJson` so the dispatcher can compare the
+  //   submitted rawInput's canonical form against the cached one.
+  //   NULL passes through as null; the dispatcher treats null as
+  //   "no mismatch detection available" and returns the cache hit as
+  //   before, never raising a false `idempotency_mismatch`.
   @override
   Future<IdempotencyEntry?> lookup(
     String actionName,
@@ -49,7 +55,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     final cutoff = (now ?? DateTime.now()).toUtc();
     final result = await _pool.execute(
       Sql.named('''
-        SELECT result_json, emitted_event_ids, recorded_at, expires_at
+        SELECT result_json, emitted_event_ids, recorded_at, expires_at,
+               raw_input_canonical_json
         FROM idempotency
         WHERE action_name = @a
           AND principal_id = @p
@@ -78,6 +85,7 @@ class PostgresIdempotencyStore implements IdempotencyStore {
       ),
       recordedAt: (row[2] as DateTime).toUtc(),
       expiresAt: (row[3] as DateTime).toUtc(),
+      rawInputCanonicalJson: row[4] as String?,
     );
   }
 
@@ -85,9 +93,15 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   //   `INSERT ... ON CONFLICT (action_name, principal_id,
   //   idempotency_key) DO UPDATE`. Repeat records for the same tuple
   //   overwrite, matching the in-memory store's map-overwrite
-  //   semantics; the action-dispatch path is responsible for the
-  //   "same key, different content" denial (EVS-PRD-action-dispatch/E)
-  //   before this store is called.
+  //   semantics. The dispatcher detects the "same key, different
+  //   content" mismatch (EVS-PRD-action-dispatch/E) BEFORE calling
+  //   `record` on the success path; this UPSERT only ever fires when
+  //   the dispatcher has decided the submission is a fresh-or-matching
+  //   write, never to overwrite a conflicting entry.
+  // Implements: EVS-PRD-action-dispatch/E — persists
+  //   `raw_input_canonical_json` alongside the cached outcome so a
+  //   subsequent lookup can drive the dispatcher's content-mismatch
+  //   check.
   @override
   Future<void> record({
     required String actionName,
@@ -96,22 +110,26 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     required Map<String, Object?> resultJson,
     required List<String> emittedEventIds,
     required DateTime expiresAt,
+    String? rawInputCanonicalJson,
   }) async {
     await _pool.execute(
       Sql.named('''
         INSERT INTO idempotency (
           action_name, principal_id, idempotency_key,
-          result_json, emitted_event_ids, recorded_at, expires_at
+          result_json, emitted_event_ids, recorded_at, expires_at,
+          raw_input_canonical_json
         ) VALUES (
           @a, @p, @k,
-          @res:jsonb, @ids:jsonb, @recAt, @expAt
+          @res:jsonb, @ids:jsonb, @recAt, @expAt,
+          @rawJson
         )
         ON CONFLICT (action_name, principal_id, idempotency_key)
         DO UPDATE SET
           result_json = EXCLUDED.result_json,
           emitted_event_ids = EXCLUDED.emitted_event_ids,
           recorded_at = EXCLUDED.recorded_at,
-          expires_at = EXCLUDED.expires_at
+          expires_at = EXCLUDED.expires_at,
+          raw_input_canonical_json = EXCLUDED.raw_input_canonical_json
       '''),
       parameters: {
         'a': actionName,
@@ -121,6 +139,7 @@ class PostgresIdempotencyStore implements IdempotencyStore {
         'ids': emittedEventIds,
         'recAt': DateTime.now().toUtc(),
         'expAt': expiresAt.toUtc(),
+        'rawJson': rawInputCanonicalJson,
       },
     );
   }
@@ -145,7 +164,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     final result = await _pool.execute(
       Sql.named('''
         SELECT action_name, principal_id, idempotency_key,
-               result_json, emitted_event_ids, recorded_at, expires_at
+               result_json, emitted_event_ids, recorded_at, expires_at,
+               raw_input_canonical_json
         FROM idempotency
         ORDER BY action_name ASC, principal_id ASC, idempotency_key ASC
       '''),
@@ -164,6 +184,7 @@ class PostgresIdempotencyStore implements IdempotencyStore {
           ),
           recordedAt: (row[5] as DateTime).toUtc(),
           expiresAt: (row[6] as DateTime).toUtc(),
+          rawInputCanonicalJson: row[7] as String?,
         ),
       ),
     );

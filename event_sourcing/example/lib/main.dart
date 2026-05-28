@@ -68,18 +68,18 @@ Future<_PaneRuntime> _bootstrapPane({
   final primary = DemoDestination(
     id: 'Primary',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[
+      entryTypes: <String>{
         'demo_note',
         'red_button_pressed',
         'green_button_pressed',
-      ],
+      },
     ),
   );
   final secondary = DemoDestination(
     id: 'Secondary',
     allowHardDelete: true,
     filter: const SubscriptionFilter(
-      entryTypes: <String>['green_button_pressed', 'blue_button_pressed'],
+      entryTypes: <String>{'green_button_pressed', 'blue_button_pressed'},
     ),
   );
   //   native-wire destinations so the dual-pane UI shows both lanes
@@ -88,25 +88,25 @@ Future<_PaneRuntime> _bootstrapPane({
   //       button entry types). Wedge isolation: a poison user event
   //       wedges this destination without affecting NativeAudit.
   //     - NativeAudit ships system audit events only
-  //       (`includeSystemEvents: true` plus an empty entryTypes list).
+  //       (`includeSystemEvents: true` plus an empty entryTypes set).
   //       This is the visible demonstration of -J's
   //       opt-in path and its cross-hop forensic visibility.
   final nativeUser = NativeDemoDestination(
     id: 'NativeUser',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[
+      entryTypes: <String>{
         'demo_note',
         'red_button_pressed',
         'green_button_pressed',
         'blue_button_pressed',
-      ],
+      },
     ),
     bridge: bridge,
   );
   final nativeAudit = NativeDemoDestination(
     id: 'NativeAudit',
     filter: const SubscriptionFilter(
-      entryTypes: <String>[],
+      entryTypes: <String>{},
       includeSystemEvents: true,
     ),
     bridge: bridge,
@@ -121,7 +121,7 @@ Future<_PaneRuntime> _bootstrapPane({
     ..register(
       const AggregateProjectionSpec(
         viewName: 'notes',
-        interest: SubscriptionFilter(entryTypes: <String>['demo_note']),
+        interest: SubscriptionFilter(entryTypes: <String>{'demo_note'}),
         tombstoneEventTypes: <String>{'tombstone'},
       ),
     );

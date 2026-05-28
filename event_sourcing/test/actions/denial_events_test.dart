@@ -100,6 +100,36 @@ void main() {
       expect(draft.data.containsKey('deny_reason'), isFalse);
     });
 
+    test('idempotencyMismatch carries hashes, action_name, and key', () {
+      // Verifies: EVS-PRD-action-dispatch/E — denial payload carries
+      // the hashes but never the raw inputs themselves.
+      final draft = denialIdempotencyMismatch(
+        invocationId: 'inv-mm',
+        actionName: 'submit_note',
+        idempotencyKey: 'k1',
+        cachedRawInputHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        submittedRawInputHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        actionInvocationMetadata: <String, dynamic>{'request_id': 'r-mm'},
+      );
+      expect(draft.aggregateType, 'action_attempt');
+      expect(draft.entryType, 'action_denial');
+      expect(draft.eventType, 'idempotency_mismatch');
+      expect(draft.aggregateId, 'inv-mm');
+      expect(draft.data['action_name'], 'submit_note');
+      expect(draft.data['idempotency_key'], 'k1');
+      expect(
+        draft.data['cached_raw_input_hash'],
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      );
+      expect(
+        draft.data['submitted_raw_input_hash'],
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      );
+      expect(draft.metadata?['request_id'], 'r-mm');
+    });
+
     test('executionFailed carries sanitized error', () {
       final draft = denialExecutionFailed(
         invocationId: 'inv-1',
@@ -158,6 +188,13 @@ void main() {
           invocationId: 'i',
           actionName: 'a',
           error: 'e',
+        ).aggregateType,
+        denialIdempotencyMismatch(
+          invocationId: 'i',
+          actionName: 'a',
+          idempotencyKey: 'k',
+          cachedRawInputHash: 'h1',
+          submittedRawInputHash: 'h2',
         ).aggregateType,
       };
       expect(all, {'action_attempt'});
