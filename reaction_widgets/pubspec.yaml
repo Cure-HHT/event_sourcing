@@ -1,0 +1,25 @@
+name: reaction_widgets
+description: >
+  Headless Flutter widget primitives for apps built on the `reaction`
+  package. Ships builder primitives, imperative listeners, a scope-
+  threading InheritedWidget, a permission gate, an error sink, and
+  widget-test doubles. NO rendered or styled widgets — apps render their
+  own sugar. See `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
+version: 0.1.0-dev
+publish_to: none
+
+environment:
+  sdk: ^3.10.7
+  flutter: ">=3.38.7"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  reaction:
+    path: ../reaction
+  meta: ^1.16.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
