@@ -16,5 +16,9 @@ export 'src/view/view_listener.dart' show ViewListener;
 // Permission
 export 'src/permission/permission_gate.dart' show PermissionGate;
 
+// Error
+export 'src/error/reaction_error_listener.dart'
+    show ReActionErrorListener, ReActionErrorCallback;
+
 // Testing
 export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;
