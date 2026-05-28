@@ -8,5 +8,8 @@ export 'src/scope/reaction_scope_widget.dart' show ReActionScope;
 // Action
 export 'src/action/action_builder.dart' show ActionBuilder, ActionBuilderFn;
 
+// View
+export 'src/view/view_state.dart' show ViewState, Loading, Ready, Disconnected;
+
 // Testing
 export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;
