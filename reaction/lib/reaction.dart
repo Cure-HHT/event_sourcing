@@ -92,6 +92,10 @@ export 'src/state/action_state.dart'
 export 'src/state/idempotency_key_generator.dart'
     show IdempotencyKeyGenerator, Uuid4IdempotencyKeyGenerator;
 
+// Scope
+export 'src/scope/connection_status.dart'
+    show ConnectionStatus, Connected, Reconnecting, Disconnected;
+
 // Local impls
 export 'src/local/local_action_submitter.dart' show LocalActionSubmitter;
 export 'src/local/local_auth_session.dart' show LocalAuthSession;
