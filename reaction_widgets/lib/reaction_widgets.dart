@@ -13,5 +13,8 @@ export 'src/view/view_state.dart' show ViewState, Loading, Ready, Stale;
 export 'src/view/view_builder.dart' show ViewBuilder, ViewBuilderFn;
 export 'src/view/view_listener.dart' show ViewListener;
 
+// Permission
+export 'src/permission/permission_gate.dart' show PermissionGate;
+
 // Testing
 export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;
