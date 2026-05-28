@@ -124,6 +124,52 @@ void main() {
       expect(received.first, same(auth));
       await sub.cancel();
     });
+
+    test('dispose() is idempotent', () async {
+      final fake = FakeReaction();
+      await fake.dispose();
+      await fake.dispose(); // should not throw
+    });
+
+    test('post-dispose access throws StateError', () async {
+      final fake = FakeReaction();
+      await fake.dispose();
+      expect(() => fake.authSession, throwsStateError);
+      expect(() => fake.actionSubmitter, throwsStateError);
+      expect(() => fake.viewSource, throwsStateError);
+      expect(() => fake.permissionSource, throwsStateError);
+      expect(() => fake.connectionStatus, throwsStateError);
+      expect(() => fake.connectionStatusStream, throwsStateError);
+      expect(
+        () => fake.driveAuthStatus(const NotAuthenticated()),
+        throwsStateError,
+      );
+      expect(
+        () => fake.driveConnectionStatus(const Connected()),
+        throwsStateError,
+      );
+      expect(() => fake.drivePermission(null), throwsStateError);
+      expect(
+        () => fake.queueDispatchResult(
+          const DispatchResult<Object?>.success('ok', <String>[]),
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => fake.queueDispatchResultFuture(
+          Future.value(const DispatchResult<Object?>.success('ok', <String>[])),
+        ),
+        throwsStateError,
+      );
+      expect(
+        () => fake.emitViewUpdate<Map<String, Object?>>(
+          'v',
+          const EndOfReplay<Map<String, Object?>>(sequence: 1),
+        ),
+        throwsStateError,
+      );
+      expect(() => fake.submittedActions, throwsStateError);
+    });
   });
 
   group('pumpReactionWidget', () {

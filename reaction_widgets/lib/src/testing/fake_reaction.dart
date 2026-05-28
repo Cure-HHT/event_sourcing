@@ -57,54 +57,87 @@ class FakeReaction implements ReactionScope {
   late final _FakeViewSource _viewSource;
   late final _FakePermissionSource _permissionSource;
 
-  @override
-  AuthSession get authSession => _authSession;
+  bool _disposed = false;
+
+  void _checkDisposed() {
+    if (_disposed) {
+      throw StateError('FakeReaction has been disposed.');
+    }
+  }
 
   @override
-  ActionSubmitter get actionSubmitter => _actionSubmitter;
+  AuthSession get authSession {
+    _checkDisposed();
+    return _authSession;
+  }
 
   @override
-  ViewSource get viewSource => _viewSource;
+  ActionSubmitter get actionSubmitter {
+    _checkDisposed();
+    return _actionSubmitter;
+  }
 
   @override
-  PermissionSource get permissionSource => _permissionSource;
+  ViewSource get viewSource {
+    _checkDisposed();
+    return _viewSource;
+  }
 
   @override
-  ConnectionStatus get connectionStatus => _connectionStatus;
+  PermissionSource get permissionSource {
+    _checkDisposed();
+    return _permissionSource;
+  }
 
   @override
-  Stream<ConnectionStatus> get connectionStatusStream =>
-      _statusController.stream;
+  ConnectionStatus get connectionStatus {
+    _checkDisposed();
+    return _connectionStatus;
+  }
+
+  @override
+  Stream<ConnectionStatus> get connectionStatusStream {
+    _checkDisposed();
+    return _statusController.stream;
+  }
 
   // ----- Driver API -----
 
   /// Set [AuthStatus] and emit to `authSession.stream`.
   void driveAuthStatus(AuthStatus s) {
+    _checkDisposed();
     _authStatus = s;
     if (!_authController.isClosed) _authController.add(s);
   }
 
   /// Set [ConnectionStatus] and emit to [connectionStatusStream].
   void driveConnectionStatus(ConnectionStatus s) {
+    _checkDisposed();
     _connectionStatus = s;
     if (!_statusController.isClosed) _statusController.add(s);
   }
 
   /// Queue a [DispatchResult] for the next [ActionSubmitter.submit].
-  void queueDispatchResult(DispatchResult<Object?> r) =>
-      _queuedResults.add(Future.value(r));
+  void queueDispatchResult(DispatchResult<Object?> r) {
+    _checkDisposed();
+    _queuedResults.add(Future.value(r));
+  }
 
   /// Queue a pending [Future] for the next [ActionSubmitter.submit] call.
   ///
   /// Lets tests exercise paths that depend on a submission being IN-FLIGHT
   /// (e.g., dispose-during-Submitting): pass a [Completer.future] and
   /// complete it after the test has driven the desired widget-tree state.
-  void queueDispatchResultFuture(Future<DispatchResult<Object?>> f) =>
-      _queuedResults.add(f);
+  void queueDispatchResultFuture(Future<DispatchResult<Object?>> f) {
+    _checkDisposed();
+    _queuedResults.add(f);
+  }
 
   /// All actions submitted via this fake (for test assertions).
-  List<ActionSubmission> get submittedActions =>
-      List.unmodifiable(_submittedActions);
+  List<ActionSubmission> get submittedActions {
+    _checkDisposed();
+    return List.unmodifiable(_submittedActions);
+  }
 
   /// Emit an [Update] to any active subscriber of [viewName].
   ///
@@ -113,6 +146,7 @@ class FakeReaction implements ReactionScope {
   /// has no replay buffer. Drive updates AFTER the test widget has
   /// subscribed.
   void emitViewUpdate<T>(String viewName, Update<T> update) {
+    _checkDisposed();
     final c = _viewControllers[viewName];
     if (c != null && !c.isClosed) c.add(update);
   }
@@ -120,12 +154,15 @@ class FakeReaction implements ReactionScope {
   /// Set the current [EffectiveAuthorization] and emit on
   /// `permissionSource.stream`.
   void drivePermission(EffectiveAuthorization? auth) {
+    _checkDisposed();
     _effectiveAuth = auth;
     if (!_permController.isClosed) _permController.add(auth);
   }
 
   @override
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
     await _authController.close();
     await _statusController.close();
     await _permController.close();
