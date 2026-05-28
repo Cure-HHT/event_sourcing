@@ -3,7 +3,8 @@
 This file pins the PRD-level obligations for two new sibling packages:
 
 - `reaction/` (pure Dart) — substrate-agnostic interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`), wire transport (HTTP for actions, WebSocket for view subscriptions), shelf-based reference server, in-process and remote implementations.
-- `reaction_widgets/` (Flutter, **headless**) — `ReActionScope` `InheritedWidget`, Builder primitives (`ActionBuilder`, `ViewBuilder`), imperative `ViewListener` and `ReActionErrorListener`, `PermissionGate`, and shipped widget-test doubles (`FakeReaction` + `.test()` helper). The library ships NO rendered or styled widgets — those live in each downstream consumer app, wrapping the builders with modality-appropriate sugar.
+- `reaction_widgets/` (Flutter, **headless**) — `ReActionScope` `InheritedWidget`, Builder primitives (`ActionBuilder`, `ViewBuilder`), imperative `ViewListener` and `ReActionErrorListener`, and `PermissionGate`. The library ships NO rendered or styled widgets — those live in each downstream consumer app, wrapping the builders with modality-appropriate sugar.
+- `reaction_widgets_testing/` (Flutter, dev-deps only) — shipped widget-test doubles (`FakeReaction` + `pumpReactionWidget`) for apps built on `reaction_widgets`. Sibling package so consumers' release builds don't pull `flutter_test`.
 
 `reaction` itself defines a shared `ReactionScope` abstraction (with `LocalScope` and `RemoteScope` implementations) that exposes the four interfaces plus an authoritative `ConnectionStatus` stream. The widget layer threads that scope; it does not infer connection liveness from stream behavior.
 
@@ -61,11 +62,14 @@ event_sourcing-worktrees/CUR-1317-libify-event-sourcing/
                        EffectiveAuthorization; no styled UI)
       error/           ReActionErrorListener (auth/transport sink;
                        fires callbacks, renders nothing)
-      testing/         FakeReaction + ReActionScope.test() pump helper
-                       — shipped as a first-class deliverable
+  reaction_widgets_testing/  (NEW, Flutter, dev-deps only;
+                              depends on reaction_widgets)
+    lib/                 FakeReaction + pumpReactionWidget — widget-
+                         test doubles shipped per assertion H without
+                         bloating reaction_widgets's main deps.
 ```
 
-Dependency direction is one-way: `reaction_widgets → reaction → event_sourcing`. The `reaction_widgets_provider` adapter package is deferred (see Future work).
+Dependency direction is one-way: `reaction_widgets_testing → reaction_widgets → reaction → event_sourcing`. The `reaction_widgets_provider` adapter package is deferred (see Future work).
 
 Position D (snapshot + tail) is the wire's semantic shape. The web client does not run a full `EventStore` and does not re-derive views from event history. On subscribe, the server runs `subscribe<T>(filter, AggregateMode(viewName, mapper, aggregates))` against its own `EventStore`; the substrate's atomic snapshot-then-deltas guarantee delivers `Snapshot<T>` × N → `EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞ on its `Stream<Update<T>>`; the server's WS handler serializes each `Update<T>` to JSON and ships it; the client's `RemoteViewSource` deserializes, applies the consumer's `mapper`, and emits the same `Stream<Update<T>>` to widget code. On WS drop the `RemoteScope` transitions `ConnectionStatus` to `Reconnecting`, auto-reconnects with exponential backoff, and on recovery re-issues every active subscribe — each replays its own fresh `Snapshot × N → EndOfReplay → live` per the same substrate semantics. The widget layer's `ViewBuilder` observes the authoritative `ConnectionStatus` and surfaces `Stale(lastRows)` rather than blanking.
 
@@ -381,6 +385,8 @@ These shaped the design but live nowhere in the assertions above; they are recor
 **Why not ship sugar widgets (`ActionButton`, `ViewListView`) inside `reaction_widgets`?** An earlier two-tier-within-one-package design intended exactly this. The two near-term consumers (hht_diary mobile and Flutter-web portal UI) run in genuinely different modalities; a mobile-shaped `ActionButton` (large tap target, "queued offline" posture) is wrong for a desktop-web portal (refuses offline, hover affordances), and vice versa. Shipping any shared styled widget in the base would encode the wrong assumption for one of the consumers by construction, forcing each to fight overrides. The two-tier idea survives but the boundary moves: base provides headless primitives; each app provides its own sugar matching its modality. See `EVS-PRD-reaction-widget-contract`-G rationale.
 
 **Why not infer connection state at the widget layer from subscription-stream liveness?** Considered as a way to avoid changing `reaction`. Rejected: it is a workaround that locks the widget contract to whatever the Remote impl happens to do today (e.g., does the stream close on WS drop, or buffer silently?). The proper fix was to add an authoritative `ConnectionStatus` surface to `ReactionScope` (`EVS-PRD-reaction-scope`). Greenfield principle: define the library properly, do not paper over a missing surface in a layer above.
+
+**Why ship FakeReaction in a sibling `reaction_widgets_testing` package, not in `reaction_widgets/lib/src/testing/`?** FakeReaction imports `flutter_test`'s `WidgetTester` and `pumpEventQueue` to provide `pumpReactionWidget`. If it lived in `reaction_widgets`'s main `dependencies` (not `dev_dependencies`), every consumer's release build would pull `test_api`/`matcher`/etc. into shipped binaries — pure bloat. The sibling package keeps the test-double deliverable first-class per assertion H while letting consumers add it as a `dev_dependency` only.
 
 **Why not build cursor/batched snapshot delivery into the wire now?** The whole repo is in-scope for this work, so it would be possible. But there is no consumer with measured large-view scale, and the substrate's snapshot-then-deltas semantics serve the expected scale. Building cursor pagination now would be speculative complexity. The right move is to **define the contract to be additive-ready** (`EVS-PRD-view-subscriber`-E) so cursor delivery can ship later as a non-breaking enhancement, plus give the widget layer an opt-in `progressive` mode (`EVS-PRD-reaction-widget-contract`-J) for the rendering half of the problem. This is YAGNI with a non-breaking future, not a workaround.
 

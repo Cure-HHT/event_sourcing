@@ -5,15 +5,18 @@ Guidance for Claude Code sessions working in this repo.
 ## What this repo is
 
 Reactive, append-only event-sourcing primitives + companion libs
-(`canonical_json_jcs`, `provenance`). Primarily pure Dart; the
-`reaction_widgets/` package adds a single Flutter dependency
-(headless widget primitives — `InheritedWidget` scope threading,
-`ActionBuilder`/`ViewBuilder` Builder primitives, `ViewListener`,
-`PermissionGate`, `ReActionErrorListener`, and shipped `FakeReaction`
-test doubles). All other packages remain pure Dart. CI therefore runs
-`dart test` on the pure-Dart packages and `flutter test` on
-`reaction_widgets/`. The primary downstream consumer is
-`cure-hht/hht_diary`, which pins this repo by git ref.
+(`canonical_json_jcs`, `provenance`). Primarily pure Dart; two Flutter
+packages sit on top: `reaction_widgets/` (headless widget primitives —
+`InheritedWidget` scope threading, `ActionBuilder`/`ViewBuilder`
+Builder primitives, `ViewListener`, `PermissionGate`,
+`ReActionErrorListener`) and the sibling `reaction_widgets_testing/`
+(shipped `FakeReaction` + `pumpReactionWidget` widget-test doubles,
+split out so consumers' release builds don't pull `flutter_test`).
+All other packages remain pure Dart. CI therefore runs `dart test`
+on the pure-Dart packages and `flutter test` on both
+`reaction_widgets/` and `reaction_widgets_testing/`. The primary
+downstream consumer is `cure-hht/hht_diary`, which pins this repo by
+git ref.
 
 This repo was extracted from `cure-hht/hht_diary` on 2026-05-08
 (CUR-1317). See [README.md](README.md) for the cut-point and roadmap.
@@ -40,11 +43,15 @@ cutover.
 - `reaction_widgets/` — **headless** Flutter widget layer that
   consumes `ReactionScope`: `ReActionScope` `InheritedWidget`,
   `ActionBuilder`/`ViewBuilder` Builder primitives, `ViewListener`,
-  `PermissionGate`, `ReActionErrorListener`, and shipped widget-test
-  doubles (`FakeReaction` + `.test()` pump helper). Depends only on
+  `PermissionGate`, `ReActionErrorListener`. Depends only on
   `reaction`. Ships NO rendered or styled widgets — each downstream
-  consumer renders its own sugar on top of the builders. This is the
-  only Flutter package in the repo.
+  consumer renders its own sugar on top of the builders.
+- `reaction_widgets_testing/` — sibling Flutter package shipping the
+  widget-test doubles (`FakeReaction` + `pumpReactionWidget`) that
+  satisfy `EVS-PRD-reaction-widget-contract`-H. Consumers add as a
+  `dev_dependency`. Split out of `reaction_widgets/` so its main
+  dependency on `flutter_test` doesn't pull `test_api`/`matcher`/etc.
+  into consumers' release builds.
 - `canonical_json_jcs/` — JCS (RFC 8785).
 - `provenance/` — append-only provenance chain types.
 - `spec/` — formal requirements in EVS namespace (PRD level today;

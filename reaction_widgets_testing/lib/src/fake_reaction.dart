@@ -6,7 +6,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
-import 'package:reaction_widgets/src/scope/reaction_scope_widget.dart';
+import 'package:reaction_widgets/reaction_widgets.dart';
 
 /// Test-only [ReactionScope] implementation for widget tests.
 ///

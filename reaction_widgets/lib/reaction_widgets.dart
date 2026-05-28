@@ -17,8 +17,11 @@
 ///   `PermissionSource` snapshot for the active principal.
 /// - [ReActionErrorListener] — surfaces transport / subscription
 ///   errors out of the scope as imperative callbacks.
-/// - [FakeReaction] + [pumpReactionWidget] — in-memory test harness
-///   for widget tests that does not require a real substrate.
+///
+/// Widget-test doubles (`FakeReaction` + `pumpReactionWidget`) live in
+/// the sibling `package:reaction_widgets_testing` package; add it as a
+/// `dev_dependency` to use them. The split keeps `flutter_test` out of
+/// consumers' release builds.
 library;
 
 // Scope
@@ -38,6 +41,3 @@ export 'src/permission/permission_gate.dart' show PermissionGate;
 // Error
 export 'src/error/reaction_error_listener.dart'
     show ReActionErrorListener, ReActionErrorCallback;
-
-// Testing
-export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;

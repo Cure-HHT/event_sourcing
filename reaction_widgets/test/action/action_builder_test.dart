@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
+import 'package:reaction_widgets_testing/reaction_widgets_testing.dart';
 
 ActionSubmission _sub({String? idempotencyKey}) => ActionSubmission(
   actionName: 'noop',

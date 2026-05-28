@@ -42,15 +42,6 @@ void main() {
 
     for (final entity in libDir.listSync(recursive: true)) {
       if (entity is! File || !entity.path.endsWith('.dart')) continue;
-      // Skip the testing/ directory — FakeReaction's dartdoc may
-      // legitimately reference substrate-internal type names when
-      // describing what real implementations route through. The
-      // assertion-F contract targets production widget code, not test
-      // fakes.
-      if (entity.path.contains('/testing/') ||
-          entity.path.contains(r'\testing\')) {
-        continue;
-      }
       final src = entity.readAsStringSync();
       for (final t in disallowedTypes) {
         final pattern = RegExp(r'\b' + t + r'\b');

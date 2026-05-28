@@ -2,9 +2,11 @@ name: reaction_widgets
 description: >
   Headless Flutter widget primitives for apps built on the `reaction`
   package. Ships builder primitives, imperative listeners, a scope-
-  threading InheritedWidget, a permission gate, an error sink, and
-  widget-test doubles. NO rendered or styled widgets — apps render their
-  own sugar. See `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
+  threading InheritedWidget, a permission gate, and an error sink.
+  NO rendered or styled widgets — apps render their own sugar. Widget-
+  test doubles live in the sibling `reaction_widgets_testing` package
+  so consumers' release builds don't pull `flutter_test`. See
+  `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
 version: 0.1.0-dev
 publish_to: none
 
@@ -14,14 +16,6 @@ environment:
 
 dependencies:
   flutter:
-    sdk: flutter
-  # flutter_test is in main dependencies (not dev_dependencies) because
-  # FakeReaction + pumpReactionWidget are SHIPPED test doubles per
-  # EVS-PRD-reaction-widget-contract/H. They live in lib/src/testing/
-  # and import WidgetTester / pumpEventQueue from flutter_test, so they
-  # need flutter_test resolvable from consumer test code without each
-  # consumer redeclaring it.
-  flutter_test:
     sdk: flutter
   reaction:
     path: ../reaction
@@ -35,3 +29,10 @@ dependencies:
 
 dev_dependencies:
   flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  # FakeReaction + pumpReactionWidget live in the sibling testing
+  # package; this dep lets reaction_widgets's own widget tests use
+  # those doubles without polluting main dependencies.
+  reaction_widgets_testing:
+    path: ../reaction_widgets_testing

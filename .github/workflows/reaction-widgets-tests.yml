@@ -40,9 +40,15 @@ jobs:
       - name: Resolve deps (reaction_widgets)
         run: flutter pub get
         working-directory: reaction_widgets
+      - name: Resolve deps (reaction_widgets_testing)
+        run: flutter pub get
+        working-directory: reaction_widgets_testing
       - name: Reaction scope + connection-status tests
         run: flutter test test/scope/ test/remote/auto_reconnect_test.dart
         working-directory: reaction
+      - name: reaction_widgets_testing test suite
+        run: flutter test
+        working-directory: reaction_widgets_testing
       - name: reaction_widgets test suite
         run: flutter test
         working-directory: reaction_widgets

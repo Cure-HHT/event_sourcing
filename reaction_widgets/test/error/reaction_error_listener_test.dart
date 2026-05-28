@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
+import 'package:reaction_widgets_testing/reaction_widgets_testing.dart';
 
 /// Settle the test after emitting a stream event.
 ///
