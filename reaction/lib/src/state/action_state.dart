@@ -11,7 +11,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///
 /// ```text
 /// Idle --submit()--> Submitting --+--> Success(DispatchResult)
-///                                  +--> Denied(reason)
+///                                  +--> Denied(DispatchResult)
 ///                                  +--> Failed(error, stackTrace)
 /// ```
 ///
@@ -26,7 +26,7 @@ sealed class ActionState {
   const factory ActionState.idle() = Idle;
   const factory ActionState.submitting() = Submitting;
   const factory ActionState.success(DispatchResult<Object?> result) = Success;
-  const factory ActionState.denied(String reason) = Denied;
+  const factory ActionState.denied(DispatchResult<Object?> result) = Denied;
   factory ActionState.failed(Object error, StackTrace stackTrace) = Failed;
 }
 
@@ -49,14 +49,33 @@ class Success extends ActionState {
   final DispatchResult<Object?> result;
 }
 
-/// The submission was denied by the dispatcher (parse failure,
-/// validation failure, authorization denied, execution failed, or
-/// idempotency conflict). [reason] is a human-readable summary for
-/// the UI; full denial details are available via the [DispatchResult]
-/// passed to the widget builder (when applicable).
+/// The submission was denied by the dispatcher (parse failure, validation
+/// failure, authorization denied, execution failed, unknown action, or
+/// idempotency mismatch). Carries the full [DispatchResult] so widget
+/// consumers can switch on specific denial variants for structured UX
+/// (e.g., "you need permission X" vs "validation failed: ..."). The
+/// [reason] getter is a derived human-readable summary suitable for a
+/// default toast/snackbar message.
 class Denied extends ActionState {
-  const Denied(this.reason);
-  final String reason;
+  const Denied(this.result);
+  final DispatchResult<Object?> result;
+
+  /// Human-readable one-line summary of the denial, derived from the
+  /// concrete [DispatchResult] variant.
+  String get reason => switch (result) {
+    DispatchSuccess() => 'unexpected success classified as denial',
+    DispatchUnknownAction(:final requestedName) =>
+      'unknown action: "$requestedName"',
+    DispatchParseDenied(:final error) => 'parse error: $error',
+    DispatchValidationDenied(:final error) => 'validation failed: $error',
+    DispatchAuthorizationDenied(:final permission) =>
+      'you need permission "${permission.name}"',
+    DispatchExecutionFailed(:final error) => 'execution failed: $error',
+    DispatchIdempotencyHit() =>
+      'unexpected idempotency hit classified as denial',
+    DispatchIdempotencyMismatch() =>
+      'idempotency mismatch — same key, different payload',
+  };
 }
 
 /// The submission failed with an unexpected error (transport,
