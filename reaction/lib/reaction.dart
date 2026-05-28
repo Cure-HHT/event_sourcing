@@ -95,6 +95,7 @@ export 'src/state/idempotency_key_generator.dart'
 // Scope
 export 'src/scope/connection_status.dart'
     show ConnectionStatus, Connected, Reconnecting, Disconnected;
+export 'src/scope/reaction_scope.dart' show ReactionScope;
 
 // Local impls
 export 'src/local/local_action_submitter.dart' show LocalActionSubmitter;
