@@ -49,7 +49,7 @@ class FakeReaction implements ReactionScope {
   final StreamController<EffectiveAuthorization?> _permController =
       StreamController<EffectiveAuthorization?>.broadcast();
   final Map<String, StreamController<Update<dynamic>>> _viewControllers = {};
-  final List<DispatchResult<Object?>> _queuedResults = [];
+  final List<Future<DispatchResult<Object?>>> _queuedResults = [];
   final List<ActionSubmission> _submittedActions = [];
 
   late final _FakeAuthSession _authSession;
@@ -91,7 +91,16 @@ class FakeReaction implements ReactionScope {
   }
 
   /// Queue a [DispatchResult] for the next [ActionSubmitter.submit].
-  void queueDispatchResult(DispatchResult<Object?> r) => _queuedResults.add(r);
+  void queueDispatchResult(DispatchResult<Object?> r) =>
+      _queuedResults.add(Future.value(r));
+
+  /// Queue a pending [Future] for the next [ActionSubmitter.submit] call.
+  ///
+  /// Lets tests exercise paths that depend on a submission being IN-FLIGHT
+  /// (e.g., dispose-during-Submitting): pass a [Completer.future] and
+  /// complete it after the test has driven the desired widget-tree state.
+  void queueDispatchResultFuture(Future<DispatchResult<Object?>> f) =>
+      _queuedResults.add(f);
 
   /// All actions submitted via this fake (for test assertions).
   List<ActionSubmission> get submittedActions =>
@@ -161,12 +170,13 @@ class _FakeActionSubmitter implements ActionSubmitter {
   final FakeReaction _fake;
 
   @override
-  Future<DispatchResult<Object?>> submit(ActionSubmission submission) async {
+  Future<DispatchResult<Object?>> submit(ActionSubmission submission) {
     _fake._submittedActions.add(submission);
     if (_fake._queuedResults.isEmpty) {
       throw StateError(
         'FakeReaction: no DispatchResult queued for submit() call. '
-        'Call queueDispatchResult() before submitting.',
+        'Call queueDispatchResult() or queueDispatchResultFuture() '
+        'before submitting.',
       );
     }
     return _fake._queuedResults.removeAt(0);
