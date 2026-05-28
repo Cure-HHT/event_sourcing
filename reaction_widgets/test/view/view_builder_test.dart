@@ -158,6 +158,44 @@ void main() {
       expect(_aggregateIdOf(ready.rows.single), 'b');
     });
 
+    testWidgets('Snapshot with null value skips accumulation', (tester) async {
+      // Substrate emits Snapshot(value: null) for an explicitly-listed-but-
+      // empty aggregate (the aggregate id was named in the subscription
+      // filter but no rows currently exist for it). ViewBuilder's _onUpdate
+      // must skip accumulation for that case rather than crash or insert a
+      // null/spurious row.
+      final fake = FakeReaction();
+      final transitions = await _pumpRecording(
+        tester,
+        fake: fake,
+        viewName: 'v',
+      );
+
+      // First snapshot has null value -> skipped.
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const Snapshot<_Row>(value: null, sequence: 1),
+      );
+      // Second snapshot has a real row -> accumulated.
+      fake.emitViewUpdate<_Row>(
+        'v',
+        Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 2),
+      );
+      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      await _settleStream(tester);
+
+      expect(transitions.last, isA<Ready<_Row>>());
+      final ready = transitions.last as Ready<_Row>;
+      expect(
+        ready.rows,
+        hasLength(1),
+        reason:
+            'Snapshot(value: null) MUST be skipped; only the row from the '
+            'second non-null snapshot should be accumulated.',
+      );
+      expect(_aggregateIdOf(ready.rows.single), 'a');
+    });
+
     testWidgets('ConnectionStatus.Reconnecting -> Stale retains rows', (
       tester,
     ) async {
