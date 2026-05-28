@@ -29,12 +29,12 @@ The widget layer consumes these public types from `package:reaction/reaction.dar
 
 | Symbol | Where | Shape |
 |---|---|---|
-| `AuthSession` | `interfaces/auth_session.dart` | `AuthStatus get current; Stream<AuthStatus> get stream; void setCredential(String?); Principal? get principal;` |
-| `AuthStatus` | same | sealed: `Authenticated(Principal)`, `NotAuthenticated`, `Expired` |
-| `ActionSubmitter` | `interfaces/action_submitter.dart` | `Future<DispatchResult> submit(ActionSubmission)` |
-| `ViewSource` | `interfaces/view_source.dart` | `Stream<Update<T>> watch<T>(String viewName, T Function(Map<String, Object?>) mapper, SubscriptionFilter filter, Set<String>? aggregates)` |
-| `PermissionSource` | `interfaces/permission_source.dart` | `EffectiveAuthorization? get current; Stream<EffectiveAuthorization?> get stream;` |
-| `ActionState` | `state/action_state.dart` | sealed: `Idle`, `Submitting`, `Success(DispatchResult)`, `Denied(DispatchResult)`, `Failed(Object)` |
+| `AuthSession` | `interfaces/auth_session.dart` | `AuthStatus get current; Stream<AuthStatus> get stream; void setCredential(String?); Principal? get principal; Future<void> dispose();` |
+| `AuthStatus` | same | sealed: `Authenticated({required Principal principal})`, `NotAuthenticated()`, `Expired()` |
+| `ActionSubmitter` | `interfaces/action_submitter.dart` | `Future<DispatchResult<Object?>> submit(ActionSubmission)` |
+| `ViewSource` | `interfaces/view_source.dart` | `Stream<Update<T>> watch<T>({required String viewName, required T Function(Map<String, Object?>) mapper, SubscriptionFilter? filter, Set<String>? aggregates})` — all named; `filter` is optional/nullable |
+| `PermissionSource` | `interfaces/permission_source.dart` | `EffectiveAuthorization? get current; Stream<EffectiveAuthorization?> get stream; Future<void> dispose();` |
+| `ActionState` | `state/action_state.dart` | sealed: `Idle()`, `Submitting()`, `Success(DispatchResult<Object?> result)`, **`Denied(DispatchResult<Object?> result)` with `String get reason` getter (post-Task 1.5 refactor — substrate currently has `Denied(String reason)`)**, `Failed(Object error, StackTrace stackTrace)` |
 | `IdempotencyKeyGenerator` | `state/idempotency_key_generator.dart` | `String generate()` |
 | `Uuid4IdempotencyKeyGenerator` | same | default impl |
 | `RemoteScope` | `remote/remote_scope.dart` | exposes `authSession`, `actionSubmitter`, `viewSource`, `permissionSource`; `Future<void> dispose()` |
@@ -152,6 +152,173 @@ Expected: tests pass (existing state tests still green on this branch).
 - [ ] **Step 4: No commit**
 
 This is a verification task; no code changes.
+
+---
+
+### Task 1.5: Refactor `ActionState.Denied` to carry `DispatchResult`
+
+**Context for the implementer:** The Task 1 drift sweep found that `ActionState.Denied` currently carries `String reason`, but the plan's Verified-Symbols table and Task 11's `ActionBuilder` code assume `Denied(DispatchResult<Object?> result)` with a derived `reason` getter. Per `feedback_greenfield_fix_root_not_workaround`, fix the substrate to preserve structured denial info rather than throwing it away into a string at the widget boundary.
+
+**Files:**
+
+- Modify: `reaction/lib/src/state/action_state.dart`
+- Modify: `reaction/test/state/action_state_test.dart`
+
+- [ ] **Step 1: Update the failing test**
+
+Replace the existing `'Denied carries the denial reason'` test in `reaction/test/state/action_state_test.dart` with:
+
+```dart
+test('Denied carries the full DispatchResult and exposes a reason getter', () {
+  const result = DispatchResult<Object?>.authorizationDenied(
+      Permission('test.permission'));
+  const d = Denied(result);
+  expect(d, isA<ActionState>());
+  expect(d, isA<Denied>());
+  expect(d.result, same(result));
+  expect(d.reason, contains('test.permission'));
+});
+
+test('Denied.reason maps each DispatchResult denial variant to a readable summary', () {
+  expect(
+    const Denied(DispatchResult<Object?>.unknownAction('foo')).reason,
+    contains('foo'),
+  );
+  expect(
+    const Denied(DispatchResult<Object?>.parseDenied('bad json')).reason,
+    contains('parse'),
+  );
+  expect(
+    const Denied(DispatchResult<Object?>.validationDenied('field empty')).reason,
+    contains('valid'),
+  );
+  expect(
+    const Denied(DispatchResult<Object?>.authorizationDenied(Permission('p'))).reason,
+    contains('permission'),
+  );
+  expect(
+    const Denied(DispatchResult<Object?>.executionFailed('boom')).reason,
+    isNotEmpty,
+  );
+  expect(
+    const Denied(DispatchResult<Object?>.idempotencyMismatch(
+      actionName: 'a', idempotencyKey: 'k',
+      cachedRawInputHash: 'h1', submittedRawInputHash: 'h2',
+    )).reason,
+    contains('idempot'),
+  );
+});
+```
+
+Also update the existing `'exhaustive switch across all 5 variants'` test if it constructs `Denied('...')` — the new shape requires a `DispatchResult`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+```bash
+cd reaction && flutter test test/state/action_state_test.dart 2>&1 | tail -10
+
+```
+
+Expected: FAIL — `Denied('action not allowed for role')` (String) won't compile against `Denied(DispatchResult)` (or, if you've already swapped the field type below, the test compiles but the new `reason` getter doesn't exist yet).
+
+- [ ] **Step 3: Refactor `ActionState.Denied`**
+
+In `reaction/lib/src/state/action_state.dart`, replace the `Denied` class and update the `ActionState.denied` factory:
+
+```dart
+/// The submission was denied by the dispatcher (parse failure, validation
+/// failure, authorization denied, execution failed, unknown action, or
+/// idempotency mismatch). Carries the full [DispatchResult] so widget
+/// consumers can switch on specific denial variants for structured UX
+/// (e.g., "you need permission X" vs "validation failed: ..."). The
+/// [reason] getter is a derived human-readable summary suitable for a
+/// default toast/snackbar message.
+class Denied extends ActionState {
+  const Denied(this.result);
+  final DispatchResult<Object?> result;
+
+  /// Human-readable one-line summary of the denial, derived from the
+  /// concrete [DispatchResult] variant.
+  String get reason => switch (result) {
+        DispatchSuccess() => 'unexpected success classified as denial',
+        DispatchUnknownAction(:final requestedName) =>
+            'Unknown action: "$requestedName"',
+        DispatchParseDenied(:final error) => 'Parse error: $error',
+        DispatchValidationDenied(:final error) =>
+            'Validation failed: $error',
+        DispatchAuthorizationDenied(:final permission) =>
+            'You need permission "${permission.name}"',
+        DispatchExecutionFailed(:final error) =>
+            'Execution failed: $error',
+        DispatchIdempotencyHit() =>
+            'unexpected idempotency hit classified as denial',
+        DispatchIdempotencyMismatch() =>
+            'Idempotency mismatch — same key, different payload',
+      };
+}
+```
+
+Update the convenience factory:
+
+```dart
+const factory ActionState.denied(DispatchResult<Object?> result) = Denied;
+```
+
+Update the comment block at the top describing the lifecycle:
+
+```dart
+/// Lifecycle:
+///
+/// ```text
+/// Idle --submit()--> Submitting --+--> Success(DispatchResult)
+///                                  +--> Denied(DispatchResult)
+///                                  +--> Failed(error, stackTrace)
+/// ```
+```
+
+**Note:** `Permission` is a class with a `name` field — verify the actual accessor (`permission.name`, `permission.id`, etc.) by reading `event_sourcing/lib/src/actions/permission.dart` and adjust the `DispatchAuthorizationDenied` arm accordingly.
+
+- [ ] **Step 4: Run tests**
+
+```bash
+cd reaction && flutter test test/state/action_state_test.dart 2>&1 | tail -5
+
+```
+
+Expected: PASS (8 tests — the two new Denied tests + the existing Idle/Submitting/Success/Failed/exhaustive tests).
+
+Run the full reaction suite to check for any unforeseen caller breakage:
+
+```bash
+cd reaction && flutter test 2>&1 | tail -10
+
+```
+
+Expected: all tests pass. No other callers of `Denied(String)` exist today (grep-verified during drift sweep), so the refactor should be local.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add reaction/lib/src/state/action_state.dart \
+        reaction/test/state/action_state_test.dart
+git commit -m "[CUR-1317] reaction: ActionState.Denied carries DispatchResult
+
+Replaces Denied(String reason) with Denied(DispatchResult<Object?> result)
+plus a derived String get reason getter. Preserves the substrate's
+structured denial info (DispatchAuthorizationDenied/ValidationDenied/
+IdempotencyMismatch/etc.) so widget consumers can switch on variants
+for structured UX, while the reason getter remains useful for the
+default toast/snackbar case.
+
+Greenfield fix per feedback_greenfield_fix_root_not_workaround: the
+previous String-only shape compressed away substrate-level information
+the widget layer needs.
+
+Implements EVS-PRD-reaction-widget-contract-C (the structured-state-machine
+half of the Builder primitive contract).
+
+Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>"
+```
 
 ---
 
@@ -924,7 +1091,7 @@ group('RemoteScope as ReactionScope', () {
 
     // Trigger initial open via a subscription
     await scope.viewSource.watch<Map<String, Object?>>(
-      'test_view', (m) => m, /* filter */, null).first;
+      viewName: 'test_view', mapper: (m) => m).first;
     // Drop
     fakeWs.close(1006);
     await pumpEventQueue();
@@ -1320,8 +1487,8 @@ void main() {
       final sub = fake.authSession.stream.listen(received.add);
 
       fake.driveAuthStatus(const NotAuthenticated());
-      fake.driveAuthStatus(Authenticated(const Principal(
-          userId: 'u', activeRole: 'r', roles: {'r'})));
+      fake.driveAuthStatus(const Authenticated(
+          principal: Principal(userId: 'u', activeRole: 'r', roles: {'r'})));
       await pumpEventQueue();
 
       expect(received.length, 2);
@@ -1357,7 +1524,7 @@ void main() {
         () async {
       final fake = FakeReaction();
       final stream = fake.viewSource.watch<Map<String, Object?>>(
-          'v', (m) => m, SubscriptionFilter.all(), null);
+          viewName: 'v', mapper: (m) => m);
       final received = <Update<Map<String, Object?>>>[];
       final sub = stream.listen(received.add);
 
@@ -1535,12 +1702,12 @@ class _FakeViewSource implements ViewSource {
   _FakeViewSource(this._fake);
   final FakeReaction _fake;
   @override
-  Stream<Update<T>> watch<T>(
-    String viewName,
-    T Function(Map<String, Object?>) mapper,
-    SubscriptionFilter filter,
+  Stream<Update<T>> watch<T>({
+    required String viewName,
+    required T Function(Map<String, Object?>) mapper,
+    SubscriptionFilter? filter,
     Set<String>? aggregates,
-  ) {
+  }) {
     final controller = _fake._viewControllers.putIfAbsent(
       viewName,
       () => StreamController<Update<dynamic>>.broadcast(),
@@ -2034,17 +2201,21 @@ class _ActionBuilderState extends State<ActionBuilder> {
       setState(() {
         _state = switch (result) {
           DispatchSuccess() => Success(result),
-          // The remaining DispatchResult variants are all denials; map to Denied.
+          // A cached idempotency hit is a user-facing success: same outcome
+          // as the first submission, no new events emitted.
+          DispatchIdempotencyHit() => Success(result),
+          // All other DispatchResult variants are pipeline denials.
+          // Widget consumers can `switch (state.result)` for variant-specific UX.
           _ => Denied(result),
         };
         // Consumer-supplied key is preserved across submissions (the consumer
         // owns its lifecycle); generated key is regenerated for the next press.
         if (base.idempotencyKey == null) _activeKey = null;
       });
-    }).catchError((Object e) {
+    }).catchError((Object e, StackTrace st) {
       if (!mounted) return;
       setState(() {
-        _state = Failed(e);
+        _state = Failed(e, st);
         if (base.idempotencyKey == null) _activeKey = null;
       });
     });
@@ -2381,7 +2552,12 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
     if (_viewSub != null) return;
     final scope = ReActionScope.of(context);
     _viewSub = scope.viewSource
-        .watch<T>(widget.viewName, widget.mapper, widget.filter, widget.aggregates)
+        .watch<T>(
+          viewName: widget.viewName,
+          mapper: widget.mapper,
+          filter: widget.filter,
+          aggregates: widget.aggregates,
+        )
         .listen(_onUpdate);
     _statusSub = scope.connectionStatusStream.listen(_onStatus);
   }
@@ -2583,7 +2759,12 @@ class _ViewListenerState<T> extends State<ViewListener<T>> {
     if (_sub != null) return;
     final scope = ReActionScope.of(context);
     _sub = scope.viewSource
-        .watch<T>(widget.viewName, widget.mapper, widget.filter, widget.aggregates)
+        .watch<T>(
+          viewName: widget.viewName,
+          mapper: widget.mapper,
+          filter: widget.filter,
+          aggregates: widget.aggregates,
+        )
         .listen((u) {
       if (!mounted) return;
       widget.onUpdate(context, u);
