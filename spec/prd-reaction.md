@@ -3,11 +3,13 @@
 This file pins the PRD-level obligations for two new sibling packages:
 
 - `reaction/` (pure Dart) — substrate-agnostic interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`), wire transport (HTTP for actions, WebSocket for view subscriptions), shelf-based reference server, in-process and remote implementations.
-- `reaction_widgets/` (Flutter) — `ReActionScope` `InheritedWidget`, Builder primitives + sugar widgets, `ViewListener` for imperative side-effects, `PermissionGate`, `ReActionErrorListener`.
+- `reaction_widgets/` (Flutter, **headless**) — `ReActionScope` `InheritedWidget`, Builder primitives (`ActionBuilder`, `ViewBuilder`), imperative `ViewListener` and `ReActionErrorListener`, `PermissionGate`, and shipped widget-test doubles (`FakeReaction` + `.test()` helper). The library ships NO rendered or styled widgets — those live in each downstream consumer app, wrapping the builders with modality-appropriate sugar.
+
+`reaction` itself defines a shared `ReactionScope` abstraction (with `LocalScope` and `RemoteScope` implementations) that exposes the four interfaces plus an authoritative `ConnectionStatus` stream. The widget layer threads that scope; it does not infer connection liveness from stream behavior.
 
 Plus the substrate addition the wire requires (an `EndOfReplay<T>` variant on `Update<T>`).
 
-The six normative requirements below appear as `## EVS-PRD-...` blocks. Cross-system narrative (overview, architecture, decisions rejected, open questions, future work, migration story) lives in the other `##` chapters of this file. elspais detects requirement blocks by the `EVS-{TYPE}-{component}` pattern in the heading text, not by heading depth — so the file reads as a book with chapters, some of which happen to be normative.
+The seven normative requirements below appear as `## EVS-PRD-...` blocks. Cross-system narrative (overview, architecture, decisions rejected, open questions, future work, migration story) lives in the other `##` chapters of this file. elspais detects requirement blocks by the `EVS-{TYPE}-{component}` pattern in the heading text, not by heading depth — so the file reads as a book with chapters, some of which happen to be normative.
 
 ## Overview
 
@@ -18,7 +20,7 @@ Two architectural moves keep the design small:
 1. **Reuse the substrate's reactive primitive across the wire.** Cross-process change-feed delivery is a JSON serialization of the existing `subscribe<T>` `Stream<Update<T>>` over WebSocket — not a bespoke wire protocol. The substrate's atomic snapshot-then-deltas guarantee carries over to the wire for free. The only substrate addition is one new `Update<T>` variant: `EndOfReplay<T>`.
 2. **Keep the auth credential opaque to the substrate.** `reaction` defines a `PrincipalAuthValidator` interface; the validator is consumer-supplied. The mechanism that closes the Principal-on-faith trust boundary (linking-code bootstrap on mobile, Firebase ID tokens on portal) lives in app code, not in `reaction`.
 
-The widget layer is two-tier: low-level Builder primitives (`ActionBuilder`, `ViewBuilder`) for full control, plus pre-built sugar widgets (`ActionButton`, `ViewListView`, `PermissionGate`) for the common case. State management is agnostic: the library exposes `Stream`s and `ValueListenable`s, and consumers wrap them with whatever state-management library they prefer. A separate `reaction_widgets_provider` adapter package ships in v1 because the existing portal-ui already uses Provider 6.x.
+The widget layer is **headless**: it ships Builder primitives (`ActionBuilder`, `ViewBuilder`), imperative listeners (`ViewListener`, `ReActionErrorListener`), the scope-threading `InheritedWidget` (`ReActionScope`), a permission gate (`PermissionGate`), and widget-test doubles — and **no rendered or styled widgets**. Each downstream consumer renders its own sugar (e.g., `DiarySubmitButton`, portal list panels) on top of the builders. The two near-term consumers (hht_diary mobile and the Flutter-web portal UI) run in genuinely different modalities; shipping shared styled widgets in the base would encode the wrong assumption for one of them. The "two-tier" structure (primitives + sugar) still exists — but the tiers live in different packages with the package boundary running along the modality split. State management is agnostic: the library exposes `Stream`s and `ValueListenable`s; consumers wrap them with whatever state-management library they prefer. An optional `reaction_widgets_provider` adapter is deferred until consumer demand makes it worth packaging.
 
 ## Architecture
 
@@ -29,12 +31,17 @@ event_sourcing-worktrees/CUR-1317-libify-event-sourcing/
       - EndOfReplay<T> as a 4th Update<T> variant
   canonical_json_jcs/     (exists, unchanged)
   provenance/             (exists, unchanged)
-  reaction/               (NEW, pure Dart, depends on event_sourcing)
+  reaction/               (pure Dart, depends on event_sourcing)
     lib/src/
       interfaces/      AuthSession, ActionSubmitter, ViewSource,
                        PermissionSource, PrincipalAuthValidator
+      scope/           ReactionScope (interface) + LocalScope
+                       composing the Local* impls + connection-status
+                       surface (RemoteScope lives in remote/)
       local/           Local* impls wrapping substrate APIs
-      remote/          Remote* impls (HTTP for actions, WS for views)
+      remote/          Remote* impls + RemoteScope; HTTP for actions,
+                       multiplexed WS for views/permissions; owns
+                       ConnectionStatus transitions and auto-reconnect
       server/          shelf-based reference server: HTTP routes for
                        actions + permission snapshots + WS handler that
                        multiplexes subscriptions over one connection
@@ -42,21 +49,25 @@ event_sourcing-worktrees/CUR-1317-libify-event-sourcing/
                        Update<T> envelopes, SubscribeMessage,
                        PrincipalAuthClaim
       state/           ActionState sealed type + idempotency-key generation
-  reaction_widgets/       (NEW, Flutter, depends on reaction)
+  reaction_widgets/       (NEW, Flutter, headless; depends on reaction)
     lib/src/
-      scope/           ReActionScope InheritedWidget
-      action/          ActionBuilder + ActionButton
-      view/            ViewBuilder + ViewListView + ViewListener
-      permission/      PermissionGate
-      error/           ReActionErrorListener (centralized error sink)
-  reaction_widgets_provider/ (NEW, Flutter, tiny adapter)
-    lib/                  ChangeNotifier wrappers; one-line context.watch<...>
-                          ergonomics for portal-ui's existing patterns
+      scope/           ReActionScope InheritedWidget (threads ReactionScope
+                       incl. ConnectionStatus) + .test() ctor
+      action/          ActionBuilder (Builder primitive only — no
+                       rendered widgets)
+      view/            ViewBuilder + ViewState<T> (Loading/Ready/
+                       Disconnected) + ViewListener
+      permission/      PermissionGate (gates a child or builder on
+                       EffectiveAuthorization; no styled UI)
+      error/           ReActionErrorListener (auth/transport sink;
+                       fires callbacks, renders nothing)
+      testing/         FakeReaction + ReActionScope.test() pump helper
+                       — shipped as a first-class deliverable
 ```
 
-Dependency direction is one-way: `reaction_widgets_provider → reaction_widgets → reaction → event_sourcing`.
+Dependency direction is one-way: `reaction_widgets → reaction → event_sourcing`. The `reaction_widgets_provider` adapter package is deferred (see Future work).
 
-Position D (snapshot + tail) is the wire's semantic shape. The web client does not run a full `EventStore` and does not re-derive views from event history. On subscribe, the server runs `subscribe<T>(filter, AggregateMode(viewName, mapper, aggregates))` against its own `EventStore`; the substrate's atomic snapshot-then-deltas guarantee delivers `Snapshot<T>` × N → `EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞ on its `Stream<Update<T>>`; the server's WS handler serializes each `Update<T>` to JSON and ships it; the client's `RemoteViewSource` deserializes, applies the consumer's `mapper`, and emits the same `Stream<Update<T>>` to widget code.
+Position D (snapshot + tail) is the wire's semantic shape. The web client does not run a full `EventStore` and does not re-derive views from event history. On subscribe, the server runs `subscribe<T>(filter, AggregateMode(viewName, mapper, aggregates))` against its own `EventStore`; the substrate's atomic snapshot-then-deltas guarantee delivers `Snapshot<T>` × N → `EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞ on its `Stream<Update<T>>`; the server's WS handler serializes each `Update<T>` to JSON and ships it; the client's `RemoteViewSource` deserializes, applies the consumer's `mapper`, and emits the same `Stream<Update<T>>` to widget code. On WS drop the `RemoteScope` transitions `ConnectionStatus` to `Reconnecting`, auto-reconnects with exponential backoff, and on recovery re-issues every active subscribe — each replays its own fresh `Snapshot × N → EndOfReplay → live` per the same substrate semantics. The widget layer's `ViewBuilder` observes the authoritative `ConnectionStatus` and surfaces `Disconnected(lastRows)` rather than blanking.
 
 Concurrency profile: `reaction`'s WS server-side load is portal UI users only — ~1 typical, ~20 maximum, intermittent. The 100s–1000s of mobile concurrency uses the substrate's existing `Destination`/`Ingest` sync — that is a different path, not `reaction`'s WS.
 
@@ -69,7 +80,8 @@ The PRDs below are best read in this order on first contact, because each later 
 3. `EVS-PRD-view-subscriber` — the substrate's `Update<T>` stream made transport-agnostic.
 4. `EVS-PRD-permission-source` — per-Principal projection access.
 5. `EVS-PRD-cross-process-event-transport` — the wire envelope shared by the Remote impls of the three above.
-6. `EVS-PRD-reaction-widget-contract` — the Flutter widget layer that consumes all four interfaces.
+6. `EVS-PRD-reaction-scope` — the shared scope abstraction (`LocalScope`/`RemoteScope`) that composes the four interfaces and surfaces `ConnectionStatus`. Widgets thread this, not the four interfaces individually.
+7. `EVS-PRD-reaction-widget-contract` — the Flutter widget layer that consumes the scope.
 
 ## EVS-PRD-auth-session: Auth Session
 
@@ -166,6 +178,8 @@ C. The library SHALL ship a `RemoteViewSource` implementation that consumes the 
 
 D. Consumer code that depends only on the `ViewSource` interface SHALL be source-identical regardless of whether a `LocalViewSource` or `RemoteViewSource` is composed at runtime.
 
+E. The `ViewSource.watch<T>` contract — its return type (`Stream<Update<T>>`), its `Update<T>` variant set, and the consumer-supplied mapper signature — SHALL be designed so that batched or cursor-based snapshot delivery can be added as a purely **additive** evolution. Any future enhancement to *how* snapshot rows are delivered (chunking, paging, cursor resumption) SHALL NOT change the existing variant shapes or break consumers that ignore the enhancement.
+
 ### Rationale
 
 **Why does the interface return the substrate's existing `Update<T>` type, rather than wrap it?** The substrate's `Update<T>` already has the four variants the consumer needs (`Snapshot`, `Delta`, `Tombstone`, `EndOfReplay`) with the right semantics. Wrapping it in a parallel `ReactionUpdate<T>` would introduce a translation layer that adds nothing — and would obligate the library to keep the wrapper in sync with substrate changes forever. Reusing `Update<T>` directly means the substrate's contract IS the consumer's contract.
@@ -173,6 +187,8 @@ D. Consumer code that depends only on the `ViewSource` interface SHALL be source
 **Why does the mapper apply client-side in the Remote impl (C)?** The wire envelope ships the raw row as `Map<String, Object?>`, not the consumer's typed `T`. The mapper turns the map into `T` — that's a consumer-defined conversion that has no business running on the server. Server-side mapping would also force the wire codec to know about every consumer type, which violates the library's domain-neutrality.
 
 **Why "source-identical" widget code (D)?** Same rationale as `EVS-PRD-action-submitter`-E.
+
+**Why pin pagination-readiness (E) without building pagination?** Pagination (cursor-based or batched snapshot delivery) is genuine YAGNI today — no consumer has a measured large-view problem, and the substrate's snapshot-then-deltas semantics serve the expected scale. But the library is greenfield; the right move is to define the contract such that adding pagination later is non-breaking, rather than ship a contract that locks consumers in and then has to migrate them. Concretely: `Snapshot<T>` already carries one row at a time, so a future "batched snapshot" can ship as either a new variant (e.g., `SnapshotBatch<T>`) that defaults-translates to a sequence of `Snapshot<T>` for consumers that don't observe it, or as a flag on `Snapshot<T>` (e.g., `lastInBatch`) that consumers may safely ignore. The `EndOfReplay` marker stays definitive. Pinning the additive-evolution promise as a normative assertion prevents future authors from shipping a breaking redesign in the name of "cleanup."
 
 *End* *View Subscriber* | **Hash**: b6801679
 
@@ -234,6 +250,10 @@ F. Action submission over HTTP POST SHALL carry the bearer credential from the r
 
 G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SHALL apply the same Layer-2 conventions as the sender.
 
+H. The Remote-side wire transport SHALL implement automatic reconnection with exponential backoff on WS drops (close-frames other than `4001 auth_rejected` and `4003 permissions_changed`, which route to `AuthSession` / permission-refresh instead). On successful reconnection it SHALL re-authenticate using the currently-stored credential and re-issue every active subscribe; each re-issued subscription SHALL replay a fresh `Snapshot × N → EndOfReplay → live` per the substrate's snapshot-then-deltas semantics.
+
+I. The Remote-side transport SHALL surface its observable connection state via the `ReactionScope`'s `ConnectionStatus` stream defined in `EVS-PRD-reaction-scope`. Status transitions SHALL be driven by observable WS lifecycle events (open, close, reconnect-attempt, retry-exhausted) — the library SHALL NOT synthesize ping requests or poll to derive status, and consumer code SHALL NOT need to infer connection state from subscription-stream liveness.
+
 ### Rationale
 
 **Why JSON rather than a binary protocol?** The wire serves Flutter web clients (where Dart compiles to JavaScript) and pure-Dart server endpoints. JSON has zero-cost ergonomics in both environments, plays nicely with browser dev-tools, and matches the existing portal's transport format. Binary protocols (protobuf, MessagePack) would be a premature optimization at the expected portal-UI scale of ~1–20 concurrent users.
@@ -246,36 +266,81 @@ G. The wire transport SHALL NOT introduce a new epistemic layer; the receiver SH
 
 **Why isn't action-submission idempotency-key handling pinned here?** Idempotency is the substrate's existing dispatcher concern (`EVS-PRD-action-dispatch`) and the widget-side key-generation policy (`EVS-PRD-reaction-widget-contract`-E). The wire just carries the key as an `idempotencyKey` field on the `ActionSubmission`. No special wire treatment is needed.
 
+**Why auto-reconnect with backoff in the library (H), not delegated to consumers?** Reconnection is a transport-layer concern, not an application concern; every consumer would otherwise reinvent it (and most would get the backoff wrong). The library knows the WS lifecycle and the close-frame semantics; consumers do not. Centralising the policy keeps it correct, observable, and tunable in one place. The `4001`/`4003` carve-outs preserve the auth-event semantics: an auth-rejected close must surface as `Expired` (re-authenticate), not as a transient drop to retry; a permissions-changed close must trigger a permission refresh, not a blind reconnect of stale subscriptions.
+
+**Why is `ConnectionStatus` defined on the scope (per `EVS-PRD-reaction-scope`) rather than per Remote impl (I)?** Connection state is a property of the shared transport (`RemoteConnection`), not of any one interface. All four Remote impls share the WS; the status belongs in one place. Exposing it on the scope also lets the `LocalScope` report `Connected` trivially, so widget code consuming `ConnectionStatus` is source-identical across Local and Remote (per the substrate-agnostic widget contract). Driving from observable WS events rather than synthetic pings keeps the signal cheap, accurate, and free of contention with normal traffic.
+
 *End* *Cross-Process Event Transport* | **Hash**: fbe2d2d4
+
+## EVS-PRD-reaction-scope: Reaction Scope
+
+**Level**: PRD | **Status**: Draft | **Implements**: -
+**Refines**: EVS-PRD-library-charter, EVS-PRD-auth-session, EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-source, EVS-PRD-cross-process-event-transport
+
+### Purpose
+
+Consumer code — and the widget layer in particular — needs a single substrate-agnostic composition root that bundles the four library interfaces together with live transport-connection state. The `ReactionScope` abstraction is that root; `LocalScope` and `RemoteScope` are its two implementations. Without it, each consumer must thread four interface instances individually and has no authoritative signal for whether the transport is up — both of which silently break source-identical Local vs Remote consumption at the composition boundary.
+
+### Assertions
+
+A. The library SHALL define a `ReactionScope` interface that exposes all four library interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`) as getters, a synchronous `ConnectionStatus get connectionStatus` getter, a `Stream<ConnectionStatus>` of connection-state transitions, and an asynchronous `dispose()` for graceful teardown.
+
+B. `ConnectionStatus` SHALL be a sealed type with exactly three variants: `Connected`, `Reconnecting`, and `Disconnected`.
+
+C. The library SHALL ship a `LocalScope` implementation that composes the four `Local*` interface impls and reports `ConnectionStatus.Connected` for the lifetime of the scope. In-process composition has no transport to lose; the trivial always-`Connected` report keeps consumer code source-identical without nil-checking the in-process case.
+
+D. The library SHALL ship a `RemoteScope` implementation that composes the four `Remote*` interface impls over a shared `RemoteConnection` and drives `ConnectionStatus` transitions from the underlying WS lifecycle: `Connected` on initial WS open and on each successful reconnection; `Reconnecting` between WS drop and a successful re-open; `Disconnected` only after the auto-reconnect policy (`EVS-PRD-cross-process-event-transport`-H) gives up.
+
+E. Consumer code that depends only on the `ReactionScope` interface (and the four interfaces it exposes) SHALL be source-identical regardless of which scope implementation is composed at runtime.
+
+### Rationale
+
+**Why a shared scope interface at all?** Each of the four interface PRDs independently pins "source-identical Local vs Remote." But composition needs a unifying type so widget code can hold one reference and pass it down via an `InheritedWidget`. Without `ReactionScope`, widget code holds either a `LocalScope` concrete reference or a `RemoteScope` concrete reference — and the substrate-agnostic promise is structurally broken at the composition boundary even though every individual interface keeps its promise. The shared interface closes the gap.
+
+**Why `ConnectionStatus` on the scope rather than per Remote impl?** Connection state is a property of the shared transport (`RemoteConnection`), not of any one interface. `RemoteAuthSession`, `RemoteActionSubmitter`, `RemoteViewSource`, and `RemotePermissionSource` all share one WS; exposing the status once on the scope avoids per-impl duplication and keeps the observable signal authoritative. `LocalScope`'s trivial always-`Connected` report makes consumer code (especially the widget layer's `ViewBuilder`) source-identical: it can always observe a non-null `connectionStatus` without conditional logic for the in-process case.
+
+**Why three variants (not two)?** `Reconnecting` is operationally distinct from `Disconnected`: the appropriate UX response is "show a reconnecting banner, keep last-known data visible" rather than "show a hard error and prompt for user action." `Disconnected` (after the retry policy gives up) is the actionable error. A two-state online/offline model loses the "we're still trying" affordance, which is the whole point of the auto-reconnect machinery.
+
+**Why drive transitions from the WS lifecycle rather than HTTP?** The HTTP client makes one request at a time; its "is the network up" answer coincides with each request's success/failure and is therefore discontinuous. The WS is a long-lived channel whose liveness is observable directly via close-frames and reopen events. Tying `ConnectionStatus` to WS lifecycle gives a continuous, accurate signal; tying it to HTTP would require synthetic ping requests, which add traffic and add an inference layer that can disagree with WS reality.
+
+*End* *Reaction Scope* | **Hash**: (regenerate)
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
-**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-view-subscriber
+**Refines**: EVS-PRD-reaction-scope, EVS-PRD-auth-session, EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-source
 
 > **Implementation status:** Designed; `reaction_widgets` package not yet implemented (Plan D). The assertions below are normative — they are the contract the future package MUST satisfy when built. Audit tooling SHOULD treat coverage gaps here as "package not yet built", not as drift between spec and shipped code.
 
 ### Purpose
 
-Flutter widget code consuming `reaction`'s four interfaces SHALL be substrate-agnostic; the same widget composition SHALL work whether bound to Local or Remote implementations. The library provides Builder primitives for full control plus pre-built sugar widgets for the common case, an `InheritedWidget` to thread the four interfaces down the tree, and an imperative side-effect widget for "react to a view change without rebuilding" patterns.
+Flutter widget code consuming `reaction`'s `ReactionScope` SHALL be substrate-agnostic: the same widget composition SHALL work whether bound to a `LocalScope` or `RemoteScope`. The library is **headless** — it ships Builder primitives, imperative listeners, the scope-threading `InheritedWidget`, a permission gate, an error sink, and widget-test doubles, and **nothing else**. The library ships NO rendered or styled widgets (no buttons, no list widgets, no theming, no modality-aware affordances); each downstream consumer renders its own sugar on top of the builders. This split exists because the two near-term consumers (the hht_diary mobile app and the Flutter-web portal UI) run in genuinely different modalities — and any shared styled widget would encode the wrong assumption for one of them by construction.
 
 ### Assertions
 
-A. The widget library SHALL provide an `InheritedWidget` (`ReActionScope`) that threads the four library interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`) down the widget tree, accessible via `ReActionScope.of(context)`.
+A. The widget library SHALL provide an `InheritedWidget` (`ReActionScope`) that threads a `ReactionScope` instance — and therefore all four library interfaces (`AuthSession`, `ActionSubmitter`, `ViewSource`, `PermissionSource`) plus the authoritative `ConnectionStatus` — down the widget tree, accessible via `ReActionScope.of(context)`.
 
-B. Widget code consuming `ReActionScope.of(context)` SHALL be source-identical when the scope is composed from Local versus Remote implementations of the four interfaces.
+B. Widget code consuming `ReActionScope.of(context)` SHALL be source-identical when the scope is composed as a `LocalScope` versus a `RemoteScope`.
 
-C. The widget library SHALL provide Builder primitives for action submission (`ActionBuilder`) and view subscription (`ViewBuilder`), each exposing the operation's state to the caller-supplied builder for rendering.
+C. The widget library SHALL provide headless Builder primitives for action submission (`ActionBuilder`) and view subscription (`ViewBuilder`) that delegate rendering entirely to a caller-supplied builder function; the primitives themselves SHALL NOT render any visual content.
 
 D. The widget library SHALL provide an imperative side-effect widget (`ViewListener`) that fires a callback on view-state transitions without rebuilding the widget tree.
 
 E. Action-submission widgets SHALL generate a UUID v4 idempotency key at first submission attempt, retain that key for the in-flight submission so retries during `Submitting` reuse it, and generate a fresh key only after the submission reaches a terminal state (Success, Denied, or Failed). Consumers SHALL be able to override the generated key by supplying an explicit `idempotencyKey` on the submission factory.
 
-F. The widget library SHALL be source-organized so that no widget references the substrate's storage backend, dispatcher, or projection registry directly; all substrate access SHALL flow through `reaction`'s four interfaces.
+F. The widget library SHALL be source-organized so that no widget references the substrate's storage backend, dispatcher, or projection registry directly; all substrate access SHALL flow through `reaction`'s `ReactionScope` and the four interfaces it exposes.
+
+G. The widget library SHALL ship NO rendered or styled widgets. The library SHALL provide ONLY: (i) a scope-threading `InheritedWidget` (`ReActionScope`), (ii) headless Builder primitives that delegate rendering to a caller-supplied builder (`ActionBuilder`, `ViewBuilder`), (iii) imperative side-effect widgets that fire callbacks without rendering content (`ViewListener`, `ReActionErrorListener`), and (iv) a `PermissionGate` that gates display of a caller-supplied child or builder on the active `Principal`'s `EffectiveAuthorization` without rendering any styled UI of its own. Rendered sugar — buttons, lists, theming, modality-aware affordances — SHALL live in downstream consumer applications.
+
+H. The widget library SHALL ship widget-test doubles as a first-class deliverable: a `FakeReaction` (and equivalent `FakeReactionScope` or `ReActionScope.test(...)` constructor) implementing the `ReactionScope` contract for unit/widget tests, plus a pump helper that mounts a widget under test against the fakes. The doubles SHALL allow tests to drive — deterministically and without timing — `AuthStatus` transitions, `ActionSubmitter.submit` results (including each `DispatchResult` variant), view-row updates (`Snapshot` / `Delta` / `Tombstone` / `EndOfReplay`), permission-snapshot changes, and `ConnectionStatus` transitions.
+
+I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>` with exactly three variants: `Loading` (pre-`EndOfReplay`, no rows yet), `Ready(List<T> rows)` (post-`EndOfReplay`, live), and `Disconnected(List<T> lastRows, Object error)` (transport disconnected, last-known rows retained for UX continuity). The transition to `Disconnected` SHALL be driven by the composed `ReactionScope`'s `ConnectionStatus` — NOT by inference from subscription-stream liveness.
+
+J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes partial row sets to the builder during snapshot replay, allowing large-view first-paint without blocking on the full snapshot. The default mode SHALL surface `Loading` until `EndOfReplay`, then transition to `Ready` with the full snapshot.
 
 ### Rationale
 
-**Why a two-tier API (Builder primitive + sugar widget) instead of one or the other?** Builder-only is verbose for the 80% common case (every action button becomes a 5-line `switch (state)` block). Sugar-only is opinionated and cannot accommodate non-standard UX (a multi-stage progress, a custom denied-message animation, a contextual confirmation dialog). The two-tier approach mirrors Flutter's own pattern: `StreamBuilder`/`FutureBuilder` are primitives, `ListView` and `GridView` are sugar built on top. Consumers who need control go to the primitive; consumers who don't, don't.
+**Why headless — no rendered or styled widgets in the base (G)?** The two near-term consumers (hht_diary mobile and the Flutter-web portal UI) are very different modalities: a mobile submit button (large tap target, "queued offline" posture, haptic feedback) is wrong for the web portal (refuses offline, desktop affordances, hover states), and vice versa. A shared styled widget would inevitably encode the wrong assumption for one of them, forcing each consumer to fight overrides. The base layer therefore stops at the **headless plumbing** that is identical across modalities — state machines, lifecycle management, scope threading, test doubles — and leaves rendering to per-app sugar. The earlier "two-tier within one package" framing (Builder primitives + sugar widgets like `ActionButton`/`ViewListView` in the same library) is superseded: the two tiers still exist, but they live in different packages with the package boundary running along the modality split. Base provides primitives; each app provides its own sugar.
 
 **Why `ViewListener` is a separate widget rather than a flag on `ViewBuilder` (D)?** Imperative side effects (showing a modal on state transition) are a different shape from reactive rebuilds. Trying to wedge them into a builder requires either side effects in `build()` (which Flutter explicitly forbids) or a callback parameter that fires from inside `setState` (which violates the principle that `build()` should be pure). A separate widget that uses `didChangeDependencies` / `addListener` cleanly lets consumers attach side effects without polluting the rebuild path. This mirrors `BlocListener`/`ProviderListener` in popular state-management libraries — a well-known pattern.
 
@@ -283,9 +348,15 @@ F. The widget library SHALL be source-organized so that no widget references the
 
 **Why "no direct substrate access from widgets" (F)?** Without this, a widget could reach past `reaction`'s interfaces into `EventStore` or `ActionDispatcher` directly. That would break substrate-agnosticism (the widget would no longer work over the Remote transport) and violate the layered architecture. A structural scan test verifies the assertion.
 
-**Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Forcing a state-mgmt choice (Riverpod, BLoC, Provider) excludes consumers who use the others; the existing portal-ui already uses Provider. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca; the optional `reaction_widgets_provider` adapter package bridges to Provider's `context.watch<...>()` ergonomics for the existing portal-ui. Riverpod or BLoC adapters can ship in the same way if/when consumer demand exists.
+**Why ship test doubles as a first-class, asserted deliverable (H)?** Test doubles for the four interfaces and `ReactionScope` are exactly the kind of "every consumer would otherwise reinvent" plumbing that justifies the headless base's existence. Half the layer's value proposition is correctness; the other half is testability. Without shipped fakes, every downstream app writes them, drifts from each other, and discovers `pumpWidget` ergonomics independently. With shipped fakes, downstream widget tests are turnkey and consistent. Treating doubles as a normative deliverable (rather than an internal test-fixture) makes this guarantee explicit and audit-checkable.
 
-*End* *Reaction Widget Contract* | **Hash**: d21c8301
+**Why `ViewState` with `Disconnected` retaining last-known rows (I)?** When the transport drops, the right UX answer is "show stale data with a reconnecting banner," not "blank the screen." Retaining `lastRows` on the `Disconnected` variant lets apps render that affordance trivially. Driving the transition from the `ReactionScope`'s authoritative `ConnectionStatus` — rather than inferring "the stream stopped" — keeps the widget contract aligned with the transport contract and avoids whack-a-mole edge cases (e.g., is a long-idle stream "disconnected" or "just quiet"?). Earlier drafts considered inferring connection state at the widget layer by observing subscription-stream liveness; that was a workaround for a missing `reaction` surface. The proper fix was to add `ConnectionStatus` to `ReactionScope` (`EVS-PRD-reaction-scope`); the widget then consumes an authoritative signal.
+
+**Why progressive rendering as opt-in, default `Loading`-until-`EndOfReplay` (J)?** The default deterministic behavior matches the substrate's snapshot-then-deltas guarantee semantically: until `EndOfReplay`, the snapshot is incomplete. For most views this is the right default — render once with everything. For very large views (where snapshot delivery takes seconds), opt-in `progressive: true` lets the list paint as rows arrive. Making it opt-in keeps small-view callers from accidentally rendering against partial state, and keeps the contract additive-compatible with future cursor-based snapshot delivery (per `EVS-PRD-view-subscriber`-E): a future `SnapshotBatch` variant simply becomes another source of partial rows under `progressive` mode.
+
+**Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Forcing a state-mgmt choice (Riverpod, BLoC, Provider) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca; an optional `reaction_widgets_provider` adapter can ship later if/when consumer demand makes it worth packaging (current expectation: deferred — the portal-ui can wrap raw streams or write its own thin adapter as needed). Riverpod or BLoC adapters can ship the same way.
+
+*End* *Reaction Widget Contract* | **Hash**: (regenerate)
 
 ## Decisions and alternatives rejected
 
@@ -307,25 +378,35 @@ These shaped the design but live nowhere in the assertions above; they are recor
 
 **Why not use `dedupeByContent` for action-widget idempotency?** Different layer, different problem. `dedupeByContent` is a payload-equality optimization at event-append time; action idempotency is a request-correlation contract at dispatch entry. The substrate's existing `IdempotencyPolicy` per-action with `IdempotencyStore` keyed on `(principalId, idempotencyKey)` is exactly the right tool for the widget case.
 
+**Why not ship sugar widgets (`ActionButton`, `ViewListView`) inside `reaction_widgets`?** An earlier two-tier-within-one-package design intended exactly this. The two near-term consumers (hht_diary mobile and Flutter-web portal UI) run in genuinely different modalities; a mobile-shaped `ActionButton` (large tap target, "queued offline" posture) is wrong for a desktop-web portal (refuses offline, hover affordances), and vice versa. Shipping any shared styled widget in the base would encode the wrong assumption for one of the consumers by construction, forcing each to fight overrides. The two-tier idea survives but the boundary moves: base provides headless primitives; each app provides its own sugar matching its modality. See `EVS-PRD-reaction-widget-contract`-G rationale.
+
+**Why not infer connection state at the widget layer from subscription-stream liveness?** Considered as a way to avoid changing `reaction`. Rejected: it is a workaround that locks the widget contract to whatever the Remote impl happens to do today (e.g., does the stream close on WS drop, or buffer silently?). The proper fix was to add an authoritative `ConnectionStatus` surface to `ReactionScope` (`EVS-PRD-reaction-scope`). Greenfield principle: define the library properly, do not paper over a missing surface in a layer above.
+
+**Why not build cursor/batched snapshot delivery into the wire now?** The whole repo is in-scope for this work, so it would be possible. But there is no consumer with measured large-view scale, and the substrate's snapshot-then-deltas semantics serve the expected scale. Building cursor pagination now would be speculative complexity. The right move is to **define the contract to be additive-ready** (`EVS-PRD-view-subscriber`-E) so cursor delivery can ship later as a non-breaking enhancement, plus give the widget layer an opt-in `progressive` mode (`EVS-PRD-reaction-widget-contract`-J) for the rendering half of the problem. This is YAGNI with a non-breaking future, not a workaround.
+
 ## Open questions
 
 These are tracked here for resolution during implementation; resolution should land as new assertions or as Rationale updates to the affected PRDs.
 
-1. **Snapshot pagination / size limits.** Position D ships the entire view as `Snapshot<T>` × N. For very large views (e.g., 10,000 patient rows), this is one big stream burst on subscribe. Probably fine for hht_diary's expected scale; document "if a view exceeds N rows, snapshot delivery is split into batches" as a future optimization with concrete N when measurement demands it.
-2. **Server-side per-subscription authorization details.** `EVS-PRD-cross-process-event-transport`-E pins the obligation; the implementation specifics (does the server compose additional filter clauses, restrict the aggregates set, or short-circuit the subscription with a wire-level denial?) are deferred to implementation.
-3. **Reconnect strategy details.** WebSocket drops happen. v1 baseline: refetch the snapshot + re-tail (re-subscribe; substrate's existing snapshot-then-deltas semantics carry over). v1.1 optimization: resume from last applied sequence (server retains events; cheap if recent).
-4. **Custom-route registration ergonomics.** `reaction`'s shelf server lets consumers register additional routes (login, linking-code onboarding) outside the standard `reaction` flow; those routes bypass auth-validator middleware. The exact API for this — `server.addCustomRoute(...)` vs exposing the `Router` for direct mutation — is an implementation detail.
-5. **`JwtAuthValidator` reference implementation.** Whether to ship a JWT validator alongside `TrustingAuthValidator` is deferred; pluggable seam exists from day one regardless.
+1. **Server-side per-subscription authorization details.** `EVS-PRD-cross-process-event-transport`-E pins the obligation; the implementation specifics (does the server compose additional filter clauses, restrict the aggregates set, or short-circuit the subscription with a wire-level denial?) are deferred to implementation.
+2. **Custom-route registration ergonomics.** `reaction`'s shelf server lets consumers register additional routes (login, linking-code onboarding) outside the standard `reaction` flow; those routes bypass auth-validator middleware. The exact API for this — `server.addCustomRoute(...)` vs exposing the `Router` for direct mutation — is an implementation detail.
+3. **`JwtAuthValidator` reference implementation.** Whether to ship a JWT validator alongside `TrustingAuthValidator` is deferred; pluggable seam exists from day one regardless.
+
+*Previously open (now resolved):*
+
+- *Snapshot pagination / size limits* — resolved by `EVS-PRD-view-subscriber`-E (additive contract) plus `EVS-PRD-reaction-widget-contract`-J (opt-in `progressive` rendering). Cursor delivery itself is deferred-but-additive (see Future work).
+- *Reconnect strategy details* — resolved by `EVS-PRD-cross-process-event-transport`-H (auto-reconnect with exponential backoff, full re-subscribe on recovery) and `EVS-PRD-reaction-scope`-D (authoritative `ConnectionStatus` transitions). The v1.1 "resume from last applied sequence" optimization is still future work but no longer an open design question.
 
 ## Future work
 
 These are explicitly out of scope for v1 but anticipated as natural extensions:
 
-- **`EventLogView`** — prettified `Stream<Update<StoredEvent>>` consumer with filter chips (entryType, eventType, principal, time range) and a tap-to-drawer detail panel. Substrate-shaped sugar; useful in any event-sourced app for audit, debugging, ops dashboards.
-- **`TraceView`** — given a root event, walks correlation IDs (`action_invocation_id`, `flowToken`) and renders the related-event tree/timeline. The substrate already records both correlation fields on every event.
-- **`reaction_widgets_riverpod` adapter** — analog of `reaction_widgets_provider` for Riverpod consumers. Defer until demand.
-- **Connection-state observability** on `Remote*` impls (`Stream<ConnectionState>`) — for "Reconnecting…" UX. Defer to v1.1.
-- **View pagination / cursor-based row delivery** — defer until large-view scale demands it.
+- **`EventLogView`** — prettified `Stream<Update<StoredEvent>>` consumer with filter chips (entryType, eventType, principal, time range) and a tap-to-drawer detail panel. Substrate-shaped sugar; useful in any event-sourced app for audit, debugging, ops dashboards. Lives in downstream consumer apps (not in headless base, per `EVS-PRD-reaction-widget-contract`-G).
+- **`TraceView`** — given a root event, walks correlation IDs (`action_invocation_id`, `flowToken`) and renders the related-event tree/timeline. The substrate already records both correlation fields on every event. Lives in downstream consumer apps.
+- **`reaction_widgets_provider` adapter** — `context.watch<...>()` ergonomics for Provider-based consumers (e.g., the existing portal-ui's Provider 6.x patterns). Deferred until the portal-ui migration concretely demands it; the headless base's raw streams are usable directly in the meantime.
+- **`reaction_widgets_riverpod` adapter** — analog of `_provider` for Riverpod consumers. Defer until demand.
+- **Cursor / batched snapshot wire delivery** — per `EVS-PRD-view-subscriber`-E the wire contract is **additive-ready**; cursor delivery can ship later as a non-breaking enhancement. Defer until measured large-view scale demands it.
+- **Resume-from-sequence on reconnect** — current auto-reconnect (`EVS-PRD-cross-process-event-transport`-H) re-subscribes from scratch with a fresh `Snapshot × N → EndOfReplay → live`. A v1.1 optimization would resume from the last applied sequence (server retains events; cheap if recent). Pure-additive — does not change `ConnectionStatus` semantics or `Update<T>` variants.
 
 ## Migration story (hht_diary portal)
 
@@ -337,7 +418,7 @@ These are explicitly out of scope for v1 but anticipated as natural extensions:
 | **ActionSubmitter** | 20–30 bespoke REST POST handlers, ad-hoc shapes | Codify `ActionSubmission` ontology + uniform `DispatchResult` + `ActionDispatcher` on the server | Substantial one-time codification cost |
 | **ViewSource** | Imperative REST GETs in `initState` + `setState`; no real-time | Reactive `Stream<Update<T>>` with snapshot+tail; rebuild pages around `ViewBuilder` | Category change — the largest net-new value |
 | **PermissionSource** | Inline role + site checks in handlers; hardcoded ontology | `RolePermissionGrants` projection + per-Principal snapshot via `RemotePermissionSource` | Lightweight wrapper over existing logic |
-| **State mgmt** | Provider 6.x + ChangeNotifier + setState | Agnostic Streams + `InheritedWidget` (`ReActionScope`); `_provider` adapter for existing patterns | Maps cleanly via the adapter package |
+| **State mgmt** | Provider 6.x + ChangeNotifier + setState | Agnostic Streams + `InheritedWidget` (`ReActionScope`); raw streams usable directly, `_provider` adapter only if/when packaging it pays for itself | Maps cleanly; adapter packaging is deferred |
 | **Wire** | REST only, no WebSocket | REST POST + WS multiplex | Medium refactor; shelf supports WS upgrade |
 
 The migration unlocks substrate-shaped opportunities the existing portal expresses informally: patient lifecycle state machines (`linkable → linking_in_progress → connected → disconnected`), linking code lifecycle, questionnaire instance lifecycle, immutable audit trail — all become first-class events with declarative `ProjectionSpec`s for the views the UI consumes.

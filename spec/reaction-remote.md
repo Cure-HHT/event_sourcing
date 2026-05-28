@@ -426,10 +426,12 @@ sufficient to drive it. Non-breaking add.
 
 ### `RemoteScope` (composition class)
 
-The production-side analog to the existing `ReactionTestHarness` (the
-in-process composition bundle for Local*). Constructed once per
-user-session at app boot; returns the four interface instances plus
-a `dispose()` for graceful teardown.
+The production-side `ReactionScope` implementation for cross-process
+clients. Composes the four `Remote*` interface impls over a shared
+`RemoteConnection`, surfaces an authoritative `ConnectionStatus`
+stream driven by WS lifecycle events, and owns graceful teardown.
+Constructed once per user-session at app boot. Implements the
+`ReactionScope` interface defined by `EVS-PRD-reaction-scope`.
 
 ```dart
 final scope = RemoteScope(
@@ -446,6 +448,10 @@ final ActionSubmitter  submit = scope.actionSubmitter;
 final ViewSource       views  = scope.viewSource;
 final PermissionSource perms  = scope.permissionSource;
 
+// Authoritative transport state (per EVS-PRD-reaction-scope-D):
+final ConnectionStatus           now    = scope.connectionStatus;
+final Stream<ConnectionStatus>   status = scope.connectionStatusStream;
+
 await scope.dispose();  // on app shutdown
 ```
 
@@ -457,6 +463,26 @@ https://... -> wss://...
 ```
 
 with `/subscriptions` appended.
+
+`ConnectionStatus` transitions are driven directly by the underlying
+`RemoteConnection`'s WS lifecycle (not synthesized; not polled):
+
+| Trigger                                                | Status         |
+| ------------------------------------------------------ | -------------- |
+| Initial state (before first WS activation)             | `Disconnected` |
+| First WS open succeeds                                 | `Connected`    |
+| WS close (codes other than 4001 / 4003)                | `Reconnecting` |
+| Reconnect attempt succeeds + auth + re-subscribe sent  | `Connected`    |
+| Reconnect-backoff policy exhausted                     | `Disconnected` |
+
+Close-frames `4001 auth_rejected` and `4003 permissions_changed` route
+to `AuthSession`/permission-refresh respectively per the existing
+behavior; they do NOT drive `ConnectionStatus` to `Reconnecting`.
+
+`LocalScope` (the in-process sibling that composes the `Local*`
+impls) reports `ConnectionStatus.Connected` for its entire lifetime.
+This keeps widget code consuming `ConnectionStatus` source-identical
+across Local and Remote.
 
 ### `RemoteConnection` (internal, package-private)
 
