@@ -79,6 +79,7 @@ class LocalScope implements ReactionScope {
 
   @override
   Stream<ConnectionStatus> get connectionStatusStream {
+    _checkDisposed();
     // Broadcast empty stream — no transitions ever occur.
     return const Stream<ConnectionStatus>.empty().asBroadcastStream();
   }

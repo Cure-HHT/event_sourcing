@@ -2,12 +2,9 @@
 //
 // Cross-impl contract test: runs the same assertions against both
 // LocalScope and RemoteScope to enforce source-identical behavior per
-// EVS-PRD-reaction-scope-E. The set of assertions here is intentionally
-// the intersection of behaviours both impls must satisfy — known
-// asymmetries (e.g. LocalScope.connectionStatusStream does NOT throw
-// post-dispose while RemoteScope's does) are deliberately NOT asserted
-// so the same test passes against both impls. Per-impl behaviours live
-// in `local_scope_test.dart` / the remote suite.
+// EVS-PRD-reaction-scope-E. The set of assertions here is the
+// intersection of behaviours both impls must satisfy. Per-impl
+// behaviours live in `local_scope_test.dart` / the remote suite.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -75,6 +72,7 @@ void main() {
           expect(() => scope.viewSource, throwsStateError);
           expect(() => scope.permissionSource, throwsStateError);
           expect(() => scope.connectionStatus, throwsStateError);
+          expect(() => scope.connectionStatusStream, throwsStateError);
         });
       });
     }

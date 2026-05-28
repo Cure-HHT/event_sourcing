@@ -80,6 +80,7 @@ void main() {
       expect(() => scope.viewSource, throwsStateError);
       expect(() => scope.permissionSource, throwsStateError);
       expect(() => scope.connectionStatus, throwsStateError);
+      expect(() => scope.connectionStatusStream, throwsStateError);
     });
   });
 }
