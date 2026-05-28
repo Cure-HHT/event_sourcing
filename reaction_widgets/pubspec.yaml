@@ -15,11 +15,23 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # flutter_test is in main dependencies (not dev_dependencies) because
+  # FakeReaction + pumpReactionWidget are SHIPPED test doubles per
+  # EVS-PRD-reaction-widget-contract/H. They live in lib/src/testing/
+  # and import WidgetTester / pumpEventQueue from flutter_test, so they
+  # need flutter_test resolvable from consumer test code without each
+  # consumer redeclaring it.
+  flutter_test:
+    sdk: flutter
   reaction:
     path: ../reaction
+  # event_sourcing is a transitive dep through reaction, but lib code
+  # here imports its types directly (Update, ActionSubmission,
+  # EffectiveAuthorization, Principal, etc.), so it must be declared
+  # explicitly per depend_on_referenced_packages.
+  event_sourcing:
+    path: ../event_sourcing
   meta: ^1.16.0
 
 dev_dependencies:
-  flutter_test:
-    sdk: flutter
   flutter_lints: ^6.0.0

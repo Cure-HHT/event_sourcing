@@ -2,4 +2,8 @@
 /// package. See `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
 library;
 
-// Exports added as widgets land in subsequent tasks.
+// Scope
+export 'src/scope/reaction_scope_widget.dart' show ReActionScope;
+
+// Testing
+export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;
