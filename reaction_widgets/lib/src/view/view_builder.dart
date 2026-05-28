@@ -4,16 +4,12 @@ import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
-// Hide ConnectionStatus.Disconnected so the bare `Disconnected` identifier
-// in this file unambiguously refers to ViewState.Disconnected. The
-// transport-side Disconnected is referenced via the [conn] prefix.
-import 'package:reaction/reaction.dart' hide Disconnected;
-import 'package:reaction/reaction.dart' as conn show Disconnected;
+import 'package:reaction/reaction.dart';
 import 'package:reaction_widgets/src/scope/reaction_scope_widget.dart';
 import 'package:reaction_widgets/src/view/view_state.dart';
 
 /// Builder function for [ViewBuilder]. Receives the current
-/// [ViewState] (Loading / Ready / Disconnected).
+/// [ViewState] (Loading / Ready / Stale).
 typedef ViewBuilderFn<T> =
     Widget Function(BuildContext context, ViewState<T> state);
 
@@ -33,13 +29,12 @@ typedef ViewBuilderFn<T> =
 /// - `progressive: true`: re-emit [Ready] after every accumulated
 ///   row during snapshot replay, allowing large-view first-paint
 ///   without blocking on the full snapshot.
-/// - On a [ConnectionStatus] change to [Reconnecting] or
-///   `ConnectionStatus.Disconnected`, surface [Disconnected] retaining
-///   the last [Ready.rows] as `lastRows`. On reconnect ([Connected])
-///   after a [Disconnected] state, reset rows and re-enter [Loading]
-///   until the fresh snapshot completes — the substrate's auto-reconnect
-///   re-issues every active subscribe with a fresh
-///   `Snapshot × N → EndOfReplay → live` per
+/// - On a [ConnectionStatus] change to [Reconnecting] or [Disconnected],
+///   surface [Stale] retaining the last [Ready.rows] as `lastRows`. On
+///   reconnect ([Connected]) after a [Stale] state, reset rows and
+///   re-enter [Loading] until the fresh snapshot completes — the
+///   substrate's auto-reconnect re-issues every active subscribe with
+///   a fresh `Snapshot × N → EndOfReplay → live` per
 ///   `EVS-PRD-cross-process-event-transport`-H.
 ///
 /// Renders nothing of its own (headless, per
@@ -77,7 +72,17 @@ class ViewBuilder<T> extends StatefulWidget {
 
   /// Extracts the aggregate id from a mapped row. Required because the
   /// substrate's [Snapshot]/[Delta] variants do not carry the aggregate
-  /// id directly. See class doc.
+  /// id as a separate field on the wire envelope — they carry only the
+  /// typed value [T].
+  ///
+  /// Per the substrate's deliberate Layer-2 convention (see
+  /// `reaction/lib/src/wire/update_codec.dart` and
+  /// `event_sourcing/lib/src/projections/interpreter/aggregate_fold.dart`),
+  /// the aggregate id is stamped into the raw view-row map under the
+  /// `'aggregateId'` key before the consumer's [mapper] is invoked.
+  /// Consumers therefore know how to extract it from their row type [T]
+  /// — typically `(row) => row.aggregateId` for class-typed views, or
+  /// `(row) => row['aggregateId'] as String` for `Map`-typed views.
   final String Function(T) aggregateIdOf;
 
   /// Caller-supplied renderer. Receives the current [ViewState].
@@ -133,15 +138,13 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
         if (value != null) {
           _rows[widget.aggregateIdOf(value)] = value;
         }
-        if (widget.progressive && !_replayDone) {
-          _emitReady();
-        }
+        if (_replayDone || widget.progressive) _emitReady();
       case Delta<T>(:final value):
         _rows[widget.aggregateIdOf(value)] = value;
-        if (_replayDone) _emitReady();
+        if (_replayDone || widget.progressive) _emitReady();
       case Tombstone<T>(:final aggregateId):
         _rows.remove(aggregateId);
-        if (_replayDone) _emitReady();
+        if (_replayDone || widget.progressive) _emitReady();
       case EndOfReplay<T>():
         _replayDone = true;
         _emitReady();
@@ -155,22 +158,22 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
   void _onStatus(ConnectionStatus s) {
     switch (s) {
       case Connected():
-        // On reconnect after Disconnected, a fresh snapshot+tail will
-        // replay (per EVS-PRD-cross-process-event-transport-H); reset
-        // rows and re-enter Loading until EndOfReplay arrives.
-        if (_state is Disconnected<T>) {
+        // On reconnect after Stale, a fresh snapshot+tail will replay
+        // (per EVS-PRD-cross-process-event-transport-H); reset rows and
+        // re-enter Loading until EndOfReplay arrives.
+        if (_state is Stale<T>) {
           _rows.clear();
           _replayDone = false;
           _setState(Loading<T>());
         }
       case Reconnecting():
-      case conn.Disconnected():
+      case Disconnected():
         // Retain the last-known row set so the builder can render a
         // "stale data + reconnecting banner" affordance rather than
         // blanking. Per EVS-PRD-reaction-widget-contract-I, this
         // transition is driven by ConnectionStatus, not by inference
         // from stream liveness.
-        _setState(Disconnected<T>(List<T>.unmodifiable(_rows.values), s));
+        _setState(Stale<T>(List<T>.unmodifiable(_rows.values), s));
     }
   }
 

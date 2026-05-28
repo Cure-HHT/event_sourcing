@@ -3,13 +3,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-// Hide ViewState.Disconnected so the bare `Disconnected` identifier in
-// this file refers to the transport-side ConnectionStatus variant. The
-// rendering-state Disconnected from reaction_widgets is referenced via
-// the [vs] prefix.
 import 'package:reaction/reaction.dart';
-import 'package:reaction_widgets/reaction_widgets.dart' as vs show Disconnected;
-import 'package:reaction_widgets/reaction_widgets.dart' hide Disconnected;
+import 'package:reaction_widgets/reaction_widgets.dart';
 
 typedef _Row = Map<String, Object?>;
 
@@ -163,7 +158,7 @@ void main() {
       expect(_aggregateIdOf(ready.rows.single), 'b');
     });
 
-    testWidgets('ConnectionStatus.Reconnecting -> Disconnected retains rows', (
+    testWidgets('ConnectionStatus.Reconnecting -> Stale retains rows', (
       tester,
     ) async {
       final fake = FakeReaction();
@@ -184,14 +179,14 @@ void main() {
       fake.driveConnectionStatus(const Reconnecting());
       await _settleStream(tester);
 
-      expect(transitions.last, isA<vs.Disconnected<_Row>>());
-      final dc = transitions.last as vs.Disconnected<_Row>;
+      expect(transitions.last, isA<Stale<_Row>>());
+      final dc = transitions.last as Stale<_Row>;
       expect(dc.lastRows, hasLength(1));
       expect(_aggregateIdOf(dc.lastRows.single), 'a');
       expect(dc.error, isA<Reconnecting>());
     });
 
-    testWidgets('Connected after Disconnected re-enters Loading then Ready', (
+    testWidgets('Connected after Stale re-enters Loading then Ready', (
       tester,
     ) async {
       final fake = FakeReaction();
@@ -211,7 +206,7 @@ void main() {
 
       fake.driveConnectionStatus(const Reconnecting());
       await _settleStream(tester);
-      expect(transitions.last, isA<vs.Disconnected<_Row>>());
+      expect(transitions.last, isA<Stale<_Row>>());
 
       fake.driveConnectionStatus(const Connected());
       await _settleStream(tester);
@@ -317,5 +312,63 @@ void main() {
       expect(transitions.last, isA<Ready<_Row>>());
       expect((transitions.last as Ready<_Row>).rows, hasLength(2));
     });
+
+    testWidgets(
+      'progressive mode emits Ready on Delta during snapshot replay',
+      (tester) async {
+        final fake = FakeReaction();
+        final transitions = await _pumpRecording(
+          tester,
+          fake: fake,
+          viewName: 'v',
+          progressive: true,
+        );
+
+        // Snapshot installs row 'a'.
+        fake.emitViewUpdate<_Row>(
+          'v',
+          Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
+        );
+        await _settleStream(tester);
+        expect(transitions.last, isA<Ready<_Row>>());
+        expect((transitions.last as Ready<_Row>).rows.single['title'], 'A');
+
+        // Delta during pre-EndOfReplay: progressive mode MUST surface
+        // the updated row immediately, not buffer until EndOfReplay
+        // (parity with Snapshot behaviour under progressive=true).
+        fake.emitViewUpdate<_Row>(
+          'v',
+          Delta<_Row>(
+            value: _row('a', title: 'A-updated'),
+            sequence: 2,
+            cause: 'evt',
+          ),
+        );
+        await _settleStream(tester);
+        expect(transitions.last, isA<Ready<_Row>>());
+        expect(
+          (transitions.last as Ready<_Row>).rows.single['title'],
+          'A-updated',
+          reason:
+              'Progressive mode MUST emit Ready on Delta during replay '
+              '(EVS-PRD-reaction-widget-contract/J).',
+        );
+
+        // Tombstone during pre-EndOfReplay: same parity expectation.
+        fake.emitViewUpdate<_Row>(
+          'v',
+          const Tombstone<_Row>(aggregateId: 'a', sequence: 3),
+        );
+        await _settleStream(tester);
+        expect(transitions.last, isA<Ready<_Row>>());
+        expect(
+          (transitions.last as Ready<_Row>).rows,
+          isEmpty,
+          reason:
+              'Progressive mode MUST emit Ready on Tombstone during replay '
+              '(EVS-PRD-reaction-widget-contract/J).',
+        );
+      },
+    );
   });
 }

@@ -56,7 +56,7 @@ event_sourcing-worktrees/CUR-1317-libify-event-sourcing/
       action/          ActionBuilder (Builder primitive only — no
                        rendered widgets)
       view/            ViewBuilder + ViewState<T> (Loading/Ready/
-                       Disconnected) + ViewListener
+                       Stale) + ViewListener
       permission/      PermissionGate (gates a child or builder on
                        EffectiveAuthorization; no styled UI)
       error/           ReActionErrorListener (auth/transport sink;
@@ -67,7 +67,7 @@ event_sourcing-worktrees/CUR-1317-libify-event-sourcing/
 
 Dependency direction is one-way: `reaction_widgets → reaction → event_sourcing`. The `reaction_widgets_provider` adapter package is deferred (see Future work).
 
-Position D (snapshot + tail) is the wire's semantic shape. The web client does not run a full `EventStore` and does not re-derive views from event history. On subscribe, the server runs `subscribe<T>(filter, AggregateMode(viewName, mapper, aggregates))` against its own `EventStore`; the substrate's atomic snapshot-then-deltas guarantee delivers `Snapshot<T>` × N → `EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞ on its `Stream<Update<T>>`; the server's WS handler serializes each `Update<T>` to JSON and ships it; the client's `RemoteViewSource` deserializes, applies the consumer's `mapper`, and emits the same `Stream<Update<T>>` to widget code. On WS drop the `RemoteScope` transitions `ConnectionStatus` to `Reconnecting`, auto-reconnects with exponential backoff, and on recovery re-issues every active subscribe — each replays its own fresh `Snapshot × N → EndOfReplay → live` per the same substrate semantics. The widget layer's `ViewBuilder` observes the authoritative `ConnectionStatus` and surfaces `Disconnected(lastRows)` rather than blanking.
+Position D (snapshot + tail) is the wire's semantic shape. The web client does not run a full `EventStore` and does not re-derive views from event history. On subscribe, the server runs `subscribe<T>(filter, AggregateMode(viewName, mapper, aggregates))` against its own `EventStore`; the substrate's atomic snapshot-then-deltas guarantee delivers `Snapshot<T>` × N → `EndOfReplay<T>` → live `Delta<T>` / `Tombstone<T>` × ∞ on its `Stream<Update<T>>`; the server's WS handler serializes each `Update<T>` to JSON and ships it; the client's `RemoteViewSource` deserializes, applies the consumer's `mapper`, and emits the same `Stream<Update<T>>` to widget code. On WS drop the `RemoteScope` transitions `ConnectionStatus` to `Reconnecting`, auto-reconnects with exponential backoff, and on recovery re-issues every active subscribe — each replays its own fresh `Snapshot × N → EndOfReplay → live` per the same substrate semantics. The widget layer's `ViewBuilder` observes the authoritative `ConnectionStatus` and surfaces `Stale(lastRows)` rather than blanking.
 
 Concurrency profile: `reaction`'s WS server-side load is portal UI users only — ~1 typical, ~20 maximum, intermittent. The 100s–1000s of mobile concurrency uses the substrate's existing `Destination`/`Ingest` sync — that is a different path, not `reaction`'s WS.
 
@@ -190,7 +190,7 @@ E. The `ViewSource.watch<T>` contract — its return type (`Stream<Update<T>>`),
 
 **Why pin pagination-readiness (E) without building pagination?** Pagination (cursor-based or batched snapshot delivery) is genuine YAGNI today — no consumer has a measured large-view problem, and the substrate's snapshot-then-deltas semantics serve the expected scale. But the library is greenfield; the right move is to define the contract such that adding pagination later is non-breaking, rather than ship a contract that locks consumers in and then has to migrate them. Concretely: `Snapshot<T>` already carries one row at a time, so a future "batched snapshot" can ship as either a new variant (e.g., `SnapshotBatch<T>`) that defaults-translates to a sequence of `Snapshot<T>` for consumers that don't observe it, or as a flag on `Snapshot<T>` (e.g., `lastInBatch`) that consumers may safely ignore. The `EndOfReplay` marker stays definitive. Pinning the additive-evolution promise as a normative assertion prevents future authors from shipping a breaking redesign in the name of "cleanup."
 
-*End* *View Subscriber* | **Hash**: b6801679
+*End* *View Subscriber* | **Hash**: bfaba693
 
 ## EVS-PRD-permission-source: Permission Source
 
@@ -270,12 +270,12 @@ I. The Remote-side transport SHALL surface its observable connection state via t
 
 **Why is `ConnectionStatus` defined on the scope (per `EVS-PRD-reaction-scope`) rather than per Remote impl (I)?** Connection state is a property of the shared transport (`RemoteConnection`), not of any one interface. All four Remote impls share the WS; the status belongs in one place. Exposing it on the scope also lets the `LocalScope` report `Connected` trivially, so widget code consuming `ConnectionStatus` is source-identical across Local and Remote (per the substrate-agnostic widget contract). Driving from observable WS events rather than synthetic pings keeps the signal cheap, accurate, and free of contention with normal traffic.
 
-*End* *Cross-Process Event Transport* | **Hash**: fbe2d2d4
+*End* *Cross-Process Event Transport* | **Hash**: a36d45f2
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
-**Refines**: EVS-PRD-library-charter, EVS-PRD-auth-session, EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-source, EVS-PRD-cross-process-event-transport
+**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-cross-process-event-transport, EVS-PRD-library-charter, EVS-PRD-permission-source, EVS-PRD-view-subscriber
 
 ### Purpose
 
@@ -303,12 +303,12 @@ E. Consumer code that depends only on the `ReactionScope` interface (and the fou
 
 **Why drive transitions from the WS lifecycle rather than HTTP?** The HTTP client makes one request at a time; its "is the network up" answer coincides with each request's success/failure and is therefore discontinuous. The WS is a long-lived channel whose liveness is observable directly via close-frames and reopen events. Tying `ConnectionStatus` to WS lifecycle gives a continuous, accurate signal; tying it to HTTP would require synthetic ping requests, which add traffic and add an inference layer that can disagree with WS reality.
 
-*End* *Reaction Scope* | **Hash**: (regenerate)
+*End* *Reaction Scope* | **Hash**: 3752964b
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
 **Level**: PRD | **Status**: Draft | **Implements**: -
-**Refines**: EVS-PRD-reaction-scope, EVS-PRD-auth-session, EVS-PRD-action-submitter, EVS-PRD-view-subscriber, EVS-PRD-permission-source
+**Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-reaction-scope, EVS-PRD-view-subscriber
 
 > **Implementation status:** Designed; `reaction_widgets` package not yet implemented. The assertions below are normative — they are the contract the future package MUST satisfy when built. Audit tooling SHOULD treat coverage gaps here as "package not yet built", not as drift between spec and shipped code.
 
@@ -334,7 +334,7 @@ G. The widget library SHALL ship NO rendered or styled widgets. The library SHAL
 
 H. The widget library SHALL ship widget-test doubles as a first-class deliverable: a `FakeReaction` (and equivalent `FakeReactionScope` or `ReActionScope.test(...)` constructor) implementing the `ReactionScope` contract for unit/widget tests, plus a pump helper that mounts a widget under test against the fakes. The doubles SHALL allow tests to drive — deterministically and without timing — `AuthStatus` transitions, `ActionSubmitter.submit` results (including each `DispatchResult` variant), view-row updates (`Snapshot` / `Delta` / `Tombstone` / `EndOfReplay`), permission-snapshot changes, and `ConnectionStatus` transitions.
 
-I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>` with exactly three variants: `Loading` (pre-`EndOfReplay`, no rows yet), `Ready(List<T> rows)` (post-`EndOfReplay`, live), and `Disconnected(List<T> lastRows, Object error)` (transport disconnected, last-known rows retained for UX continuity). The transition to `Disconnected` SHALL be driven by the composed `ReactionScope`'s `ConnectionStatus` — NOT by inference from subscription-stream liveness.
+I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>` with exactly three variants: `Loading` (pre-`EndOfReplay`, no rows yet), `Ready(List<T> rows)` (post-`EndOfReplay`, live), and `Stale(List<T> lastRows, Object error)` (transport disconnected, last-known rows retained for UX continuity). The transition to `Stale` SHALL be driven by the composed `ReactionScope`'s `ConnectionStatus` — NOT by inference from subscription-stream liveness.
 
 J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes partial row sets to the builder during snapshot replay, allowing large-view first-paint without blocking on the full snapshot. The default mode SHALL surface `Loading` until `EndOfReplay`, then transition to `Ready` with the full snapshot.
 
@@ -350,13 +350,13 @@ J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes part
 
 **Why ship test doubles as a first-class, asserted deliverable (H)?** Test doubles for the four interfaces and `ReactionScope` are exactly the kind of "every consumer would otherwise reinvent" plumbing that justifies the headless base's existence. Half the layer's value proposition is correctness; the other half is testability. Without shipped fakes, every downstream app writes them, drifts from each other, and discovers `pumpWidget` ergonomics independently. With shipped fakes, downstream widget tests are turnkey and consistent. Treating doubles as a normative deliverable (rather than an internal test-fixture) makes this guarantee explicit and audit-checkable.
 
-**Why `ViewState` with `Disconnected` retaining last-known rows (I)?** When the transport drops, the right UX answer is "show stale data with a reconnecting banner," not "blank the screen." Retaining `lastRows` on the `Disconnected` variant lets apps render that affordance trivially. Driving the transition from the `ReactionScope`'s authoritative `ConnectionStatus` — rather than inferring "the stream stopped" — keeps the widget contract aligned with the transport contract and avoids whack-a-mole edge cases (e.g., is a long-idle stream "disconnected" or "just quiet"?). Earlier drafts considered inferring connection state at the widget layer by observing subscription-stream liveness; that was a workaround for a missing `reaction` surface. The proper fix was to add `ConnectionStatus` to `ReactionScope` (`EVS-PRD-reaction-scope`); the widget then consumes an authoritative signal.
+**Why `ViewState` with `Stale` retaining last-known rows (I)?** When the transport drops, the right UX answer is "show stale data with a reconnecting banner," not "blank the screen." Retaining `lastRows` on the `Stale` variant lets apps render that affordance trivially. The variant is named `Stale` (rather than echoing the transport-layer term `Disconnected`) for two reasons: it names what the variant IS at the rendering layer (a stale-data surface), and it avoids a structural identifier collision with `ConnectionStatus.Disconnected` from `package:reaction` — any consumer that uses both `ViewBuilder` and a `ConnectionStatus`-aware widget would otherwise need a `hide`-clause workaround. Driving the transition from the `ReactionScope`'s authoritative `ConnectionStatus` — rather than inferring "the stream stopped" — keeps the widget contract aligned with the transport contract and avoids whack-a-mole edge cases (e.g., is a long-idle stream "disconnected" or "just quiet"?). Earlier drafts considered inferring connection state at the widget layer by observing subscription-stream liveness; that was a workaround for a missing `reaction` surface. The proper fix was to add `ConnectionStatus` to `ReactionScope` (`EVS-PRD-reaction-scope`); the widget then consumes an authoritative signal.
 
 **Why progressive rendering as opt-in, default `Loading`-until-`EndOfReplay` (J)?** The default deterministic behavior matches the substrate's snapshot-then-deltas guarantee semantically: until `EndOfReplay`, the snapshot is incomplete. For most views this is the right default — render once with everything. For very large views (where snapshot delivery takes seconds), opt-in `progressive: true` lets the list paint as rows arrive. Making it opt-in keeps small-view callers from accidentally rendering against partial state, and keeps the contract additive-compatible with future cursor-based snapshot delivery (per `EVS-PRD-view-subscriber`-E): a future `SnapshotBatch` variant simply becomes another source of partial rows under `progressive` mode.
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Forcing a state-mgmt choice (Riverpod, BLoC, Provider) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca; an optional `reaction_widgets_provider` adapter can ship later if/when consumer demand makes it worth packaging (current expectation: deferred — the portal-ui can wrap raw streams or write its own thin adapter as needed). Riverpod or BLoC adapters can ship the same way.
 
-*End* *Reaction Widget Contract* | **Hash**: (regenerate)
+*End* *Reaction Widget Contract* | **Hash**: 53508e6a
 
 ## Decisions and alternatives rejected
 

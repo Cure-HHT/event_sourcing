@@ -9,7 +9,7 @@ export 'src/scope/reaction_scope_widget.dart' show ReActionScope;
 export 'src/action/action_builder.dart' show ActionBuilder, ActionBuilderFn;
 
 // View
-export 'src/view/view_state.dart' show ViewState, Loading, Ready, Disconnected;
+export 'src/view/view_state.dart' show ViewState, Loading, Ready, Stale;
 export 'src/view/view_builder.dart' show ViewBuilder, ViewBuilderFn;
 
 // Testing
