@@ -1,6 +1,6 @@
 # Reaction Remote Impls, Reference Server, and Wire Protocol
 
-**Phase**: I (post Plan B-local; impl gated on CUR-1331 impl)
+**Phase**: I (in-process impl shipped; cross-process impl gated on CUR-1331 impl)
 **Status**: Design draft (no normative requirement blocks yet;
 `EVS-DEV-*` requirements land in-place against this file as impl
 stabilizes)
@@ -12,10 +12,10 @@ stabilizes)
 **Depends on**: `spec/scoped-permissions.md` (CUR-1331) for the
 `AuthorizationPolicy`, `EffectiveAuthorization`, and `ScopeValue`
 shapes that the reference server's per-subscription authorization
-consults. Plan B-remote+C impl is sequenced to land after CUR-1331
-impl so the server's permission-consulting code targets the final
-API shape directly rather than being written against the pre-1331
-surface and then swept.
+consults. The cross-process client + server impl is sequenced to land
+after CUR-1331 impl so the server's permission-consulting code targets
+the final API shape directly rather than being written against the
+pre-1331 surface and then swept.
 
 > **Lifecycle note.** This file is authored as a design document and
 > will grow normative `EVS-{TYPE}-{component}` requirement blocks in
@@ -27,14 +27,15 @@ surface and then swept.
 > this file as non-normative prose until a requirement block heading
 > is added.
 
-**Note on roadmap supersession.** This design merges the roadmap's
-split of Plan B-remote (client only) and Plan C (server only) into a
-single implementation. The wire protocol cannot be specified, codec-
-tested, or end-to-end-validated without both sides; the PRD
-architecture (`spec/prd-reaction.md` lines 26-55) already puts
-`local/`, `remote/`, `server/`, and `wire/` in one package. The
-roadmap document (`docs/superpowers/specs/2026-05-11-roadmap.md`)
-gets an update reflecting the merge alongside this design's commit.
+**Note on roadmap supersession.** This design merges what was
+previously split into separate client-only and server-only
+implementation tracks into a single cohesive design. The wire
+protocol cannot be specified, codec-tested, or end-to-end-validated
+without both sides; the PRD architecture (`spec/prd-reaction.md`
+lines 26-55) already puts `local/`, `remote/`, `server/`, and `wire/`
+in one package. The roadmap document
+(`docs/superpowers/specs/2026-05-11-roadmap.md`) gets an update
+reflecting the merge alongside this design's commit.
 
 ## Scope
 
@@ -426,10 +427,12 @@ sufficient to drive it. Non-breaking add.
 
 ### `RemoteScope` (composition class)
 
-The production-side analog to the existing `ReactionTestHarness` (the
-in-process composition bundle for Local*). Constructed once per
-user-session at app boot; returns the four interface instances plus
-a `dispose()` for graceful teardown.
+The production-side `ReactionScope` implementation for cross-process
+clients. Composes the four `Remote*` interface impls over a shared
+`RemoteConnection`, surfaces an authoritative `ConnectionStatus`
+stream driven by WS lifecycle events, and owns graceful teardown.
+Constructed once per user-session at app boot. Implements the
+`ReactionScope` interface defined by `EVS-PRD-reaction-scope`.
 
 ```dart
 final scope = RemoteScope(
@@ -446,6 +449,10 @@ final ActionSubmitter  submit = scope.actionSubmitter;
 final ViewSource       views  = scope.viewSource;
 final PermissionSource perms  = scope.permissionSource;
 
+// Authoritative transport state (per EVS-PRD-reaction-scope-D):
+final ConnectionStatus           now    = scope.connectionStatus;
+final Stream<ConnectionStatus>   status = scope.connectionStatusStream;
+
 await scope.dispose();  // on app shutdown
 ```
 
@@ -457,6 +464,26 @@ https://... -> wss://...
 ```
 
 with `/subscriptions` appended.
+
+`ConnectionStatus` transitions are driven directly by the underlying
+`RemoteConnection`'s WS lifecycle (not synthesized; not polled):
+
+| Trigger                                                | Status         |
+| ------------------------------------------------------ | -------------- |
+| Initial state (before first WS activation)             | `Disconnected` |
+| First WS open succeeds                                 | `Connected`    |
+| WS close (codes other than 4001 / 4003)                | `Reconnecting` |
+| Reconnect attempt succeeds + auth + re-subscribe sent  | `Connected`    |
+| Reconnect-backoff policy exhausted                     | `Disconnected` |
+
+Close-frames `4001 auth_rejected` and `4003 permissions_changed` route
+to `AuthSession`/permission-refresh respectively per the existing
+behavior; they do NOT drive `ConnectionStatus` to `Reconnecting`.
+
+`LocalScope` (the in-process sibling that composes the `Local*`
+impls) reports `ConnectionStatus.Connected` for its entire lifetime.
+This keeps widget code consuming `ConnectionStatus` source-identical
+across Local and Remote.
 
 ### `RemoteConnection` (internal, package-private)
 
@@ -867,9 +894,9 @@ permission, scopeValue)`, `effectivePermissionsFor(principal) ->
 EffectiveAuthorization`, sealed `ScopeValue` with `BoundScope` /
 `ValueWildcardScope` / `TotalWildcardScope`, and the `ContainmentRef`
 expansion against app-registered scope-class projections. This
-section is the design surface where Plan B-remote+C plugs into
-CUR-1331's primitives; the impl ticket runs after CUR-1331 impl
-lands so this code is written against the final API.
+section is the design surface where the cross-process client+server
+impl plugs into CUR-1331's primitives; the impl ticket runs after
+CUR-1331 impl lands so this code is written against the final API.
 
 ```text
 On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
@@ -1279,12 +1306,12 @@ enumeration is the right place.
 Recorded here so future authors do not re-litigate them without new
 evidence.
 
-**Why merge Plan B-remote and Plan C into one plan?** The wire
-protocol cannot be specified, codec-tested, or end-to-end-validated
-without both sides present. PRD architecture already puts client +
-server + wire in one package. Splitting created throwaway fake-server
-scaffolding that the actual server would have replaced. One plan
-captures the cohesive design.
+**Why merge the cross-process client and server impl into one plan?**
+The wire protocol cannot be specified, codec-tested, or end-to-end-
+validated without both sides present. PRD architecture already puts
+client + server + wire in one package. Splitting created throwaway
+fake-server scaffolding that the actual server would have replaced.
+One plan captures the cohesive design.
 
 **Why refetch reconnect instead of resume-from-sequence?** v1
 baseline matches PRD Open Q3. Resume-from-sequence is a wire-
@@ -1489,12 +1516,13 @@ Explicitly out of scope for this plan but anticipated:
 
 ## Roadmap impact and sequencing
 
-This design merges the roadmap's split of Plan B-remote (client only)
-and Plan C (server only) into a single plan: "Plan B-remote+C". The
-roadmap document (`docs/superpowers/specs/2026-05-11-roadmap.md`)
-will be updated alongside this design to reflect:
+This design merges what was previously split into separate
+client-only and server-only implementation tracks into a single
+cohesive design. The roadmap document
+(`docs/superpowers/specs/2026-05-11-roadmap.md`) will be updated
+alongside this design to reflect:
 
-- Plan B-remote+C scope (Remote* impls + wire codecs + reference
+- Cross-process scope (Remote* impls + wire codecs + reference
   server + `TrustingAuthValidator`).
 - Defers: production validators, resume-from-sequence, reactive
   re-narrowing on permission/scope change.
@@ -1532,6 +1560,6 @@ For first contact:
 - `spec/prd-library-charter.md` — epistemic-layer framing and AOP
   discipline.
 - `docs/superpowers/specs/2026-05-11-roadmap.md` — Phase progress,
-  Plan B-remote+C status, sequencing notes.
+  cross-process impl status, sequencing notes.
 - Linear: CUR-1317 (libify), CUR-1331 (scope-aware permissions;
-  blocks Plan B-remote+C impl).
+  blocks cross-process impl).

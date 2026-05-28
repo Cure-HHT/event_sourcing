@@ -1,0 +1,54 @@
+# Reaction widgets — runs the reaction_widgets unit/widget test suite on
+# every PR and push to main. No external services required.
+
+name: Reaction widgets tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: reaction-widgets-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  reaction_widgets:
+    name: reaction_widgets unit + widget tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (reaction)
+        run: flutter pub get
+        working-directory: reaction
+      - name: Resolve deps (reaction_widgets)
+        run: flutter pub get
+        working-directory: reaction_widgets
+      - name: Resolve deps (reaction_widgets_testing)
+        run: flutter pub get
+        working-directory: reaction_widgets_testing
+      - name: Reaction scope + connection-status tests
+        run: flutter test test/scope/ test/remote/auto_reconnect_test.dart
+        working-directory: reaction
+      - name: reaction_widgets_testing test suite
+        run: flutter test
+        working-directory: reaction_widgets_testing
+      - name: reaction_widgets test suite
+        run: flutter test
+        working-directory: reaction_widgets

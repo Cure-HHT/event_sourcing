@@ -42,7 +42,7 @@ class Expired extends AuthStatus {
 /// Implementations:
 /// - `LocalAuthSession` (in-process): holds a [Principal] directly; no
 ///   credential lifecycle (mobile-install case).
-/// - `RemoteAuthSession` (cross-process; Plan B-remote): holds a
+/// - `RemoteAuthSession` (cross-process): holds a
 ///   bearer-token string; transitions to [Expired] on auth failures
 ///   from the wire.
 ///

@@ -26,7 +26,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///   `role_permission_grants` and `user_role_scopes` views and routes
 ///   through `AuthorizationPolicy.effectivePermissionsFor` to derive
 ///   the [EffectiveAuthorization] for the active principal.
-/// - [RemotePermissionSource] (cross-process; Plan B-remote): initial
+/// - [RemotePermissionSource] (cross-process): initial
 ///   HTTP GET `/permissions/snapshot?principalId=...`; subsequent
 ///   updates via the multiplexed WS subscription on the same
 ///   projection.

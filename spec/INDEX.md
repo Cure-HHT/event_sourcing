@@ -12,7 +12,7 @@
 | EVS-PRD-action-submitter              | Action Submitter                | prd-reaction.md                      | 22898b0a |
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 9c087173 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | cd11dd12 |
-| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | fbe2d2d4 |
+| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | a36d45f2 |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | ec656743 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | da8f0f0b |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | b49cdace |
@@ -24,11 +24,12 @@
 | EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 5617d92d |
 | EVS-PRD-portability                   | Portability                     | prd-portability.md                   | edf3c977 |
 | EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | 4755ef8b |
-| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | d21c8301 |
+| EVS-PRD-reaction-scope                | Reaction Scope                  | prd-reaction.md                      | 3752964b |
+| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | 53508e6a |
 | EVS-PRD-regulatory-alignment          | Regulatory Alignment            | prd-regulatory-alignment.md          | c68731c0 |
 | EVS-PRD-scoped-permissions            | Scope-aware authorization model | scoped-permissions.md                | d3eee322 |
 | EVS-PRD-subscription                  | Subscription                    | prd-subscription.md                  | 5d398de1 |
-| EVS-PRD-view-subscriber               | View Subscriber                 | prd-reaction.md                      | b6801679 |
+| EVS-PRD-view-subscriber               | View Subscriber                 | prd-reaction.md                      | bfaba693 |
 
 ## DEVELOPMENT
 

@@ -35,13 +35,60 @@ void main() {
       expect((s.result as DispatchSuccess<String>).result, equals('inv-1'));
     });
 
-    test('Denied carries the denial reason', () {
-      // Use concrete constructor so the static type exposes .reason.
-      const d = Denied('action not allowed for role');
-      expect(d, isA<ActionState>());
-      expect(d, isA<Denied>());
-      expect(d.reason, contains('not allowed'));
-    });
+    test(
+      'Denied carries the full DispatchResult and exposes a reason getter',
+      () {
+        const result = DispatchResult<Object?>.authorizationDenied(
+          Permission('test.permission'),
+        );
+        const d = Denied(result);
+        expect(d, isA<ActionState>());
+        expect(d, isA<Denied>());
+        expect(d.result, same(result));
+        expect(d.reason, contains('test.permission'));
+      },
+    );
+
+    test(
+      'Denied.reason maps each DispatchResult denial variant to a readable summary',
+      () {
+        expect(
+          const Denied(DispatchResult<Object?>.unknownAction('foo')).reason,
+          contains('foo'),
+        );
+        expect(
+          const Denied(DispatchResult<Object?>.parseDenied('bad json')).reason,
+          contains('parse'),
+        );
+        expect(
+          const Denied(
+            DispatchResult<Object?>.validationDenied('field empty'),
+          ).reason,
+          contains('valid'),
+        );
+        expect(
+          const Denied(
+            DispatchResult<Object?>.authorizationDenied(Permission('p')),
+          ).reason,
+          contains('permission'),
+        );
+        expect(
+          const Denied(DispatchResult<Object?>.executionFailed('boom')).reason,
+          isNotEmpty,
+        );
+        expect(
+          const Denied(
+            DispatchResult<Object?>.idempotencyMismatch(
+              actionName: 'a',
+              idempotencyKey: 'k',
+              cachedRawInputHash: 'h1',
+              submittedRawInputHash: 'h2',
+            ),
+          ).reason,
+          contains('idempot'),
+        );
+      },
+    );
 
     test('Failed carries the error and stack', () {
       final err = StateError('boom');

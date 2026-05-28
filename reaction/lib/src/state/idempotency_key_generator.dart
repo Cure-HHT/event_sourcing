@@ -10,7 +10,7 @@ import 'package:uuid/uuid.dart';
 /// Generates idempotency keys for action submissions. Defaults to UUID
 /// v4 ([Uuid4IdempotencyKeyGenerator]).
 ///
-/// `ActionBuilder` in `reaction_widgets` (Plan D) caches a generated
+/// `ActionBuilder` in `reaction_widgets` caches a generated
 /// key for the lifetime of an in-flight submission and resets on
 /// terminal state — so retries during `Submitting` reuse the same key
 /// (idempotent dedupe), but a new press after Success/Denied/Failed

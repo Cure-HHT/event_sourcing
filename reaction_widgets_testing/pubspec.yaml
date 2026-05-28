@@ -1,0 +1,30 @@
+name: reaction_widgets_testing
+description: >
+  Widget-test doubles for apps built on `reaction_widgets`. Ships
+  FakeReaction (a deterministic ReactionScope implementation) and
+  pumpReactionWidget (a WidgetTester helper). Per
+  EVS-PRD-reaction-widget-contract-H, these are first-class deliverables —
+  factored into a sibling package so consumers can add them as a
+  dev_dependency without pulling flutter_test into release builds.
+version: 0.1.0-dev
+publish_to: none
+
+environment:
+  sdk: ^3.10.7
+  flutter: ">=3.38.7"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_test:
+    sdk: flutter
+  reaction:
+    path: ../reaction
+  reaction_widgets:
+    path: ../reaction_widgets
+  event_sourcing:
+    path: ../event_sourcing
+  meta: ^1.16.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0

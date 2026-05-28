@@ -1,0 +1,38 @@
+name: reaction_widgets
+description: >
+  Headless Flutter widget primitives for apps built on the `reaction`
+  package. Ships builder primitives, imperative listeners, a scope-
+  threading InheritedWidget, a permission gate, and an error sink.
+  NO rendered or styled widgets — apps render their own sugar. Widget-
+  test doubles live in the sibling `reaction_widgets_testing` package
+  so consumers' release builds don't pull `flutter_test`. See
+  `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
+version: 0.1.0-dev
+publish_to: none
+
+environment:
+  sdk: ^3.10.7
+  flutter: ">=3.38.7"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  reaction:
+    path: ../reaction
+  # event_sourcing is a transitive dep through reaction, but lib code
+  # here imports its types directly (Update, ActionSubmission,
+  # EffectiveAuthorization, Principal, etc.), so it must be declared
+  # explicitly per depend_on_referenced_packages.
+  event_sourcing:
+    path: ../event_sourcing
+  meta: ^1.16.0
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+  # FakeReaction + pumpReactionWidget live in the sibling testing
+  # package; this dep lets reaction_widgets's own widget tests use
+  # those doubles without polluting main dependencies.
+  reaction_widgets_testing:
+    path: ../reaction_widgets_testing

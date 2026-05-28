@@ -34,7 +34,21 @@
 /// - [IdempotencyKeyGenerator] — UUID v4 by default
 ///   ([Uuid4IdempotencyKeyGenerator]).
 ///
-/// Four in-process Local implementations (Plan B-local):
+/// ## Scope abstraction
+///
+/// A [ReactionScope] bundles the four interfaces ([AuthSession],
+/// [ActionSubmitter], [ViewSource], [PermissionSource]) plus a
+/// [ConnectionStatus] stream (sealed: [Connected], [Reconnecting],
+/// [Disconnected]) into a single composition root that the widget
+/// layer threads through the tree. Two implementations ship:
+///
+/// - [LocalScope] — in-process composition over a substrate handle;
+///   always [Connected].
+/// - [RemoteScope] — per-connection composition over a multiplexed WS
+///   + HTTP transport against a [ReactionHandlers]-hosted server;
+///   surfaces real connection-status transitions.
+///
+/// Four in-process Local implementations:
 ///
 /// - [LocalAuthSession] — holds a [Principal] directly.
 /// - [LocalActionSubmitter] — wraps `ActionDispatcher.dispatch`.
@@ -44,9 +58,9 @@
 ///   through `AuthorizationPolicy.effectivePermissionsFor` to derive
 ///   the [EffectiveAuthorization] for the active principal.
 ///
-/// Four cross-process Remote implementations + a connection scope
-/// (Plan B-remote), wiring the same four interfaces over HTTP +
-/// WebSocket against a [ReactionHandlers]-hosted server:
+/// Four cross-process Remote implementations + a connection scope,
+/// wiring the same four interfaces over HTTP + WebSocket against a
+/// [ReactionHandlers]-hosted server:
 ///
 /// - [RemoteScope] — per-connection composition root that owns the
 ///   shared HTTP client + multiplexed WS connection.
@@ -54,8 +68,8 @@
 ///   [RemotePermissionSource] — the four interfaces wired to that
 ///   scope.
 ///
-/// Server-side adapters (Plan C) for hosting the wire protocol from
-/// any shelf pipeline:
+/// Server-side adapters for hosting the wire protocol from any shelf
+/// pipeline:
 ///
 /// - [ReactionHandlers] — composition bundle exposing `me` /
 ///   `actions` / `permissions` / `subscriptions` shelf handlers
@@ -73,8 +87,7 @@
 ///   Production deployments supply their own validator (Firebase,
 ///   Auth0, JWT, etc.).
 ///
-/// Flutter widgets land in Plan D (separate `reaction_widgets`
-/// package).
+/// Flutter widgets live in a separate `reaction_widgets` package.
 library;
 
 // Interfaces
@@ -92,6 +105,12 @@ export 'src/state/action_state.dart'
     show ActionState, Denied, Failed, Idle, Submitting, Success;
 export 'src/state/idempotency_key_generator.dart'
     show IdempotencyKeyGenerator, Uuid4IdempotencyKeyGenerator;
+
+// Scope
+export 'src/scope/connection_status.dart'
+    show ConnectionStatus, Connected, Reconnecting, Disconnected;
+export 'src/scope/local_scope.dart' show LocalScope;
+export 'src/scope/reaction_scope.dart' show ReactionScope;
 
 // Local impls
 export 'src/local/local_action_submitter.dart' show LocalActionSubmitter;
