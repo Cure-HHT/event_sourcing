@@ -22,7 +22,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// - [LocalViewSource] (in-process): delegates to
 ///   `eventStore.subscribe<T>(filter, AggregateMode(viewName, mapper,
 ///   aggregates))`.
-/// - [RemoteViewSource] (cross-process; Plan B-remote): opens a WS
+/// - [RemoteViewSource] (cross-process): opens a WS
 ///   subscription with `(subscriptionId, viewName, filter, aggregates)`;
 ///   deserializes `Update<Map<String, Object?>>` envelopes and applies
 ///   the consumer's mapper client-side.

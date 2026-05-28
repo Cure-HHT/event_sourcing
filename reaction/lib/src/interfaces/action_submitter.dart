@@ -13,7 +13,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// - `LocalActionSubmitter` (in-process): delegates to
 ///   `ActionDispatcher.dispatch`. Returns the resulting [DispatchResult]
 ///   directly.
-/// - `RemoteActionSubmitter` (cross-process; Plan B-remote): HTTP POST
+/// - `RemoteActionSubmitter` (cross-process): HTTP POST
 ///   to `/actions/{actionName}`; deserializes [DispatchResult] from the
 ///   response.
 ///

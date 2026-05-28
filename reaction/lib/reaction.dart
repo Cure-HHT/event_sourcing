@@ -34,7 +34,7 @@
 /// - [IdempotencyKeyGenerator] — UUID v4 by default
 ///   ([Uuid4IdempotencyKeyGenerator]).
 ///
-/// Four in-process Local implementations (Plan B-local):
+/// Four in-process Local implementations:
 ///
 /// - [LocalAuthSession] — holds a [Principal] directly.
 /// - [LocalActionSubmitter] — wraps `ActionDispatcher.dispatch`.
@@ -44,9 +44,9 @@
 ///   through `AuthorizationPolicy.effectivePermissionsFor` to derive
 ///   the [EffectiveAuthorization] for the active principal.
 ///
-/// Four cross-process Remote implementations + a connection scope
-/// (Plan B-remote), wiring the same four interfaces over HTTP +
-/// WebSocket against a [ReactionHandlers]-hosted server:
+/// Four cross-process Remote implementations + a connection scope,
+/// wiring the same four interfaces over HTTP + WebSocket against a
+/// [ReactionHandlers]-hosted server:
 ///
 /// - [RemoteScope] — per-connection composition root that owns the
 ///   shared HTTP client + multiplexed WS connection.
@@ -54,8 +54,8 @@
 ///   [RemotePermissionSource] — the four interfaces wired to that
 ///   scope.
 ///
-/// Server-side adapters (Plan C) for hosting the wire protocol from
-/// any shelf pipeline:
+/// Server-side adapters for hosting the wire protocol from any shelf
+/// pipeline:
 ///
 /// - [ReactionHandlers] — composition bundle exposing `me` /
 ///   `actions` / `permissions` / `subscriptions` shelf handlers
@@ -73,8 +73,7 @@
 ///   Production deployments supply their own validator (Firebase,
 ///   Auth0, JWT, etc.).
 ///
-/// Flutter widgets land in Plan D (separate `reaction_widgets`
-/// package).
+/// Flutter widgets live in a separate `reaction_widgets` package.
 library;
 
 // Interfaces

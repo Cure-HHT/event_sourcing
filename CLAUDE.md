@@ -6,7 +6,7 @@ Guidance for Claude Code sessions working in this repo.
 
 Reactive, append-only event-sourcing primitives + companion libs
 (`canonical_json_jcs`, `provenance`). Primarily pure Dart; the
-Plan-D `reaction_widgets/` package adds a single Flutter dependency
+`reaction_widgets/` package adds a single Flutter dependency
 (headless widget primitives — `InheritedWidget` scope threading,
 `ActionBuilder`/`ViewBuilder` Builder primitives, `ViewListener`,
 `PermissionGate`, `ReActionErrorListener`, and shipped `FakeReaction`
@@ -31,15 +31,14 @@ cutover.
   `example/` and `example_action_permissions/`.
 - `reaction/` — substrate-agnostic action submission, view subscription,
   permission snapshots, and credential lifecycle for apps built on
-  `event_sourcing`. Pure Dart at runtime; ships local in-process
-  implementations (Plan B-local) plus wire codecs and Remote/Server
-  handlers for cross-process deployments (Plan B-remote). Exposes a
-  shared `ReactionScope` abstraction (with `LocalScope`/`RemoteScope`
-  implementations) that bundles the four interfaces with an
-  authoritative `ConnectionStatus` stream for the widget layer to
-  consume.
-- `reaction_widgets/` — **headless** Flutter widget layer (Plan D)
-  that consumes `ReactionScope`: `ReActionScope` `InheritedWidget`,
+  `event_sourcing`. Pure Dart at runtime; ships in-process Local
+  implementations plus wire codecs and Remote/Server handlers for
+  cross-process deployments. Exposes a shared `ReactionScope`
+  abstraction (with `LocalScope`/`RemoteScope` implementations) that
+  bundles the four interfaces with an authoritative `ConnectionStatus`
+  stream for the widget layer to consume.
+- `reaction_widgets/` — **headless** Flutter widget layer that
+  consumes `ReactionScope`: `ReActionScope` `InheritedWidget`,
   `ActionBuilder`/`ViewBuilder` Builder primitives, `ViewListener`,
   `PermissionGate`, `ReActionErrorListener`, and shipped widget-test
   doubles (`FakeReaction` + `.test()` pump helper). Depends only on
