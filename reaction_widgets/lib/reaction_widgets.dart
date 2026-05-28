@@ -10,6 +10,7 @@ export 'src/action/action_builder.dart' show ActionBuilder, ActionBuilderFn;
 
 // View
 export 'src/view/view_state.dart' show ViewState, Loading, Ready, Disconnected;
+export 'src/view/view_builder.dart' show ViewBuilder, ViewBuilderFn;
 
 // Testing
 export 'src/testing/fake_reaction.dart' show FakeReaction, pumpReactionWidget;
