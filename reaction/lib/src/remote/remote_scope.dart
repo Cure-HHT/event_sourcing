@@ -148,9 +148,17 @@ class RemoteScope implements ReactionScope {
   @override
   Future<void> dispose() async {
     _disposed = true;
-    await _statusController.close();
+    // Order matters: dispose the connection FIRST so its own
+    // _disposed flag is set and its awaited _reconnectDone drains
+    // any in-flight reconnect-loop iterations. Those iterations
+    // call _emitStatus -> _statusController.add; if we closed the
+    // controller first, a late emission would throw
+    // 'Bad state: Cannot add event after closing' rather than
+    // being silently dropped. Closing the controller AFTER the
+    // connection has fully drained is safe.
     await _perms.dispose();
     await _auth.dispose();
     await _connection.dispose();
+    await _statusController.close();
   }
 }

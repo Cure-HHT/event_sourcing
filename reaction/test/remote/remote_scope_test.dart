@@ -97,13 +97,19 @@ void main() {
       },
     );
 
-    test(
-      'dispose() makes connection-status getters throw StateError',
-      () async {
-        final scope = RemoteScope(baseUrl: Uri.parse('http://test.local'));
-        await scope.dispose();
-        expect(() => scope.connectionStatus, throwsStateError);
-      },
-    );
+    test('dispose() makes all interface and connection-status getters '
+        'throw StateError', () async {
+      final scope = RemoteScope(baseUrl: Uri.parse('http://test.local'));
+      await scope.dispose();
+      // All six accessors must throw post-dispose (parity with
+      // LocalScope's interface-getter test, plus the two
+      // connection-status getters specific to ReactionScope).
+      expect(() => scope.authSession, throwsStateError);
+      expect(() => scope.actionSubmitter, throwsStateError);
+      expect(() => scope.viewSource, throwsStateError);
+      expect(() => scope.permissionSource, throwsStateError);
+      expect(() => scope.connectionStatus, throwsStateError);
+      expect(() => scope.connectionStatusStream, throwsStateError);
+    });
   });
 }
