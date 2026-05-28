@@ -12,6 +12,16 @@
 // Implements: EVS-PRD-view-subscriber/D — same.
 // Implements: EVS-PRD-permission-source/D — Principal is sourced from the
 //   co-mounted AuthSession (no direct setPrincipal on PermissionSource).
+// Implements: EVS-PRD-reaction-scope/A — RemoteScope satisfies the
+//   ReactionScope interface (four interface getters + connectionStatus
+//   + connectionStatusStream + dispose).
+// Implements: EVS-PRD-reaction-scope/D — drives ConnectionStatus
+//   transitions from the underlying RemoteConnection's WS lifecycle by
+//   wiring its onConnectionStatusChanged callback into a broadcast
+//   StreamController.
+// Implements: EVS-PRD-reaction-scope/E — post-dispose, the four
+//   interface getters and the connection-status getters throw
+//   StateError so consumer code is source-identical with LocalScope.
 
 import 'dart:async';
 
@@ -25,9 +35,11 @@ import 'package:reaction/src/remote/remote_auth_session.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/remote/remote_permission_source.dart';
 import 'package:reaction/src/remote/remote_view_source.dart';
+import 'package:reaction/src/scope/connection_status.dart';
+import 'package:reaction/src/scope/reaction_scope.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-class RemoteScope {
+class RemoteScope implements ReactionScope {
   RemoteScope({
     required Uri baseUrl,
     http.Client? httpClient,
@@ -67,6 +79,12 @@ class RemoteScope {
     // without it, the client would only learn about its widened
     // permissions on the next Authenticated transition.
     _connection.onStaleData = (_) => unawaited(_perms.refresh());
+    // Surface every transport-status transition from the underlying
+    // RemoteConnection onto the public broadcast stream. The callback
+    // is already de-duped at the source (RemoteConnection._emitStatus
+    // skips no-op transitions), so consumers see exactly the meaningful
+    // changes.
+    _connection.onConnectionStatusChanged = _statusController.add;
   }
 
   final RemoteConnection _connection;
@@ -75,12 +93,62 @@ class RemoteScope {
   late final RemoteViewSource _views;
   late final RemotePermissionSource _perms;
 
-  AuthSession get authSession => _auth;
-  ActionSubmitter get actionSubmitter => _submitter;
-  ViewSource get viewSource => _views;
-  PermissionSource get permissionSource => _perms;
+  /// Broadcast so multiple widget consumers can listen concurrently
+  /// without re-subscribing the underlying RemoteConnection callback.
+  /// Per `EVS-PRD-reaction-scope`-A and the `ReactionScope` interface
+  /// doc, this stream emits ONLY subsequent transitions; consumers
+  /// that need "current plus subsequent" seed from [connectionStatus]
+  /// and listen to this stream.
+  final StreamController<ConnectionStatus> _statusController =
+      StreamController<ConnectionStatus>.broadcast();
+  bool _disposed = false;
 
+  void _checkDisposed() {
+    if (_disposed) {
+      throw StateError('RemoteScope has been disposed.');
+    }
+  }
+
+  @override
+  AuthSession get authSession {
+    _checkDisposed();
+    return _auth;
+  }
+
+  @override
+  ActionSubmitter get actionSubmitter {
+    _checkDisposed();
+    return _submitter;
+  }
+
+  @override
+  ViewSource get viewSource {
+    _checkDisposed();
+    return _views;
+  }
+
+  @override
+  PermissionSource get permissionSource {
+    _checkDisposed();
+    return _perms;
+  }
+
+  @override
+  ConnectionStatus get connectionStatus {
+    _checkDisposed();
+    return _connection.connectionStatus;
+  }
+
+  @override
+  Stream<ConnectionStatus> get connectionStatusStream {
+    _checkDisposed();
+    return _statusController.stream;
+  }
+
+  @override
   Future<void> dispose() async {
+    _disposed = true;
+    await _statusController.close();
     await _perms.dispose();
     await _auth.dispose();
     await _connection.dispose();
