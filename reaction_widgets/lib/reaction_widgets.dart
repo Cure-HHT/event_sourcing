@@ -1,5 +1,24 @@
 /// Headless Flutter widget primitives for apps built on the `reaction`
 /// package. See `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
+///
+/// ## What this package provides
+///
+/// - [ReActionScope] — InheritedWidget that threads a `ReactionScope`
+///   (the four reaction interfaces + connection status) down the
+///   widget tree. Mount once near the app root.
+/// - [ActionBuilder] — rebuilds on `ActionState` transitions
+///   (Idle/Submitting/Success/Denied/Failed) for a single
+///   `ActionSubmitter` flow.
+/// - [ViewBuilder] / [ViewListener] — declarative (builds rows) and
+///   imperative (side-effects on row changes) consumers of a
+///   `ViewSource` subscription. [ViewState] is the sealed
+///   build-time state (Loading/Ready/Stale).
+/// - [PermissionGate] — conditionally builds children based on a
+///   `PermissionSource` snapshot for the active principal.
+/// - [ReActionErrorListener] — surfaces transport / subscription
+///   errors out of the scope as imperative callbacks.
+/// - [FakeReaction] + [pumpReactionWidget] — in-memory test harness
+///   for widget tests that does not require a real substrate.
 library;
 
 // Scope

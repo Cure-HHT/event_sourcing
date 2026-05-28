@@ -34,6 +34,20 @@
 /// - [IdempotencyKeyGenerator] — UUID v4 by default
 ///   ([Uuid4IdempotencyKeyGenerator]).
 ///
+/// ## Scope abstraction
+///
+/// A [ReactionScope] bundles the four interfaces ([AuthSession],
+/// [ActionSubmitter], [ViewSource], [PermissionSource]) plus a
+/// [ConnectionStatus] stream (sealed: [Connected], [Reconnecting],
+/// [Disconnected]) into a single composition root that the widget
+/// layer threads through the tree. Two implementations ship:
+///
+/// - [LocalScope] — in-process composition over a substrate handle;
+///   always [Connected].
+/// - [RemoteScope] — per-connection composition over a multiplexed WS
+///   + HTTP transport against a [ReactionHandlers]-hosted server;
+///   surfaces real connection-status transitions.
+///
 /// Four in-process Local implementations:
 ///
 /// - [LocalAuthSession] — holds a [Principal] directly.
