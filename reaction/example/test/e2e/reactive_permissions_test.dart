@@ -108,12 +108,20 @@ void main() {
     );
     expect(res.statusCode, 200, reason: '/admin/revoke -> ${res.body}');
 
-    await alice.authSession.stream
-        .firstWhere((s) => s is Expired)
-        .timeout(
-          const Duration(seconds: 5),
-          onTimeout: () => throw StateError('alice never expired'),
-        );
+    // The 4003 close may flip the session to Expired before we attach the
+    // listener below. authSession.stream is broadcast and does not replay
+    // its current value, so check `current` first and only await a
+    // subsequent transition if it has not already happened. (The check and
+    // the firstWhere attach with no await between them, so no Expired
+    // emission can slip through the gap.)
+    if (alice.authSession.current is! Expired) {
+      await alice.authSession.stream
+          .firstWhere((s) => s is Expired)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => throw StateError('alice never expired'),
+          );
+    }
     expect(alice.authSession.current, isA<Expired>());
 
     await aliceView.cancel();

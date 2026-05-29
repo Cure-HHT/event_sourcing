@@ -129,14 +129,11 @@ void main() {
     expect(crossUser, isA<DispatchSuccess<Object?>>());
 
     // The view reflects exactly the two real notes; the replay added
-    // nothing and the mismatch was rejected.
+    // nothing and the mismatch was rejected. Delivery preserves log order,
+    // so once 'idem-carol' (submitted AFTER the mismatch) has arrived, any
+    // erroneous mismatch-created delta would necessarily have been
+    // delivered already — which is what makes the negative assertion sound.
     await view.waitForTitles({'idem-A', 'idem-carol'});
-    // Give any erroneous extra delta a chance to arrive, then assert
-    // the mismatch title never materialized.
-    await pumpUntil(
-      () => view.titles.length >= 2,
-      describe: () => 'two notes present',
-    );
     expect(
       view.titles.contains('idem-A-changed'),
       isFalse,
