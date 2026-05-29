@@ -31,7 +31,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// (_) => null)`); this is the default. Apps with scoped permissions
 /// construct the registry alongside their projection set and pass it here
 /// so the bootstrapped policy can resolve containment hops.
-Future<AuthorizationPolicyBootstrap> bootstrapActionPermissions({
+Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   required EventStore eventStore,
   required Set<Permission> declaredPermissions,
   ScopeClassRegistry? scopeClassRegistry,
@@ -66,7 +66,7 @@ Future<AuthorizationPolicyBootstrap> bootstrapActionPermissions({
   }
 
   // 3. Apply seed (emit missing grants).
-  final applier = EventSeedApplier(
+  final applier = PermissionSeedApplier(
     eventStore: eventStore,
     seedInitiator: seedInitiator,
   );
@@ -80,7 +80,7 @@ Future<AuthorizationPolicyBootstrap> bootstrapActionPermissions({
   final policy = TableBackedAuthorizationPolicy(
     backend: eventStore.backend,
     scopeClassRegistry: registry,
-    txnProvider: <T>(fn) => eventStore.backend.transaction<T>(fn),
+    transactionProvider: <T>(fn) => eventStore.backend.transaction<T>(fn),
   );
   return PolicyReady(policy);
 }

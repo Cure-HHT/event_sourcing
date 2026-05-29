@@ -33,8 +33,8 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-Future<AppendOnlyDatastore> _bootstrap(SembastBackend backend) {
-  return bootstrapAppendOnlyDatastore(
+Future<EventStoreBundle> _bootstrap(SembastBackend backend) {
+  return bootstrapEventStore(
     backend: backend,
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
@@ -53,7 +53,7 @@ Future<List<StoredEvent>> _eventsOfType(
 void main() {
   group('DestinationRegistry audit aggregateId = source.identifier', () {
     late SembastBackend backend;
-    late AppendOnlyDatastore ds;
+    late EventStoreBundle ds;
     var counter = 0;
 
     setUp(() async {

@@ -41,8 +41,8 @@ class ReactionTestHarness {
 
     // --- Entry types ---
     final entryTypes = EntryTypeRegistry();
-    for (final defn in kSystemEntryTypes) {
-      entryTypes.register(defn);
+    for (final definition in kSystemEntryTypes) {
+      entryTypes.register(definition);
     }
     entryTypes
       ..register(
@@ -50,7 +50,7 @@ class ReactionTestHarness {
           id: 'note',
           registeredVersion: 1,
           name: 'Note',
-          materialize: true,
+          isMaterialized: true,
         ),
       )
       ..register(
@@ -58,20 +58,20 @@ class ReactionTestHarness {
           id: 'greeting',
           registeredVersion: 1,
           name: 'Greeting',
-          materialize: false,
+          isMaterialized: false,
         ),
       )
-      // Required by EventSeedApplier when seeding the role-permission matrix.
+      // Required by PermissionSeedApplier when seeding the role-permission matrix.
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
           registeredVersion: 1,
           name: 'Role-Permission Grant',
-          materialize: false,
+          isMaterialized: false,
         ),
       )
       // Required so e2e/authz_test.dart can append role_assigned /
-      // role_unassigned events for the AuthzWatcher to react to. The
+      // role_unassigned events for the AuthorizationWatcher to react to. The
       // user_role_scopes projection itself is registered below so the
       // TableBackedAuthorizationPolicy can read scope assignments
       // (currently the policy reads from a sembast view that exists
@@ -82,7 +82,7 @@ class ReactionTestHarness {
           id: 'user_role_scope',
           registeredVersion: 1,
           name: 'User-Role-Scope Assignment',
-          materialize: false,
+          isMaterialized: false,
         ),
       )
       // Required by ActionDispatcher for denial-stage audit events.
@@ -91,7 +91,7 @@ class ReactionTestHarness {
           id: 'action_denial',
           registeredVersion: 1,
           name: 'Action Denial',
-          materialize: false,
+          isMaterialized: false,
         ),
       );
 
@@ -140,7 +140,7 @@ class ReactionTestHarness {
     final policy = TableBackedAuthorizationPolicy(
       backend: backend,
       scopeClassRegistry: scopeClassRegistry,
-      txnProvider: <T>(fn) => backend.transaction<T>(fn),
+      transactionProvider: <T>(fn) => backend.transaction<T>(fn),
     );
 
     // --- Action dispatcher ---
@@ -175,7 +175,7 @@ class ReactionTestHarness {
     await eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
-      aggregateId: roleAssignmentAggregateId(
+      aggregateId: computeRoleAssignmentAggregateId(
         userId: userId,
         role: role,
         scope: scope,

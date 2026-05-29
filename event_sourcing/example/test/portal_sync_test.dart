@@ -21,7 +21,7 @@ class _Pane {
     required this.policyNotifier,
   });
 
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   final Source source;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -94,7 +94,7 @@ Future<_Pane> _mkPane({
     bridge: bridge,
   );
 
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: source,
     entryTypes: allDemoEntryTypes,

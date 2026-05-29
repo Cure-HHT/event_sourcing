@@ -3,7 +3,7 @@
 // Tier-2 scenarios for MID-SESSION permission changes across clients —
 // the reactive-security flows running end to end against the shipped
 // `reaction_example` demo with its real scoped permissions and
-// AuthzWatcher.
+// AuthorizationWatcher.
 //
 // Scenarios:
 //   S4  admin grant mid-session -> stale_data -> client permission view
@@ -38,7 +38,7 @@ void main() {
   test('S4: an admin grant mid-session refreshes the client permission view '
       'and unblocks a previously-denied write, with no re-login', () async {
     final alice = await server.login('alice'); // editor @ west only
-    // Subscribe so alice has a live WS the AuthzWatcher can signal.
+    // Subscribe so alice has a live WS the AuthorizationWatcher can signal.
     final aliceView = NotesObserver(alice, label: 'alice');
     await pumpUntil(
       () => aliceView.sawEndOfReplay,
@@ -65,7 +65,7 @@ void main() {
     );
     expect(assign, isA<DispatchSuccess<Object?>>());
 
-    // The AuthzWatcher pushes stale_data to alice's WS; RemoteScope
+    // The AuthorizationWatcher pushes stale_data to alice's WS; RemoteScope
     // re-fetches /permissions/snapshot; her cached view gains east.
     await pumpUntil(
       () => hasWorkspaceScope(alice.permissionSource.current, 'east'),
@@ -98,7 +98,7 @@ void main() {
     );
 
     // Revoke alice's seeded (editor, west) assignment via the demo's
-    // no-auth escape hatch. AuthzWatcher sees role_unassigned for a
+    // no-auth escape hatch. AuthorizationWatcher sees role_unassigned for a
     // role alice holds and closes her WS with 4003.
     final res = await http.post(
       server.baseUrl.replace(

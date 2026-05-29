@@ -1212,7 +1212,7 @@ void main() {
   // mid-flight invalidate an authorized dispatch.)
   group('Stage 6–8 — authorize+execute share one transaction', () {
     test(
-      'policy.isPermitted receives a non-null Txn injected by the dispatcher',
+      'policy.isPermitted receives a non-null Transaction injected by the dispatcher',
       () async {
         final policy = RecordingAllowPolicy();
         final d = ActionDispatcher(
@@ -1235,48 +1235,51 @@ void main() {
           policy.txns.single,
           isNotNull,
           reason:
-              'dispatcher must inject its active runTransaction Txn into '
+              'dispatcher must inject its active runTransaction Transaction into '
               'policy.isPermitted so authorize+execute share a snapshot',
         );
       },
     );
 
-    test('two dispatches receive distinct Txn instances (each dispatch opens '
-        'its own backend transaction)', () async {
-      final policy = RecordingAllowPolicy();
-      final d = ActionDispatcher(
-        registry: registry,
-        authorization: policy,
-        events: eventStore,
-        idempotency: idempotency,
-      );
-      await d.dispatch(
-        const ActionSubmission(
-          actionName: 'hello',
-          rawInput: <String, Object?>{'who': 'one'},
-        ),
-        _ctx(),
-      );
-      await d.dispatch(
-        const ActionSubmission(
-          actionName: 'hello',
-          rawInput: <String, Object?>{'who': 'two'},
-        ),
-        _ctx(),
-      );
+    test(
+      'two dispatches receive distinct Transaction instances (each dispatch opens '
+      'its own backend transaction)',
+      () async {
+        final policy = RecordingAllowPolicy();
+        final d = ActionDispatcher(
+          registry: registry,
+          authorization: policy,
+          events: eventStore,
+          idempotency: idempotency,
+        );
+        await d.dispatch(
+          const ActionSubmission(
+            actionName: 'hello',
+            rawInput: <String, Object?>{'who': 'one'},
+          ),
+          _ctx(),
+        );
+        await d.dispatch(
+          const ActionSubmission(
+            actionName: 'hello',
+            rawInput: <String, Object?>{'who': 'two'},
+          ),
+          _ctx(),
+        );
 
-      expect(policy.txns, hasLength(2));
-      expect(policy.txns[0], isNotNull);
-      expect(policy.txns[1], isNotNull);
-      expect(
-        identical(policy.txns[0], policy.txns[1]),
-        isFalse,
-        reason: 'distinct dispatches must open distinct transactions',
-      );
-    });
+        expect(policy.txns, hasLength(2));
+        expect(policy.txns[0], isNotNull);
+        expect(policy.txns[1], isNotNull);
+        expect(
+          identical(policy.txns[0], policy.txns[1]),
+          isFalse,
+          reason: 'distinct dispatches must open distinct transactions',
+        );
+      },
+    );
 
     test('both isPermitted calls within one dispatch (TwoPermissionAction) '
-        'receive the SAME Txn instance — proves the policy reads share one '
+        'receive the SAME Transaction instance — proves the policy reads share one '
         'snapshot across the action\'s permission iteration', () async {
       registry.register(TwoPermissionAction());
       final policy = RecordingAllowPolicy();

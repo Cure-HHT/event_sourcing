@@ -280,7 +280,7 @@ class ActionDispatcher {
 
     // Stage 6 (policy reads) + Stage 7 (execute) + Stage 8 (persist) run
     // in a single dispatch transaction. The policy receives the active
-    // [Txn] so its projection reads share the read-snapshot with the
+    // [Transaction] so its projection reads share the read-snapshot with the
     // event appends — a role/scope revocation committed by another
     // dispatch between authorize-reads and append takes effect on
     // subsequent dispatches, not the in-flight one.

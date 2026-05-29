@@ -7,19 +7,19 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('RenameField', () {
     test('renames a present field', () {
-      const t = RenameField(from: 'old', to: 'new');
+      const t = RenameField(sourceField: 'old', targetField: 'new');
       final result = t.apply(const {'old': 1, 'other': 2});
       expect(result, {'new': 1, 'other': 2});
     });
 
     test('no-op when source absent', () {
-      const t = RenameField(from: 'missing', to: 'new');
+      const t = RenameField(sourceField: 'missing', targetField: 'new');
       final result = t.apply(const {'other': 2});
       expect(result, {'other': 2});
     });
 
     test('throws when target already present', () {
-      const t = RenameField(from: 'old', to: 'new');
+      const t = RenameField(sourceField: 'old', targetField: 'new');
       expect(() => t.apply(const {'old': 1, 'new': 2}), throwsStateError);
     });
   });
@@ -61,7 +61,7 @@ void main() {
   group('TransformChain.applyAll', () {
     test('applies transforms in order', () {
       const chain = [
-        RenameField(from: 'a', to: 'b'),
+        RenameField(sourceField: 'a', targetField: 'b'),
         DefaultField(fieldName: 'c', defaultValue: 3),
       ];
       final result = TransformChain.applyAll(chain, const {'a': 1});

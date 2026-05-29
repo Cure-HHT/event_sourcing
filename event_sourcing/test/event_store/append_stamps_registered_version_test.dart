@@ -21,8 +21,8 @@ Future<EventStore> _openStore() async {
   );
   final backend = SembastBackend(database: db);
   final registry = EntryTypeRegistry();
-  for (final defn in kSystemEntryTypes) {
-    registry.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
   }
   registry.register(_kCustom);
   return EventStore.openForTest(

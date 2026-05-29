@@ -50,7 +50,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -58,7 +58,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -66,7 +66,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -272,7 +272,7 @@ void main() {
           // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
           final ingestVerdict = await destination.store.verifyIngestChain();
           expect(
-            ingestVerdict.ok,
+            ingestVerdict.isValid,
             isTrue,
             reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
           );
@@ -282,7 +282,7 @@ void main() {
           for (final stored in [storedA1, storedB1, storedA2, storedB2]) {
             final verdict = await destination.store.verifyEventChain(stored);
             expect(
-              verdict.ok,
+              verdict.isValid,
               isTrue,
               reason:
                   'verifyEventChain failed for ${stored.eventId}: '
@@ -483,7 +483,7 @@ void main() {
           // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
           final ingestVerdict = await destination.store.verifyIngestChain();
           expect(
-            ingestVerdict.ok,
+            ingestVerdict.isValid,
             isTrue,
             reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
           );
@@ -493,7 +493,7 @@ void main() {
           for (final stored in [storedA1, storedA2, storedB1, storedB2]) {
             final verdict = await destination.store.verifyEventChain(stored);
             expect(
-              verdict.ok,
+              verdict.isValid,
               isTrue,
               reason:
                   'verifyEventChain failed for ${stored.eventId}: '

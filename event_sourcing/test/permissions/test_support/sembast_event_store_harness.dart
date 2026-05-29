@@ -54,17 +54,17 @@ const List<EntryTypeDefinition> _kPermissionsEntryTypeDefinitions =
         id: kRolePermissionGrantEntryType,
         registeredVersion: 1,
         name: 'Role-permission grant',
-        // materialize: false — projection is driven by the registered
+        // isMaterialized: false — projection is driven by the registered
         // ProjectionSpec (rolePermissionGrantsSpec).
-        materialize: false,
+        isMaterialized: false,
       ),
       EntryTypeDefinition(
         id: kUserRoleScopeEntryType,
         registeredVersion: 1,
         name: 'User-role-scope assignment',
-        // materialize: false — projection is driven by the registered
+        // isMaterialized: false — projection is driven by the registered
         // ProjectionSpec (userRoleScopesSpec).
-        materialize: false,
+        isMaterialized: false,
       ),
     ];
 
@@ -82,7 +82,7 @@ Future<sembast.Database> _openMemoryDatabase() => newDatabaseFactoryMemory()
 /// Build a fresh, isolated in-memory [EventStore] wired with the
 /// permissions module's entry types and the [rolePermissionGrantsSpec]
 /// TableProjectionSpec. Returns the [EventStore] (not the
-/// [AppendOnlyDatastore] facade) for ergonomic use in tests.
+/// [EventStoreBundle] facade) for ergonomic use in tests.
 Future<EventStore> buildInMemoryEventStore() async {
   final db = await _openMemoryDatabase();
   final backend = SembastBackend(database: db);
@@ -114,7 +114,7 @@ Future<EventStore> buildInMemoryEventStore() async {
 /// );
 /// await harness.append(
 ///   aggregateType: 'user_role_scope',
-///   aggregateId: roleAssignmentAggregateId(...),
+///   aggregateId: computeRoleAssignmentAggregateId(...),
 ///   eventType: 'role_assigned',
 ///   payload: const RoleAssignedPayload(...).toJson(),
 /// );

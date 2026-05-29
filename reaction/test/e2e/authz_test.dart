@@ -3,7 +3,7 @@
 // + mid-session permission-change handling (force-logout + stale_data).
 // Verifies: EVS-DEV-authz-watcher/A/B/C/D — end-to-end coverage of the
 //   mid-session permission-change envelope-routing behavior the
-//   AuthzWatcher implements (force-logout on role_unassigned /
+//   AuthorizationWatcher implements (force-logout on role_unassigned /
 //   permission_revoked; stale_data on role_assigned / permission_granted;
 //   containment opt-in via watchContainment).
 //
@@ -71,12 +71,12 @@ void main() {
     skip: 'expand with CUR-1331 scoped-permission fixtures',
   );
 
-  // --- Mid-session AuthzWatcher behavior ---
+  // --- Mid-session AuthorizationWatcher behavior ---
   //
-  // The server-side AuthzWatcher is already wired (see
-  // reaction/lib/src/server/authz_watcher.dart); these tests are
+  // The server-side AuthorizationWatcher is already wired (see
+  // reaction/lib/src/server/authorization_watcher.dart); these tests are
   // blocked on the client-side surfacing of WS close-code 4003 into
-  // RemoteAuthSession.onAuthRejected, plus stale_data envelope
+  // RemoteAuthSession.handleAuthRejected, plus stale_data envelope
   // handling on the client.
 
   test('role_unassigned mid-subscription closes WS with 4003', () async {
@@ -87,7 +87,7 @@ void main() {
     // requires a `user_role_scopes` row for (alice, install) before any
     // permission check authorizes. We seed with the same scope the
     // role_unassigned appended below targets, so that unassign actually
-    // removes alice's only membership row (proving the AuthzWatcher
+    // removes alice's only membership row (proving the AuthorizationWatcher
     // reacts to the projection becoming empty).
     await h.grantPermission(role: 'install', permission: 'view:notes_today');
     await h.assignRole(
@@ -100,7 +100,7 @@ void main() {
 
     // Open subscription and await EOR — this round-trips through the
     // WS handler and registers alice's connection in the
-    // WsConnectionRegistry so the AuthzWatcher can find it later.
+    // WsConnectionRegistry so the AuthorizationWatcher can find it later.
     final stream = h.scope.viewSource.watch<Map<String, Object?>>(
       viewName: 'notes_today',
       mapper: (m) => m,
@@ -111,7 +111,7 @@ void main() {
     // Wait for the snapshot/EOR to settle.
     await Future<void>.delayed(const Duration(milliseconds: 200));
 
-    // Append role_unassigned for alice. AuthzWatcher matches on
+    // Append role_unassigned for alice. AuthorizationWatcher matches on
     // aggregateType=user_role_scope + eventType=role_unassigned and
     // closes alice's WS connection with 4003.
     const userId = 'alice';
@@ -120,7 +120,7 @@ void main() {
     await h.substrate.eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
-      aggregateId: roleAssignmentAggregateId(
+      aggregateId: computeRoleAssignmentAggregateId(
         userId: userId,
         role: role,
         scope: scope,
@@ -160,10 +160,10 @@ void main() {
     () async {
       // Exercises the full reaction round-trip for role-revocation:
       // a user submits an action successfully, an admin revokes their
-      // role mid-session, the AuthzWatcher closes their WS, the user
+      // role mid-session, the AuthorizationWatcher closes their WS, the user
       // re-logs-in as the same identity, and the substrate's membership
       // gate denies the second submit. Regression guard: a failure in
-      // either the policy's user_role_scopes lookup or the AuthzWatcher's
+      // either the policy's user_role_scopes lookup or the AuthorizationWatcher's
       // projection trigger would allow the second submit to succeed.
       final h = await ReactionRemoteTestHarness.open();
       addTearDown(h.close);
@@ -189,7 +189,7 @@ void main() {
       expect(firstResult, isA<DispatchSuccess<Object?>>());
 
       // Open a subscription so alice's WS connection is registered in the
-      // server's WsConnectionRegistry — without this the AuthzWatcher has
+      // server's WsConnectionRegistry — without this the AuthorizationWatcher has
       // nothing to force-close. Use the same view-permission seeded
       // elsewhere in this file for consistency.
       await h.grantPermission(role: 'install', permission: 'view:notes_today');
@@ -206,7 +206,7 @@ void main() {
       await h.substrate.eventStore.append(
         entryType: 'user_role_scope',
         aggregateType: 'user_role_scope',
-        aggregateId: roleAssignmentAggregateId(
+        aggregateId: computeRoleAssignmentAggregateId(
           userId: 'alice',
           role: 'install',
           scope: const TotalWildcardScope(),
@@ -220,7 +220,7 @@ void main() {
         initiator: const AutomationInitiator(service: 'test-revoke'),
       );
 
-      // AuthzWatcher closes alice's WS; client RemoteAuthSession flips
+      // AuthorizationWatcher closes alice's WS; client RemoteAuthSession flips
       // to Expired.
       await h.scope.authSession.stream
           .firstWhere((s) => s is Expired)

@@ -7,7 +7,7 @@
 //   `markFinal`/`appendAttempt` no-op branches.
 //
 // The abstract StorageBackend FIFO contract (enqueueFifo, readFifoHead,
-// listFifoEntries, appendAttempt, markFinal, anyFifoWedged/wedgedFifos,
+// listFifoEntries, appendAttempt, markFinal, hasFifoWedged/wedgedFifos,
 // fill-cursor read/write, markFinal idempotency and one-way transitions)
 // is exercised against this backend by
 // `sembast_backend_conformance_test.dart` via the backend-agnostic

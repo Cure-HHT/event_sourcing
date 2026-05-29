@@ -14,7 +14,7 @@ import 'package:shelf/shelf.dart';
 
 void main() {
   test('returns 200 + Principal JSON when Principal in context', () async {
-    final handler = meRouteHandler();
+    final handler = meHandler();
     final req = Request(
       'GET',
       Uri.parse('http://x/me'),
@@ -34,7 +34,7 @@ void main() {
   });
 
   test('returns 500 when no Principal', () async {
-    final handler = meRouteHandler();
+    final handler = meHandler();
     final req = Request('GET', Uri.parse('http://x/me'));
     final res = await handler(req);
     expect(res.statusCode, 500);

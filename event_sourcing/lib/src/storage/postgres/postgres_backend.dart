@@ -45,7 +45,7 @@ import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:postgres/postgres.dart';
@@ -201,10 +201,10 @@ class PostgresBackend extends StorageBackend {
   //   thrown exception rolls back. Postgres SERIALIZABLE isolation prevents
   //   the per-device sequence counter from being read+written by concurrent
   //   transactions.
-  // Implements: EVS-DEV-postgres-backend/C — Txn handle invalidated after
+  // Implements: EVS-DEV-postgres-backend/C — Transaction handle invalidated after
   //   body returns or throws.
   @override
-  Future<T> transaction<T>(Future<T> Function(Txn txn) body) async {
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     _checkOpen();
     return _pool.runTx<T>(
       (tx) async {
@@ -237,7 +237,7 @@ class PostgresBackend extends StorageBackend {
   //   from nextSequenceNumber; persisted verbatim preserving total order;
   //   advance owned by nextSequenceNumber, not appendEvent.
   @override
-  Future<AppendResult> appendEvent(Txn txn, StoredEvent event) async {
+  Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     final session = _asPgTxn(txn).session;
     // Validate the reservation: the persisted counter must equal the seq
     // the caller is consuming. Reading the counter inside the same txn
@@ -319,7 +319,7 @@ class PostgresBackend extends StorageBackend {
   //   the same txn see writes staged in the same body (read-your-writes).
   @override
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
-    Txn txn,
+    Transaction txn,
     String aggregateId,
   ) async {
     final session = _asPgTxn(txn).session;
@@ -376,13 +376,13 @@ class PostgresBackend extends StorageBackend {
   //
   // `async` (not arrow) so that the synchronous `_asPgTxn(txn).session`
   // check — which throws StateError on a post-body escape or a foreign
-  // Txn — completes the returned Future with the error rather than
+  // Transaction — completes the returned Future with the error rather than
   // throwing synchronously past the caller's `await`. The conformance
   // harness' `throwsStateError` matcher awaits the Future, so a
   // synchronous throw at call-site evaluation would short-circuit it.
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
-    Txn txn, {
+    Transaction txn, {
     int? afterSequence,
     int? limit,
     String? entryType,
@@ -467,7 +467,7 @@ class PostgresBackend extends StorageBackend {
   //   the next event's previous_event_hash atomically with the append that
   //   uses it.
   @override
-  Future<String?> readLatestEventHash(Txn txn) async {
+  Future<String?> readLatestEventHash(Transaction txn) async {
     final session = _asPgTxn(txn).session;
     final result = await session.execute(
       'SELECT event_hash FROM events '
@@ -490,7 +490,7 @@ class PostgresBackend extends StorageBackend {
   /// explicit (JSONB doesn't have a direct arithmetic operator).
   // Implements: EVS-PRD-event-log/B — monotonic per-transaction reserve.
   @override
-  Future<int> nextSequenceNumber(Txn txn) async {
+  Future<int> nextSequenceNumber(Transaction txn) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('''
@@ -527,7 +527,10 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-event-log/D — single-event lookup by event_id
   //   inside the supplied transaction; returns null when absent.
   @override
-  Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId) async {
+  Future<StoredEvent?> findEventByIdInTxn(
+    Transaction txn,
+    String eventId,
+  ) async {
     final session = _asPgTxn(txn).session;
     final result = await session.execute(
       Sql.named('SELECT * FROM events WHERE event_id = @id LIMIT 1'),
@@ -554,7 +557,7 @@ class PostgresBackend extends StorageBackend {
   //   view_rows; returns null when the (view_name, row_key) pair is absent.
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
   ) async {
@@ -575,7 +578,7 @@ class PostgresBackend extends StorageBackend {
   //   INSERT … ON CONFLICT (view_name, row_key) DO UPDATE.
   @override
   Future<void> upsertViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
     Map<String, dynamic> row,
@@ -595,7 +598,11 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/B — delete a single row from
   //   view_rows by (view_name, row_key); no-op when absent.
   @override
-  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) async {
+  Future<void> deleteViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+  ) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('DELETE FROM view_rows WHERE view_name = @v AND row_key = @k'),
@@ -639,7 +646,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-action-dispatch
   @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
@@ -676,7 +683,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/B — delete all rows for a view
   //   without touching other views (WHERE view_name = @v).
   @override
-  Future<void> clearViewInTxn(Txn txn, String viewName) async {
+  Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('DELETE FROM view_rows WHERE view_name = @v'),
@@ -692,7 +699,7 @@ class PostgresBackend extends StorageBackend {
   //   returns null when the (view_name, entry_type) pair is absent.
   @override
   Future<int?> readViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
   ) async {
@@ -714,7 +721,7 @@ class PostgresBackend extends StorageBackend {
   //   reflect the latest target_version value.
   @override
   Future<void> writeViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
     int targetVersion,
@@ -736,7 +743,7 @@ class PostgresBackend extends StorageBackend {
   //   target_version) pairs for the given view_name as a Map<String, int>.
   @override
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
   ) async {
     final session = _asPgTxn(txn).session;
@@ -754,7 +761,10 @@ class PostgresBackend extends StorageBackend {
   //   harness; clearViewTargetVersionsInTxn deletes all rows for the given
   //   view_name without touching rows belonging to other views.
   @override
-  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) async {
+  Future<void> clearViewTargetVersionsInTxn(
+    Transaction txn,
+    String viewName,
+  ) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('DELETE FROM view_target_versions WHERE view_name = @v'),
@@ -823,7 +833,7 @@ class PostgresBackend extends StorageBackend {
   //   contract fields.
   @override
   Future<FifoEntry> enqueueFifoTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
@@ -951,7 +961,7 @@ class PostgresBackend extends StorageBackend {
     return FifoEntry(
       entryId: entryId,
       eventIds: List<String>.unmodifiable(eventIds),
-      eventIdRange: (firstSeq: firstSeq, lastSeq: lastSeq),
+      sequenceRange: (firstSeq: firstSeq, lastSeq: lastSeq),
       sequenceInQueue: sequenceInQueue,
       wirePayload: payloadMap == null
           ? null
@@ -1114,13 +1124,13 @@ class PostgresBackend extends StorageBackend {
     });
   }
 
-  // Implements: EVS-PRD-destinations — anyFifoWedged true iff any
+  // Implements: EVS-PRD-destinations — hasFifoWedged true iff any
   //   destination's head row (first sequence_in_queue with
   //   final_status IN {null, wedged}) is wedged. Single SQL pass via
   //   DISTINCT ON (destination_id) so we visit each FIFO's head row in
   //   one scan, then filter to wedged.
   @override
-  Future<bool> anyFifoWedged() async {
+  Future<bool> hasFifoWedged() async {
     _checkOpen();
     final result = await _pool.execute('''
       SELECT EXISTS (
@@ -1222,7 +1232,7 @@ class PostgresBackend extends StorageBackend {
   //   verbatim).
   @override
   Future<void> setFinalStatusTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     String entryId,
     FinalStatus? status,
@@ -1304,7 +1314,7 @@ class PostgresBackend extends StorageBackend {
   //   deleted (via the postgres driver's affectedRows).
   @override
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   ) async {
@@ -1330,7 +1340,7 @@ class PostgresBackend extends StorageBackend {
   //   per-destination store; the counter on sembast is wiped via
   //   `backend_state` deletion.)
   @override
-  Future<void> deleteFifoStoreTxn(Txn txn, String destinationId) async {
+  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('DELETE FROM fifo_entries WHERE destination_id = @dest'),
@@ -1361,7 +1371,7 @@ class PostgresBackend extends StorageBackend {
 
   // Key: 'schema_version'; value: integer. INSERT … ON CONFLICT DO UPDATE.
   @override
-  Future<void> writeSchemaVersion(Txn txn, int version) async {
+  Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('''
@@ -1402,7 +1412,7 @@ class PostgresBackend extends StorageBackend {
   // `async` so validation errors land as Future completions.
   @override
   Future<void> writeFillCursorTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int sequenceNumber,
   ) async {
@@ -1446,7 +1456,7 @@ class PostgresBackend extends StorageBackend {
   // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.
   @override
   Future<void> writeScheduleTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     DestinationSchedule schedule,
   ) async {
@@ -1463,7 +1473,7 @@ class PostgresBackend extends StorageBackend {
 
   // Delete the schedule row for [destinationId]. No-op when absent.
   @override
-  Future<void> deleteScheduleTxn(Txn txn, String destinationId) async {
+  Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
@@ -1668,13 +1678,13 @@ class PostgresBackend extends StorageBackend {
       // top-level `recorded_at` / `ip_address` columns exist only for
       // server-side filtering and ORDER BY.
       final context = EventSecurityContext.fromJson(_asJsonMap(row[17]));
-      rows.add(AuditRow(event: event, context: context));
+      rows.add(AuditRow(event: event, securityContext: context));
     }
     String? nextCursor;
     if (result.length > limit) {
       final tail = rows.last;
       nextCursor = _AuditCursorPoint(
-        recordedAt: tail.context.recordedAt,
+        recordedAt: tail.securityContext.recordedAt,
         eventId: tail.event.eventId,
       ).encode();
     }
@@ -1719,21 +1729,21 @@ class PostgresBackend extends StorageBackend {
   static String _fifoSeqCounterKey(String destinationId) =>
       'fifo_seq_counter_$destinationId';
 
-  /// Downcast a [Txn] handed to this backend's StorageBackend methods
+  /// Downcast a [Transaction] handed to this backend's StorageBackend methods
   /// into the concrete [PostgresTxn]. Any other concrete subtype indicates
-  /// the caller mixed two different backends' Txn handles — that's a bug,
+  /// the caller mixed two different backends' Transaction handles — that's a bug,
   /// not a recoverable state, so we surface it as `StateError`.
   ///
   /// The `session` getter on a valid [PostgresTxn] in turn throws
   /// `StateError` when the surrounding transaction body has already
   /// returned (the handle was invalidated). Either failure mode produces
   /// the same outward shape, which matches the conformance harness'
-  /// `throwsStateError` expectations for both "foreign Txn" and
+  /// `throwsStateError` expectations for both "foreign Transaction" and
   /// "post-body escape" cases.
-  PostgresTxn _asPgTxn(Txn txn) {
+  PostgresTxn _asPgTxn(Transaction txn) {
     if (txn is! PostgresTxn) {
       throw StateError(
-        'PostgresBackend: Txn was produced by a different StorageBackend '
+        'PostgresBackend: Transaction was produced by a different StorageBackend '
         'implementation; refusing to apply it. Got ${txn.runtimeType}.',
       );
     }
@@ -1782,7 +1792,7 @@ class PostgresBackend extends StorageBackend {
   /// columns are returned by the driver as already-decoded Dart
   /// maps/lists; TIMESTAMPTZ columns as `DateTime` in UTC. The shape
   /// matches the contract enforced by [FifoEntry]'s constructor:
-  /// `eventIds` non-empty and `eventIdRange.firstSeq <= lastSeq`. The
+  /// `eventIds` non-empty and `sequenceRange.firstSeq <= lastSeq`. The
   /// driver's already-typed `int`/`String?` columns are passed through
   /// without re-encoding so the comparison surface stays explicit.
   FifoEntry _fifoEntryFromRow(ResultRow row) {
@@ -1798,7 +1808,7 @@ class PostgresBackend extends StorageBackend {
     return FifoEntry(
       entryId: m['entry_id'] as String,
       eventIds: List<String>.unmodifiable(eventIds),
-      eventIdRange: (
+      sequenceRange: (
         firstSeq: m['event_id_first_seq'] as int,
         lastSeq: m['event_id_last_seq'] as int,
       ),

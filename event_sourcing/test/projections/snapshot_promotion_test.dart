@@ -59,8 +59,8 @@ Future<SembastBackend> _openBackend() async {
 
 EntryTypeRegistry _registry() {
   final r = EntryTypeRegistry();
-  for (final defn in kSystemEntryTypes) {
-    r.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    r.register(definition);
   }
   r
     ..register(_kNote)
@@ -162,13 +162,13 @@ void main() {
     );
   });
 
-  group('assertNoEntryTypeDowngrade', () {
+  group('verifyNoEntryTypeDowngrade', () {
     test('throws EntryTypeVersionDowngradeError when registry version '
         'is below the highest stored view_target_versions value', () async {
       final backend = await _openBackend();
       final entryTypes = EntryTypeRegistry();
-      for (final defn in kSystemEntryTypes) {
-        entryTypes.register(defn);
+      for (final definition in kSystemEntryTypes) {
+        entryTypes.register(definition);
       }
       entryTypes.register(
         const EntryTypeDefinition(
@@ -187,7 +187,7 @@ void main() {
 
       await expectLater(
         backend.transaction((txn) async {
-          await assertNoEntryTypeDowngrade(
+          await verifyNoEntryTypeDowngrade(
             txn: txn,
             backend: backend,
             projections: projections,
@@ -215,7 +215,7 @@ void main() {
       // No throw; the registry's note is at 3, stored is 1 (lag, not
       // downgrade).
       await backend.transaction((txn) async {
-        await assertNoEntryTypeDowngrade(
+        await verifyNoEntryTypeDowngrade(
           txn: txn,
           backend: backend,
           projections: projections,
@@ -271,8 +271,8 @@ void main() {
         // view_target_versions to 2.
         final backend = await _openBackend();
         final entryTypes = EntryTypeRegistry();
-        for (final defn in kSystemEntryTypes) {
-          entryTypes.register(defn);
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
         }
         entryTypes.register(
           const EntryTypeDefinition(
@@ -290,7 +290,7 @@ void main() {
               fromVersion: 1,
               toVersion: 2,
               transforms: <TransformPrimitive>[
-                RenameField(from: 'body', to: 'note_body'),
+                RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
             ),
           );
@@ -362,7 +362,7 @@ void main() {
             fromVersion: 1,
             toVersion: 3,
             transforms: <TransformPrimitive>[
-              RenameField(from: 'body', to: 'note_body'),
+              RenameField(sourceField: 'body', targetField: 'note_body'),
             ],
           ),
         );
@@ -444,8 +444,8 @@ void main() {
 
         final backend = await _openBackend();
         final entryTypes = EntryTypeRegistry();
-        for (final defn in kSystemEntryTypes) {
-          entryTypes.register(defn);
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
         }
         entryTypes.register(
           const EntryTypeDefinition(
@@ -463,7 +463,7 @@ void main() {
               fromVersion: 1,
               toVersion: 2,
               transforms: <TransformPrimitive>[
-                RenameField(from: 'body', to: 'note_body'),
+                RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
             ),
           );
@@ -525,8 +525,8 @@ void main() {
       // First boot: register note at v1.
       {
         final entryTypes = EntryTypeRegistry();
-        for (final defn in kSystemEntryTypes) {
-          entryTypes.register(defn);
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
         }
         entryTypes.register(
           const EntryTypeDefinition(
@@ -561,8 +561,8 @@ void main() {
       // a v1->v2 promoter (rename body -> note_body).
       {
         final entryTypes = EntryTypeRegistry();
-        for (final defn in kSystemEntryTypes) {
-          entryTypes.register(defn);
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
         }
         entryTypes.register(
           const EntryTypeDefinition(
@@ -580,7 +580,7 @@ void main() {
               fromVersion: 1,
               toVersion: 2,
               transforms: <TransformPrimitive>[
-                RenameField(from: 'body', to: 'note_body'),
+                RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
             ),
           );
@@ -629,8 +629,8 @@ void main() {
       // First boot at v2, append an event.
       {
         final entryTypes = EntryTypeRegistry();
-        for (final defn in kSystemEntryTypes) {
-          entryTypes.register(defn);
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
         }
         entryTypes.register(
           const EntryTypeDefinition(
@@ -663,8 +663,8 @@ void main() {
 
       // Second boot against the same backend: downgrade to v1.
       final entryTypes = EntryTypeRegistry();
-      for (final defn in kSystemEntryTypes) {
-        entryTypes.register(defn);
+      for (final definition in kSystemEntryTypes) {
+        entryTypes.register(definition);
       }
       entryTypes.register(
         const EntryTypeDefinition(

@@ -48,7 +48,7 @@ enum ScopeClassMatch {
 ///   - `c == targetClass` → [ScopeClassMatch.appliesExact].
 ///   - `registry.isAncestor(c, targetClass)` → [ScopeClassMatch.appliesViaAncestor].
 ///   - otherwise → [ScopeClassMatch.doesNotApply].
-ScopeClassMatch scopeClassMatch(
+ScopeClassMatch matchScopeClass(
   ScopeValue assigned,
   String targetClass,
   ScopeClassRegistry registry,

@@ -38,7 +38,7 @@ class RoleAssignmentSeedResult {
 /// emits nothing.
 ///
 /// Aggregate id is the canonical-JSON encoding of `(user_id, role, scope)`
-/// produced by [roleAssignmentAggregateId]; the same convention is used by
+/// produced by [computeRoleAssignmentAggregateId]; the same convention is used by
 /// the `userRoleScopesSpec` projection's `AggregateIdKey` rowKey so the
 /// emitted events land on the rows this function reconstructs.
 Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
@@ -51,8 +51,11 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
   // 1. Compute the aggregate-id -> entry map implied by the seed.
   final inSeed = <String, RoleAssignmentSeedEntry>{
     for (final e in seed.entries)
-      roleAssignmentAggregateId(userId: e.userId, role: e.role, scope: e.scope):
-          e,
+      computeRoleAssignmentAggregateId(
+        userId: e.userId,
+        role: e.role,
+        scope: e.scope,
+      ): e,
   };
 
   // 2. Reconstruct the aggregate-id set currently materialized in the
@@ -66,7 +69,7 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
       (r['scope']! as Map).cast<String, Object?>(),
     );
     inView.add(
-      roleAssignmentAggregateId(
+      computeRoleAssignmentAggregateId(
         userId: r['user_id']! as String,
         role: r['role']! as String,
         scope: scope,

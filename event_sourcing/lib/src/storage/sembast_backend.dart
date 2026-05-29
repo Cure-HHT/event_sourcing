@@ -15,10 +15,11 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:meta/meta.dart' show visibleForTesting;
-import 'package:sembast/sembast.dart';
+import 'package:sembast/sembast.dart' hide Transaction;
+import 'package:sembast/sembast.dart' as sembast show Transaction;
 import 'package:uuid/uuid.dart';
 
 part 'sembast_test_support.dart';
@@ -157,7 +158,7 @@ class SembastBackend extends StorageBackend {
   // -------- transaction --------
 
   @override
-  Future<T> transaction<T>(Future<T> Function(Txn txn) body) async {
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     final db = _database();
     final outerPending = _pendingPostCommit;
     final innerPending = <void Function()>[];
@@ -184,23 +185,24 @@ class SembastBackend extends StorageBackend {
     }
   }
 
-  _SembastTxn _requireValidTxn(Txn txn) {
+  _SembastTxn _requireValidTxn(Transaction txn) {
     if (txn is! _SembastTxn) {
-      throw StateError('Txn is not a SembastBackend Txn');
+      throw StateError('Transaction is not a SembastBackend Transaction');
     }
     if (!txn._isValid) {
-      throw StateError('Txn used outside its transaction() body');
+      throw StateError('Transaction used outside its transaction() body');
     }
     return txn;
   }
 
-  /// Return the underlying sembast [Transaction] for [txn]. Used by
+  /// Return the underlying sembast [sembast.Transaction] for [txn]. Used by
   /// adjacent sembast-family stores (e.g. `SembastSecurityContextStore`)
   /// that need to commit writes atomically with this backend's
   /// transaction. NOT part of the abstract `StorageBackend` contract —
   /// only sembast-side code should reach for this.
   // ignore: library_private_types_in_public_api
-  Transaction unwrapSembastTxn(Txn txn) => _requireValidTxn(txn)._sembastTxn;
+  sembast.Transaction unwrapSembastTxn(Transaction txn) =>
+      _requireValidTxn(txn)._sembastTxn;
 
   // -------- Events --------
 
@@ -219,7 +221,7 @@ class SembastBackend extends StorageBackend {
   // Implements: EVS-PRD-event-log/B — sequence number stamped by caller from
   //   nextSequenceNumber; persisted verbatim preserving total order.
   @override
-  Future<AppendResult> appendEvent(Txn txn, StoredEvent event) async {
+  Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
         .record(_sequenceKey)
@@ -259,7 +261,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
-    Txn txn,
+    Transaction txn,
     String aggregateId,
   ) async {
     final t = _requireValidTxn(txn);
@@ -377,7 +379,7 @@ class SembastBackend extends StorageBackend {
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
   @override
-  Future<int> nextSequenceNumber(Txn txn) async {
+  Future<int> nextSequenceNumber(Transaction txn) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
         .record(_sequenceKey)
@@ -389,7 +391,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<String?> readLatestEventHash(Txn txn) async {
+  Future<String?> readLatestEventHash(Transaction txn) async {
     final t = _requireValidTxn(txn);
     final records = await _eventStore.find(
       t._sembastTxn,
@@ -411,7 +413,7 @@ class SembastBackend extends StorageBackend {
   //   helper reused here.
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
-    Txn txn, {
+    Transaction txn, {
     int? afterSequence,
     int? limit,
     String? entryType,
@@ -538,7 +540,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<void> writeSchemaVersion(Txn txn, int version) async {
+  Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
         .record(_schemaVersionKey)
@@ -576,7 +578,7 @@ class SembastBackend extends StorageBackend {
   /// of the transaction body on a throw.
   @override
   Future<void> writeFillCursorTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int sequenceNumber,
   ) async {
@@ -640,7 +642,7 @@ class SembastBackend extends StorageBackend {
   /// surrounding transaction's atomicity.
   @override
   Future<void> writeScheduleTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     DestinationSchedule schedule,
   ) async {
@@ -653,7 +655,7 @@ class SembastBackend extends StorageBackend {
   /// Delete the persisted schedule record for [destinationId] inside
   /// [txn]. Used by `deleteDestination`.
   @override
-  Future<void> deleteScheduleTxn(Txn txn, String destinationId) async {
+  Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
         .record(_scheduleKey(destinationId))
@@ -662,9 +664,9 @@ class SembastBackend extends StorageBackend {
 
   /// Drop the entire `fifo_<destinationId>` Sembast store inside [txn]
   /// and remove [destinationId] from the known-FIFOs registry so
-  /// `anyFifoWedged` / `wedgedFifos` no longer iterate it.
+  /// `hasFifoWedged` / `wedgedFifos` no longer iterate it.
   @override
-  Future<void> deleteFifoStoreTxn(Txn txn, String destinationId) async {
+  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
     final t = _requireValidTxn(txn);
     await _fifoStore(destinationId).drop(t._sembastTxn);
     // Also drop the fill-cursor record so a later addDestination of the
@@ -715,7 +717,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
   ) async {
@@ -727,7 +729,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<void> upsertViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
     Map<String, dynamic> row,
@@ -744,7 +746,11 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) async {
+  Future<void> deleteViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+  ) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).record(key).delete(t._sembastTxn);
     _pendingPostCommit.add(() {
@@ -776,7 +782,7 @@ class SembastBackend extends StorageBackend {
   //   coherence requirement on the authorize side.
   @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
@@ -800,7 +806,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<void> clearViewInTxn(Txn txn, String viewName) async {
+  Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).delete(t._sembastTxn);
     _pendingPostCommit.add(() {
@@ -828,7 +834,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<int?> readViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
   ) async {
@@ -849,7 +855,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<void> writeViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
     int targetVersion,
@@ -866,7 +872,7 @@ class SembastBackend extends StorageBackend {
 
   @override
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
   ) async {
     final t = _requireValidTxn(txn);
@@ -881,7 +887,10 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) async {
+  Future<void> clearViewTargetVersionsInTxn(
+    Transaction txn,
+    String viewName,
+  ) async {
     final t = _requireValidTxn(txn);
     await _viewTargetVersionsStoreRef.delete(
       t._sembastTxn,
@@ -910,12 +919,12 @@ class SembastBackend extends StorageBackend {
   ///
   /// The returned `FifoEntry` is the persisted record. Callers that
   /// need to advance a per-destination cursor use
-  /// `result.eventIdRange.lastSeq` as the inclusive upper bound of the
+  /// `result.sequenceRange.lastSeq` as the inclusive upper bound of the
   /// batch on the event log.
   ///
   /// The row's `entry_id` is a freshly-minted v4 UUID and has no
   /// relationship to the events the row carries — callers that need
-  /// to correlate against events use `eventIds` / `eventIdRange`.
+  /// to correlate against events use `eventIds` / `sequenceRange`.
   @override
   Future<FifoEntry> enqueueFifo(
     String destinationId,
@@ -963,7 +972,7 @@ class SembastBackend extends StorageBackend {
   /// `transaction(...)` wrapper.
   @override
   Future<FifoEntry> enqueueFifoTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
@@ -989,7 +998,7 @@ class SembastBackend extends StorageBackend {
     }
     final t = _requireValidTxn(txn);
     final eventIds = batch.map((e) => e.eventId).toList(growable: false);
-    final eventIdRange = (
+    final sequenceRange = (
       firstSeq: batch.first.sequenceNumber,
       lastSeq: batch.last.sequenceNumber,
     );
@@ -1033,7 +1042,7 @@ class SembastBackend extends StorageBackend {
     }
     // Mint a v4 UUID for this row's entry_id. The identifier is opaque
     // and has no relationship to the events the row carries — callers
-    // that need event-level correlation use `eventIds` / `eventIdRange`.
+    // that need event-level correlation use `eventIds` / `sequenceRange`.
     // UUID generation means two FIFO rows (of any final_status, including
     // tombstoned archive rows) never share an entry_id, so
     // `tombstoneAndRefill` can coexist with fresh rows re-promoting the
@@ -1063,7 +1072,7 @@ class SembastBackend extends StorageBackend {
     final entry = FifoEntry(
       entryId: entryId,
       eventIds: eventIds,
-      eventIdRange: eventIdRange,
+      sequenceRange: sequenceRange,
       sequenceInQueue: assigned,
       wirePayload: payloadMap,
       wireFormat: wireFormat,
@@ -1090,7 +1099,7 @@ class SembastBackend extends StorageBackend {
   }
 
   Future<void> _registerFifoDestinationSembast(
-    Transaction sembastTxn,
+    sembast.Transaction sembastTxn,
     String destinationId,
   ) async {
     final current =
@@ -1431,7 +1440,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
-  Future<bool> anyFifoWedged() async {
+  Future<bool> hasFifoWedged() async {
     for (final dest in await _knownFifoDestinations()) {
       if (await _wedgedHead(dest) != null) return true;
     }
@@ -1508,7 +1517,7 @@ class SembastBackend extends StorageBackend {
   /// indicates a concurrent delete race that these ops do not close.
   @override
   Future<void> setFinalStatusTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     String entryId,
     FinalStatus? status,
@@ -1584,7 +1593,7 @@ class SembastBackend extends StorageBackend {
   /// all non-null rows are retained forever.
   @override
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   ) async {
@@ -1619,7 +1628,10 @@ class SembastBackend extends StorageBackend {
   /// against the unified event store (origin and ingest appends share
   /// `_eventStore`).
   @override
-  Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId) async {
+  Future<StoredEvent?> findEventByIdInTxn(
+    Transaction txn,
+    String eventId,
+  ) async {
     final t = _requireValidTxn(txn);
     final finder = Finder(filter: Filter.equals('event_id', eventId), limit: 1);
     final record = await _eventStore.findFirst(t._sembastTxn, finder: finder);
@@ -1747,10 +1759,12 @@ class SembastBackend extends StorageBackend {
     for (final event in events) {
       final ctx = securityByEventId[event.eventId];
       if (ctx == null) continue;
-      rows.add(AuditRow(event: event, context: ctx));
+      rows.add(AuditRow(event: event, securityContext: ctx));
     }
     rows.sort((a, b) {
-      final cmp = b.context.recordedAt.compareTo(a.context.recordedAt);
+      final cmp = b.securityContext.recordedAt.compareTo(
+        a.securityContext.recordedAt,
+      );
       if (cmp != 0) return cmp;
       return b.event.eventId.compareTo(a.event.eventId);
     });
@@ -1759,7 +1773,7 @@ class SembastBackend extends StorageBackend {
     final filtered = decodedCursor == null
         ? rows
         : rows.where((r) {
-            final cmp = r.context.recordedAt.compareTo(
+            final cmp = r.securityContext.recordedAt.compareTo(
               decodedCursor!.recordedAt,
             );
             if (cmp < 0) return true;
@@ -1773,7 +1787,7 @@ class SembastBackend extends StorageBackend {
     final page = filtered.take(limit).toList();
     final nextCursor = filtered.length > limit
         ? _AuditCursorPoint(
-            recordedAt: page.last.context.recordedAt,
+            recordedAt: page.last.securityContext.recordedAt,
             eventId: page.last.event.eventId,
           ).encode()
         : null;
@@ -1811,9 +1825,9 @@ class SembastBackend extends StorageBackend {
   }
 }
 
-class _SembastTxn extends Txn {
+class _SembastTxn extends Transaction {
   _SembastTxn._(this._sembastTxn);
-  final Transaction _sembastTxn;
+  final sembast.Transaction _sembastTxn;
   bool _isValid = true;
   void _invalidate() {
     _isValid = false;

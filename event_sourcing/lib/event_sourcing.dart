@@ -128,17 +128,16 @@ export 'src/actions/principal.dart'
 export 'src/actions/scope_value.dart'
     show BoundScope, ScopeValue, TotalWildcardScope, ValueWildcardScope;
 
-// bootstrapAppendOnlyDatastore — single entry point for app main() to wire
+// bootstrapEventStore — single entry point for app main() to wire
 // the storage backend, EntryTypeRegistry, destinations, security context
-// store, and EventStore. Returns an AppendOnlyDatastore facade.
-export 'src/bootstrap.dart'
-    show AppendOnlyDatastore, bootstrapAppendOnlyDatastore;
+// store, and EventStore. Returns an EventStoreBundle facade.
+export 'src/bootstrap.dart' show EventStoreBundle, bootstrapEventStore;
 
 // Core configuration
-export 'src/core/config/datastore_config.dart';
+export 'src/core/config/event_store_config.dart';
 
 // Exceptions
-export 'src/core/errors/datastore_exception.dart';
+export 'src/core/errors/event_store_exception.dart';
 export 'src/core/errors/sync_exception.dart';
 
 // Destinations — per-destination routing contract.
@@ -192,7 +191,7 @@ export 'src/ingest/ingest_result.dart'
 export 'src/projections/rebuild.dart' show rebuildView;
 // Callers create AggregateProjectionSpec / TableProjectionSpec values,
 // register them in a ProjectionRegistry, and pass the registry to
-// bootstrapAppendOnlyDatastore or directly to EventStore.
+// bootstrapEventStore or directly to EventStore.
 export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
 export 'src/projections/projection_registry.dart' show ProjectionRegistry;
@@ -232,8 +231,8 @@ export 'src/subscriptions/update.dart'
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.
-export 'src/permissions/authorization_policy_bootstrap.dart'
-    show AuthorizationPolicyBootstrap, PolicyReady, PolicyFailSafe;
+export 'src/permissions/authorization_bootstrap_result.dart'
+    show AuthorizationBootstrapResult, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
     show bootstrapActionPermissions;
 export 'src/permissions/bootstrap_role_assignments.dart'
@@ -242,8 +241,8 @@ export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
 export 'src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
-export 'src/permissions/event_seed_applier.dart'
-    show EventSeedApplier, SeedApplyResult;
+export 'src/permissions/permission_seed_applier.dart'
+    show PermissionSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
     show FailSafeAuthorizationPolicy;
 export 'src/permissions/permission_granted_payload.dart'
@@ -253,7 +252,7 @@ export 'src/permissions/permission_revoked_payload.dart'
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
-    show roleAssignmentAggregateId;
+    show computeRoleAssignmentAggregateId;
 export 'src/permissions/role_assignment_seed.dart'
     show RoleAssignmentSeed, RoleAssignmentSeedEntry;
 export 'src/permissions/role_unassigned_payload.dart'
@@ -263,11 +262,11 @@ export 'src/permissions/role_permission_grants_spec.dart'
 export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
 export 'src/permissions/scope_class_match.dart'
-    show ScopeClassMatch, scopeClassMatch;
+    show ScopeClassMatch, matchScopeClass;
 export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
-    show ContainmentRef, ScopeClassSpec;
+    show ContainmentReference, ScopeClassSpec;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/table_backed_authorization_policy.dart'
@@ -317,7 +316,7 @@ export 'src/security/system_entry_types.dart'
 // library-private: only `PostgresBackend.open` calls it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
-export 'src/storage/fifo_entry.dart' show EventIdRange, FifoEntry;
+export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
@@ -336,11 +335,11 @@ export 'src/storage/storage_exception.dart'
         StorageTransientException,
         classifyStorageException;
 export 'src/storage/stored_event.dart' show StoredEvent;
-export 'src/storage/txn.dart' show Txn;
+export 'src/storage/transaction.dart' show Transaction;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 
 // Sync — backoff curve, drain loop, and top-level orchestrator.
-export 'src/sync/drain.dart' show ClockFn, drain;
+export 'src/sync/drain.dart' show Clock, drain;
 export 'src/sync/fill_batch.dart' show fillBatch;
 export 'src/sync/sync_cycle.dart' show SyncCycle;
 export 'src/sync/sync_policy.dart' show SyncPolicy;

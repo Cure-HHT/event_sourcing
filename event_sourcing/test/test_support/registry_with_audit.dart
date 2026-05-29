@@ -46,11 +46,11 @@ Future<AuditedRegistryDeps> buildAuditedRegistryDeps(
 }) async {
   final entryTypes = EntryTypeRegistry();
   final auditEntryTypes = auditEntryTypeOverride ?? kSystemEntryTypes;
-  for (final defn in auditEntryTypes) {
-    entryTypes.register(defn);
+  for (final definition in auditEntryTypes) {
+    entryTypes.register(definition);
   }
-  for (final defn in callerEntryTypes) {
-    entryTypes.register(defn);
+  for (final definition in callerEntryTypes) {
+    entryTypes.register(definition);
   }
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final eventStore = await EventStore.openForTest(

@@ -30,11 +30,11 @@ Future<EventStore> bootstrapTestEventStore({
 
   // Register every reserved system entry type (security-context lifecycle,
   // destination-mutation audits, retention sweep, registry-initialized audit).
-  for (final defn in kSystemEntryTypes) {
-    registry.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
   }
 
-  // Register test-specific entry types. materialize: false — these are
+  // Register test-specific entry types. isMaterialized: false — these are
   // audit records and test fixtures, not diary entries.
   registry
     ..register(
@@ -42,7 +42,7 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     // greeting is emitted by HelloAction and MultiEventAction.
@@ -51,7 +51,7 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
 

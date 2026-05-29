@@ -1,8 +1,8 @@
 // Implements: EVS-PRD-library-charter/D
-import 'package:event_sourcing/src/core/errors/datastore_exception.dart';
+import 'package:event_sourcing/src/core/errors/event_store_exception.dart';
 
 /// Exception thrown when synchronization operations fail.
-class SyncException extends DatastoreException {
+class SyncException extends EventStoreException {
   const SyncException(
     super.message, {
     this.statusCode,

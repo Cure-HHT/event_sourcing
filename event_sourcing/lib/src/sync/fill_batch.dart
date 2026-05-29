@@ -82,7 +82,7 @@ Future<void> fillBatch(
   required StorageBackend backend,
   required DestinationSchedule schedule,
   Source? source,
-  ClockFn? clock,
+  Clock? clock,
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
 

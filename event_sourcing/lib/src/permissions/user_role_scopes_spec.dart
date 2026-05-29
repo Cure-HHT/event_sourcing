@@ -15,7 +15,7 @@
 //
 // Row-layout contract (consumed by TableBackedAuthorizationPolicy):
 //   key: event.aggregateId — the canonical-JSON encoding of the
-//     (user_id, role, scope) tuple produced by roleAssignmentAggregateId().
+//     (user_id, role, scope) tuple produced by computeRoleAssignmentAggregateId().
 //   columns: {'user_id', 'role', 'scope'} — WholePayload of a
 //     role_assigned event, whose payload is RoleAssignedPayload — plus the
 //     substrate-stamped 'aggregateId' (== key) and 'sequence' fields that

@@ -74,14 +74,14 @@ Uint8List _envelope({
   return envelope.encode();
 }
 
-Future<AppendOnlyDatastore> _bootstrapWithRegistry({
+Future<EventStoreBundle> _bootstrapWithRegistry({
   required int registeredVersion,
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'ingest-validation-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
-  return bootstrapAppendOnlyDatastore(
+  return bootstrapEventStore(
     backend: backend,
     source: const Source(
       hopId: 'portal',

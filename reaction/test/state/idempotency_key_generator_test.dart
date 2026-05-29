@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-reaction-widget-contract/E —
-// Uuid4IdempotencyKeyGenerator emits UUID v4 keys (the format the
+// UuidIdempotencyKeyGenerator emits UUID v4 keys (the format the
 // widget library is required to use), and the IdempotencyKeyGenerator
 // interface admits deterministic stub replacements for tests
 // (supporting the consumer-override path in assertion E).
@@ -7,9 +7,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/state/idempotency_key_generator.dart';
 
 void main() {
-  group('Uuid4IdempotencyKeyGenerator', () {
+  group('UuidIdempotencyKeyGenerator', () {
     test('produces a UUID v4 format string', () {
-      final gen = Uuid4IdempotencyKeyGenerator();
+      final gen = UuidIdempotencyKeyGenerator();
       final key = gen.generate();
       // UUID v4: 8-4-4-4-12 hex, with version nibble 4 and variant
       // nibble 8/9/a/b.
@@ -20,7 +20,7 @@ void main() {
     });
 
     test('successive calls produce distinct keys', () {
-      final gen = Uuid4IdempotencyKeyGenerator();
+      final gen = UuidIdempotencyKeyGenerator();
       final keys = <String>{for (var i = 0; i < 100; i++) gen.generate()};
       expect(keys.length, equals(100));
     });

@@ -36,8 +36,8 @@ Future<_Fixture> _openStore({
   final registry = EntryTypeRegistry();
   // Auto-register every reserved system entry type (includes
   // `ingest-audit`, security-context lifecycle entry types, etc.).
-  for (final defn in kSystemEntryTypes) {
-    registry.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
   }
   registry.register(
     const EntryTypeDefinition(
@@ -258,7 +258,7 @@ void main() {
         );
 
         final verdict = await dest.store.verifyEventChain(dupEvent);
-        expect(verdict.ok, isTrue);
+        expect(verdict.isValid, isTrue);
         expect(verdict.failures, isEmpty);
       } finally {
         await orig.close();

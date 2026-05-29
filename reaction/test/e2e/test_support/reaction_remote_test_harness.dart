@@ -42,7 +42,7 @@ class ReactionRemoteTestHarness {
 
     // HTTP routes are gated by Bearer-token auth middleware. The WS
     // upgrade path (`/subscriptions`) is NOT — credentials arrive
-    // in-band via the first WS AuthMsg (see RemoteConnection._connect
+    // in-band via the first WS AuthMessage (see RemoteConnection._connect
     // and the `subscriptions` handler's docstring) because Flutter web
     // cannot attach an Authorization header during a WS upgrade.
     final httpRouter = Router()
@@ -74,7 +74,7 @@ class ReactionRemoteTestHarness {
 
   Future<void> close() async {
     await scope.dispose();
-    await reaction.dispose(); // stops AuthzWatcher
+    await reaction.dispose(); // stops AuthorizationWatcher
     await httpServer.close(force: true);
     await substrate.close();
   }

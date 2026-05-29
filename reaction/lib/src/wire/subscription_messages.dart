@@ -1,7 +1,7 @@
 // Implements: EVS-PRD-cross-process-event-transport/A — JSON codecs for
 //   the WS control plane (auth, subscribe, unsubscribe, auth_ok,
 //   subscription_denied, stale_data, error) and the StaleDataReason
-//   sealed enum the AuthzWatcher emits over the wire.
+//   sealed enum the AuthorizationWatcher emits over the wire.
 // Implements: EVS-PRD-cross-process-event-transport/B — every server-to-
 //   client envelope carries subscriptionId where applicable.
 // Implements: EVS-PRD-cross-process-event-transport/D — SubscribeMsg
@@ -18,9 +18,9 @@ sealed class ClientMessage {
   const ClientMessage();
 }
 
-class AuthMsg extends ClientMessage {
+class AuthMessage extends ClientMessage {
   final String credential;
-  const AuthMsg({required this.credential});
+  const AuthMessage({required this.credential});
 }
 
 class SubscribeMsg extends ClientMessage {
@@ -169,7 +169,7 @@ class SubscriptionMessages {
   const SubscriptionMessages._();
 
   static Map<String, Object?> encodeClient(ClientMessage m) {
-    if (m is AuthMsg) {
+    if (m is AuthMessage) {
       return {'type': 'auth', 'credential': m.credential};
     } else if (m is SubscribeMsg) {
       return {
@@ -190,7 +190,7 @@ class SubscriptionMessages {
     final type = readType(json);
     switch (type) {
       case 'auth':
-        return AuthMsg(credential: requireString(json, 'credential'));
+        return AuthMessage(credential: requireString(json, 'credential'));
       case 'subscribe':
         final aggregates = json['aggregates'];
         return SubscribeMsg(

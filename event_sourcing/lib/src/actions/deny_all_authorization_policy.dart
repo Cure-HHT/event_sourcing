@@ -8,7 +8,7 @@ import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/permissions/effective_authorization.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Authorization policy that denies every request. Useful for unit
 /// tests of the dispatcher's authorize stage and as a temporary
@@ -29,7 +29,7 @@ class DenyAllAuthorizationPolicy extends AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async {
     if (!_suppressWarning) {
       // ignore: avoid_print
@@ -46,6 +46,6 @@ class DenyAllAuthorizationPolicy extends AuthorizationPolicy {
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization.empty;
 }

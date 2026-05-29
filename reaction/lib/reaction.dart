@@ -32,7 +32,7 @@
 ///   (Idle/Submitting/Success/Denied/Failed). Used by `ActionBuilder`
 ///   in `reaction_widgets`.
 /// - [IdempotencyKeyGenerator] — UUID v4 by default
-///   ([Uuid4IdempotencyKeyGenerator]).
+///   ([UuidIdempotencyKeyGenerator]).
 ///
 /// ## Scope abstraction
 ///
@@ -104,7 +104,7 @@ export 'src/interfaces/view_source.dart' show ViewSource;
 export 'src/state/action_state.dart'
     show ActionState, Denied, Failed, Idle, Submitting, Success;
 export 'src/state/idempotency_key_generator.dart'
-    show IdempotencyKeyGenerator, Uuid4IdempotencyKeyGenerator;
+    show IdempotencyKeyGenerator, UuidIdempotencyKeyGenerator;
 
 // Scope
 export 'src/scope/connection_status.dart'
@@ -136,5 +136,5 @@ export 'src/server/view_scope_registry.dart'
     show ViewScopeBinding, ViewScopeRegistry;
 export 'src/server/ws_connection_registry.dart' show WsConnectionRegistry;
 
-// AuthzWatcher is package-private; consumers interact via
+// AuthorizationWatcher is package-private; consumers interact via
 // ReactionHandlers.watchContainment(...).

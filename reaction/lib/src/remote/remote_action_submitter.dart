@@ -35,7 +35,7 @@ class RemoteActionSubmitter implements ActionSubmitter {
     );
     if (res.statusCode == 401) {
       if (authSession is RemoteAuthSession) {
-        (authSession as RemoteAuthSession).onWireUnauthorized();
+        (authSession as RemoteAuthSession).handleWireUnauthorized();
       }
       throw const TransportException('unauthorized');
     }

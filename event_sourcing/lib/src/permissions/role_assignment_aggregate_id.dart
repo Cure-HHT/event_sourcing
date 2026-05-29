@@ -15,7 +15,7 @@ import '../actions/scope_value.dart';
 /// the aggregate id for `role_assigned` and `role_unassigned` events so
 /// that the projection's insert/remove discipline keys per-tuple
 /// uniqueness without segment-encoding ambiguity.
-String roleAssignmentAggregateId({
+String computeRoleAssignmentAggregateId({
   required String userId,
   required String role,
   required ScopeValue scope,

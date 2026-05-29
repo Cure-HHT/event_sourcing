@@ -10,7 +10,7 @@
 //   permission_revoked events reproduces the view deterministically.
 //
 // Row-layout contract (consumed by TableBackedAuthorizationPolicy and
-// EventSeedApplier):
+// PermissionSeedApplier):
 //   key: event.aggregateId  (e.g. 'admin:user.invite')
 //   columns: {'role', 'permissionName'}  — WholePayload of a
 //     permission_granted event, whose payload is PermissionGrantedPayload —
@@ -20,7 +20,7 @@
 //
 // AggregateIdKey() is used as the row key because:
 //   1. The payload field is 'permissionName' (matching PermissionGrantedPayload).
-//   2. The row key format ('admin:user.invite') is consumed by EventSeedApplier;
+//   2. The row key format ('admin:user.invite') is consumed by PermissionSeedApplier;
 //      AggregateIdKey() keeps that format stable.
 //
 // The aggregateTypes filter restricts projection to events whose aggregateType

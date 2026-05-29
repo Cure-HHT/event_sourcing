@@ -201,7 +201,7 @@ Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
       'greeter': {'say_hello'},
     },
   );
-  final applier = EventSeedApplier(
+  final applier = PermissionSeedApplier(
     eventStore: harness.eventStore,
     seedInitiator: const AutomationInitiator(service: 'reaction_test_seed'),
   );

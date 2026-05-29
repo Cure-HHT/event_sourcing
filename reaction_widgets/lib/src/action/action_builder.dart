@@ -50,7 +50,7 @@ class ActionBuilder extends StatefulWidget {
   final ActionBuilderFn builder;
 
   /// Optional override for the idempotency-key generator. Defaults to
-  /// [Uuid4IdempotencyKeyGenerator]. Tests typically inject a
+  /// [UuidIdempotencyKeyGenerator]. Tests typically inject a
   /// deterministic stub.
   final IdempotencyKeyGenerator? idempotencyKeyGenerator;
 
@@ -72,7 +72,7 @@ class _ActionBuilderState extends State<ActionBuilder> {
   @override
   void initState() {
     super.initState();
-    _keyGen = widget.idempotencyKeyGenerator ?? Uuid4IdempotencyKeyGenerator();
+    _keyGen = widget.idempotencyKeyGenerator ?? UuidIdempotencyKeyGenerator();
   }
 
   void _submit() {

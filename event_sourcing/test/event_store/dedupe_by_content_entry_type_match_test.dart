@@ -26,7 +26,7 @@ Future<EventStore> _bootstrap() async {
     'dedupe-by-entry-type-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
-  final ds = await bootstrapAppendOnlyDatastore(
+  final ds = await bootstrapEventStore(
     backend: backend,
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],

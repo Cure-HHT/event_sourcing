@@ -22,11 +22,11 @@ typedef ViewBuilderFn<T> =
 ///
 /// Transitions, per `EVS-PRD-reaction-widget-contract`-I / -J:
 ///
-/// - Default (`progressive: false`): start in [Loading]; transition to
+/// - Default (`isProgressive: false`): start in [Loading]; transition to
 ///   [Ready] exactly once `EndOfReplay` arrives. Subsequent
 ///   [Delta] / [Tombstone] updates re-emit [Ready] with the updated row
 ///   set.
-/// - `progressive: true`: re-emit [Ready] after every accumulated
+/// - `isProgressive: true`: re-emit [Ready] after every accumulated
 ///   row during snapshot replay, allowing large-view first-paint
 ///   without blocking on the full snapshot.
 /// - On a [ConnectionStatus] change to [Reconnecting] or [Disconnected],
@@ -60,7 +60,7 @@ class ViewBuilder<T> extends StatefulWidget {
     required this.builder,
     this.filter,
     this.aggregates,
-    this.progressive = false,
+    this.isProgressive = false,
   });
 
   /// Registered `ProjectionSpec.viewName` to subscribe to.
@@ -98,7 +98,7 @@ class ViewBuilder<T> extends StatefulWidget {
   /// When true, expose partial rows during snapshot replay (rather than
   /// surfacing [Loading] until [EndOfReplay]). Default false. See
   /// `EVS-PRD-reaction-widget-contract`-J.
-  final bool progressive;
+  final bool isProgressive;
 
   @override
   State<ViewBuilder<T>> createState() => _ViewBuilderState<T>();
@@ -138,13 +138,13 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
         if (value != null) {
           _rows[widget.aggregateIdOf(value)] = value;
         }
-        if (_replayDone || widget.progressive) _emitReady();
+        if (_replayDone || widget.isProgressive) _emitReady();
       case Delta<T>(:final value):
         _rows[widget.aggregateIdOf(value)] = value;
-        if (_replayDone || widget.progressive) _emitReady();
+        if (_replayDone || widget.isProgressive) _emitReady();
       case Tombstone<T>(:final aggregateId):
         _rows.remove(aggregateId);
-        if (_replayDone || widget.progressive) _emitReady();
+        if (_replayDone || widget.isProgressive) _emitReady();
       case EndOfReplay<T>():
         _replayDone = true;
         _emitReady();

@@ -20,19 +20,19 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 /// This minimal surface — `register`, `byId`, `isRegistered`, `all` — covers
 /// all entry-type validation needs for the event store.
 class EntryTypeRegistry {
-  /// Register [defn]. Duplicate id is a configuration bug — silent
+  /// Register [definition]. Duplicate id is a configuration bug — silent
   /// shadowing would let an app declare two competing definitions for the
   /// same entry type and the later one would silently win — so it is
   /// surfaced loudly via `ArgumentError`.
-  void register(EntryTypeDefinition defn) {
-    if (_defs.containsKey(defn.id)) {
+  void register(EntryTypeDefinition definition) {
+    if (_defs.containsKey(definition.id)) {
       throw ArgumentError.value(
-        defn.id,
-        'defn.id',
-        'EntryTypeDefinition "${defn.id}" already registered',
+        definition.id,
+        'definition.id',
+        'EntryTypeDefinition "${definition.id}" already registered',
       );
     }
-    _defs[defn.id] = defn;
+    _defs[definition.id] = definition;
   }
 
   /// Returns the `EntryTypeDefinition` registered under [id], or `null`

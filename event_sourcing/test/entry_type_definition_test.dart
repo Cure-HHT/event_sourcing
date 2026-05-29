@@ -21,7 +21,7 @@ void main() {
       expect(def.id, 'epistaxis_event');
       expect(def.registeredVersion, 1);
       expect(def.name, 'Nosebleed');
-      expect(def.materialize, isTrue);
+      expect(def.isMaterialized, isTrue);
     });
 
     test('toJson emits snake_case keys for every field', () {
@@ -45,7 +45,7 @@ void main() {
         id: 'epistaxis_event',
         registeredVersion: 2,
         name: 'Nosebleed',
-        materialize: false,
+        isMaterialized: false,
       );
 
       final roundTripped = EntryTypeDefinition.fromJson(def.toJson());
@@ -71,7 +71,7 @@ void main() {
       // Verifies: absent optional field defaults to true.
       test('absent "materialize" in JSON defaults to true', () {
         final def = EntryTypeDefinition.fromJson(_validJson());
-        expect(def.materialize, isTrue);
+        expect(def.isMaterialized, isTrue);
       });
     });
 
@@ -143,7 +143,7 @@ void main() {
   group('materialize flag', () {
     test('defaults to true', () {
       const def = EntryTypeDefinition(id: 'x', registeredVersion: 1, name: 'X');
-      expect(def.materialize, isTrue);
+      expect(def.isMaterialized, isTrue);
     });
 
     test('false round-trips through JSON', () {
@@ -151,13 +151,13 @@ void main() {
         id: 'x',
         registeredVersion: 1,
         name: 'X',
-        materialize: false,
+        isMaterialized: false,
       );
-      expect(def.materialize, isFalse);
+      expect(def.isMaterialized, isFalse);
       final map = def.toJson();
       expect(map['materialize'], isFalse);
       final roundTripped = EntryTypeDefinition.fromJson(map);
-      expect(roundTripped.materialize, isFalse);
+      expect(roundTripped.isMaterialized, isFalse);
     });
 
     test('absent "materialize" in JSON defaults to true', () {
@@ -166,7 +166,7 @@ void main() {
         'registered_version': 1,
         'name': 'X',
       });
-      expect(def.materialize, isTrue);
+      expect(def.isMaterialized, isTrue);
     });
 
     test('non-bool "materialize" is rejected', () {
@@ -187,7 +187,7 @@ void main() {
         id: 'x',
         registeredVersion: 1,
         name: 'X',
-        materialize: false,
+        isMaterialized: false,
       );
       expect(a, isNot(b));
     });

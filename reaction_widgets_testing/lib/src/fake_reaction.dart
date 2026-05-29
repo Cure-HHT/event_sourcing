@@ -57,10 +57,10 @@ class FakeReaction implements ReactionScope {
   late final _FakeViewSource _viewSource;
   late final _FakePermissionSource _permissionSource;
 
-  bool _disposed = false;
+  bool _isDisposed = false;
 
   void _checkDisposed() {
-    if (_disposed) {
+    if (_isDisposed) {
       throw StateError('FakeReaction has been disposed.');
     }
   }
@@ -161,8 +161,8 @@ class FakeReaction implements ReactionScope {
 
   @override
   Future<void> dispose() async {
-    if (_disposed) return;
-    _disposed = true;
+    if (_isDisposed) return;
+    _isDisposed = true;
     await _authController.close();
     await _statusController.close();
     await _permController.close();

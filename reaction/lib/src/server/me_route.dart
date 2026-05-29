@@ -14,7 +14,7 @@ import 'package:shelf/shelf.dart';
 /// Handler for GET /me. Returns the Principal attached by the auth
 /// middleware. The Remote client uses this to validate a credential
 /// and obtain the Principal for AuthStatus.Authenticated.
-Handler meRouteHandler() {
+Handler meHandler() {
   return (Request request) {
     final principal = principalFromContext(request);
     if (principal == null) {

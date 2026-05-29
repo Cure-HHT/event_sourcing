@@ -43,7 +43,7 @@ void main() {
     final dispatcher = _StubDispatcher(
       const DispatchSuccess<Object?>({'echo': 'hi'}, <String>[]),
     );
-    final handler = actionRouteHandler(dispatcher: dispatcher);
+    final handler = actionHandler(dispatcher: dispatcher);
     const submission = ActionSubmission(
       actionName: 'sayHello',
       rawInput: {'name': 'A'},
@@ -73,7 +73,7 @@ void main() {
   });
 
   test('returns 400 on malformed body', () async {
-    final handler = actionRouteHandler(
+    final handler = actionHandler(
       dispatcher: _StubDispatcher(
         const DispatchSuccess<Object?>(null, <String>[]),
       ),
@@ -95,7 +95,7 @@ void main() {
   });
 
   test('returns 500 when no Principal in context', () async {
-    final handler = actionRouteHandler(
+    final handler = actionHandler(
       dispatcher: _StubDispatcher(
         const DispatchSuccess<Object?>(null, <String>[]),
       ),

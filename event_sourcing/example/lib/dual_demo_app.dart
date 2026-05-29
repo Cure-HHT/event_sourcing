@@ -24,7 +24,7 @@ class DemoPaneConfig {
     required this.paneLabel,
   });
 
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;

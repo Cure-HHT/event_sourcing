@@ -12,7 +12,7 @@ import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Change record returned by [AggregateFold.applyEvent] and
 /// [TableFold.applyEvent]. Collected by [ProjectionInterpreter.applyEvent]
@@ -47,7 +47,7 @@ class AggregateFold {
   /// notification, or `null` when the event was a tombstone for a row that
   /// did not exist (no change occurred).
   static Future<AggregateFoldChange?> applyEvent({
-    required Txn txn,
+    required Transaction txn,
     required StorageBackend backend,
     required AggregateProjectionSpec spec,
     required StoredEvent event,

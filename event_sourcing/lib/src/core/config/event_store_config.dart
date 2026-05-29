@@ -1,54 +1,54 @@
 // Implements: EVS-PRD-library-charter/H/D
-/// Configuration for the append-only datastore.
+/// Configuration for the event store.
 ///
-/// This class holds all configuration needed to initialize the datastore,
+/// This class holds all configuration needed to initialize the event store,
 /// including database paths, encryption settings, and sync endpoints.
-class DatastoreConfig {
-  const DatastoreConfig({
+class EventStoreConfig {
+  const EventStoreConfig({
     required this.deviceId,
     this.databasePath,
-    this.databaseName = 'clinical_events.db',
-    this.enableEncryption = true,
+    this.storageName = 'event_sourcing.db',
+    this.encryptionEnabled = true,
     this.encryptionKey,
     this.userId,
     this.syncServerUrl,
-    this.enableTelemetry = false,
+    this.telemetryEnabled = false,
     this.telemetryEndpoint,
   }) : assert(
-         !enableEncryption || encryptionKey != null,
+         !encryptionEnabled || encryptionKey != null,
          'encryptionKey must be provided when encryption is enabled',
        );
 
   /// Create a development configuration with sensible defaults.
-  factory DatastoreConfig.development({
+  factory EventStoreConfig.development({
     required String deviceId,
     String? userId,
     String? encryptionKey,
   }) {
-    return DatastoreConfig(
+    return EventStoreConfig(
       deviceId: deviceId,
       userId: userId,
-      databaseName: 'clinical_events_dev.db',
-      enableEncryption: encryptionKey != null,
+      storageName: 'event_sourcing_dev.db',
+      encryptionEnabled: encryptionKey != null,
       encryptionKey: encryptionKey,
-      enableTelemetry: true,
+      telemetryEnabled: true,
     );
   }
 
   /// Create a production configuration.
-  factory DatastoreConfig.production({
+  factory EventStoreConfig.production({
     required String deviceId,
     required String userId,
     required String syncServerUrl,
     String? encryptionKey,
   }) {
-    return DatastoreConfig(
+    return EventStoreConfig(
       deviceId: deviceId,
       userId: userId,
       syncServerUrl: syncServerUrl,
-      enableEncryption: encryptionKey != null,
+      encryptionEnabled: encryptionKey != null,
       encryptionKey: encryptionKey,
-      enableTelemetry: true,
+      telemetryEnabled: true,
     );
   }
 
@@ -57,13 +57,13 @@ class DatastoreConfig {
   final String? databasePath;
 
   /// Name of the database file.
-  final String databaseName;
+  final String storageName;
 
   /// Enable SQLCipher encryption.
-  final bool enableEncryption;
+  final bool encryptionEnabled;
 
   /// Encryption key for SQLCipher.
-  /// Only used if [enableEncryption] is true.
+  /// Only used if [encryptionEnabled] is true.
   final String? encryptionKey;
 
   /// User ID for audit trail.
@@ -79,33 +79,33 @@ class DatastoreConfig {
   final String? syncServerUrl;
 
   /// Enable OpenTelemetry tracing.
-  final bool enableTelemetry;
+  final bool telemetryEnabled;
 
   /// OpenTelemetry endpoint.
-  /// Only used if [enableTelemetry] is true.
+  /// Only used if [telemetryEnabled] is true.
   final String? telemetryEndpoint;
 
   /// Copy with new values.
-  DatastoreConfig copyWith({
+  EventStoreConfig copyWith({
     String? databasePath,
-    String? databaseName,
-    bool? enableEncryption,
+    String? storageName,
+    bool? encryptionEnabled,
     String? encryptionKey,
     String? userId,
     String? deviceId,
     String? syncServerUrl,
-    bool? enableTelemetry,
+    bool? telemetryEnabled,
     String? telemetryEndpoint,
   }) {
-    return DatastoreConfig(
+    return EventStoreConfig(
       databasePath: databasePath ?? this.databasePath,
-      databaseName: databaseName ?? this.databaseName,
-      enableEncryption: enableEncryption ?? this.enableEncryption,
+      storageName: storageName ?? this.storageName,
+      encryptionEnabled: encryptionEnabled ?? this.encryptionEnabled,
       encryptionKey: encryptionKey ?? this.encryptionKey,
       userId: userId ?? this.userId,
       deviceId: deviceId ?? this.deviceId,
       syncServerUrl: syncServerUrl ?? this.syncServerUrl,
-      enableTelemetry: enableTelemetry ?? this.enableTelemetry,
+      telemetryEnabled: telemetryEnabled ?? this.telemetryEnabled,
       telemetryEndpoint: telemetryEndpoint ?? this.telemetryEndpoint,
     );
   }

@@ -249,8 +249,8 @@ void main() {
       final wedgedHead = await backend.readFifoHead(destination.id);
       expect(wedgedHead, isNotNull);
       expect(wedgedHead!.finalStatus, FinalStatus.wedged);
-      expect(wedgedHead.eventIdRange.firstSeq, e2.sequenceNumber);
-      expect(wedgedHead.eventIdRange.lastSeq, e2.sequenceNumber);
+      expect(wedgedHead.sequenceRange.firstSeq, e2.sequenceNumber);
+      expect(wedgedHead.sequenceRange.lastSeq, e2.sequenceNumber);
       expect(wedgedHead.eventIds, [e2.eventId]);
       final wedgedEntryId = wedgedHead.entryId;
 
@@ -365,7 +365,7 @@ void main() {
 /// already marked sent). We round-trip through `backend.readFifoRow`
 /// for every entry_id we can discover via the raw store.
 ///
-/// Returns the row whose eventIdRange covers [sequenceNumber], or null
+/// Returns the row whose sequenceRange covers [sequenceNumber], or null
 /// when no such row exists. If [excludeEntryId] is non-null, rows with
 /// that entryId are skipped (used to find the FRESH row after tombstone
 /// + refill, ignoring the tombstoned archive).
@@ -387,8 +387,8 @@ Future<FifoEntry?> _findRowCoveringSeq(
     if (excludeEntryId != null && entryId == excludeEntryId) continue;
     final row = await backend.readFifoRow(destinationId, entryId);
     if (row == null) continue;
-    if (sequenceNumber >= row.eventIdRange.firstSeq &&
-        sequenceNumber <= row.eventIdRange.lastSeq) {
+    if (sequenceNumber >= row.sequenceRange.firstSeq &&
+        sequenceNumber <= row.sequenceRange.lastSeq) {
       return row;
     }
   }

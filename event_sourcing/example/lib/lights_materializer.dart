@@ -40,7 +40,7 @@ class LightsMaterializer {
   /// Applies [event] to the `rgb_lights` view inside [txn].
   /// No-ops silently if [event.entryType] is not a button-press type.
   static Future<void> applyInTxn(
-    Txn txn,
+    Transaction txn,
     StorageBackend backend, {
     required StoredEvent event,
   }) async {

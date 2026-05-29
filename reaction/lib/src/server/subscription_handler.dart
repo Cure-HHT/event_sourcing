@@ -44,7 +44,7 @@ typedef ViewPermissionNamer = String? Function(String viewName);
 /// Run the per-connection state machine for an already-upgraded
 /// WebSocket [channel]. Spawns a message loop that:
 ///
-///   1. Waits for [AuthMsg] as the first wire message.
+///   1. Waits for [AuthMessage] as the first wire message.
 ///      - On success: emits [AuthOkMsg] and transitions to
 ///        AUTHENTICATED.
 ///      - On failure: closes the WS with code 4001 ("auth_rejected").
@@ -176,7 +176,7 @@ class _ConnectionState {
       await channel.sink.close(4001, 'auth_rejected');
       return;
     }
-    if (msg is! AuthMsg) {
+    if (msg is! AuthMessage) {
       await channel.sink.close(4001, 'auth_rejected');
       return;
     }
@@ -215,7 +215,7 @@ class _ConnectionState {
       if (removed != null) {
         await removed.cancel();
       }
-    } else if (msg is AuthMsg) {
+    } else if (msg is AuthMessage) {
       // Re-auth in v1 is not supported; surface as a protocol error
       // so a buggy client sees something other than silence.
       _send(
@@ -298,7 +298,7 @@ class _ConnectionState {
   /// (no row-level narrowing required).
   ///
   /// The class gate (equals-or-ancestor) is computed by the shared
-  /// `scopeClassMatch` helper in event_sourcing — the single tested source
+  /// `matchScopeClass` helper in event_sourcing — the single tested source
   /// of truth that the write-path policy's `_matches`
   /// (`TableBackedAuthorizationPolicy`) also obeys, so the read path cannot
   /// over-grant relative to the write path by construction.
@@ -343,7 +343,7 @@ class _ConnectionState {
 
       // The class gate (equals-or-ancestor of the view's scope class) is the
       // single tested source of truth shared with the write path; see
-      // scopeClassMatch in event_sourcing. When the registry is null we
+      // matchScopeClass in event_sourcing. When the registry is null we
       // cannot compute ancestry, so we fall back to exact-class-only matching
       // (conservative: under-grants the ancestor case, never over-grants —
       // see the doc comment above).
@@ -360,7 +360,7 @@ class _ConnectionState {
             ? ScopeClassMatch.appliesExact
             : ScopeClassMatch.doesNotApply;
       } else {
-        match = scopeClassMatch(scope, binding.scopeClass, registry);
+        match = matchScopeClass(scope, binding.scopeClass, registry);
       }
 
       switch (match) {

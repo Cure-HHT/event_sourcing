@@ -18,7 +18,7 @@ import 'package:event_sourcing/src/actions/scope_value.dart'
     show BoundScope, ScopeValue;
 import 'package:event_sourcing/src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
-import 'package:event_sourcing/src/storage/txn.dart' show Txn;
+import 'package:event_sourcing/src/storage/transaction.dart' show Transaction;
 
 /// Always-succeeds, emits one event.
 class HelloAction extends Action<Map<String, Object?>, String> {
@@ -176,13 +176,13 @@ class AlwaysAllowPolicy extends AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => const Allow();
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization.empty;
 }
 
@@ -196,17 +196,17 @@ class RecordingAllowPolicy extends AuthorizationPolicy {
 
   final List<(Permission, ScopeValue?)> calls = <(Permission, ScopeValue?)>[];
 
-  /// Every [Txn] the dispatcher injected into [isPermitted], in call
+  /// Every [Transaction] the dispatcher injected into [isPermitted], in call
   /// order. Tests assert non-null and identity-equality with the txn the
   /// dispatcher's [EventStore.runTransaction] body received.
-  final List<Txn?> txns = <Txn?>[];
+  final List<Transaction?> txns = <Transaction?>[];
 
   @override
   Future<AuthorizationDecision> isPermitted(
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async {
     calls.add((permission, scopeValue));
     txns.add(txn);
@@ -216,7 +216,7 @@ class RecordingAllowPolicy extends AuthorizationPolicy {
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization.empty;
 }
 
@@ -231,13 +231,13 @@ class AlwaysDenyNotGrantedPolicy extends AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => Deny(permission: permission, reason: DenyReason.notGranted);
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization.empty;
 }
 

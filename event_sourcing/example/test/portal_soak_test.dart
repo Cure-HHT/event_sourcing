@@ -28,7 +28,7 @@ class _Pane {
     required this.policyNotifier,
   });
 
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   final Source source;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -101,7 +101,7 @@ Future<_Pane> _mkPane({
     bridge: bridge,
   );
 
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: source,
     entryTypes: allDemoEntryTypes,
@@ -457,8 +457,8 @@ void main() {
         );
         // ignore: avoid_print
         print(
-          'Wedged FIFOs — mobile: ${await mobile.backend.anyFifoWedged()}, '
-          'portal: ${await portal.backend.anyFifoWedged()}',
+          'Wedged FIFOs — mobile: ${await mobile.backend.hasFifoWedged()}, '
+          'portal: ${await portal.backend.hasFifoWedged()}',
         );
         // ignore: avoid_print
         print('=' * 60);
@@ -511,14 +511,14 @@ void main() {
 
         // 4. No wedged FIFOs on mobile
         expect(
-          await mobile.backend.anyFifoWedged(),
+          await mobile.backend.hasFifoWedged(),
           isFalse,
           reason: 'mobile must have no wedged FIFOs after flush',
         );
 
         // 5. No wedged FIFOs on portal
         expect(
-          await portal.backend.anyFifoWedged(),
+          await portal.backend.hasFifoWedged(),
           isFalse,
           reason: 'portal must have no wedged FIFOs after flush',
         );

@@ -49,7 +49,7 @@ grants:
         await eventStore.append(
           entryType: 'user_role_scope',
           aggregateType: 'user_role_scope',
-          aggregateId: roleAssignmentAggregateId(
+          aggregateId: computeRoleAssignmentAggregateId(
             userId: 'u',
             role: 'admin',
             scope: const TotalWildcardScope(),

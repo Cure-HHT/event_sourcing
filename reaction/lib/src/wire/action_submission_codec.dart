@@ -17,13 +17,14 @@ import 'envelope.dart';
 class ActionSubmissionCodec {
   const ActionSubmissionCodec._();
 
-  static Map<String, Object?> encode(ActionSubmission s) {
+  static Map<String, Object?> encode(ActionSubmission submission) {
     final out = <String, Object?>{
-      'actionName': s.actionName,
-      'rawInput': s.rawInput,
+      'actionName': submission.actionName,
+      'rawInput': submission.rawInput,
     };
-    if (s.idempotencyKey != null) out['idempotencyKey'] = s.idempotencyKey;
-    if (s.flowToken != null) out['flowToken'] = s.flowToken;
+    if (submission.idempotencyKey != null)
+      out['idempotencyKey'] = submission.idempotencyKey;
+    if (submission.flowToken != null) out['flowToken'] = submission.flowToken;
     return out;
   }
 

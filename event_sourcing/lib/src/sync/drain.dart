@@ -20,7 +20,7 @@ import 'package:event_sourcing/src/sync/sync_policy.dart';
 /// Clock used to decide whether the head entry's backoff has elapsed.
 /// Tests pass a fixed-time closure; production passes `null` and picks
 /// up `DateTime.now().toUtc()`.
-typedef ClockFn = DateTime Function();
+typedef Clock = DateTime Function();
 
 /// Drain the head of [destination]'s FIFO: check backoff, call
 /// [Destination.send], record the attempt, and route the result to a
@@ -56,7 +56,7 @@ typedef ClockFn = DateTime Function();
 Future<void> drain(
   Destination destination, {
   required StorageBackend backend,
-  ClockFn? clock,
+  Clock? clock,
   SyncPolicy? policy,
 }) async {
   final now = clock ?? () => DateTime.now().toUtc();

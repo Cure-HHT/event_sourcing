@@ -4,8 +4,8 @@
 /// All exceptions thrown by the append-only datastore extend this class.
 /// This allows callers to catch all datastore-related errors with a single
 /// catch clause if needed.
-abstract class DatastoreException implements Exception {
-  const DatastoreException(this.message, {this.cause, this.stackTrace});
+abstract class EventStoreException implements Exception {
+  const EventStoreException(this.message, {this.cause, this.stackTrace});
 
   /// Human-readable error message.
   final String message;
@@ -27,12 +27,12 @@ abstract class DatastoreException implements Exception {
 }
 
 /// Exception thrown when database operations fail.
-class DatabaseException extends DatastoreException {
-  const DatabaseException(super.message, {super.cause, super.stackTrace});
+class StorageBackendException extends EventStoreException {
+  const StorageBackendException(super.message, {super.cause, super.stackTrace});
 }
 
 /// Exception thrown when event validation fails.
-class EventValidationException extends DatastoreException {
+class EventValidationException extends EventStoreException {
   const EventValidationException(
     super.message, {
     this.eventData,
@@ -54,12 +54,12 @@ class EventValidationException extends DatastoreException {
 }
 
 /// Exception thrown when event serialization/deserialization fails.
-class SerializationException extends DatastoreException {
+class SerializationException extends EventStoreException {
   const SerializationException(super.message, {super.cause, super.stackTrace});
 }
 
 /// Exception thrown when conflict detection or resolution fails.
-class ConflictException extends DatastoreException {
+class ConflictException extends EventStoreException {
   const ConflictException(
     super.message, {
     this.conflictingEventIds,
@@ -83,8 +83,8 @@ class ConflictException extends DatastoreException {
 /// Exception thrown when signature verification fails.
 ///
 /// This is a CRITICAL security exception indicating possible tampering.
-class SignatureException extends DatastoreException {
-  const SignatureException(
+class ChainVerificationException extends EventStoreException {
+  const ChainVerificationException(
     super.message, {
     this.eventId,
     super.cause,
@@ -108,6 +108,6 @@ class SignatureException extends DatastoreException {
 }
 
 /// Exception thrown when configuration is invalid.
-class ConfigurationException extends DatastoreException {
+class ConfigurationException extends EventStoreException {
   const ConfigurationException(super.message, {super.cause, super.stackTrace});
 }

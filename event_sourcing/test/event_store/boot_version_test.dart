@@ -30,7 +30,7 @@ Future<SembastBackend> _openBackend() async {
 }
 
 /// Append a synthetic version event directly to [backend], simulating a
-/// previous boot at [version]. Uses the Txn-based API with an explicit
+/// previous boot at [version]. Uses the Transaction-based API with an explicit
 /// nextSequenceNumber reservation, matching the pattern from version_check_test.
 Future<void> _appendSyntheticVersionEvent(
   SembastBackend backend, {
@@ -79,7 +79,7 @@ void main() {
         securityContexts: SembastSecurityContextStore(backend: backend),
       );
       final result = await VersionCheck.findMostRecent(backend);
-      expect(result?.recordedVersion, LibVersion.current);
+      expect(result?.recordedVersion, LibVersion.version);
       expect(result?.eventType, LibVersionEvents.initialized);
       await store.close();
     });
@@ -121,7 +121,7 @@ void main() {
       );
       final result = await VersionCheck.findMostRecent(backend);
       expect(result?.eventType, LibVersionEvents.changed);
-      expect(result?.recordedVersion, LibVersion.current);
+      expect(result?.recordedVersion, LibVersion.version);
       await store.close();
     });
 

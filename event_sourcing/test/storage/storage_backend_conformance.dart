@@ -40,8 +40,8 @@ import '../test_support/fifo_entry_helpers.dart';
 /// backend. Returning `null` from [factory] marks every test in the suite
 /// as skipped (this is how the Postgres harness gates on `PG_TEST_URL`
 /// absence). The factory may also be invoked from inside an individual
-/// test body — the foreign-Txn test in [_registerTransactionTests]
-/// constructs a second backend instance to obtain a Txn from a
+/// test body — the foreign-Transaction test in [_registerTransactionTests]
+/// constructs a second backend instance to obtain a Transaction from a
 /// different backend.
 ///
 /// [backendLabel] is the human-readable name folded into the outer group
@@ -170,8 +170,8 @@ Future<StoredEvent> _appendBuilt(
 // -------- Transaction subgroup --------
 //
 // Verifies: EVS-PRD-event-log/A — successful body commits all writes
-//   atomically; thrown exception rolls back all writes; Txn handle is
-//   invalidated when body returns or throws; a Txn from one backend
+//   atomically; thrown exception rolls back all writes; Transaction handle is
+//   invalidated when body returns or throws; a Transaction from one backend
 //   instance is rejected by another (defense-in-depth on the type-and-
 //   identity check).
 void _registerTransactionTests(
@@ -222,10 +222,10 @@ void _registerTransactionTests(
       expect(await backend.findAllEvents(), isEmpty);
     });
 
-    test('Txn cannot be used after body returns', () async {
+    test('Transaction cannot be used after body returns', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      late Txn escaped;
+      late Transaction escaped;
       await backend.transaction((txn) async {
         escaped = txn;
       });
@@ -235,10 +235,10 @@ void _registerTransactionTests(
       );
     });
 
-    test('Txn cannot be used after body throws', () async {
+    test('Transaction cannot be used after body throws', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      late Txn escaped;
+      late Transaction escaped;
       await expectLater(
         backend.transaction((txn) async {
           escaped = txn;
@@ -270,33 +270,36 @@ void _registerTransactionTests(
       },
     );
 
-    // Defense-in-depth: a Txn handed out by a *different* backend
+    // Defense-in-depth: a Transaction handed out by a *different* backend
     // instance must be rejected when re-used against this one. The
     // type-and-identity check guards against accidentally feeding one
     // backend's transaction into another's state.
-    test('foreign Txn (from a different backend) is rejected', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      final other = await factory();
-      if (other == null) {
-        markTestSkipped('factory returned null on second invocation');
-        return;
-      }
-      late Txn foreignTxn;
-      await other.transaction((txn) async {
-        foreignTxn = txn;
-      });
-      await other.close();
+    test(
+      'foreign Transaction (from a different backend) is rejected',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final other = await factory();
+        if (other == null) {
+          markTestSkipped('factory returned null on second invocation');
+          return;
+        }
+        late Transaction foreignTxn;
+        await other.transaction((txn) async {
+          foreignTxn = txn;
+        });
+        await other.close();
 
-      // The foreign Txn is already invalidated by its own backend's
-      // end-of-body invalidation, so the validity check fires first.
-      // Even if it were still valid, the type-and-identity check would
-      // catch it.
-      await expectLater(
-        backend.appendEvent(foreignTxn, _event('ev-foreign', 1)),
-        throwsStateError,
-      );
-    });
+        // The foreign Transaction is already invalidated by its own backend's
+        // end-of-body invalidation, so the validity check fires first.
+        // Even if it were still valid, the type-and-identity check would
+        // catch it.
+        await expectLater(
+          backend.appendEvent(foreignTxn, _event('ev-foreign', 1)),
+          throwsStateError,
+        );
+      },
+    );
   });
 }
 
@@ -530,7 +533,7 @@ void _registerEventLogTests(
     test('readLatestEventHash rejects use outside its transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      late Txn escaped;
+      late Transaction escaped;
       await backend.transaction((txn) async {
         escaped = txn;
       });
@@ -566,7 +569,7 @@ void _registerEventLogTests(
     test('findAllEventsInTxn rejects use outside its transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      late Txn escaped;
+      late Transaction escaped;
       await backend.transaction((txn) async {
         escaped = txn;
       });
@@ -1287,7 +1290,7 @@ void _registerViewTargetVersionTests(
 //
 // Verifies: EVS-PRD-portability/D — FIFO persistence methods (enqueueFifo,
 //   readFifoHead, listFifoEntries, appendAttempt, markFinal,
-//   anyFifoWedged/wedgedFifos) are part of the StorageBackend abstraction.
+//   hasFifoWedged/wedgedFifos) are part of the StorageBackend abstraction.
 //   markFinal idempotency + one-way transition rule are part of the FIFO
 //   contract; drain's at-least-once delivery depends on
 //   markFinal(same-status) being a no-op.
@@ -1314,7 +1317,7 @@ void _registerFifoTests(
       expect(head.entryId, isNot('e1'));
       expect(head.entryId, matches(RegExp(r'^[0-9a-f-]{36}$')));
       expect(head.eventIds, ['e1']);
-      expect(head.eventIdRange, (firstSeq: 1, lastSeq: 1));
+      expect(head.sequenceRange, (firstSeq: 1, lastSeq: 1));
       expect(head.finalStatus, isNull);
       expect(head.attempts, isEmpty);
       expect(head.sentAt, isNull);
@@ -1831,9 +1834,9 @@ void _registerFifoTests(
       );
     });
 
-    // -------- anyFifoWedged + wedgedFifos --------
+    // -------- hasFifoWedged + wedgedFifos --------
 
-    test('anyFifoWedged true iff any FIFO is wedged', () async {
+    test('hasFifoWedged true iff any FIFO is wedged', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final a1 = await enqueueSingle(
@@ -1844,10 +1847,10 @@ void _registerFifoTests(
       );
       await enqueueSingle(backend, 'B', eventId: 'b1', sequenceNumber: 1);
 
-      expect(await backend.anyFifoWedged(), isFalse);
+      expect(await backend.hasFifoWedged(), isFalse);
 
       await backend.markFinal('A', a1.entryId, FinalStatus.wedged);
-      expect(await backend.anyFifoWedged(), isTrue);
+      expect(await backend.hasFifoWedged(), isTrue);
     });
 
     test('wedgedFifos returns one summary per wedged FIFO', () async {
@@ -1926,7 +1929,7 @@ void _registerFifoTests(
         sequenceNumber: 1,
       );
       await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      expect(await backend.anyFifoWedged(), isFalse);
+      expect(await backend.hasFifoWedged(), isFalse);
       expect(await backend.wedgedFifos(), isEmpty);
     });
 

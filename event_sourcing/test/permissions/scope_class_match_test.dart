@@ -7,7 +7,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('scopeClassMatch', () {
+  group('matchScopeClass', () {
     // Two-class containment chain: patient containedIn site. So 'site' is an
     // ancestor of 'patient'; 'patient' is NOT an ancestor of 'site'; and the
     // two are unrelated in the descendant->ancestor direction we don't walk.
@@ -16,7 +16,7 @@ void main() {
         ScopeClassSpec(name: 'site'),
         ScopeClassSpec(
           name: 'patient',
-          containedIn: ContainmentRef(
+          containedIn: ContainmentReference(
             parentClass: 'site',
             projection: 'patient_site_index',
             keyColumn: 'patient_id',
@@ -31,11 +31,11 @@ void main() {
 
     test('TotalWildcardScope applies exactly for any target class', () {
       expect(
-        scopeClassMatch(const TotalWildcardScope(), 'patient', registry),
+        matchScopeClass(const TotalWildcardScope(), 'patient', registry),
         ScopeClassMatch.appliesExact,
       );
       expect(
-        scopeClassMatch(const TotalWildcardScope(), 'site', registry),
+        matchScopeClass(const TotalWildcardScope(), 'site', registry),
         ScopeClassMatch.appliesExact,
       );
     });
@@ -43,7 +43,7 @@ void main() {
     group('ValueWildcardScope', () {
       test('exact class → appliesExact', () {
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const ValueWildcardScope(class_: 'patient'),
             'patient',
             registry,
@@ -56,7 +56,7 @@ void main() {
         // 'site' wildcard against a 'patient' target: site IS an ancestor of
         // patient.
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const ValueWildcardScope(class_: 'site'),
             'patient',
             registry,
@@ -71,7 +71,7 @@ void main() {
         // guard (a wildcard on the wrong class must not grant the whole
         // target class).
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const ValueWildcardScope(class_: 'patient'),
             'site',
             registry,
@@ -84,7 +84,7 @@ void main() {
     group('BoundScope', () {
       test('exact class → appliesExact', () {
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const BoundScope(class_: 'patient', value: 'p1'),
             'patient',
             registry,
@@ -95,7 +95,7 @@ void main() {
 
       test('ancestor class → appliesViaAncestor', () {
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const BoundScope(class_: 'site', value: 'site-A'),
             'patient',
             registry,
@@ -106,7 +106,7 @@ void main() {
 
       test('unrelated/cross class → doesNotApply', () {
         expect(
-          scopeClassMatch(
+          matchScopeClass(
             const BoundScope(class_: 'patient', value: 'p1'),
             'site',
             registry,

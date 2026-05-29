@@ -11,10 +11,10 @@ void main() {
       expect(spec.containedIn, isNull);
     });
 
-    test('contained class carries a ContainmentRef', () {
+    test('contained class carries a ContainmentReference', () {
       const spec = ScopeClassSpec(
         name: 'patient',
-        containedIn: ContainmentRef(
+        containedIn: ContainmentReference(
           parentClass: 'site',
           projection: 'patient_site_index',
           keyColumn: 'patient_id',
@@ -31,9 +31,9 @@ void main() {
       expect(() => ScopeClassSpec(name: ''), throwsA(isA<AssertionError>()));
     });
 
-    test('ContainmentRef rejects empty fields', () {
+    test('ContainmentReference rejects empty fields', () {
       expect(
-        () => ContainmentRef(
+        () => ContainmentReference(
           parentClass: '',
           projection: 'p',
           keyColumn: 'k',
@@ -42,7 +42,7 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
       expect(
-        () => ContainmentRef(
+        () => ContainmentReference(
           parentClass: 'p',
           projection: '',
           keyColumn: 'k',
@@ -51,7 +51,7 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
       expect(
-        () => ContainmentRef(
+        () => ContainmentReference(
           parentClass: 'p',
           projection: 'p',
           keyColumn: '',
@@ -60,7 +60,7 @@ void main() {
         throwsA(isA<AssertionError>()),
       );
       expect(
-        () => ContainmentRef(
+        () => ContainmentReference(
           parentClass: 'p',
           projection: 'p',
           keyColumn: 'k',
@@ -78,20 +78,20 @@ void main() {
       expect(a, isNot(equals(c)));
     });
 
-    test('ContainmentRef equality compares all fields', () {
-      const r1 = ContainmentRef(
+    test('ContainmentReference equality compares all fields', () {
+      const r1 = ContainmentReference(
         parentClass: 'site',
         projection: 'idx',
         keyColumn: 'k',
         parentColumn: 'p',
       );
-      const r2 = ContainmentRef(
+      const r2 = ContainmentReference(
         parentClass: 'site',
         projection: 'idx',
         keyColumn: 'k',
         parentColumn: 'p',
       );
-      const r3 = ContainmentRef(
+      const r3 = ContainmentReference(
         parentClass: 'other',
         projection: 'idx',
         keyColumn: 'k',
@@ -103,7 +103,7 @@ void main() {
     });
 
     test('ScopeClassSpec equality accounts for containedIn', () {
-      const ref = ContainmentRef(
+      const ref = ContainmentReference(
         parentClass: 'site',
         projection: 'idx',
         keyColumn: 'k',

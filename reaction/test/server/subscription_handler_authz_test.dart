@@ -139,13 +139,13 @@ class _ScopePolicy implements AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => const Allow();
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization(
     activeRole: 'clinician',
     rolePermissions: const <Permission>{},
@@ -161,7 +161,7 @@ ScopeClassRegistry _siteOverPatientRegistry() => ScopeClassRegistry(
     ScopeClassSpec(name: 'site'),
     ScopeClassSpec(
       name: 'patient',
-      containedIn: ContainmentRef(
+      containedIn: ContainmentReference(
         parentClass: 'site',
         projection: 'patient_site',
         keyColumn: 'patient_id',

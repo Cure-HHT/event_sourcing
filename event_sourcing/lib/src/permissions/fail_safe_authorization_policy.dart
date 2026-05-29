@@ -18,12 +18,12 @@ class FailSafeAuthorizationPolicy implements AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => Deny(permission: permission, reason: DenyReason.notGranted);
 
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => EffectiveAuthorization.empty;
 }

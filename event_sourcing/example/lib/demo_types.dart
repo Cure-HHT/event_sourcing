@@ -30,7 +30,7 @@ const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
 );
 
 /// Full demo entry-type set. Passed as `entryTypes:` to
-/// `bootstrapAppendOnlyDatastore`.
+/// `bootstrapEventStore`.
 const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
   demoNoteType,
   redButtonType,

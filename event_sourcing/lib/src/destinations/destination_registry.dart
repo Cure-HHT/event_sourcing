@@ -9,7 +9,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/historical_replay.dart';
 
 /// Process-wide registry of synchronization destinations.
@@ -442,8 +442,8 @@ class DestinationRegistry {
     }
     // head.finalStatus is null or wedged here (readFifoHead contract).
 
-    final targetFirstSeq = head.eventIdRange.firstSeq;
-    final targetLastSeq = head.eventIdRange.lastSeq;
+    final targetFirstSeq = head.sequenceRange.firstSeq;
+    final targetLastSeq = head.sequenceRange.lastSeq;
     final targetSeqInQueue = head.sequenceInQueue;
 
     return _eventStore.runTransaction((txn, collector) async {
@@ -499,7 +499,7 @@ class DestinationRegistry {
   /// `appendInTxn`'s `_validateAppendInputs` raises an `ArgumentError`
   /// inside the surrounding transaction (rolling back any prior writes).
   Future<void> _emitDestinationAuditInTxn(
-    Txn txn,
+    Transaction txn,
     PublishCollector collector, {
     required String entryType,
     required Map<String, Object?> data,

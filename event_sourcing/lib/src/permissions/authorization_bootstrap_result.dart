@@ -1,4 +1,4 @@
-// lib/src/permissions/authorization_policy_bootstrap.dart
+// lib/src/permissions/authorization_bootstrap_result.dart
 // Implements: EVS-PRD-permissions-as-events/A — sealed result type for the
 //   permission bootstrap flow; PolicyReady carries a policy built from the
 //   event log; PolicyFailSafe is returned when seed validation fails,
@@ -14,14 +14,14 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:meta/meta.dart';
 
 @immutable
-sealed class AuthorizationPolicyBootstrap {
-  const AuthorizationPolicyBootstrap();
+sealed class AuthorizationBootstrapResult {
+  const AuthorizationBootstrapResult();
   AuthorizationPolicy get policy;
   bool get isReady;
   List<String> get errors;
 }
 
-final class PolicyReady extends AuthorizationPolicyBootstrap {
+final class PolicyReady extends AuthorizationBootstrapResult {
   const PolicyReady(this._policy);
   final AuthorizationPolicy _policy;
 
@@ -33,7 +33,7 @@ final class PolicyReady extends AuthorizationPolicyBootstrap {
   List<String> get errors => const <String>[];
 }
 
-final class PolicyFailSafe extends AuthorizationPolicyBootstrap {
+final class PolicyFailSafe extends AuthorizationBootstrapResult {
   const PolicyFailSafe(this._errors);
   final List<String> _errors;
 

@@ -53,7 +53,11 @@ Future<void> main(List<String> args) async {
   final port = int.parse(parsed['port'] as String);
 
   final result = await bootstrap();
-  final server = await shelf_io.serve(_withCors(result.router.call), host, port);
+  final server = await shelf_io.serve(
+    _withCors(result.router.call),
+    host,
+    port,
+  );
 
   stdout.writeln(
     'reaction example server listening on http://${server.address.host}:${server.port}',

@@ -1,5 +1,5 @@
 // Verifies: EVS-DEV-view-target-versions-seeding
-// Tests for AppendOnlyDatastore.setViewTargetVersion.
+// Tests for EventStoreBundle.setViewTargetVersion.
 // View target versions are written directly via setViewTargetVersion or
 // by rebuildView.
 
@@ -27,11 +27,11 @@ const EntryTypeDefinition _demoNote = EntryTypeDefinition(
 );
 
 void main() {
-  group('AppendOnlyDatastore.setViewTargetVersion', () {
+  group('EventStoreBundle.setViewTargetVersion', () {
     test('writes a new entry-type version after bootstrap', () async {
       //   entry type into a view's view_target_versions.
       final backend = await _openBackend();
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],
@@ -47,7 +47,7 @@ void main() {
 
     test('overwrites an existing entry-type version', () async {
       final backend = await _openBackend();
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: const <EntryTypeDefinition>[_demoNote],

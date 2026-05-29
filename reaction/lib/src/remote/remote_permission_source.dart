@@ -2,7 +2,7 @@
 //   PermissionSource: synchronous current getter + Stream of
 //   EffectiveAuthorization? snapshot updates.
 // Implements: EVS-PRD-permission-source/C — fetches the initial snapshot
-//   via HTTP GET /permissions/snapshot and refreshes on the AuthzWatcher's
+//   via HTTP GET /permissions/snapshot and refreshes on the AuthorizationWatcher's
 //   stale_data envelope (wired by RemoteScope).
 // Implements: EVS-PRD-permission-source/D — Principal is sourced from
 //   the co-mounted AuthSession; no direct mutator.
@@ -29,7 +29,7 @@ import 'package:reaction/src/wire/effective_authorization_codec.dart';
 ///
 /// Mid-session refresh: [refresh] re-fetches the snapshot and is wired
 /// by [RemoteScope] to the server's `stale_data` envelope (emitted by
-/// the AuthzWatcher on security-EXPANDING changes — `role_assigned`,
+/// the AuthorizationWatcher on security-EXPANDING changes — `role_assigned`,
 /// `permission_granted`, containment changes — see
 /// `spec/reaction-remote.md` "Mid-session permission changes"). UI
 /// gating that wraps `stream` therefore updates live as the user's
@@ -53,7 +53,7 @@ class RemotePermissionSource implements PermissionSource {
   final StreamController<EffectiveAuthorization?> _controller =
       StreamController<EffectiveAuthorization?>.broadcast();
   late final StreamSubscription<AuthStatus> _authSub;
-  bool _disposed = false;
+  bool _isDisposed = false;
 
   /// Monotonic generation counter, bumped on every auth-status change.
   /// In-flight `_fetchSnapshot` responses are discarded if a newer
@@ -103,14 +103,14 @@ class RemotePermissionSource implements PermissionSource {
   /// transport errors (same shape as the Authenticated-transition
   /// path).
   Future<void> refresh() async {
-    if (_disposed) return;
+    if (_isDisposed) return;
     if (authSession.current is! Authenticated) return;
     _fetchGen++;
     await _fetchSnapshot();
   }
 
   Future<void> _fetchSnapshot() async {
-    if (_disposed) return;
+    if (_isDisposed) return;
     final gen = _fetchGen;
     final url = connection.baseUrl.replace(path: '/permissions/snapshot');
     final http.Response res;
@@ -126,7 +126,7 @@ class RemotePermissionSource implements PermissionSource {
     }
     // Drop stale responses: a newer auth transition has superseded us,
     // or we've been disposed.
-    if (gen != _fetchGen || _disposed) return;
+    if (gen != _fetchGen || _isDisposed) return;
     if (res.statusCode == 200) {
       final effective = EffectiveAuthorizationCodec.decode(
         jsonDecode(res.body) as Map<String, Object?>,
@@ -150,7 +150,7 @@ class RemotePermissionSource implements PermissionSource {
 
   @override
   Future<void> dispose() async {
-    _disposed = true;
+    _isDisposed = true;
     await _authSub.cancel();
     if (!_controller.isClosed) await _controller.close();
   }

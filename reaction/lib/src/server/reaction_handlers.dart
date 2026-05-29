@@ -2,7 +2,7 @@
 //   for the server side of the wire: exposes .me, .actions, .permissions
 //   as shelf.Handler getters and .subscriptions(validator) as a factory.
 // Implements: EVS-DEV-authz-watcher/E — owns the single server-wide
-//   AuthzWatcher instance and the connection registry it uses; lifecycle
+//   AuthorizationWatcher instance and the connection registry it uses; lifecycle
 //   bound to the handlers' constructor / dispose pair.
 
 import 'dart:async';
@@ -10,7 +10,7 @@ import 'dart:async';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/action_route.dart';
-import 'package:reaction/src/server/authz_watcher.dart';
+import 'package:reaction/src/server/authorization_watcher.dart';
 import 'package:reaction/src/server/me_route.dart';
 import 'package:reaction/src/server/permission_route.dart';
 import 'package:reaction/src/server/subscription_handler.dart';
@@ -49,7 +49,7 @@ export 'package:reaction/src/server/subscription_handler.dart'
 /// // HTTP routes are gated by the consumer's auth middleware (it
 /// // reads the Bearer header and attaches a Principal to the request
 /// // context). The WS upgrade path (`/subscriptions`) is NOT —
-/// // credentials arrive in-band via the first WS AuthMsg (see
+/// // credentials arrive in-band via the first WS AuthMessage (see
 /// // [subscriptions]) because Flutter web cannot attach
 /// // an Authorization header during a WS upgrade. Mounting the WS
 /// // route behind HTTP-bearer middleware would reject every upgrade
@@ -82,7 +82,7 @@ class ReactionHandlers {
        connectionRegistry = WsConnectionRegistry(),
        _viewPermissionNamer =
            viewPermissionNamer ?? defaultViewPermissionNamer {
-    _authzWatcher = AuthzWatcher(
+    _authzWatcher = AuthorizationWatcher(
       eventStore: eventStore,
       connectionRegistry: connectionRegistry,
       policy: policy,
@@ -105,7 +105,7 @@ class ReactionHandlers {
   final ViewScopeRegistry viewScopeRegistry;
   final WsConnectionRegistry connectionRegistry;
   final ViewPermissionNamer _viewPermissionNamer;
-  late final AuthzWatcher _authzWatcher;
+  late final AuthorizationWatcher _authzWatcher;
 
   /// Default view-permission name resolver: `view:<viewName>`.
   static String? defaultViewPermissionNamer(String viewName) =>
@@ -118,22 +118,22 @@ class ReactionHandlers {
       _authzWatcher.watchContainment(aggregateType);
 
   /// GET handler: returns the authenticated Principal as JSON.
-  Handler get me => meRouteHandler();
+  Handler get me => meHandler();
 
   /// POST handler: dispatches an ActionSubmission and returns the
   /// DispatchResult. Same auth requirement as [me].
-  Handler get actions => actionRouteHandler(dispatcher: dispatcher);
+  Handler get actions => actionHandler(dispatcher: dispatcher);
 
   /// GET handler: returns the EffectiveAuthorization for the
   /// authenticated Principal. Same auth requirement as [me].
-  Handler get permissions => permissionRouteHandler(policy: policy);
+  Handler get permissions => permissionSnapshotHandler(policy: policy);
 
   /// WS upgrade handler: opens a per-connection state machine that
   /// authenticates via first WS message (the lib's
   /// PrincipalAuthValidator interface), then accepts subscribe /
   /// unsubscribe messages and relays substrate `Update<T>` envelopes.
   /// The connection registers with [connectionRegistry] on auth_ok
-  /// so the AuthzWatcher can find it on permission events.
+  /// so the AuthorizationWatcher can find it on permission events.
   ///
   /// The validator is supplied per-call (rather than at construction)
   /// because the WS upgrade path cannot carry an Authorization header
@@ -154,6 +154,6 @@ class ReactionHandlers {
         );
       });
 
-  /// Stop the AuthzWatcher subscription. Call on graceful shutdown.
+  /// Stop the AuthorizationWatcher subscription. Call on graceful shutdown.
   Future<void> dispose() => _authzWatcher.stop();
 }

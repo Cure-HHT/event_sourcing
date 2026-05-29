@@ -1,6 +1,6 @@
 // Implements: EVS-PRD-event-log/A — all mutations accept a caller-supplied
-//   `Txn` so they commit atomically with the event-log row they describe.
-//   Postgres-side, the [Txn] passed in is a [PostgresTxn] holding the
+//   `Transaction` so they commit atomically with the event-log row they describe.
+//   Postgres-side, the [Transaction] passed in is a [PostgresTxn] holding the
 //   `TxSession` opened by [PostgresBackend.transaction]; writes routed
 //   through `txn.session` therefore live inside the same transaction as
 //   the `events` row produced by [PostgresBackend.appendEvent].
@@ -17,7 +17,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed `SecurityContextStore`. Persists one row per event in
@@ -29,7 +29,7 @@ import 'package:postgres/postgres.dart';
 /// backend via [PostgresBackend.queryAudit]; this store's [queryAudit]
 /// is a thin delegator. Mutations live here so they can share a
 /// [PostgresTxn] with the matching [PostgresBackend.appendEvent].
-class PostgresSecurityContextStore extends InternalSecurityContextStore {
+class PostgresSecurityContextStore extends MutableSecurityContextStore {
   PostgresSecurityContextStore({required this.backend});
 
   final PostgresBackend backend;
@@ -40,7 +40,10 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<EventSecurityContext?> readInTxn(Txn txn, String eventId) async {
+  Future<EventSecurityContext?> readInTxn(
+    Transaction txn,
+    String eventId,
+  ) async {
     final session = _session(txn);
     final result = await session.execute(
       Sql.named('SELECT payload FROM security_context WHERE event_id = @id'),
@@ -51,7 +54,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<void> writeInTxn(Txn txn, EventSecurityContext row) async {
+  Future<void> writeInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
     await session.execute(
       Sql.named('''
@@ -68,7 +71,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<void> upsertInTxn(Txn txn, EventSecurityContext row) async {
+  Future<void> upsertInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
     await session.execute(
       Sql.named('''
@@ -89,7 +92,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<void> deleteInTxn(Txn txn, String eventId) async {
+  Future<void> deleteInTxn(Transaction txn, String eventId) async {
     final session = _session(txn);
     await session.execute(
       Sql.named('DELETE FROM security_context WHERE event_id = @id'),
@@ -99,7 +102,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
 
   @override
   Future<List<EventSecurityContext>> findUnredactedOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   ) async {
     final session = _session(txn);
@@ -118,7 +121,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
 
   @override
   Future<List<EventSecurityContext>> findOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   ) async {
     final session = _session(txn);
@@ -153,7 +156,7 @@ class PostgresSecurityContextStore extends InternalSecurityContextStore {
     cursor: cursor,
   );
 
-  TxSession _session(Txn txn) {
+  TxSession _session(Transaction txn) {
     if (txn is! PostgresTxn) {
       throw ArgumentError.value(
         txn,

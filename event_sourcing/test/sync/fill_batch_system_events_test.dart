@@ -24,8 +24,8 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-Future<AppendOnlyDatastore> _bootstrap(SembastBackend backend) {
-  return bootstrapAppendOnlyDatastore(
+Future<EventStoreBundle> _bootstrap(SembastBackend backend) {
+  return bootstrapEventStore(
     backend: backend,
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
@@ -36,7 +36,7 @@ Future<AppendOnlyDatastore> _bootstrap(SembastBackend backend) {
 void main() {
   group('fillBatch — system event admission via SubscriptionFilter', () {
     late SembastBackend backend;
-    late AppendOnlyDatastore ds;
+    late EventStoreBundle ds;
     var counter = 0;
 
     setUp(() async {

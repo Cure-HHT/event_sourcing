@@ -13,7 +13,7 @@ void main() {
       fromVersion: 1,
       toVersion: 2,
       transforms: [
-        RenameField(from: 'old_name', to: 'new_name'),
+        RenameField(sourceField: 'old_name', targetField: 'new_name'),
         DefaultField(fieldName: 'language', defaultValue: 'en'),
       ],
     );

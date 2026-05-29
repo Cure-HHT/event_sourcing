@@ -37,12 +37,12 @@ class ChainFailure {
 
 /// Non-throwing verdict returned by `verifyEventChain` / `verifyIngestChain`.
 class ChainVerdict {
-  const ChainVerdict({required this.ok, required this.failures});
-  final bool ok;
+  const ChainVerdict({required this.isValid, required this.failures});
+  final bool isValid;
   final List<ChainFailure> failures;
 
   static const ChainVerdict valid = ChainVerdict(
-    ok: true,
+    isValid: true,
     failures: <ChainFailure>[],
   );
 }

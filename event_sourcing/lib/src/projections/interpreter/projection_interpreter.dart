@@ -27,15 +27,12 @@ import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 class ProjectionInterpreter {
   final ProjectionRegistry projections;
   final PromoterRegistry promoters;
   final EntryTypeRegistry entryTypes;
-
-  /// Alias for [projections]; prefer [projections] for new call sites.
-  ProjectionRegistry get registry => projections;
 
   ProjectionInterpreter({
     required this.projections,
@@ -54,7 +51,7 @@ class ProjectionInterpreter {
   /// row) are excluded. The caller uses this list for post-commit subscriber
   /// notification via [SubscriptionEngine.publishRowChange].
   Future<List<AggregateFoldChange>> applyEvent({
-    required Txn txn,
+    required Transaction txn,
     required StorageBackend backend,
     required StoredEvent event,
   }) async {

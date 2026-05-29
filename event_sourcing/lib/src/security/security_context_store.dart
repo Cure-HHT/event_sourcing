@@ -1,10 +1,10 @@
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Read-side contract for the security-context sidecar. Mutations are
-/// package-private via `InternalSecurityContextStore` — only `EventStore`
+/// package-private via `MutableSecurityContextStore` — only `EventStore`
 /// writes, updates, or deletes rows so each mutation commits atomically
 /// with the event-log row that describes it.
 // Implements: EVS-PRD-event-log/A — mutations are committed atomically with
@@ -33,19 +33,19 @@ abstract class SecurityContextStore {
 /// through `EventStore.append` / `EventStore.clearSecurityContext` /
 /// `EventStore.applyRetentionPolicy`.
 // Implements: EVS-PRD-event-log/A — `writeInTxn` / `upsertInTxn` /
-//   `deleteInTxn` all accept a `Txn` so the caller (EventStore) can commit
+//   `deleteInTxn` all accept a `Transaction` so the caller (EventStore) can commit
 //   security and event-log mutations atomically.
-abstract class InternalSecurityContextStore extends SecurityContextStore {
-  Future<void> writeInTxn(Txn txn, EventSecurityContext row);
-  Future<EventSecurityContext?> readInTxn(Txn txn, String eventId);
-  Future<void> deleteInTxn(Txn txn, String eventId);
-  Future<void> upsertInTxn(Txn txn, EventSecurityContext row);
+abstract class MutableSecurityContextStore extends SecurityContextStore {
+  Future<void> writeInTxn(Transaction txn, EventSecurityContext row);
+  Future<EventSecurityContext?> readInTxn(Transaction txn, String eventId);
+  Future<void> deleteInTxn(Transaction txn, String eventId);
+  Future<void> upsertInTxn(Transaction txn, EventSecurityContext row);
   Future<List<EventSecurityContext>> findUnredactedOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   );
   Future<List<EventSecurityContext>> findOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   );
 }
@@ -59,7 +59,7 @@ class PagedAudit {
 
 /// One audit row: the event and its security context pair.
 class AuditRow {
-  const AuditRow({required this.event, required this.context});
+  const AuditRow({required this.event, required this.securityContext});
   final StoredEvent event;
-  final EventSecurityContext context;
+  final EventSecurityContext securityContext;
 }

@@ -26,13 +26,13 @@ import 'envelope.dart';
 class EffectiveAuthorizationCodec {
   const EffectiveAuthorizationCodec._();
 
-  static Map<String, Object?> encode(EffectiveAuthorization e) {
-    final perms = e.rolePermissions.toList()
+  static Map<String, Object?> encode(EffectiveAuthorization authorization) {
+    final perms = authorization.rolePermissions.toList()
       ..sort((a, b) => a.name.compareTo(b.name));
     return {
-      'activeRole': e.activeRole,
+      'activeRole': authorization.activeRole,
       'rolePermissions': perms.map(_encodePermission).toList(),
-      'scopeAssignments': e.scopeAssignments
+      'scopeAssignments': authorization.scopeAssignments
           .map(_encodeScopeAssignment)
           .toList(),
     };

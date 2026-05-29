@@ -1,16 +1,16 @@
-// Tracks open WS connections by userId so the AuthzWatcher can
+// Tracks open WS connections by userId so the AuthorizationWatcher can
 // route close-frames and stale_data messages to affected clients.
 //
 // Package-private; not exported from reaction.dart.
 //
 // Implements: EVS-DEV-authz-watcher/A/B/C/E — the per-userId index the
-//   AuthzWatcher consults when force-closing or sending stale_data;
+//   AuthorizationWatcher consults when force-closing or sending stale_data;
 //   carries the per-connection state separately from the watcher's
 //   single substrate subscription.
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-/// Tracks open WS connections by userId so the AuthzWatcher can
+/// Tracks open WS connections by userId so the AuthorizationWatcher can
 /// route close-frames and stale_data messages to affected clients.
 class WsConnectionRegistry {
   final Map<String, Set<WebSocketChannel>> _byUser = {};

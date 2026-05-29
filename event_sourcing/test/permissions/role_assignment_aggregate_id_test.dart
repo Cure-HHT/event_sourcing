@@ -9,9 +9,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('roleAssignmentAggregateId', () {
+  group('computeRoleAssignmentAggregateId', () {
     test('encodes a bound scope as canonical JSON', () {
-      final id = roleAssignmentAggregateId(
+      final id = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site', value: 'A'),
@@ -24,7 +24,7 @@ void main() {
     });
 
     test('encodes a value-wildcard scope', () {
-      final id = roleAssignmentAggregateId(
+      final id = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const ValueWildcardScope(class_: 'site'),
@@ -34,7 +34,7 @@ void main() {
     });
 
     test('encodes a total wildcard scope', () {
-      final id = roleAssignmentAggregateId(
+      final id = computeRoleAssignmentAggregateId(
         userId: 'U2',
         role: 'ADMIN',
         scope: const TotalWildcardScope(),
@@ -43,12 +43,12 @@ void main() {
     });
 
     test('distinct tuples produce distinct ids', () {
-      final a = roleAssignmentAggregateId(
+      final a = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site', value: 'A:B'),
       );
-      final b = roleAssignmentAggregateId(
+      final b = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site-X', value: 'A'),
@@ -57,12 +57,12 @@ void main() {
     });
 
     test('same tuple produces identical id', () {
-      final a = roleAssignmentAggregateId(
+      final a = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site', value: 'A'),
       );
-      final b = roleAssignmentAggregateId(
+      final b = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site', value: 'A'),

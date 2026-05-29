@@ -180,7 +180,7 @@ class _AuditRowTile extends StatelessWidget {
             style: DemoText.body,
           ),
           Text(
-            'recorded ${row.context.recordedAt.toIso8601String()}',
+            'recorded ${row.securityContext.recordedAt.toIso8601String()}',
             style: DemoText.body,
           ),
           Text('initiator $initiatorLabel', style: DemoText.body),

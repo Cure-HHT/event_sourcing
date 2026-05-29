@@ -9,7 +9,7 @@
 //
 // The actions emit `role_assigned` / `role_unassigned` events with the
 // substrate's standard payloads — the `user_role_scopes` projection
-// indexes them automatically and the AuthzWatcher reacts to them
+// indexes them automatically and the AuthorizationWatcher reacts to them
 // exactly like seed-time assignments (force-logout on unassign, push
 // stale_data on assign).
 
@@ -101,7 +101,7 @@ class AssignRoleAction extends Action<RoleAssignmentInput, RoleAdminResult> {
       result: const RoleAdminResult(),
       events: [
         EventDraft(
-          aggregateId: roleAssignmentAggregateId(
+          aggregateId: computeRoleAssignmentAggregateId(
             userId: input.userId,
             role: input.role,
             scope: input.scope,
@@ -160,7 +160,7 @@ class UnassignRoleAction extends Action<RoleAssignmentInput, RoleAdminResult> {
       result: const RoleAdminResult(),
       events: [
         EventDraft(
-          aggregateId: roleAssignmentAggregateId(
+          aggregateId: computeRoleAssignmentAggregateId(
             userId: input.userId,
             role: input.role,
             scope: input.scope,

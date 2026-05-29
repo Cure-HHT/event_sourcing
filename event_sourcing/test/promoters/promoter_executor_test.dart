@@ -16,7 +16,7 @@ void main() {
         entryType: 't',
         fromVersion: 1,
         toVersion: 2,
-        transforms: [RenameField(from: 'old', to: 'mid')],
+        transforms: [RenameField(sourceField: 'old', targetField: 'mid')],
       ),
     );
     reg.register(
@@ -25,7 +25,7 @@ void main() {
         entryType: 't',
         fromVersion: 2,
         toVersion: 3,
-        transforms: [RenameField(from: 'mid', to: 'final')],
+        transforms: [RenameField(sourceField: 'mid', targetField: 'final')],
       ),
     );
     final result = PromoterExecutor.promote(

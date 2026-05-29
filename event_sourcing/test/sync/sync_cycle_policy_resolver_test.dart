@@ -178,7 +178,7 @@ void main() {
       );
       await expectLater(cycle(), throwsStateError);
       // Guard was released by the finally block — this call must succeed.
-      expect(cycle.inFlight, isFalse);
+      expect(cycle.isInFlight, isFalse);
       await cycle();
       await ctx.backend.close();
     });

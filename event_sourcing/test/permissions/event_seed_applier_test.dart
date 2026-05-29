@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'test_support/sembast_event_store_harness.dart';
 
 void main() {
-  group('EventSeedApplier', () {
+  group('PermissionSeedApplier', () {
     late EventStore eventStore;
     final declared = <Permission>{
       const Permission('user.invite'),
@@ -25,7 +25,7 @@ void main() {
     test(
       'emits PermissionGranted for every pair in seed when view is empty',
       () async {
-        final applier = EventSeedApplier(
+        final applier = PermissionSeedApplier(
           eventStore: eventStore,
           seedInitiator: const AutomationInitiator(service: 'test'),
         );
@@ -46,7 +46,7 @@ void main() {
     test(
       're-running with unchanged seed emits zero events (idempotent)',
       () async {
-        final applier = EventSeedApplier(
+        final applier = PermissionSeedApplier(
           eventStore: eventStore,
           seedInitiator: const AutomationInitiator(service: 'test'),
         );
@@ -79,7 +79,7 @@ void main() {
           initiator: const AutomationInitiator(service: 'pre-existing'),
         );
 
-        final applier = EventSeedApplier(
+        final applier = PermissionSeedApplier(
           eventStore: eventStore,
           seedInitiator: const AutomationInitiator(service: 'test'),
         );

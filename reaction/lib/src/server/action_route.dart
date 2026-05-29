@@ -31,7 +31,7 @@ import 'package:shelf/shelf.dart';
 /// `DispatchResult<Object?>`; this handler is bound to the same
 /// generic. The dispatcher decides Success vs any of the Denied
 /// variants — the handler simply forwards the codec output.
-Handler actionRouteHandler({
+Handler actionHandler({
   required ActionDispatcher dispatcher,
   DateTime Function()? now,
 }) {

@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// Verifies the FifoEntry shape:
 ///
 /// - `eventIds` is a non-empty `List<String>`.
-/// - `eventIdRange` is a (firstSeq, lastSeq) record drawn from
+/// - `sequenceRange` is a (firstSeq, lastSeq) record drawn from
 ///   the sequence_numbers of the contained events.
 /// - `wirePayload` is one payload covering the whole batch;
 ///   no per-event wire payload is stored.
@@ -22,13 +22,13 @@ void main() {
 
   FifoEntry makeBatch({
     List<String>? eventIds,
-    EventIdRange? eventIdRange,
+    SequenceRange? sequenceRange,
     Map<String, Object?>? wirePayload,
   }) {
     return FifoEntry(
       entryId: 'entry-1',
       eventIds: eventIds ?? const ['ev-1', 'ev-2', 'ev-3'],
-      eventIdRange: eventIdRange ?? (firstSeq: 10, lastSeq: 12),
+      sequenceRange: sequenceRange ?? (firstSeq: 10, lastSeq: 12),
       sequenceInQueue: 1,
       wirePayload: wirePayload ?? const <String, Object?>{'batch': 'ok'},
       wireFormat: 'json-v1',
@@ -57,7 +57,7 @@ void main() {
         () => FifoEntry(
           entryId: 'entry-1',
           eventIds: const <String>[],
-          eventIdRange: (firstSeq: 0, lastSeq: 0),
+          sequenceRange: (firstSeq: 0, lastSeq: 0),
           sequenceInQueue: 1,
           wirePayload: const <String, Object?>{},
           wireFormat: 'json-v1',
@@ -77,7 +77,7 @@ void main() {
         () => FifoEntry(
           entryId: 'entry-1',
           eventIds: const <String>['e1'],
-          eventIdRange: (firstSeq: 5, lastSeq: 3),
+          sequenceRange: (firstSeq: 5, lastSeq: 3),
           sequenceInQueue: 1,
           wirePayload: const <String, Object?>{},
           wireFormat: 'json-v1',
@@ -108,27 +108,27 @@ void main() {
       expect(() => FifoEntry.fromJson(empty), throwsFormatException);
     });
 
-    // eventIdRange is drawn from the sequence_number values of the contained
-    // events; the pair is typed as EventIdRange (Dart 3 record typedef).
-    test('eventIdRange is an (firstSeq, lastSeq) record', () {
-      final entry = makeBatch(eventIdRange: (firstSeq: 100, lastSeq: 104));
-      expect(entry.eventIdRange.firstSeq, 100);
-      expect(entry.eventIdRange.lastSeq, 104);
-      expect(entry.eventIdRange, isA<EventIdRange>());
+    // sequenceRange is drawn from the sequence_number values of the contained
+    // events; the pair is typed as SequenceRange (Dart 3 record typedef).
+    test('sequenceRange is an (firstSeq, lastSeq) record', () {
+      final entry = makeBatch(sequenceRange: (firstSeq: 100, lastSeq: 104));
+      expect(entry.sequenceRange.firstSeq, 100);
+      expect(entry.sequenceRange.lastSeq, 104);
+      expect(entry.sequenceRange, isA<SequenceRange>());
       // Record equality is structural.
-      expect(entry.eventIdRange, (firstSeq: 100, lastSeq: 104));
+      expect(entry.sequenceRange, (firstSeq: 100, lastSeq: 104));
     });
 
     // event_id_range persists as {"first_seq": int, "last_seq": int} in JSON.
     test('event_id_range persists as first_seq/last_seq Map', () {
-      final entry = makeBatch(eventIdRange: (firstSeq: 7, lastSeq: 9));
+      final entry = makeBatch(sequenceRange: (firstSeq: 7, lastSeq: 9));
       final json = entry.toJson();
       expect(
         json['event_id_range'],
         equals(<String, Object?>{'first_seq': 7, 'last_seq': 9}),
       );
       final decoded = FifoEntry.fromJson(json);
-      expect(decoded.eventIdRange, (firstSeq: 7, lastSeq: 9));
+      expect(decoded.sequenceRange, (firstSeq: 7, lastSeq: 9));
     });
 
     // fromJson enforces the event_id_range field shape.
@@ -181,7 +181,7 @@ void main() {
         'emit legacy event_id scalar', () {
       final entry = makeBatch(
         eventIds: const ['ev-a', 'ev-b'],
-        eventIdRange: (firstSeq: 20, lastSeq: 21),
+        sequenceRange: (firstSeq: 20, lastSeq: 21),
       );
       final json = entry.toJson();
       expect(json.containsKey('event_id'), isFalse);
@@ -192,11 +192,11 @@ void main() {
       });
       final decoded = FifoEntry.fromJson(json);
       expect(decoded.eventIds, ['ev-a', 'ev-b']);
-      expect(decoded.eventIdRange, (firstSeq: 20, lastSeq: 21));
+      expect(decoded.sequenceRange, (firstSeq: 20, lastSeq: 21));
       expect(decoded, equals(entry));
     });
 
-    // Verifies: equality still covers the new eventIds and eventIdRange
+    // Verifies: equality still covers the new eventIds and sequenceRange
     // fields; two entries that differ only in eventIds are NOT equal.
     test('equality distinguishes entries differing only in eventIds', () {
       final a = makeBatch(eventIds: const ['ev-x']);
@@ -204,9 +204,9 @@ void main() {
       expect(a, isNot(equals(b)));
     });
 
-    test('equality distinguishes entries differing only in eventIdRange', () {
-      final a = makeBatch(eventIdRange: (firstSeq: 1, lastSeq: 1));
-      final b = makeBatch(eventIdRange: (firstSeq: 2, lastSeq: 2));
+    test('equality distinguishes entries differing only in sequenceRange', () {
+      final a = makeBatch(sequenceRange: (firstSeq: 1, lastSeq: 1));
+      final b = makeBatch(sequenceRange: (firstSeq: 2, lastSeq: 2));
       expect(a, isNot(equals(b)));
     });
 
@@ -224,7 +224,7 @@ void main() {
       final entry = FifoEntry(
         entryId: 'e1',
         eventIds: const ['ev1'],
-        eventIdRange: (firstSeq: 1, lastSeq: 1),
+        sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
         wirePayload: const {'k': 'v'},
         wireFormat: 'json-v1',
@@ -297,7 +297,7 @@ void main() {
       final entry = FifoEntry(
         entryId: 'fe-001',
         eventIds: const <String>['e1'],
-        eventIdRange: (firstSeq: 1, lastSeq: 1),
+        sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
         wireFormat: 'esd/batch@1',
         wirePayload: null,
@@ -339,7 +339,7 @@ void main() {
       final entry = FifoEntry(
         entryId: 'fe-002',
         eventIds: const <String>['e1'],
-        eventIdRange: (firstSeq: 1, lastSeq: 1),
+        sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
         wireFormat: 'application/csv',
         wirePayload: const <String, Object?>{
