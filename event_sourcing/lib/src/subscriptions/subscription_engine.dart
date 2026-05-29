@@ -1,8 +1,8 @@
-// Implements: EVS-PRD-subscription.A (events() applies SubscriptionFilter to
+// Implements: EVS-PRD-subscription/A (events() applies SubscriptionFilter to
 //   the broadcast stream; rowChanges() scopes to the requested viewName)
-// Implements: EVS-PRD-subscription.B (broadcast StreamController publishes
+// Implements: EVS-PRD-subscription/B (broadcast StreamController publishes
 //   immediately after EventStore.append commits; delivery is reactive)
-// Implements: EVS-PRD-subscription.C (stream emission order mirrors append
+// Implements: EVS-PRD-subscription/C (stream emission order mirrors append
 //   order; no reordering occurs between publishEvent and listener delivery)
 import 'dart:async';
 

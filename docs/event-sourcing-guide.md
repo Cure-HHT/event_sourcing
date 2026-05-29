@@ -28,8 +28,8 @@ It is intentionally narrow. It supplies:
   derived from it.
 - A declarative projection mechanism: you describe the shape of a view,
   the library computes and maintains it.
-- An action dispatcher with parse → validate → authorize → execute →
-  persist pipeline.
+- An action dispatcher with a parse → validate → resolve-scopes →
+  authorize → execute → persist pipeline.
 - A role/permission/scope authorization model where every grant and
   assignment is itself an event in the same log.
 - A pluggable `StorageBackend` abstraction. Two reference backends ship:
@@ -102,7 +102,9 @@ tools.
 An action is the substrate's write API. You subclass
 `Action<TInput, TResult>`, declare which permissions it requires,
 implement `parseInput`, `validate`, and `execute`, and the dispatcher
-runs everything in the right order inside a single storage transaction.
+runs the pipeline in order — parsing, validation, and scope-resolution
+first, then the authorize, execute, and persist steps inside a single
+storage transaction.
 Your `execute` returns an `ExecutionResult` carrying the events to
 persist; the library handles the appending, the audit trail, and the
 authorization check.
@@ -181,7 +183,9 @@ they shape what's possible:
 ## Dispatching an action — what happens
 
 When the dispatcher receives an `ActionSubmission` (a request to run
-some action with some input), it walks through six steps. Parse,
+some action with some input), it walks through six author-visible steps
+(the full dispatcher pipeline wraps these in additional internal stages —
+idempotency lookup, hit/mismatch handling, and outcome recording). Parse,
 validate, and scope-resolution are pure-or-near-pure and run outside
 any storage transaction; the authorize, execute, and persist steps
 share a single transaction:
@@ -199,7 +203,7 @@ share a single transaction:
    `scopeClass`). A failure here produces a `scopeUnresolvable`
    authorization-denial event via a standalone append — the dispatch
    transaction has not been opened yet.
-4. **Authorize and persist.** Inside a fresh storage transaction, for
+4. **Authorize.** Inside a fresh storage transaction, for
    each `Permission` in turn, the dispatcher asks the policy whether
    the principal has the grant. The policy first verifies the
    principal actually holds the claimed `activeRole` by reading
@@ -704,7 +708,7 @@ The pieces:
   Sembast store or a `view_rows.view_name` predicate on Postgres).
 - **`interest`** — a `SubscriptionFilter` listing the event types
   (`Set<String>`), aggregate types (`Set<String>`), and entry types
-  (`List<String>`) the projection cares about. Any field can be
+  (`Set<String>`) the projection cares about. Any field can be
   omitted to mean "all values of that dimension." Per-aggregate-id
   filtering is a subscription concern, not a projection concern — see
   `AggregateMode.aggregates` below.
@@ -841,14 +845,18 @@ that are not part of your payload:
   audit log can correlate all the events from one dispatch.
 - **`flow_token`** — an optional caller-supplied correlation id you
   can use to thread a chain of dispatches together for tracing.
-- **`security`** — optional `SecurityDetails` carrying redaction or
-  classification metadata. Used by retention sweeps and security-context
-  events.
-
 You generally don't read most of these — they exist for the substrate's
 own bookkeeping. But you can: every `StoredEvent` exposes them, and
 `backend.findAllEvents(...)` lets you query the log by `entryType`,
-`originatorId`, `clientTimestamp` range, and so on.
+`originatorIdentifier` / `originatorHopId`, `clientTimestamp` range, and
+so on.
+
+One related record is *not* stamped onto the event: an optional
+`SecurityDetails` — connection/request telemetry (`ipAddress`,
+`userAgent`, `sessionId`, `geoCountry`/`geoRegion`, `requestId`) supplied
+at append time. The substrate persists it to a **separate**
+security-context store keyed by `event_id`, deliberately keeping
+request-level PII out of the event record and its metadata.
 
 ### Denial event payloads
 
@@ -948,7 +956,8 @@ appends a `lib_version_initialized` event recording the version of
 
 The same boot path runs a check called "entry-type downgrade refusal":
 if any registered entry type's `registeredVersion` is less than the
-version recorded for that type in the log, boot fails. The substrate
+highest version the substrate has previously recorded for that type
+(tracked in the `view_target_versions` table), boot fails. The substrate
 will not silently re-interpret an event under an older schema.
 
 ### Schema evolution: entry types and promoters
@@ -1195,25 +1204,30 @@ Cross-process, the wire fails sometimes. WebSocket connections drop
 on tab toggles, network changes, idle timeouts. HTTP requests time
 out. Tokens expire.
 
-`reaction`'s v1 baseline is intentionally minimal: on WS drop,
-existing subscription streams surface a `'wire_disconnected'` error
-and the next `watch<T>` call reopens the connection lazily, replaying
-`Snapshot × N → EOR → Delta…` from scratch. The widget sees a brief
-flash of skeleton/loading while the snapshot replays. Consumer code
-decides whether and when to retry — the substrate stays out of policy
-decisions about reconnect timing.
+`reaction` handles wire failure for you. On WS drop, `RemoteScope`
+transitions its `ConnectionStatus` to `Reconnecting` and auto-reconnects
+with exponential backoff (≈250 ms initial delay, ×2, capped at 30 s,
+~10 attempts). On recovery it re-issues every active subscription, each
+replaying `Snapshot × N → EndOfReplay → Delta…`, so the widget converges
+back to live state on its own — typically a brief skeleton/loading flash
+while the fresh snapshot streams. Existing subscription streams surface a
+`'wire_disconnected'` error only if the reconnect policy gives up (status
+→ `Disconnected`) or the connection is closed for auth reasons. Consumers
+observe all of this through the authoritative `ConnectionStatus` surface
+(see below), not by inferring it from stream liveness.
 
-The wire reserves space for two natural v1.1 follow-ups:
-exponential-backoff auto-reconnect of existing subs without requiring
-a fresh `watch<T>` call, and a "resume-from-sequence" optimization
-that re-tails from the client-known sequence instead of replaying the
-snapshot. Both are non-breaking and can ship later.
+One non-breaking optimization remains future work: a
+"resume-from-sequence" mode that re-tails from the client-known sequence
+on reconnect instead of replaying the full snapshot.
 
 Auth expiry is the parallel concern. The wire surfaces it explicitly:
 HTTP 401 from any route and either a `4001 auth_rejected` or `4003
 permissions_changed` close-frame on WebSocket flip the `AuthSession`
 status to `Expired`. (See *What happens when permissions change
-mid-session* below for when 4003 fires.) The UI distinguishes "log in
+mid-session* below for when 4003 fires.) Other close codes are not auth
+events: `4002 server_shutting_down` and abnormal closes such as
+`1011`/`1006` are treated as reconnect-able drops, handled by the
+auto-reconnect above rather than flipping to `Expired`. The UI distinguishes "log in
 again" (expired) from "log in" (never had a session) — useful enough
 that `AuthStatus` is a sealed three-variant type (`NotAuthenticated`,
 `Authenticated`, `Expired`) and consumer code switch-exhausts over it.
@@ -1246,6 +1260,16 @@ surface; both `Local*` and `Remote*` impls of each exist.
   `role_permission_grants` + `user_role_scopes` projections through
   `AuthorizationPolicy.effectivePermissionsFor`; Remote impl fetches
   from `/permissions/snapshot` and refreshes over the WS.
+
+Alongside the four interfaces, the composed scope exposes an
+authoritative connection-liveness signal — `ConnectionStatus get
+connectionStatus` plus a `Stream<ConnectionStatus> connectionStatusStream`,
+with three variants: `Connected`, `Reconnecting`, `Disconnected`.
+`LocalScope` reports `Connected` for its entire lifetime (in-process has
+no transport to lose); `RemoteScope` drives the transitions from the
+WebSocket lifecycle. Consumers read this to render reconnecting/offline
+affordances rather than inferring connection state from whether a
+subscription stream has gone quiet.
 
 Widgets and other consumers depend only on these. The deployment
 choice — composing `LocalScope` (in-process bundle) versus
@@ -1386,8 +1410,9 @@ change serious enough to interrupt a user mid-session:
 
 - **`role_assigned` for this user, or `permission_granted` to a
   role this user holds:** the server sends a `stale_data` envelope
-  on the open WS (a one-bit signal: "your cached scope state may be
-  out of date"). The subscription stays open; the client decides
+  on the open WS — carrying a typed `StaleDataReason` (`roleAssigned`,
+  `permissionAdded`, or `containmentChanged`) meaning "your cached scope
+  state may be out of date." The subscription stays open; the client decides
   whether to refresh. The user is currently authorized to see
   *less* than they could — that's a UX freshness issue, not a
   security one, so it doesn't warrant interrupting them.

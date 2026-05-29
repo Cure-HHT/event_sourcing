@@ -1,8 +1,8 @@
-// Implements: EVS-PRD-subscription.A (Update<T> sealed envelope carries the
+// Implements: EVS-PRD-subscription/A (Update<T> sealed envelope carries the
 //   Snapshot/EndOfReplay/Delta/Tombstone update shapes for both mode kinds)
-// Implements: EVS-PRD-subscription.B (Delta and Tombstone variants are the
+// Implements: EVS-PRD-subscription/B (Delta and Tombstone variants are the
 //   reactive delivery types emitted as new events are ingested)
-// Implements: EVS-PRD-subscription.C (sequence field on every variant
+// Implements: EVS-PRD-subscription/C (sequence field on every variant
 //   preserves log order; consumers can rely on monotonic sequence numbers)
 sealed class Update<T> {
   int get sequence;
