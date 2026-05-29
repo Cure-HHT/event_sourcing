@@ -78,6 +78,77 @@ void main() {
       expect(row!['role'], 'admin');
     });
 
+    test('insert stamps aggregateId + sequence into the persisted row', () async {
+      // Regression: TableFold previously persisted only the extracted
+      // rowData, omitting the `aggregateId` and `sequence` fields that
+      // AggregateFold stamps. That asymmetry broke every consumer that
+      // followed the documented view-row contract (ViewBuilder's
+      // `aggregateIdOf` / "the aggregate id is stamped into the raw
+      // view-row map under the 'aggregateId' key") and zeroed the
+      // sequence used by subscribe's snapshot replay.
+      final backend = await _backend();
+      await backend.transaction((txn) async {
+        await TableFold.applyEvent(
+          txn: txn,
+          backend: backend,
+          spec: _spec,
+          event: _ev('permission_granted', {
+            'role': 'admin',
+            'permission': 'users.invite',
+            'scope': 'site',
+          }),
+        );
+      });
+      final row = await backend.transaction(
+        (txn) async => backend.readViewRowInTxn(
+          txn,
+          'role_permission_grants',
+          'admin|users.invite|site',
+        ),
+      );
+      expect(row, isNotNull);
+      // Payload columns preserved.
+      expect(row!['role'], 'admin');
+      expect(row['permission'], 'users.invite');
+      // Substrate-stamped identity + ordering fields, matching AggregateFold.
+      expect(
+        row['aggregateId'],
+        'admin|users.invite|site',
+        reason: 'TableFold must stamp the row key as aggregateId',
+      );
+      expect(
+        row['sequence'],
+        1,
+        reason: 'TableFold must stamp the event sequence',
+      );
+    });
+
+    test('insert change.newValue carries aggregateId + sequence', () async {
+      // Live Delta consumers receive change.newValue over the wire; it must
+      // carry the same stamped fields as the persisted row so a mapper that
+      // reads `row['aggregateId']` works for both snapshot replay and live
+      // deltas.
+      final backend = await _backend();
+      AggregateFoldChange? change;
+      await backend.transaction((txn) async {
+        change = await TableFold.applyEvent(
+          txn: txn,
+          backend: backend,
+          spec: _spec,
+          event: _ev('permission_granted', {
+            'role': 'editor',
+            'permission': 'notes.edit',
+            'scope': 'west',
+          }),
+        );
+      });
+      expect(change, isNotNull);
+      expect(change!.newValue, isNotNull);
+      expect(change!.newValue!['aggregateId'], 'editor|notes.edit|west');
+      expect(change!.newValue!['sequence'], 1);
+      expect(change!.newValue!['role'], 'editor');
+    });
+
     test('remove event deletes the matching row', () async {
       final backend = await _backend();
       await backend.transaction((txn) async {

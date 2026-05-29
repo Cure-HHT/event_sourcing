@@ -14,6 +14,8 @@ dependencies:
     path: ../../event_sourcing
   reaction:
     path: ../
+  reaction_widgets:
+    path: ../../reaction_widgets
   http: ^1.4.0
   shelf: ^1.4.2
   shelf_router: ^1.1.4
@@ -25,4 +27,12 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  reaction_widgets_testing:
+    path: ../../reaction_widgets_testing
   flutter_lints: ^6.0.0
+
+flutter:
+  # Bundles the MaterialIcons font. Without this the build ships an empty
+  # FontManifest and every Material icon renders as a "tofu" box — the
+  # actual cause of the missing dropdown chevrons (not icon tree-shaking).
+  uses-material-design: true

@@ -17,7 +17,10 @@
 //   key: event.aggregateId — the canonical-JSON encoding of the
 //     (user_id, role, scope) tuple produced by roleAssignmentAggregateId().
 //   columns: {'user_id', 'role', 'scope'} — WholePayload of a
-//     role_assigned event, whose payload is RoleAssignedPayload.
+//     role_assigned event, whose payload is RoleAssignedPayload — plus the
+//     substrate-stamped 'aggregateId' (== key) and 'sequence' fields that
+//     TableFold writes into every row, matching AggregateFold so
+//     subscribe()/ViewBuilder consume table and aggregate views uniformly.
 //
 // The aggregateTypes filter mirrors role_permission_grants_spec.dart: the
 // substrate only projects events whose aggregateType is 'user_role_scope',

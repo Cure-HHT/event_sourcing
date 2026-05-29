@@ -13,7 +13,10 @@
 // EventSeedApplier):
 //   key: event.aggregateId  (e.g. 'admin:user.invite')
 //   columns: {'role', 'permissionName'}  — WholePayload of a
-//     permission_granted event, whose payload is PermissionGrantedPayload.
+//     permission_granted event, whose payload is PermissionGrantedPayload —
+//     plus the substrate-stamped 'aggregateId' (== key) and 'sequence'
+//     fields that TableFold writes into every row, matching AggregateFold so
+//     subscribe()/ViewBuilder consume table and aggregate views uniformly.
 //
 // Deviation from plan: AggregateIdKey() is used instead of the plan's
 // CompositeKey(['data.role', 'data.permission']) because:

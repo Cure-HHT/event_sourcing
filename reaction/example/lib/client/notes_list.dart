@@ -1,140 +1,158 @@
 // reaction/example/lib/client/notes_list.dart
 //
-// Reactive notes_today list. Subscribes to the substrate's notes_today
-// view through the RemoteScope's ViewSource and accumulates the
-// Snapshot/EndOfReplay/Delta/Tombstone stream into a flat list keyed by
-// aggregate id. Rows render with the workspace as a tag chip.
+// Reactive notes_today list, rendered on top of reaction_widgets'
+// headless `ViewBuilder<Note>`.
 //
-// The accumulator buffers snapshots until EndOfReplay before
-// publishing, so the list updates atomically on each re-subscription
-// (no flash of "first snapshot only" while replay is still streaming).
+// ViewBuilder owns everything the old hand-rolled `_NotesAccumulator`
+// used to do — subscribing through the composed scope's ViewSource,
+// accumulating the `Snapshot × N -> EndOfReplay -> Delta / Tombstone`
+// stream keyed by aggregate id, and surfacing a sealed `ViewState<Note>`
+// (Loading / Ready / Stale). This file is now pure rendering sugar: it
+// maps each ViewState variant to a Flutter widget. That is exactly the
+// "headless primitive + per-app sugar" split the widget library is built
+// around (EVS-PRD-reaction-widget-contract-G).
+//
+// The `Stale` branch demonstrates the transport-aware affordance: when
+// the WS drops, ViewBuilder keeps the last-known rows (driven by the
+// scope's authoritative ConnectionStatus, NOT by inferring stream
+// liveness — EVS-PRD-reaction-widget-contract-I) so we render a
+// "reconnecting" banner over stale data instead of blanking the list.
 
-import 'dart:async';
+// `material.dart` also exports a `ViewBuilder` (from SearchAnchor); hide it
+// so the unqualified name resolves to reaction_widgets' view primitive.
+import 'package:flutter/material.dart' hide ViewBuilder;
+import 'package:reaction_widgets/reaction_widgets.dart';
 
-import 'package:event_sourcing/event_sourcing.dart';
-import 'package:flutter/material.dart';
-import 'package:reaction/reaction.dart';
+import 'ui.dart';
 
+/// One materialised `notes_today` row.
 class Note {
   const Note({required this.id, required this.workspace, required this.title});
 
   final String id;
   final String workspace;
   final String title;
+
+  /// Maps a raw view-row map to a [Note]. The substrate's AggregateFold
+  /// stamps the aggregate id under the `'aggregateId'` key before the
+  /// mapper runs (a Layer-2 convention), so we read it from there.
+  static Note fromRow(Map<String, Object?> row) => Note(
+    id: row['aggregateId']! as String,
+    workspace: (row['workspace'] as String?) ?? '(unknown)',
+    title: (row['title'] as String?) ?? '(untitled)',
+  );
 }
 
-class NotesList extends StatefulWidget {
-  const NotesList({required this.viewSource, super.key});
-
-  final ViewSource viewSource;
-
-  @override
-  State<NotesList> createState() => _NotesListState();
-}
-
-class _NotesListState extends State<NotesList> {
-  final _NotesAccumulator _notes = _NotesAccumulator();
-  late final StreamSubscription<Update<Note>> _sub;
-
-  @override
-  void initState() {
-    super.initState();
-    final stream = widget.viewSource.watch<Note>(
-      viewName: 'notes_today',
-      mapper: (row) => Note(
-        id: row['aggregateId']! as String,
-        workspace: (row['workspace'] as String?) ?? '(unknown)',
-        title: (row['title'] as String?) ?? '(untitled)',
-      ),
-    );
-    _sub = stream.listen(
-      _notes.apply,
-      onError: (Object err) {
-        // Errors surface in the parent screen's flash via the parent;
-        // local UI just keeps the most recent state.
-      },
-    );
-    _notes.addListener(_onChanged);
-  }
-
-  void _onChanged() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    _notes.removeListener(_onChanged);
-    unawaited(_sub.cancel());
-    _notes.dispose();
-    super.dispose();
-  }
+class NotesList extends StatelessWidget {
+  const NotesList({super.key});
 
   @override
   Widget build(BuildContext context) {
-    if (!_notes.replayComplete) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    final notes = _notes.notes;
-    if (notes.isEmpty) {
-      return const Center(child: Text('(no notes yet)'));
-    }
-    return ListView.separated(
-      itemCount: notes.length,
-      separatorBuilder: (_, _) => const Divider(height: 0),
-      itemBuilder: (context, i) {
-        final note = notes[i];
-        return ListTile(
-          dense: true,
-          leading: Chip(
-            label: Text(note.workspace),
-            visualDensity: VisualDensity.compact,
-          ),
-          title: Text(note.title),
-          subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
-        );
+    return ViewBuilder<Note>(
+      viewName: 'notes_today',
+      mapper: Note.fromRow,
+      aggregateIdOf: (note) => note.id,
+      builder: (context, state) => switch (state) {
+        Loading<Note>() => const Center(child: CircularProgressIndicator()),
+        Ready<Note>(:final rows) => _NoteListView(notes: rows),
+        Stale<Note>(:final lastRows) => Column(
+          children: <Widget>[
+            _StaleBanner(),
+            Expanded(child: _NoteListView(notes: lastRows)),
+          ],
+        ),
       },
     );
   }
 }
 
-/// Buffers Snapshot/Delta/Tombstone into a Map until EndOfReplay; then
-/// atomic swap. After EOR, mutations apply directly. Prevents the
-/// "partial replay flash" on resubscribe.
-class _NotesAccumulator extends ChangeNotifier {
-  Map<String, Note> _staging = <String, Note>{};
-  Map<String, Note> _published = <String, Note>{};
-  bool _replayComplete = false;
+/// Reconnecting banner shown over the last-known rows (Stale state).
+class _StaleBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: scheme.onTertiaryContainer,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Reconnecting — showing last-known notes…',
+            style: TextStyle(color: scheme.onTertiaryContainer),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-  bool get replayComplete => _replayComplete;
-  List<Note> get notes =>
-      (_published.values.toList()..sort((a, b) => a.id.compareTo(b.id)));
+/// Pure rendering of a row set. ViewBuilder does not sort, so we sort by
+/// id here for a stable display order.
+class _NoteListView extends StatelessWidget {
+  const _NoteListView({required this.notes});
 
-  void apply(Update<Note> update) {
-    switch (update) {
-      case Snapshot<Note>(:final value):
-        if (value != null) _staging[value.id] = value;
-      case EndOfReplay<Note>():
-        _published = _staging;
-        _staging = <String, Note>{};
-        _replayComplete = true;
-        notifyListeners();
-      case Delta<Note>(:final value):
-        if (_replayComplete) {
-          _published = Map<String, Note>.from(_published)..[value.id] = value;
-          notifyListeners();
-        } else {
-          _staging[value.id] = value;
-        }
-      case Tombstone<Note>(:final aggregateId):
-        if (_replayComplete) {
-          if (_published.containsKey(aggregateId)) {
-            _published = Map<String, Note>.from(_published)
-              ..remove(aggregateId);
-            notifyListeners();
-          }
-        } else {
-          _staging.remove(aggregateId);
-        }
+  final List<Note> notes;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    if (notes.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Icon(Icons.notes_outlined, size: 40, color: scheme.outline),
+            const SizedBox(height: 8),
+            Text('(no notes yet)', style: TextStyle(color: scheme.outline)),
+          ],
+        ),
+      );
     }
+    final sorted = notes.toList()..sort((a, b) => a.id.compareTo(b.id));
+    return ListView.separated(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      itemCount: sorted.length,
+      separatorBuilder: (_, _) => const SizedBox(height: 8),
+      itemBuilder: (context, i) {
+        final note = sorted[i];
+        final color = workspaceColor(note.workspace);
+        return Card(
+          elevation: 0,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: BorderSide(color: scheme.outlineVariant),
+          ),
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: color.withValues(alpha: 0.15),
+              foregroundColor: color,
+              child: const Icon(Icons.sticky_note_2_outlined),
+            ),
+            title: Text(
+              note.title,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
+            trailing: TagChip(label: note.workspace, color: color),
+          ),
+        );
+      },
+    );
   }
 }
