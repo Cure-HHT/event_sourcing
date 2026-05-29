@@ -1,11 +1,11 @@
 # Scoped Permissions
 
 **Phase**: I (substrate primitive; precedes portal cutover in CUR-1170)
-**Status**: Design draft (no normative requirement blocks yet; `EVS-PRD-scoped-permissions` and supporting DEV-level requirements land in-place against this file as impl stabilizes)
+**Status**: Implemented — normative requirement blocks (`EVS-PRD-scoped-permissions` plus supporting `EVS-DEV-*`) are present in this file (see below) and active in the requirement graph.
 **Last updated**: 2026-05-13
 **Linear**: CUR-1331
 
-> **Lifecycle note.** This file is authored as a design document and will grow normative `EVS-{TYPE}-{component}` requirement blocks in place as the design stabilizes through implementation. The brainstorm → stabilize → migrate lifecycle in `spec/README.md` is short-circuited here: the design lives in `spec/` from the start to preserve fidelity (avoid information loss in a migration step), and the same file is edited to add assertions later. elspais treats this file as non-normative prose until a requirement block heading is added.
+> **Lifecycle note.** This file was authored as a design document and grew its normative `EVS-{TYPE}-{component}` requirement blocks in place as the design stabilized — the brainstorm → stabilize → migrate lifecycle in `spec/README.md` is short-circuited here so the design lives in `spec/` from the start (avoiding information loss in a migration step). Those blocks are now present (see the `## EVS-PRD-scoped-permissions` / `## EVS-DEV-*` sections), so elspais treats this file as normative.
 
 ## Scope
 

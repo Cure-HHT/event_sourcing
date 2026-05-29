@@ -21,17 +21,25 @@ class TableFold {
   }) async {
     if (spec.insertEventTypes.contains(event.eventType)) {
       final key = spec.rowKey.extract(event);
-      final data = spec.rowData.extract(event);
-      await backend.upsertViewRowInTxn(
-        txn,
-        spec.viewName,
-        key.toString(),
-        data,
-      );
+      final keyStr = key.toString();
+      // Stamp the substrate-owned identity (`aggregateId`) and ordering
+      // (`sequence`) fields into the row, mirroring AggregateFold. Without
+      // them, TableProjectionSpec rows would violate the view-row contract
+      // every consumer relies on — ViewBuilder's `aggregateIdOf` extractor
+      // and subscribe()'s snapshot-replay `sequence` read both expect these
+      // keys present on every materialized row, regardless of spec shape.
+      // Stamped last so they win over any colliding payload key, as in
+      // AggregateFold.
+      final row = <String, Object?>{
+        ...spec.rowData.extract(event),
+        'aggregateId': keyStr,
+        'sequence': event.sequenceNumber,
+      };
+      await backend.upsertViewRowInTxn(txn, spec.viewName, keyStr, row);
       return AggregateFoldChange(
         viewName: spec.viewName,
-        aggregateId: key.toString(),
-        newValue: data,
+        aggregateId: keyStr,
+        newValue: row,
         sequence: event.sequenceNumber,
         cause: event.eventType,
         isTombstone: false,

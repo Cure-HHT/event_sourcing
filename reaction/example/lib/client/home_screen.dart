@@ -1,32 +1,43 @@
 // reaction/example/lib/client/home_screen.dart
 //
-// Authenticated home screen. Composes five sections:
+// Authenticated home screen. The composition hub that wires the
+// reaction_widgets primitives together:
 //
-//   - IdentityBar      — userId + activeRole + "Sign out" / "Force-logout"
-//   - PermissionsCard  — current EffectiveAuthorization (role permissions +
-//                        scope assignments), live via stream
-//   - NotesList        — reactive notes_today view with workspace tag
-//   - SubmitNoteForm   — workspace dropdown + title + submit button,
-//                        permission-gated via PermissionSource.stream
-//   - AdminPanel       — visible iff active role holds Permission('assign_role'),
-//                        lists user_role_scopes view + grant/revoke forms
+//   - ReActionErrorListener  — surfaces transport transitions
+//                              (reconnecting / disconnected) as snackbars
+//                              without rebuilding the tree.
+//   - StreamBuilder<EffectiveAuthorization?> — feeds the display pieces
+//                              that need the FULL authorization snapshot
+//                              (identity role, permissions card, the
+//                              submit form's scope pre-filter). The
+//                              headless layer deliberately ships no
+//                              snapshot-exposing builder, so reading the
+//                              raw `permissionSource.stream` here is the
+//                              supported pattern for *display*.
+//   - PermissionGate('assign_role') — gates the admin panel. This is the
+//                              coarse boolean affordance gate the widget
+//                              layer DOES ship.
+//   - ViewListener<Note>     — fires a snackbar when a live note arrives,
+//                              demonstrating an imperative side-effect on
+//                              view updates without rebuilding NotesList.
+//   - NotesList / SubmitNoteForm / AdminPanel — per-app rendering sugar
+//                              built on ViewBuilder / ActionBuilder.
 //
-// Every section that depends on the user's permissions wraps in a
-// StreamBuilder<EffectiveAuthorization?> on PermissionSource.stream so a
-// server-pushed stale_data envelope (handled in RemoteConnection +
-// RemoteScope) flows through to a live UI update — alice's submit form
-// gains 'east' the moment carol grants her access.
+// All substrate access flows through `ReActionScope.of(context)` — no
+// widget here references EventStore / ActionDispatcher directly
+// (EVS-PRD-reaction-widget-contract-F).
 
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:reaction/reaction.dart';
+import 'package:reaction_widgets/reaction_widgets.dart';
 
 import 'admin_panel.dart';
 import 'notes_list.dart';
 import 'submit_note_form.dart';
+import 'ui.dart';
 
 /// Workspaces known to the demo's bootstrap seed. The UI offers all
 /// three; server-side scope enforcement decides per-dispatch whether
@@ -36,110 +47,120 @@ import 'submit_note_form.dart';
 /// substrate denies with DispatchAuthorizationDenied.
 const List<String> kKnownWorkspaces = <String>['west', 'east', 'mars'];
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({required this.scope, required this.baseUrl, super.key});
-
-  final RemoteScope scope;
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({required this.baseUrl, super.key});
 
   /// Server base URL for the out-of-band `/admin/revoke` demo endpoint.
   final Uri baseUrl;
 
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
-
-class _HomeScreenState extends State<HomeScreen> {
-  String? _flash;
-
-  void _setFlash(String? message) {
-    if (mounted) setState(() => _flash = message);
+  void _snack(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Future<void> _forceLogout() async {
-    final principal = widget.scope.authSession.principal;
+  Future<void> _forceLogout(BuildContext context) async {
+    final scope = ReActionScope.of(context);
+    final principal = scope.authSession.principal;
     if (principal is! UserPrincipal) {
-      _setFlash('Not signed in as a user.');
+      _snack(context, 'Not signed in as a user.');
       return;
     }
-    // Out-of-band admin endpoint: revokes the SEEDED assignment for
-    // this user (their starting role + scope from bootstrap), which
-    // closes the WS with 4003 and flips the session to Expired.
-    final url = widget.baseUrl.replace(
+    // Out-of-band admin endpoint: revokes the SEEDED assignment for this
+    // user (their starting role + scope from bootstrap), which closes the
+    // WS with 4003 and flips the session to Expired.
+    final url = baseUrl.replace(
       path: '/admin/revoke',
       queryParameters: <String, String>{'user': principal.userId},
     );
     final client = http.Client();
     try {
       await client.post(url);
-      _setFlash('Force-logout requested for ${principal.userId}.');
+      if (context.mounted) {
+        _snack(context, 'Force-logout requested for ${principal.userId}.');
+      }
     } catch (e) {
-      _setFlash('force-logout failed: $e');
+      if (context.mounted) _snack(context, 'force-logout failed: $e');
     } finally {
       client.close();
     }
   }
 
-  void _signOut() {
-    widget.scope.authSession.setCredential(null);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final principal = widget.scope.authSession.principal;
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: StreamBuilder<EffectiveAuthorization?>(
-        stream: widget.scope.permissionSource.stream,
-        initialData: widget.scope.permissionSource.current,
-        builder: (context, snapshot) {
-          final snap = snapshot.data;
-          final isAdmin =
-              snap != null &&
-              snap.rolePermissions.contains(const Permission('assign_role'));
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              _IdentityBar(
-                principal: principal,
-                snapshot: snap,
-                onSignOut: _signOut,
-                onForceLogout: _forceLogout,
-              ),
-              const Divider(),
-              _PermissionsCard(snapshot: snap),
-              const SizedBox(height: 12),
-              SubmitNoteForm(
-                actionSubmitter: widget.scope.actionSubmitter,
-                snapshot: snap,
-                onFlash: _setFlash,
-              ),
-              if (_flash != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    _flash!,
-                    style: const TextStyle(color: Colors.grey),
-                  ),
-                ),
-              const SizedBox(height: 12),
-              if (isAdmin) ...<Widget>[
-                AdminPanel(
-                  viewSource: widget.scope.viewSource,
-                  actionSubmitter: widget.scope.actionSubmitter,
-                  onFlash: _setFlash,
-                ),
-                const SizedBox(height: 12),
-              ],
-              Expanded(child: NotesList(viewSource: widget.scope.viewSource)),
-            ],
-          );
-        },
+    final scope = ReActionScope.of(context);
+    final principal = scope.authSession.principal;
+
+    return ReActionErrorListener(
+      onTransportReconnecting: (ctx) => _snack(ctx, 'Reconnecting…'),
+      onTransportDisconnected: (ctx) =>
+          _snack(ctx, 'Disconnected — the reconnect policy gave up.'),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: StreamBuilder<EffectiveAuthorization?>(
+              stream: scope.permissionSource.stream,
+              initialData: scope.permissionSource.current,
+              builder: (context, snapshot) {
+                final snap = snapshot.data;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    _IdentityBar(
+                      principal: principal,
+                      snapshot: snap,
+                      onSignOut: () => scope.authSession.setCredential(null),
+                      onForceLogout: () => _forceLogout(context),
+                    ),
+                    const SizedBox(height: 12),
+                    _PermissionsCard(snapshot: snap),
+                    const SizedBox(height: 12),
+                    SubmitNoteForm(snapshot: snap),
+                    const SizedBox(height: 12),
+                    // PermissionGate renders nothing when the role lacks
+                    // assign_role; the panel appears live the moment a grant
+                    // lands (the gate listens on permissionSource.stream).
+                    const PermissionGate(
+                      permission: 'assign_role',
+                      child: Padding(
+                        padding: EdgeInsets.only(bottom: 12),
+                        child: AdminPanel(),
+                      ),
+                    ),
+                    Expanded(
+                      // ViewListener subscribes to the same view as NotesList
+                      // but for side-effects only: it toasts on each LIVE note
+                      // (Delta) without rebuilding the list. Replay rows arrive
+                      // as Snapshot, not Delta, so this fires only for notes
+                      // added after first paint.
+                      child: ViewListener<Note>(
+                        viewName: 'notes_today',
+                        mapper: Note.fromRow,
+                        onUpdate: (ctx, update) {
+                          if (update case Delta<Note>(:final value)) {
+                            _snack(
+                              ctx,
+                              'New note in ${value.workspace}: ${value.title}',
+                            );
+                          }
+                        },
+                        child: const _NotesSection(),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
-/// Top bar: identity + role + scope summary + sign-out + force-logout.
+/// Identity header: avatar + userId + role chip + sign-out / force-logout.
 class _IdentityBar extends StatelessWidget {
   const _IdentityBar({
     required this.principal,
@@ -155,32 +176,71 @@ class _IdentityBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final userId = principal is UserPrincipal
-        ? (principal as UserPrincipal).userId
+        ? (principal! as UserPrincipal).userId
         : '(anonymous)';
     final role = snapshot?.activeRole ?? '(loading)';
-    return Row(
-      children: <Widget>[
-        Expanded(
-          child: Text(
-            'Signed in: $userId — role: $role',
-            style: const TextStyle(fontWeight: FontWeight.bold),
-          ),
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: scheme.primaryContainer,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: <Widget>[
+            CircleAvatar(
+              backgroundColor: scheme.primary,
+              foregroundColor: scheme.onPrimary,
+              child: Text(
+                userId.isEmpty ? '?' : userId[0].toUpperCase(),
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    userId,
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                      color: scheme.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  TagChip(
+                    label: role,
+                    color: scheme.primary,
+                    icon: Icons.verified_user_outlined,
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Force-logout (revoke seed)',
+              onPressed: onForceLogout,
+              icon: const Icon(Icons.gpp_bad_outlined),
+            ),
+            TextButton.icon(
+              onPressed: onSignOut,
+              icon: const Icon(Icons.logout),
+              label: const Text('Sign out'),
+            ),
+          ],
         ),
-        TextButton(
-          onPressed: onForceLogout,
-          child: const Text('Force-logout (revoke seed)'),
-        ),
-        const SizedBox(width: 8),
-        TextButton(onPressed: onSignOut, child: const Text('Sign out')),
-      ],
+      ),
     );
   }
 }
 
-/// Compact permission display so the user can see what their active
-/// role grants AND which scopes they're assigned. Updates live via the
-/// enclosing StreamBuilder.
+/// Live display of the active role's permissions + scope assignments,
+/// rendered as chips. Reads the full EffectiveAuthorization (the headless
+/// PermissionGate only answers boolean "holds X?"), so this is the app's
+/// own raw-stream consumer for display.
 class _PermissionsCard extends StatelessWidget {
   const _PermissionsCard({required this.snapshot});
 
@@ -188,29 +248,106 @@ class _PermissionsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final snap = snapshot;
-    final Widget body;
     if (snap == null) {
-      body = const Text('(loading permissions…)');
-    } else {
-      final permsText = snap.rolePermissions.isEmpty
-          ? '(no permissions)'
-          : 'Permissions: ${(snap.rolePermissions.map((p) => p.name).toList()..sort()).join(", ")}';
-      final scopesText = snap.scopeAssignments.isEmpty
-          ? 'Scopes: (none)'
-          : 'Scopes: ${snap.scopeAssignments.map((a) => a.scope.toString()).join(", ")}';
-      body = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[Text(permsText), Text(scopesText)],
+      return const SectionCard(
+        title: 'Your access',
+        icon: Icons.shield_outlined,
+        child: Text('(loading permissions…)'),
       );
     }
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.blueGrey.shade50,
-        borderRadius: BorderRadius.circular(4),
+    final perms = snap.rolePermissions.map((p) => p.name).toList()..sort();
+    return SectionCard(
+      title: 'Your access',
+      icon: Icons.shield_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          _ChipRow(
+            label: 'Permissions',
+            empty: '(none)',
+            chips: <Widget>[
+              for (final name in perms)
+                TagChip(label: name, color: scheme.primary),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _ChipRow(
+            label: 'Scopes',
+            empty: '(none)',
+            chips: <Widget>[
+              for (final a in snap.scopeAssignments)
+                TagChip(
+                  label: a.scope.toString(),
+                  color: scheme.tertiary,
+                  icon: Icons.layers_outlined,
+                ),
+            ],
+          ),
+        ],
       ),
-      child: body,
+    );
+  }
+}
+
+class _ChipRow extends StatelessWidget {
+  const _ChipRow({required this.label, required this.empty, required this.chips});
+
+  final String label;
+  final String empty;
+  final List<Widget> chips;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SizedBox(
+          width: 92,
+          child: Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ),
+        Expanded(
+          child: chips.isEmpty
+              ? Text(empty, style: TextStyle(color: Theme.of(context).colorScheme.outline))
+              : Wrap(spacing: 6, runSpacing: 6, children: chips),
+        ),
+      ],
+    );
+  }
+}
+
+/// Section header above the live notes list.
+class _NotesSection extends StatelessWidget {
+  const _NotesSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.event_note_outlined, size: 18, color: scheme.primary),
+              const SizedBox(width: 8),
+              Text(
+                "Today's notes",
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Expanded(child: NotesList()),
+      ],
     );
   }
 }

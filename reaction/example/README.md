@@ -1,8 +1,10 @@
 # reaction_example
 
-A two-process reference app for the `reaction` package: a Flutter Linux
-desktop client talking to a shelf-based Dart server over HTTP + WebSocket
-via `RemoteScope` and `ReactionHandlers`.
+A two-process reference app for the `reaction` and `reaction_widgets`
+packages: a Flutter Linux desktop client talking to a shelf-based Dart
+server over HTTP + WebSocket via `RemoteScope` and `ReactionHandlers`.
+The client UI is built entirely on the headless `reaction_widgets`
+primitives — it is the reference consumer of that package.
 
 The demo is sized to exercise the substrate's full permission model in
 miniature: three roles, one scope class with two values, four seeded
@@ -31,10 +33,37 @@ that updates when permissions change mid-session.
   (client flips to `Expired`). `role_assigned` / `permission_granted`
   push a `stale_data` envelope; the client's `RemotePermissionSource`
   re-fetches `/permissions/snapshot` so UI gating updates live.
-- **Reactive UI** — every part of the home screen that depends on the
-  user's permissions wraps in `StreamBuilder<EffectiveAuthorization?>`
-  on `PermissionSource.stream`. The admin panel becomes visible the
-  moment an `assign_role` grant lands.
+- **`reaction_widgets` primitives drive the whole client UI** — the
+  refactored client consumes the headless widget layer rather than
+  hand-rolling stream plumbing:
+  - **`ReActionScope`** (`app.dart`) threads the `RemoteScope` down the
+    tree once, above `MaterialApp`; every screen reads it via
+    `ReActionScope.of(context)`. The same widget tree would work
+    unchanged over a `LocalScope` (in-process mobile) — the
+    substrate-agnostic contract (`EVS-PRD-reaction-widget-contract`-B).
+  - **`ViewBuilder<T>`** (`notes_list.dart`, `admin_panel.dart`) replaces
+    the old hand-written accumulators. It owns subscription,
+    `Snapshot/EndOfReplay/Delta/Tombstone` accumulation, and surfaces a
+    sealed `ViewState` (`Loading` / `Ready` / `Stale`). The `Stale`
+    branch renders a reconnecting banner over last-known rows, driven by
+    the scope's authoritative `ConnectionStatus`.
+  - **`ActionBuilder`** (`submit_note_form.dart`, `admin_panel.dart`)
+    owns the submission lifecycle and idempotency-key minting, exposing
+    `Idle/Submitting/Success/Denied/Failed` to the builder.
+  - **`PermissionGate`** (`home_screen.dart`) gates the admin panel on
+    `assign_role`; it appears live the moment a grant lands.
+  - **`ViewListener<Note>`** (`home_screen.dart`) toasts on each LIVE
+    note (a `Delta`) as an imperative side-effect without rebuilding the
+    list.
+  - **`ReActionErrorListener`** (`home_screen.dart`) surfaces transport
+    reconnecting/disconnected transitions as snackbars.
+
+  The pieces that need the FULL `EffectiveAuthorization` for *display*
+  (the identity bar's role, the permissions card, the submit form's
+  scope pre-filter) still read the raw `PermissionSource.stream` via a
+  `StreamBuilder` — the headless layer deliberately ships only a boolean
+  `PermissionGate`, not a snapshot-exposing builder, so this is the
+  supported pattern for display-only consumers.
 
 ## Seeded users
 
@@ -67,15 +96,17 @@ reaction/example/
     submit_note_action.dart        workspace-scoped Action
     role_admin_actions.dart        AssignRoleAction + UnassignRoleAction
     notes_projection.dart          AggregateProjectionSpec
-  lib/client/
+  lib/client/                      (built on reaction_widgets)
     main.dart                      runApp(NotesApp())
-    app.dart                       AuthStatus routing
+    app.dart                       mounts ReActionScope + AuthStatus routing
     login_screen.dart              username text field
-    home_screen.dart               StreamBuilder over PermissionSource
-    notes_list.dart                reactive notes_today list
-    submit_note_form.dart          permission-gated form
-    admin_panel.dart               assign/unassign UI (admin-only)
-  test/server_smoke_test.dart      11-case end-to-end smoke test
+    home_screen.dart               PermissionGate + ViewListener +
+                                   ReActionErrorListener composition hub
+    notes_list.dart                ViewBuilder<Note> (Loading/Ready/Stale)
+    submit_note_form.dart          PermissionGate + ActionBuilder
+    admin_panel.dart               ViewBuilder + ActionBuilder (admin-only)
+  test/server_smoke_test.dart      11-case server-side end-to-end test
+  test/client_widget_test.dart     client widget tests using FakeReaction
 ```
 
 ## Running the demo
@@ -91,9 +122,12 @@ dart run bin/server.dart
 ```
 
 Binds `127.0.0.1:8080` by default. Override with `--host` / `--port`.
-State is ephemeral — restart resets everything.
+State is ephemeral — restart resets everything. The server enables
+permissive CORS (`Access-Control-Allow-Origin: *`) so a web client served
+from another origin can reach it; production deployments scope or drop
+that.
 
-**Terminal 2 — start the Flutter client:**
+**Terminal 2 — start the Flutter client (desktop):**
 
 ```sh
 cd reaction/example
@@ -101,10 +135,23 @@ flutter create .          # first time only: scaffolds linux/ etc.
 flutter run -d linux -t lib/client/main.dart
 ```
 
-To point at a non-localhost server, set `REACTION_SERVER_URL`:
+**Or run the client in a browser** (the substrate-agnostic widget code is
+identical — this is the spec's "Use 2: Flutter web client" path):
 
 ```sh
-REACTION_SERVER_URL=http://10.0.0.5:8080 flutter run -d linux ...
+cd reaction/example
+flutter run -d chrome -t lib/client/main.dart
+# or build once and serve the bundle:
+#   flutter build web -t lib/client/main.dart
+#   (then serve build/web on any static host)
+```
+
+To point at a non-localhost server, pass the `REACTION_SERVER_URL`
+compile-time define (works on every target, including web):
+
+```sh
+flutter run -d linux -t lib/client/main.dart \
+  --dart-define=REACTION_SERVER_URL=http://10.0.0.5:8080
 ```
 
 ## Multi-user walkthrough (the load-bearing demo)
@@ -163,18 +210,29 @@ workspaces entirely) would `.where()` `kKnownWorkspaces` by the same
 `scopeAssignments` walk used here. The substrate-side denial path
 remains the perimeter either way.
 
-## Smoke test
+## Tests
 
 ```sh
 cd reaction/example
 flutter test
 ```
 
-The smoke test boots `bootstrap()` onto an ephemeral port and verifies
-11 cases: per-user `activeRole` on `/me`, anonymous fallback for
-unknown bearers, workspace-scoped `submit_note` success/denial across
-the seeded users, admin-vs-non-admin gating on `assign_role` and
-`unassign_role`, and `/permissions/snapshot` shape per role.
+Two suites run:
+
+- **`test/server_smoke_test.dart`** boots `bootstrap()` onto an ephemeral
+  port and verifies 11 server-side cases: per-user `activeRole` on `/me`,
+  anonymous fallback for unknown bearers, workspace-scoped `submit_note`
+  success/denial across the seeded users, admin-vs-non-admin gating on
+  `assign_role` and `unassign_role`, and `/permissions/snapshot` shape
+  per role.
+- **`test/client_widget_test.dart`** exercises the client widgets against the
+  shipped `reaction_widgets_testing` doubles (`FakeReaction` +
+  `pumpReactionWidget`, per `EVS-PRD-reaction-widget-contract`-H) — no
+  server, no timing. It drives `ViewBuilder`'s `Loading → Ready → Stale`
+  transitions deterministically, asserts `PermissionGate` hides the
+  submit form without `submit_note`, and walks an `ActionBuilder`
+  submission from in-flight `Submitting` to a `Denied` result. This is
+  the reference for how downstream consumers test their own sugar.
 
 ## `/admin/revoke` is the no-auth escape hatch
 
