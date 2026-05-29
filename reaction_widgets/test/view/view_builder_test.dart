@@ -126,6 +126,68 @@ void main() {
       expect(ready.rows.single['title'], 'A-updated');
     });
 
+    testWidgets(
+      'default mode buffers a pre-EndOfReplay Delta/Tombstone and stays '
+      'Loading until EndOfReplay',
+      (tester) async {
+        // Pins the consistent-snapshot invariant
+        // (EVS-PRD-reaction-widget-contract/I): in default mode the
+        // builder MUST NOT surface Ready before EndOfReplay — not even
+        // when the pre-replay updates are Deltas/Tombstones rather than
+        // Snapshots. The off-contract row is still accumulated, so it
+        // appears once EndOfReplay arrives. (Coverage gap noted during
+        // the 2026-05-29 Tier-2 investigation: the existing pre-EOR test
+        // only drove Snapshots.)
+        final fake = FakeReaction();
+        final transitions = await _pumpRecording(
+          tester,
+          fake: fake,
+          viewName: 'v',
+        );
+        expect(transitions.last, isA<Loading<_Row>>());
+
+        // A Delta before EndOfReplay: buffered, NOT surfaced.
+        fake.emitViewUpdate<_Row>(
+          'v',
+          Delta<_Row>(
+            value: _row('a', title: 'A'),
+            sequence: 1,
+            cause: 'evt',
+          ),
+        );
+        await _settleStream(tester);
+        expect(
+          transitions.last,
+          isA<Loading<_Row>>(),
+          reason:
+              'default mode MUST NOT surface Ready on a pre-EndOfReplay '
+              'Delta',
+        );
+
+        // A Tombstone before EndOfReplay: also no Ready.
+        fake.emitViewUpdate<_Row>(
+          'v',
+          const Tombstone<_Row>(aggregateId: 'ghost', sequence: 2),
+        );
+        await _settleStream(tester);
+        expect(
+          transitions.last,
+          isA<Loading<_Row>>(),
+          reason:
+              'default mode MUST NOT surface Ready on a pre-EndOfReplay '
+              'Tombstone',
+        );
+
+        // EndOfReplay finally promotes to Ready, surfacing the buffered row.
+        fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+        await _settleStream(tester);
+        expect(transitions.last, isA<Ready<_Row>>());
+        final ready = transitions.last as Ready<_Row>;
+        expect(ready.rows, hasLength(1));
+        expect(ready.rows.single['title'], 'A');
+      },
+    );
+
     testWidgets('Tombstone removes the matching row from Ready', (
       tester,
     ) async {
