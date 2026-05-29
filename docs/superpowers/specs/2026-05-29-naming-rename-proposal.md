@@ -15,27 +15,29 @@ A family of names carries `Datastore` / `Database` / `AppendOnly`
 vocabulary from the `hht_diary` origin, plus a `clinical_events.db`
 default — none of which belong in a domain-neutral substrate.
 
-| Current | Kind | Recommended | Notes |
-|---|---|---|---|
-| `AppendOnlyDatastore` | class (bundle of `eventStore` + registries + `securityContexts`) | **`EventStoreBundle`** (alt: `EventStoreScope`, `Substrate`) | the bundle you get from opening the substrate |
-| `bootstrapAppendOnlyDatastore` | function → that bundle | **`bootstrapEventStore`** | keeps the existing `bootstrap*` family verb; fixes only the heritage noun |
-| `DatastoreConfig` | class | **`EventStoreConfig`** | + `.development`/`.production` factories, `copyWith` |
-| `DatastoreException` | base class | **`EventStoreException`** | all subclasses re-parent |
-| `DatabaseException` | subclass | **`StorageBackendException`** | `Database` isn't substrate vocab; `StorageException` already exists |
-| `databaseName` (field/param) | field | **`storageName`** | and **change the `clinical_events.db` default** — a domain leak, fix regardless of rename |
+**Decision (locked):** conservative entry-point style — keep the
+`bootstrap*` family verb and fix only the heritage *nouns*. The
+constructor-style alternative (dropping `bootstrap*` for
+`EventStore.open(...)` etc.) was considered and rejected: larger blast
+radius, and it would break the parallel `bootstrap*` family for no
+clarity gain (the heritage noun, not the verb, is what violates R2).
 
-**Two coherent options for the entry point:**
+| Current | Kind | Final name |
+|---|---|---|
+| `AppendOnlyDatastore` | class (bundle of `eventStore` + registries + `securityContexts`) | **`EventStoreBundle`** |
+| `bootstrapAppendOnlyDatastore` | function → that bundle | **`bootstrapEventStore`** |
+| `DatastoreConfig` | class (+ `.development`/`.production` factories, `copyWith`) | **`EventStoreConfig`** |
+| `DatastoreException` | base class (all subclasses re-parent) | **`EventStoreException`** |
+| `DatabaseException` | subclass (`StorageException` already exists) | **`StorageBackendException`** |
+| `databaseName` | field/param | **`storageName`** |
 
-1. **Conservative (recommended).** Keep the `bootstrap*` family
-   (`bootstrapEventStore`, `bootstrapActionPermissions`,
-   `bootstrapRoleAssignments`, `bootstrapAuditedActions` stay parallel);
-   fix only the heritage *nouns*. Lowest churn, preserves R11 symmetry.
-2. **Constructor-style.** Drop `bootstrap*` in favor of factories
-   (`EventStore.open(...)`, `ActionDispatcher.create(...)`, etc.). Cleaner
-   per R7 but larger blast radius and changes the whole family.
+The `bootstrap*` family stays parallel: `bootstrapEventStore`,
+`bootstrapActionPermissions`, `bootstrapRoleAssignments`,
+`bootstrapAuditedActions` (R11).
 
-The `clinical_events.db` default value is a **must-fix domain leak**
-independent of any rename.
+The `clinical_events.db` default value is a **must-fix domain leak** —
+change it to a domain-neutral default (e.g. `event_sourcing.db`)
+regardless of the rename.
 
 ## B. Other HIGH (endorsed)
 
@@ -66,16 +68,18 @@ independent of any rename.
   `PermissionSeedApplier`; `AuthorizationPolicyBootstrap` →
   `AuthorizationBootstrapResult`.
 
-**Pushback (recommend NOT renaming):**
+**Excluded (do NOT rename):**
 
 - `ReactionHandlers` → ~~`ReactionEndpoints`~~. **Keep.** It is
   deliberately a bundle of shelf *handlers* (the guide calls it exactly
   that); `Handlers` is accurate, not a vague R5 suffix.
-- `SecurityDetails` → `SecurityTelemetry`. **Optional / low value** — the
-  guide already uses `SecurityDetails`; rename only if doing a broad pass.
-- `bootstrapActionPermissions`/`bootstrapRoleAssignments` →
-  `initialize*`. **Defer to the §A entry-point decision** — keep them as
-  the `bootstrap*` family unless you choose constructor-style.
+- `SecurityDetails` → ~~`SecurityTelemetry`~~. **Keep.** The guide uses
+  `SecurityDetails`; low value, out of scope.
+- The `bootstrap*` family stays per the §A locked decision:
+  `bootstrapAuditedActions`, `bootstrapActionPermissions`, and
+  `bootstrapRoleAssignments` are **NOT** renamed (no `createActionDispatcher`,
+  no `initialize*`). Only `bootstrapAppendOnlyDatastore` →
+  `bootstrapEventStore` (heritage noun) per §A.
 
 ## D. LOW (internal/style — optional cleanup batch)
 
