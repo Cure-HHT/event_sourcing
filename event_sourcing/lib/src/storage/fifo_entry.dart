@@ -23,13 +23,11 @@ typedef EventIdRange = ({int firstSeq, int lastSeq});
 /// row). Once delivered they are marked `FinalStatus.sent`; on
 /// permanent failure they are marked `FinalStatus.wedged`; rows excised
 /// by a trail sweep are marked `FinalStatus.tombstoned`. All non-null
-/// terminal states are retained forever as send-log / audit records
-///.
+/// terminal states are retained forever as send-log / audit records.
 ///
-/// Phase-4.3 Task 6 migrated this type from a single-event-per-row shape
-/// to a batch-per-row shape: `eventIds` is a non-empty `List<String>`,
-/// `eventIdRange` is an `(firstSeq, lastSeq)` record, and `wirePayload`
-/// is one payload for the whole batch (no per-event payload is stored).
+/// `eventIds` is a non-empty `List<String>`, `eventIdRange` is an
+/// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
+/// the whole batch (no per-event payload is stored).
 // Implements: EVS-PRD-portability/C — pure Dart value type; serialises
 //   identically on every Dart-supported runtime; no platform dependency.
 // Implements: EVS-PRD-portability/D — part of the platform-agnostic
@@ -41,8 +39,6 @@ typedef EventIdRange = ({int firstSeq, int lastSeq});
 // envelopeMetadata + event_ids-resolved events. For 3rd-party rows
 // (any other wireFormat) wirePayload is non-null and envelopeMetadata
 // is null.
-// ArgumentError at construction and FormatException on fromJson.
-// entire batch (when present).
 class FifoEntry {
   FifoEntry({
     required this.entryId,
@@ -132,7 +128,7 @@ class FifoEntry {
         'FifoEntry: missing or non-int "sequence_in_queue"',
       );
     }
-    // `esd/batch@1` rows; non-null and a Map on 3rd-party rows. Reject
+    // null for native `esd/batch@1` rows; non-null and a Map on 3rd-party rows. Reject
     // any other shape.
     final wirePayloadRaw = json['wire_payload'];
     if (wirePayloadRaw != null && wirePayloadRaw is! Map) {
@@ -177,7 +173,7 @@ class FifoEntry {
         'FifoEntry: "sent_at" must be a String when present',
       );
     }
-    // disk; non-null iff wireFormat == "esd/batch@1".
+    // Non-null iff wireFormat == "esd/batch@1".
     final envelopeMetadataRaw = json['envelope_metadata'];
     if (envelopeMetadataRaw != null && envelopeMetadataRaw is! Map) {
       throw const FormatException(
@@ -227,7 +223,6 @@ class FifoEntry {
   /// were batched. Always non-empty — enforced at
   /// construction and rechecked on `fromJson`. Preserved for audit and for
   /// idempotent redelivery.
-  // the batch.
   final List<String> eventIds;
 
   /// Inclusive `(first_seq, last_seq)` pair drawn from the sequence_numbers
@@ -279,8 +274,6 @@ class FifoEntry {
   /// `eventIds`-resolved events to re-encode the wire bytes
   /// deterministically (RFC 8785 JCS) on each send attempt. Non-null
   /// iff `wireFormat == "esd/batch@1"`; null for 3rd-party rows.
-  // value, non-null iff wireFormat == "esd/batch@1", set at enqueue,
-  // immutable, drives drain re-encode determinism.
   final BatchEnvelopeMetadata? envelopeMetadata;
 
   /// Encode to snake_case JSON. Optional fields emit explicit null.

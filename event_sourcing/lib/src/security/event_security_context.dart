@@ -1,11 +1,10 @@
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 
-/// Sidecar row recording security telemetry for one event. Lives in its
-/// own sembast store (`security_context`) keyed on `eventId`. The
-/// foreign-key direction is one-way: `security_context.event_id` → the
-/// event log's `event_id`. The event row holds no reference back to
-/// security, so redacting telemetry never touches the legal event record.
-// one-way FK security → event.
+/// Sidecar row recording security telemetry for one event. Stored in the
+/// `security_context` collection, keyed on `eventId`. The foreign-key
+/// direction is one-way: `security_context.event_id` → the event log's
+/// `event_id`. The event row holds no reference back to security, so
+/// redacting telemetry never touches the legal event record.
 // Implements: EVS-PRD-event-log/A — redacting telemetry never modifies the
 //   immutable event-log row; the one-way FK preserves append-only semantics.
 // Implements: EVS-PRD-regulatory-alignment/A — `recordedAt` captures the
@@ -102,7 +101,6 @@ class EventSecurityContext {
   /// `EventStore.applyRetentionPolicy` on the compact sweep.
   // Implements: EVS-PRD-regulatory-alignment — truncation enforces the
   //   configured retention window while keeping the event-log row intact.
-  // agent, and geo fields.
   EventSecurityContext applyTruncation(SecurityRetentionPolicy policy) {
     return EventSecurityContext(
       eventId: eventId,

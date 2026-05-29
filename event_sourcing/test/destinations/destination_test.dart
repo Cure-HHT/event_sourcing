@@ -12,8 +12,7 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Minimal concrete Destination used only to verify the abstract surface
-/// type-checks and dispatches correctly. The production destination
-/// (`PrimaryDiaryServerDestination`) is Phase-5 work.
+/// type-checks and dispatches correctly.
 class _EchoDestination extends Destination {
   _EchoDestination({required this.result});
 
@@ -123,8 +122,8 @@ void main() {
       expect(dest.wireFormat, 'echo-v1');
     });
 
-    // fields come straight from the subclass implementation. The batch
-    // shape means a single-event batch is a batch of length one.
+    // WirePayload fields come straight from the subclass implementation. A
+    // single-event batch is a batch of length one.
     test('transform returns subclass-produced WirePayload', () async {
       final dest = _EchoDestination(result: const SendOk());
       final payload = await dest.transform([_mkEvent('ev-abc')]);
@@ -160,14 +159,14 @@ void main() {
       expect((result as SendPermanent).error, 'HTTP 400');
     });
 
-    // subclass's SubscriptionFilter. (Real filtering semantics land in
-    // Task 4.)
+    // subclass's SubscriptionFilter.
     test('filter dispatches to the subclass implementation', () {
       final dest = _EchoDestination(result: const SendOk());
       expect(dest.filter.matches(_mkEvent('ev-1')), isTrue);
     });
 
-    // WirePayload covering every event in the batch.
+    // transform produces a single WirePayload covering every event in the
+    // batch.
     test('Destination.transform(List<Event>) produces one '
         'WirePayload covering the whole batch', () async {
       final dest = _EchoDestination(result: const SendOk());
@@ -188,7 +187,8 @@ void main() {
       await expectLater(dest.transform(<StoredEvent>[]), throwsArgumentError);
     });
 
-    // current batch.
+    // canAddToBatch returns true when the batch is empty and false once
+    // the current batch is at capacity.
     test('canAddToBatch returns true when batch is empty and '
         'false once capacity is reached', () {
       final dest = _EchoDestination(result: const SendOk());
@@ -198,14 +198,16 @@ void main() {
       expect(dest.canAddToBatch([_mkEvent('ev-1')], _mkEvent('ev-2')), isFalse);
     });
 
-    // destination surface and defaults to Duration.zero for this fixture.
+    // maxAccumulateTime is declared on the destination surface and defaults
+    // to Duration.zero for this fixture.
     test('Destination.maxAccumulateTime is declared on the '
         'destination surface', () {
       final dest = _EchoDestination(result: const SendOk());
       expect(dest.maxAccumulateTime, Duration.zero);
     });
 
-    // abstract contract so concrete destinations opt in explicitly.
+    // allowHardDelete defaults to false in the abstract contract so concrete
+    // destinations must opt in explicitly.
     test('Destination.allowHardDelete defaults to false in the '
         'abstract contract', () {
       final dest = _DefaultDestination();

@@ -9,16 +9,6 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
-/// Build a `FifoEntry` for the common single-event batch case without
-/// forcing every call-site to spell out `eventIds: [id]` and
-/// `eventIdRange: (firstSeq: n, lastSeq: n)`.
-///
-/// This helper exists for tests that pre-date Phase 4.3 Task 6's
-/// single-event → batch-per-row migration. The batch shape (
-/// + B) makes `eventIds` and `eventIdRange` required on `FifoEntry`;
-/// wrapping a scalar `eventId` + `sequenceNumber` into both fields here
-/// keeps per-call churn minimal.
-// from a single event's id and sequence_number.
 /// Build a minimal `StoredEvent` fixture with the given id and sequence
 /// number. Tests that need a batch input to `StorageBackend.enqueueFifo`
 /// construct one via `[storedEventFixture(...)]`.
@@ -58,11 +48,10 @@ WirePayload wirePayloadJson(
   transformVersion: transformVersion,
 );
 
-/// Convenience: enqueue a single-event batch through the new batch-aware
+/// Convenience: enqueue a single-event batch through the batch-aware
 /// `StorageBackend.enqueueFifo`. Wraps [eventId] + [sequenceNumber] in a
 /// one-element batch and a JSON-encoded wire payload; returns the
-/// persisted `FifoEntry`. Used by tests that pre-date the batch-per-row
-/// migration where every FIFO row in the suite was a single event.
+/// persisted `FifoEntry`.
 Future<FifoEntry> enqueueSingle(
   StorageBackend backend,
   String destinationId, {

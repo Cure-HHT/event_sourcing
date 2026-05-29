@@ -3,10 +3,6 @@
 //   interpreter on the ingest path is symmetric with the interpreter on the
 //   append path (same gates, same atomicity, same throw-rolls-back semantics).
 //   Closes Phase 4.9 design spec §398.
-//
-// Rewritten in Task 22 (CUR-1317) to use ProjectionSpec / ProjectionRegistry
-// instead of the deleted Materializer/EntryPromoter abstractions. The substrate
-// behavior under test is identical; only the fixture changed.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,7 +12,7 @@ import 'package:uuid/uuid.dart';
 // ---------------------------------------------------------------------------
 // Toy ProjectionSpec — AggregateProjectionSpec that folds any 'demo_note'
 // event into 'toy_view', storing latest event_id, answers, is_complete,
-// is_deleted. Mirrors the behavior of the old _ToyMaterializer.
+// is_deleted.
 // ---------------------------------------------------------------------------
 
 const _kToyViewSpec = AggregateProjectionSpec(

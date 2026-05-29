@@ -76,51 +76,59 @@ Future<void> _assign(EventStore store, String aggId, String user) =>
     );
 
 void main() {
-  test('replays TableProjectionSpec rows with aggregateId + sequence', () async {
-    final store = await _open();
-    addTearDown(store.close);
+  test(
+    'replays TableProjectionSpec rows with aggregateId + sequence',
+    () async {
+      final store = await _open();
+      addTearDown(store.close);
 
-    await _assign(store, 'alice|editor', 'alice');
-    await _assign(store, 'bob|editor', 'bob');
+      await _assign(store, 'alice|editor', 'alice');
+      await _assign(store, 'bob|editor', 'bob');
 
-    final updates = <Update<Map<String, Object?>>>[];
-    final sub = store
-        .subscribe<Map<String, Object?>>(
-          const SubscriptionFilter(),
-          AggregateMode<Map<String, Object?>>(
-            viewName: 'user_role_scopes',
-            mapper: (row) => row,
-          ),
-        )
-        .listen(updates.add);
+      final updates = <Update<Map<String, Object?>>>[];
+      final sub = store
+          .subscribe<Map<String, Object?>>(
+            const SubscriptionFilter(),
+            AggregateMode<Map<String, Object?>>(
+              viewName: 'user_role_scopes',
+              mapper: (row) => row,
+            ),
+          )
+          .listen(updates.add);
 
-    // Drain until EndOfReplay.
-    while (!updates.any((u) => u is EndOfReplay)) {
-      await Future<void>.delayed(Duration.zero);
-    }
+      // Drain until EndOfReplay.
+      while (!updates.any((u) => u is EndOfReplay)) {
+        await Future<void>.delayed(Duration.zero);
+      }
 
-    final snapshots = updates.whereType<Snapshot<Map<String, Object?>>>().toList();
-    expect(snapshots, hasLength(2), reason: 'both seeded rows replay');
-    for (final snap in snapshots) {
-      final row = snap.value!;
-      // The field the reaction_widgets ViewBuilder aggregateIdOf extractor
-      // reads — previously absent on TableProjectionSpec rows.
-      expect(row['aggregateId'], isNotNull);
-      expect(row['aggregateId'], isIn(<String>['alice|editor', 'bob|editor']));
-      // Snapshot sequence is driven by the stamped row `sequence`, not 0.
-      expect(snap.sequence, greaterThan(0));
-    }
+      final snapshots = updates
+          .whereType<Snapshot<Map<String, Object?>>>()
+          .toList();
+      expect(snapshots, hasLength(2), reason: 'both seeded rows replay');
+      for (final snap in snapshots) {
+        final row = snap.value!;
+        // The field the reaction_widgets ViewBuilder aggregateIdOf extractor
+        // reads — required by the documented view-row contract.
+        expect(row['aggregateId'], isNotNull);
+        expect(
+          row['aggregateId'],
+          isIn(<String>['alice|editor', 'bob|editor']),
+        );
+        // Snapshot sequence is driven by the stamped row `sequence`, not 0.
+        expect(snap.sequence, greaterThan(0));
+      }
 
-    // A live assignment after subscribe arrives as a Delta carrying the
-    // stamped aggregateId (the path a multi-user grant-push exercises).
-    await _assign(store, 'carol|editor', 'carol');
-    while (!updates.any((u) => u is Delta)) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    final delta = updates.whereType<Delta<Map<String, Object?>>>().single;
-    expect(delta.value['aggregateId'], 'carol|editor');
-    expect(delta.value['user_id'], 'carol');
+      // A live assignment after subscribe arrives as a Delta carrying the
+      // stamped aggregateId (the path a multi-user grant-push exercises).
+      await _assign(store, 'carol|editor', 'carol');
+      while (!updates.any((u) => u is Delta)) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final delta = updates.whereType<Delta<Map<String, Object?>>>().single;
+      expect(delta.value['aggregateId'], 'carol|editor');
+      expect(delta.value['user_id'], 'carol');
 
-    await sub.cancel();
-  });
+      await sub.cancel();
+    },
+  );
 }

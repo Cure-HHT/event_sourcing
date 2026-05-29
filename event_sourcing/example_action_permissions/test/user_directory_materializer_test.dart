@@ -17,8 +17,8 @@ void main() {
       });
       final p = dir.resolve('green-user-3') as UserPrincipal;
       expect(p.activeRole, 'GreenTeam');
-      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
-      // keeps the activeSite on its own directory record.
+      // UserPrincipal carries identity/role only; the demo exposes
+      // activeSite via its own directory record.
       expect(dir.siteFor('green-user-3'), 'green-workspace');
     });
 
@@ -50,8 +50,8 @@ void main() {
       });
       final p = dir.resolve('mover') as UserPrincipal;
       expect(p.activeRole, 'BlueTeam');
-      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
-      // keeps the activeSite on its own directory record.
+      // UserPrincipal carries identity/role only; the demo exposes
+      // activeSite via its own directory record.
       expect(dir.siteFor('mover'), 'blue-workspace');
       expect(dir.listEntries(), hasLength(1));
     });

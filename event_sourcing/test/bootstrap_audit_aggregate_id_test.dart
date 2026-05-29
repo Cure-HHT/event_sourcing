@@ -3,8 +3,6 @@
 // audit stamps `aggregateId = source.identifier` (the install UUID).
 // The bootstrap audit is the first event in every installation's
 // per-install hash-chained system aggregate.
-//
-//   aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

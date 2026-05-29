@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('Initiator', () {
-    // the three variants at compile time (analyzer would flag a missing arm).
+    // A sealed switch over Initiator covers all three variants at compile time
+    // (analyzer flags a missing arm).
     test('sealed pattern-match is exhaustive over three variants', () {
       String describe(Initiator i) => switch (i) {
         UserInitiator() => 'user',
@@ -19,14 +20,15 @@ void main() {
       expect(describe(const AnonymousInitiator(ipAddress: null)), 'anonymous');
     });
 
-    // encoding and round-trips.
+    // UserInitiator serializes with a 'type' discriminator and round-trips.
     test('UserInitiator JSON round-trips with type discriminator', () {
       const u = UserInitiator('user-123');
       expect(u.toJson(), {'type': 'user', 'user_id': 'user-123'});
       expect(Initiator.fromJson(u.toJson()), u);
     });
 
-    // nullable triggeringEventId.
+    // AutomationInitiator round-trips with both the required service field
+    // and the optional nullable triggeringEventId.
     test('AutomationInitiator JSON round-trips with both required '
         'and optional fields', () {
       const a1 = AutomationInitiator(service: 'mobile-bg-sync');

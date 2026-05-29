@@ -162,9 +162,10 @@ class ReactionTestHarness {
   }
 
   /// Convenience: append a `role_assigned` event so the substrate's
-  /// authorization policy treats [userId] as actually holding [role] —
-  /// required ever since the policy gained substrate-verified role
-  /// membership (closed-under-events trust model). Defaults to a
+  /// authorization policy treats [userId] as actually holding [role].
+  /// The policy verifies role membership against the event log
+  /// (closed-under-events trust model); callers must seed this event
+  /// before dispatching actions that require the role. Defaults to a
   /// [TotalWildcardScope] so unscoped actions like `say_hello` authorize.
   Future<void> seedRoleAssigned({
     required String userId,
@@ -219,7 +220,6 @@ class ReactionTestHarness {
 
 // ---------------------------------------------------------------------------
 // Sample action registered in the dispatcher.
-// Used by LocalActionSubmitter tests in Task 10.
 // ---------------------------------------------------------------------------
 
 /// Input for [SayHelloAction].

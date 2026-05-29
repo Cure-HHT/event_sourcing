@@ -40,7 +40,6 @@ void main() {
       await backend.close();
     });
 
-    // touch the event log.
     test('deleteInTxn on security row does not touch event log', () async {
       final (backend, store) = await _setup();
       await backend.transaction((txn) async {

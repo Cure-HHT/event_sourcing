@@ -2,9 +2,7 @@
 // SubscriptionFilter: includeSystemEvents=false rejects all system entry
 // types (default, so app destinations don't accidentally admit audit events);
 // includeSystemEvents=true admits them bypassing the entryTypes allow-list.
-// dispatches system entry types through the opt-in flag, bypassing the
-// entryTypes allow-list. User entry types continue to use entryTypes.
-// opt in via SubscriptionFilter.includeSystemEvents.
+// User entry types continue to use the entryTypes allow-list regardless.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -38,7 +36,8 @@ StoredEvent _userEvent(String entryType) => _mkEvent(entryType: entryType);
 
 void main() {
   group('SubscriptionFilter.includeSystemEvents', () {
-    // regardless of entryTypes content.
+    // includeSystemEvents=false rejects system events regardless of
+    // entryTypes content.
     test('includeSystemEvents=false rejects system events '
         'regardless of entryTypes', () {
       const f = SubscriptionFilter(entryTypes: {'demo_note'});
@@ -46,7 +45,8 @@ void main() {
       expect(f.matches(_systemEvent()), isFalse);
     });
 
-    // entryTypes (an empty list does not exclude them).
+    // includeSystemEvents=true admits system events even with an empty
+    // entryTypes set (an empty set does not exclude them).
     test('includeSystemEvents=true admits system events even '
         'with empty entryTypes', () {
       const f = SubscriptionFilter(
@@ -56,8 +56,8 @@ void main() {
       expect(f.matches(_systemEvent()), isTrue);
     });
 
-    // override entryTypes for user events; user events still use the
-    // allow-list.
+    // includeSystemEvents=true does not override entryTypes for user events;
+    // user events still use the allow-list.
     test('includeSystemEvents=true still applies entryTypes '
         'for user events', () {
       const f = SubscriptionFilter(
@@ -73,8 +73,8 @@ void main() {
       expect(f.includeSystemEvents, isFalse);
     });
 
-    // gated by the same flag (the flag is keyed off the reserved set,
-    // not a single id).
+    // Every reserved system entry type is gated by the same flag (keyed
+    // off the reserved set, not a single id).
     test('includeSystemEvents=true admits every reserved '
         'system entry type', () {
       const f = SubscriptionFilter(includeSystemEvents: true);

@@ -64,11 +64,9 @@ void main() {
       expect(stored!.libFormatVersion, StoredEvent.currentLibFormatVersion);
     });
 
-    // Note: the former -F test ("append does NOT validate
-    // entryTypeVersion against registry") has been deleted. Under the new
-    // contract the substrate stamps entry_type_version from the registry's
-    // registeredVersion, so there is no caller-supplied value to validate;
-    // ingest-time entry_type_version-vs-registry validation is still
-    // verified by test/event_store/ingest_version_validation_test.dart.
+    // Note: the substrate stamps entry_type_version from the registry's
+    // registeredVersion, so there is no caller-supplied value to validate.
+    // Ingest-time entry_type_version-vs-registry validation is verified by
+    // test/event_store/ingest_version_validation_test.dart.
   });
 }

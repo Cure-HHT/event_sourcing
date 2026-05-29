@@ -2,7 +2,6 @@
 // Verifies: EVS-PRD-action-dispatch/A
 // Verifies: EVS-PRD-permissions-as-events/B
 // Verifies: EVS-PRD-event-log/A/C
-// the dispatcher and returns the correct wire shape.
 import 'dart:convert';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';

@@ -145,8 +145,7 @@ class RemotePermissionSource implements PermissionSource {
       _current = effective;
       if (!_controller.isClosed) _controller.add(effective);
     }
-    // Non-200: leave current state untouched. Phase 4 e2e exercises the
-    // 401 + WS-update paths.
+    // Non-200: leave current state untouched.
   }
 
   @override

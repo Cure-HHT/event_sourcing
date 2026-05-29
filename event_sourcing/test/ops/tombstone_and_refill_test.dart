@@ -461,10 +461,9 @@ void main() {
 
     // tombstoneAndRefill, the next fillBatch re-promotes every event
     // covered by the tombstoned target AND by its trail into fresh
-    // FIFO rows. With v4-UUID `entry_id`s (Phase 4.7 Task 6.5) the
-    // tombstoned audit row and the fresh re-promotion rows coexist
-    // even when they cover the same event_ids — their identifiers
-    // never collide.
+    // FIFO rows. v4-UUID `entry_id`s ensure the tombstoned audit row
+    // and the fresh re-promotion rows coexist even when they cover the
+    // same event_ids — their identifiers never collide.
     //
     // Setup: 9 events on the event log. Enqueue three contiguous
     // 3-event batches — the first wedged (events 1-3, head), then
@@ -476,7 +475,7 @@ void main() {
     //    the rewound cursor;
     //  - the tombstoned audit row survives alongside the fresh rows;
     //  - every fresh row has a new UUID entryId distinct from the
-    //    tombstoned row's entryId (Task 6.5).
+    //    tombstoned row's entryId.
     test('next fillBatch re-promotes target events AND trail events', () async {
       final deps = await buildAuditedRegistryDeps(backend);
       final registry = DestinationRegistry(
@@ -579,7 +578,7 @@ void main() {
         coveredIds.addAll((r['event_ids']! as List).cast<String>());
       }
       expect(coveredIds, {for (var i = 1; i <= 9; i++) 'e$i'});
-      // Task 6.5 invariant: every fresh row's entry_id is a UUID
+      // v4-UUID entry_id invariant: every fresh row's entry_id is a UUID
       // distinct from the tombstoned row's entry_id.
       for (final r in fresh) {
         expect(r['entry_id'], isNot(headEntryId));

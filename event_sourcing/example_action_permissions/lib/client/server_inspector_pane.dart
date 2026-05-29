@@ -2,8 +2,7 @@
 //
 // Right-pane inspector: polls GET /_demo/inspect on a 1Hz timer and
 // renders five sections (events, matrix, directory, idempotency, last
-// dispatch trace). The polling cadence is intentionally simple — Phase
-// 4.12's reactive layer is the future swap target.
+// dispatch trace). The polling cadence is intentionally simple for the demo.
 
 import 'dart:async';
 

@@ -5,8 +5,6 @@ import 'package:event_sourcing/src/actions/action.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 
 /// Central registry of all `Action` instances known to a deployment.
-//
-//             every registered action.
 class ActionRegistry {
   ActionRegistry();
 

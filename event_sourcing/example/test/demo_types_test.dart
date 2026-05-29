@@ -72,7 +72,8 @@ void main() {
   });
 
   group('allDemoEntryTypes (bootstrap registration)', () {
-    //   List<EntryTypeDefinition>; duplicate id would throw at register.
+    // allDemoEntryTypes is a List<EntryTypeDefinition>; duplicate ids
+    // would throw at registration time.
     test('has exactly four entries', () {
       expect(allDemoEntryTypes.length, 4);
     });

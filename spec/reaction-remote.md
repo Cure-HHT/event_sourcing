@@ -27,15 +27,13 @@ pre-1331 surface and then swept.
 > this file as non-normative prose until a requirement block heading
 > is added.
 
-**Note on roadmap supersession.** This design merges what was
-previously split into separate client-only and server-only
-implementation tracks into a single cohesive design. The wire
-protocol cannot be specified, codec-tested, or end-to-end-validated
-without both sides; the PRD architecture (`spec/prd-reaction.md`
-lines 26-55) already puts `local/`, `remote/`, `server/`, and `wire/`
-in one package. The roadmap document
-(`docs/superpowers/specs/2026-05-11-roadmap.md`) gets an update
-reflecting the merge alongside this design's commit.
+**Note on scope.** This design covers client and server together in one
+cohesive document. The wire protocol cannot be specified, codec-tested,
+or end-to-end-validated without both sides; the PRD architecture
+(`spec/prd-reaction.md` lines 26-55) already puts `local/`, `remote/`,
+`server/`, and `wire/` in one package. See the roadmap document
+(`docs/superpowers/specs/2026-05-11-roadmap.md`) for the current
+implementation status.
 
 ## Scope
 
@@ -283,8 +281,7 @@ JSON shape notes:
 - `authorization_denied` carries only the substrate's `Permission`
   (inlined `{name, scopeClass}`). The substrate's
   `DispatchAuthorizationDenied` carries no `DenyReason` / `scope` /
-  `detail` — those fields belonged to an earlier, richer variant that
-  was simplified.
+  `detail`; the wire carries only the `Permission` (name + scopeClass).
 - `idempotency_hit` ships `cachedResult` + `priorEmittedEventIds`
   (mirroring the substrate's `DispatchIdempotencyHit.cachedResult` and
   `priorEmittedEventIds`). No `cachedAt` timestamp — the substrate does
@@ -1306,12 +1303,11 @@ enumeration is the right place.
 Recorded here so future authors do not re-litigate them without new
 evidence.
 
-**Why merge the cross-process client and server impl into one plan?**
+**Why cover cross-process client and server impl in one design?**
 The wire protocol cannot be specified, codec-tested, or end-to-end-
-validated without both sides present. PRD architecture already puts
-client + server + wire in one package. Splitting created throwaway
-fake-server scaffolding that the actual server would have replaced.
-One plan captures the cohesive design.
+validated without both sides present. The PRD architecture already puts
+client + server + wire in one package, and a single design document
+captures the cohesive cross-cutting concerns naturally.
 
 **Why refetch reconnect instead of resume-from-sequence?** v1
 baseline matches PRD Open Q3. Resume-from-sequence is a wire-
@@ -1320,14 +1316,13 @@ envelope. UX flash is acceptable at portal scale (~1-20 users); the
 extra moving parts (client sequence tracking, server `read(from:)`
 semantics) can wait until measurement demands them.
 
-**Why no `JwtAuthValidator` reference impl in this plan?** Per the
-saved auth-validators-are-consumer-supplied memory and PRD-auth-
-session/F's rationale: production validators encode deployment-
-specific identity-provider choices (Firebase issuer/audience/JWKS
-URL; Auth0 issuer/audience; linking-code-to-UUID binding logic;
-etc.). A concrete lib-side validator commits to one shape and forces
-it on every consumer. The pluggable seam (`PrincipalAuthValidator`)
-is sufficient.
+**Why no `JwtAuthValidator` reference impl in this plan?** Per
+`EVS-PRD-auth-session/F`'s rationale: production validators encode
+deployment-specific identity-provider choices (Firebase
+issuer/audience/JWKS URL; Auth0 issuer/audience; linking-code-to-UUID
+binding logic; etc.). A concrete lib-side validator commits to one
+shape and forces it on every consumer. The pluggable seam
+(`PrincipalAuthValidator`) is sufficient.
 
 **Why Approach B for per-subscription authorization (two-tier:
 deny then narrow) instead of A (narrow only)?** B gives a clean
@@ -1354,27 +1349,22 @@ just is, more honestly. The collapse-not-add migration story
 reaction handlers plus a few stragglers) makes the "framework
 wrapper" approach actively unhelpful: the consumer wants the
 reaction handlers *interleaved* with their own remaining routes,
-not segregated under a different mount point. Resolves what was
-previously called PRD Open Q4 (custom-route registration) by
-making the question moot — every route is a custom route from
-the consumer's perspective; the lib just supplies the four that
-implement the wire.
+not segregated under a different mount point. Every route is a custom
+route from the consumer's perspective; the lib supplies the four that
+implement the wire and the consumer mounts them wherever they like.
 
 **Why no per-Principal permission cache on the WS connection?**
-An earlier draft of this design opened a per-Principal
-`EffectiveAuthorization` subscription on `auth_ok` to keep a fresh
-in-memory copy of the Principal's permissions for fast lookup on
-each `subscribe` message — effectively a server-side cache mirroring
-the substrate's permission projection. Rejected for v1: (a)
-`policy.isPermitted` and `policy.effectivePermissionsFor` against
-`findViewRowsInTxn` are sub-millisecond for the row counts in
-question, and `subscribe` messages are not high-frequency (a portal
-user opens a handful of panels per session, not thousands), so the
-optimization has no measurable benefit; (b) the cache would
-introduce per-connection state (cache mirror + substrate
-subscription managing it) that has to be cleaned up on disconnect
-and managed against race conditions when grants change
-mid-decision. Each `subscribe` message thus calls into
+A server-side cache mirroring the substrate's permission projection
+(one `EffectiveAuthorization` subscription per authenticated connection)
+was considered and rejected for two reasons: (a) `policy.isPermitted`
+and `policy.effectivePermissionsFor` against `findViewRowsInTxn` are
+sub-millisecond for the row counts in question, and `subscribe` messages
+are not high-frequency (a portal user opens a handful of panels per
+session, not thousands), so the optimization has no measurable benefit;
+(b) the cache would introduce per-connection state (cache mirror +
+substrate subscription managing it) that has to be cleaned up on
+disconnect and managed against race conditions when grants change
+mid-decision. Each `subscribe` message calls into
 `policy.isPermitted` / `effectivePermissionsFor` fresh; the only
 per-connection state is the active `Principal` and the
 `Map<subscriptionId, StreamSubscription>` registry. Mid-session
@@ -1514,13 +1504,10 @@ Explicitly out of scope for this plan but anticipated:
   sides (analogous to the named-predicate path). Today no consumer
   requires structured errors, so this is documented as a future path.
 
-## Roadmap impact and sequencing
+## Roadmap and sequencing
 
-This design merges what was previously split into separate
-client-only and server-only implementation tracks into a single
-cohesive design. The roadmap document
-(`docs/superpowers/specs/2026-05-11-roadmap.md`) will be updated
-alongside this design to reflect:
+The roadmap document
+(`docs/superpowers/specs/2026-05-11-roadmap.md`) reflects:
 
 - Cross-process scope (Remote* impls + wire codecs + reference
   server + `TrustingAuthValidator`).
@@ -1530,10 +1517,8 @@ alongside this design to reflect:
   reaction server's per-subscription authz consults
   `AuthorizationPolicy.isPermitted` /
   `effectivePermissionsFor` / `ContainmentResolver` shapes that
-  CUR-1331 reshapes; writing impl against the pre-1331 surface and
-  then sweeping would mean two PRs touch the same code in pre-
-  shipping greenfield posture. Better to land CUR-1331 impl first
-  and target the final API directly.
+  CUR-1331 defines; targeting the final API directly avoids a sweep
+  of the same code when CUR-1331 impl lands.
 - Status: design draft committed; impl ticket TBD after CUR-1331
   impl lands.
 

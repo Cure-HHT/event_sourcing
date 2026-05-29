@@ -11,7 +11,6 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 ///
 /// The fields are immutable once set — they are part of the FIFO row's
 /// identity for retry determinism.
-// FIFO rows; supports retry-deterministic re-encoding at drain time.
 class BatchEnvelopeMetadata {
   const BatchEnvelopeMetadata({
     required this.batchFormatVersion,
@@ -25,7 +24,6 @@ class BatchEnvelopeMetadata {
   /// Build from a parsed [BatchEnvelope]. Drops the `events` list — the
   /// drain path resolves events via `findEventById` and reattaches them
   /// at encode time.
-  // BatchEnvelope, dropping the events list.
   factory BatchEnvelopeMetadata.fromEnvelope(BatchEnvelope env) {
     return BatchEnvelopeMetadata(
       batchFormatVersion: env.batchFormatVersion,
@@ -37,7 +35,6 @@ class BatchEnvelopeMetadata {
     );
   }
 
-  // map (sembast row deserialization).
   factory BatchEnvelopeMetadata.fromMap(Map<String, Object?> m) {
     return BatchEnvelopeMetadata(
       batchFormatVersion: m['batch_format_version']! as String,
@@ -60,7 +57,6 @@ class BatchEnvelopeMetadata {
   /// drain path: after `findEventById` resolves each event in `event_ids`,
   /// the events are passed here to rebuild the envelope and `.encode()`
   /// is called to produce wire bytes.
-  // re-encode at drain time.
   BatchEnvelope toEnvelope(List<Map<String, Object?>> events) {
     return BatchEnvelope(
       batchFormatVersion: batchFormatVersion,
@@ -73,7 +69,6 @@ class BatchEnvelopeMetadata {
     );
   }
 
-  // row persistence.
   Map<String, Object?> toMap() => <String, Object?>{
     'batch_format_version': batchFormatVersion,
     'batch_id': batchId,

@@ -984,13 +984,9 @@ void main() {
     //   and the Sembast transaction contract. Track as follow-up.
   });
 
-  // Regression coverage for the EventStore.appendInTxn projection-interpreter
-  // gap surfaced in CUR-1331 Task 25: ActionDispatcher Stage 8 appends action
-  // events via appendInTxn, and prior to the fix the projection interpreter
-  // was NOT invoked, so views were stale until something else (e.g., a
-  // subscriber bridge) re-fed the event through the public append. The fix
-  // moves _interpreter.applyEvent inside appendInTxn so views materialize in
-  // the same transaction as the append.
+  // Stage 8 appends action events via appendInTxn, and the projection
+  // interpreter runs inside that same transaction so view rows are
+  // materialized atomically with the append.
   group('Stage 8 — projection materialization inside dispatch tx', () {
     test('view row is present immediately after dispatch returns', () async {
       // Register a TableProjectionSpec that watches the test action's

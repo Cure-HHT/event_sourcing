@@ -115,9 +115,9 @@ void main() {
       backend = await _openBackend('watch-events-reopen-$dbCounter.db');
     });
 
-    // Under the unified event store, ingest routes through appendEvent
-    // and shares the broadcast controller with origin appends, so a
-    // single watchEvents subscription sees both write paths.
+    // Ingest routes through appendEvent and shares the broadcast
+    // controller with origin appends, so a single watchEvents
+    // subscription sees both write paths.
     test('watchEvents emits ingested events (unified store)', () async {
       const destSource = Source(
         hopId: 'portal-server',

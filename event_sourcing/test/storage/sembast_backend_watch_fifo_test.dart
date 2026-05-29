@@ -102,11 +102,9 @@ void main() {
       expect(emA, isEmpty);
     });
 
-    // envelopeMetadata for native (`esd/batch@1`) rows. Confirms the
-    // Phase-4.12 stream-side FifoEntry path stays in sync with the
-    // Phase-4.13 storage shape: the row-typed snapshot exposes the
-    // envelope identity that drain reconstructs from, and wirePayload is
-    // null on the emitted entry.
+    // envelopeMetadata for native (`esd/batch@1`) rows. The row-typed
+    // snapshot exposes the envelope identity that drain reconstructs from,
+    // and wirePayload is null on the emitted entry.
     test('watchFifo emits envelopeMetadata for '
         'native rows; wirePayload is null on the snapshot', () async {
       // Enqueue a native esd/batch@1 row via the public enqueueFifo

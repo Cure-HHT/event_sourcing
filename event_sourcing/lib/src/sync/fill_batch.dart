@@ -77,16 +77,6 @@ const _uuidGen = Uuid();
 ///
 /// [clock] defaults to `() => DateTime.now().toUtc()`; tests inject a
 /// fixed-time closure so the `now()` reference point is deterministic.
-// maxAccumulateTime hold on single-event batches, fill_cursor advance to
-// batch.last.sequenceNumber, idempotent no-op when no new matching events,
-// and wedge-aware early return when readFifoHead's row is wedged.
-// client_timestamp ∈ [startDate, min(endDate, now())]; events outside
-// the window are never enqueued.
-// native destinations bypass transform and receive a library-built
-// envelope; non-native destinations call transform as before.
-// drain halts on a wedged head; the wedge-skip
-// branch above avoids speculative rows that tombstoneAndRefill would
-// have to undo.
 Future<void> fillBatch(
   Destination destination, {
   required StorageBackend backend,
@@ -108,11 +98,10 @@ Future<void> fillBatch(
   // Window entirely in the future (startDate > upper): nothing to promote.
   if (schedule.startDate!.isAfter(upper)) return;
 
-  // wedged, drain halts at it, so any row we promote
-  // behind it would be speculative work that tombstoneAndRefill's
-  // trail-delete sweep would have to undo. Return
-  // without promoting; recovery rewinds fill_cursor and the next
-  // fillBatch fills in one pass.
+  // When the FIFO head is wedged, drain halts at it. Any row promoted now
+  // would be speculative work that tombstoneAndRefill's trail-delete sweep
+  // would have to undo. Recovery rewinds fill_cursor; the next fillBatch
+  // fills in one pass.
   final head = await backend.readFifoHead(destination.id);
   if (head?.finalStatus == FinalStatus.wedged) return;
 
@@ -128,18 +117,15 @@ Future<void> fillBatch(
   // advances past the event's client_timestamp, or endDate is widened
   // via setEndDate).
   //
-  //   destination.filter.matches.
-  //   permanent rejections (subscription, startDate-lower) contribute to
-  //   cursor advance; deferred rejections (upper bound) stop the walk so
-  //   the cursor does not skip past them.
-  // Check order matters: permanent rejection reasons (subscription
-  // mismatch, startDate-lower) are evaluated BEFORE the deferred-by-upper
-  // check so an event that fails subscription does not block the walk
-  // even if its client_timestamp is past the upper bound. Otherwise a
+  // Permanent rejections (subscription filter, startDate-lower) contribute to
+  // cursor advance; deferred rejections (upper bound) stop the walk so the
+  // cursor does not skip past them. Check order matters: permanent rejection
+  // reasons (subscription mismatch, startDate-lower) are evaluated BEFORE the
+  // deferred-by-upper check so an event that fails subscription does not block
+  // the walk even if its client_timestamp is past the upper bound. Otherwise a
   // system audit emitted at real-clock-now in a test using a mock fillBatch
-  // clock would be treated as deferred and freeze cursor advance, even
-  // though the destination's subscription filter would reject it
-  // permanently.
+  // clock would be treated as deferred and freeze cursor advance, even though
+  // the destination's subscription filter would reject it permanently.
   final inWindow = <StoredEvent>[];
   int? lastDecidedSeq;
   for (final e in candidates) {
@@ -160,11 +146,10 @@ Future<void> fillBatch(
       continue;
     }
     if (e.clientTimestamp.isAfter(upper)) {
-      // Deferred — endDate is mutable so this event
-      // may become eligible later. Stop the walk; cursor must not
-      // advance past this event nor past any subsequent candidate
-      // (advancing past a later in-window event would skip this
-      // deferred one).
+      // Deferred — endDate is mutable so this event may become eligible
+      // later. Stop the walk; the cursor must not advance past this event
+      // or any subsequent candidate (advancing past a later in-window event
+      // would skip this deferred one).
       break;
     }
     // In-window candidate. Decided either way (will be promoted, or held
@@ -177,8 +162,8 @@ Future<void> fillBatch(
     // No promotions to make. Advance cursor past any permanently-rejected
     // events the walk visited; if the walk stopped at the very first
     // candidate (deferred), do not advance — that event must remain
-    // re-evaluable. idempotency holds: repeated invocations
-    // with no new matching events produce no new FIFO rows.
+    // re-evaluable. Idempotent: repeated invocations with no new matching
+    // events produce no new FIFO rows.
     if (lastDecidedSeq != null) {
       await backend.writeFillCursor(destination.id, lastDecidedSeq);
     }
@@ -197,9 +182,9 @@ Future<void> fillBatch(
     }
   }
 
-  // elapsed. Multi-event batches don't hit this hold: canAddToBatch
-  // returning false for the next candidate already indicated size
-  // pressure, which is an admissible flush condition.
+  // maxAccumulateTime hold: single-event batches are held until the oldest
+  // event's age exceeds maxAccumulateTime. Multi-event batches are not held
+  // because canAddToBatch returning false already indicated size pressure.
   final oldestAge = now.difference(batch.first.clientTimestamp);
   if (batch.length == 1 && oldestAge < destination.maxAccumulateTime) {
     // Hold: do NOT advance the cursor either — the event is still a
@@ -217,8 +202,6 @@ Future<void> fillBatch(
   // `Destination.transform` and do NOT carry the bytes through the FIFO
   // row. Non-native destinations own their wire format and pass through
   // [transform].
-  // native rows skip transform entirely and receive a library-built
-  // BatchEnvelopeMetadata from `source`.
   if (destination.serializesNatively) {
     if (source == null) {
       throw ArgumentError(

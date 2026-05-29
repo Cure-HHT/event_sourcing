@@ -1,0 +1,67 @@
+# End-to-end & scenario tests — Tier 1 (automated) only.
+#
+# Runs the multi-client and permission/projection user-story suites that
+# drive the example servers from outside over real HTTP + WebSocket. Each
+# test boots its own ephemeral, in-memory server (loopback port or a
+# `dart run bin/server.dart` subprocess), so no external services are
+# required. See docs/e2e-testing.md.
+#
+# The Tier-2 UI confirmation suite (reaction/example/test_driver/, run via
+# `flutter drive`) is NOT run here: it needs a desktop display. Run it on
+# demand per docs/e2e-testing.md, or add a manual workflow_dispatch job
+# with xvfb + Linux desktop build deps if unattended runs are wanted.
+
+name: E2E scenario tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: e2e-scenario-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e_scenarios:
+    name: Multi-client + permission/projection scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (example_action_permissions)
+        run: flutter pub get
+        working-directory: event_sourcing/example_action_permissions
+      - name: Resolve deps (reaction)
+        run: flutter pub get
+        working-directory: reaction
+      - name: Resolve deps (reaction_widgets)
+        run: flutter pub get
+        working-directory: reaction_widgets
+      - name: Resolve deps (reaction_widgets_testing)
+        run: flutter pub get
+        working-directory: reaction_widgets_testing
+      - name: Resolve deps (reaction/example)
+        run: flutter pub get
+        working-directory: reaction/example
+      - name: Multi-client e2e (reaction/example)
+        run: flutter test test/e2e/
+        working-directory: reaction/example
+      - name: Permission/projection scenarios (action_permissions_demo)
+        run: flutter test test/scenarios/
+        working-directory: event_sourcing/example_action_permissions

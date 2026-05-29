@@ -1,16 +1,11 @@
 // Verifies: EVS-PRD-event-log/B/C
 // Verifies: EVS-PRD-destinations/C/D
-// Regression test for "continue past exhausted".
+// Regression test for strict-order delivery: a wedged head row must block
+// trailing pending rows.
 //
-// The Phase 4.6 demo surfaced that an exhausted head row did not block a
-// trailing pending row: drain skipped past the wedged head and shipped
-// the next row, producing out-of-order delivery to receipt-order-
-// committing destinations. The concrete repro was "#60 shipped before
-// #59" — event 59 wedged with a SendPermanent (schema skew), and drain
-// then attempted and succeeded on event 60 before the operator could
-// resolve 59.
-//
-// This test asserts the POST-FIX behavior:
+// drain halts at a wedged head (strict-order delivery) rather than
+// skipping past it and shipping subsequent rows out of order. This test
+// asserts that behavior end-to-end:
 //   1. drain halts at the wedged head (strict-order delivery);
 //   2. the trailing row stays pre-terminal (null final_status) — NOT
 //      shipped ahead of the wedged head;
@@ -19,8 +14,6 @@
 //   4. after `tombstoneAndRefill` on the wedged head, the next
 //      fillBatch + drain cycle re-enqueues and delivers events in
 //      sequence order (wedged event first, then trailing event).
-//
-// re-promotion by the next fillBatch).
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -82,8 +75,8 @@ Future<StoredEvent> _appendEvent(
 ///   * records the sequence_number of every successfully-delivered
 ///     payload for assertions about strict-order delivery.
 ///
-/// `batchCapacity = 1` forces one event per FIFO row, matching the
-/// Phase 4.6 demo's per-event drift where each event was its own row.
+/// `batchCapacity = 1` forces one event per FIFO row so each event
+/// occupies its own row and the strict-order halt is observable per event.
 class _RecordingDestination extends Destination {
   _RecordingDestination({
     required this.id,
@@ -167,16 +160,11 @@ void main() {
       final backend = await _openBackend('strict-order-regression.db');
       addTearDown(backend.close);
 
-      // Scripted outcomes model the Phase 4.6 demo:
-      //   - event #1 ("frontier sent before the wedge") -> SendOk;
-      //   - event #2 ("schema-skew on seq 59") -> SendPermanent.
-      // Event #3 would get SendOk, but the strict-order halt MUST
+      // Scripted outcomes:
+      //   - event #1 (prior-sent frontier) -> SendOk;
+      //   - event #2 (the wedge: permanent failure) -> SendPermanent.
+      // Event #3 would succeed, but the strict-order halt MUST
       // prevent drain from ever reaching it.
-      //
-      // Concrete mapping from the Phase 4.6 demo:
-      //   event #1 here  <->  event 58 in the demo (prior-sent frontier)
-      //   event #2 here  <->  event 59 in the demo (the wedge)
-      //   event #3 here  <->  event 60 in the demo (the out-of-order ship)
       final destination = _RecordingDestination(
         id: 'secondary',
         plannedOutcomes: <SendResult>[
@@ -286,9 +274,8 @@ void main() {
         e3RowBefore!.finalStatus,
         isNull,
         reason:
-            'Pre-fix drain would have shipped e3 past the wedged e2 '
-            '(SendOk on e3), flipping this row to FinalStatus.sent. '
-            'Post-fix drain halts at wedged e2; e3 stays pre-terminal.',
+            'drain halts at the wedged e2 and must not ship e3 past it; '
+            'e3 stays pre-terminal until the operator acts.',
       );
 
       // Act: operator "deploys a fix" and runs tombstoneAndRefill on
@@ -332,8 +319,8 @@ void main() {
       );
 
       // Assert: the wedged row is now a tombstoned
-      // archive. It coexists with the fresh rows (Task 6.5 UUID
-      // entry_ids prevent collision).
+      // archive. It coexists with the fresh rows (v4-UUID entry_ids
+      // prevent collision).
       final wedgedRowAfter = await backend.readFifoRow(
         destination.id,
         wedgedEntryId,

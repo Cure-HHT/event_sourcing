@@ -192,7 +192,7 @@ void main() {
 }
 
 /// Seeds the harness's role-permission matrix with 'say_hello' granted to the
-/// 'greeter' role. Copied from local_action_submitter_test.dart.
+/// 'greeter' role.
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
   const sayHelloPerm = Permission('say_hello');
   const seed = PermissionSeed(

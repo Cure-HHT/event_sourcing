@@ -132,8 +132,7 @@ void main() {
         expect(provisioned.data['activeSite'], 'green-workspace');
 
         // role_assigned event populates the user_role_scopes view in the
-        // dispatch tx, replacing the post-commit subscriber-bridge that
-        // previously had to re-emit role_assigned via eventStore.append.
+        // dispatch tx so permission checks reflect the new role immediately.
         final assigned = result.events.singleWhere(
           (e) => e.eventType == 'role_assigned',
         );

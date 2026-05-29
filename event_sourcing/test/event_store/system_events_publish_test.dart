@@ -8,14 +8,11 @@
 //   events in the log and delivered to subscribers, not silently absorbed.
 //
 // Verifies that all event-appending paths notify the subscription bus, not
-// only the public EventStore.append path.
-//
-// Before the _runInTxnWithPublish fix, appendInTxn callers inside
-// clearSecurityContext, applyRetentionPolicy, _emitDuplicateReceivedInTxn,
-// _ingestOneInTxn, and DestinationRegistry._emitDestinationAuditInTxn did NOT
-// publish to the subscription engine. A subscriber using
-// SubscriptionFilter(includeSystemEvents: true) would silently miss all of
-// those events.
+// only the public EventStore.append path. All internal txn helpers
+// (clearSecurityContext, applyRetentionPolicy, _emitDuplicateReceivedInTxn,
+// _ingestOneInTxn, DestinationRegistry._emitDestinationAuditInTxn) publish
+// to the subscription engine so that subscribers using
+// SubscriptionFilter(includeSystemEvents: true) receive every system event.
 
 import 'dart:async';
 

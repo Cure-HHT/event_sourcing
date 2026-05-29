@@ -9,8 +9,6 @@
 /// The dispatcher fills in `initiator`, `metadata['action_invocation_id']`,
 /// and `metadata['action_name']` before persisting. `flowToken` is optional
 /// input from the action; the dispatcher uses the call parameter as fallback.
-//
-// entryType, eventType, data, flowToken, metadata.
 class EventDraft {
   const EventDraft({
     required this.aggregateId,

@@ -53,8 +53,6 @@ typedef ClockFn = DateTime Function();
 ///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
 /// loop falls back to [SyncPolicy.defaults].
-// halt-at-wedged head and backoff.
-// back to SyncPolicy.defaults.
 Future<void> drain(
   Destination destination, {
   required StorageBackend backend,
@@ -66,10 +64,9 @@ Future<void> drain(
   while (true) {
     final head = await backend.readFifoHead(destination.id);
     if (head == null) return;
-    // recovery is tombstoneAndRefill. The wedged row is
-    // still returned by readFifoHead (rather than skipped) so UI
-    // surfaces can observe the wedge via that one entry point without
-    // also querying wedgedFifos separately.
+    // A wedged head halts the drain; recovery is tombstoneAndRefill.
+    // readFifoHead returns the wedged row (rather than skipping it) so UI
+    // surfaces can observe the wedge via that single entry point.
     if (head.finalStatus == FinalStatus.wedged) return;
     // head.finalStatus is null from here on — this is a drain candidate.
 
@@ -89,8 +86,6 @@ Future<void> drain(
     // 3rd-party rows (any other wireFormat) carry the bytes as a stored
     // JSON-Map `wirePayload`; we re-encode that Map to bytes verbatim
     // for `Destination.send`, preserving the previous storage shape.
-    // presence; native re-encode is byte-deterministic across retries
-    // (RFC 8785 JCS); 3rd-party path is unchanged.
     final WirePayload payload;
     final envelope = head.envelopeMetadata;
     if (envelope != null) {
@@ -133,11 +128,10 @@ Future<void> drain(
     final attempt = _attemptFromResult(result, now());
     await backend.appendAttempt(destination.id, head.entryId, attempt);
 
-    // Route the outcome.
-    // maxAttempts both mark the head wedged. The next loop iteration
-    // sees the wedged row via readFifoHead and drain halts at the
-    // top-of-loop check. Trail rows are never attempted ahead of a
-    // wedged head — strict-order delivery.
+    // Route the outcome. SendPermanent and SendTransient-at-maxAttempts both
+    // mark the head wedged; the next loop iteration sees the wedged row via
+    // readFifoHead and halts at the top-of-loop check. Trail rows are never
+    // attempted ahead of a wedged head — strict-order delivery.
     switch (result) {
       case SendOk():
         await backend.markFinal(destination.id, head.entryId, FinalStatus.sent);

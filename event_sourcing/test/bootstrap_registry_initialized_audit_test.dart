@@ -12,10 +12,6 @@
 //       dedupe is broken and a new event lands.
 //     - bumping registeredVersion on an existing caller entry type changes
 //       the map's value for that key, so a new event lands.
-//
-//   aggregateId = source.identifier (the install UUID).
-//   hard-coded; the registry is the source of truth.
-//   aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

@@ -15,9 +15,8 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// and payload shape).
 ///
 /// Batching: [batchCapacity] controls the size at which
-/// [canAddToBatch] returns `false`; default is `1`, matching legacy
-/// single-event behavior for the drain tests that do not exercise
-/// batching.
+/// [canAddToBatch] returns `false`; default is `1` (single-event
+/// FIFO semantics) for drain tests that do not exercise batching.
 class FakeDestination extends Destination {
   FakeDestination({
     this.id = 'fake',
@@ -46,7 +45,8 @@ class FakeDestination extends Destination {
   @override
   final Duration maxAccumulateTime;
 
-  // abstract-class default is exercised on other destinations.
+  // Overridden explicitly; the abstract-class default is exercised via
+  // other destinations.
   @override
   final bool allowHardDelete;
 
@@ -62,8 +62,8 @@ class FakeDestination extends Destination {
   /// order with returned outcomes.
   final List<SendResult> returned = <SendResult>[];
 
-  /// Count of times `transform` has been invoked. Used by Phase 4.10
-  /// wedge-skip tests to assert `transform` is NOT called when fillBatch
+  /// Count of times `transform` has been invoked. Used by wedge-skip
+  /// tests to assert `transform` is NOT called when fillBatch
   /// early-returns on a wedged head.
   int transformCalls = 0;
 

@@ -6,8 +6,6 @@
 /// - [none]: caller MUST NOT pass a key; if they do, it is ignored.
 /// - [optional]: caller MAY pass a key; without one, no replay protection.
 /// - [required]: caller MUST pass a key; absence is a parse-stage denial.
-//
-// each documented in  (DISPATCH) and IdempotencyStore tests.
 enum Idempotency { none, optional, required }
 
 /// A cached dispatch outcome stored in the `IdempotencyStore`.
@@ -19,9 +17,8 @@ enum Idempotency { none, optional, required }
 /// but it makes `IdempotencyStore.listEntries` self-describing: each
 /// returned entry identifies which cache slot it occupies without the
 /// caller having to thread the key separately.
-//
-// returns this verbatim. `emittedEventIds` is the audit-trail link to the
-// events written by the original dispatch.
+/// `emittedEventIds` is the audit-trail link to the events written by
+/// the original dispatch.
 class IdempotencyEntry {
   const IdempotencyEntry({
     required this.actionName,
@@ -60,7 +57,5 @@ class IdempotencyEntry {
 }
 
 /// Default TTL for idempotency cache entries when an action does not
-/// override.
-//
-// otherwise via its `idempotencyTtl` getter.
+/// override via its `idempotencyTtl` getter.
 const Duration defaultIdempotencyTtl = Duration(hours: 24);

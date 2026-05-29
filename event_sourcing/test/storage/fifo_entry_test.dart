@@ -8,8 +8,6 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Phase 4.3 Task 6 — FifoEntry batch-per-row shape.
-///
 /// Verifies the FifoEntry shape:
 ///
 /// - `eventIds` is a non-empty `List<String>`.
@@ -17,15 +15,8 @@ import 'package:flutter_test/flutter_test.dart';
 ///   the sequence_numbers of the contained events.
 /// - `wirePayload` is one payload covering the whole batch;
 ///   no per-event wire payload is stored.
-///
-/// Phase 4.7 Task 3 additionally verifies the nullable
-/// enum refactor:
-///
 /// - `FinalStatus` has exactly `{sent, wedged, tombstoned}`.
 /// - `FifoEntry.finalStatus` is nullable; `null` means "not-yet-terminal".
-///
-/// These tests run in addition to (not in place of) `value_types_test.dart`'s
-/// `FifoEntry` group, which now also exercises the new shape.
 void main() {
   final enqueuedAt = DateTime.utc(2026, 4, 22, 9);
 
@@ -49,8 +40,8 @@ void main() {
     );
   }
 
-  group('FifoEntry batch shape (Phase 4.3 Task 6)', () {
-    // identifying every event in the batch.
+  group('FifoEntry batch shape', () {
+    // eventIds is a non-empty List<String> identifying every event in the batch.
     test('eventIds is a non-empty List<String> with every batch '
         'event id', () {
       final entry = makeBatch(eventIds: const ['ev-a', 'ev-b', 'ev-c']);
@@ -59,7 +50,8 @@ void main() {
       expect(entry.eventIds, isNotEmpty);
     });
 
-    // construction so a batch row can never be persisted with zero events.
+    // The empty-eventIds invariant is enforced at construction so a batch row
+    // can never be persisted with zero events.
     test('constructing FifoEntry with empty eventIds throws', () {
       expect(
         () => FifoEntry(
@@ -99,7 +91,8 @@ void main() {
       );
     });
 
-    // empty event_ids field with a FormatException.
+    // fromJson enforces the eventIds invariant: missing, non-List, and
+    // empty event_ids fields all throw FormatException.
     test('fromJson rejects missing, non-List, and empty '
         'event_ids', () {
       final base = makeBatch().toJson();
@@ -115,8 +108,8 @@ void main() {
       expect(() => FifoEntry.fromJson(empty), throwsFormatException);
     });
 
-    // drawn from the sequence_number values of the contained events; the
-    // pair is typed as EventIdRange (Dart 3 record typedef), not a class.
+    // eventIdRange is drawn from the sequence_number values of the contained
+    // events; the pair is typed as EventIdRange (Dart 3 record typedef).
     test('eventIdRange is an (firstSeq, lastSeq) record', () {
       final entry = makeBatch(eventIdRange: (firstSeq: 100, lastSeq: 104));
       expect(entry.eventIdRange.firstSeq, 100);
@@ -126,7 +119,7 @@ void main() {
       expect(entry.eventIdRange, (firstSeq: 100, lastSeq: 104));
     });
 
-    // {"first_seq": int, "last_seq": int} in JSON.
+    // event_id_range persists as {"first_seq": int, "last_seq": int} in JSON.
     test('event_id_range persists as first_seq/last_seq Map', () {
       final entry = makeBatch(eventIdRange: (firstSeq: 7, lastSeq: 9));
       final json = entry.toJson();
@@ -138,7 +131,7 @@ void main() {
       expect(decoded.eventIdRange, (firstSeq: 7, lastSeq: 9));
     });
 
-    // event_id_range field.
+    // fromJson enforces the event_id_range field shape.
     test('fromJson rejects missing or malformed event_id_range', () {
       final base = makeBatch().toJson();
 
@@ -165,7 +158,8 @@ void main() {
       expect(() => FifoEntry.fromJson(nonIntSeq), throwsFormatException);
     });
 
-    // batch; no per-event payload is stored.
+    // wirePayload is a single map covering the whole batch; no per-event
+    // payload is stored.
     test('wirePayload is a single map covering the whole batch', () {
       final entry = makeBatch(
         eventIds: const ['ev-a', 'ev-b'],
@@ -181,9 +175,8 @@ void main() {
       expect((entry.wirePayload!['events']! as List).length, 2);
     });
 
-    // through toJson/fromJson without losing any of the three new/changed
-    // fields, and the legacy single-event 'event_id' scalar key is NOT
-    // emitted (no backward-compat shim).
+    // The batch shape round-trips through toJson/fromJson. The legacy single-
+    // event 'event_id' scalar key is NOT emitted.
     test('JSON round-trip preserves new shape and does not '
         'emit legacy event_id scalar', () {
       final entry = makeBatch(
@@ -223,10 +216,10 @@ void main() {
     });
   });
 
-  // Phase 4.7 Task 3 — FinalStatus nullable + {sent, wedged, tombstoned}.
-  group('FifoEntry nullable final_status (Phase 4.7 Task 3)', () {
-    // yet terminal". Drain may attempt a row whose finalStatus is null;
-    // non-null terminal values are retained forever as audit records.
+  group('FifoEntry nullable final_status', () {
+    // null means "not yet terminal". Drain may attempt a row whose
+    // finalStatus is null; non-null terminal values are retained forever
+    // as audit records.
     test('finalStatus is nullable; null is not a terminal state', () {
       final entry = FifoEntry(
         entryId: 'e1',
@@ -244,8 +237,8 @@ void main() {
       expect(entry.finalStatus, isNull);
     });
 
-    // `pending` / `exhausted` are NOT among them (pending is now null,
-    // exhausted is renamed to wedged).
+    // FinalStatus has exactly three values; `pending` and `exhausted` are
+    // not valid values and are rejected by fromJson.
     test('FinalStatus enum has exactly {sent, wedged, '
         'tombstoned}', () {
       expect(FinalStatus.values.toSet(), {
@@ -255,8 +248,8 @@ void main() {
       });
     });
 
-    // strings 'pending' and 'exhausted' so a stale persisted row with an
-    // old value cannot quietly load as something else.
+    // fromJson rejects the strings 'pending' and 'exhausted' so a stale
+    // persisted row with an old value cannot quietly load as something else.
     test('FinalStatus.fromJson rejects pending and exhausted', () {
       expect(() => FinalStatus.fromJson('pending'), throwsFormatException);
       expect(() => FinalStatus.fromJson('exhausted'), throwsFormatException);
@@ -265,8 +258,8 @@ void main() {
       expect(FinalStatus.fromJson('tombstoned'), FinalStatus.tombstoned);
     });
 
-    // final_status and round-trips through toJson as explicit null
-    // (not omission).
+    // fromJson accepts a null final_status and round-trips it through
+    // toJson as explicit null (not omission).
     test('FifoEntry.fromJson accepts null final_status', () {
       final json = {
         'entry_id': 'e1',
@@ -287,8 +280,7 @@ void main() {
     });
   });
 
-  // Phase 4.13 Task 4 — envelope_metadata + nullable wire_payload.
-  group('FifoEntry envelopeMetadata + nullable wirePayload (Phase 4.13)', () {
+  group('FifoEntry envelopeMetadata + nullable wirePayload', () {
     final meta = BatchEnvelopeMetadata(
       batchFormatVersion: '1',
       batchId: 'b-001',
@@ -298,8 +290,8 @@ void main() {
       sentAt: DateTime.utc(2026, 4, 25, 12),
     );
 
-    // and a null wire_payload, and the pair round-trips through
-    // toJson / fromJson with both fields preserved.
+    // A native row carries envelopeMetadata and a null wire_payload, and
+    // the pair round-trips through toJson / fromJson with both fields preserved.
     test('native row round-trips envelopeMetadata with null '
         'wirePayload', () {
       final entry = FifoEntry(
@@ -339,8 +331,9 @@ void main() {
       expect(restored, equals(entry));
     });
 
-    // wire_payload and a null envelope_metadata, and the pair round-trips
-    // through toJson / fromJson with both fields preserved.
+    // A 3rd-party row carries a non-null wire_payload and a null
+    // envelope_metadata, and the pair round-trips through toJson / fromJson
+    // with both fields preserved.
     test('3rd-party row round-trips wirePayload with null '
         'envelopeMetadata', () {
       final entry = FifoEntry(

@@ -6,7 +6,6 @@ import 'package:event_sourcing/src/actions/idempotency.dart';
 /// Pluggable cache for action dispatch outcomes, keyed by
 /// `(actionName, principalId, key)`. Lookup hits short-circuit a
 /// dispatch and return the cached result.
-//
 abstract class IdempotencyStore {
   Future<IdempotencyEntry?> lookup(
     String actionName,
@@ -50,9 +49,7 @@ abstract class IdempotencyStore {
   Future<List<IdempotencyEntry>> listEntries();
 }
 
-/// In-memory `IdempotencyStore` for tests and per-process state during
-/// early development. Production uses a Postgres-backed impl from a
-/// later "port to portal" ticket.
+/// In-memory `IdempotencyStore` for tests and single-process deployments.
 class InMemoryIdempotencyStore implements IdempotencyStore {
   InMemoryIdempotencyStore();
 

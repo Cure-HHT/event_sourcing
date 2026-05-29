@@ -66,12 +66,12 @@ void main() {
 
   tearDown(() async => backend.close());
 
-  /// rejection.
   group('cursor advance respects rejection reason', () {
-    //   current upper bound (min(endDate, now())) is deferred. fill_cursor
-    //   SHALL NOT advance past it. When the upper bound widens (clock
-    //   advances or endDate moves forward), the deferred event becomes
-    //   eligible and is enqueued on a subsequent fillBatch call.
+    // An event whose client_timestamp exceeds the current upper bound
+    // (min(endDate, now())) is deferred. fill_cursor SHALL NOT advance
+    // past it. When the upper bound widens (clock advances or endDate
+    // moves forward), the deferred event becomes eligible and is
+    // enqueued on a subsequent fillBatch call.
     test('deferred event is not cursor-skipped; later fillBatch '
         'with widened upper enqueues it', () async {
       // T0 = the test's reference "now". endDate is set far in the future
@@ -152,12 +152,10 @@ void main() {
       );
     });
 
-    //   candidate fails the time-window or subscription filter), the OLD
-    //   code advanced cursor to candidates.last.sequenceNumber regardless
-    //   of why each candidate was rejected. The K fix splits rejection
-    //   reasons: cursor advances past permanently-rejected events
-    //   (subscription mismatch), but stops at the first deferred event
-    //   (upper-bound rejection).
+    // When each candidate fails the time-window or subscription filter,
+    // the cursor advances past permanently-rejected events (subscription
+    // mismatch) but stops at the first deferred event (upper-bound
+    // rejection).
     test('inWindow.isEmpty path — cursor advances past permanent '
         'rejection but stops at first deferred event', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
@@ -180,9 +178,8 @@ void main() {
         entryType: 'epistaxis_event',
         clientTimestamp: DateTime.utc(2026, 4, 20),
       );
-      // e3: would be in-window, but is past e2 in seq order. Old buggy
-      //     code might advance cursor past e3 too via the inWindow-empty
-      //     advance to candidates.last.
+      // e3: would be in-window, but is past e2 in seq order. Without
+      //     the deferred-stop rule, the cursor might advance past e3 too.
       final e3 = await _appendEvent(
         backend,
         eventId: 'e3',
@@ -199,8 +196,8 @@ void main() {
       //   e1: subscription-reject (permanent).
       //   e2: deferred (upper-bound).
       //   e3: in-window (subscription matches, client_timestamp <= upper).
-      // K fix: walk stops at e2 (first deferred). e1 contributes to
-      //   cursor advance (permanent), e2 and e3 stay deferred.
+      // Walk stops at e2 (first deferred). e1 contributes to cursor
+      // advance (permanent), e2 and e3 stay deferred.
       await fillBatch(
         dest,
         backend: backend,
@@ -222,7 +219,7 @@ void main() {
         e1.sequenceNumber,
         reason:
             'cursor advances past e1 (permanent rejection) and stops at '
-            'e2 (deferred); -K',
+            'e2 (deferred)',
       );
       expect(
         cursor1,
@@ -262,14 +259,14 @@ void main() {
         equals([e2.eventId, e3.eventId]),
         reason:
             'second tick: e3 enqueued. Both previously-deferred events '
-            'are recovered (-K — would be lost without the fix).',
+            'are recovered once the upper bound widens.',
       );
     });
 
-    //   forward while still in the past lets each tick pick up a slice of
-    //   previously-deferred events. Cursor advances incrementally; events
-    //   are not lost. Uses batchCapacity=100 so each fillBatch call drains
-    //   all in-window events in one go.
+    // Inching endDate forward while still in the past lets each tick
+    // pick up a slice of previously-deferred events. Cursor advances
+    // incrementally; events are not lost. Uses batchCapacity=100 so
+    // each fillBatch call drains all in-window events in one go.
     test('throttle scheme — endDate inched forward while past '
         'enqueues previously-deferred events incrementally', () async {
       final clockNow = DateTime.utc(2026, 6, 1);
@@ -361,9 +358,9 @@ void main() {
       );
     });
 
-    //   destination's SubscriptionFilter are PERMANENTLY rejected. The
-    //   cursor MAY advance past them (filter is stable). Tested as a
-    //   regression to ensure the K fix did not over-correct.
+    // Events not matching the destination's SubscriptionFilter are
+    // permanently rejected. The cursor MAY advance past them (filter
+    // is stable).
     test('subscription-rejected events advance cursor', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
       final schedule = DestinationSchedule(
@@ -410,11 +407,11 @@ void main() {
       );
     });
 
-    //   are PERMANENTLY rejected for the current invocation; the cursor
-    //   MAY advance past them. Under monotonic-backward
-    //   semantics, a later setStartDate(earlier) re-promotes the gap
-    //   window via runGapReplay (independent of fill_cursor); fillBatch
-    //   does not need to keep these events re-evaluable.
+    // Events below startDate are permanently rejected for the current
+    // invocation; the cursor MAY advance past them. Under monotonic-
+    // backward semantics, a later setStartDate(earlier) re-promotes the
+    // gap window via runGapReplay (independent of fill_cursor); fillBatch
+    // does not need to keep these events re-evaluable.
     test('events below startDate advance cursor', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
       final schedule = DestinationSchedule(
@@ -458,9 +455,9 @@ void main() {
     });
   });
 
-  /// windows; closed-past windows still scan.
   group('window-state short-circuits', () {
-    //   returns immediately. No FIFO writes, no cursor advance.
+    // A future startDate causes fillBatch to return immediately. No
+    // FIFO writes, no cursor advance.
     test('future startDate causes immediate return without scan', () async {
       final t0 = DateTime.utc(2026, 4, 15);
 
@@ -492,7 +489,8 @@ void main() {
       );
     });
 
-    //   window), fillBatch returns immediately.
+    // A malformed window (startDate > endDate) causes fillBatch to
+    // return immediately.
     test('malformed window (startDate > endDate) early-returns', () async {
       final t0 = DateTime.utc(2026, 4, 15);
 
@@ -520,10 +518,10 @@ void main() {
       expect(dest.transformCalls, 0);
     });
 
-    //   (startDate <= endDate < now), fillBatch SHALL STILL SCAN to enqueue
-    //   any in-window events not yet promoted. This is the throttle scheme's
-    //   foundation: closed-past does not freeze processing, only the
-    //   not-yet-opened / malformed cases do.
+    // For a closed-past window (startDate <= endDate < now), fillBatch
+    // SHALL still scan to enqueue any in-window events not yet promoted.
+    // This is the throttle scheme's foundation: closed-past does not
+    // freeze processing, only not-yet-opened / malformed cases do.
     test('closed-past window still scans and enqueues in-window '
         'events', () async {
       final t0 = DateTime.utc(2026, 6, 1);

@@ -29,10 +29,10 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Enqueue a single-event row via the Phase-4.7 batch-aware
-/// `enqueueFifo`. The backend mints a v4-UUID `entry_id` at enqueue
-/// time (independent of the event id); callers that need to look the
-/// row up later capture the returned `FifoEntry.entryId`.
+/// Enqueue a single-event row via the batch-aware `enqueueFifo`. The
+/// backend mints a v4-UUID `entry_id` at enqueue time (independent of
+/// the event id); callers that need to look the row up later capture the
+/// returned `FifoEntry.entryId`.
 Future<String> _enqueueRow(
   SembastBackend backend,
   String destId, {
@@ -82,7 +82,6 @@ void main() {
       expect(await backend.readFifoHead('fake'), isNull);
     });
 
-    // to the next pending entry in the same call.
     test('drain loops across multiple SendOks in one call', () async {
       var seq = 0;
       for (final id in ['e1', 'e2', 'e3']) {
@@ -98,7 +97,7 @@ void main() {
       expect(await backend.readFifoHead('fake'), isNull);
     });
 
-    // head row's final_status is already FinalStatus.wedged, drain
+    // When the head row's final_status is FinalStatus.wedged, drain
     // SHALL return without calling Destination.send; the row is NOT
     // re-attempted, and its trail rows are NOT attempted either.
     // Recovery from a wedged head is tombstoneAndRefill.
@@ -127,7 +126,7 @@ void main() {
       expect(head.finalStatus, FinalStatus.wedged);
     });
 
-    // the NEXT loop iteration reads the newly-wedged row and drain
+    // On the next loop iteration, drain reads the newly-wedged row and
     // halts at the top-of-loop check. Concretely: drain attempts e1
     // exactly once, e1 becomes wedged, e2 (the trail row) is NEVER
     // attempted, and e1 remains at the head of readFifoHead.
@@ -155,7 +154,7 @@ void main() {
 
       // e1 is wedged; e2 is still pre-terminal (final_status null).
       // readFifoHead returns the wedged e1 because wedged is a
-      // returnable-but-halting final_status under the new contract.
+      // returnable-but-halting final_status.
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
       expect(head!.entryId, e1RowId);
@@ -167,9 +166,10 @@ void main() {
       expect(e2!.finalStatus, isNull);
     });
 
-    // the head wedged; drain halts on the next iteration; the trail row
-    // is NOT attempted. Uses a tiny maxAttempts policy (=1) with
-    // Duration.zero backoffs so a single SendTransient trips the cap.
+    // SendTransient at maxAttempts marks the head wedged; drain halts
+    // on the next iteration; the trail row is NOT attempted. Uses a
+    // tiny maxAttempts policy (=1) with Duration.zero backoffs so a
+    // single SendTransient trips the cap.
     test('SendTransient at maxAttempts marks head wedged; '
         'drain halts on next iteration; trail row is NOT attempted', () async {
       final e1RowId = await _enqueueRow(
@@ -216,7 +216,8 @@ void main() {
       expect(e2!.finalStatus, isNull);
     });
 
-    // is appended, entry remains pending, backoff gates next drain.
+    // A transient attempt is appended; entry remains pending; backoff
+    // gates the next drain.
     test('SendTransient appends attempt; next drain honors '
         'backoff and does not call send again', () async {
       final firstAttemptAt = DateTime.utc(2026, 4, 22, 10, 0, 5);
@@ -268,12 +269,11 @@ void main() {
       expect(await backend.readFifoHead('fake'), isNull); // sent
     });
 
-    // matter the outcome. Under strict-order drain (Phase 4.7), every
-    // attempted row's final_status is either null (still pre-terminal),
-    // sent, or wedged by the time drain returns. This test uses three
-    // successful SendOk results so all three rows are visited without
-    // triggering a halt; each send call must append exactly one
-    // AttemptResult to its row.
+    // Every attempted row's final_status is either null (still
+    // pre-terminal), sent, or wedged by the time drain returns. This
+    // test uses three successful SendOk results so all three rows are
+    // visited without triggering a halt; each send call must append
+    // exactly one AttemptResult to its row.
     test('every send call appends an AttemptResult', () async {
       final rowIds = <String>{};
       var seq = 0;
@@ -305,10 +305,9 @@ void main() {
       }
     });
 
-    // rows in sequence_in_queue order. Three successful SendOks prove
-    // the ordering: the payloads land in the destination in the same
-    // order the rows were enqueued. (The halt-at-wedged facet of
-    // above.)
+    // drain attempts rows in sequence_in_queue order. Three successful
+    // SendOks prove the ordering: the payloads land in the destination
+    // in the same order the rows were enqueued.
     test('strict FIFO — drain attempts e1, e2, e3 in enqueue order', () async {
       var seq = 0;
       for (final id in ['e1', 'e2', 'e3']) {
@@ -366,8 +365,8 @@ void main() {
         expect(d1.sent, hasLength(1));
         expect(d2.sent, hasLength(1));
         // d1's row is wedged (SendPermanent); readFifoHead returns the
-        // wedged row under the Phase-4.7 contract so UI surfaces can
-        // observe the wedge via this one entry point.
+        // wedged row so UI surfaces can observe the wedge via this one
+        // entry point.
         final d1Head = await backend.readFifoHead('d1');
         expect(d1Head, isNotNull);
         expect(d1Head!.entryId, d1RowId);
@@ -377,8 +376,9 @@ void main() {
       },
     );
 
-    // drain consults (not the defaults). Pre-seed attempts[] to one below a
-    // smaller injected cap; next transient attempt should wedge the entry.
+    // drain consults the injected policy (not the defaults). Pre-seed
+    // attempts[] to one below the injected cap; the next transient
+    // attempt should wedge the entry.
     test('drain honors injected policy.maxAttempts', () async {
       final e1RowId = await _enqueueRow(
         backend,
@@ -413,8 +413,8 @@ void main() {
       );
       expect(dest.sent, hasLength(1));
       // With a cap of 3 and 3 total attempts, the entry is wedged.
-      // Under the Phase-4.7 contract readFifoHead returns the wedged
-      // row (it is a halt signal to drain, not a skip-past).
+      // readFifoHead returns the wedged row (it is a halt signal to
+      // drain, not a skip-past).
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
       expect(head!.entryId, e1RowId);
@@ -467,7 +467,7 @@ void main() {
       expect(head.attempts.first.outcome, 'transient');
     });
 
-    // row reconstructs wire bytes from `envelope_metadata` +
+    // A native row reconstructs wire bytes from `envelope_metadata` +
     // `event_ids`-resolved events through `BatchEnvelope.encode`. The
     // re-encode is JCS-canonical and therefore byte-identical across
     // retries: a transient first attempt and a successful second attempt
@@ -552,7 +552,7 @@ void main() {
       );
     });
 
-    // `event_ids` reference an event that no longer resolves throws
+    // A native row whose `event_ids` reference a missing event throws
     // StateError. Models the integrity-violation case where the FIFO row
     // outlives its underlying event log entry; drain refuses to send a
     // partial / incorrect re-encode.

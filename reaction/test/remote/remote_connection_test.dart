@@ -253,8 +253,8 @@ void main() {
 
       // Record the order/types of messages the server receives. With a
       // slow validator the server holds off on auth_ok; the client must
-      // NOT push a subscribe in the meantime (pre-fix it would, and the
-      // server would treat it as an auth-protocol violation).
+      // NOT push a subscribe in the meantime — sending one before auth_ok
+      // would be an auth-protocol violation.
       final serverInbound = <String>[];
       pair.serverSide.stream.listen((raw) {
         final type = (jsonDecode(raw as String) as Map)['type'] as String?;

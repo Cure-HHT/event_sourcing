@@ -76,8 +76,6 @@ class AppendOnlyDatastore {
 /// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
 /// lib-version boot check. Default `false` — production-correct behaviour
 /// is to refuse a downgrade. Pass `true` only during development / testing.
-//   before caller-supplied types.
-//   id throws ArgumentError with "reserved" message.
 Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   required StorageBackend backend,
   required Source source,
@@ -138,13 +136,13 @@ Future<AppendOnlyDatastore> bootstrapAppendOnlyDatastore({
   );
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
-  //   event recording the registry's full id->registered_version map
-  //   after EventStore construction and before destination registration.
-  //   dedupeByContent: same-state reboots no-op; a schema bump (added
-  //   entry type or registeredVersion bump) emits a new event.
-  //   their aggregate so each install has a single per-installation
-  //   hash-chained system aggregate spanning bootstrap, destination
-  //   registry, and retention/redaction audits.
+  // Emit an event recording the registry's full id->registered_version map
+  // after EventStore construction and before destination registration.
+  // dedupeByContent: same-state reboots no-op; a schema bump (added entry
+  // type or registeredVersion bump) emits a new event. Each install uses
+  // source.identifier as its aggregate, so there is a single per-installation
+  // hash-chained system aggregate spanning bootstrap, destination registry,
+  // and retention/redaction audits.
   final registryStateMap = <String, int>{};
   for (final defn in typeRegistry.all()) {
     registryStateMap[defn.id] = defn.registeredVersion;

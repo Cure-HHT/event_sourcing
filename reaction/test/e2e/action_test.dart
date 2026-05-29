@@ -18,7 +18,8 @@ void main() {
     // a matching grant in the role_permission_grants projection before
     // TableBackedAuthorizationPolicy will Allow. The substrate also
     // requires a `user_role_scopes` row binding (alice, install) — the
-    // Principal's activeRole claim is no longer trusted standalone.
+    // Principal's activeRole claim is verified against this row, not
+    // trusted on faith.
     await h.grantPermission(role: 'install', permission: 'say_hello');
     await h.assignRole(userId: 'alice', role: 'install');
     h.scope.authSession.setCredential('alice');

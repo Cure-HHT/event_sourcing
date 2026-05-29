@@ -78,14 +78,12 @@
 ///
 library;
 
-// Provenance types — re-export from the provenance package for convenience
-// (Phase 4.9, CUR-1154). ProvenanceEntry is exported so consumers of the
-// returned type without depending on the provenance package directly.
+// Provenance types — re-exported from the provenance package so consumers
+// can reference ProvenanceEntry without depending on the provenance package
+// directly.
 export 'package:provenance/provenance.dart' show BatchContext, ProvenanceEntry;
 
-// Actions module — trusted-boundary command/intent layer (formerly the
-// audited_actions package; merged into event_sourcing via Phase C of the
-// consolidation, CUR-1192).
+// Actions module — trusted-boundary command/intent layer.
 export 'src/actions/action.dart' show Action;
 export 'src/actions/action_context.dart' show ActionContext;
 export 'src/actions/action_dispatcher.dart' show ActionDispatcher;
@@ -143,7 +141,7 @@ export 'src/core/config/datastore_config.dart';
 export 'src/core/errors/datastore_exception.dart';
 export 'src/core/errors/sync_exception.dart';
 
-// Destinations — per-destination routing contract (Phase 4, CUR-1154).
+// Destinations — per-destination routing contract.
 // FakeDestination lives in test/test_support/ and is intentionally NOT
 // exported.
 export 'src/destinations/batch_envelope_metadata.dart'
@@ -162,7 +160,7 @@ export 'src/entry_type_definition.dart' show EntryTypeDefinition;
 export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 
 // EventDraft — input value type for Action.execute return value and
-// appendWithSecurity call (Phase 5, CUR-1192).
+// appendWithSecurity call.
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
     show
@@ -172,8 +170,7 @@ export 'src/event_store.dart'
         EventStoreSyncCycleTrigger,
         RetentionResult;
 
-// Ingest types — error types, result types, and chain verdict
-// (Phase 4.9, CUR-1154).
+// Ingest types — error types, result types, and chain verdict.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
 export 'src/ingest/chain_verdict.dart'
     show ChainFailure, ChainFailureKind, ChainVerdict;
@@ -188,9 +185,8 @@ export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
 // Projections — declarative view specs, the registry that holds them, and
-// the parameterized rebuild helper. The legacy Materializer/EntryPromoter
-// abstractions are removed (CUR-1317 Task 22); projections now use the
-// declarative ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
+// the parameterized rebuild helper. Projections use the declarative
+// ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
 // is intentionally NOT exported — it lives under test/test_support/ so
 // production code cannot depend on it.
 export 'src/projections/rebuild.dart' show rebuildView;
@@ -278,10 +274,10 @@ export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;
 
-// Security module — Phase 4.4 Tasks 11-15: EventSecurityContext value
-// type, SecurityDetails caller input, SecurityRetentionPolicy sweeps,
-// SecurityContextStore read-only surface, sembast concrete impl, reserved
-// system entry types for redaction/compact/purge audit events.
+// Security module — EventSecurityContext value type, SecurityDetails caller
+// input, SecurityRetentionPolicy sweeps, SecurityContextStore read-only
+// surface, concrete impls, and reserved system entry types for
+// redaction/compact/purge audit events.
 export 'src/security/event_security_context.dart' show EventSecurityContext;
 export 'src/security/security_context_store.dart'
     show AuditRow, PagedAudit, SecurityContextStore;
@@ -294,22 +290,21 @@ export 'src/security/postgres_security_context_store.dart'
     show PostgresSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
-        // Security-context lifecycle audits (Phase 4.4).
+        // Security-context lifecycle audits.
         kSecurityContextCompactedEntryType,
         kSecurityContextPurgedEntryType,
         kSecurityContextRedactedEntryType,
-        // Destination-mutation audits (Phase 4.17).
+        // Destination-mutation audits.
         kDestinationDeletedEntryType,
         kDestinationEndDateSetEntryType,
         kDestinationRegisteredEntryType,
         kDestinationStartDateSetEntryType,
         kDestinationWedgeRecoveredEntryType,
-        // Retention sweep audit (Phase 4.17).
+        // Retention sweep audit.
         kRetentionPolicyAppliedEntryType,
-        // Bootstrap registry-initialized audit (Phase 4.17 cross-phase
-        // I-1 fix).
+        // Bootstrap registry-initialized audit.
         kEntryTypeRegistryInitializedEntryType,
-        // Substrate-internal lib-version boot events (Task 3 fix).
+        // Substrate-internal lib-version boot events.
         kLibVersionChangedEntryType,
         kLibVersionInitializedEntryType,
         // Aggregates over all of the above.
@@ -318,8 +313,7 @@ export 'src/security/system_entry_types.dart'
 
 // Storage layer — StorageBackend contract, the SembastBackend +
 // PostgresBackend concrete implementations, and the value types that
-// flow through the contract (CUR-1154 for the contract; CUR-1330 for
-// the Postgres backend). `ensurePostgresSchema` is intentionally
+// flow through the contract. `ensurePostgresSchema` is intentionally
 // library-private: only `PostgresBackend.open` calls it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
@@ -345,9 +339,7 @@ export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/txn.dart' show Txn;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 
-// Sync — backoff curve, drain loop, and top-level orchestrator (Phase 4,
-// CUR-1154). Phase 5 wires triggers in clinical_diary that route into
-// SyncCycle.call().
+// Sync — backoff curve, drain loop, and top-level orchestrator.
 export 'src/sync/drain.dart' show ClockFn, drain;
 export 'src/sync/fill_batch.dart' show fillBatch;
 export 'src/sync/sync_cycle.dart' show SyncCycle;

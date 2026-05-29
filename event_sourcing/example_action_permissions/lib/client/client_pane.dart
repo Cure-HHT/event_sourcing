@@ -1,8 +1,7 @@
 // lib/client/client_pane.dart
 //
 // Left pane of the dual-pane app. Holds the snapshot cache, the user
-// selector, and (in later tasks) the action button panel and request
-// history. For Task 21 it just exercises session/start.
+// selector, the action button panel, and the request history panel.
 
 import 'package:action_permissions_demo/client/action_buttons_panel.dart';
 import 'package:action_permissions_demo/client/hacker_mode_toggle.dart';

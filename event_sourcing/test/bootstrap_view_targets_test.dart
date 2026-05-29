@@ -1,10 +1,7 @@
 // Verifies: EVS-DEV-view-target-versions-seeding
 // Tests for AppendOnlyDatastore.setViewTargetVersion.
-//
-// The legacy initialViewTargetVersions / materializers bootstrap parameters
-// are removed in Task 22 (CUR-1317). View target versions are now written
-// directly via setViewTargetVersion or by rebuildView (Task 23). This file
-// retains only the setViewTargetVersion tests.
+// View target versions are written directly via setViewTargetVersion or
+// by rebuildView.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

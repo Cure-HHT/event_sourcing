@@ -38,13 +38,13 @@ Future<void> ensurePostgresSchema(Session session) async {
   await session.execute(_backendStateTable);
   await session.execute(_securityContextTable);
   await session.execute(_idempotencyTable);
-  // `raw_input_canonical_json` is added to `idempotency` only inside the
-  // CREATE TABLE above, so a database provisioned before this column
-  // shipped would lack it — and `PostgresIdempotencyStore.lookup` SELECTs
-  // it, which would raise a "column does not exist" error rather than the
-  // intended null fallback (the fallback covers a missing VALUE, not a
-  // missing COLUMN). Adding a nullable column is a metadata-only,
-  // idempotent operation, so run it unconditionally on every boot.
+  // `raw_input_canonical_json` is declared in the CREATE TABLE above, but
+  // CREATE TABLE is a no-op on a pre-existing table, so an older database
+  // may lack the column. `PostgresIdempotencyStore.lookup` SELECTs it;
+  // a missing COLUMN would raise "column does not exist" rather than
+  // returning null (null covers a missing VALUE, not a missing COLUMN).
+  // ADD COLUMN IF NOT EXISTS is a metadata-only, idempotent operation, so
+  // run it unconditionally on every boot.
   await session.execute(_idempotencyAddRawInputColumn);
 }
 
@@ -156,13 +156,12 @@ CREATE TABLE IF NOT EXISTS security_context (
 // `raw_input_canonical_json` (TEXT, nullable) carries the RFC-8785
 // canonicalization of the original submission's `rawInput`, recorded so
 // the dispatcher can detect same-key, different-content collisions
-// (EVS-PRD-action-dispatch/E). A NULL VALUE in this column is the
-// legacy / forward-compat shape: a row recorded before the substrate
-// captured the canonical form falls back to plain cache-hit semantics —
-// no false `idempotency_mismatch` is raised. (Note: that null-value
+// (EVS-PRD-action-dispatch/E). A NULL VALUE in this column means no
+// canonical form was captured; the dispatcher treats null as
+// "no mismatch detection available" and returns the cache hit as-is,
+// never raising a false `idempotency_mismatch`. (Note: that null-value
 // fallback does NOT cover a missing COLUMN; the idempotent ALTER in
-// `ensurePostgresSchema` guarantees the column itself exists on tables
-// created before it shipped.)
+// `ensurePostgresSchema` guarantees the column itself exists.)
 const String _idempotencyTable = '''
 CREATE TABLE IF NOT EXISTS idempotency (
   action_name               TEXT         NOT NULL,
@@ -177,11 +176,11 @@ CREATE TABLE IF NOT EXISTS idempotency (
 )
 ''';
 
-// Idempotent migration: a database created before
-// `raw_input_canonical_json` shipped has the column only via the
-// CREATE TABLE above, which is a no-op on a pre-existing table. ADD
-// COLUMN IF NOT EXISTS backfills the column (nullable add = metadata-
-// only) so `lookup`'s SELECT of it never hits "column does not exist".
+// Idempotent migration: the CREATE TABLE above is a no-op on a pre-existing
+// table, so the `raw_input_canonical_json` column may be absent on databases
+// provisioned before it was added. ADD COLUMN IF NOT EXISTS backfills the
+// column (nullable add = metadata-only) so `lookup`'s SELECT of it never
+// hits "column does not exist".
 const String _idempotencyAddRawInputColumn = '''
 ALTER TABLE idempotency
   ADD COLUMN IF NOT EXISTS raw_input_canonical_json TEXT

@@ -19,9 +19,6 @@ import 'package:collection/collection.dart';
 /// This type is not a JSON value: it carries raw bytes. The `FifoEntry`
 /// stores the bytes under `wire_payload`, the `contentType` under
 /// `wire_format`, and the `transformVersion` under `transform_version`.
-// content_type + transform_version covering the whole batch;
-// transform_version flows through FifoEntry into downstream
-// ProvenanceEntry stamping.
 class WirePayload {
   WirePayload({
     required Uint8List bytes,

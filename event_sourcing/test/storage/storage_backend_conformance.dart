@@ -440,9 +440,9 @@ void _registerEventLogTests(
       });
     });
 
-    // Phase-2 Prereq B, Option 1: counter is advanced by nextSequenceNumber,
-    // so appendEvent rejects a mismatched sequence number rather than
-    // silently advancing the counter implicitly.
+    // Counter is advanced by nextSequenceNumber, so appendEvent rejects
+    // a mismatched sequence number rather than silently advancing the
+    // counter implicitly.
     test('appendEvent throws when sequenceNumber does not match the reserved '
         'counter value (Prereq B, Option 1)', () async {
       if (!initializedOf()) return;
@@ -1783,7 +1783,8 @@ void _registerFifoTests(
       expect(await backend.readFifoHead('ghost-dest'), isNull);
     });
 
-    // From markfinal_idempotency_test.dart — Case 2 (idempotency).
+    // markFinal idempotency: calling markFinal with the same status twice
+    // returns cleanly without throwing; the row retains its final status.
     test('markFinal sent twice on the same row returns cleanly '
         '(no throw, row stays sent)', () async {
       if (!initializedOf()) return;
@@ -1804,8 +1805,8 @@ void _registerFifoTests(
       expect(all.single.finalStatus, FinalStatus.sent);
     });
 
-    // From markfinal_idempotency_test.dart — Case 3 (status mismatch with
-    // explicit error-message inspection).
+    // markFinal one-way transition: transitioning from one final status to
+    // a different final status throws a StateError naming both statuses.
     test('markFinal sent then markFinal wedged throws StateError '
         'naming both statuses', () async {
       if (!initializedOf()) return;
@@ -1929,10 +1930,10 @@ void _registerFifoTests(
       expect(await backend.wedgedFifos(), isEmpty);
     });
 
-    // -------- Phase-2 Prereq A, Option 1: backend-owned sequence_in_queue ---
+    // -------- backend-owned sequence_in_queue ---
 
-    // Verifies that the backend assigns sequence_in_queue monotonically
-    // starting at 1, regardless of any caller-side sequencing concerns.
+    // The backend assigns sequence_in_queue monotonically starting at 1,
+    // independent of any caller-side sequencing.
     test('enqueueFifo assigns its own monotonic sequence_in_queue '
         '(Prereq A, Option 1)', () async {
       if (!initializedOf()) return;

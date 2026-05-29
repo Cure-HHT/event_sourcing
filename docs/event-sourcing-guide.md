@@ -677,11 +677,10 @@ matching-content cache hit):
   inputs (`cached_raw_input_hash`, `submitted_raw_input_hash`), the
   `action_name`, and the `idempotency_key`; the inputs themselves
   are deliberately NOT persisted (they may contain sensitive data).
-  Legacy cache entries — rows recorded before
-  `raw_input_canonical_json` shipped on the storage row — fall back
-  to the plain cache-hit behavior on lookup; the substrate never
-  raises a false `idempotency_mismatch` against an entry whose
-  canonical form it didn't capture.
+  Cache entries that lack a `raw_input_canonical_json` column on the
+  storage row fall back to the plain cache-hit behavior on lookup;
+  the substrate never raises a false `idempotency_mismatch` against
+  an entry whose canonical form it didn't capture.
 
 ## Defining a projection
 
@@ -805,8 +804,8 @@ genesis.
 The sections above describe the substrate as you'd use it for a
 single-installation app: one server, one database, one source of truth.
 Everything below is what the substrate also provides, mostly invisibly,
-to support audit, regulatory compliance, and (eventually) syncing
-events between installations.
+to support audit, regulatory compliance, and cross-installation sync
+(Phase II multi-source).
 
 You can ship a working application without engaging with any of this.
 But knowing it's there shapes how you think about debugging, retention,
@@ -1054,14 +1053,12 @@ the substrate.
 
 ## Cross-process client/server deployments
 
-> **Status note.** Both halves of the `reaction` package have now
-> shipped: the in-process `Local*` impls (used by the substrate's
-> demos) and the cross-process `Remote*`-plus-server half. The
-> normative spec lives at `spec/reaction-remote.md`; the
-> implementation lives under `reaction/lib/src/remote/` and
-> `reaction/lib/src/server/`, exercised by the package's unit and
-> end-to-end test suites. Names and shapes match this chapter as
-> shipped on `main`.
+> The `reaction` package ships both halves: the in-process `Local*`
+> impls (used by the substrate's demos) and the cross-process
+> `Remote*`-plus-server half. The normative spec lives at
+> `spec/reaction-remote.md`; the implementation lives under
+> `reaction/lib/src/remote/` and `reaction/lib/src/server/`, exercised
+> by the package's unit and end-to-end test suites.
 
 Everything covered so far assumes one process. The Flutter app you
 build runs the substrate directly: it opens an `EventStore`, holds the
@@ -1161,13 +1158,11 @@ two-tier authorization at the moment of subscribe.
   the substrate uses for action authorization — read-path and
   write-path use the same scope mechanism, by design.
 
-This is also why CUR-1331's scope-aware permissions had to land
-before the wire layer's implementation. The wire's per-subscription
-narrowing consults `EffectiveAuthorization.scopeAssignments` and
-walks containment projections; without the scope-aware substrate
-underneath, the wire would only have role-to-permission grants to
-filter by, which can't express "the patients at the sites this user
-covers."
+The wire's per-subscription narrowing consults
+`EffectiveAuthorization.scopeAssignments` and walks containment
+projections — the scope-aware substrate is what lets it express
+"the patients at the sites this user covers" rather than filtering
+only by role-to-permission grants.
 
 **4. The closed-under-events guarantee splits cleanly.**
 
@@ -1445,16 +1440,13 @@ envelope types plus one new (`stale_data`). No re-narrowing of
 active subscription filters, no per-subscription state machine, no
 new epistemic layer.
 
-The earlier draft of this design had the WS handler open a per-
-Principal subscription on `auth_ok` to keep a fresh in-memory mirror
-of the Principal's `EffectiveAuthorization` — effectively a server-
-side permission cache. That was rejected because the cache adds
-real complexity (per-connection state, mirror-vs-projection races)
-for negligible benefit at portal scale (substrate policy queries
-are sub-millisecond and subscribe messages are infrequent). The
-mid-session-change handling described here is a different mechanism
-with a different goal: it doesn't cache permission state, it
-reacts to permission events.
+The `AuthzWatcher` does not cache permission state per-connection. A
+per-Principal in-memory mirror would add complexity (per-connection
+state, mirror-vs-projection races) for negligible benefit — substrate
+policy queries are sub-millisecond and subscribe messages are
+infrequent. Instead the watcher reacts to permission events and sends
+the appropriate wire signal; it does not keep a live copy of each
+Principal's `EffectiveAuthorization`.
 
 ### Reading order from here
 
@@ -1475,8 +1467,8 @@ references are:
   `Remote*`-plus-server half. Mirror images of the `Local*` impls,
   just with HTTP/WS instead of direct method calls.
 - `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
-  historical task-by-task implementation plan; preserved as a record
-  of how the work was structured and what was built in what order.
+  task-by-task implementation plan; useful for understanding what each
+  sub-component does and how the pieces fit together.
 
 Both halves of `reaction` are shipped and tested. The substrate's
 two demos (`event_sourcing/example_action_permissions/` and

@@ -52,7 +52,7 @@ void main() {
     setUp(() async {
       harness = await ReactionTestHarness.open();
       await _grantSayHelloToGreeterRole(harness);
-      // The substrate now verifies (userId, activeRole) membership via
+      // The substrate verifies (userId, activeRole) membership via
       // user_role_scopes for every permission check — seed the
       // role_assigned for alice so her say_hello dispatch authorizes.
       await harness.seedRoleAssigned(userId: 'alice', role: 'greeter');

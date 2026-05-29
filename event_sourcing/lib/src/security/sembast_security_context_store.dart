@@ -93,8 +93,8 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
         .toList();
   }
 
-  // on the backend so consumers cannot reach past the
-  // abstraction to perform their own joins.
+  // Cross-store reads (security_context + events join) live on the backend
+  // so consumers cannot reach past the abstraction to perform their own joins.
   @override
   Future<PagedAudit> queryAudit({
     Initiator? initiator,

@@ -32,10 +32,9 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Enqueue a single-event row through Phase-4.7's batch-aware
-/// `enqueueFifo`. The backend mints a v4-UUID `entry_id`; callers that
-/// need to look the row up later capture the returned
-/// `FifoEntry.entryId`.
+/// Enqueue a single-event row through the batch-aware `enqueueFifo`.
+/// The backend mints a v4-UUID `entry_id`; callers that need to look
+/// the row up later capture the returned `FifoEntry.entryId`.
 Future<String> _enqueueOne(
   SembastBackend backend,
   String destId,
@@ -74,9 +73,9 @@ void main() {
       await backend.close();
     });
 
-    // under Future.wait. Simulate via one blocking destination and one
-    // fast one: the fast drain completes without being blocked on the
-    // slow one.
+    // Drains run concurrently under Future.wait. Simulated via one
+    // blocking destination and one fast one: the fast drain completes
+    // without being blocked on the slow one.
     test('drains run concurrently across registered destinations', () async {
       final gate = Completer<void>();
 
@@ -131,8 +130,8 @@ void main() {
       expect(order, ['drain-send', 'inbound-poll']);
     });
 
-    // in flight (a destination is awaiting a completer), a second call
-    // returns immediately with no new side effects.
+    // When a cycle is in flight (a destination is awaiting a completer),
+    // a second call returns immediately with no new side effects.
     test('reentrant call returns immediately without new drain', () async {
       final gate = Completer<void>();
       final dest = FakeDestination(
@@ -165,7 +164,8 @@ void main() {
       expect(sync.inFlight, isFalse);
     });
 
-    // subsequent call does drain normally (the guard auto-releases).
+    // After the first cycle completes, a subsequent call drains
+    // normally (the guard auto-releases).
     test('after first cycle completes, a new call drains again', () async {
       final dest = FakeDestination(
         id: 'fake',
@@ -189,8 +189,9 @@ void main() {
       expect(dest.sent, hasLength(2));
     });
 
-    // cancel another drain. Exercised via a destination whose send
-    // throws, and another that completes normally.
+    // An exception in one destination must not cancel another drain.
+    // Exercised via a destination whose send throws and another that
+    // completes normally.
     test('exception in one destination does not cancel another', () async {
       final boomed = _AlwaysThrows(id: 'boomed');
       final healthy = FakeDestination(id: 'healthy', script: [const SendOk()]);
@@ -214,9 +215,10 @@ void main() {
       expect(await backend.readFifoHead('healthy'), isNull);
     });
 
-    // through to the drain-loop's maxAttempts check. With a cap of 2 and
-    // one pre-existing transient attempt, the next transient attempt made
-    // by the cycle should wedge the entry.
+    // The injected policy propagates through to the drain-loop's
+    // maxAttempts check. With a cap of 2 and one pre-existing transient
+    // attempt, the next transient attempt made by the cycle wedges
+    // the entry.
     test('SyncCycle propagates injected policy to drain', () async {
       final dest = FakeDestination(
         id: 'fake',
@@ -254,9 +256,9 @@ void main() {
       );
       await sync.call();
       expect(dest.sent, hasLength(1));
-      // Entry is wedged; under the Phase-4.7 readFifoHead contract the
-      // wedged row is returned (rather than skipped) so UI surfaces can
-      // observe the wedge via a single entry point.
+      // Entry is wedged; readFifoHead returns the wedged row (rather
+      // than skipping it) so UI surfaces can observe the wedge via a
+      // single entry point.
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
       expect(head!.entryId, e1RowId);

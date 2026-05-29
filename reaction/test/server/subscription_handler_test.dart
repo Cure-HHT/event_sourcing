@@ -124,8 +124,7 @@ class _StubEventStore implements EventStore {
 }
 
 class _StubPolicy implements AuthorizationPolicy {
-  // `effective` is a stub knob retained for follow-up row-level tests;
-  // unused in this slice's two tests.
+  // `effective` is a stub knob for row-level tests; unused in these tests.
   // ignore: unused_element_parameter
   _StubPolicy({this.allow = true, this.effective});
 

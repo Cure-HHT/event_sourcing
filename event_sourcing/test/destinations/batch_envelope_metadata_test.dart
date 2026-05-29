@@ -18,7 +18,6 @@ void main() {
       sentAt: DateTime.utc(2026, 4, 25, 12, 0, 0),
     );
 
-    // six fields exactly.
     test('round-trip via toMap / fromMap is value-equal', () {
       final map = fixture.toMap();
       final restored = BatchEnvelopeMetadata.fromMap(map);
@@ -57,7 +56,6 @@ void main() {
       expect((decoded['events']! as List).length, 2);
     });
 
-    // identical metadata.
     test('equality and hashCode are value-based', () {
       final a = BatchEnvelopeMetadata.fromMap(fixture.toMap());
       final b = BatchEnvelopeMetadata.fromMap(fixture.toMap());

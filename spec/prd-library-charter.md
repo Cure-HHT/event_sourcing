@@ -71,7 +71,7 @@ ALCOA+ alignment (assertion G) lives entirely at this layer. The cryptographic a
 - A projection produces one row per aggregate, materialized via generic merge (the substrate could equally produce per-event rows or derived-only views).
 - "Version" is a monotonically-bumped integer per entry type (the substrate could equally use content-hash-as-version).
 
-The library bundles these as primitives because most consumers want them, but they don't carry the same epistemic weight as Layer 1. Applications that want different interpretations build them on top of Layer 1 facts — by subscribing to raw events and computing app-side state, or eventually by registering alternative convention sets shipped as new library primitives under the Append-Only Primitives discipline.
+The library bundles these as primitives because most consumers want them, but they don't carry the same epistemic weight as Layer 1. Applications that want different interpretations build them on top of Layer 1 facts — by subscribing to raw events and computing app-side state, or by registering alternative convention sets shipped as new library primitives under the Append-Only Primitives discipline.
 
 **Implications for other charter assertions.**
 

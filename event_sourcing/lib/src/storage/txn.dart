@@ -10,8 +10,8 @@
 //   abstracted as a pure-Dart type; concrete backends subclass per platform.
 // Implements: EVS-PRD-event-log/A — used by appendEvent to guarantee append-
 //   only atomic writes under a single backend transaction.
-// its defining transaction() body. Concrete backends are responsible for
-// enforcing that constraint and raising an error if the handle escapes.
+// Concrete backends are responsible for enforcing that the handle is not used
+// outside its defining transaction() body and raising an error if it escapes.
 abstract class Txn {
   const Txn();
 }

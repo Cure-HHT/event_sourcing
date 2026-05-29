@@ -6,8 +6,8 @@
 // 1. The free function [buildInMemoryEventStore] builds an in-memory
 //    Sembast-backed [EventStore] with the [rolePermissionGrantsSpec]
 //    projection registered and the role_permission_grant entry type
-//    registered. It is the long-standing helper used by the
-//    rolePermissionGrantsSpec and adjacent permissions tests.
+//    registered. Used by the rolePermissionGrantsSpec and adjacent
+//    permissions tests.
 //
 // 2. The [SembastEventStoreHarness] class wraps the same in-memory wiring
 //    behind a small, projection-spec-parameterized API:
@@ -24,8 +24,8 @@
 // helper that fits the test without juggling registry assembly. Adding
 // more entry types here is fine as the permissions module grows; the
 // harness deliberately does NOT accept caller-supplied entry-type
-// definitions because Tasks 17/24 (the only near-term reusers) do not
-// need that flexibility yet.
+// definitions because the current permissions tests do not require
+// that flexibility.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
@@ -55,8 +55,7 @@ const List<EntryTypeDefinition> _kPermissionsEntryTypeDefinitions =
         registeredVersion: 1,
         name: 'Role-permission grant',
         // materialize: false — projection is driven by the registered
-        // ProjectionSpec (rolePermissionGrantsSpec), not by the legacy
-        // materializer surface.
+        // ProjectionSpec (rolePermissionGrantsSpec).
         materialize: false,
       ),
       EntryTypeDefinition(
@@ -142,8 +141,7 @@ class SembastEventStoreHarness {
 
     // Unique source identifier per harness instance so a single test
     // can build multiple harnesses (e.g., to exercise multi-source
-    // scenarios in Tasks 17/24) without two stores claiming the same
-    // source identity.
+    // scenarios) without two stores claiming the same source identity.
     final sourceId = 'test-instance-${DateTime.now().microsecondsSinceEpoch}';
 
     final eventStore = await EventStore.open(

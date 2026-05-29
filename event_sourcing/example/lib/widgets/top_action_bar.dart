@@ -12,9 +12,8 @@ const _uuid = Uuid();
 /// Fixed `SecurityDetails` stamped on every `_record` call when the
 /// "security context" toggle is on. Realistic-looking but obviously
 /// synthetic so an operator inspecting the AUDIT panel can correlate
-/// rows back to this code path. Plan 4.15 §4.15.A — orchestrator-
-/// approved scope addition: makes the AuditPanel demonstrate non-empty
-/// rows (Plan 4.15 Task 4 Risk 3 mitigation).
+/// rows back to this code path. Enables the AuditPanel to demonstrate
+/// non-empty rows when the toggle is on.
 const SecurityDetails _kDemoSecurityDetails = SecurityDetails(
   ipAddress: '203.0.113.42',
   userAgent: 'event_sourcing_datastore_demo/0.1.0 (Flutter; Linux desktop)',
@@ -49,11 +48,10 @@ class _TopActionBarState extends State<TopActionBar> {
   final TextEditingController _body = TextEditingController();
   final SyntheticBatchBuilder _syntheticBatch = SyntheticBatchBuilder();
 
-  // §4.15.A toggle. When on, every `_record` call passes
-  // `_kDemoSecurityDetails` to `EventStore.append`'s `security:` arg, so
-  // the security_context sidecar populates and the AUDIT panel renders
-  // non-empty rows. Off by default so the empty-audit case stays
-  // observable for demo pedagogy.
+  // When on, every `_record` call passes `_kDemoSecurityDetails` to
+  // `EventStore.append`'s `security:` arg, so the security_context
+  // sidecar populates and the AUDIT panel renders non-empty rows. Off
+  // by default so the empty-audit case stays observable for demo pedagogy.
   bool _stampSecurityContext = false;
 
   @override
@@ -111,8 +109,8 @@ class _TopActionBarState extends State<TopActionBar> {
 
   /// Build a synthetic `esd/batch@1` envelope (one event from
   /// `remote-mobile-1`) and feed it through `EventStore.ingestBatch`.
-  /// Plan 4.15 Task 5 Step 1. Surfaces the receiver-stamped
-  /// `origin_sequence_number` for demo of
+  /// Surfaces the receiver-stamped `origin_sequence_number` in the
+  /// DETAIL panel for the ingested event.
   Future<void> _ingestSyntheticBatch() async {
     final envelope = _syntheticBatch.buildSingleEventBatch();
     await widget.datastore.eventStore.ingestBatch(
@@ -352,7 +350,7 @@ class _TopActionBarState extends State<TopActionBar> {
     );
   }
 
-  /// Plan §4.15.A toggle. ON → subsequent `_record` calls stamp
+  /// Security-context toggle. ON → subsequent `_record` calls stamp
   /// `SecurityDetails`; OFF → no security context (preserves the
   /// empty-AUDIT case for demo pedagogy).
   Widget _securityToggle() {

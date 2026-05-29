@@ -4,8 +4,6 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
 import 'package:flutter/foundation.dart';
 
-//   maxAccumulateTime.
-// Design: §7.6.
 class DemoDestination implements Destination, DemoKnobs {
   DemoDestination({
     required this.id,
@@ -32,8 +30,8 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   String get wireFormat => 'demo-json-v1';
 
-  // destination; library invokes transform() and stores the resulting
-  // WirePayload verbatim.
+  // Not a native destination: library invokes transform() and stores the
+  // resulting WirePayload verbatim.
   @override
   bool get serializesNatively => false;
 

@@ -3,16 +3,6 @@
 // deleteDestination, tombstoneAndRefill) emits a system audit event in the
 // same transaction as the mutation (D), and that the audit carries the
 // correct configuration fields (A).
-// Tests for the in-transaction config-change audit emissions added in
-// Phase 4.17c-g. Every registry mutation method (addDestination,
-// setStartDate, setEndDate, deactivateDestination, deleteDestination,
-// tombstoneAndRefill) plus EventStore.applyRetentionPolicy must stamp
-// a system audit event in the same backend.transaction as the mutation.
-//
-//   AND on deactivateDestination (which routes through setEndDate).
-//   transaction as the mutation it documents.
-//   (including zero-effect sweeps).
-//   tombstoneAndRefill.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -70,9 +60,9 @@ void main() {
       await backend.close();
     });
 
-    // system.destination_registered audit event with the destination's
-    // id, wire format, allowHardDelete, serializesNatively, and filter
-    // shape. The initiator round-trips on the audit event.
+    // The emitted system.destination_registered audit event carries the
+    // destination's id, wire format, allowHardDelete, serializesNatively,
+    // and filter shape. The initiator round-trips on the audit event.
     test('addDestination stamps destination_registered audit', () async {
       final dest = FakeDestination(id: 'primary', allowHardDelete: false);
       await ds.destinations.addDestination(dest, initiator: _user);
@@ -92,8 +82,8 @@ void main() {
       expect(audit.initiator, _user);
     });
 
-    // system.destination_start_date_set audit event with the start date
-    // in UTC ISO-8601.
+    // The emitted system.destination_start_date_set audit event carries the
+    // start date in UTC ISO-8601.
     test('setStartDate stamps destination_start_date_set audit', () async {
       await ds.destinations.addDestination(
         FakeDestination(id: 'primary'),
@@ -113,8 +103,9 @@ void main() {
       expect(audit.initiator, _user);
     });
 
-    // system.destination_end_date_set audit event with the end date,
-    // prior end date (null on first call), and result classification.
+    // The emitted system.destination_end_date_set audit event carries the
+    // end date, the prior end date (null on first call), and the result
+    // classification.
     test('setEndDate stamps destination_end_date_set audit', () async {
       await ds.destinations.addDestination(
         FakeDestination(id: 'primary'),
@@ -146,7 +137,8 @@ void main() {
       expect(audit.initiator, _user);
     });
 
-    // setEndDate so it emits the same destination_end_date_set audit.
+    // deactivateDestination delegates to setEndDate and emits the same
+    // destination_end_date_set audit entry type.
     test('deactivateDestination stamps destination_end_date_set '
         'audit (same entry type as setEndDate)', () async {
       await ds.destinations.addDestination(
@@ -168,8 +160,8 @@ void main() {
       expect(audits.single.data['result'], 'closed');
     });
 
-    // system.destination_deleted audit event in the same transaction
-    // as the FIFO + schedule drop.
+    // deleteDestination emits a system.destination_deleted audit event in
+    // the same transaction as the FIFO + schedule drop.
     test('deleteDestination stamps destination_deleted audit', () async {
       await ds.destinations.addDestination(
         FakeDestination(id: 'purgeable', allowHardDelete: true),
@@ -185,9 +177,9 @@ void main() {
       expect(audit.initiator, _user);
     });
 
-    // system.destination_wedge_recovered audit event with the rewind
-    // target, deleted-trail count, and the event-id range of the
-    // tombstoned head row.
+    // tombstoneAndRefill emits a system.destination_wedge_recovered audit
+    // event carrying the rewind target, deleted-trail count, and the
+    // event-id range of the tombstoned head row.
     test('tombstoneAndRefill stamps destination_wedge_recovered '
         'audit', () async {
       final dest = FakeDestination(id: 'wedged');
@@ -226,10 +218,10 @@ void main() {
       expect(audit.initiator, _user);
     });
 
-    // registered), no audit event lands. Combined with the
-    // sequence-number monotonicity guarantee, this proves the audit and
-    // the schedule write commit together: a rolled-back mutation rolls
-    // back the audit too.
+    // When addDestination throws ArgumentError (duplicate id), no audit
+    // event lands. Combined with the sequence-number monotonicity
+    // guarantee, this confirms that the audit and the schedule write commit
+    // together: a rolled-back mutation rolls back the audit too.
     test('failed addDestination (duplicate id) emits no audit', () async {
       await ds.destinations.addDestination(
         FakeDestination(id: 'primary'),
@@ -274,9 +266,9 @@ void main() {
       await backend.close();
     });
 
-    // retention_policy_applied audit, even when both sweeps find zero
-    // candidates. The audit carries the policy's retention windows, the
-    // candidate counts (0/0 here), and both cutoffs.
+    // applyRetentionPolicy emits a retention_policy_applied audit even when
+    // both sweeps find zero candidates. The audit carries the policy's
+    // retention windows, the candidate counts (0/0 here), and both cutoffs.
     test('applyRetentionPolicy emits retention_policy_applied '
         'audit on a zero-effect sweep', () async {
       await ds.eventStore.applyRetentionPolicy();
@@ -301,8 +293,8 @@ void main() {
       );
     });
 
-    // retention_policy_applied audit. The audit stream is a per-sweep
-    // timeline, not a per-non-empty-sweep timeline.
+    // Each sweep emits its own retention_policy_applied audit. The audit
+    // stream is a per-sweep timeline, not a per-non-empty-sweep timeline.
     test('each sweep emits its own retention_policy_applied audit', () async {
       await ds.eventStore.applyRetentionPolicy();
       await ds.eventStore.applyRetentionPolicy();

@@ -335,13 +335,9 @@ void main() {
     );
   });
 
-  //   locally-originated events and `[R]` for events ingested from
-  //   another hop. Mobile records a GREEN press locally; after sync,
-  //   that event lives on both panes' event logs but with different
-  //   originator-identity comparisons:
-  //     - Mobile's pane shows the row with `[L]` (originator == self).
-  //     - Portal's pane shows the same row with `[R]` (originator was
-  //       mobile, not portal).
+  // Mobile records a GREEN press locally. After sync, that event lives on
+  // both panes' event logs. The pane whose source originated the event
+  // renders `[L]`; the pane that ingested it from another hop renders `[R]`.
   testWidgets('portal pane shows [R] for ingested events; mobile shows [L]', (
     tester,
   ) async {

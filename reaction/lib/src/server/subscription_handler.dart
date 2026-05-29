@@ -391,7 +391,7 @@ class _ConnectionState {
               return null;
             case ValueWildcardScope():
               // Ancestor wildcard covers the whole descendant class: no
-              // narrowing applies. (Preserves prior read-path behavior.)
+              // narrowing applies.
               return null;
             case BoundScope():
               // An ancestor BoundScope (e.g. BoundScope('site', 'site-A') on

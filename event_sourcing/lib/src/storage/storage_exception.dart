@@ -17,13 +17,11 @@ import 'package:sembast/sembast.dart';
 // Implements: EVS-PRD-portability/D — part of the platform-agnostic
 //   StorageBackend abstraction; hides backend-specific error types behind this
 //   sealed hierarchy so callers need not import Sembast or IO packages.
-// subclasses; exhaustive pattern-matching enforced at compile time.
 sealed class StorageException implements Exception {
   const StorageException(this.message, this.cause, this.stackTrace);
 
   final String message;
 
-  // diagnostic traceability.
   final Object cause;
   final StackTrace stackTrace;
 }
@@ -61,8 +59,7 @@ class StorageCorruptException extends StorageException {
 ///
 /// Callers pass the raw `error` and `stack` from a `try`/`catch` and then
 /// pattern-match the result to decide whether to retry, quarantine, or
-/// surface. No call sites wire this classifier in Phase 4.5 — consumers land
-/// in Phase 4.6 (or later) under the same umbrella.
+/// surface.
 ///
 /// Mapping today:
 /// * `dart:async` `TimeoutException` → transient
@@ -74,15 +71,6 @@ class StorageCorruptException extends StorageException {
 ///   `errDatabaseNotFound`, `errDatabaseClosed`) → permanent
 /// * anything else → permanent (conservative fallback — a
 ///   retry loop on unknown errors is worse than failing loudly)
-// for any input; never throws.
-// signals classify as StorageTransientException.
-// break) and sembast DatabaseException.errInvalidCodec classify as
-// StorageCorruptException.
-// ArgumentError, and sembast DatabaseException lifecycle codes
-// (errBadParam, errDatabaseNotFound, errDatabaseClosed) classify as
-// StoragePermanentException.
-// as StoragePermanentException (never transient).
-// stackTrace to the returned exception.
 StorageException classifyStorageException(Object error, StackTrace stack) {
   return switch (error) {
     final TimeoutException e => StorageTransientException(

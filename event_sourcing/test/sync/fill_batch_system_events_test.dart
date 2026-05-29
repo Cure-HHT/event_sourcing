@@ -49,9 +49,9 @@ void main() {
       await backend.close();
     });
 
-    // in via includeSystemEvents=true sees system audit events flow
-    // into its FIFO via fillBatch; a peer destination without the
-    // opt-in sees only user events.
+    // A destination that opts in via includeSystemEvents=true sees
+    // system audit events flow into its FIFO via fillBatch; a peer
+    // destination without the opt-in sees only user events.
     //
     // The setup registers two destinations (with future startDates so
     // the addDestination calls themselves do NOT trigger replay) and
@@ -221,11 +221,10 @@ void main() {
       }
     });
 
-    // destination with the default filter (includeSystemEvents=false)
-    // never admits system events even when the destination's
-    // entryTypes list contains a reserved id by mistake. The
-    // includeSystemEvents flag wins; entryTypes is consulted only for
-    // user events.
+    // A destination with the default filter (includeSystemEvents=false)
+    // never admits system events even when the destination's entryTypes
+    // list contains a reserved id by mistake. The includeSystemEvents
+    // flag wins; entryTypes is consulted only for user events.
     test('includeSystemEvents=false rejects system events '
         'even if entryTypes contains a reserved id', () async {
       final dest = FakeDestination(
