@@ -10,16 +10,16 @@ import 'package:uuid/uuid.dart';
 /// (with `origin_sequence_number` carrying the wire-supplied seq) and
 /// reassigns a fresh local `sequence_number`
 ///
-/// **Single-event-per-batch by design.** Plan 4.15 Task 5 Risk 2: the
-/// `EventStore.ingestBatch` Chain 1 verifier walks every provenance entry
-/// from index `len-1` down to (exclusive) index `0`, recomputing each
-/// receiver hop's `arrival_hash`. With a single origin entry the loop
-/// never executes, so chain-1 trivially passes — the synthetic event's
-/// `event_hash` need not match a real canonical hash. A multi-event
-/// batch would also pass (each event's chain is verified independently),
-/// but staying at one event keeps the helper self-contained: no need to
-/// import `package:crypto` / `canonical_json_jcs` from the example,
-/// avoiding a `depend_on_referenced_packages` lint failure.
+/// **Single-event-per-batch by design.** The `EventStore.ingestBatch`
+/// Chain 1 verifier walks every provenance entry from index `len-1` down
+/// to (exclusive) index `0`, recomputing each receiver hop's
+/// `arrival_hash`. With a single origin entry the loop never executes,
+/// so chain-1 trivially passes — the synthetic event's `event_hash` need
+/// not match a real canonical hash. A multi-event batch would also pass
+/// (each event's chain is verified independently), but staying at one
+/// event keeps the helper self-contained: no need to import
+/// `package:crypto` / `canonical_json_jcs` from the example, avoiding a
+/// `depend_on_referenced_packages` lint failure.
 ///
 /// The receiver-side `_appendReceiverProvenance` recomputes a real
 /// canonical hash for the stored event; the synthetic placeholder hash

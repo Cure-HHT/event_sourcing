@@ -7,7 +7,6 @@
 //   stamped once at append and never mutated.
 // Implements: EVS-PRD-portability/C — pure Dart sealed type; serialises
 //   identically on every Dart-supported runtime.
-// required fields with FormatException.
 sealed class Initiator {
   const Initiator();
 
@@ -79,7 +78,8 @@ class UserInitiator extends Initiator {
   String toString() => 'UserInitiator($userId)';
 }
 
-// audit link; null for cron / free-running / observed-external-fact triggers.
+/// An automation service acted. `triggeringEventId` links to the causal event;
+/// null for cron, free-running, or observed-external-fact triggers.
 class AutomationInitiator extends Initiator {
   const AutomationInitiator({required this.service, this.triggeringEventId});
   final String service;
@@ -107,7 +107,8 @@ class AutomationInitiator extends Initiator {
       'AutomationInitiator(service: $service, triggeringEventId: $triggeringEventId)';
 }
 
-// pre-auth flows like the PIN-login screen.
+/// An unauthenticated actor; used for pre-auth flows such as the
+/// PIN-login screen. `ipAddress` is optional.
 class AnonymousInitiator extends Initiator {
   const AnonymousInitiator({required this.ipAddress});
   final String? ipAddress;

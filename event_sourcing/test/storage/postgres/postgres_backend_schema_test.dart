@@ -74,12 +74,12 @@ void main() {
 
     test('ensurePostgresSchema backfills raw_input_canonical_json on a '
         'pre-existing idempotency table (idempotent ALTER)', () async {
-      // Provision the LEGACY idempotency table shape — i.e. without the
-      // raw_input_canonical_json column, as a database created before
-      // that column shipped would have. CREATE TABLE IF NOT EXISTS in
-      // ensurePostgresSchema is a no-op against it, so before the fix
-      // the column would never be added and lookup()'s SELECT of it
-      // raised "column does not exist".
+      // Provision the idempotency table without raw_input_canonical_json,
+      // simulating a database provisioned before that column was added.
+      // CREATE TABLE IF NOT EXISTS in ensurePostgresSchema is a no-op against
+      // a pre-existing table, so ensurePostgresSchema must backfill the column
+      // via an idempotent ALTER — otherwise lookup()'s SELECT of it would raise
+      // "column does not exist".
       final conn = await _connect(url);
       addTearDown(conn.close);
       await conn.execute('''

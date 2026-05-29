@@ -33,7 +33,6 @@ const _uuidGen = Uuid();
 /// Package-private default log sink used when a [SembastBackend] instance
 /// has not overridden [SembastBackend.debugLogSink]. Routes through
 /// `dart:developer` at the warning level (`level: 900`).
-// appendAttempt no-op on a missing target.
 void _defaultLogSink(String message) {
   developer.log(message, name: 'SembastBackend', level: 900);
 }
@@ -80,10 +79,9 @@ class SembastBackend extends StorageBackend {
 
   // Per-destination monotonic `sequence_in_queue` counter key, stored in
   // `backend_state` as `fifo_seq_counter_<destinationId>`. Used by
-  // `enqueueFifoTxn` to assign a never-reused sequence_in_queue value
-  //: the counter advances on every enqueue and is never
-  // reset, so a row deleted by the trail sweep cannot have
-  // its slot re-used by a later enqueue.
+  // `enqueueFifoTxn` to assign a never-reused sequence_in_queue value:
+  // the counter advances on every enqueue and is never reset, so a row
+  // deleted by the trail sweep cannot have its slot re-used by a later enqueue.
   static String _fifoSeqCounterKey(String destinationId) =>
       'fifo_seq_counter_$destinationId';
 
@@ -107,14 +105,13 @@ class SembastBackend extends StorageBackend {
 
   Database _database() => _db;
 
-  // Broadcast controllers — feed reactive APIs added in Phase 4.12.
-  // _eventsController fed after each successful appendEvent commit
-  //; origin and ingest paths both route through appendEvent
+  // Broadcast controllers for reactive APIs.
+  // _eventsController emits after each successful appendEvent commit;
+  // origin and ingest paths both route through appendEvent
   // under the unified event store, so a single emission point covers both.
-  // _fifoChangesController fed after each successful FIFO mutation;
-  // payload is the destinationId. _viewChangesController fed
-  // after each successful view-row mutation; payload is the viewName
-  //.
+  // _fifoChangesController emits after each successful FIFO mutation;
+  // payload is the destinationId. _viewChangesController emits
+  // after each successful view-row mutation; payload is the viewName.
   final StreamController<StoredEvent> _eventsController =
       StreamController<StoredEvent>.broadcast();
   final StreamController<String> _fifoChangesController =
@@ -132,7 +129,6 @@ class SembastBackend extends StorageBackend {
   /// commit. The field is mutable so the wrapper can preserve outer
   /// state across nested calls (sembast does not nest, but the swap is
   /// the cleanest race-safe pattern).
-  // controllers; co-atomic with the surrounding transaction's commit.
   List<void Function()> _pendingPostCommit = <void Function()>[];
 
   /// Close the underlying sembast database AND the reactive broadcast
@@ -150,8 +146,8 @@ class SembastBackend extends StorageBackend {
   }
 
   /// Visible-for-testing sink for the warning-level diagnostic emitted by
-  /// [markFinal] and [appendAttempt] when they no-op on a missing target
-  ///. Defaults to the package-private [_defaultLogSink],
+  /// [markFinal] and [appendAttempt] when they no-op on a missing target.
+  /// Defaults to the package-private [_defaultLogSink],
   /// which writes through `dart:developer` at `level: 900` (warning).
   /// Tests install a `List<String>.add` closure to capture emitted lines
   /// without depending on a global logger. Setting this to `null`
@@ -219,8 +215,6 @@ class SembastBackend extends StorageBackend {
   /// consumed the reservation with a wrong `sequenceNumber`; both are
   /// caller bugs, so `appendEvent` throws `StateError` rather than
   /// silently accepting an out-of-range value.
-  // (advance owned by nextSequenceNumber; appendEvent consumes the
-  // reservation).
   // Implements: EVS-PRD-event-log/A — persists event to append-only log.
   // Implements: EVS-PRD-event-log/B — sequence number stamped by caller from
   //   nextSequenceNumber; persisted verbatim preserving total order.
@@ -382,7 +376,6 @@ class SembastBackend extends StorageBackend {
   /// [appendEvent] consumes the reservation without advancing again. If
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
-  // single atomic step with the subsequent appendEvent.
   @override
   Future<int> nextSequenceNumber(Txn txn) async {
     final t = _requireValidTxn(txn);
@@ -457,25 +450,20 @@ class SembastBackend extends StorageBackend {
     }
   }
 
-  // live-filter via held-cursor; broadcast; close-aware.
+  // Replay-then-live event stream, broadcast and close-aware.
   //
-  // The per-call controller is itself broadcast so a single
-  // `watchEvents()` return value supports multiple `listen()`
-  // subscribers. On the first listen:
-  //   1. `scheduleMicrotask(startReplay)` defers the replay so the
-  //      caller's `listen()` returns before any emission, ensuring no
-  //      replayed event is missed.
+  // The per-call controller is itself broadcast so a single `watchEvents()`
+  // return value supports multiple `listen()` subscribers. On the first listen:
+  //   1. `scheduleMicrotask(startReplay)` defers the replay so the caller's
+  //      `listen()` returns before any emission, ensuring no replayed event
+  //      is missed.
   //   2. Replay reads `findAllEvents(afterSequence: lowerBound)` and
   //      forwards each event, advancing `lastReplayed`.
-  //   3. After replay completes, attach to the package-private
-  //      `_eventsController` broadcast and filter
-  //      `e.sequenceNumber > lastReplayed` — this
-  //      closes the race where an event commits between the replay
-  //      snapshot read and the live attach.
-  // Close on the backend's `_eventsController` propagates via
-  // `onDone`. The per-call controller closes via `controller.close()`.
+  //   3. After replay completes, attach to `_eventsController` and filter
+  //      `e.sequenceNumber > lastReplayed` to close the race where an event
+  //      commits between the replay snapshot read and the live attach.
+  // Close on `_eventsController` propagates via `onDone`.
   // Not on the StorageBackend abstract surface — SembastBackend-specific.
-  // Used by the example app (Track 8) and the dedicated watch tests.
   Stream<StoredEvent> watchEvents({int? afterSequence}) {
     if (_eventsController.isClosed) {
       throw StateError(
@@ -573,7 +561,6 @@ class SembastBackend extends StorageBackend {
 
   /// Write the per-destination fill cursor inside its own atomic
   /// transaction.
-  // (standalone variant; opens its own transaction).
   @override
   Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
     _validateFillCursorValue(sequenceNumber);
@@ -587,7 +574,6 @@ class SembastBackend extends StorageBackend {
   /// Write the per-destination fill cursor inside [txn] so the advance is
   /// co-atomic with the surrounding transaction. Rolls back with the rest
   /// of the transaction body on a throw.
-  // (transactional variant; participates in surrounding atomicity).
   @override
   Future<void> writeFillCursorTxn(
     Txn txn,
@@ -624,7 +610,6 @@ class SembastBackend extends StorageBackend {
 
   /// Read the persisted `DestinationSchedule` for [destinationId], or
   /// null when no schedule record exists. Non-transactional.
-  // DestinationRegistry.scheduleOf.
   @override
   Future<DestinationSchedule?> readSchedule(String destinationId) async {
     final db = _database();
@@ -690,9 +675,8 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
     // Drop the per-destination sequence_in_queue counter so a later
     // addDestination of the same id starts at 1 rather than inheriting
-    // the old counter. its "never reused" invariant is
-    // scoped to a destination's lifetime; a fresh addDestination is a
-    // fresh lifetime.
+    // the old counter. The "never reused" invariant is scoped to a
+    // destination's lifetime; a fresh addDestination begins a new lifetime.
     await _backendStateStore
         .record(_fifoSeqCounterKey(destinationId))
         .delete(t._sembastTxn);
@@ -741,7 +725,6 @@ class SembastBackend extends StorageBackend {
     return Map<String, dynamic>.from(raw);
   }
 
-  // so watchView subscribers re-fetch the snapshot.
   @override
   Future<void> upsertViewRowInTxn(
     Txn txn,
@@ -816,7 +799,6 @@ class SembastBackend extends StorageBackend {
         .toList(growable: false);
   }
 
-  // views untouched.
   @override
   Future<void> clearViewInTxn(Txn txn, String viewName) async {
     final t = _requireValidTxn(txn);
@@ -934,8 +916,6 @@ class SembastBackend extends StorageBackend {
   /// The row's `entry_id` is a freshly-minted v4 UUID and has no
   /// relationship to the events the row carries — callers that need
   /// to correlate against events use `eventIds` / `eventIdRange`.
-  // attempts, no sent_at).
-  // variant; opens its own transaction and delegates to enqueueFifoTxn).
   @override
   Future<FifoEntry> enqueueFifo(
     String destinationId,
@@ -981,11 +961,6 @@ class SembastBackend extends StorageBackend {
   /// `sequence_in_queue` assignment, and the known-FIFOs registry
   /// bookkeeping all live here; [enqueueFifo] is a thin
   /// `transaction(...)` wrapper.
-  // attempts, no sent_at).
-  // null wire_payload; 3rd-party rows store wire_payload + null
-  // envelope_metadata.
-  // variant; used by fillBatch to co-commit enqueue + fill_cursor).
-  // native path stores envelope_metadata directly, no wire decode.
   @override
   Future<FifoEntry> enqueueFifoTxn(
     Txn txn,
@@ -1150,8 +1125,6 @@ class SembastBackend extends StorageBackend {
   /// wedged row here (rather than filtering it out) lets UI surfaces
   /// observe the wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
-  // skips {sent, tombstoned}. Recovery from a wedged head is
-  // tombstoneAndRefill.
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) async {
     final db = _database();
@@ -1171,14 +1144,6 @@ class SembastBackend extends StorageBackend {
     return FifoEntry.fromJson(Map<String, Object?>.from(records.single.value));
   }
 
-  // destination's FIFO rows as typed FifoEntry, ordered by
-  // sequence_in_queue ascending. afterSequenceInQueue is an exclusive
-  // lower bound (Filter.greaterThan); limit caps result size taken from
-  // the start of the ordered range. An unknown destination falls
-  // through to records.isEmpty (sembast lazily-creates stores so a
-  // never-written FIFO has zero records) and returns an empty list. No
-  // raw-map shape leaks; callers must use this method rather than
-  // opening the fifo_<id> store by name.
   @override
   Future<List<FifoEntry>> listFifoEntries(
     String destinationId, {
@@ -1202,25 +1167,16 @@ class SembastBackend extends StorageBackend {
         .toList();
   }
 
-  // driven re-emission filtered by destinationId; broadcast;
-  // close-aware.
-  //
-  // Like `watchEvents`, the per-call controller is itself broadcast so a
-  // single `watchFifo()` return value supports multiple `listen()`
-  // subscribers. On the first listen:
+  // Snapshot-on-subscribe + live-re-emission stream for a destination's FIFO.
+  // The per-call controller is broadcast so a single `watchFifo()` return value
+  // supports multiple `listen()` subscribers. On the first listen:
   //   1. `scheduleMicrotask(emitSnapshot)` defers the initial snapshot so
   //      the caller's `listen()` returns before any emission.
-  //   2. Subscribe to the package-private `_fifoChangesController`
-  //      broadcast and re-emit a fresh snapshot whenever the changed
-  //      destinationId matches this subscription's destination
-  //      (cross-destination isolation).
-  // Snapshot fetch goes through `listFifoEntries`, so an unknown
-  // destination produces an empty list and emissions
-  // carry typed `FifoEntry` — no raw maps leak.
-  // Close on the backend's `_fifoChangesController` propagates via
-  // `onDone`. The per-call controller closes via `controller.close()`.
-  // Not on the StorageBackend abstract surface — SembastBackend-specific.
-  // Used by the example app (Track 8) and the dedicated watch tests.
+  //   2. A subscription to `_fifoChangesController` re-emits a fresh snapshot
+  //      whenever the changed destinationId matches (cross-destination isolation).
+  // Snapshot fetch goes through `listFifoEntries`, so an unknown destination
+  // produces an empty list. Close on `_fifoChangesController` propagates via
+  // `onDone`. Not on the StorageBackend abstract surface — SembastBackend-specific.
   Stream<List<FifoEntry>> watchFifo(String destinationId) {
     if (_fifoChangesController.isClosed) {
       throw StateError(
@@ -1276,13 +1232,12 @@ class SembastBackend extends StorageBackend {
     return controller.stream;
   }
 
-  // materialized view by name. Mirrors watchFifo's shape: snapshot on
-  // subscribe + re-emit on every mutation (upsert / delete / clear);
-  // cross-view isolation enforced by the viewName filter; broadcast so
-  // multiple subscribers per view share a single upstream subscription;
-  // close-aware via _viewChangesController's onDone propagation.
-  // Not on the StorageBackend abstract surface — SembastBackend-specific.
-  // Used by the example app (Track 8) and the dedicated watch tests.
+  // Snapshot-on-subscribe + live-re-emission stream for a named materialized
+  // view. Mirrors watchFifo's shape: snapshot on subscribe + re-emit on every
+  // mutation (upsert / delete / clear); cross-view isolation enforced by the
+  // viewName filter; broadcast so multiple subscribers per view share a single
+  // upstream subscription; close-aware via _viewChangesController's onDone
+  // propagation. Not on the StorageBackend abstract surface — SembastBackend-specific.
   Stream<List<Map<String, Object?>>> watchView(String viewName) {
     if (_viewChangesController.isClosed) {
       throw StateError(
@@ -1330,9 +1285,9 @@ class SembastBackend extends StorageBackend {
   /// Append [attempt] to the entry's attempts[]. Does not change
   /// finalStatus. Runs in its own transaction.
   ///
-  /// Tolerates a missing target row or a never-registered FIFO store
-  ///: in both cases this method returns without throwing
-  /// and emits a warning-level diagnostic via [debugLogSink]. This closes
+  /// Tolerates a missing target row or a never-registered FIFO store:
+  /// in both cases this method returns without throwing and emits a
+  /// warning-level diagnostic via [debugLogSink]. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
   /// concurrent user operation (unjamDestination, deleteDestination) may
@@ -1342,7 +1297,6 @@ class SembastBackend extends StorageBackend {
   /// never written to simply has zero records, so the `records.isEmpty`
   /// branch covers both "unknown destination" and "row deleted from a
   /// known destination". No separate "store exists?" probe is needed.
-  // missing FIFO store, with a warning-level diagnostic.
   @override
   Future<void> appendAttempt(
     String destinationId,
@@ -1391,9 +1345,9 @@ class SembastBackend extends StorageBackend {
   /// `sent_at = DateTime.now().toUtc()`. The entry is RETAINED: no delete
   /// ever happens through this path.
   ///
-  /// Tolerates a missing target row or a never-registered FIFO store
-  ///: in both cases this method returns without throwing
-  /// and emits a warning-level diagnostic via [debugLogSink]. This closes
+  /// Tolerates a missing target row or a never-registered FIFO store:
+  /// in both cases this method returns without throwing and emits a
+  /// warning-level diagnostic via [debugLogSink]. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
   /// concurrent user operation (unjamDestination, deleteDestination) may
@@ -1409,8 +1363,6 @@ class SembastBackend extends StorageBackend {
   /// returns cleanly (no-op, no re-stamp of `sent_at`). When the entry is
   /// already terminal with a DIFFERENT status, `StateError` is thrown —
   /// this is real corruption and loud failure is correct.
-  // permanent send-log records.
-  // missing FIFO store, with a warning-level diagnostic.
   @override
   Future<void> markFinal(
     String destinationId,
@@ -1554,8 +1506,6 @@ class SembastBackend extends StorageBackend {
   /// Throws [StateError] on a missing target row: callers verify
   /// existence before opening the transaction, so a missing row here
   /// indicates a concurrent delete race that these ops do not close.
-  // attempts[] preserved verbatim; sent_at untouched.
-  // ({sent, tombstoned}) cannot transition further.
   @override
   Future<void> setFinalStatusTxn(
     Txn txn,
@@ -1630,9 +1580,8 @@ class SembastBackend extends StorageBackend {
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
   /// tombstoned target in one transaction. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
-  /// are left untouched regardless of their `sequence_in_queue` — per
+  /// are left untouched regardless of their `sequence_in_queue` —
   /// all non-null rows are retained forever.
-  // (final_status IS null AND sequence_in_queue > afterSequenceInQueue).
   @override
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
     Txn txn,
@@ -1667,8 +1616,8 @@ class SembastBackend extends StorageBackend {
 
   /// Read a single event by `event_id` within [txn]. Returns `null` when no
   /// event with that id is present. Used by ingest's idempotency check
-  /// against the unified event store (origin and ingest
-  /// appends share `_eventStore`).
+  /// against the unified event store (origin and ingest appends share
+  /// `_eventStore`).
   @override
   Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId) async {
     final t = _requireValidTxn(txn);
@@ -1681,7 +1630,7 @@ class SembastBackend extends StorageBackend {
     );
   }
 
-  // event_id over the unified event store; returns null when absent.
+  // Indexed lookup by event_id over the unified event store; returns null when absent.
   @override
   Future<StoredEvent?> findEventById(String eventId) async {
     final db = _database();
@@ -1696,9 +1645,8 @@ class SembastBackend extends StorageBackend {
 
   // -------- Audit query --------
 
-  // the storage layer; SembastSecurityContextStore.queryAudit is a thin
-  // delegator.
-  // verbatim from the previous SecurityContextStore-hosted implementation.
+  // Cross-store audit query; SembastSecurityContextStore.queryAudit is a thin
+  // delegator that forwards here.
   @override
   Future<PagedAudit> queryAudit({
     Initiator? initiator,
@@ -1876,7 +1824,7 @@ class _SembastTxn extends Txn {
 /// `(recorded_at, event_id)` tuple from the previous page's tail row;
 /// the next page is a strict lower bound under the same sort order so
 /// concurrent inserts at the head do not skew page contents.
-// queryAudit and (transitively) the SecurityContextStore delegator.
+// Used by queryAudit and (transitively) the SecurityContextStore delegator.
 class _AuditCursorPoint {
   const _AuditCursorPoint({required this.recordedAt, required this.eventId});
 

@@ -98,14 +98,15 @@ void main() {
       );
     });
 
-    // read. Subsequent addDestination after all() succeeds.
+    // all() does not freeze the registry on first read. Subsequent
+    // addDestination after all() succeeds.
     test('first all() read does NOT freeze the registry; a '
         'subsequent addDestination succeeds', () async {
       await registry.addDestination(
         _StubDestination('primary'),
         initiator: _testInit,
       );
-      registry.all(); // would freeze under the Phase-4 contract
+      registry.all();
       await registry.addDestination(
         _StubDestination('secondary'),
         initiator: _testInit,

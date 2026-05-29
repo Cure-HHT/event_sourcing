@@ -5,7 +5,7 @@
 //   EffectiveAuthorization.scopeAssignments, and prove that scope
 //   assignments for an UNRELATED scope class do not over-grant (the
 //   read path mirrors the write-path policy's class-and-ancestry
-//   matching). Prior to the fix there were NO row-narrowing tests.
+//   matching).
 
 import 'dart:async';
 import 'dart:convert';

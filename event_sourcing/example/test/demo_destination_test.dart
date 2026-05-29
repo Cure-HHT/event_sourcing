@@ -28,7 +28,8 @@ void main() {
       final d = DemoDestination(id: 'Primary');
       expect(d.wireFormat, 'demo-json-v1');
     });
-    //   with null allow-lists and no predicate accepts all events.
+    // DemoDestination.filter has null allow-lists and no predicate,
+    // so it accepts all events.
     test('filter accepts events regardless of entryType / eventType', () {
       final d = DemoDestination(id: 'Primary');
       expect(d.filter.matches(_mkEvent('1')), isTrue);
@@ -48,7 +49,7 @@ void main() {
   });
 
   group('canAddToBatch', () {
-    //   notifier is the live knob.
+    // batchSize.value is the live knob; changes take effect immediately.
     test('batchSize = 1 rejects a second event', () {
       final d = DemoDestination(id: 'x');
       d.batchSize.value = 1;
@@ -78,7 +79,7 @@ void main() {
   });
 
   group('maxAccumulateTime', () {
-    //   live-tunable via the underlying notifier.
+    // maxAccumulateTime reads the current maxAccumulateTimeN notifier value.
     test('reads the current notifier value', () {
       final d = DemoDestination(id: 'x');
       d.maxAccumulateTimeN.value = const Duration(seconds: 3);
@@ -89,7 +90,8 @@ void main() {
   });
 
   group('transform', () {
-    //   covering every event — contentType + transformVersion stamps.
+    // transform covers every event in the batch and stamps contentType
+    // and transformVersion on the resulting WirePayload.
     test('produces JSON bytes + contentType + transformVersion', () async {
       final d = DemoDestination(id: 'x');
       final batch = <StoredEvent>[_mkEvent('1'), _mkEvent('2')];
@@ -107,9 +109,10 @@ void main() {
   });
 
   group('send routes by Connection (REQ-p01001)', () {
-    //   variants. Connection.ok → SendOk after waiting sendLatency;
-    //   Connection.broken → SendTransient with "simulated disconnect";
-    //   Connection.rejecting → SendPermanent with "simulated rejection".
+    // Tests each Connection variant: Connection.ok → SendOk after
+    // waiting sendLatency; Connection.broken → SendTransient with
+    // "simulated disconnect"; Connection.rejecting → SendPermanent
+    // with "simulated rejection".
     test('Connection.ok returns SendOk after the latency window', () async {
       final d = DemoDestination(id: 'x');
       d.sendLatency.value = const Duration(milliseconds: 40);

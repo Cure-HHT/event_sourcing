@@ -18,16 +18,14 @@
 //     fields that TableFold writes into every row, matching AggregateFold so
 //     subscribe()/ViewBuilder consume table and aggregate views uniformly.
 //
-// Deviation from plan: AggregateIdKey() is used instead of the plan's
-// CompositeKey(['data.role', 'data.permission']) because:
-//   1. The payload field is 'permissionName', not 'permission' (plan typo).
-//   2. The existing row key format ('admin:user.invite') is consumed by
-//      EventSeedApplier; a key-format change would break that reader.
-// AggregateIdKey() preserves the existing row key unchanged.
+// AggregateIdKey() is used as the row key because:
+//   1. The payload field is 'permissionName' (matching PermissionGrantedPayload).
+//   2. The row key format ('admin:user.invite') is consumed by EventSeedApplier;
+//      AggregateIdKey() keeps that format stable.
 //
-// aggregateTypes filter added to match the old materializer's appliesTo
-// guard (aggregateType == 'role_permission_grant'), so unrelated events
-// that happen to carry eventType 'permission_granted' are not processed.
+// The aggregateTypes filter restricts projection to events whose aggregateType
+// is 'role_permission_grant', so unrelated events that happen to carry
+// eventType 'permission_granted' are not processed.
 
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';

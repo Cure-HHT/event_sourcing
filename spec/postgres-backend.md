@@ -1,10 +1,9 @@
 # Postgres Backend
 
-**Status**: Stable (CUR-1330 shipped 2026-05-12).
+**Status**: Stable.
 
 The substrate's persistence contract is exposed behind the abstract
-`StorageBackend` interface. As of CUR-1330, two reference implementations
-ship in-tree:
+`StorageBackend` interface. Two reference implementations ship in-tree:
 
 - `SembastBackend` — mobile / Flutter deployments (sembast-on-disk).
 - `PostgresBackend` — server-side deployments (Cloud SQL / managed Postgres).
@@ -18,22 +17,21 @@ that remains. The normative DEV-level obligations live in
 ## Why
 
 Phase IV (portal+server cutover) needs a server-side `StorageBackend`.
-The substrate has been backend-agnostic since the kick-start extraction,
-but the abstraction was only proved by a single sembast-backed impl.
-Shipping a second concrete impl alongside it serves three purposes:
+The substrate is backend-agnostic via the abstract `StorageBackend`
+interface. Shipping a second concrete impl alongside `SembastBackend`
+serves three purposes:
 
 - **Activates the deferred backend-portability commitment.** The
-  `EVS-PRD-portability` PRD has always asserted that the substrate
-  runs on every Dart-supported runtime, but server-side persistence
-  was unproved. Postgres is the first concrete server-side backend.
+  `EVS-PRD-portability` PRD asserts that the substrate runs on every
+  Dart-supported runtime. Postgres is the first concrete server-side
+  backend to prove this for server deployments.
 - **Unblocks Phase IV.** The portal-server / diary-server / portal-UI
   cutover needs a backend it can actually deploy on Cloud SQL. Sembast
   on a server is technically possible but operationally awkward.
-- **Hardens the `StorageBackend` contract.** Anything sembast-specific
-  that leaked through the abstraction would have stayed invisible until
-  a second impl was attempted. Building `PostgresBackend` surfaced and
-  fixed those leaks (the conformance harness's coverage grew during
-  this work).
+- **Hardens the `StorageBackend` contract.** Having two impls that both
+  pass the conformance harness verifies that the abstraction boundary
+  holds and that no sembast-specific behavior leaks through. The
+  conformance harness covers both backends with the same assertions.
 
 ## Open architectural decision: view-row representation
 
@@ -189,9 +187,8 @@ store to the dedicated `backend_state` table.
 
 ## Open questions
 
-- None blocking. The questions that were open during brainstorm
-  (reactive change streams, connection pool sizing) have moved to
-  "Future work" below as scoped follow-ups rather than design gaps.
+- None blocking. Reactive change streams and connection pool sizing are
+  scoped follow-ups tracked in "Future work" below, not design gaps.
 
 ## Future work
 

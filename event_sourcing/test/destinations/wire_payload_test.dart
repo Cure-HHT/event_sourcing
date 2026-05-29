@@ -8,7 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('WirePayload', () {
-    // transformVersion; getters return the stored values.
+    // All three fields (bytes, contentType, transformVersion) are stored and
+    // exposed by their respective getters.
     test('constructor stores and exposes all three fields', () {
       final bytes = Uint8List.fromList([0x7b, 0x7d]); // '{}'
       final payload = WirePayload(

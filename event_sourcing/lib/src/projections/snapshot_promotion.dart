@@ -3,7 +3,7 @@
 // Three helpers live in this file, all invoked from EventStore.open in
 // fixed order:
 //   1. assertNoEntryTypeDowngrade — refuse boot if any entry type's
-//      registeredVersion has decreased. (Task 10)
+//      registeredVersion has decreased.
 //   2. seedViewTargetVersions — ensure every (viewName, interest-matched
 //      entry type) pair has a view_target_versions row; absent ones are
 //      written at the current registeredVersion.
@@ -11,7 +11,7 @@
 //      stored view_target_versions value is below current
 //      registeredVersion, apply the promoter chain to the affected
 //      view rows (those whose history includes events of that entry
-//      type) and update the row. (Task 11)
+//      type) and update the row.
 //
 // See: docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md
 //
@@ -52,8 +52,8 @@ import 'package:event_sourcing/src/storage/txn.dart';
 
 /// Callback invoked by [promoteViewSnapshots] once per (viewName,
 /// entryType) pair that's been lifted from `fromVersion` to
-/// `toVersion`. The caller (`EventStore.open` in Task 12) wires this
-/// to append a `view_snapshot_promoted` audit event via the substrate's
+/// `toVersion`. The caller (`EventStore.open`) wires this to append a
+/// `view_snapshot_promoted` audit event via the substrate's
 /// raw-internal-append path; boot-time helpers cannot reach
 /// `EventStore.appendInTxn` because they run before the `EventStore`
 /// instance exists.
@@ -183,8 +183,7 @@ Future<void> promoteViewSnapshots({
       );
 
       // Affected aggregate ids: those whose history includes any event
-      // of this entry type. Use the extended findAllEvents filter from
-      // Task 3.
+      // of this entry type. Filtered via findAllEventsInTxn's entryType param.
       final events = await backend.findAllEventsInTxn(
         txn,
         entryType: entryType,
@@ -238,8 +237,8 @@ Future<void> promoteViewSnapshots({
         def.registeredVersion,
       );
 
-      // Emit the audit (via callback — the caller plumbs the actual
-      // raw-internal-append in Task 12).
+      // Emit the audit via the caller-supplied callback, which appends
+      // a `view_snapshot_promoted` audit event via raw-internal-append.
       await emitAudit(
         viewName: spec.viewName,
         entryType: entryType,

@@ -157,13 +157,13 @@ class _DetailPanelState extends State<DetailPanel> {
 
 /// Renders the selected event's metadata as JSON plus an explicit
 /// per-provenance-entry summary that surfaces `origin_sequence_number`
-/// when set. Most local events have a single
-/// origin-only provenance entry with no `origin_sequence_number` —
-/// ingested events show one per receiver hop with the originator's
-/// wire-supplied seq, demonstrating the unified-store property.
+/// when set. Most local events have a single origin-only provenance
+/// entry with no `origin_sequence_number` — ingested events show one
+/// per receiver hop with the originator's wire-supplied seq,
+/// demonstrating the unified-store property.
 ///
-/// Plan 4.15 Task 5 Step 2 + Risk 4 mitigation (only render the line
-/// when non-null, keeping local-event details uncluttered).
+/// `origin_sequence_number` is only rendered when non-null, keeping
+/// local-event details uncluttered.
 class _EventDetail extends StatefulWidget {
   const _EventDetail({required this.backend, required this.eventId});
 

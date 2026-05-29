@@ -11,8 +11,8 @@ import 'dart:typed_data';
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 
-/// The library's canonical batch envelope. Phase 4.9 supports exactly one
-/// format version: `"1"` (identifier `"esd/batch@1"`).
+/// The library's canonical batch envelope. Exactly one format version is
+/// supported: `"1"` (identifier `"esd/batch@1"`).
 class BatchEnvelope {
   const BatchEnvelope({
     required this.batchFormatVersion,

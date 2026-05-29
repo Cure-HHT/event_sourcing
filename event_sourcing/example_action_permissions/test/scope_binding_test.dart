@@ -7,8 +7,8 @@
 // What this exercises that walkthrough_03 (matrix-as-perimeter) does not:
 // the role-grant check passes (BlueTeam carries buttons.press.blue), and
 // only the scope match decides Allow vs. Deny. That isolates the scope
-// binding wired in Task 25 (Action.scopeFor + RoleAssignmentSeed +
-// ScopeClassRegistry) from the role-permission perimeter.
+// binding (Action.scopeFor + RoleAssignmentSeed + ScopeClassRegistry)
+// from the role-permission perimeter.
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_idempotency_store.dart';

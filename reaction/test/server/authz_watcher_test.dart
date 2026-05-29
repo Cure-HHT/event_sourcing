@@ -3,10 +3,9 @@
 // or role event into the substrate and asserts the registry's
 // channels received the right reaction (close-frame or stale_data).
 //
-// All tests are intentionally skipped at this stage — the unit-level
-// shape requires substrate fixtures + close-frame capture that we
-// defer to the Phase 4 e2e harness (test/e2e/authz_test.dart). Stubs
-// remain here as a checklist of the behavior surface to cover.
+// All tests are skipped — full coverage is deferred to the Phase 4
+// e2e harness (test/e2e/authz_test.dart). Stubs here serve as a
+// checklist of the behavior surface to cover.
 //
 // Verifies: EVS-DEV-authz-watcher/A/B/C/D/E — force-logout on
 //   role_unassigned and permission_revoked, stale_data on role_assigned

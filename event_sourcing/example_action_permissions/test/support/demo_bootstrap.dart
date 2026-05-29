@@ -15,8 +15,8 @@ class DemoBackends {
 }
 
 /// Per-flavor factory. Each test file's `main()` provides a sembast
-/// implementation; companion `*_postgres_test.dart` files (Task B) supply
-/// a postgres implementation that resets the schema before each call.
+/// implementation; companion `*_postgres_test.dart` files supply a postgres
+/// implementation that resets the schema before each call.
 typedef DemoBackendFactory = Future<DemoBackends> Function();
 
 /// Shared permissions YAML used by the demo test runners. Kept stable so

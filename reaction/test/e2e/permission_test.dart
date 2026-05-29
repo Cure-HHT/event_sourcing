@@ -42,7 +42,7 @@ void main() {
   test('granted permissions appear in the snapshot', () async {
     // Seed the grant + role membership after the initial setUp fetch,
     // then bounce the credential to force a re-fetch and observe the new
-    // grant in the refreshed snapshot. The substrate now requires a
+    // grant in the refreshed snapshot. The substrate requires a
     // `user_role_scopes` row for (alice, install) before
     // effectivePermissionsFor returns anything for the activeRole.
     // Subscribe to the auth stream BEFORE setCredential(null), because

@@ -1,10 +1,5 @@
 import 'package:event_sourcing/event_sourcing.dart';
 
-// event_sourcing_datastore; demo instances registered via
-// bootstrapAppendOnlyDatastore at Task 9.
-// Validated by: JNY-01 (demo_note lifecycle), JNY-02 (CQRS via action
-// types' distinct aggregate types in demoAggregateTypeByEntryTypeId).
-
 /// Regular diary-like entry type. Materializes into the `notes` view via
 /// the `AggregateProjectionSpec` registered in `_bootstrapPane`.
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
@@ -35,7 +30,7 @@ const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
 );
 
 /// Full demo entry-type set. Passed as `entryTypes:` to
-/// `bootstrapAppendOnlyDatastore` at Task 9.
+/// `bootstrapAppendOnlyDatastore`.
 const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
   demoNoteType,
   redButtonType,
@@ -45,12 +40,11 @@ const List<EntryTypeDefinition> allDemoEntryTypes = <EntryTypeDefinition>[
 
 /// Per-entry-type aggregate-type lookup.
 ///
-/// `EntryTypeDefinition` itself does not carry an `aggregateType` field
-/// (shape). `EventStore.append` takes
-/// `aggregateType` as a per-call argument; the demo looks it up here
-/// keyed on `entryType.id`. Distinct aggregate types on the three action
-/// events are the CQRS discriminator JNY-02 walks through the EVENTS
-/// panel.
+/// `EntryTypeDefinition` itself does not carry an `aggregateType` field.
+/// `EventStore.append` takes `aggregateType` as a per-call argument; the
+/// demo looks it up here keyed on `entryType.id`. Distinct aggregate types
+/// on the three action events serve as the CQRS discriminator visible in
+/// the EVENTS panel.
 const Map<String, String> demoAggregateTypeByEntryTypeId = <String, String>{
   'demo_note': 'Note',
   'red_button_pressed': 'RedButtonPressed',

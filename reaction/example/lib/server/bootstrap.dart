@@ -247,13 +247,12 @@ Future<BootstrapResult> bootstrap() async {
       .addMiddleware(authMiddleware(validator))
       .addHandler(httpRouter.call);
 
-  // /admin/revoke is the no-auth admin escape hatch retained from the
-  // original force-logout demo: it appends a role_unassigned event for
-  // the supplied user, AuthzWatcher closes their WS with 4003, the
-  // client flips to Expired. Production deployments wouldn't expose
-  // this — the in-app `unassign_role` action (admin-gated) is the
-  // primary mechanism. Useful for testing the force-logout path
-  // without first acquiring an admin session.
+  // /admin/revoke is a no-auth admin escape hatch: it appends a
+  // role_unassigned event for the supplied user, AuthzWatcher closes
+  // their WS with 4003, the client flips to Expired. Production
+  // deployments wouldn't expose this — the in-app `unassign_role`
+  // action (admin-gated) is the primary mechanism. Useful for testing
+  // the force-logout path without first acquiring an admin session.
   Future<Response> revokeHandler(Request request) async {
     final userId = request.url.queryParameters['user'];
     if (userId == null || userId.isEmpty) {

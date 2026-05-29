@@ -4,12 +4,11 @@
 /// terminal" (drain may attempt the row), and a non-null value is one
 /// of three terminal states below. Once a FIFO entry's `finalStatus` is
 /// non-null it is retained forever as an audit record; the FIFO never
-/// deletes it. The sole code path that deletes a FIFO
-/// row is -C (the `tombstoneAndRefill` trail sweep), and
-/// that path only deletes rows whose `finalStatus` is `null`.
+/// deletes it. The sole code path that deletes a FIFO row is the
+/// `tombstoneAndRefill` trail sweep, and that path only deletes rows
+/// whose `finalStatus` is `null`.
 // Implements: EVS-PRD-portability/C — pure Dart enum; platform-independent
 //   serialisation via name-based toJson/fromJson.
-// {sent, wedged, tombstoned}.
 enum FinalStatus {
   sent,
   wedged,

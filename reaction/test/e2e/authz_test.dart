@@ -7,11 +7,11 @@
 //   permission_revoked; stale_data on role_assigned / permission_granted;
 //   containment opt-in via watchContainment).
 //
-// Status: ships two tests expanded today:
+// Two scenarios are active:
 //   1) view-level deny at subscribe time, and
 //   2) role_unassigned mid-subscription → server closes WS with 4003 →
 //      client RemoteAuthSession flips to Expired.
-// The remaining scenarios are kept as skipped scaffolds:
+// Remaining scenarios are kept as skipped scaffolds pending known future work:
 //   - row-level scope narrowing requires CUR-1331 scoped-permission
 //     fixture wiring on the harness;
 //   - permission_revoked closing-all-affected-users is identical
@@ -19,7 +19,7 @@
 //     requires policy fixtures to seed the right (role, perm) state;
 //   - stale_data scenarios (role_assigned, permission_granted,
 //     containment) require client-side stale_data envelope handling
-//     which is not yet wired through the RemoteScope.
+//     not yet wired through the RemoteScope.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -83,7 +83,7 @@ void main() {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);
 
-    // Seed view perm + role membership + authenticate. The substrate now
+    // Seed view perm + role membership + authenticate. The substrate
     // requires a `user_role_scopes` row for (alice, install) before any
     // permission check authorizes. We seed with the same scope the
     // role_unassigned appended below targets, so that unassign actually
@@ -158,14 +158,13 @@ void main() {
   test(
     'after force-logout, re-login + submit denies via substrate membership check',
     () async {
-      // Pins the full reaction round-trip the substrate trust-model fix
-      // (62b2bcc) was responding to: a user submits an action successfully,
-      // an admin revokes their role mid-session, the AuthzWatcher closes
-      // their WS, the user re-logs-in as the same identity, and the
-      // substrate's membership gate denies the second submit. Without this
-      // test, a regression in either the policy's user_role_scopes lookup
-      // or the AuthzWatcher's projection trigger could silently re-
-      // introduce the original bug.
+      // Exercises the full reaction round-trip for role-revocation:
+      // a user submits an action successfully, an admin revokes their
+      // role mid-session, the AuthzWatcher closes their WS, the user
+      // re-logs-in as the same identity, and the substrate's membership
+      // gate denies the second submit. Regression guard: a failure in
+      // either the policy's user_role_scopes lookup or the AuthzWatcher's
+      // projection trigger would allow the second submit to succeed.
       final h = await ReactionRemoteTestHarness.open();
       addTearDown(h.close);
 

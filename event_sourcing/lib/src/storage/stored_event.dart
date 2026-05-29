@@ -13,12 +13,6 @@ import 'package:provenance/provenance.dart';
 // Implements: EVS-PRD-event-log/B — carries sequenceNumber for total ordering.
 // Implements: EVS-PRD-portability/C — pure Dart value type; no platform
 //   dependency; serialises identically on every Dart-supported runtime.
-// the ingesting server is the sole authority on its own timestamp.
-// stamped by the substrate from EntryTypeDefinition.registeredVersion on every
-// local append; preserved verbatim on ingested events.
-// stamped by the lib from currentLibFormatVersion.
-// top-level user_id remains on StoredEvent.
-// event record.
 class StoredEvent {
   const StoredEvent({
     required this.key,
@@ -204,8 +198,7 @@ class StoredEvent {
   /// `provenance[]`.
   final Map<String, dynamic> metadata;
 
-  /// Actor that initiated this event. Replaces the Phase-4.3 top-level
-  /// `userId` field.
+  /// Actor that initiated this event.
   final Initiator initiator;
 
   /// Client-side timestamp when event was created.

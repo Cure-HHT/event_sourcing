@@ -1,11 +1,9 @@
 // reaction/example/test/e2e/reactive_permissions_test.dart
 //
 // Tier-2 scenarios for MID-SESSION permission changes across clients —
-// the reactive-security flows that the substrate's `reaction/test/e2e`
-// suite still carries as skipped scaffolds ("expand with CUR-1331
-// fixtures + client-side stale_data handling"). Here they run for real,
-// end to end, against the shipped `reaction_example` demo with its real
-// scoped permissions and AuthzWatcher.
+// the reactive-security flows running end to end against the shipped
+// `reaction_example` demo with its real scoped permissions and
+// AuthzWatcher.
 //
 // Scenarios:
 //   S4  admin grant mid-session -> stale_data -> client permission view

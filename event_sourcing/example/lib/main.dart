@@ -17,8 +17,6 @@ import 'package:uuid/uuid.dart';
 
 /// Reads a persisted install UUID from [path], or mints + persists a new
 /// UUIDv4 if the file does not exist.
-//   identity by persisting a UUIDv4 per pane to disk on first boot and
-//   reading the same value on every subsequent boot.
 Future<String> _readOrMintUUID(String path) async {
   final f = File(path);
   try {
@@ -54,8 +52,8 @@ class _PaneRuntime {
 /// portal's `EventStore.ingestBatch`. The portal pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
 /// simulator (existing behavior).
-// drives fillBatch + drain per destination with live policy from
-// the per-pane policyNotifier.
+// The tick body drives fillBatch + drain per destination with live policy
+// from the per-pane policyNotifier.
 Future<_PaneRuntime> _bootstrapPane({
   required String dbPath,
   required Source source,
@@ -82,15 +80,15 @@ Future<_PaneRuntime> _bootstrapPane({
       entryTypes: <String>{'green_button_pressed', 'blue_button_pressed'},
     ),
   );
-  //   native-wire destinations so the dual-pane UI shows both lanes
-  //   reaching the downstream bridge:
-  //     - NativeUser ships user-payload events only (the demo's three
-  //       button entry types). Wedge isolation: a poison user event
-  //       wedges this destination without affecting NativeAudit.
-  //     - NativeAudit ships system audit events only
-  //       (`includeSystemEvents: true` plus an empty entryTypes set).
-  //       This is the visible demonstration of -J's
-  //       opt-in path and its cross-hop forensic visibility.
+  // Two native-wire destinations so the dual-pane UI shows both lanes
+  // reaching the downstream bridge:
+  //   - NativeUser ships user-payload events only (the demo's button
+  //     entry types). Wedge isolation: a poison user event wedges this
+  //     destination without affecting NativeAudit.
+  //   - NativeAudit ships system audit events only
+  //     (`includeSystemEvents: true` plus an empty entryTypes set),
+  //     demonstrating the opt-in system-event path and its cross-hop
+  //     forensic visibility.
   final nativeUser = NativeDemoDestination(
     id: 'NativeUser',
     filter: const SubscriptionFilter(

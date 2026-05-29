@@ -34,8 +34,7 @@ class ProjectionInterpreter {
   final PromoterRegistry promoters;
   final EntryTypeRegistry entryTypes;
 
-  /// Back-compat alias for callers reading `interpreter.registry`. Equal to
-  /// [projections]. New code should use [projections] directly.
+  /// Alias for [projections]; prefer [projections] for new call sites.
   ProjectionRegistry get registry => projections;
 
   ProjectionInterpreter({

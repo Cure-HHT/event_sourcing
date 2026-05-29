@@ -75,10 +75,11 @@ void main() {
       await ctx.backend.close();
     });
 
-    // destination's drain in a single cycle. Asserted indirectly: the
-    // resolver counter increments by exactly 1 per cycle regardless of
-    // how many destinations are registered. That is the load-bearing
-    // assertion (resolver invoked once, value reused for all drains).
+    // The resolved policy is reused for every destination's drain in a
+    // single cycle. Asserted indirectly: the resolver counter increments
+    // by exactly 1 per cycle regardless of how many destinations are
+    // registered. That is the load-bearing assertion (resolver invoked
+    // once, value reused for all drains).
     test(
       'resolver result is the same across all destinations within one cycle',
       () async {
@@ -139,7 +140,8 @@ void main() {
   });
 
   group('mutual exclusivity + throws', () {
-    // throws ArgumentError at construction time.
+    // Supplying both policy and policyResolver throws ArgumentError at
+    // construction time.
     test(
       'constructing with both policy and policyResolver throws ArgumentError',
       () async {
@@ -157,8 +159,9 @@ void main() {
       },
     );
 
-    // aborts (exception propagates), the reentrancy guard is cleared
-    // via try/finally, and a subsequent trigger may invoke call() again.
+    // When the resolver throws, the cycle aborts (exception propagates),
+    // the reentrancy guard is cleared via try/finally, and a subsequent
+    // trigger may invoke call() again.
     test('resolver throws → cycle aborts; reentrancy guard cleared', () async {
       final ctx = await _bootstrap();
       var first = true;
@@ -182,7 +185,8 @@ void main() {
   });
 
   group('regression', () {
-    // nor resolver still works (drain falls back to SyncPolicy.defaults).
+    // SyncCycle with neither policy nor resolver still works; drain
+    // falls back to SyncPolicy.defaults.
     test(
       'SyncCycle with neither policy nor resolver still works (defaults)',
       () async {
@@ -193,7 +197,8 @@ void main() {
       },
     );
 
-    // unchanged; no resolver supplied, the field is forwarded to drain.
+    // When an explicit policy is supplied with no resolver, the field is
+    // forwarded to drain unchanged.
     test(
       'SyncCycle with explicit policy: still uses it (today behavior)',
       () async {

@@ -31,8 +31,6 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// its FIFO Sembast store (`fifo_{id}`) and SHALL be stable: changing it
 /// later would orphan the store's contents. The typical id is a short
 /// slug, e.g. `"primary"` for the primary diary server.
-// maxAccumulateTime.
-// abstract contract; concrete destinations opt in explicitly.
 abstract class Destination {
   const Destination();
 
@@ -62,7 +60,6 @@ abstract class Destination {
   /// trailing single-event batch is flushed immediately. The hold exists
   /// to let a live single-event batch coalesce with a second arrival,
   /// which has no meaning for historical catch-up.
-  // batches is honored by fillBatch.
   Duration get maxAccumulateTime;
 
   /// Whether this destination permits hard deletion of its FIFO store via
@@ -85,7 +82,6 @@ abstract class Destination {
   /// When `false` (the default for 3rd-party destinations such as sponsor
   /// CSV or Rave EDC XML), `fillBatch` invokes [transform] and persists the
   /// resulting [WirePayload] verbatim with `envelope_metadata: null`.
-  // override to true.
   bool get serializesNatively => false;
 
   /// Destination-owned batching rule. Invoked by `fillBatch` once per
@@ -102,7 +98,6 @@ abstract class Destination {
   /// silently results in no FIFO row being formed on this tick. Most
   /// destinations SHOULD return `true` when `currentBatch.isEmpty` to
   /// accept at least the first event.
-  // batch admission predicate.
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate);
 
   /// Pure transform from an event [batch] to its wire payload. Produces
@@ -125,8 +120,6 @@ abstract class Destination {
   /// The returned payload is typically handed directly to `send(...)` on
   /// the drain path; the same bytes are also persisted on the
   /// [`FifoEntry.wirePayload`] for later retry attempts.
-  // transform_version); transform_version is preserved on the FifoEntry.
-  // WirePayload covering every event in the batch; empty batch is invalid.
   Future<WirePayload> transform(List<StoredEvent> batch);
 
   /// Hand [payload] to the destination and categorize the outcome.
@@ -143,6 +136,5 @@ abstract class Destination {
   /// How underlying HTTP codes, network errors, and timeouts map into those
   /// three variants is a per-destination judgment, not dictated by the
   /// contract.
-  // categorization is per-destination policy.
   Future<SendResult> send(WirePayload payload);
 }

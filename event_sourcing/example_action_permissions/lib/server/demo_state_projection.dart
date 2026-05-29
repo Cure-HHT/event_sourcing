@@ -3,8 +3,7 @@
 //   inspector pane.
 //
 // PollingDemoStateProjection re-queries the event store, matrix view,
-// directory, and idempotency cache on each call. CUR-1154 Phase 4.12's
-// reactive read layer (watchEvents/watchFifo) is the future swap target.
+// directory, and idempotency cache on each call.
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/inspect_snapshot.dart';

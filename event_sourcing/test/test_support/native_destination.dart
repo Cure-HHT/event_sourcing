@@ -16,7 +16,6 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 ///
 /// Records every `send` invocation in [sent] and pops one [SendResult] per
 /// call from a script supplied at construction.
-// serializesNatively to true.
 class NativeDestination extends Destination {
   NativeDestination({
     this.id = 'native',
@@ -34,7 +33,6 @@ class NativeDestination extends Destination {
   @override
   String get wireFormat => 'esd/batch@1';
 
-  // produces envelope metadata, this destination provides no transform.
   @override
   bool get serializesNatively => true;
 

@@ -66,8 +66,8 @@ portal for queries.
 parentColumn: 'siteId')`). `PatientSelf` users hold `entry.create` scoped to
 their own patientId; coordinators hold `entry.view` and `entry.query` scoped to
 their site (the substrate's containment expansion gets them per-patient access
-for free); supervisors hold the same at total-wildcard. A future `Auditor` role
-gets read-only across the study via `ValueWildcardScope('site')`.
+for free); supervisors hold the same at total-wildcard. An `Auditor` role
+requiring read-only access across the study uses `ValueWildcardScope('site')`.
 
 **Cross-process.** Two composition roots. The phone runs `LocalScope` against
 `SembastBackend` — `AuthSession.Authenticated(Principal(patientId,
@@ -138,8 +138,8 @@ materializations, both reconstructable from the log.
 
 **Scope class hierarchy — straight use of the primitive.** Two-level `site →
 patient`. The eDiary doesn't need `study` as a third level in v1 (single-study
-deployments); a multi-study sponsor portal adds it later as a registered
-`ScopeClassSpec` with `patient_site_index`'s parent class becoming `study`.
+deployments); a multi-study sponsor portal adds a `study` scope class as a
+registered `ScopeClassSpec` with `patient_site_index`'s parent class set to `study`.
 The substrate's containment expansion gives coordinators per-patient grants
 from their site assignment without any code change.
 

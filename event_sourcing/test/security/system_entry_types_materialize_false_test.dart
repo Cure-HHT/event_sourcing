@@ -1,14 +1,12 @@
-//   materialize:false. Cross-aggregate stream events stay out of view-
-//   side projection on every install, on both the local-append path
-//   and the ingest path (the outer gate `def.materialize` short-
-//   circuits the materializer loop in `_appendInTxn` and
-//   `_ingestOneInTxn` before any materializer is consulted).
+// All reserved system entry types ship with materialize:false. Cross-aggregate
+// stream events stay out of view-side projection on every install, on both the
+// local-append path and the ingest path (the outer gate `def.materialize`
+// short-circuits the materializer loop in `_appendInTxn` and
+// `_ingestOneInTxn` before any materializer is consulted).
 //
-// Regression intent: a future refactor that flips one of the reserved
-//   `EntryTypeDefinition` records to `materialize: true` would silently
-//   start firing materializers on cross-aggregate stream events, which
-//   is out of scope for Phase 4.22. This test fails loudly if that
-//   happens.
+// Regression guard: flipping any reserved `EntryTypeDefinition` to
+//   `materialize: true` would silently start firing materializers on system
+//   audit events. This test fails loudly if that happens.
 //
 // Verifies: EVS-PRD-event-log/A — all reserved system entry types have
 //   materialize:false, ensuring audit events never corrupt view-side state.
@@ -28,12 +26,12 @@ const Source _source = Source(
 
 void main() {
   group('Reserved system entry types — materialize:false', () {
-    //   auto-registered by `bootstrapAppendOnlyDatastore` ships
-    //   `materialize: false`. Iteration is driven from
-    //   `kReservedSystemEntryTypeIds` and the registry is consulted
-    //   post-bootstrap so the test exercises the actual auto-registered
-    //   `EntryTypeDefinition` instances rather than re-importing the
-    //   internal `kSystemEntryTypes` list.
+    // Verifies that every entry type auto-registered by
+    // `bootstrapAppendOnlyDatastore` ships `materialize: false`. Iteration is
+    // driven from `kReservedSystemEntryTypeIds` and the registry is consulted
+    // post-bootstrap so the test exercises the actual auto-registered
+    // `EntryTypeDefinition` instances rather than re-importing the
+    // internal `kSystemEntryTypes` list.
     test('all reserved system entry types have '
         'materialize:false', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
@@ -50,18 +48,14 @@ void main() {
 
         // The reserved id set is the canonical list of system entry
         // types and SHALL be exactly 14. A change here implies a new
-        // system entry type was added without flipping this assertion;
+        // system entry type was added without updating this assertion;
         // the test forces an explicit decision on whether the new id
         // also ships materialize:false.
         //
-        // Count is 14: 10 original system audits + 2 substrate-internal
-        // lib-version boot events (lib_version_initialized,
-        // lib_version_changed) added in the Task 3 fix so that
-        // SubscriptionFilter correctly gates them behind
-        // includeSystemEvents:true + 2 added by CUR-1317 entry-type-
-        // version-substrate-owned work (ingest-audit covering raw-path
-        // ingest-audit callers, and view_snapshot_promoted emitted by
-        // the boot-time snapshot-promotion pass).
+        // Count is 14: 10 security/bootstrap audits + 2 lib-version boot
+        // events (lib_version_initialized, lib_version_changed, gated
+        // behind includeSystemEvents:true by SubscriptionFilter) + 2
+        // entry-type-version events (ingest-audit, view_snapshot_promoted).
         expect(
           kReservedSystemEntryTypeIds.length,
           equals(14),

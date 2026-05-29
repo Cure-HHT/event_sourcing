@@ -17,11 +17,8 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 /// object is how an app keeps "the set of known entry types" a single
 /// authority rather than a ledger scattered across widgets.
 ///
-/// This minimal surface — `register`, `byId`, `isRegistered`, `all` — is
-/// what `EntryService.record` needs in Phase 4.3 Task 16. Task 17 will
-/// polish the surface (iteration ergonomics, JSON registration helpers)
-/// without changing these signatures.
-// entryType validation.
+/// This minimal surface — `register`, `byId`, `isRegistered`, `all` — covers
+/// all entry-type validation needs for the event store.
 class EntryTypeRegistry {
   /// Register [defn]. Duplicate id is a configuration bug — silent
   /// shadowing would let an app declare two competing definitions for the

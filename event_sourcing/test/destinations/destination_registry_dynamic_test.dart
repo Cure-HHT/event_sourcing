@@ -58,7 +58,7 @@ void main() {
       expect(persisted, const DestinationSchedule());
     });
 
-    // second addDestination.
+    // A second addDestination with the same id throws ArgumentError.
     test('addDestination with duplicate id throws ArgumentError', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -73,16 +73,16 @@ void main() {
       );
     });
 
-    // read of the registry (no freeze). This is the behavior change from
-    // Phase 4's
+    // read of the registry (no freeze). Subsequent addDestination after
+    // all() succeeds.
     test('registry does NOT freeze on first read; subsequent '
         'addDestination succeeds', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
         initiator: _testInit,
       );
-      // Read the registry first — under the old contract this would
-      // have frozen it.
+      // Read the registry — the registry remains open to further
+      // addDestination calls after all() is called.
       registry.all();
       await registry.addDestination(
         FakeDestination(id: 'secondary'),
@@ -91,7 +91,7 @@ void main() {
       expect(registry.all().map((d) => d.id), ['primary', 'secondary']);
     });
 
-    // reflects the new startDate and persists.
+    // The schedule reflects the new startDate and persists to the backend.
     test('setStartDate assigns a startDate and persists it', () async {
       await registry.addDestination(
         FakeDestination(id: 'primary'),
@@ -147,9 +147,9 @@ void main() {
       expect(schedule.startDate, start);
     });
 
-    // schedule reflects the new (earlier) value. Gap replay is exercised
-    // separately via dedicated event-log fixtures; this test focuses on
-    // the schedule write itself.
+    // The schedule reflects the new (earlier) value. Gap replay is exercised
+    // separately via dedicated event-log fixtures; this test focuses on the
+    // schedule write itself.
     test('setStartDate accepts backward movement (earlier '
         'than current)', () async {
       await registry.addDestination(
@@ -166,7 +166,7 @@ void main() {
       expect(persisted?.startDate, earlier);
     });
 
-    // currently-active destination returns closed.
+    // setEndDate on a currently-active destination returns closed.
     test('setEndDate returns closed when the call transitions '
         'active -> currently-closed', () async {
       await registry.addDestination(
@@ -190,7 +190,8 @@ void main() {
       expect(schedule.endDate, past);
     });
 
-    // currently-active destination returns scheduled.
+    // setEndDate with a future endDate on a currently-active destination
+    // returns scheduled.
     test('setEndDate returns scheduled when endDate is in the '
         'future (active destination)', () async {
       await registry.addDestination(
@@ -211,8 +212,8 @@ void main() {
       expect(result, SetEndDateResult.scheduled);
     });
 
-    // another past endDate leaves the classification unchanged and
-    // returns applied.
+    // Overwriting with another past endDate leaves the classification
+    // unchanged and returns applied.
     test('setEndDate returns applied when classification does '
         'not change relative to now', () async {
       await registry.addDestination(
@@ -238,7 +239,8 @@ void main() {
       expect(schedule.endDate, secondPast);
     });
 
-    // shorthand; returns closed.
+    // deactivateDestination is a shorthand for setEndDate(now()); returns
+    // closed.
     test('deactivateDestination returns closed and stamps '
         'endDate at approximately now()', () async {
       await registry.addDestination(
@@ -269,7 +271,8 @@ void main() {
       );
     });
 
-    // the destination's allowHardDelete is false.
+    // deleteDestination throws StateError when the destination's
+    // allowHardDelete is false.
     test('deleteDestination throws StateError when '
         'allowHardDelete is false', () async {
       await registry.addDestination(
@@ -481,10 +484,10 @@ void main() {
       );
     });
 
-    // another future-dated endDate on an active destination does not
-    // change the active-vs-closed classification AND does not newly
-    // schedule a close (a close is already scheduled); the return code
-    // is `applied`, not `scheduled`.
+    // Replacing one future-dated endDate with another on an active
+    // destination does not change the active-vs-closed classification
+    // and does not newly schedule a close (one is already scheduled);
+    // the return code is `applied`, not `scheduled`.
     test(
       'setEndDate returns applied when replacing a future '
       'endDate with another future endDate on an active destination',

@@ -134,10 +134,8 @@ void main() {
         // (EVS-PRD-reaction-widget-contract/I): in default mode the
         // builder MUST NOT surface Ready before EndOfReplay — not even
         // when the pre-replay updates are Deltas/Tombstones rather than
-        // Snapshots. The off-contract row is still accumulated, so it
-        // appears once EndOfReplay arrives. (Coverage gap noted during
-        // the 2026-05-29 Tier-2 investigation: the existing pre-EOR test
-        // only drove Snapshots.)
+        // Snapshots. The accumulated row still appears once EndOfReplay
+        // arrives.
         final fake = FakeReaction();
         final transitions = await _pumpRecording(
           tester,

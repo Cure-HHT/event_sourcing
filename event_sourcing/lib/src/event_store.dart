@@ -161,9 +161,9 @@ class EntryTypeVersionDowngradeError extends Error {
       'registeredVersion >= $fromVersion for "$entryType".';
 }
 
-/// Phase 4.4 write API. Serves both mobile widgets and portal callers via
-/// one `append` method that takes per-field arguments plus optional
-/// `SecurityDetails`. Replaces `EntryService.record`.
+/// The substrate's append-only event log. Serves both mobile widgets and
+/// portal callers via one `append` method that takes per-field arguments
+/// plus optional `SecurityDetails`.
 ///
 /// `EventStore` is permission-blind: it exposes unguarded
 /// read/write APIs to anything holding a reference. All access control
@@ -197,14 +197,14 @@ class EventStore {
   final ProjectionInterpreter _interpreter;
 
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
-  /// supplied directly on the constructor). Used by [rebuildView] (Task 23)
-  /// to apply promoter chains during replay.
+  /// supplied directly on the constructor). Used by [rebuildView] to apply
+  /// promoter chains during replay.
   final PromoterRegistry _promoters;
 
-  /// Exposes the projection registry for [rebuildView] (Task 23).
+  /// Exposes the projection registry for [rebuildView].
   ProjectionRegistry get projections => _interpreter.registry;
 
-  /// Exposes the promoter registry for [rebuildView] (Task 23).
+  /// Exposes the promoter registry for [rebuildView].
   PromoterRegistry get promoters => _promoters;
 
   final ClockFn? _clock;
@@ -491,9 +491,7 @@ class EventStore {
   /// (before reading the snapshot) so no changes are lost between the
   /// snapshot read and forward-mode delivery. A [_replayDone] flag
   /// inside the listener routes events to the buffer during snapshot
-  /// read and directly to the output controller after it. This avoids
-  /// the cancel+re-subscribe race that the prior implementation had
-  /// between buffer-drain and forward-mode attach.
+  /// read and directly to the output controller after it.
   ///
   /// The [StreamController] is closed when the subscriber cancels,
   /// preventing infinite blocking.
@@ -614,11 +612,10 @@ class EventStore {
   /// substrate is the single source of truth for both fields; callers do
   /// not (and cannot) supply them. Ingest still validates
   /// `entry_type_version` against the registry
-  //   StoredEvent.currentLibFormatVersion on every append.
   // Implements: EVS-DEV-append-stamps-registered-version — substrate stamps
-  //   entry_type_version from registry.registeredVersion; callers no longer
-  //   pass the value.
-  //   skip honored; throw rolls back entire append.
+  //   entry_type_version from registry.registeredVersion; callers do not
+  //   supply this field. dedupeByContent skips the append when content
+  //   matches the prior event; any throw rolls back the entire append.
   Future<StoredEvent?> append({
     required String entryType,
     required String aggregateId,
@@ -698,10 +695,10 @@ class EventStore {
         );
       }
       await securityContexts.deleteInTxn(txn, eventId);
-      //   aggregate; the redaction subject moves into
-      //   `data.subject_event_id` so callers can still query "all
-      //   redactions of event X" by filtering on entry_type AND
-      //   data.subject_event_id.
+      // Emit the redaction audit event. The install UUID is the aggregate;
+      // the redaction subject moves into `data.subject_event_id` so callers
+      // can query "all redactions of event X" by filtering on entry_type
+      // AND data.subject_event_id.
       await appendInTxn(
         txn,
         collector: collector,
@@ -729,7 +726,6 @@ class EventStore {
   /// (zero-effect sweeps included), plus per-population
   /// `security_context_compacted` / `security_context_purged` events
   /// when those sweeps are non-empty.
-  //   (always, even on empty sweeps).
   Future<RetentionResult> applyRetentionPolicy({
     SecurityRetentionPolicy? policy,
     Initiator? sweepInitiator,
@@ -761,7 +757,6 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        //   aggregate.
         await appendInTxn(
           txn,
           collector: collector,
@@ -784,7 +779,6 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        //   aggregate.
         await appendInTxn(
           txn,
           collector: collector,
@@ -805,8 +799,8 @@ class EventStore {
           dedupeByContent: false,
         );
       }
-      // operator wants a retention timeline, not just non-empty sweeps).
-      //   aggregate.
+      // Always emit the policy-applied audit event, even when both sweeps
+      // were empty, so operators have a continuous retention timeline.
       await appendInTxn(
         txn,
         collector: collector,
@@ -917,11 +911,10 @@ class EventStore {
       softwareVersion: source.softwareVersion,
     );
 
-    // dedupe-by-content
-    //   most-recent event of matching entry_type within the aggregate.
-    //   Multiple entry types may share an aggregate (-D system
-    //   events under source.identifier); dedupe scopes per entry_type so
-    //   each emission stream is treated independently.
+    // dedupe-by-content: compares against the most-recent event of matching
+    // entry_type within the aggregate. Multiple entry types may share an
+    // aggregate (e.g. system events under source.identifier); dedupe scopes
+    // per entry_type so each emission stream is treated independently.
     StoredEvent? prior;
     if (dedupeByContent) {
       final aggregateHistory = await backend.findEventsForAggregateInTxn(
@@ -1006,9 +999,8 @@ class EventStore {
 
     // Run the projection interpreter inside the same transaction so views
     // materialize atomically with the append. Action-emitted events (via
-    // ActionDispatcher.Stage8 → appendInTxn) MUST update views in-tx so
-    // subsequent dispatches in the same flow read the new view rows; this
-    // was the bug fixed by moving _interpreter.applyEvent inside appendInTxn.
+    // ActionDispatcher → appendInTxn) MUST update views in-tx so subsequent
+    // dispatches in the same flow read the new view rows.
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
       backend: backend,
@@ -1033,12 +1025,11 @@ class EventStore {
     return sha256.convert(canonicalizeBytes(input)).toString();
   }
 
-  // 4.4 identity-field set.
   String _eventHash(Map<String, Object?> recordMap) =>
       _canonicalEventHash(recordMap);
 
   // -----------------------------------------------------------------------
-  // Destination-role (ingest) write path — Phase 4.9
+  // Destination-role (ingest) write path
   // -----------------------------------------------------------------------
 
   /// Process-local ingest. Opens its own transaction and delegates to
@@ -1094,7 +1085,6 @@ class EventStore {
             receiverVersion: StoredEvent.currentLibFormatVersion,
           );
         }
-        // through to the existing failure path inside _ingestOneInTxn.
         final def = entryTypes.byId(storedEvent.entryType);
         if (def != null &&
             storedEvent.entryTypeVersion > def.registeredVersion) {
@@ -1220,10 +1210,10 @@ class EventStore {
     collector?.add(updatedEvent);
 
     // 7. Fire the projection interpreter symmetric with the local-append path.
-    //   interpreter runs inside the same transaction as `appendEvent`, applying
-    //   all registered ProjectionSpecs whose interest filter matches the event.
-    //   A throw propagates out of `_ingestOneInTxn` and rolls back the entire
-    //   ingest transaction (-A all-or-nothing batch atomicity).
+    //    The interpreter runs inside the same transaction as `appendEvent`,
+    //    applying all registered ProjectionSpecs whose interest filter matches
+    //    the event. A throw propagates out and rolls back the entire ingest
+    //    transaction (all-or-nothing batch atomicity).
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
       backend: backend,
@@ -1241,7 +1231,7 @@ class EventStore {
   }
 
   // -----------------------------------------------------------------------
-  // Verification APIs — Phase 4.9 Task 10
+  // Verification APIs
   // -----------------------------------------------------------------------
 
   /// Walk Chain 1 on [event].metadata.provenance backward from tail to origin.
@@ -1609,8 +1599,7 @@ const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 /// Extracts the 11-field identity set from [recordMap] and returns its
 /// SHA-256 as a hex string. Used by [EventStore._eventHash] (the normal
 /// append path) and [_appendLibVersionEventToBackend] (the substrate-
-/// internal boot path) — previously duplicated between
-/// `_eventHash` and `_libVersionEventHash`.
+/// internal boot path).
 String _canonicalEventHash(Map<String, Object?> recordMap) {
   final hashInput = <String, Object?>{
     'event_id': recordMap['event_id'],
@@ -1738,11 +1727,9 @@ Future<void> _appendLibVersionEventToBackend(
 /// row updates and `view_target_versions` write, so the promoted state
 /// and its audit event commit atomically.
 ///
-/// Bypasses [EventStore.appendInTxn] because boot-time helpers run
-/// before the [EventStore] instance exists; uses the same raw-internal-
-/// append helper ([_appendRawInternalEventInTxn]) that
-/// [EventStore._emitDuplicateReceivedInTxn] and
-/// [_appendLibVersionEventToBackend] share.
+/// Bypasses [EventStore.appendInTxn] because this boot-time helper runs
+/// before the [EventStore] instance exists. Uses [_appendRawInternalEventInTxn]
+/// for record assembly and hashing.
 // Implements: EVS-DEV-snapshot-promotion-on-open — audit event emission.
 Future<void> _appendViewSnapshotPromotedAuditInTxn(
   Txn txn,

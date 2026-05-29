@@ -1,10 +1,8 @@
 // Test helper: build a `(EventStore, DestinationRegistry)` pair wired to
 // a shared `SembastBackend` so registry-mutation tests can satisfy the
-// audit-emission contract introduced and
-//
-// The system entry types (kSystemEntryTypes) are pre-registered on the
-// returned `EntryTypeRegistry` so every audit append validates cleanly
-// without requiring callers to list them.
+// audit-emission contract. The system entry types (kSystemEntryTypes) are
+// pre-registered on the returned `EntryTypeRegistry` so every audit append
+// validates cleanly without requiring callers to list them.
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';

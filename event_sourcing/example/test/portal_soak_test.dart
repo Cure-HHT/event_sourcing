@@ -524,9 +524,9 @@ void main() {
         );
 
         // 6. System audits originated on mobile reach portal via NativeAudit.
-        //   on a destination admits reserved system entry types into its
-        //   FIFO; the downstream bridge then carries those rows to the
-        //   portal pane's event log.
+        //   Setting `includeSystemEvents: true` on a destination admits
+        //   reserved system entry types into its FIFO; the downstream bridge
+        //   then carries those rows to the portal pane's event log.
         final allPortalEvents = await portal.backend.findAllEvents();
         final portalSystemEvents = allPortalEvents
             .where((e) => kReservedSystemEntryTypeIds.contains(e.entryType))

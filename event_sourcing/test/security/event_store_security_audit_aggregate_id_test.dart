@@ -11,12 +11,6 @@
 //   log for every covered substrate mutation (redact, compact, purge, sweep).
 // Verifies: EVS-PRD-regulatory-alignment/A — retention and redaction audit
 //   events carry timestamps, satisfying the ALCOA+ Contemporaneous obligation.
-//
-//   security_context_redacted; subject_event_id moves to data field).
-//   security_context_compacted).
-//   security_context_purged).
-//   system.retention_policy_applied).
-//   aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -112,11 +106,8 @@ void main() {
         await fx.backend.close();
       });
 
-      // stamps aggregateId = source.identifier, not a per-sweep
-      // synthesized id.
-      // stamps aggregateId = source.identifier, not a per-sweep
-      // synthesized id.
-      // stamps aggregateId = source.identifier, not 'security-retention'.
+      // All three audit entry types (compact, purge, retention_policy_applied)
+      // stamp aggregateId = source.identifier, not a synthesized per-sweep id.
       test('compact, purge, and retention_policy_applied audits '
           'use source.identifier as aggregateId', () async {
         final fixtureNow = DateTime.utc(2030, 1, 1);
@@ -184,9 +175,8 @@ void main() {
         await fx.backend.close();
       });
 
-      // redaction audit streams, every system event a single install
-      // emits shares the same aggregateId. The system aggregate is one
-      // hash-chained timeline per installation.
+      // Every system event a single install emits shares the same aggregateId.
+      // The system aggregate is one hash-chained timeline per installation.
       test('bootstrap + retention + redaction audits all share the '
           'install aggregate', () async {
         final fx = await _setup(now: DateTime.utc(2030, 1, 1));

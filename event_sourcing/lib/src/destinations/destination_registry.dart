@@ -32,19 +32,6 @@ import 'package:event_sourcing/src/sync/historical_replay.dart';
 /// Production code constructs a single instance during bootstrap; tests
 /// construct a fresh instance per test against an in-memory
 /// `SembastBackend` and a matching `EventStore`.
-// time after bootstrap; duplicate id is rejected; emits a registration
-// audit event atomically with the schedule write.
-// non-increasing (earlier OK, equal no-op, later throws); emits a
-// start_date audit event atomically with the schedule write and any
-// applicable replay (historical on first activation, gap on backward
-// move).
-// deactivateDestination is the now() shorthand; both emit an end_date
-// audit event atomically with the schedule write.
-// allowHardDelete and drops the schedule + FIFO store atomically with
-// a deletion audit event.
-// same transaction as the mutation, so partial states cannot persist.
-// operator wedge-recovery primitive; emits a wedge-recovery audit event
-// atomically with the FIFO mutations.
 class DestinationRegistry {
   /// Construct a registry bound to [backend] for storage persistence and
   /// [eventStore] for in-transaction audit emission. The registry does
@@ -76,12 +63,6 @@ class DestinationRegistry {
   ///
   /// Throws `ArgumentError` if a destination with the same id is already
   /// registered.
-  // bootstrap; duplicate id rejected with ArgumentError.
-  // schedule across process restart, so setStartDate's monotonic-
-  // backward semantics survive bootstrap re-running addDestination
-  // with the same id. Only seeds a dormant schedule when no schedule
-  // is persisted.
-  // transaction as the schedule write.
   Future<void> addDestination(
     Destination destination, {
     required Initiator initiator,
@@ -115,8 +96,9 @@ class DestinationRegistry {
           'serializes_natively': destination.serializesNatively,
           'filter_entry_types': destination.filter.entryTypes?.toList(),
           'filter_event_types': destination.filter.eventTypes?.toList(),
-          // predicate API. Downstream key-based queries should find the
-          // key present-but-null rather than absent.
+          // Predicates are not serializable; null is recorded so that
+          // downstream key-based queries find the key present-but-null
+          // rather than absent.
           'filter_predicate_description': null,
         },
         initiator: initiator,
@@ -143,7 +125,6 @@ class DestinationRegistry {
   /// in-memory cache; the cache is populated by `addDestination` and
   /// kept current by `setStartDate` / `setEndDate`. Throws
   /// `ArgumentError` when [id] is not registered.
-  // downstream fillBatch time-window filtering.
   Future<DestinationSchedule> scheduleOf(String id) async {
     final cached = _schedules[id];
     if (cached != null) return cached;
@@ -185,13 +166,6 @@ class DestinationRegistry {
   /// previous value, or `null` on first activation).
   ///
   /// Throws `ArgumentError` when [id] is not registered.
-  // non-increasing.
-  // triggers historical replay synchronously inside the same
-  // transaction as the schedule write.
-  // does NOT trigger replay.
-  // over [when, current.startDate) inside the same transaction;
-  // fill_cursor is not regressed.
-  // transaction as the schedule write and replay.
   Future<void> setStartDate(
     String id,
     DateTime when, {
@@ -304,9 +278,6 @@ class DestinationRegistry {
   /// shorthand).
   ///
   /// Throws `ArgumentError` when [id] is not registered.
-  // applied per the three-way classification.
-  // transaction as the schedule write; covers deactivate as the
-  // now() shorthand.
   Future<SetEndDateResult> setEndDate(
     String id,
     DateTime endDate, {
@@ -378,7 +349,6 @@ class DestinationRegistry {
   /// Set the destination's `endDate` to `DateTime.now()`, returning
   /// `SetEndDateResult.closed`. The audit event is
   /// emitted by the underlying `setEndDate` call.
-  // shorthand for setEndDate; audit emission is delegated.
   Future<SetEndDateResult> deactivateDestination(
     String id, {
     required Initiator initiator,
@@ -390,8 +360,6 @@ class DestinationRegistry {
   /// `StateError` when the destination's `allowHardDelete` getter is
   /// `false` — the default, opt-out-only gate on permanent FIFO
   /// destruction.
-  // allowHardDelete; atomic FIFO-store + schedule drop.
-  // transaction as the FIFO + schedule drop.
   Future<void> deleteDestination(
     String id, {
     required Initiator initiator,
@@ -452,9 +420,6 @@ class DestinationRegistry {
   /// - A `system.destination_wedge_recovered` audit event is appended.
   ///
   /// Returns a [TombstoneAndRefillResult].
-  // checked pre-transaction so ArgumentError does not hold a write lock.
-  // preserves attempts[] verbatim.
-  // transaction as the FIFO mutations.
   Future<TombstoneAndRefillResult> tombstoneAndRefill(
     String destinationId,
     String fifoRowId, {
@@ -533,9 +498,6 @@ class DestinationRegistry {
   /// `registeredVersion` for [entryType]; if [entryType] is not registered,
   /// `appendInTxn`'s `_validateAppendInputs` raises an `ArgumentError`
   /// inside the surrounding transaction (rolling back any prior writes).
-  //   install UUID as their aggregate; destination identity moves into
-  //   data.id so callers can still query "all audits about destination
-  //   X" by filtering on entry_type AND data.id.
   Future<void> _emitDestinationAuditInTxn(
     Txn txn,
     PublishCollector collector, {

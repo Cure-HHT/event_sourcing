@@ -30,8 +30,8 @@ void main() {
       expect(user.userId, 'green-user-1');
       expect(user.activeRole, 'GreenTeam');
       expect(user.roles, <String>{'GreenTeam'});
-      // UserPrincipal no longer carries activeSite (CUR-1331); the demo
-      // exposes it via the directory record instead.
+      // UserPrincipal carries identity/role only; the demo exposes
+      // activeSite via the directory record.
       expect(dir.siteFor('green-user-1'), 'green-workspace');
     });
 

@@ -5,8 +5,6 @@
 //   (sequence number + hash) back to the caller after a successful append.
 // Implements: EVS-PRD-event-log/B — sequenceNumber is the total-order position
 //   assigned to this event; callers use it to confirm correct ordering.
-// sequence counter inside the same transaction; callers receive both values
-// in this single result.
 class AppendResult {
   const AppendResult({required this.sequenceNumber, required this.eventHash});
 

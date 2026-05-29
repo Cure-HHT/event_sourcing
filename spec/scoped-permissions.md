@@ -40,9 +40,9 @@ This is a **Layer 2 convention extension** under the Append-Only Primitives disc
 - The `AuthorizationPolicy` mechanism remains substrate code (closed-under-events trust model). Alternatives are library extensions, not app-supplied policy logic.
 - Once a primitive ships under a name with given semantics, those semantics are frozen; alternative behavior is a new primitive, not a re-interpretation.
 
-This design is **pre-ship** (Phase I has not released). The existing `permission_granted` / `permission_revoked` event types and their payload shapes — kick-started during the `hht_diary` extraction — are reshaped freely. After Phase I ships, the shapes pinned here become frozen under AOP.
+This design is **pre-ship** (Phase I has not released). The `permission_granted` / `permission_revoked` event types and their payload shapes are reshaped here; the shapes pinned in this spec become frozen under AOP once Phase I ships.
 
-The scope-class mechanism is **domain-neutral**: the substrate ships the registration and matching machinery; apps register their own scope classes (`site`, `patient`, `project`, etc.). The substrate has no built-in knowledge of clinical-trial concepts. This is a corollary of the lib's domain-neutral commitment and replaces the legacy hardcoded `ScopeClass{global, site, self}` enum.
+The scope-class mechanism is **domain-neutral**: the substrate ships the registration and matching machinery; apps register their own scope classes (`site`, `patient`, `project`, etc.). The substrate has no built-in knowledge of clinical-trial concepts. This is a corollary of the lib's domain-neutral commitment; the substrate carries no hardcoded scope-class enum.
 
 ## Overview diagram
 
@@ -155,7 +155,7 @@ Two layers of grant data in the log:
 
 **Layer A — Role to permission templates** (refined existing model)
 
-The existing `permission_granted` and `permission_revoked` event types remain. Their payloads drop the legacy `scope` field (the old `ScopeClass` enum); the permission's scope class is registered on the `Permission` definition itself, not per-grant.
+The `permission_granted` and `permission_revoked` event types carry only `role` and `permission_name`; the permission's scope class is registered on the `Permission` definition itself, not per-grant.
 
 ```text
 permission_granted   { role: String, permission_name: String }
@@ -261,7 +261,7 @@ isPermitted(principal U, permission P, requestedScope (Cr, Vr)):
 
 `ContainmentResolver.resolve(Cr, Vr, target: Ca)` walks the chain `Cr -> parentOf(Cr) -> ...` looking up each hop in the appropriate `TableProjection`. Returns the value at class `Ca`, or `null` if any hop misses (which is treated as "doesn't match this assignment" — continues to the next).
 
-**YAML seed grammar** is unchanged. Today's seed already carries only role-to-permission names (`event_sourcing/example_action_permissions/tool/permissions.yaml`); the legacy `ScopeClass` enum lived in code on the `Permission` definition, not in the YAML. Under the new model, the `Permission` definition carries `scopeClass: String?` instead. The YAML keeps the existing shape:
+**YAML seed grammar**: the seed carries only role-to-permission names (`event_sourcing/example_action_permissions/tool/permissions.yaml`); scope class is not a YAML concept. The `Permission` definition carries `scopeClass: String?` in code; the YAML shape is:
 
 ```text
 roles:
@@ -293,7 +293,7 @@ class Permission {
 }
 ```
 
-The legacy `scope: ScopeClass` field is removed with the enum.
+There is no `scope` field on `Permission`; scope class is declared via `scopeClass: String?`.
 
 **`Action`** (one new method):
 
@@ -347,7 +347,7 @@ class ScopeAssignment {
 }
 ```
 
-`effectivePermissionsFor` replaces the legacy `permissionsFor`. The legacy method returned a session-precondition-filtered permission set, which no longer has a coherent meaning under the new model. The new method returns raw materials: the permission set the active role carries, and the user's scope assignments under that role. Clients and apps compose these with their own data projections to build "items I can act on" lists; per-decision UI gating still uses `isPermitted`.
+`effectivePermissionsFor` returns raw materials: the permission set the active role carries, and the user's scope assignments under that role. Clients and apps compose these with their own data projections to build "items I can act on" lists; per-decision UI gating still uses `isPermitted`.
 
 **Dispatcher authorize stage:**
 
@@ -395,7 +395,7 @@ The decision this pins: a revocation arriving between two dispatches takes effec
 
 **Implementation pre-req — transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. The current `StorageBackend` surface (`event_sourcing/lib/src/storage/storage_backend.dart`) provides `readViewRowInTxn` (single-row, in-txn) and `findViewRows` (multi-row, non-transactional); the transactional-snapshot guarantee requires a transactional multi-row read. The impl ticket adds `findViewRowsInTxn(Txn, viewName, {filter})` (or equivalent — name TBD by impl) to the abstract `StorageBackend` interface, with implementations in each backend (sembast first). This is a substrate-interface addition, not an app surface; follows the same abstract-backend-agnostic contract as existing `*InTxn` methods.
 
-**Denial reasons** (refined):
+**Denial reasons**:
 
 ```text
 DenyReason:
@@ -407,9 +407,6 @@ DenyReason:
                        permission, OR returned the wrong scope class.
                        This is a programmer-bug surface; the audit log
                        captures it so it surfaces loudly.
-
-(REMOVED: sessionPreconditionMissing -- the precondition concept is
-         superseded; "no covering assignment" is now just notGranted.)
 ```
 
 ### Section 4 — Migration and cleanup
@@ -586,7 +583,7 @@ I. The library SHALL stamp the requested scope value onto authorization_denied e
 
 ### Rationale
 
-Replaces the legacy substrate `ScopeClass { global, site, self }` enum and `Principal.activeSite` with a domain-neutral, app-registered scope-class machinery. See the design prose above for the algorithm and motivating use cases; see `spec/prd-permissions-as-events.md` for the parent obligation around closed-under-events authorization.
+The substrate ships domain-neutral, app-registered scope-class machinery (`ScopeClassSpec`, `ScopeClassRegistry`) rather than any hardcoded scope-class enum. See the design prose above for the algorithm and motivating use cases; see `spec/prd-permissions-as-events.md` for the parent obligation around closed-under-events authorization.
 
 ---
 
@@ -692,9 +689,7 @@ F. The policy SHALL return `Deny(notGranted)` for principals that are not `UserP
 
 ### Rationale
 
-The membership-first gate in assertion C closes a trust hole that existed in the policy's pre-`62b2bcc` shape, where unscoped permissions short-circuited on the role-permission-grant read and never consulted `user_role_scopes`. That earlier shape implicitly trusted the caller-supplied `Principal.activeRole` — anyone who could submit an action could claim any role and exercise that role's unscoped permissions, regardless of whether the substrate had ever recorded a `role_assigned` event binding them to it.
-
-The substrate's trust model (see CLAUDE.md, "Trust boundaries") trusts only `Principal.userId`; everything else, including which roles the user holds, is derivable from the event log. Reading `user_role_scopes` first restores that discipline: the `(userId, activeRole)` binding is verified against the event-derived projection before any permission is honoured under that role. The check is uniform — scoped and unscoped permissions both pay the cost — because the alternative (special-casing unscoped permissions) is the exact bug this commit fixed.
+The membership-first gate in assertion C enforces the substrate's trust model (see CLAUDE.md, "Trust boundaries"): the substrate trusts only `Principal.userId`; everything else, including which roles the user holds, is derivable from the event log. Reading `user_role_scopes` first verifies the `(userId, activeRole)` binding against the event-derived projection before any permission is honoured under that role. The check is uniform — scoped and unscoped permissions both verify membership — because special-casing unscoped permissions would allow a caller to claim any role and exercise that role's permissions without a recorded `role_assigned` event.
 
 Reusing the assignment row set for the scope-match step keeps the cost a single projection read per `isPermitted` call regardless of whether the permission is scoped, preserving the dispatcher's per-action latency budget.
 

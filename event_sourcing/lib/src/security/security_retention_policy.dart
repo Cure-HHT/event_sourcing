@@ -6,7 +6,6 @@
 //   compliant handling of PII while preserving the append-only event log.
 // Implements: EVS-PRD-event-log/A — policy never touches the immutable
 //   event-log rows; only the sidecar security_context store is mutated.
-// and static `defaults` instance.
 class SecurityRetentionPolicy {
   const SecurityRetentionPolicy({
     this.fullRetention = const Duration(days: 90),

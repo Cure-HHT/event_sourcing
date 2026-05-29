@@ -8,8 +8,6 @@
 /// evolve without ABI pressure on this persisted record.
 // Implements: EVS-PRD-portability/C — pure Dart value type; platform-
 //   independent JSON serialisation.
-// outcome, error_message, http_status. Persisted permanently on the
-// FifoEntry.
 class AttemptResult {
   const AttemptResult({
     required this.attemptedAt,

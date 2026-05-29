@@ -20,7 +20,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///   credential verbatim as `Principal.id`. Loud "DO NOT USE IN
 ///   PRODUCTION" docstring.
 /// - Optional `JwtAuthValidator` — verifies a JWT against a configured
-///   public key/issuer. (Deferred; pluggable seam exists from day one.)
+///   public key/issuer. (Deferred; the pluggable seam is in place.)
 ///
 /// This interface lives in the client-side `reaction` package because
 /// it is shared with the server-side `reaction` server module;

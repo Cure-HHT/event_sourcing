@@ -6,9 +6,9 @@ example apps from outside (real HTTP + WebSocket, and — optionally — the
 rendered Flutter UI). They are **not** meant to run on every local commit;
 they belong in PR CI (Tier 1) or are run on demand (Tier 2).
 
-They were added under CUR-1317 to close a coverage gap: **multiple clients
-connected to a single server**, plus user-story scenarios exercising the
-permission system and projections in combination.
+They cover **multiple clients connected to a single server**, plus
+user-story scenarios exercising the permission system and projections in
+combination.
 
 ## Two tiers
 

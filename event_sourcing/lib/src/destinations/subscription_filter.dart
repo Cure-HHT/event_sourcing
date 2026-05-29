@@ -38,11 +38,6 @@ typedef SubscriptionPredicate = bool Function(StoredEvent event);
 /// [includeSystemEvents] defaults to `false`) admits no system events,
 /// which is the default for destinations that want unconditional fan-out
 /// of user events without forensic visibility into config-change audits.
-// by entry_type / event_type with null-vs-empty distinction, optional
-// predicate escape-hatch.
-// through includeSystemEvents (opt-in) rather than entryTypes; matches
-// is the single authority on per-destination admission for both user
-// and system events.
 class SubscriptionFilter {
   const SubscriptionFilter({
     this.entryTypes,
@@ -95,9 +90,6 @@ class SubscriptionFilter {
   /// [entryTypes] allow-list is consulted only for user entry types.
   /// [eventTypes] and [predicate] are consulted for both system and
   /// user events that cleared the entry-type gate.
-  // short-circuits when allow-lists fail.
-  // through includeSystemEvents, bypassing entryTypes; user entry types
-  // use the entryTypes list.
   bool matches(StoredEvent event) {
     if (kReservedSystemEntryTypeIds.contains(event.entryType)) {
       if (!includeSystemEvents) return false;

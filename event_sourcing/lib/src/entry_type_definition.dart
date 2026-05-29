@@ -27,7 +27,6 @@ class EntryTypeDefinition {
     this.materialize = true,
   });
 
-  // payloads missing any of the three required fields or with wrong types.
   factory EntryTypeDefinition.fromJson(Map<String, Object?> json) {
     final id = _requireString(json, 'id');
     final registeredVersion = _requireInt(json, 'registered_version');
@@ -52,8 +51,8 @@ class EntryTypeDefinition {
   final String id;
 
   /// Highest `entry_type_version` this lib build's registry accepts on
-  /// `EventStore.ingestBatch`. Today (single-version world) it's the only
-  /// value; Phase 4.21 may expand to a `Set<int>` for multi-sponsor concurrency.
+  /// `EventStore.ingestBatch`. Currently a single version per entry type;
+  /// ingest rejects events whose `entry_type_version` exceeds this value.
   final int registeredVersion;
 
   /// Display name used by operational tooling.

@@ -80,8 +80,8 @@ void main() {
       await backend.close();
     });
 
-    // no-op: no FIFO rows are enqueued, fill_cursor is unchanged, no
-    // transient state leaks.
+    // fillBatch with a dormant schedule is a no-op: no FIFO rows are
+    // enqueued, fill_cursor is unchanged, no transient state leaks.
     test('fillBatch with no new matching events is a no-op', () async {
       // Append events to the log so the dormant-schedule early-exit
       // is the only thing preventing a FIFO write (not vacuous).
@@ -103,8 +103,8 @@ void main() {
       expect(await backend.readFillCursor('fake'), -1);
     });
 
-    // log, fillBatch does not enqueue any rows and does not advance the
-    // cursor.
+    // With an empty event log, fillBatch does not enqueue any rows and
+    // does not advance the cursor.
     test('fillBatch with empty event log does not advance cursor', () async {
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
@@ -118,8 +118,9 @@ void main() {
       expect(await backend.readFillCursor('fake'), -1);
     });
 
-    // with batchCapacity=3 produces one FIFO row covering the first 3
-    // events and advances the cursor to the 3rd event's sequence_number.
+    // fillBatch with batchCapacity=3 produces one FIFO row covering the
+    // first 3 events and advances the cursor to the 3rd event's
+    // sequence_number.
     test('fillBatch respects canAddToBatch boundary', () async {
       final clientTs = DateTime.utc(2026, 4, 22, 10);
       final appended = <StoredEvent>[];
@@ -151,8 +152,8 @@ void main() {
       expect(await backend.readFillCursor('fake'), 3);
     });
 
-    // maxAccumulateTime has elapsed: no FIFO row is written yet and the
-    // fill_cursor is not advanced.
+    // When maxAccumulateTime has not yet elapsed, no FIFO row is written
+    // and fill_cursor is not advanced.
     test('fillBatch with 1 candidate and maxAccumulateTime>0 '
         'does not flush yet', () async {
       // Only one event in window.
@@ -178,8 +179,9 @@ void main() {
       expect(await backend.readFillCursor('fake'), -1);
     });
 
-    // single-event batch flushes: a FIFO row is written and the
-    // fill_cursor advances to the event's sequence_number.
+    // Once maxAccumulateTime has elapsed, the single-event batch
+    // flushes: a FIFO row is written and fill_cursor advances to the
+    // event's sequence_number.
     test('fillBatch flushes a 1-event batch once '
         'maxAccumulateTime has elapsed', () async {
       final ts = DateTime.utc(2026, 4, 22, 11, 50);
@@ -204,8 +206,8 @@ void main() {
       expect(await backend.readFillCursor('fake'), 1);
     });
 
-    // are NOT enqueued. Fresher matching events still flow through and
-    // the cursor advances past the skipped ones.
+    // Events before startDate are NOT enqueued. Fresher matching events
+    // still flow through and the cursor advances past the skipped ones.
     test('fillBatch skips events with client_timestamp < startDate', () async {
       // Two events before startDate, one after.
       await _appendEvent(
@@ -242,7 +244,8 @@ void main() {
       expect(await backend.readFillCursor('fake'), 3);
     });
 
-    // (or > now() when endDate is later than now) are NOT enqueued.
+    // Events after endDate (or after now() when endDate is later than
+    // now) are NOT enqueued.
     test('fillBatch skips events with client_timestamp > endDate', () async {
       await _appendEvent(
         backend,
@@ -302,8 +305,7 @@ void main() {
       expect(head2!.eventIds, ['e-active']);
 
       // Widening endDate to admit e-after: next fillBatch tick picks it
-      // up. Demonstrates the K-fix payoff — deferred events are NOT
-      // lost when the upper bound widens.
+      // up. Deferred events are NOT lost when the upper bound widens.
       final widened = DestinationSchedule(
         startDate: DateTime.utc(2026, 4, 1),
         endDate: DateTime.utc(2026, 4, 30),
@@ -322,8 +324,9 @@ void main() {
       );
     });
 
-    // batch.last.sequenceNumber on successful enqueue (single-event
-    // batch here; cursor = the single event's sequence number).
+    // fillBatch advances fill_cursor to batch.last.sequenceNumber on
+    // successful enqueue (single-event batch here; cursor = the single
+    // event's sequence number).
     test('fillBatch advances fill_cursor to '
         'batch.last.sequenceNumber on successful enqueue', () async {
       // One matching event, batchCapacity=1, maxAccumulateTime=0 so it
@@ -347,8 +350,8 @@ void main() {
       expect(head!.eventIdRange.lastSeq, 1);
     });
 
-    // a first with no new matching events is a true no-op: no new FIFO
-    // row, cursor unchanged at batch.last.sequenceNumber.
+    // A repeat call with no new matching events is a true no-op: no new
+    // FIFO row, cursor unchanged at batch.last.sequenceNumber.
     test('repeat fillBatch with no new events is idempotent', () async {
       await _appendEvent(
         backend,
@@ -382,8 +385,8 @@ void main() {
       expect(head!.eventIds, ['e1']);
     });
 
-    // match destination.filter are never enqueued, and the cursor advances
-    // past them so they are not re-evaluated.
+    // Events that do not match destination.filter are never enqueued,
+    // and the cursor advances past them so they are not re-evaluated.
     test('non-matching events advance cursor but enqueue '
         'nothing', () async {
       // Filter only accepts entry_type='epistaxis_event'; append two
@@ -433,8 +436,8 @@ void main() {
     // Destination.transform, and without advancing fill_cursor.
     test('fillBatch is a no-op when FIFO head is wedged', () async {
       // Step 1: enqueue one matching event and let fillBatch promote it
-      // into a FIFO row, then mark that row wedged. This is the wedge
-      // setup the new behavior must respect.
+      // into a FIFO row, then mark that row wedged. This establishes
+      // the wedge state the subsequent assertions must confirm.
       await _appendEvent(
         backend,
         eventId: 'e1',
@@ -457,8 +460,8 @@ void main() {
       final transformCallsBefore = dest.transformCalls;
 
       // Step 3: append more matching events, then call fillBatch again.
-      // The new behavior: it must NOT promote them, NOT advance cursor,
-      // NOT call transform.
+      // fillBatch MUST NOT promote them, NOT advance cursor, NOT call
+      // transform while the head is wedged.
       await _appendEvent(
         backend,
         eventId: 'e2',
@@ -488,7 +491,7 @@ void main() {
       expect(headAfter.finalStatus, FinalStatus.wedged);
     });
 
-    // tombstoned and refilled, the next fillBatch promotes events that
+    // After tombstoneAndRefill, the next fillBatch promotes events that
     // arrived during the wedge in one pass against the rewound cursor.
     test('post-tombstoneAndRefill, fillBatch promotes wedge-era '
         'events in one pass', () async {
@@ -558,11 +561,11 @@ void main() {
       expect(await backend.readFillCursor('fake'), 3);
     });
 
-    // true, fillBatch builds a fresh BatchEnvelopeMetadata from `source`
-    // (mints batch_id, stamps sent_at = now, copies hopId / identifier /
-    // softwareVersion) and enqueues via nativeEnvelope:. The destination's
-    // transform is NOT called — NativeDestination's transform throws if
-    // invoked.
+    // When serializesNatively is true, fillBatch builds a fresh
+    // BatchEnvelopeMetadata from `source` (mints batch_id, stamps
+    // sent_at = now, copies hopId / identifier / softwareVersion) and
+    // enqueues via nativeEnvelope:. The destination's transform is NOT
+    // called — NativeDestination's transform throws if invoked.
     test('native destination — fillBatch mints envelope '
         'from source, stores envelope_metadata, nulls wire_payload', () async {
       const source = Source(
@@ -616,9 +619,10 @@ void main() {
       expect(await backend.readFillCursor('native'), 2);
     });
 
-    // without a `source:` parameter throws ArgumentError. The native
-    // branch needs Source to stamp envelope identity; the absence is a
-    // caller-bug surfaced loudly rather than a silent partial enqueue.
+    // A native destination without a `source:` parameter throws
+    // ArgumentError. The native branch needs Source to stamp envelope
+    // identity; the absence is a caller-bug surfaced loudly rather than
+    // a silent partial enqueue.
     test('native destination without source: throws '
         'ArgumentError', () async {
       final clientTs = DateTime.utc(2026, 4, 22, 10);

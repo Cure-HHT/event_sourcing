@@ -3,11 +3,8 @@
 // handshake, server-initiated drops, reconnect generations) without
 // touching a real socket or HTTP server.
 //
-// Extracted from `auto_reconnect_test.dart`'s self-contained fakes
-// (Task 5 of the reaction_widgets implementation plan); Task 6's
-// `remote_scope_test.dart` reuses them to drive `RemoteScope`'s
-// `connectionStatusStream` end-to-end, and Task 7's cross-impl contract
-// test reuses them again. Keep this file dependency-light so any
+// Shared by `auto_reconnect_test.dart`, `remote_scope_test.dart`, and the
+// cross-impl contract test. Keep this file dependency-light so any
 // `reaction/test/remote/*` file can import it.
 
 import 'dart:async';

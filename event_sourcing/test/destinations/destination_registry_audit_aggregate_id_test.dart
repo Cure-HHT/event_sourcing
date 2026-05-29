@@ -10,9 +10,6 @@
 // `data.id`. This makes the destination-registry audit stream a
 // per-install hash-chained system aggregate, while preserving "all
 // audits about destination X" queries via `entry_type` + `data.id`.
-//
-//   aggregate so each install has a single per-installation
-//   hash-chained system aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

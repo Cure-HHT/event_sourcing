@@ -2,21 +2,15 @@
 // mutations: when the audit appendInTxn fails the surrounding transaction
 // rolls back, so the schedule write / FIFO mutation never persists without
 // its audit (D — durable queues commit atomically with their audit).
-// Atomicity test for the in-transaction config-change audit emissions
-// added in Phase 4.17c-g. When the audit appendInTxn throws inside the
-// registry mutation's transaction, the WHOLE transaction rolls back —
-// the schedule write, FIFO mutation, and any other side effect commit
-// only when the audit also commits. This is its atomicity
-// half: the partial state ("mutation persisted, audit lost") must be
-// unobservable.
 //
-// mutation. Tested by registering a `DestinationRegistry` against an
-// `EventStore` whose `EntryTypeRegistry` is truncated — only the
-// system entry types needed to reach the mutation under test are
-// registered, so the FAILING audit append (the one whose entry type
-// is intentionally omitted) throws via `_validateAppendInputs`. The
-// surrounding `backend.transaction` rolls back: the prior mutation's
-// side effects (schedule write, FIFO drop, etc.) do not persist.
+// Each test registers a `DestinationRegistry` against an `EventStore` whose
+// `EntryTypeRegistry` is truncated — only the system entry types needed to
+// reach the mutation under test are registered, so the FAILING audit append
+// (the one whose entry type is intentionally omitted) throws via
+// `_validateAppendInputs`. The surrounding `backend.transaction` rolls back:
+// the prior mutation's side effects (schedule write, FIFO drop, etc.) do not
+// persist. The partial state ("mutation persisted, audit lost") is
+// unobservable.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -84,8 +78,8 @@ void main() {
       await backend.close();
     });
 
-    // back when the audit append fails. The destination must NOT appear
-    // persisted (readSchedule returns null afterwards).
+    // The schedule write and in-memory registration must both roll back
+    // when the audit append fails (readSchedule returns null afterwards).
     test(
       'addDestination: audit failure rolls back the schedule write',
       () async {
@@ -104,14 +98,12 @@ void main() {
       },
     );
 
-    // when the audit append fails. Built via a `DestinationRegistry`
-    // bound to an `EntryTypeRegistry` that registers
-    // `system.destination_registered` (so addDestination's setup
-    // succeeds and the in-memory `_destinations` map is populated) but
-    // does NOT register `system.destination_start_date_set` (so
-    // setStartDate's audit append throws inside the txn). The
-    // surrounding `backend.transaction` rolls back the schedule write;
-    // afterwards `schedule.startDate` is still null.
+    // The schedule write must roll back when the audit append fails. Built
+    // with `system.destination_registered` registered (so addDestination
+    // succeeds) but `system.destination_start_date_set` omitted (so
+    // setStartDate's audit append throws inside the txn). The surrounding
+    // `backend.transaction` rolls back the schedule write; afterwards
+    // `schedule.startDate` is still null.
     test('setStartDate: audit failure rolls back the schedule write', () async {
       final registry = await _buildPartialRegistry(
         backend,
@@ -148,16 +140,14 @@ void main() {
       expect(scheduleAfter!.startDate, isNull);
     });
 
-    // drop rolls back when the audit append fails. Built via a
-    // `DestinationRegistry` bound to an `EntryTypeRegistry` that
-    // registers `system.destination_registered` and
-    // `system.destination_start_date_set` (so addDestination +
-    // setStartDate setup succeed) but does NOT register
-    // `system.destination_deleted` (so deleteDestination's audit
-    // append throws inside the txn). The surrounding
-    // `backend.transaction` rolls back the FIFO + schedule drops;
-    // afterwards the destination is still registered and its FIFO
-    // head row + schedule are still present.
+    // The FIFO + schedule drop must roll back when the audit append fails.
+    // Built with `system.destination_registered` and
+    // `system.destination_start_date_set` registered (so addDestination +
+    // setStartDate setup succeed) but `system.destination_deleted` omitted
+    // (so deleteDestination's audit append throws inside the txn). The
+    // surrounding `backend.transaction` rolls back the FIFO + schedule drops;
+    // afterwards the destination is still registered and its FIFO head row +
+    // schedule are still present.
     test(
       'deleteDestination: audit failure rolls back FIFO + schedule drop',
       () async {

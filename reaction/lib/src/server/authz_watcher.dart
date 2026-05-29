@@ -109,7 +109,6 @@ class AuthzWatcher {
   void _handleContainmentEvent(Update<StoredEvent> update) {
     if (update is! Delta<StoredEvent>) return;
     // Emit stale_data to ALL connected users — coarse fan-out.
-    // (Granular per-user expansion is a future optimization.)
     for (final uid in connectionRegistry.connectedUserIds.toList()) {
       _staleData(uid, StaleDataReason.containmentChanged);
     }
@@ -132,8 +131,8 @@ class AuthzWatcher {
 
   Future<void> _forceLogoutAllWithRole(String role) async {
     for (final uid in connectionRegistry.connectedUserIds.toList()) {
-      // Synthetic principal to query the policy. Future refinement:
-      // cache activeRole alongside the registered connection.
+      // Synthetic principal to query the policy (activeRole is not
+      // cached per-connection; this reconstructs it from the role name).
       final principal = UserPrincipal(
         userId: uid,
         roles: {role},

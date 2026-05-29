@@ -6,10 +6,6 @@
 //   log, as well as cross-chunk correctness for large logs.
 //
 // ProjectionSpec replay; strict-superset target-version map.
-//
-// Rewritten in Task 22 (CUR-1317) to use the new rebuildView(store:, viewName:,
-// targetVersionByEntryType:) signature backed by ProjectionSpec +
-// PromoterRegistry instead of the deleted Materializer/EntryPromoter types.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

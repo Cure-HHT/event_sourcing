@@ -1,7 +1,5 @@
 // IMPLEMENTS REQUIREMENTS:
-//   events to the in-memory UserDirectory; runs inside the events.transaction
-//   block as part of EventStore commit (when wired through Materializer
-//   protocol from event_sourcing in Task 14).
+//   events to the in-memory UserDirectory.
 //
 // applyDirect() is the bare projection used by tests and the seed applier.
 

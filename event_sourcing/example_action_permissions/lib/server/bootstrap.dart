@@ -105,13 +105,11 @@ Future<DemoServerComponents> bootstrapDemoServer({
   //     (see step 4 below), so no timing window exists between the listener
   //     attach and the first seed append.
   //
-  //     The substrate's appendInTxn now runs the projection interpreter
-  //     inside the dispatch transaction (see EventStore.appendInTxn), so
-  //     the user_role_scopes view materializes atomically with the
-  //     ProvisionUserAction's user_provisioned event. The earlier
-  //     subscriber-bridge that re-emitted role_assigned via
-  //     eventStore.append is gone — ProvisionUserAction now emits the
-  //     role_assigned event itself.
+  //     The substrate's appendInTxn runs the projection interpreter inside
+  //     the dispatch transaction (see EventStore.appendInTxn), so the
+  //     user_role_scopes view materializes atomically with the
+  //     ProvisionUserAction's user_provisioned event. ProvisionUserAction
+  //     emits the role_assigned event itself.
   eventStore
       .subscribe<StoredEvent>(
         const SubscriptionFilter(
@@ -166,10 +164,9 @@ Future<DemoServerComponents> bootstrapDemoServer({
     );
   }
 
-  // 4a. Seed user-role-scope assignments. The substrate now verifies
-  //     user-role membership via `user_role_scopes` for EVERY permission
-  //     check (scoped and unscoped) — the Principal's `activeRole` claim
-  //     is no longer trusted standalone. So every directory entry needs
+  // 4a. Seed user-role-scope assignments. The substrate verifies
+  //     user-role membership via `user_role_scopes` for every permission
+  //     check (scoped and unscoped). Every directory entry needs
   //     a `role_assigned` event, regardless of whether the user holds any
   //     site-scoped permissions:
   //       * users with `activeSite != null` get a BoundScope assignment

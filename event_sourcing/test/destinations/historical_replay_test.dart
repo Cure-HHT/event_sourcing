@@ -99,10 +99,10 @@ void main() {
       await backend.close();
     });
 
-    // date walks the event_log past fill_cursor in the same transaction
-    // and enqueues every matching historical event as batches identical
-    // in shape to fillBatch output (destination's canAddToBatch and
-    // transform).
+    // setStartDate with a past date walks the event_log from fill_cursor in
+    // the same transaction and enqueues every matching historical event as
+    // batches identical in shape to fillBatch output (using the
+    // destination's canAddToBatch and transform).
     test('setStartDate with past date batches all matching '
         'historical events', () async {
       // Seed 5 events, all inside the last hour.
@@ -139,8 +139,9 @@ void main() {
       expect(await backend.readFillCursor('x'), 5);
     });
 
-    // replay. Events accumulate in event_log and stay out of the FIFO
-    // until wall-clock crosses startDate (then fillBatch picks them up).
+    // No replay runs for a future startDate. Events accumulate in the
+    // event_log and stay out of the FIFO until the wall-clock crosses
+    // startDate (then fillBatch picks them up).
     test('setStartDate in the future leaves FIFO empty', () async {
       // Seed 3 events "now".
       final ts = DateTime.now();
@@ -167,12 +168,12 @@ void main() {
       expect(await _readAllFifoRows(backend, 'x'), isEmpty);
     });
 
-    // the live fillBatch path, not duplicated by replay. We simulate the
-    // serialization order (replay transaction completes, then the new
-    // record() transaction runs) explicitly: append 3 events, setStartDate
-    // (past) — replay enqueues all 3; append 2 more events; run fillBatch
-    // — those 2 are enqueued by the live path. No event_id appears in
-    // more than one FIFO row; every event is covered exactly once.
+    // Events appended after replay land via the live fillBatch path, not
+    // duplicated by replay. The serialization order is simulated explicitly:
+    // append 3 events, setStartDate (past) — replay enqueues all 3; append 2
+    // more events; run fillBatch — those 2 are enqueued by the live path. No
+    // event_id appears in more than one FIFO row; every event is covered
+    // exactly once.
     test('events appended after replay start land via live '
         'fillBatch, not duplicated', () async {
       // Seed 3 events well inside the past-start window.
@@ -201,8 +202,7 @@ void main() {
       );
 
       // Replay must land a FIFO row with exactly the 3 seeded events,
-      // and advance fill_cursor past them. This is the primary
-      // or if replay double-enqueued a row.
+      // and advance fill_cursor past them.
       final afterReplay = await _readAllFifoRows(backend, 'x');
       expect(afterReplay, hasLength(1));
       expect((afterReplay.single['event_ids']! as List).cast<String>(), [
@@ -273,11 +273,11 @@ void main() {
       expect(await backend.readFillCursor('x'), lastUserEvent.sequenceNumber);
     });
 
-    //   honor `serializesNatively` symmetrically with `fillBatch`.
-    //   Native destinations never have `transform` invoked; replay
-    //   mints `BatchEnvelopeMetadata` from the local `Source` and
-    //   enqueues via `nativeEnvelope:` (envelope_metadata column
-    //   populated, wire_payload null).
+    // Replay honors `serializesNatively` symmetrically with `fillBatch`.
+    // Native destinations never have `transform` invoked; replay mints
+    // `BatchEnvelopeMetadata` from the local `Source` and enqueues via
+    // `nativeEnvelope:` (envelope_metadata column populated, wire_payload
+    // null).
     test('replay on a native destination skips transform '
         'and stamps envelope metadata', () async {
       // Seed 3 events well inside the past-start window.
@@ -334,13 +334,11 @@ void main() {
       expect(envelope['sender_identifier'], 'test-device');
     });
 
-    //   parity) — a destination with `includeSystemEvents: true`
-    //   registered AFTER system audit events have already landed in
-    //   the event log catches them up via replay without invoking
-    //   `transform`. This is the demo-pane scenario where
-    //   `NativeAudit` is set up post-bootstrap with `includeSystemEvents`
-    //   enabled and inherits the audits from prior destination
-    //   registrations.
+    // A destination with `includeSystemEvents: true` registered after
+    // system audit events have already landed in the event log catches
+    // them up via replay without invoking `transform`. This covers the
+    // demo-pane scenario where a `NativeAudit` destination is set up
+    // post-bootstrap with `includeSystemEvents` enabled.
     test('native audit-mirror picks up prior '
         'system audits via replay', () async {
       // Register a non-native sibling first so the registry emits a
@@ -363,10 +361,8 @@ void main() {
       await registry.addDestination(auditMirror, initiator: _testInit);
 
       // setStartDate(past) triggers replay over every prior system
-      // audit. With the previous-buggy code, `transform` would be
-      // called and throw because the native destination throws by
-      // contract. With the fix in place, replay enqueues a row with
-      // envelope metadata, no wire_payload.
+      // audit. Replay takes the native branch: it enqueues a row with
+      // envelope metadata and no wire_payload, without invoking `transform`.
       await registry.setStartDate(
         'audit_mirror',
         DateTime.now().subtract(const Duration(hours: 1)),

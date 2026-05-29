@@ -4,17 +4,16 @@ import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
 import 'package:flutter/foundation.dart';
 
 /// Native demo destination — declares it speaks `esd/batch@1` so the
-/// library handles serialization itself (Phase 4.14 ). FIFO
-/// rows for this destination store envelope metadata + null wire_payload
-///. Used in the example to demonstrate the storage-shape
-/// difference vs `DemoDestination` (lossy 3rd-party).
+/// library handles serialization itself. FIFO rows for this destination
+/// store envelope metadata with a null wire_payload. Used in the example
+/// to demonstrate the storage-shape difference vs `DemoDestination`
+/// (lossy 3rd-party).
 ///
 /// Implements [DemoKnobs] so the FIFO panel exposes the same live-tunable
 /// connection / latency / batch-size / accumulate sliders as the lossy
-/// `DemoDestination`. Default knob values preserve the previously-fixed
-/// behavior: `batchSize=10` (highlights native multi-event batches),
-/// `sendLatency=0` (instant succeed), `connection=ok`,
-/// `maxAccumulateTime=0` (no hold).
+/// `DemoDestination`. Default knob values: `batchSize=10` (highlights
+/// native multi-event batches), `sendLatency=0` (instant succeed),
+/// `connection=ok`, `maxAccumulateTime=0` (no hold).
 ///
 /// Optional [DownstreamBridge] hook: when supplied via the `bridge:`
 /// constructor parameter and `connection.value == Connection.ok`,
@@ -23,8 +22,6 @@ import 'package:flutter/foundation.dart';
 /// maps the outcome back to a [SendResult]. When `connection != ok`,
 /// the bridge is NOT invoked — link failures are simulated upstream of
 /// the bridge so the existing `broken`/`rejecting` UX is unchanged.
-//   the canonical `esd/batch@1` envelope inside fillBatch and persists
-//   envelope_metadata with wire_payload null.
 class NativeDemoDestination implements Destination, DemoKnobs {
   NativeDemoDestination({
     this.id = 'Native',

@@ -135,6 +135,5 @@ forecasting service subscribing as a remote consumer of each shard. That's
 *outside* the v1 substrate's stated scope, but doesn't violate any
 architectural commitment — each shard remains closed-under-events; the
 forecaster reads many shards the way any cross-installation consumer would.
-The thing that *would* need substrate work is making the per-shard log itself
-horizontally partitionable, which is a much larger change and isn't on any
-current roadmap.
+Making the per-shard log itself horizontally partitionable is a much larger
+change with no committed design.

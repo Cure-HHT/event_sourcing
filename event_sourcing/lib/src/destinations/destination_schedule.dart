@@ -17,9 +17,6 @@
 ///
 /// The value type is deliberately immutable; `DestinationRegistry`
 /// mutations construct a new `DestinationSchedule` and persist it.
-// setStartDate enforces monotonic-backward semantics (later throws,
-// earlier triggers gap replay) by constructing a new DestinationSchedule.
-// classification drives SetEndDateResult.
 class DestinationSchedule {
   /// Construct a schedule. Either field may be null — see class doc.
   const DestinationSchedule({this.startDate, this.endDate});

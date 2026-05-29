@@ -6,9 +6,8 @@
 import 'package:event_sourcing/src/actions/permission.dart';
 
 /// Sealed outcome of `ActionDispatcher.dispatch(...)`. Each pipeline
-/// stage's success or failure maps to a variant.
-//
-// stage. Sealed: exhaustiveness checked at every switch site.
+/// stage's success or failure maps to a variant. Sealed: exhaustiveness
+/// is checked at every switch site.
 sealed class DispatchResult<TResult> {
   const DispatchResult();
 

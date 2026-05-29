@@ -124,9 +124,6 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 ///   2. `SubscriptionFilter.matches` correctly gates them behind
 ///      `includeSystemEvents: true` via the `kReservedSystemEntryTypeIds`
 ///      membership check (which this list is the authoritative source for).
-// compact / purge audit events.
-//   entry type; the substrate stamps entry_type_version from the registry's
-//   registeredVersion on every append.
 // Implements: EVS-DEV-event-store-open/B,C — lib-version boot events
 //   registered here so byId() returns non-null and SubscriptionFilter gates
 //   them correctly, even though they are appended raw (bypassing the registry).

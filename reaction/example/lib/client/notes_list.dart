@@ -3,12 +3,11 @@
 // Reactive notes_today list, rendered on top of reaction_widgets'
 // headless `ViewBuilder<Note>`.
 //
-// ViewBuilder owns everything the old hand-rolled `_NotesAccumulator`
-// used to do — subscribing through the composed scope's ViewSource,
-// accumulating the `Snapshot × N -> EndOfReplay -> Delta / Tombstone`
-// stream keyed by aggregate id, and surfacing a sealed `ViewState<Note>`
-// (Loading / Ready / Stale). This file is now pure rendering sugar: it
-// maps each ViewState variant to a Flutter widget. That is exactly the
+// ViewBuilder subscribes through the composed scope's ViewSource,
+// accumulates the `Snapshot × N -> EndOfReplay -> Delta / Tombstone`
+// stream keyed by aggregate id, and surfaces a sealed `ViewState<Note>`
+// (Loading / Ready / Stale). This file is pure rendering sugar: it
+// maps each ViewState variant to a Flutter widget — the
 // "headless primitive + per-app sugar" split the widget library is built
 // around (EVS-PRD-reaction-widget-contract-G).
 //
