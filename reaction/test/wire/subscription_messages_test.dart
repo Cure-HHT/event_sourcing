@@ -11,11 +11,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
 
 void main() {
-  test('round-trips AuthMsg', () {
-    const original = AuthMsg(credential: 'opaque-token');
+  test('round-trips AuthMessage', () {
+    const original = AuthMessage(credential: 'opaque-token');
     final j = SubscriptionMessages.encodeClient(original);
     expect(j, {'type': 'auth', 'credential': 'opaque-token'});
-    final d = SubscriptionMessages.decodeClient(j) as AuthMsg;
+    final d = SubscriptionMessages.decodeClient(j) as AuthMessage;
     expect(d.credential, 'opaque-token');
   });
 

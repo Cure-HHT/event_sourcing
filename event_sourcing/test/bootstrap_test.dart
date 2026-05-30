@@ -34,11 +34,11 @@ class _ThrowOnIdAccess extends FakeDestination {
 }
 
 void main() {
-  group('bootstrapAppendOnlyDatastore', () {
-    test('returns AppendOnlyDatastore facade carrying eventStore, '
+  group('bootstrapEventStore', () {
+    test('returns EventStoreBundle facade carrying eventStore, '
         'entryTypes, destinations, securityContexts', () async {
       final backend = await _openBackend();
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: [_defn('demo_note')],
@@ -54,7 +54,7 @@ void main() {
     test('auto-registers 3 reserved system entry types BEFORE '
         'caller-supplied list', () async {
       final backend = await _openBackend();
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: [_defn('demo_note')],
@@ -69,7 +69,7 @@ void main() {
         'ArgumentError with "reserved" message', () async {
       final backend = await _openBackend();
       await expectLater(
-        bootstrapAppendOnlyDatastore(
+        bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: [_defn('security_context_redacted')],
@@ -94,7 +94,7 @@ void main() {
         FakeDestination(id: 'analytics', script: const []),
       ];
 
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: types,
@@ -125,7 +125,7 @@ void main() {
       final dests = [FakeDestination(id: 'primary', script: const [])];
 
       await expectLater(
-        bootstrapAppendOnlyDatastore(
+        bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: types,
@@ -143,7 +143,7 @@ void main() {
       final dests = <Destination>[_ThrowOnIdAccess()];
 
       await expectLater(
-        bootstrapAppendOnlyDatastore(
+        bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: types,
@@ -153,7 +153,7 @@ void main() {
       );
       expect(await backend.readSchedule('unused'), isNull);
 
-      final ds = await bootstrapAppendOnlyDatastore(
+      final ds = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: types,
@@ -171,7 +171,7 @@ void main() {
       ];
 
       await expectLater(
-        bootstrapAppendOnlyDatastore(
+        bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: const [],
@@ -193,7 +193,7 @@ void main() {
         ];
 
         await expectLater(
-          bootstrapAppendOnlyDatastore(
+          bootstrapEventStore(
             backend: backend,
             source: _source,
             entryTypes: const [],
@@ -209,15 +209,15 @@ void main() {
 
   // -------------------------------------------------------------------------
   // Boot-version check fires through the production bootstrap path
-  // Verifies: EVS-DEV-event-store-open (via bootstrapAppendOnlyDatastore) —
+  // Verifies: EVS-DEV-event-store-open (via bootstrapEventStore) —
   //   the production entry point routes through EventStore.open so the
   //   lib-version check fires in real app boots, not only in direct
   //   EventStore.open calls.
   // -------------------------------------------------------------------------
-  group('bootstrapAppendOnlyDatastore routes through EventStore.open', () {
+  group('bootstrapEventStore routes through EventStore.open', () {
     test('emits lib_version_initialized on first bootstrap', () async {
       final backend = await _openBackend();
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
@@ -225,7 +225,7 @@ void main() {
       );
       final result = await VersionCheck.findMostRecent(backend);
       expect(result, isNotNull);
-      expect(result!.recordedVersion, LibVersion.current);
+      expect(result!.recordedVersion, LibVersion.version);
       expect(result.eventType, LibVersionEvents.initialized);
     });
 
@@ -257,7 +257,7 @@ void main() {
           );
         });
         await expectLater(
-          bootstrapAppendOnlyDatastore(
+          bootstrapEventStore(
             backend: backend,
             source: _source,
             entryTypes: const <EntryTypeDefinition>[],
@@ -294,7 +294,7 @@ void main() {
           );
         });
         // allowDowngrade: true — should succeed despite 99.0.0 recorded version.
-        final ds = await bootstrapAppendOnlyDatastore(
+        final ds = await bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],

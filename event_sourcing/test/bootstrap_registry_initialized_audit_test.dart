@@ -67,7 +67,7 @@ void main() {
       () async {
         final factory = newDatabaseFactoryMemory();
         final backend = await _openMemoryBackend(factory, 'fresh.db');
-        final ds = await bootstrapAppendOnlyDatastore(
+        final ds = await bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
@@ -90,11 +90,12 @@ void main() {
         // Every system + caller entry type appears with its registered
         // version. The audit event's own entry type is included too —
         // the registry was complete before the append fired.
-        for (final defn in ds.entryTypes.all()) {
+        for (final definition in ds.entryTypes.all()) {
           expect(
-            registryMap[defn.id],
-            defn.registeredVersion,
-            reason: 'registry map missing or wrong version for ${defn.id}',
+            registryMap[definition.id],
+            definition.registeredVersion,
+            reason:
+                'registry map missing or wrong version for ${definition.id}',
           );
         }
         expect(registryMap.length, ds.entryTypes.all().length);
@@ -114,7 +115,7 @@ void main() {
       final factory = newDatabaseFactoryMemory();
       const path = 'reboot-same.db';
       final backendA = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendA,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
@@ -131,7 +132,7 @@ void main() {
       // dedupeByContent on the registry-init append sees identical
       // content and returns null without writing.
       final backendB = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendB,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
@@ -151,7 +152,7 @@ void main() {
       final factory = newDatabaseFactoryMemory();
       const path = 'add-type.db';
       final backendA = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendA,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA()],
@@ -161,7 +162,7 @@ void main() {
       // Reboot with a NEW entry type added — the registry map shape
       // changes, dedupe breaks, a new audit lands.
       final backendB = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendB,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
@@ -184,7 +185,7 @@ void main() {
       final factory = newDatabaseFactoryMemory();
       const path = 'bump-version.db';
       final backendA = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendA,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 1)],
@@ -195,7 +196,7 @@ void main() {
       // map value for demo_note changes from 1 to 2. dedupe breaks;
       // a new audit lands recording the bump.
       final backendB = await _openMemoryBackend(factory, path);
-      await bootstrapAppendOnlyDatastore(
+      await bootstrapEventStore(
         backend: backendB,
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(version: 2)],

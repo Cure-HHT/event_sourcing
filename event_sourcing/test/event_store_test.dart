@@ -44,8 +44,8 @@ Future<_Fixture> _setup({
   final backend = SembastBackend(database: db);
   final registry = EntryTypeRegistry();
   // Auto-register every reserved system entry type.
-  for (final defn in kSystemEntryTypes) {
-    registry.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
   }
   final effectiveDefs = defs ?? [_simpleDef('epistaxis_event')];
   for (final def in effectiveDefs) {
@@ -57,7 +57,7 @@ Future<_Fixture> _setup({
   ProjectionRegistry? projections;
   if (registerProjection) {
     final materializableIds = effectiveDefs
-        .where((d) => d.materialize)
+        .where((d) => d.isMaterialized)
         .map((d) => d.id)
         .toSet();
     if (materializableIds.isNotEmpty) {
@@ -155,7 +155,7 @@ void main() {
             id: 'non_materialized',
             registeredVersion: 1,
             name: 'Non-Mat',
-            materialize: false,
+            isMaterialized: false,
           ),
         ],
         registerProjection: false,

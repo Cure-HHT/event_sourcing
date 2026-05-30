@@ -47,7 +47,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -55,7 +55,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -63,7 +63,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -118,7 +118,7 @@ void main() {
 
         // 4. verifyEventChain → ok=true.
         final verdict = await dest.store.verifyEventChain(stored!);
-        expect(verdict.ok, isTrue);
+        expect(verdict.isValid, isTrue);
         expect(verdict.failures, isEmpty);
       } finally {
         await orig.close();
@@ -172,7 +172,7 @@ void main() {
           );
 
           final verdict = await dest.store.verifyEventChain(tampered);
-          expect(verdict.ok, isFalse);
+          expect(verdict.isValid, isFalse);
           expect(verdict.failures, hasLength(1));
           expect(verdict.failures.first.position, equals(1));
           expect(
@@ -243,7 +243,7 @@ void main() {
         } catch (e) {
           fail('verifyEventChain must not throw; got: $e');
         }
-        expect(verdict.ok, isFalse);
+        expect(verdict.isValid, isFalse);
       } finally {
         await orig.close();
         await dest.close();
@@ -272,7 +272,7 @@ void main() {
           expect(provenance, hasLength(1));
 
           final verdict = await orig.store.verifyEventChain(event);
-          expect(verdict.ok, isTrue);
+          expect(verdict.isValid, isTrue);
           expect(verdict.failures, isEmpty);
         } finally {
           await orig.close();

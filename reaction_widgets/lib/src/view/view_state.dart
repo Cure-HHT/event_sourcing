@@ -6,7 +6,7 @@ import 'package:meta/meta.dart';
 ///
 /// Three variants, exhaustive:
 ///
-/// - [Loading] — pre-`EndOfReplay`; no rows yet (or progressive mode
+/// - [Loading] — pre-`EndOfReplay`; no rows yet (or isProgressive mode
 ///   disabled).
 /// - [Ready]   — post-`EndOfReplay`; rows are live and current.
 /// - [Stale]   — transport disconnected; `lastRows` retained for UX
@@ -45,12 +45,12 @@ class Ready<T> extends ViewState<T> {
 /// retained so apps can render "stale data with reconnecting banner"
 /// rather than blanking.
 ///
-/// `error` carries the triggering `ConnectionStatus` (typically
+/// `connectionStatus` carries the triggering `ConnectionStatus` (typically
 /// `Reconnecting` or `ConnectionStatus.Disconnected`) for the builder's
 /// information.
 class Stale<T> extends ViewState<T> {
-  const Stale(this.lastRows, this.error);
+  const Stale(this.lastRows, this.connectionStatus);
 
   final List<T> lastRows;
-  final Object error;
+  final Object connectionStatus;
 }

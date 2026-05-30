@@ -26,7 +26,7 @@
 //   promotes lagging view rows and emits view_snapshot_promoted audit events.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A — EntryTypeVersionDowngradeError
 //   is thrown from open when registeredVersion < stored target version.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/B — assertNoEntryTypeDowngrade
+// Implements: EVS-DEV-entry-type-downgrade-refusal/B — verifyNoEntryTypeDowngrade
 //   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C — EntryTypeVersionDowngradeError
 //   carries entryType id, fromVersion, and toVersion for diagnostic logging.
@@ -62,7 +62,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
@@ -178,7 +178,7 @@ class EventStore {
     this.syncCycleTrigger,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
-    ClockFn? clock,
+    Clock? clock,
     Uuid? uuid,
   }) : _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
@@ -192,7 +192,7 @@ class EventStore {
   final StorageBackend backend;
   final EntryTypeRegistry entryTypes;
   final Source source;
-  final InternalSecurityContextStore securityContexts;
+  final MutableSecurityContextStore securityContexts;
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
   final ProjectionInterpreter _interpreter;
 
@@ -202,12 +202,12 @@ class EventStore {
   final PromoterRegistry _promoters;
 
   /// Exposes the projection registry for [rebuildView].
-  ProjectionRegistry get projections => _interpreter.registry;
+  ProjectionRegistry get projections => _interpreter.projections;
 
   /// Exposes the promoter registry for [rebuildView].
   PromoterRegistry get promoters => _promoters;
 
-  final ClockFn? _clock;
+  final Clock? _clock;
   final Uuid _uuid;
   final SubscriptionEngine _subs = SubscriptionEngine();
 
@@ -215,7 +215,7 @@ class EventStore {
   /// boot check:
   ///
   /// - **First boot** (no version event in the log): appends a
-  ///   `lib_version_initialized` event recording [LibVersion.current].
+  ///   `lib_version_initialized` event recording [LibVersion.version].
   /// - **Same version**: no-op — the log already records this version.
   /// - **Upgrade** (recorded version < current): appends a
   ///   `lib_version_changed` event recording the transition.
@@ -231,11 +231,11 @@ class EventStore {
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required Source source,
-    required InternalSecurityContextStore securityContexts,
+    required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     EventStoreSyncCycleTrigger? syncCycleTrigger,
-    ClockFn? clock,
+    Clock? clock,
     Uuid? uuid,
     bool allowDowngrade = false,
   }) async {
@@ -278,11 +278,11 @@ class EventStore {
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required Source source,
-    required InternalSecurityContextStore securityContexts,
+    required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     EventStoreSyncCycleTrigger? syncCycleTrigger,
-    ClockFn? clock,
+    Clock? clock,
     Uuid? uuid,
   }) async {
     final effectiveProjections = projections ?? ProjectionRegistry();
@@ -311,7 +311,7 @@ class EventStore {
   /// Runs the three boot-time entry-type-version helpers in fixed order
   /// inside a single backend transaction:
   ///
-  ///   1. [assertNoEntryTypeDowngrade] — refuse boot if any entry type's
+  ///   1. [verifyNoEntryTypeDowngrade] — refuse boot if any entry type's
   ///      `registeredVersion` is below the highest stored
   ///      `view_target_versions` value.
   ///   2. [seedViewTargetVersions] — write a `view_target_versions` row
@@ -338,7 +338,7 @@ class EventStore {
     required PromoterRegistry promoters,
   }) async {
     await storage.transaction((txn) async {
-      await assertNoEntryTypeDowngrade(
+      await verifyNoEntryTypeDowngrade(
         txn: txn,
         backend: storage,
         projections: projections,
@@ -397,19 +397,19 @@ class EventStore {
         storage,
         LibVersionEvents.initialized,
         <String, Object?>{
-          'version': LibVersion.current,
+          'version': LibVersion.version,
           'initializedAt': DateTime.now().toUtc().toIso8601String(),
         },
       );
     } else {
       final cmp = LibVersion.compare(
         recorded.recordedVersion,
-        LibVersion.current,
+        LibVersion.version,
       );
       if (cmp > 0 && !allowDowngrade) {
         throw DowngradeRefusedError(
           recorded.recordedVersion,
-          LibVersion.current,
+          LibVersion.version,
         );
       } else if (cmp < 0) {
         await _appendLibVersionEventToBackend(
@@ -417,7 +417,7 @@ class EventStore {
           LibVersionEvents.changed,
           <String, Object?>{
             'fromVersion': recorded.recordedVersion,
-            'toVersion': LibVersion.current,
+            'toVersion': LibVersion.version,
             'changedAt': DateTime.now().toUtc().toIso8601String(),
           },
         );
@@ -447,7 +447,7 @@ class EventStore {
   /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
   /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
   Future<T> runTransaction<T>(
-    Future<T> Function(Txn txn, PublishCollector collector) body,
+    Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
     return _runInTxnWithPublish(body);
   }
@@ -456,7 +456,7 @@ class EventStore {
   /// [PublishCollector] and publishes all collected events and row changes
   /// after commit.
   Future<T> _runInTxnWithPublish<T>(
-    Future<T> Function(Txn txn, PublishCollector collector) body,
+    Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
     final collector = PublishCollector();
     final result = await backend.transaction<T>((txn) => body(txn, collector));
@@ -875,7 +875,7 @@ class EventStore {
   /// subscription bus after commit. Callers that open their own transaction
   /// via [runTransaction] MUST pass their collector here.
   Future<StoredEvent?> appendInTxn(
-    Txn txn, {
+    Transaction txn, {
     required String entryType,
     required String aggregateId,
     required String aggregateType,
@@ -1121,14 +1121,14 @@ class EventStore {
   /// [batchContext] is non-null when called from `ingestBatch`, null when
   /// called from [ingestEvent].
   Future<PerEventIngestOutcome> _ingestOneInTxn(
-    Txn txn,
+    Transaction txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
-    if (!verdict.ok) {
+    if (!verdict.isValid) {
       final failure = verdict.failures.first;
       throw IngestChainBroken(
         eventId: incoming.eventId,
@@ -1309,7 +1309,7 @@ class EventStore {
       }
       prev = event;
     }
-    return ChainVerdict(ok: failures.isEmpty, failures: failures);
+    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
   /// Extract the last provenance entry of [event] as a typed map, or `null`
@@ -1336,7 +1336,7 @@ class EventStore {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List) {
       return const ChainVerdict(
-        ok: false,
+        isValid: false,
         failures: <ChainFailure>[
           ChainFailure(
             position: -1,
@@ -1350,7 +1350,7 @@ class EventStore {
     final provenance = provenanceRaw.cast<Map<String, Object?>>();
     if (provenance.isEmpty) {
       return const ChainVerdict(
-        ok: false,
+        isValid: false,
         failures: <ChainFailure>[
           ChainFailure(
             position: -1,
@@ -1409,7 +1409,7 @@ class EventStore {
         );
       }
     }
-    return ChainVerdict(ok: failures.isEmpty, failures: failures);
+    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
   /// Build a new [StoredEvent] with [receiverEntry] appended to
@@ -1542,7 +1542,7 @@ class EventStore {
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
   /// inside [txn]. Stamped with Chain 2 fields on `provenance[0]`.
   Future<void> _emitDuplicateReceivedInTxn(
-    Txn txn, {
+    Transaction txn, {
     required String subjectEventId,
     required String subjectEventHashOnRecord,
     required BatchContext? batchContext,
@@ -1628,7 +1628,7 @@ String _canonicalEventHash(Map<String, Object?> recordMap) {
 /// caller before this function is invoked, so that the caller can incorporate
 /// them into provenance entries (e.g. Chain 2 fields) before passing them here.
 Future<StoredEvent> _appendRawInternalEventInTxn(
-  Txn txn,
+  Transaction txn,
   StorageBackend backend, {
   required String aggregateId,
   required String aggregateType,
@@ -1698,7 +1698,7 @@ Future<void> _appendLibVersionEventToBackend(
       hop: 'event_sourcing',
       receivedAt: now,
       identifier: 'event_sourcing',
-      softwareVersion: LibVersion.current,
+      softwareVersion: LibVersion.version,
     );
     await _appendRawInternalEventInTxn(
       txn,
@@ -1732,7 +1732,7 @@ Future<void> _appendLibVersionEventToBackend(
 /// for record assembly and hashing.
 // Implements: EVS-DEV-snapshot-promotion-on-open — audit event emission.
 Future<void> _appendViewSnapshotPromotedAuditInTxn(
-  Txn txn,
+  Transaction txn,
   StorageBackend backend,
   EntryTypeRegistry entryTypes, {
   required String viewName,
@@ -1749,7 +1749,7 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
     hop: 'event_sourcing',
     receivedAt: now,
     identifier: 'event_sourcing',
-    softwareVersion: LibVersion.current,
+    softwareVersion: LibVersion.version,
   );
   await _appendRawInternalEventInTxn(
     txn,

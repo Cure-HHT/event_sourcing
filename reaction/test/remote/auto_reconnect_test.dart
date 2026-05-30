@@ -231,7 +231,7 @@ void main() {
       expect(
         secondGenInbound.where((m) => m.contains('"type":"auth"')).toList(),
         hasLength(1),
-        reason: 'reconnect resends the AuthMsg',
+        reason: 'reconnect resends the AuthMessage',
       );
       final resentSubscribes = secondGenInbound
           .where((m) => m.contains('"type":"subscribe"'))

@@ -39,10 +39,10 @@ class LocalScope implements ReactionScope {
   final ActionSubmitter _actionSubmitter;
   final ViewSource _viewSource;
   final PermissionSource _permissionSource;
-  bool _disposed = false;
+  bool _isDisposed = false;
 
   void _checkDisposed() {
-    if (_disposed) {
+    if (_isDisposed) {
       throw StateError('LocalScope has been disposed.');
     }
   }
@@ -86,6 +86,6 @@ class LocalScope implements ReactionScope {
 
   @override
   Future<void> dispose() async {
-    _disposed = true;
+    _isDisposed = true;
   }
 }

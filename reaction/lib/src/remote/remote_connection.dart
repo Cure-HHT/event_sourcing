@@ -120,7 +120,7 @@ class RemoteConnection {
 
   /// Invoked when the WS channel closes with an auth-related close
   /// code (4001 auth_rejected, 4003 permissions_changed). Wired by
-  /// [RemoteScope] to [RemoteAuthSession.onAuthRejected], which flips
+  /// [RemoteScope] to [RemoteAuthSession.handleAuthRejected], which flips
   /// the session to [Expired]. Other close codes (1000 normal, 1006
   /// abnormal, 1011 server-internal-error, etc.) are treated as wire
   /// drops, not auth changes, and do not invoke this callback.
@@ -134,7 +134,7 @@ class RemoteConnection {
 
   /// Invoked when the server pushes a `stale_data` envelope on the
   /// shared WS connection. The envelope is connection-scoped (not
-  /// keyed to any one subscription): the server's `AuthzWatcher` emits
+  /// keyed to any one subscription): the server's `AuthorizationWatcher` emits
   /// it on security-EXPANDING changes (`role_assigned`,
   /// `permission_granted`) and on opt-in containment updates. Wired by
   /// [RemoteScope] to trigger a [RemotePermissionSource] re-fetch so
@@ -168,7 +168,7 @@ class RemoteConnection {
   }
 
   String? _credential;
-  bool _disposed = false;
+  bool _isDisposed = false;
 
   WebSocketChannel? _channel;
   Future<void>? _connecting;
@@ -179,7 +179,7 @@ class RemoteConnection {
   /// depth — only one channel exists at a time), and (b) `dispose()`
   /// returning before the in-flight loop finishes (otherwise the loop
   /// could outlive the connection and emit ghost status transitions).
-  bool _reconnecting = false;
+  bool _isReconnecting = false;
   Completer<void>? _reconnectDone;
 
   /// Completes when the server acks the first-WS-message auth with
@@ -278,7 +278,7 @@ class RemoteConnection {
   }
 
   Future<void> _ensureConnected() async {
-    if (_disposed) throw StateError('connection disposed');
+    if (_isDisposed) throw StateError('connection disposed');
     // A live channel that has already completed its auth handshake is
     // ready immediately. While auth is still in flight (`_authComplete`
     // not yet done) fall through to await it via `_connecting`.
@@ -302,7 +302,7 @@ class RemoteConnection {
       onError: (_) => _onWsClosed(),
       cancelOnError: false,
     );
-    _sendClient(AuthMsg(credential: _credential ?? ''));
+    _sendClient(AuthMessage(credential: _credential ?? ''));
     // Block connection-readiness on the server's auth ack so queued
     // subscriptions don't race ahead of authentication. Resolved in
     // [_onMessage] on `auth_ok`; failed in [_onWsClosed] if the socket
@@ -345,7 +345,7 @@ class RemoteConnection {
       return;
     }
     if (type == 'stale_data') {
-      // Connection-scoped notification: the server's AuthzWatcher tells
+      // Connection-scoped notification: the server's AuthorizationWatcher tells
       // us SOME of our cached authorization state may be stale (a
       // role_assigned / permission_granted / containment change
       // expanded what we can see). Not subscription-scoped — the
@@ -365,11 +365,11 @@ class RemoteConnection {
 
   void _onWsClosed() {
     // Capture the close code BEFORE nulling _channel: the server-side
-    // AuthzWatcher signals mid-session auth-revocations via WS close
+    // AuthorizationWatcher signals mid-session auth-revocations via WS close
     // frames (4001 auth_rejected on credential rejection at connect-
     // time, 4003 permissions_changed on mid-session role_unassigned /
     // permission_revoked), and we must route those into
-    // RemoteAuthSession.onAuthRejected so the session flips to
+    // RemoteAuthSession.handleAuthRejected so the session flips to
     // Expired. Other close codes (1000 normal, 1006 abnormal, etc.)
     // are wire drops, not auth changes.
     final code = _channel?.closeCode;
@@ -402,7 +402,7 @@ class RemoteConnection {
     // cancelled. Skip the loop in either case — reconnecting an empty
     // connection would emit Reconnecting -> Connected just to sit
     // there with nothing to receive.
-    if (_subs.isEmpty || _disposed) {
+    if (_subs.isEmpty || _isDisposed) {
       return;
     }
     // Non-auth close with live subs: start the auto-reconnect cycle.
@@ -424,21 +424,21 @@ class RemoteConnection {
 
   /// Runs the exponential-backoff reconnect loop. On each attempt:
   ///   1. wait `_backoff.delayFor(attempt)`,
-  ///   2. open a fresh WS via `_connect` (which re-sends the AuthMsg
+  ///   2. open a fresh WS via `_connect` (which re-sends the AuthMessage
   ///      and awaits `auth_ok`; emits Connected on success),
   ///   3. re-issue every active subscribe so the server replays a
   ///      fresh `Snapshot×N → EndOfReplay → live` per substrate
   ///      snapshot-then-deltas semantics.
   /// On `maxAttempts` consecutive failures, transitions to Disconnected.
   Future<void> _runReconnectLoop() async {
-    if (_reconnecting) return;
-    _reconnecting = true;
+    if (_isReconnecting) return;
+    _isReconnecting = true;
     _reconnectDone = Completer<void>();
     try {
       for (var attempt = 0; attempt < _backoff.maxAttempts; attempt++) {
-        if (_disposed) return;
+        if (_isDisposed) return;
         await Future<void>.delayed(_backoff.delayFor(attempt));
-        if (_disposed) return;
+        if (_isDisposed) return;
         try {
           // Re-use `_ensureConnected` so a concurrent `openSubscription`
           // racing in during the gap blocks on the SAME connect future
@@ -459,12 +459,12 @@ class RemoteConnection {
         }
       }
       // Exhausted all attempts.
-      if (!_disposed) {
+      if (!_isDisposed) {
         _emitStatus(const Disconnected());
         _failOpenSubsWithDisconnect();
       }
     } finally {
-      _reconnecting = false;
+      _isReconnecting = false;
       _reconnectDone?.complete();
       _reconnectDone = null;
     }
@@ -490,7 +490,7 @@ class RemoteConnection {
   }
 
   Future<void> dispose() async {
-    _disposed = true;
+    _isDisposed = true;
     _idleCloseTimer?.cancel();
     // Fail any in-flight handshake so awaiters don't hang past dispose.
     final ac = _authComplete;
@@ -498,7 +498,7 @@ class RemoteConnection {
       ac.completeError(StateError('connection disposed'));
     }
     _authComplete = null;
-    // Wait for any in-flight reconnect loop to notice `_disposed` and
+    // Wait for any in-flight reconnect loop to notice `_isDisposed` and
     // bail out, so dispose() doesn't return while a background
     // reconnect attempt is still mutating state behind us.
     final reconnectDone = _reconnectDone;

@@ -80,7 +80,12 @@ class SectionCard extends StatelessWidget {
 
 /// A colored pill used for workspace tags, permissions, etc.
 class TagChip extends StatelessWidget {
-  const TagChip({required this.label, required this.color, this.icon, super.key});
+  const TagChip({
+    required this.label,
+    required this.color,
+    this.icon,
+    super.key,
+  });
 
   final String label;
   final Color color;

@@ -292,7 +292,11 @@ class _PermissionsCard extends StatelessWidget {
 }
 
 class _ChipRow extends StatelessWidget {
-  const _ChipRow({required this.label, required this.empty, required this.chips});
+  const _ChipRow({
+    required this.label,
+    required this.empty,
+    required this.chips,
+  });
 
   final String label;
   final String empty;
@@ -312,7 +316,12 @@ class _ChipRow extends StatelessWidget {
         ),
         Expanded(
           child: chips.isEmpty
-              ? Text(empty, style: TextStyle(color: Theme.of(context).colorScheme.outline))
+              ? Text(
+                  empty,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                )
               : Wrap(spacing: 6, runSpacing: 6, children: chips),
         ),
       ],

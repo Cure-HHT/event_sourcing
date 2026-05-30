@@ -43,8 +43,8 @@ Future<_Fixture> _setup({DateTime? now}) async {
   );
   final backend = SembastBackend(database: db);
   final registry = EntryTypeRegistry();
-  for (final defn in kSystemEntryTypes) {
-    registry.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
   }
   registry.register(_simpleDef('epistaxis_event'));
   final securityContexts = SembastSecurityContextStore(backend: backend);

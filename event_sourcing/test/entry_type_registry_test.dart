@@ -20,9 +20,9 @@ void main() {
     // id they were registered under — the registry's primary lookup
     // surface.
     test('register and byId round-trip', () {
-      final defn = _defn('demo_note');
-      registry.register(defn);
-      expect(registry.byId('demo_note'), same(defn));
+      final definition = _defn('demo_note');
+      registry.register(definition);
+      expect(registry.byId('demo_note'), same(definition));
     });
 
     // Verifies: byId returns null for unregistered ids so callers can

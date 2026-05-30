@@ -124,7 +124,7 @@ void main() {
               fromVersion: 1,
               toVersion: 2,
               transforms: <TransformPrimitive>[
-                RenameField(from: 'body', to: 'note_body'),
+                RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
             ),
           );
@@ -202,7 +202,7 @@ void main() {
             fromVersion: 1,
             toVersion: 2,
             transforms: <TransformPrimitive>[
-              RenameField(from: 'body', to: 'body_a'),
+              RenameField(sourceField: 'body', targetField: 'body_a'),
             ],
           ),
         )

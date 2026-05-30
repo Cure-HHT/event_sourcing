@@ -8,7 +8,7 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 
 /// Abstract persistence contract for the event-sourcing substrate.
@@ -35,14 +35,14 @@ abstract class StorageBackend {
   const StorageBackend();
 
   /// Execute [body] inside a single atomic backend transaction. All
-  /// `Txn`-bound writes performed within [body] SHALL commit together or
+  /// `Transaction`-bound writes performed within [body] SHALL commit together or
   /// SHALL roll back together on any thrown exception. The returned future
   /// completes with [body]'s return value on commit, or rethrows on rollback.
   ///
-  /// Concrete backends SHALL invalidate the [Txn] handle when [body] returns
+  /// Concrete backends SHALL invalidate the [Transaction] handle when [body] returns
   /// or throws, so that a later out-of-scope use raises an error rather than
   /// silently writing against a closed transaction.
-  Future<T> transaction<T>(Future<T> Function(Txn txn) body);
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body);
 
   // -------- Events --------
 
@@ -57,7 +57,7 @@ abstract class StorageBackend {
   /// [nextSequenceNumber] for the reservation contract.
   // Implements: EVS-PRD-event-log/A — append to the append-only, immutable log.
   // Implements: EVS-PRD-event-log/B — stable total order via sequence counter.
-  Future<AppendResult> appendEvent(Txn txn, StoredEvent event);
+  Future<AppendResult> appendEvent(Transaction txn, StoredEvent event);
 
   /// Events for one aggregate, sorted by `sequence_number` ascending.
   // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
@@ -70,7 +70,7 @@ abstract class StorageBackend {
   /// no-op-detection reads to be coherent with the same-transaction append.
   // Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order.
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
-    Txn txn,
+    Transaction txn,
     String aggregateId,
   );
 
@@ -115,7 +115,7 @@ abstract class StorageBackend {
   /// transaction that will append the new event. Reading the tail outside
   /// the transaction would make the chain vulnerable to a concurrent writer
   /// stamping a different previous-hash between the read and the commit.
-  Future<String?> readLatestEventHash(Txn txn);
+  Future<String?> readLatestEventHash(Transaction txn);
 
   /// Events in sequence_number order, read within [txn] so the result
   /// reflects writes already staged in the same transaction body. Optionally
@@ -137,7 +137,7 @@ abstract class StorageBackend {
   //   optional parameters with same semantics on the transactional variant.
   // Implements: EVS-DEV-find-all-events-extended-filters/C — filters AND-compose.
   Future<List<StoredEvent>> findAllEventsInTxn(
-    Txn txn, {
+    Transaction txn, {
     int? afterSequence,
     int? limit,
     String? entryType,
@@ -159,7 +159,7 @@ abstract class StorageBackend {
   /// in the same transaction is a caller bug; implementations SHALL reject
   /// it with a clear error rather than advancing the counter implicitly
   /// (Phase-2 Prereq B, Option 1).
-  Future<int> nextSequenceNumber(Txn txn);
+  Future<int> nextSequenceNumber(Transaction txn);
 
   /// Current value of the per-device sequence counter — i.e., the
   /// `sequence_number` of the most recently-persisted event. Returns 0
@@ -181,21 +181,21 @@ abstract class StorageBackend {
   /// Read one row from [viewName] by [key] inside [txn], or null when
   /// the row is absent.
   Future<Map<String, dynamic>?> readViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
   );
 
   /// Whole-row upsert into [viewName] at [key] inside [txn].
   Future<void> upsertViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
     Map<String, dynamic> row,
   );
 
   /// Delete the row at [key] in [viewName] inside [txn].
-  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key);
+  Future<void> deleteViewRowInTxn(Transaction txn, String viewName, String key);
 
   /// Iterate rows in [viewName] with optional `limit` / `offset`.
   /// Non-transactional.
@@ -223,7 +223,7 @@ abstract class StorageBackend {
   // Implements: EVS-PRD-action-dispatch — single-transaction authorize +
   //   execute path requires a transactional multi-row view-read primitive.
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
@@ -231,14 +231,14 @@ abstract class StorageBackend {
   });
 
   /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
-  Future<void> clearViewInTxn(Txn txn, String viewName);
+  Future<void> clearViewInTxn(Transaction txn, String viewName);
 
   // -------- View target versions (Phase 4.19) --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
   /// if no entry has been registered. Used by [rebuildView]
   Future<int?> readViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
   );
@@ -246,7 +246,7 @@ abstract class StorageBackend {
   /// Persist [targetVersion] for the [viewName]/[entryType] pair.
   /// Idempotent on repeat writes of the same value.
   Future<void> writeViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
     int targetVersion,
@@ -255,13 +255,13 @@ abstract class StorageBackend {
   /// Read all entry-type → target-version entries for [viewName].
   /// Used by `rebuildView`'s strict-superset check.
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
   );
 
   /// Remove every target-version entry for [viewName]. Used by
   /// `rebuildView` before re-recording, and by view drop helpers.
-  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName);
+  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName);
 
   // -------- FIFO (per destination) --------
 
@@ -304,7 +304,7 @@ abstract class StorageBackend {
   /// `sequence_in_queue` per FIFO, SHALL reject an empty [batch] with
   /// `ArgumentError`, SHALL reject a non-XOR `(wirePayload,
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
-  /// destination on first use so `anyFifoWedged`/`wedgedFifos` can
+  /// destination on first use so `hasFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
   Future<FifoEntry> enqueueFifo(
     String destinationId,
@@ -326,7 +326,7 @@ abstract class StorageBackend {
   /// [enqueueFifo] delegates to [enqueueFifoTxn] inside its own
   /// `transaction((txn) => ...)` wrapper.
   Future<FifoEntry> enqueueFifoTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
@@ -420,7 +420,7 @@ abstract class StorageBackend {
   );
 
   /// True iff any registered destination's FIFO head is `wedged`.
-  Future<bool> anyFifoWedged();
+  Future<bool> hasFifoWedged();
 
   /// Summarize every destination whose head row is wedged.
   Future<List<WedgedFifoSummary>> wedgedFifos();
@@ -434,7 +434,7 @@ abstract class StorageBackend {
   /// Write [version] into `backend_state` inside [txn]. Used by the schema
   /// migration path at boot; typical production flow writes the version once
   /// and leaves it alone until a migration.
-  Future<void> writeSchemaVersion(Txn txn, int version);
+  Future<void> writeSchemaVersion(Transaction txn, int version);
 
   /// Read the per-destination fill cursor — the highest `sequence_number`
   /// that has been promoted into any FIFO row (null, sent, wedged, or tombstoned)
@@ -463,7 +463,7 @@ abstract class StorageBackend {
   /// transaction's atomicity: on rollback the cursor reverts to its
   /// pre-transaction value.
   Future<void> writeFillCursorTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int sequenceNumber,
   );
@@ -472,7 +472,7 @@ abstract class StorageBackend {
   /// event with that id is present. Used by ingest's idempotency check.
   /// Reads the unified event log; origin-appended events and ingest-
   /// appended events occupy a single store keyed by `sequence_number`.
-  Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId);
+  Future<StoredEvent?> findEventByIdInTxn(Transaction txn, String eventId);
 
   /// Read a single event by `event_id` outside any transaction. Returns
   /// `null` when no event with that id is present. The abstract contract
@@ -507,7 +507,7 @@ abstract class StorageBackend {
   /// ops that accompany it (e.g. FIFO-store drop in
   /// `deleteDestination`) commit or roll back together.
   Future<void> writeScheduleTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     DestinationSchedule schedule,
   );
@@ -515,7 +515,7 @@ abstract class StorageBackend {
   /// Delete the `schedule_<destinationId>` record inside [txn]. Used by
   /// `deleteDestination` to drop schedule state and the FIFO store in
   /// one atomic step.
-  Future<void> deleteScheduleTxn(Txn txn, String destinationId);
+  Future<void> deleteScheduleTxn(Transaction txn, String destinationId);
 
   /// Drop the FIFO state for [destinationId] entirely inside [txn].
   /// Implementations SHALL remove every row associated with the
@@ -526,7 +526,7 @@ abstract class StorageBackend {
   /// `fifo_<destinationId>` store) the container itself is dropped;
   /// on backends with a shared FIFO table (e.g., postgres
   /// `fifo_entries`) the matching rows are deleted.
-  Future<void> deleteFifoStoreTxn(Txn txn, String destinationId);
+  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
   /// or `null` when no such row exists (either the FIFO store was never
@@ -565,7 +565,7 @@ abstract class StorageBackend {
   /// transaction, so a missing row at this point indicates a
   /// concurrent delete race that these ops do not close.
   Future<void> setFinalStatusTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     String entryId,
     FinalStatus? status,
@@ -581,7 +581,7 @@ abstract class StorageBackend {
   /// are left untouched regardless of their `sequence_in_queue` — per
   /// all non-null rows are retained forever.
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   );

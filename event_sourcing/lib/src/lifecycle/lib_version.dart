@@ -6,7 +6,7 @@
 class LibVersion {
   /// The version of the event_sourcing library compiled into this build.
   /// Update in lockstep with `pubspec.yaml`'s `version` field.
-  static const String current = '0.4.0';
+  static const String version = '0.4.0';
 
   /// Returns negative if [a] < [b], positive if [a] > [b], 0 if equal.
   /// Compares dot-separated integer components left to right; trailing

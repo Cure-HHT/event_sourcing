@@ -51,7 +51,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -59,7 +59,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -67,7 +67,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);

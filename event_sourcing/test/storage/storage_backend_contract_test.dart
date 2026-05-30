@@ -1,6 +1,6 @@
 // Verifies: EVS-PRD-portability/D — StorageBackend interface is implementable
 //   by any concrete backend. The general transaction-contract behaviors
-//   (commit, rollback, Txn-after-body, sequential-commit) are lifted into
+//   (commit, rollback, Transaction-after-body, sequential-commit) are lifted into
 //   the backend-agnostic harness in `storage_backend_conformance.dart` and
 //   exercised against every concrete backend.
 //
@@ -22,7 +22,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -55,7 +55,7 @@ void main() {
 
 /// Minimal in-memory backend used only by the nested-transaction test.
 ///
-/// Implements just enough behavior to construct a Txn and reject nested
+/// Implements just enough behavior to construct a Transaction and reject nested
 /// transactions. All other methods throw [UnimplementedError] — the
 /// abstract StorageBackend contract is covered by the backend-agnostic
 /// conformance harness exercising concrete implementations.
@@ -68,7 +68,7 @@ class _InMemoryBackend extends StorageBackend {
   Map<String, StoredEvent>? _staged;
 
   @override
-  Future<T> transaction<T>(Future<T> Function(Txn txn) body) async {
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     if (_staged != null) {
       throw StateError('Nested transactions are not supported by this fake');
     }
@@ -87,7 +87,7 @@ class _InMemoryBackend extends StorageBackend {
   }
 
   @override
-  Future<AppendResult> appendEvent(Txn txn, StoredEvent event) async {
+  Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     _assertOwnValid(txn)._check();
     _staged![event.eventId] = event;
     return AppendResult(
@@ -108,11 +108,12 @@ class _InMemoryBackend extends StorageBackend {
   }) async => throw UnimplementedError();
 
   @override
-  Future<String?> readLatestEventHash(Txn txn) => throw UnimplementedError();
+  Future<String?> readLatestEventHash(Transaction txn) =>
+      throw UnimplementedError();
 
   @override
   Future<List<StoredEvent>> findAllEventsInTxn(
-    Txn txn, {
+    Transaction txn, {
     int? afterSequence,
     int? limit,
     String? entryType,
@@ -120,9 +121,9 @@ class _InMemoryBackend extends StorageBackend {
     DateTime? clientTimestampEnd,
   }) async => throw UnimplementedError();
 
-  _InMemoryTxn _assertOwnValid(Txn txn) {
+  _InMemoryTxn _assertOwnValid(Transaction txn) {
     if (txn is! _InMemoryTxn || txn._backend != this) {
-      throw StateError('Txn does not belong to this backend');
+      throw StateError('Transaction does not belong to this backend');
     }
     return txn;
   }
@@ -133,29 +134,32 @@ class _InMemoryBackend extends StorageBackend {
       throw UnimplementedError();
   @override
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
-    Txn txn,
+    Transaction txn,
     String aggregateId,
   ) => throw UnimplementedError();
   @override
-  Future<int> nextSequenceNumber(Txn txn) => throw UnimplementedError();
+  Future<int> nextSequenceNumber(Transaction txn) => throw UnimplementedError();
   @override
   Future<int> readSequenceCounter() => throw UnimplementedError();
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
   ) => throw UnimplementedError();
   @override
   Future<void> upsertViewRowInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String key,
     Map<String, dynamic> row,
   ) => throw UnimplementedError();
   @override
-  Future<void> deleteViewRowInTxn(Txn txn, String viewName, String key) =>
-      throw UnimplementedError();
+  Future<void> deleteViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+  ) => throw UnimplementedError();
   @override
   Future<List<Map<String, dynamic>>> findViewRows(
     String viewName, {
@@ -164,35 +168,35 @@ class _InMemoryBackend extends StorageBackend {
   }) => throw UnimplementedError();
   @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
     int? offset,
   }) => throw UnimplementedError();
   @override
-  Future<void> clearViewInTxn(Txn txn, String viewName) =>
+  Future<void> clearViewInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
   @override
   Future<int?> readViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
   ) => throw UnimplementedError();
   @override
   Future<void> writeViewTargetVersionInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
     String entryType,
     int targetVersion,
   ) => throw UnimplementedError();
   @override
   Future<Map<String, int>> readAllViewTargetVersionsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName,
   ) => throw UnimplementedError();
   @override
-  Future<void> clearViewTargetVersionsInTxn(Txn txn, String viewName) =>
+  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
   @override
   Future<FifoEntry> enqueueFifo(
@@ -203,7 +207,7 @@ class _InMemoryBackend extends StorageBackend {
   }) => throw UnimplementedError();
   @override
   Future<FifoEntry> enqueueFifoTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
@@ -231,13 +235,13 @@ class _InMemoryBackend extends StorageBackend {
     FinalStatus status,
   ) => throw UnimplementedError();
   @override
-  Future<bool> anyFifoWedged() => throw UnimplementedError();
+  Future<bool> hasFifoWedged() => throw UnimplementedError();
   @override
   Future<List<WedgedFifoSummary>> wedgedFifos() => throw UnimplementedError();
   @override
   Future<int> readSchemaVersion() => throw UnimplementedError();
   @override
-  Future<void> writeSchemaVersion(Txn txn, int version) =>
+  Future<void> writeSchemaVersion(Transaction txn, int version) =>
       throw UnimplementedError();
   @override
   Future<int> readFillCursor(String destinationId) =>
@@ -247,7 +251,7 @@ class _InMemoryBackend extends StorageBackend {
       throw UnimplementedError();
   @override
   Future<void> writeFillCursorTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int sequenceNumber,
   ) => throw UnimplementedError();
@@ -261,34 +265,34 @@ class _InMemoryBackend extends StorageBackend {
   ) => throw UnimplementedError();
   @override
   Future<void> writeScheduleTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     DestinationSchedule schedule,
   ) => throw UnimplementedError();
   @override
-  Future<void> deleteScheduleTxn(Txn txn, String destinationId) =>
+  Future<void> deleteScheduleTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
   @override
-  Future<void> deleteFifoStoreTxn(Txn txn, String destinationId) =>
+  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
   @override
   Future<FifoEntry?> readFifoRow(String destinationId, String entryId) =>
       throw UnimplementedError();
   @override
   Future<void> setFinalStatusTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     String entryId,
     FinalStatus? status,
   ) => throw UnimplementedError();
   @override
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
-    Txn txn,
+    Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   ) => throw UnimplementedError();
   @override
-  Future<StoredEvent?> findEventByIdInTxn(Txn txn, String eventId) =>
+  Future<StoredEvent?> findEventByIdInTxn(Transaction txn, String eventId) =>
       throw UnimplementedError();
   @override
   Future<StoredEvent?> findEventById(String eventId) =>
@@ -310,7 +314,7 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> close() async {}
 }
 
-class _InMemoryTxn extends Txn {
+class _InMemoryTxn extends Transaction {
   _InMemoryTxn(this._backend);
   final _InMemoryBackend _backend;
   bool _valid = true;
@@ -321,7 +325,7 @@ class _InMemoryTxn extends Txn {
 
   void _check() {
     if (!_valid) {
-      throw StateError('Txn used outside its transaction() body');
+      throw StateError('Transaction used outside its transaction() body');
     }
   }
 }

@@ -1,6 +1,6 @@
 // Implements: EVS-PRD-event-log/A — every reserved system id corresponds to
 //   an audit event appended to the immutable log for each substrate mutation;
-//   no reserved entry type has materialize:true, so they never corrupt views.
+//   no reserved entry type has isMaterialized:true, so they never corrupt views.
 // Implements: EVS-PRD-regulatory-alignment/A — security-context and
 //   retention audit events carry timestamps (via EventStore.append), satisfying
 //   the ALCOA+ Contemporaneous obligation for substrate-emitted records.
@@ -45,7 +45,7 @@ const String kRetentionPolicyAppliedEntryType =
 
 /// Reserved id for the bootstrap audit event recording the
 /// `EntryTypeRegistry`'s id->registered_version map. Emitted once per
-/// `bootstrapAppendOnlyDatastore` call after `EventStore` construction
+/// `bootstrapEventStore` call after `EventStore` construction
 /// and before destination registration; deduped by content so a same-
 /// version reboot no-ops while a schema bump emits a new event.
 const String kEntryTypeRegistryInitializedEntryType =
@@ -77,7 +77,7 @@ const String kIngestAuditEntryType = 'ingest-audit';
 /// emitted by the snapshot-promotion pass.
 const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
 
-/// Reserved set of ids. `bootstrapAppendOnlyDatastore` auto-registers
+/// Reserved set of ids. `bootstrapEventStore` auto-registers
 /// these BEFORE iterating the caller-supplied entry-type list. A
 /// caller-supplied id colliding with one of these throws `ArgumentError`
 /// with an explicit "reserved" message (-D revised).
@@ -113,7 +113,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// `ingest-audit` event (covering `logRejectedBatch` and
 /// `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
 /// audit emitted by the boot-time snapshot-promotion pass. All have
-/// `materialize: false` so they never hit any view; they exist only to
+/// `isMaterialized: false` so they never hit any view; they exist only to
 /// stamp an immutable event_log row for every covered mutation.
 ///
 /// The lib-version entries (`lib_version_initialized`,
@@ -132,84 +132,84 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     id: kSecurityContextRedactedEntryType,
     registeredVersion: 1,
     name: 'Security Context Redacted',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kSecurityContextCompactedEntryType,
     registeredVersion: 1,
     name: 'Security Context Compacted',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kSecurityContextPurgedEntryType,
     registeredVersion: 1,
     name: 'Security Context Purged',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationRegisteredEntryType,
     registeredVersion: 1,
     name: 'Destination Registered',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationStartDateSetEntryType,
     registeredVersion: 1,
     name: 'Destination Start Date Set',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationEndDateSetEntryType,
     registeredVersion: 1,
     name: 'Destination End Date Set',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationDeletedEntryType,
     registeredVersion: 1,
     name: 'Destination Deleted',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationWedgeRecoveredEntryType,
     registeredVersion: 1,
     name: 'Destination Wedge Recovered',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
     registeredVersion: 1,
     name: 'Retention Policy Applied',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kEntryTypeRegistryInitializedEntryType,
     registeredVersion: 1,
     name: 'Entry Type Registry Initialized',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kLibVersionInitializedEntryType,
     registeredVersion: 1,
     name: 'Lib Version Initialized',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kLibVersionChangedEntryType,
     registeredVersion: 1,
     name: 'Lib Version Changed',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kIngestAuditEntryType,
     registeredVersion: 1,
     name: 'Ingest Audit',
-    materialize: false,
+    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kViewSnapshotPromotedEntryType,
     registeredVersion: 1,
     name: 'View Snapshot Promoted',
-    materialize: false,
+    isMaterialized: false,
   ),
 ];

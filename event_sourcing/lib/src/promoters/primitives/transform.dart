@@ -8,20 +8,21 @@ sealed class TransformPrimitive {
 }
 
 class RenameField extends TransformPrimitive {
-  final String from;
-  final String to;
-  const RenameField({required this.from, required this.to});
+  final String sourceField;
+  final String targetField;
+  const RenameField({required this.sourceField, required this.targetField});
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {
-    if (!input.containsKey(from)) return input;
-    if (input.containsKey(to)) {
+    if (!input.containsKey(sourceField)) return input;
+    if (input.containsKey(targetField)) {
       throw StateError(
-        'RenameField($from -> $to): target field "$to" already present',
+        'RenameField($sourceField -> $targetField): '
+        'target field "$targetField" already present',
       );
     }
     final next = Map<String, Object?>.from(input);
-    next[to] = next.remove(from);
+    next[targetField] = next.remove(sourceField);
     return Map.unmodifiable(next);
   }
 }

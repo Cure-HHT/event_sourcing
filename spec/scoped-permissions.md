@@ -55,7 +55,7 @@ The scope-class mechanism is **domain-neutral**: the substrate ships the registr
 |  user_role_scopes      site, patient,     EditPatient,         |
 |  role_permission_      project, ... ;     EnrollPatient,       |
 |  grants;               each with optional Action; ...          |
-|  patient_site_index;   ContainmentRef                          |
+|  patient_site_index;   ContainmentReference                          |
 |  ...                                                           |
 +----------------------------------------------------------------+
                                 |
@@ -110,7 +110,7 @@ ScopeClassSpec(
 
 ScopeClassSpec(
   name: 'patient',
-  containedIn: ContainmentRef(
+  containedIn: ContainmentReference(
     parentClass:  'site',
     projection:   'patient_site_index',  // a TableProjectionSpec
     keyColumn:    'patient_id',          // how the projection is keyed
@@ -119,7 +119,7 @@ ScopeClassSpec(
 )
 ```
 
-`ContainmentRef` points at a `TableProjectionSpec` the app already maintains for its own state. At evaluation time, to test whether assignment `(site, A)` covers requested scope `(patient, P-42)`, the substrate:
+`ContainmentReference` points at a `TableProjectionSpec` the app already maintains for its own state. At evaluation time, to test whether assignment `(site, A)` covers requested scope `(patient, P-42)`, the substrate:
 
 1. Sees that `patient.containedIn.parentClass == site`.
 2. Reads `patient_site_index` row where `patient_id = P-42`; reads its `site_id` column → `A`.
@@ -132,11 +132,11 @@ Containment chains. Substrate walks the class graph upward until either match or
 - Hierarchy lives in **data** (an event-derived projection), not in app-supplied code. Same epistemic-layer story as the rest of the substrate: Layer-1 facts (the projection's rows) drive a Layer-2 convention (the containment match).
 - Containment evaluation is substrate code, not app-callback code — preserves the no-app-supplied-policy-logic commitment.
 - The projection is a regular `TableProjectionSpec` the app likely already maintains for its UI. Substrate just *reads* it.
-- Fail-closed on missing rows: if `patient_site_index` has no row for `P-42` at evaluation time, containment lookup misses, scope match fails, and the principal is denied. This handles projection-catch-up lag, deliberately-unmapped values, and misconfigured `ContainmentRef`s identically. The client retries; the audit captures the denial.
+- Fail-closed on missing rows: if `patient_site_index` has no row for `P-42` at evaluation time, containment lookup misses, scope match fails, and the principal is denied. This handles projection-catch-up lag, deliberately-unmapped values, and misconfigured `ContainmentReference`s identically. The client retries; the audit captures the denial.
 
 **Composition-time validation** (substrate refuses to construct on violation):
 
-- `ContainmentRef.projection` must be a registered `ProjectionSpec` of `TableProjectionSpec` kind.
+- `ContainmentReference.projection` must be a registered `ProjectionSpec` of `TableProjectionSpec` kind.
 - `keyColumn` and `parentColumn` must be columns the projection emits.
 - `parentClass` must be a registered `ScopeClassSpec`.
 - No cycles in the class-containment graph.
@@ -393,7 +393,7 @@ This closes the narrow race where an ingest-arriving revocation could land betwe
 
 The decision this pins: a revocation arriving between two dispatches takes effect on the *second* one; a revocation arriving during a single dispatch's transaction takes effect *after* it commits. Concretely on a single-source v1 deployment without ingest, the race window doesn't exist at all; the transaction stance is the correct posture regardless and prepares for ingest-active deployments.
 
-**Implementation pre-req — transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. The current `StorageBackend` surface (`event_sourcing/lib/src/storage/storage_backend.dart`) provides `readViewRowInTxn` (single-row, in-txn) and `findViewRows` (multi-row, non-transactional); the transactional-snapshot guarantee requires a transactional multi-row read. The impl ticket adds `findViewRowsInTxn(Txn, viewName, {filter})` (or equivalent — name TBD by impl) to the abstract `StorageBackend` interface, with implementations in each backend (sembast first). This is a substrate-interface addition, not an app surface; follows the same abstract-backend-agnostic contract as existing `*InTxn` methods.
+**Implementation pre-req — transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. The current `StorageBackend` surface (`event_sourcing/lib/src/storage/storage_backend.dart`) provides `readViewRowInTxn` (single-row, in-txn) and `findViewRows` (multi-row, non-transactional); the transactional-snapshot guarantee requires a transactional multi-row read. The impl ticket adds `findViewRowsInTxn(Transaction, viewName, {filter})` (or equivalent — name TBD by impl) to the abstract `StorageBackend` interface, with implementations in each backend (sembast first). This is a substrate-interface addition, not an app surface; follows the same abstract-backend-agnostic contract as existing `*InTxn` methods.
 
 **Denial reasons**:
 
@@ -442,7 +442,7 @@ event_sourcing/lib/src/actions/authorization_decision.dart       MODIFY
 
 ```text
 event_sourcing/lib/src/permissions/scope_class_spec.dart         NEW
-  - ScopeClassSpec, ContainmentRef
+  - ScopeClassSpec, ContainmentReference
   - ScopeClassRegistry (composition-time validation)
 
 event_sourcing/lib/src/actions/scope_value.dart                  NEW
@@ -506,7 +506,7 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 
 **Open (pre-impl decisions still to make):**
 
-1. **Containment-ref column-mapping typing.** Today's `TableProjection` rows have a row-key plus arbitrary columns. `ContainmentRef` carries column-name strings. The projection-row contract could be more typed for scope-class projections (e.g., a `ScopeIndexProjection` subtype with declared `keyType` / `parentValueType`). Cleaner type discipline; more boilerplate. Tend yes for future tightening; not load-bearing for v1.
+1. **Containment-ref column-mapping typing.** Today's `TableProjection` rows have a row-key plus arbitrary columns. `ContainmentReference` carries column-name strings. The projection-row contract could be more typed for scope-class projections (e.g., a `ScopeIndexProjection` subtype with declared `keyType` / `parentValueType`). Cleaner type discipline; more boilerplate. Tend yes for future tightening; not load-bearing for v1.
 
 2. **Action validation for scoped-permission completeness.** A scoped `Action` whose `scopeFor` returns `null` for some input shape silently denies with `scopeUnresolvable`. Registration-time validation cannot detect this (return value depends on input). Recommended posture: runtime denial as designed, with a **DEV-level test obligation per scoped action** that exercises `scopeFor` against realistic and edge-case inputs.
 
@@ -542,7 +542,7 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 
 - **Re-check authorization at execute time** (rather than transactional authorize+execute). Rejected: introduces read amplification, an incoherent rollback story (storage doesn't unmake emitted events), and still leaves narrow windows. Transactional snapshot is the cleaner guarantee.
 
-- **App-supplied scope-expander callback** for hierarchy. Rejected: violates the no-app-supplied-policy-logic commitment. Hierarchy must come from event-derived projections that the substrate reads (the `ContainmentRef` mechanism).
+- **App-supplied scope-expander callback** for hierarchy. Rejected: violates the no-app-supplied-policy-logic commitment. Hierarchy must come from event-derived projections that the substrate reads (the `ContainmentReference` mechanism).
 
 - **`Principal` carries a scope-context map** (`{site: A, patient: P-42}`) alongside `activeRole`. Rejected: under the union-within-active-role semantics, the substrate auto-discovers every scope the user is assigned to; no per-session scope selection is needed. Audit context for "the user was viewing site A's UI when they did this" can be stamped by the action into the emitted event payload (app-domain audit, not substrate authorization).
 
@@ -589,7 +589,7 @@ The substrate ships domain-neutral, app-registered scope-class machinery (`Scope
 
 ### Changelog
 
-- 2026-05-14 | d3eee322 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | d3eee322 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Scope-aware authorization model* | **Hash**: d3eee322
 
@@ -602,21 +602,21 @@ The substrate ships domain-neutral, app-registered scope-class machinery (`Scope
 
 A. `ScopeClassRegistry` SHALL throw `StateError` at construction when two `ScopeClassSpec`s share the same `name`.
 
-B. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentRef.parentClass` names a class that is not in the registry.
+B. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentReference.parentClass` names a class that is not in the registry.
 
-C. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentRef.projection` cannot be resolved by the supplied projection lookup, or when its declared `keyColumn` or `parentColumn` is not a column of that projection.
+C. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `ContainmentReference.projection` cannot be resolved by the supplied projection lookup, or when its declared `keyColumn` or `parentColumn` is not a column of that projection.
 
 D. `ScopeClassRegistry` SHALL throw `StateError` at construction when the class-containment graph contains a cycle.
 
 E. `ScopeClassRegistry` SHALL expose lookup-by-name and an ancestor-chain walk such that `isAncestor(a, d)` returns true iff `a` appears in `d`'s containment chain (inclusive of `d`).
-
 ---
 
 ### Changelog
 
-- 2026-05-14 | 4a76c916 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 385c89c8 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
+- 2026-05-14 | 4a76c916 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Composition-time scope-class registry validation* | **Hash**: 4a76c916
+*End* *Composition-time scope-class registry validation* | **Hash**: 385c89c8
 
 ## EVS-DEV-scope-value-json: Sealed ScopeValue JSON contract
 
@@ -634,12 +634,11 @@ C. `TotalWildcardScope.toJson` SHALL produce exactly `{"wildcard_class": true}`,
 D. `ScopeValue.fromJson` SHALL be a complete-on-shape polymorphic decoder: it returns `BoundScope`, `ValueWildcardScope`, or `TotalWildcardScope` for inputs matching exactly one of the three shapes, and SHALL throw `FormatException` for any other object (including objects whose discriminator keys are present but whose value is not the literal `true`, or whose key set is ambiguous between shapes).
 
 E. The round-trip `ScopeValue.fromJson(v.toJson()) == v` SHALL hold for every concrete `ScopeValue` instance constructible via the public constructors.
-
 ---
 
 ### Changelog
 
-- 2026-05-14 | 1e192982 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | 1e192982 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Sealed ScopeValue JSON contract* | **Hash**: 1e192982
 
@@ -654,17 +653,17 @@ A. `ContainmentResolver.resolve(from, target)` SHALL return `from` unchanged whe
 
 B. `ContainmentResolver.resolve(from, target)` SHALL return `null` when `target` is not in `from.class_`'s ancestor chain in the registry.
 
-C. `ContainmentResolver.resolve(from, target)` SHALL walk the ancestor chain by reading each hop's `ContainmentRef.projection` (via the injected transactional read), returning the resolved ancestor `BoundScope` at class `target`.
+C. `ContainmentResolver.resolve(from, target)` SHALL walk the ancestor chain by reading each hop's `ContainmentReference.projection` (via the injected transactional read), returning the resolved ancestor `BoundScope` at class `target`.
 
 D. `ContainmentResolver.resolve` SHALL return `null` when any hop's projection returns zero rows for the current key, or returns a row whose `parentColumn` is missing, non-string, or empty (fail-closed on missing containment data).
-
 ---
 
 ### Changelog
 
-- 2026-05-14 | 8b7a3f36 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 9013633f | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
+- 2026-05-14 | 8b7a3f36 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Containment-chain walk via TableProjections* | **Hash**: 8b7a3f36
+*End* *Containment-chain walk via TableProjections* | **Hash**: 9013633f
 
 ## EVS-DEV-scoped-permissions-match-algorithm: TableBackedAuthorizationPolicy match semantics
 
@@ -684,7 +683,6 @@ D. For a scoped permission, the policy SHALL allow the request when at least one
 E. The policy SHALL deny with `DenyReason.notGranted` when no assignment matches the requested scope, including when containment resolution returns `null` for every assignment (fail-closed propagation from the resolver).
 
 F. The policy SHALL return `Deny(notGranted)` for principals that are not `UserPrincipal` (anonymous principals have no role assignments).
-
 ---
 
 ### Rationale
@@ -695,9 +693,9 @@ Reusing the assignment row set for the scope-match step keeps the cost a single 
 
 ### Changelog
 
-- 2026-05-24 | 87555bb8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
-- 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
-- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
+- 2026-05-24 | 87555bb8 | - | Michael Lewis (michael@anspar.org) | Auto-fix: sync changelog hash
+- 2026-05-14 | 899af570 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (michael.lewis.c@gmail.com) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
 
 *End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 87555bb8
 
@@ -715,14 +713,13 @@ B. `effectivePermissionsFor` SHALL return `EffectiveAuthorization.empty` for pri
 C. `ScopeAssignment` SHALL carry exactly one `ScopeValue` (the assigned scope), so that clients composing the surface against their own projections see assignments as sealed-variant values rather than encoded strings.
 
 D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `rolePermissions` set, and an empty `scopeAssignments` list, and SHALL satisfy structural equality with another empty instance.
-
 ---
 
 ### Changelog
 
-- 2026-05-24 | deab9862 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
-- 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
-- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
+- 2026-05-24 | deab9862 | - | Michael Lewis (michael@anspar.org) | Auto-fix: sync changelog hash
+- 2026-05-14 | b688e6ed | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (michael.lewis.c@gmail.com) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
 
 *End* *effectivePermissionsFor surface* | **Hash**: deab9862
 
@@ -733,21 +730,21 @@ D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `ro
 
 ### Assertions
 
-A. The dispatcher SHALL open one storage transaction for the authorize, execute, and stage-8 persist phases of a single dispatch; the `AuthorizationPolicy` SHALL receive the active `Txn` so its projection reads share the read-snapshot with the appended events.
+A. The dispatcher SHALL open one storage transaction for the authorize, execute, and stage-8 persist phases of a single dispatch; the `AuthorizationPolicy` SHALL receive the active `Transaction` so its projection reads share the read-snapshot with the appended events.
 
 B. When the authorize stage produces a `Deny` from within the dispatch transaction, the dispatcher SHALL append the `authorization_denied` event in the same transaction so the policy reads and the recorded denial commit atomically.
 
 C. When the execute stage throws or the stage-8 append throws, the dispatch transaction SHALL be rolled back, and the dispatcher SHALL emit the corresponding denial event (`execution_failed`) in a separate append after the rollback.
 
 D. The transactional posture SHALL ensure that a role or scope revocation committed concurrently with an in-flight dispatch does not change that dispatch's outcome; the revocation SHALL take effect on subsequent dispatches.
-
 ---
 
 ### Changelog
 
-- 2026-05-14 | 6461dd31 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 4b9e68a5 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
+- 2026-05-14 | 6461dd31 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 6461dd31
+*End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 4b9e68a5
 
 ## EVS-DEV-role-assignment-aggregate-id: Canonical-JSON aggregate id for role assignments
 
@@ -756,19 +753,19 @@ D. The transactional posture SHALL ensure that a role or scope revocation commit
 
 ### Assertions
 
-A. `roleAssignmentAggregateId(userId, role, scope)` SHALL return the canonical-JSON (JCS, RFC 8785) encoding of the object `{"user_id": userId, "role": role, "scope": scope.toJson()}`.
+A. `computeRoleAssignmentAggregateId(userId, role, scope)` SHALL return the canonical-JSON (JCS, RFC 8785) encoding of the object `{"user_id": userId, "role": role, "scope": scope.toJson()}`.
 
 B. Distinct `(userId, role, scope)` tuples SHALL produce distinct aggregate ids; identical tuples SHALL produce byte-identical aggregate ids regardless of construction order.
 
 C. The aggregate id SHALL be safe against segment-encoding ambiguity: a userId, role, or scope value containing characters like `:` or `/` SHALL NOT collide with a different tuple's id.
-
 ---
 
 ### Changelog
 
-- 2026-05-14 | abb4d0a5 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 05adadf2 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
+- 2026-05-14 | abb4d0a5 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Canonical-JSON aggregate id for role assignments* | **Hash**: abb4d0a5
+*End* *Canonical-JSON aggregate id for role assignments* | **Hash**: 05adadf2
 
 ## EVS-DEV-scope-unresolvable-denial: Dispatcher denial when Action.scopeFor is unusable
 
@@ -789,6 +786,6 @@ E. When a scope value was returned (any of cases C or D, but not B), the dispatc
 
 ### Changelog
 
-- 2026-05-14 | 4a2db650 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | 4a2db650 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 4a2db650

@@ -95,7 +95,7 @@ class PolicyHarness {
           id: 'role_permission_grant',
           registeredVersion: 1,
           name: 'Role-permission grant',
-          materialize: false,
+          isMaterialized: false,
         ),
       )
       ..register(
@@ -103,7 +103,7 @@ class PolicyHarness {
           id: 'user_role_scope',
           registeredVersion: 1,
           name: 'User-role-scope assignment',
-          materialize: false,
+          isMaterialized: false,
         ),
       )
       ..register(
@@ -111,7 +111,7 @@ class PolicyHarness {
           id: 'patient_site_assignment',
           registeredVersion: 1,
           name: 'Patient-to-site assignment',
-          materialize: false,
+          isMaterialized: false,
         ),
       );
 
@@ -153,7 +153,7 @@ class PolicyHarness {
       await eventStore.append(
         entryType: 'user_role_scope',
         aggregateType: 'user_role_scope',
-        aggregateId: roleAssignmentAggregateId(
+        aggregateId: computeRoleAssignmentAggregateId(
           userId: a.userId,
           role: a.role,
           scope: a.scope,
@@ -192,7 +192,7 @@ class PolicyHarness {
         ScopeClassSpec(name: 'site'),
         ScopeClassSpec(
           name: 'patient',
-          containedIn: ContainmentRef(
+          containedIn: ContainmentReference(
             parentClass: 'site',
             projection: 'patient_site_index',
             keyColumn: 'patient_id',
@@ -208,7 +208,7 @@ class PolicyHarness {
     final policy = TableBackedAuthorizationPolicy(
       backend: backend,
       scopeClassRegistry: scopeClassRegistry,
-      txnProvider: <T>(fn) => backend.transaction<T>(fn),
+      transactionProvider: <T>(fn) => backend.transaction<T>(fn),
     );
 
     return PolicyHarness._(

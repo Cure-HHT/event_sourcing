@@ -15,7 +15,7 @@ import 'package:shelf/shelf.dart';
 /// Handler for GET /permissions/snapshot. Returns the
 /// EffectiveAuthorization for the Principal attached by the auth
 /// middleware.
-Handler permissionRouteHandler({required AuthorizationPolicy policy}) {
+Handler permissionSnapshotHandler({required AuthorizationPolicy policy}) {
   return (Request request) async {
     final principal = principalFromContext(request);
     if (principal == null) {

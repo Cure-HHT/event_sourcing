@@ -19,7 +19,7 @@ void main() {
       const rows = <int>[1, 2, 3];
       expect(const Ready<int>(rows).rows, equals(rows));
       expect(const Stale<int>(rows, 'err').lastRows, equals(rows));
-      expect(const Stale<int>(rows, 'err').error, equals('err'));
+      expect(const Stale<int>(rows, 'err').connectionStatus, equals('err'));
     });
 
     test('exhaustive switch compiles and dispatches correctly', () {

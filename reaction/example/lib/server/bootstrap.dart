@@ -27,7 +27,7 @@ import 'package:shelf_router/shelf_router.dart';
 
 /// Bundle returned by [bootstrap]: the composed top-level shelf router
 /// (ready for `shelf_io.serve`) and a `dispose` callback that tears
-/// down the substrate + AuthzWatcher on graceful shutdown.
+/// down the substrate + AuthorizationWatcher on graceful shutdown.
 class BootstrapResult {
   BootstrapResult({required this.router, required this.dispose});
 
@@ -84,8 +84,8 @@ Future<BootstrapResult> bootstrap() async {
 
   // --- Entry types ---
   final entryTypes = EntryTypeRegistry();
-  for (final defn in kSystemEntryTypes) {
-    entryTypes.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    entryTypes.register(definition);
   }
   entryTypes
     ..register(
@@ -147,7 +147,7 @@ Future<BootstrapResult> bootstrap() async {
   final policy = TableBackedAuthorizationPolicy(
     backend: backend,
     scopeClassRegistry: scopeClassRegistry,
-    txnProvider: <T>(fn) => backend.transaction<T>(fn),
+    transactionProvider: <T>(fn) => backend.transaction<T>(fn),
   );
 
   // --- Action dispatcher ---
@@ -207,7 +207,7 @@ Future<BootstrapResult> bootstrap() async {
     await eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
-      aggregateId: roleAssignmentAggregateId(
+      aggregateId: computeRoleAssignmentAggregateId(
         userId: user.userId,
         role: user.role,
         scope: user.scope,
@@ -248,7 +248,7 @@ Future<BootstrapResult> bootstrap() async {
       .addHandler(httpRouter.call);
 
   // /admin/revoke is a no-auth admin escape hatch: it appends a
-  // role_unassigned event for the supplied user, AuthzWatcher closes
+  // role_unassigned event for the supplied user, AuthorizationWatcher closes
   // their WS with 4003, the client flips to Expired. Production
   // deployments wouldn't expose this — the in-app `unassign_role`
   // action (admin-gated) is the primary mechanism. Useful for testing
@@ -272,7 +272,7 @@ Future<BootstrapResult> bootstrap() async {
     await eventStore.append(
       entryType: 'user_role_scope',
       aggregateType: 'user_role_scope',
-      aggregateId: roleAssignmentAggregateId(
+      aggregateId: computeRoleAssignmentAggregateId(
         userId: user.userId,
         role: user.role,
         scope: user.scope,

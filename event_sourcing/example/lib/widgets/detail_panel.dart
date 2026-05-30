@@ -56,7 +56,7 @@ class _DetailPanelState extends State<DetailPanel> {
   Future<void> _refresh() async {
     try {
       final events = await widget.backend.findAllEvents(limit: 100000);
-      final anyWedged = await widget.backend.anyFifoWedged();
+      final anyWedged = await widget.backend.hasFifoWedged();
       final wedged = await widget.backend.wedgedFifos();
       final aggCount = events.map((e) => e.aggregateId).toSet().length;
       final text = <String>[

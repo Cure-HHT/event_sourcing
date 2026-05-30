@@ -165,7 +165,7 @@ void main() {
 /// Seeds the harness's role-permission matrix with 'say_hello' granted to the
 /// 'greeter' role.
 ///
-/// Uses [EventSeedApplier] directly (no YAML round-trip needed in tests).
+/// Uses [PermissionSeedApplier] directly (no YAML round-trip needed in tests).
 /// [SayHelloAction.permissions] declares `Permission('say_hello')` —
 /// that's the declared set passed to apply().
 Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
@@ -176,7 +176,7 @@ Future<void> _grantSayHelloToGreeterRole(ReactionTestHarness harness) async {
       'greeter': {'say_hello'},
     },
   );
-  final applier = EventSeedApplier(
+  final applier = PermissionSeedApplier(
     eventStore: harness.eventStore,
     seedInitiator: const AutomationInitiator(service: 'reaction_test_seed'),
   );

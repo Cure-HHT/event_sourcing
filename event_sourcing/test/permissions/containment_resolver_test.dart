@@ -13,7 +13,7 @@ class _FakeBackend {
   final Map<String, List<Map<String, dynamic>>> rows;
 
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
-    Txn txn,
+    Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
@@ -27,7 +27,7 @@ class _FakeBackend {
   }
 }
 
-class _FakeTxn extends Txn {
+class _FakeTxn extends Transaction {
   const _FakeTxn();
 }
 
@@ -39,7 +39,7 @@ void main() {
           ScopeClassSpec(name: 'site'),
           ScopeClassSpec(
             name: 'patient',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'site',
               projection: 'patient_site_index',
               keyColumn: 'patient_id',
@@ -73,7 +73,7 @@ void main() {
           ScopeClassSpec(name: 'region'),
           ScopeClassSpec(
             name: 'site',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'region',
               projection: 'site_region',
               keyColumn: 'site_id',
@@ -82,7 +82,7 @@ void main() {
           ),
           ScopeClassSpec(
             name: 'patient',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'site',
               projection: 'patient_site',
               keyColumn: 'patient_id',
@@ -122,7 +122,7 @@ void main() {
             ScopeClassSpec(name: 'site'),
             ScopeClassSpec(
               name: 'patient',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'site',
                 projection: 'patient_site',
                 keyColumn: 'patient_id',

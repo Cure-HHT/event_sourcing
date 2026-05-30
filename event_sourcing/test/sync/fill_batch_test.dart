@@ -146,7 +146,7 @@ void main() {
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
       expect(head!.eventIds, ['e1', 'e2', 'e3']);
-      expect(head.eventIdRange, (firstSeq: 1, lastSeq: 3));
+      expect(head.sequenceRange, (firstSeq: 1, lastSeq: 3));
       expect(head.finalStatus, isNull);
       // Cursor advances to the batch's last sequence_number.
       expect(await backend.readFillCursor('fake'), 3);
@@ -347,7 +347,7 @@ void main() {
       expect(await backend.readFillCursor('fake'), 1);
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
-      expect(head!.eventIdRange.lastSeq, 1);
+      expect(head!.sequenceRange.lastSeq, 1);
     });
 
     // A repeat call with no new matching events is a true no-op: no new

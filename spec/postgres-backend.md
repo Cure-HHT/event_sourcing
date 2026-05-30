@@ -144,7 +144,7 @@ orientation; the DDL file is the source of truth.
 The `PostgresBackend` implements exactly the abstract `StorageBackend`
 interface that `SembastBackend` does today — same method signatures,
 same `StoredEvent` shape on the wire between substrate and backend,
-same `Txn` handle lifetime rules, same return-value contracts. The
+same `Transaction` handle lifetime rules, same return-value contracts. The
 substrate calls into the backend identically regardless of which impl
 is wired in at composition time; tests written against the conformance
 harness exercise both with the same assertions.

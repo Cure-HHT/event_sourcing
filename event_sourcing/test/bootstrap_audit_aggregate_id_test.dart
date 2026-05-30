@@ -34,7 +34,7 @@ void main() {
           'bootstrap-aggid.db',
         );
         final backend = SembastBackend(database: db);
-        await bootstrapAppendOnlyDatastore(
+        await bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA()],
@@ -76,7 +76,7 @@ void main() {
         final factory = newDatabaseFactoryMemory();
         final dbA = await factory.openDatabase('install-A.db');
         final backendA = SembastBackend(database: dbA);
-        await bootstrapAppendOnlyDatastore(
+        await bootstrapEventStore(
           backend: backendA,
           source: sourceA,
           entryTypes: <EntryTypeDefinition>[_typeA()],
@@ -84,7 +84,7 @@ void main() {
         );
         final dbB = await factory.openDatabase('install-B.db');
         final backendB = SembastBackend(database: dbB);
-        await bootstrapAppendOnlyDatastore(
+        await bootstrapEventStore(
           backend: backendB,
           source: sourceB,
           entryTypes: <EntryTypeDefinition>[_typeA()],

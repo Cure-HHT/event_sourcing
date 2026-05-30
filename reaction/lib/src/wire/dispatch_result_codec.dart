@@ -42,44 +42,44 @@ import 'envelope.dart';
 class DispatchResultCodec {
   const DispatchResultCodec._();
 
-  static Map<String, Object?> encode(DispatchResult<Object?> r) {
-    return switch (r) {
+  static Map<String, Object?> encode(DispatchResult<Object?> result) {
+    return switch (result) {
       DispatchSuccess<Object?>() => {
         'type': 'success',
-        'result': r.result,
-        'emittedEventIds': r.emittedEventIds,
+        'result': result.result,
+        'emittedEventIds': result.emittedEventIds,
       },
       DispatchUnknownAction<Object?>() => {
         'type': 'unknown_action',
-        'requestedName': r.requestedName,
+        'requestedName': result.requestedName,
       },
       DispatchParseDenied<Object?>() => {
         'type': 'parse_denied',
-        'error': r.error.toString(),
+        'error': result.error.toString(),
       },
       DispatchValidationDenied<Object?>() => {
         'type': 'validation_denied',
-        'error': r.error.toString(),
+        'error': result.error.toString(),
       },
       DispatchAuthorizationDenied<Object?>() => {
         'type': 'authorization_denied',
-        'permission': _encodePermission(r.permission),
+        'permission': _encodePermission(result.permission),
       },
       DispatchExecutionFailed<Object?>() => {
         'type': 'execution_failed',
-        'error': r.error.toString(),
+        'error': result.error.toString(),
       },
       DispatchIdempotencyHit<Object?>() => {
         'type': 'idempotency_hit',
-        'cachedResult': r.cachedResult,
-        'priorEmittedEventIds': r.priorEmittedEventIds,
+        'cachedResult': result.cachedResult,
+        'priorEmittedEventIds': result.priorEmittedEventIds,
       },
       DispatchIdempotencyMismatch<Object?>() => {
         'type': 'idempotency_mismatch',
-        'actionName': r.actionName,
-        'idempotencyKey': r.idempotencyKey,
-        'cachedRawInputHash': r.cachedRawInputHash,
-        'submittedRawInputHash': r.submittedRawInputHash,
+        'actionName': result.actionName,
+        'idempotencyKey': result.idempotencyKey,
+        'cachedRawInputHash': result.cachedRawInputHash,
+        'submittedRawInputHash': result.submittedRawInputHash,
       },
     };
   }

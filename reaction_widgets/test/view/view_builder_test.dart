@@ -35,7 +35,7 @@ Future<List<ViewState<_Row>>> _pumpRecording(
   WidgetTester tester, {
   required FakeReaction fake,
   required String viewName,
-  bool progressive = false,
+  bool isProgressive = false,
 }) async {
   final transitions = <ViewState<_Row>>[];
   await pumpReactionWidget(
@@ -45,7 +45,7 @@ Future<List<ViewState<_Row>>> _pumpRecording(
       viewName: viewName,
       mapper: (m) => m,
       aggregateIdOf: _aggregateIdOf,
-      progressive: progressive,
+      isProgressive: isProgressive,
       builder: (ctx, state) {
         transitions.add(state);
         return const SizedBox.shrink();
@@ -282,7 +282,7 @@ void main() {
       final dc = transitions.last as Stale<_Row>;
       expect(dc.lastRows, hasLength(1));
       expect(_aggregateIdOf(dc.lastRows.single), 'a');
-      expect(dc.error, isA<Reconnecting>());
+      expect(dc.connectionStatus, isA<Reconnecting>());
     });
 
     testWidgets('Connected after Stale re-enters Loading then Ready', (
@@ -371,8 +371,8 @@ void main() {
     });
   });
 
-  group('ViewBuilder (progressive mode)', () {
-    testWidgets('progressive mode emits Ready during snapshot replay', (
+  group('ViewBuilder (isProgressive mode)', () {
+    testWidgets('isProgressive mode emits Ready during snapshot replay', (
       tester,
     ) async {
       final fake = FakeReaction();
@@ -380,7 +380,7 @@ void main() {
         tester,
         fake: fake,
         viewName: 'v',
-        progressive: true,
+        isProgressive: true,
       );
 
       expect(transitions.last, isA<Loading<_Row>>());
@@ -413,14 +413,14 @@ void main() {
     });
 
     testWidgets(
-      'progressive mode emits Ready on Delta during snapshot replay',
+      'isProgressive mode emits Ready on Delta during snapshot replay',
       (tester) async {
         final fake = FakeReaction();
         final transitions = await _pumpRecording(
           tester,
           fake: fake,
           viewName: 'v',
-          progressive: true,
+          isProgressive: true,
         );
 
         // Snapshot installs row 'a'.
@@ -432,9 +432,9 @@ void main() {
         expect(transitions.last, isA<Ready<_Row>>());
         expect((transitions.last as Ready<_Row>).rows.single['title'], 'A');
 
-        // Delta during pre-EndOfReplay: progressive mode MUST surface
+        // Delta during pre-EndOfReplay: isProgressive mode MUST surface
         // the updated row immediately, not buffer until EndOfReplay
-        // (parity with Snapshot behaviour under progressive=true).
+        // (parity with Snapshot behaviour under isProgressive=true).
         fake.emitViewUpdate<_Row>(
           'v',
           Delta<_Row>(

@@ -21,13 +21,13 @@ void main() {
 
   group('ChainVerdict', () {
     test('valid constant has ok=true and empty failures', () {
-      expect(ChainVerdict.valid.ok, isTrue);
+      expect(ChainVerdict.valid.isValid, isTrue);
       expect(ChainVerdict.valid.failures, isEmpty);
     });
 
     test('construction with failures marks ok=false', () {
       const verdict = ChainVerdict(
-        ok: false,
+        isValid: false,
         failures: <ChainFailure>[
           ChainFailure(
             position: 2,
@@ -37,7 +37,7 @@ void main() {
           ),
         ],
       );
-      expect(verdict.ok, isFalse);
+      expect(verdict.isValid, isFalse);
       expect(verdict.failures, hasLength(1));
     });
   });

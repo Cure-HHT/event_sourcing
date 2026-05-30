@@ -126,7 +126,7 @@ class ProvisionUserAction
     final activeSite = input.activeSite;
     if (activeSite != null && activeSite.isNotEmpty) {
       final scope = BoundScope(class_: 'site', value: activeSite);
-      final aggregateId = roleAssignmentAggregateId(
+      final aggregateId = computeRoleAssignmentAggregateId(
         userId: input.userId,
         role: input.role,
         scope: scope,

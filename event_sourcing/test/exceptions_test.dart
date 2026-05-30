@@ -4,10 +4,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('DatastoreException hierarchy', () {
-    group('DatabaseException', () {
+  group('EventStoreException hierarchy', () {
+    group('StorageBackendException', () {
       test('contains message', () {
-        const exception = DatabaseException('Test database error');
+        const exception = StorageBackendException('Test database error');
 
         expect(exception.message, equals('Test database error'));
         expect(exception.cause, isNull);
@@ -16,14 +16,14 @@ void main() {
 
       test('contains cause when provided', () {
         final cause = Exception('Underlying error');
-        final exception = DatabaseException('Test error', cause: cause);
+        final exception = StorageBackendException('Test error', cause: cause);
 
         expect(exception.cause, equals(cause));
       });
 
       test('contains stackTrace when provided', () {
         final stackTrace = StackTrace.current;
-        final exception = DatabaseException(
+        final exception = StorageBackendException(
           'Test error',
           stackTrace: stackTrace,
         );
@@ -32,15 +32,15 @@ void main() {
       });
 
       test('toString includes message', () {
-        const exception = DatabaseException('Test database error');
+        const exception = StorageBackendException('Test database error');
 
-        expect(exception.toString(), contains('DatabaseException'));
+        expect(exception.toString(), contains('StorageBackendException'));
         expect(exception.toString(), contains('Test database error'));
       });
 
       test('toString includes cause when present', () {
         final cause = Exception('Root cause');
-        final exception = DatabaseException('Test error', cause: cause);
+        final exception = StorageBackendException('Test error', cause: cause);
 
         expect(exception.toString(), contains('Caused by:'));
         expect(exception.toString(), contains('Root cause'));
@@ -119,16 +119,16 @@ void main() {
       });
     });
 
-    group('SignatureException', () {
+    group('ChainVerificationException', () {
       test('contains message', () {
-        const exception = SignatureException('Invalid signature');
+        const exception = ChainVerificationException('Invalid signature');
 
         expect(exception.message, equals('Invalid signature'));
         expect(exception.eventId, isNull);
       });
 
       test('contains eventId when provided', () {
-        const exception = SignatureException(
+        const exception = ChainVerificationException(
           'Signature verification failed',
           eventId: 'event-123',
         );
@@ -137,20 +137,23 @@ void main() {
       });
 
       test('toString includes security alert', () {
-        const exception = SignatureException('Tampering detected');
+        const exception = ChainVerificationException('Tampering detected');
 
         expect(exception.toString(), contains('SECURITY ALERT'));
       });
 
       test('toString includes event ID when present', () {
-        const exception = SignatureException('Tampering', eventId: 'event-123');
+        const exception = ChainVerificationException(
+          'Tampering',
+          eventId: 'event-123',
+        );
 
         expect(exception.toString(), contains('Event ID: event-123'));
       });
 
       test('toString includes cause when present', () {
         final cause = Exception('Crypto error');
-        final exception = SignatureException(
+        final exception = ChainVerificationException(
           'Verification failed',
           cause: cause,
         );

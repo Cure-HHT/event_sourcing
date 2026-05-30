@@ -72,7 +72,7 @@ void main() {
 
     // (3) Drop the server-side WS by closing every channel the
     // ws_connection_registry holds for alice. This is the same
-    // sink-close mechanism the AuthzWatcher uses for force-logout,
+    // sink-close mechanism the AuthorizationWatcher uses for force-logout,
     // minus the 4003 code (we want a generic drop, not a
     // permissions_changed signal that would also flip AuthSession to
     // Expired). Per `EVS-PRD-cross-process-event-transport`-H, this

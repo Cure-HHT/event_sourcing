@@ -1,5 +1,5 @@
 // IMPLEMENTS REQUIREMENTS:
-//   of the permissions module's EventSeedApplier. Diffs YAML against the
+//   of the permissions module's PermissionSeedApplier. Diffs YAML against the
 //   current directory; for each missing entry, calls `emit(payload)` (the
 //   server uses this to write a user_provisioned event) and
 //   `materializer.applyDirect(payload)` (to update the in-memory directory

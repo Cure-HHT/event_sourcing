@@ -15,7 +15,7 @@ class ScopeClassSpec {
     : assert(name != '', 'name must not be empty');
 
   final String name;
-  final ContainmentRef? containedIn;
+  final ContainmentReference? containedIn;
 
   @override
   bool operator ==(Object other) =>
@@ -37,7 +37,7 @@ class ScopeClassSpec {
 /// indexes by `keyColumn`, and reads the parent value from `parentColumn`.
 ///
 /// Example:
-///   ContainmentRef(parentClass: 'site',
+///   ContainmentReference(parentClass: 'site',
 ///                  projection: 'patient_site_index',
 ///                  keyColumn: 'patient_id',
 ///                  parentColumn: 'site_id')
@@ -46,8 +46,8 @@ class ScopeClassSpec {
 /// queries `patient_site_index` for the row with `patient_id == 'P-42'`
 /// and returns the value in the `site_id` column.
 @immutable
-class ContainmentRef {
-  const ContainmentRef({
+class ContainmentReference {
+  const ContainmentReference({
     required this.parentClass,
     required this.projection,
     required this.keyColumn,
@@ -64,7 +64,7 @@ class ContainmentRef {
 
   @override
   bool operator ==(Object other) =>
-      other is ContainmentRef &&
+      other is ContainmentReference &&
       parentClass == other.parentClass &&
       projection == other.projection &&
       keyColumn == other.keyColumn &&
@@ -76,6 +76,6 @@ class ContainmentRef {
 
   @override
   String toString() =>
-      'ContainmentRef(in $parentClass via $projection'
+      'ContainmentReference(in $parentClass via $projection'
       '[$keyColumn -> $parentColumn])';
 }

@@ -12,7 +12,7 @@ Future<EventStore> _bootstrap() async {
     'append-versioning-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final backend = SembastBackend(database: db);
-  final ds = await bootstrapAppendOnlyDatastore(
+  final ds = await bootstrapEventStore(
     backend: backend,
     source: const Source(
       hopId: 'mobile-device',

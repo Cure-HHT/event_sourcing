@@ -40,7 +40,7 @@ class SyncCycle {
     required StorageBackend backend,
     required DestinationRegistry registry,
     Source? source,
-    ClockFn? clock,
+    Clock? clock,
     SyncPolicy? policy,
     SyncPolicy? Function()? policyResolver,
   }) : _backend = backend,
@@ -65,7 +65,7 @@ class SyncCycle {
   /// fillBatch itself raises ArgumentError if a native destination needs
   /// it but none was supplied.
   final Source? _source;
-  final ClockFn? _clock;
+  final Clock? _clock;
   final SyncPolicy? _policy;
   final SyncPolicy? Function()? _policyResolver;
 
@@ -73,7 +73,7 @@ class SyncCycle {
 
   /// True while a prior [call] invocation has not yet completed. Exposed
   /// for tests to assert the guard's internal state.
-  bool get inFlight => _inFlight;
+  bool get isInFlight => _inFlight;
 
   /// Run one drain-and-poll cycle. Returns immediately (without side
   /// effects) when a prior [call] is still running.
@@ -94,7 +94,7 @@ class SyncCycle {
       await Future.wait(
         destinations.map((d) => _fillAndDrainOrSwallow(d, cyclePolicy)),
       );
-      await portalInboundPoll();
+      await pollInbound();
     } finally {
       _inFlight = false;
     }
@@ -166,7 +166,7 @@ class SyncCycle {
   /// implements the polling body per design doc §11.1.
   // TODO(CUR-1154, Phase 5): implement inbound tombstone polling per
   // design §11.1.
-  Future<void> portalInboundPoll() async {
+  Future<void> pollInbound() async {
     // Intentionally empty. Phase 5.
   }
 }

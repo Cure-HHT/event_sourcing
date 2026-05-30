@@ -1,6 +1,6 @@
 // Implements: EVS-PRD-auth-session/A — Remote implementation of
 //   AuthSession: current, stream, setCredential, principal.
-// Implements: EVS-PRD-auth-session/E — onAuthRejected (wired by
+// Implements: EVS-PRD-auth-session/E — handleAuthRejected (wired by
 //   RemoteScope from WS close-frames 4001 / 4003) and HTTP 401 from
 //   the GET /me round-trip both transition the session to Expired and
 //   emit the new status on the stream.
@@ -58,11 +58,11 @@ class RemoteAuthSession implements AuthSession {
 
   /// Externally invoked by RemoteConnection when a WS close-frame
   /// 4001 auth_rejected arrives.
-  void onAuthRejected() => _transition(const Expired());
+  void handleAuthRejected() => _transition(const Expired());
 
   /// Externally invoked by RemoteActionSubmitter / RemotePermissionSource
   /// when a 401 arrives on HTTP.
-  void onWireUnauthorized() => _transition(const Expired());
+  void handleWireUnauthorized() => _transition(const Expired());
 
   Future<void> _validate() async {
     final gen = _credentialGen;

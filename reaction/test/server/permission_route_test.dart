@@ -18,7 +18,7 @@ class _StubPolicy implements AuthorizationPolicy {
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async => snapshot;
 
   @override
@@ -26,7 +26,7 @@ class _StubPolicy implements AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => const Allow();
 }
 
@@ -39,7 +39,7 @@ void main() {
         scopeAssignments: [],
       ),
     );
-    final handler = permissionRouteHandler(policy: stub);
+    final handler = permissionSnapshotHandler(policy: stub);
     final req = Request(
       'GET',
       Uri.parse('http://x/permissions/snapshot'),
@@ -61,7 +61,7 @@ void main() {
 
   test('returns 500 when no Principal', () async {
     final stub = _StubPolicy(EffectiveAuthorization.empty);
-    final handler = permissionRouteHandler(policy: stub);
+    final handler = permissionSnapshotHandler(policy: stub);
     final req = Request('GET', Uri.parse('http://x/permissions/snapshot'));
     final res = await handler(req);
     expect(res.statusCode, 500);

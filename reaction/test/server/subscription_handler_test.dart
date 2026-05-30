@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-subscription remote-server side — WS subscription
-// state machine accepts AuthMsg first and emits AuthOkMsg; per-subscribe
+// state machine accepts AuthMessage first and emits AuthOkMsg; per-subscribe
 // view-level authorization rejects with subscription_denied on policy
 // deny. Snapshot/Delta relay covered in Phase 4 e2e tests where the
 // full substrate is exercised.
@@ -136,7 +136,7 @@ class _StubPolicy implements AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async => allow
       ? const Allow()
       : Deny(permission: permission, reason: DenyReason.notGranted);
@@ -144,7 +144,7 @@ class _StubPolicy implements AuthorizationPolicy {
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async =>
       effective ??
       const EffectiveAuthorization(

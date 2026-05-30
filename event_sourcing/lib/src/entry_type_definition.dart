@@ -14,7 +14,7 @@
 /// that participates in the Event Type Registry. It identifies the entry type
 /// by `id`, binds it to a registered schema version (`registeredVersion`),
 /// and controls whether a materializer runs for events of this type
-/// (`materialize`).
+/// (`isMaterialized`).
 ///
 /// JSON serialization uses snake_case keys:
 /// `id`, `registered_version`, `name`, `materialize`.
@@ -24,7 +24,7 @@ class EntryTypeDefinition {
     required this.id,
     required this.registeredVersion,
     required this.name,
-    this.materialize = true,
+    this.isMaterialized = true,
   });
 
   factory EntryTypeDefinition.fromJson(Map<String, Object?> json) {
@@ -43,7 +43,7 @@ class EntryTypeDefinition {
       id: id,
       registeredVersion: registeredVersion,
       name: name,
-      materialize: (materializeRaw as bool?) ?? true,
+      isMaterialized: (materializeRaw as bool?) ?? true,
     );
   }
 
@@ -62,13 +62,13 @@ class EntryTypeDefinition {
   /// Used by reserved system entry types (e.g., `security_context_redacted`)
   /// that must land in the event log as immutable audit rows but write no
   /// view state. Defaults to `true`.
-  final bool materialize;
+  final bool isMaterialized;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'id': id,
     'registered_version': registeredVersion,
     'name': name,
-    'materialize': materialize,
+    'materialize': isMaterialized,
   };
 
   @override
@@ -78,16 +78,16 @@ class EntryTypeDefinition {
           id == other.id &&
           registeredVersion == other.registeredVersion &&
           name == other.name &&
-          materialize == other.materialize;
+          isMaterialized == other.isMaterialized;
 
   @override
-  int get hashCode => Object.hash(id, registeredVersion, name, materialize);
+  int get hashCode => Object.hash(id, registeredVersion, name, isMaterialized);
 
   @override
   String toString() =>
       'EntryTypeDefinition('
       'id: $id, registeredVersion: $registeredVersion, name: $name, '
-      'materialize: $materialize)';
+      'isMaterialized: $isMaterialized)';
 }
 
 String _requireString(Map<String, Object?> json, String key) {

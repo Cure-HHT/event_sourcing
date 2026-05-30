@@ -11,7 +11,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 /// (or via the named fields) without needing a dedicated class. Cursor-
 /// advancement math in the drain/fill-batch paths uses `lastSeq` as the
 /// inclusive upper bound of the batch.
-typedef EventIdRange = ({int firstSeq, int lastSeq});
+typedef SequenceRange = ({int firstSeq, int lastSeq});
 
 /// One row in a destination's FIFO store — a batch of one or more events
 /// transformed together into a single wire-ready payload.
@@ -25,7 +25,7 @@ typedef EventIdRange = ({int firstSeq, int lastSeq});
 /// by a trail sweep are marked `FinalStatus.tombstoned`. All non-null
 /// terminal states are retained forever as send-log / audit records.
 ///
-/// `eventIds` is a non-empty `List<String>`, `eventIdRange` is an
+/// `eventIds` is a non-empty `List<String>`, `sequenceRange` is an
 /// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
 /// the whole batch (no per-event payload is stored).
 // Implements: EVS-PRD-portability/C — pure Dart value type; serialises
@@ -43,7 +43,7 @@ class FifoEntry {
   FifoEntry({
     required this.entryId,
     required this.eventIds,
-    required this.eventIdRange,
+    required this.sequenceRange,
     required this.sequenceInQueue,
     required this.wireFormat,
     required this.transformVersion,
@@ -64,12 +64,12 @@ class FifoEntry {
       );
     }
     // sequence numbers; the pair MUST be ordered (firstSeq <= lastSeq).
-    if (eventIdRange.firstSeq > eventIdRange.lastSeq) {
+    if (sequenceRange.firstSeq > sequenceRange.lastSeq) {
       throw ArgumentError.value(
-        eventIdRange,
-        'eventIdRange',
-        'eventIdRange.firstSeq (${eventIdRange.firstSeq}) must be '
-            '<= lastSeq (${eventIdRange.lastSeq})',
+        sequenceRange,
+        'sequenceRange',
+        'sequenceRange.firstSeq (${sequenceRange.firstSeq}) must be '
+            '<= lastSeq (${sequenceRange.lastSeq})',
       );
     }
   }
@@ -189,7 +189,7 @@ class FifoEntry {
     return FifoEntry(
       entryId: entryId,
       eventIds: List<String>.unmodifiable(eventIds),
-      eventIdRange: (firstSeq: firstSeq, lastSeq: lastSeq),
+      sequenceRange: (firstSeq: firstSeq, lastSeq: lastSeq),
       sequenceInQueue: seqInQueue,
       wirePayload: wirePayloadRaw == null
           ? null
@@ -216,7 +216,7 @@ class FifoEntry {
   /// (of any `final_status`, including tombstoned archive rows) never
   /// share an `entryId`. The identifier has no relationship to the
   /// events the row carries — callers that need to correlate against
-  /// events should use `eventIds` or `eventIdRange` instead.
+  /// events should use `eventIds` or `sequenceRange` instead.
   final String entryId;
 
   /// Event_ids of every event included in this batch row, in the order they
@@ -229,7 +229,7 @@ class FifoEntry {
   /// of the events in this batch. Used for cursor advancement math in the
   /// drain and fill-batch paths — `lastSeq` is the upper bound of the batch
   /// on the event log. For a single-event batch, `firstSeq == lastSeq`.
-  final EventIdRange eventIdRange;
+  final SequenceRange sequenceRange;
 
   /// Insertion-order position in this FIFO; monotonic per destination.
   final int sequenceInQueue;
@@ -281,8 +281,8 @@ class FifoEntry {
     'entry_id': entryId,
     'event_ids': eventIds,
     'event_id_range': <String, Object?>{
-      'first_seq': eventIdRange.firstSeq,
-      'last_seq': eventIdRange.lastSeq,
+      'first_seq': sequenceRange.firstSeq,
+      'last_seq': sequenceRange.lastSeq,
     },
     'sequence_in_queue': sequenceInQueue,
     'wire_payload': wirePayload,
@@ -301,7 +301,7 @@ class FifoEntry {
       other is FifoEntry &&
           entryId == other.entryId &&
           const ListEquality<String>().equals(eventIds, other.eventIds) &&
-          eventIdRange == other.eventIdRange &&
+          sequenceRange == other.sequenceRange &&
           sequenceInQueue == other.sequenceInQueue &&
           _deepEquals.equals(wirePayload, other.wirePayload) &&
           wireFormat == other.wireFormat &&
@@ -319,7 +319,7 @@ class FifoEntry {
   int get hashCode => Object.hash(
     entryId,
     const ListEquality<String>().hash(eventIds),
-    eventIdRange,
+    sequenceRange,
     sequenceInQueue,
     _deepEquals.hash(wirePayload),
     wireFormat,
@@ -337,8 +337,8 @@ class FifoEntry {
         ? ''
         : ', envelopeMetadata: $envelopeMetadata';
     return 'FifoEntry(entryId: $entryId, eventIds: $eventIds, '
-        'eventIdRange: (firstSeq: ${eventIdRange.firstSeq}, '
-        'lastSeq: ${eventIdRange.lastSeq}), '
+        'sequenceRange: (firstSeq: ${sequenceRange.firstSeq}, '
+        'lastSeq: ${sequenceRange.lastSeq}), '
         'sequenceInQueue: $sequenceInQueue, wireFormat: $wireFormat, '
         'finalStatus: $finalStatus, attempts: ${attempts.length}'
         '$envelopeBit)';

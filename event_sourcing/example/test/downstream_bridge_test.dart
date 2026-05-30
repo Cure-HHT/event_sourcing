@@ -10,10 +10,10 @@ import 'package:event_sourcing_datastore_demo/synthetic_ingest.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
-Future<AppendOnlyDatastore> _bootstrapPortal(String path) async {
+Future<EventStoreBundle> _bootstrapPortal(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
-  return bootstrapAppendOnlyDatastore(
+  return bootstrapEventStore(
     backend: backend,
     source: const Source(
       hopId: 'portal-server',

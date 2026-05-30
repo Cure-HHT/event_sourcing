@@ -1,15 +1,15 @@
-// All reserved system entry types ship with materialize:false. Cross-aggregate
+// All reserved system entry types ship with isMaterialized:false. Cross-aggregate
 // stream events stay out of view-side projection on every install, on both the
-// local-append path and the ingest path (the outer gate `def.materialize`
+// local-append path and the ingest path (the outer gate `def.isMaterialized`
 // short-circuits the materializer loop in `_appendInTxn` and
 // `_ingestOneInTxn` before any materializer is consulted).
 //
 // Regression guard: flipping any reserved `EntryTypeDefinition` to
-//   `materialize: true` would silently start firing materializers on system
+//   `isMaterialized: true` would silently start firing materializers on system
 //   audit events. This test fails loudly if that happens.
 //
 // Verifies: EVS-PRD-event-log/A — all reserved system entry types have
-//   materialize:false, ensuring audit events never corrupt view-side state.
+//   isMaterialized:false, ensuring audit events never corrupt view-side state.
 // Verifies: EVS-DEV-event-store-open/B,C — lib_version_initialized and
 //   lib_version_changed are registered in kSystemEntryTypes so byId() returns
 //   non-null and SubscriptionFilter correctly gates them behind
@@ -25,9 +25,9 @@ const Source _source = Source(
 );
 
 void main() {
-  group('Reserved system entry types — materialize:false', () {
+  group('Reserved system entry types — isMaterialized:false', () {
     // Verifies that every entry type auto-registered by
-    // `bootstrapAppendOnlyDatastore` ships `materialize: false`. Iteration is
+    // `bootstrapEventStore` ships `isMaterialized: false`. Iteration is
     // driven from `kReservedSystemEntryTypeIds` and the registry is consulted
     // post-bootstrap so the test exercises the actual auto-registered
     // `EntryTypeDefinition` instances rather than re-importing the
@@ -39,7 +39,7 @@ void main() {
       );
       final backend = SembastBackend(database: db);
       try {
-        final datastore = await bootstrapAppendOnlyDatastore(
+        final datastore = await bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],
@@ -50,7 +50,7 @@ void main() {
         // types and SHALL be exactly 14. A change here implies a new
         // system entry type was added without updating this assertion;
         // the test forces an explicit decision on whether the new id
-        // also ships materialize:false.
+        // also ships isMaterialized:false.
         //
         // Count is 14: 10 security/bootstrap audits + 2 lib-version boot
         // events (lib_version_initialized, lib_version_changed, gated
@@ -66,21 +66,21 @@ void main() {
         );
 
         for (final id in kReservedSystemEntryTypeIds) {
-          final defn = datastore.entryTypes.byId(id);
+          final definition = datastore.entryTypes.byId(id);
           expect(
-            defn,
+            definition,
             isNotNull,
             reason:
                 'reserved system entry type "$id" must be auto-registered '
-                'by bootstrapAppendOnlyDatastore.',
+                'by bootstrapEventStore.',
           );
           expect(
-            defn!.materialize,
+            definition!.isMaterialized,
             isFalse,
             reason:
-                '$id MUST ship materialize:false to keep cross-aggregate '
+                '$id MUST ship isMaterialized:false to keep cross-aggregate '
                 'stream events out of view-side projection. '
-                'Flipping a reserved system entry type to materialize:true '
+                'Flipping a reserved system entry type to isMaterialized:true '
                 'would start firing materializers on system audits — out '
                 'of scope for Phase 4.22.',
           );
@@ -102,7 +102,7 @@ void main() {
             'the registry instead of hardcoding.',
       );
       expect(byId['ingest-audit']!.registeredVersion, 1);
-      expect(byId['ingest-audit']!.materialize, isFalse);
+      expect(byId['ingest-audit']!.isMaterialized, isFalse);
     });
 
     test('kSystemEntryTypes registers view_snapshot_promoted at version 1, '
@@ -117,7 +117,7 @@ void main() {
             'append-stampable under the new substrate-owned version model.',
       );
       expect(byId['view_snapshot_promoted']!.registeredVersion, 1);
-      expect(byId['view_snapshot_promoted']!.materialize, isFalse);
+      expect(byId['view_snapshot_promoted']!.isMaterialized, isFalse);
     });
   });
 }

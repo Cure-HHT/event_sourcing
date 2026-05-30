@@ -29,7 +29,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   TableBackedAuthorizationPolicy({
     required this.backend,
     required this.scopeClassRegistry,
-    required this.txnProvider,
+    required this.transactionProvider,
   }) : _resolver = ContainmentResolver(
          registry: scopeClassRegistry,
          findRowsInTxn: backend.findViewRowsInTxn,
@@ -42,7 +42,8 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   /// (so authorize + execute run inside the same backend transaction).
   /// Tests can pass a one-shot supplier that opens a tx per call:
   /// `<T>(fn) => backend.transaction<T>(fn)`.
-  final Future<T> Function<T>(Future<T> Function(Txn txn)) txnProvider;
+  final Future<T> Function<T>(Future<T> Function(Transaction txn))
+  transactionProvider;
 
   final ContainmentResolver _resolver;
 
@@ -51,7 +52,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   }) async {
     // 1. Anonymous principals carry no role assignments.
     if (principal is! UserPrincipal) {
@@ -91,19 +92,19 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
 
     // Run the projection reads either in the caller-supplied txn (so
     // they share the read-snapshot with subsequent appends in that tx)
-    // or open a fresh one via [txnProvider].
+    // or open a fresh one via [transactionProvider].
     if (txn != null) {
       return _evaluate(txn, principal, permission, scopeValue);
     }
-    return txnProvider(
+    return transactionProvider(
       (innerTxn) => _evaluate(innerTxn, principal, permission, scopeValue),
     );
   }
 
   /// Pure projection-read body shared by the txn-injected and
-  /// txnProvider-opened paths.
+  /// transactionProvider-opened paths.
   Future<AuthorizationDecision> _evaluate(
-    Txn txn,
+    Transaction txn,
     UserPrincipal principal,
     Permission permission,
     ScopeValue? scopeValue,
@@ -171,7 +172,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   ///   the same (class, value), OR matches a descendant class whose
   ///   containment resolves to V at class A.
   Future<bool> _matches(
-    Txn txn, {
+    Transaction txn, {
     required ScopeValue assigned,
     required ScopeValue requested,
   }) async {
@@ -182,9 +183,9 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
 
     // The class gate (does the assigned scope's class equal-or-ancestor the
     // requested class?) is the single tested source of truth shared with the
-    // read path; see scopeClassMatch in event_sourcing. This method then
+    // read path; see matchScopeClass in event_sourcing. This method then
     // does its own value-equality / containment resolution on top of it.
-    final match = scopeClassMatch(
+    final match = matchScopeClass(
       assigned,
       requested.class_,
       scopeClassRegistry,
@@ -224,7 +225,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   @override
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   }) async {
     if (principal is! UserPrincipal) {
       return EffectiveAuthorization.empty;
@@ -232,11 +233,13 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     if (txn != null) {
       return _effectiveBody(txn, principal);
     }
-    return txnProvider((innerTxn) => _effectiveBody(innerTxn, principal));
+    return transactionProvider(
+      (innerTxn) => _effectiveBody(innerTxn, principal),
+    );
   }
 
   Future<EffectiveAuthorization> _effectiveBody(
-    Txn txn,
+    Transaction txn,
     UserPrincipal principal,
   ) async {
     // Role-membership gate: if the substrate has no user_role_scopes

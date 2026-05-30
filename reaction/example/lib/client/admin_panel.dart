@@ -438,7 +438,9 @@ class _GrantStatus extends StatelessWidget {
             color: color,
           ),
           const SizedBox(width: 6),
-          Expanded(child: Text(message, style: TextStyle(color: color))),
+          Expanded(
+            child: Text(message, style: TextStyle(color: color)),
+          ),
         ],
       ),
     );

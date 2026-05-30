@@ -8,7 +8,7 @@ import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:event_sourcing/src/permissions/effective_authorization.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Pluggable authorization decision-maker. Concrete impls live in the
 /// permissions module within `event_sourcing`
@@ -33,7 +33,7 @@ abstract class AuthorizationPolicy {
     Principal principal,
     Permission permission,
     ScopeValue? scopeValue, {
-    Txn? txn,
+    Transaction? txn,
   });
 
   /// Materials for client-side UI gating and app-side scope-aware
@@ -44,6 +44,6 @@ abstract class AuthorizationPolicy {
   /// reads in the caller's transaction; null = open one internally.
   Future<EffectiveAuthorization> effectivePermissionsFor(
     Principal principal, {
-    Txn? txn,
+    Transaction? txn,
   });
 }

@@ -37,7 +37,7 @@ void main() {
 
         await harness.append(
           aggregateType: 'user_role_scope',
-          aggregateId: roleAssignmentAggregateId(
+          aggregateId: computeRoleAssignmentAggregateId(
             userId: 'U1',
             role: 'SC',
             scope: const BoundScope(class_: 'site', value: 'A'),
@@ -63,7 +63,7 @@ void main() {
       );
       addTearDown(harness.close);
 
-      final aggId = roleAssignmentAggregateId(
+      final aggId = computeRoleAssignmentAggregateId(
         userId: 'U1',
         role: 'SC',
         scope: const BoundScope(class_: 'site', value: 'A'),

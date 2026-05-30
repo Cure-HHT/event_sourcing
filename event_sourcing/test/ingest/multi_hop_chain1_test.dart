@@ -54,7 +54,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -62,7 +62,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -70,7 +70,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -235,7 +235,7 @@ void main() {
           // fixtures cannot reach.
           final verdict1 = await portalC.store.verifyEventChain(atC1);
           expect(
-            verdict1.ok,
+            verdict1.isValid,
             isTrue,
             reason:
                 'verifyEventChain must succeed across 3 hops; '
@@ -245,7 +245,7 @@ void main() {
 
           final verdict2 = await portalC.store.verifyEventChain(atC2);
           expect(
-            verdict2.ok,
+            verdict2.isValid,
             isTrue,
             reason:
                 'verifyEventChain must succeed across 3 hops; '
@@ -323,7 +323,7 @@ void main() {
 
           final verdict = await portalC.store.verifyEventChain(atC);
           expect(
-            verdict.ok,
+            verdict.isValid,
             isTrue,
             reason:
                 'verifyEventChain must succeed across 4 hops; '

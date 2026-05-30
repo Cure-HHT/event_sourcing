@@ -2,7 +2,7 @@
 //
 // Three helpers live in this file, all invoked from EventStore.open in
 // fixed order:
-//   1. assertNoEntryTypeDowngrade — refuse boot if any entry type's
+//   1. verifyNoEntryTypeDowngrade — refuse boot if any entry type's
 //      registeredVersion has decreased.
 //   2. seedViewTargetVersions — ensure every (viewName, interest-matched
 //      entry type) pair has a view_target_versions row; absent ones are
@@ -48,7 +48,7 @@ import 'package:event_sourcing/src/promoters/primitives/transform.dart'
     show TransformChain;
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Callback invoked by [promoteViewSnapshots] once per (viewName,
 /// entryType) pair that's been lifted from `fromVersion` to
@@ -75,7 +75,7 @@ typedef AuditEmitter =
 /// Runs inside the caller's transaction so the seeding and any
 /// subsequent boot-time work commit atomically.
 Future<void> seedViewTargetVersions({
-  required Txn txn,
+  required Transaction txn,
   required StorageBackend backend,
   required ProjectionRegistry projections,
   required EntryTypeRegistry entryTypes,
@@ -108,8 +108,8 @@ Future<void> seedViewTargetVersions({
 /// Runs FIRST in the boot order (before [seedViewTargetVersions] and
 /// before `promoteViewSnapshots`), so a downgrade fails fast without
 /// the substrate touching any state.
-Future<void> assertNoEntryTypeDowngrade({
-  required Txn txn,
+Future<void> verifyNoEntryTypeDowngrade({
+  required Transaction txn,
   required StorageBackend backend,
   required ProjectionRegistry projections,
   required EntryTypeRegistry entryTypes,
@@ -152,10 +152,10 @@ Future<void> assertNoEntryTypeDowngrade({
 /// invoke [emitAudit] so the caller can append a
 /// `view_snapshot_promoted` audit event.
 ///
-/// Runs THIRD (after [assertNoEntryTypeDowngrade] and
+/// Runs THIRD (after [verifyNoEntryTypeDowngrade] and
 /// [seedViewTargetVersions]) inside the caller's transaction.
 Future<void> promoteViewSnapshots({
-  required Txn txn,
+  required Transaction txn,
   required StorageBackend backend,
   required ProjectionRegistry projections,
   required PromoterRegistry promoters,

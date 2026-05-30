@@ -1,6 +1,6 @@
 # EVS-DEV-postgres-backend: Postgres backend reference impl
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-event-log, EVS-PRD-portability
 
 ## Purpose
@@ -24,7 +24,7 @@ B. The backend SHALL store view rows as JSONB blobs in a single
 C. `PostgresBackend.transaction<T>(body)` SHALL execute `body` inside a
    single Postgres transaction at SERIALIZABLE isolation. On any thrown
    exception the transaction SHALL be rolled back; on normal return it
-   SHALL be committed. The `Txn` handle passed to `body` SHALL be
+   SHALL be committed. The `Transaction` handle passed to `body` SHALL be
    invalidated after `body` returns or throws.
 
 D. Both `PostgresBackend` and `SembastBackend` SHALL pass the conformance
@@ -59,4 +59,4 @@ sequence number. The substrate is single-writer-per-source by design
 but the storage layer should not assume the caller has external
 synchronization.
 
-*End* *Postgres backend reference impl* | **Hash**: b3c3c0ec
+*End* *Postgres backend reference impl* | **Hash**: e69b5a15

@@ -2,8 +2,9 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
-import 'package:sembast/sembast.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:sembast/sembast.dart' hide Transaction;
+import 'package:sembast/sembast.dart' as sembast show Transaction;
 
 /// Sembast-backed `SecurityContextStore`. Maintains one sembast store
 /// (`security_context`) keyed on `event_id`. Cross-store reads (the
@@ -11,11 +12,11 @@ import 'package:sembast/sembast.dart';
 /// [SembastBackend.queryAudit]; this store's [queryAudit] is a thin
 /// delegator.
 // Implements: EVS-PRD-event-log/A — all mutations accept a caller-supplied
-//   `Txn` so they commit atomically with the event-log row they describe.
+//   `Transaction` so they commit atomically with the event-log row they describe.
 // Implements: EVS-PRD-regulatory-alignment — `findUnredactedOlderThanInTxn`
 //   and `findOlderThanInTxn` drive the retention compact/purge sweeps that
 //   satisfy ALCOA+ Enduring / §11.10(c) protection-of-records obligations.
-class SembastSecurityContextStore extends InternalSecurityContextStore {
+class SembastSecurityContextStore extends MutableSecurityContextStore {
   SembastSecurityContextStore({required this.backend});
 
   final SembastBackend backend;
@@ -29,7 +30,10 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<EventSecurityContext?> readInTxn(Txn txn, String eventId) async {
+  Future<EventSecurityContext?> readInTxn(
+    Transaction txn,
+    String eventId,
+  ) async {
     final sembastTxn = _castTxn(txn);
     final raw = await _store.record(eventId).get(sembastTxn);
     if (raw == null) return null;
@@ -37,24 +41,24 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
   }
 
   @override
-  Future<void> writeInTxn(Txn txn, EventSecurityContext row) async {
+  Future<void> writeInTxn(Transaction txn, EventSecurityContext row) async {
     final sembastTxn = _castTxn(txn);
     await _store.record(row.eventId).put(sembastTxn, row.toJson());
   }
 
   @override
-  Future<void> upsertInTxn(Txn txn, EventSecurityContext row) =>
+  Future<void> upsertInTxn(Transaction txn, EventSecurityContext row) =>
       writeInTxn(txn, row);
 
   @override
-  Future<void> deleteInTxn(Txn txn, String eventId) async {
+  Future<void> deleteInTxn(Transaction txn, String eventId) async {
     final sembastTxn = _castTxn(txn);
     await _store.record(eventId).delete(sembastTxn);
   }
 
   @override
   Future<List<EventSecurityContext>> findUnredactedOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
@@ -76,7 +80,7 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
 
   @override
   Future<List<EventSecurityContext>> findOlderThanInTxn(
-    Txn txn,
+    Transaction txn,
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
@@ -114,7 +118,7 @@ class SembastSecurityContextStore extends InternalSecurityContextStore {
     cursor: cursor,
   );
 
-  Transaction _castTxn(Txn txn) {
+  sembast.Transaction _castTxn(Transaction txn) {
     // Unwrap via the backend's transaction() — test-side txns passed in
     // must have been produced by backend.transaction(). We can't access
     // the private _SembastTxn directly, so the convention is to use the

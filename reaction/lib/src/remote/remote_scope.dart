@@ -62,7 +62,7 @@ class RemoteScope implements ReactionScope {
     // so the callback will resolve a non-null _auth whenever the
     // server force-closes the WS with an auth-related code.
     _auth = RemoteAuthSession(connection: _connection);
-    _connection.onAuthClose = () => _auth.onAuthRejected();
+    _connection.onAuthClose = () => _auth.handleAuthRejected();
     _submitter = RemoteActionSubmitter(
       connection: _connection,
       authSession: _auth,
@@ -101,10 +101,10 @@ class RemoteScope implements ReactionScope {
   /// and listen to this stream.
   final StreamController<ConnectionStatus> _statusController =
       StreamController<ConnectionStatus>.broadcast();
-  bool _disposed = false;
+  bool _isDisposed = false;
 
   void _checkDisposed() {
-    if (_disposed) {
+    if (_isDisposed) {
       throw StateError('RemoteScope has been disposed.');
     }
   }
@@ -147,9 +147,9 @@ class RemoteScope implements ReactionScope {
 
   @override
   Future<void> dispose() async {
-    _disposed = true;
+    _isDisposed = true;
     // Order matters: dispose the connection FIRST so its own
-    // _disposed flag is set and its awaited _reconnectDone drains
+    // _isDisposed flag is set and its awaited _reconnectDone drains
     // any in-flight reconnect-loop iterations. Those iterations
     // call _emitStatus -> _statusController.add; if we closed the
     // controller first, a late emission would throw

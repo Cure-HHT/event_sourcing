@@ -16,8 +16,8 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
   // registry mutations can stamp their audit events without
   // bootstrapping the full datastore facade.
   final entryTypes = EntryTypeRegistry();
-  for (final defn in kSystemEntryTypes) {
-    entryTypes.register(defn);
+  for (final definition in kSystemEntryTypes) {
+    entryTypes.register(definition);
   }
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final eventStore = await EventStore.openForTest(

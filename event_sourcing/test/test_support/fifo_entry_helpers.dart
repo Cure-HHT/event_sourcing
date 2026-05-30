@@ -85,7 +85,7 @@ FifoEntry singleEventFifoEntry({
 }) => FifoEntry(
   entryId: entryId,
   eventIds: [eventId],
-  eventIdRange: (firstSeq: sequenceNumber, lastSeq: sequenceNumber),
+  sequenceRange: (firstSeq: sequenceNumber, lastSeq: sequenceNumber),
   sequenceInQueue: sequenceInQueue,
   wirePayload: wirePayload ?? const {'ok': true},
   wireFormat: wireFormat,

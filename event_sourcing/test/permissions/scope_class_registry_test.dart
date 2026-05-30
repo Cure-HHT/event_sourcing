@@ -29,7 +29,7 @@ void main() {
           ScopeClassSpec(name: 'site'),
           ScopeClassSpec(
             name: 'patient',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'site',
               projection: 'patient_site_index',
               keyColumn: 'patient_id',
@@ -69,7 +69,7 @@ void main() {
           classes: const [
             ScopeClassSpec(
               name: 'patient',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'site',
                 projection: 'patient_site_index',
                 keyColumn: 'patient_id',
@@ -97,7 +97,7 @@ void main() {
             ScopeClassSpec(name: 'site'),
             ScopeClassSpec(
               name: 'patient',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'site',
                 projection: 'patient_site_index',
                 keyColumn: 'patient_id',
@@ -124,7 +124,7 @@ void main() {
             ScopeClassSpec(name: 'site'),
             ScopeClassSpec(
               name: 'patient',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'site',
                 projection: 'patient_site_index',
                 keyColumn: 'patient_id',
@@ -151,7 +151,7 @@ void main() {
           classes: const [
             ScopeClassSpec(
               name: 'a',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'b',
                 projection: 'p',
                 keyColumn: 'k',
@@ -160,7 +160,7 @@ void main() {
             ),
             ScopeClassSpec(
               name: 'b',
-              containedIn: ContainmentRef(
+              containedIn: ContainmentReference(
                 parentClass: 'a',
                 projection: 'p',
                 keyColumn: 'k',
@@ -186,7 +186,7 @@ void main() {
           ScopeClassSpec(name: 'region'),
           ScopeClassSpec(
             name: 'site',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'region',
               projection: 'site_region',
               keyColumn: 'site_id',
@@ -195,7 +195,7 @@ void main() {
           ),
           ScopeClassSpec(
             name: 'patient',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'site',
               projection: 'patient_site',
               keyColumn: 'patient_id',

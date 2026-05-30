@@ -15,7 +15,7 @@
 //   forensic / cross-hop observability only — they do not trigger any
 //   side effect on the receiver's runtime state.
 //
-// Strategy: bootstrap two `AppendOnlyDatastore` instances with distinct
+// Strategy: bootstrap two `EventStoreBundle` instances with distinct
 //   `Source.identifier` values, one acting as ORIGINATOR and one as
 //   RECEIVER. The originator emits real system audit events as a side
 //   effect of its own configuration calls (`addDestination`,
@@ -45,7 +45,7 @@ var _dbCounter = 0;
 
 class _Fixture {
   _Fixture({required this.datastore, required this.backend});
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   Future<void> close() => backend.close();
 }
@@ -68,7 +68,7 @@ Future<_Fixture> _bootstrapDatastore({
     'ingest-passive-$_dbCounter.db',
   );
   final backend = SembastBackend(database: db);
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: Source(
       hopId: hopId,
@@ -239,7 +239,7 @@ void main() {
     //   shape (encoded inside the audit's `data.registry` map) is the
     //   originator's runtime contract, not the receiver's; the
     //   receiver's registry remains exactly the set of types its own
-    //   `bootstrapAppendOnlyDatastore` call registered.
+    //   `bootstrapEventStore` call registered.
     test('ingesting system.entry_type_registry_initialized '
         'does NOT mutate EntryTypeRegistry on the receiver', () async {
       // Originator bootstraps with one user entry type registered;

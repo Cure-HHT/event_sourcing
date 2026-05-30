@@ -37,8 +37,8 @@ import 'package:reaction/src/wire/subscription_messages.dart';
 /// their WS connections with 4003 permissions_changed. On
 /// security-expanding events (role_assigned, permission_granted) and
 /// opt-in-watched containment changes, sends a stale_data envelope.
-class AuthzWatcher {
-  AuthzWatcher({
+class AuthorizationWatcher {
+  AuthorizationWatcher({
     required this.eventStore,
     required this.connectionRegistry,
     required this.policy,

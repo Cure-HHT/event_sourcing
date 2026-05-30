@@ -5,7 +5,7 @@
 //   enqueue events in sequence_number order and advance fill_cursor to the last
 //   replayed event so subsequent fillBatch calls continue without gaps)
 // Implements: EVS-PRD-destinations/D (durable queue — both replay functions run
-//   inside the caller-supplied Txn so enqueue and schedule writes are atomic;
+//   inside the caller-supplied Transaction so enqueue and schedule writes are atomic;
 //   concurrent record() serializes behind the transaction and sees no gaps)
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
@@ -14,7 +14,7 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/txn.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:uuid/uuid.dart';
 
 const _uuidGen = Uuid();
@@ -54,7 +54,7 @@ const _uuidGen = Uuid();
 ///
 /// Key differences from `fillBatch`:
 ///
-/// - Runs inside an existing [Txn]; it does not open its own
+/// - Runs inside an existing [Transaction]; it does not open its own
 ///   transaction, and reads the event log via `findAllEventsInTxn` so
 ///   staged writes under the same transaction are visible.
 /// - Iterates to completion: replay catches up the entire historical
@@ -76,7 +76,7 @@ const _uuidGen = Uuid();
 // concurrent record() serializes behind and sees the advanced
 // fill_cursor; no double-enqueue.
 Future<void> runHistoricalReplay(
-  Txn txn,
+  Transaction txn,
   Destination destination,
   DestinationSchedule schedule,
   StorageBackend backend, {
@@ -279,7 +279,7 @@ Future<void> runHistoricalReplay(
 //   destination.transform so rows are identical in shape to fillBatch's
 //   live output.
 Future<void> runGapReplay(
-  Txn txn,
+  Transaction txn,
   Destination destination,
   StorageBackend backend, {
   required DateTime newStartDate,

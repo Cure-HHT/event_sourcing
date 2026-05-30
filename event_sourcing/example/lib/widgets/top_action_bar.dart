@@ -34,7 +34,7 @@ class TopActionBar extends StatefulWidget {
     super.key,
   });
 
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   final AppState appState;
   final Future<void> Function() onResetAll;

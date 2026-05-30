@@ -153,7 +153,7 @@ void main() {
       expect(result.entriesInViewNotInSeed, hasLength(1));
 
       // Drift entry must reference the correct aggregate id.
-      final expectedId = roleAssignmentAggregateId(
+      final expectedId = computeRoleAssignmentAggregateId(
         userId: 'u1',
         role: 'admin',
         scope: const TotalWildcardScope(),

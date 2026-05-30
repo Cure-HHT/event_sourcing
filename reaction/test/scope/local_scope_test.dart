@@ -46,7 +46,7 @@ void main() {
 
     tearDown(() async {
       // dispose() may have already been called by the test; calling it
-      // again is a no-op since _disposed is idempotent.
+      // again is a no-op since _isDisposed is idempotent.
       await scope.dispose();
       await auth.dispose();
       await perms.dispose();

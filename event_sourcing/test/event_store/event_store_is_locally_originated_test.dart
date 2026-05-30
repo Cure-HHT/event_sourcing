@@ -16,7 +16,7 @@ Future<EventStore> _bootstrap({
     '$identifier.db',
   );
   final backend = SembastBackend(database: db);
-  final ds = await bootstrapAppendOnlyDatastore(
+  final ds = await bootstrapEventStore(
     backend: backend,
     source: Source(
       hopId: hopId,

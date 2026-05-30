@@ -49,7 +49,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -57,7 +57,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -65,7 +65,7 @@ Future<_Fixture> _openStore({
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -103,7 +103,7 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_redacted',
         registeredVersion: 1,
         name: 'SC Redacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -111,7 +111,7 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_compacted',
         registeredVersion: 1,
         name: 'SC Compacted',
-        materialize: false,
+        isMaterialized: false,
       ),
     )
     ..register(
@@ -119,7 +119,7 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'security_context_purged',
         registeredVersion: 1,
         name: 'SC Purged',
-        materialize: false,
+        isMaterialized: false,
       ),
     );
   final secCtx = SembastSecurityContextStore(backend: backend);
@@ -166,7 +166,7 @@ void main() {
         }
 
         final verdict = await dest.store.verifyIngestChain();
-        expect(verdict.ok, isTrue);
+        expect(verdict.isValid, isTrue);
         expect(verdict.failures, isEmpty);
       } finally {
         await dest.close();
@@ -187,7 +187,7 @@ void main() {
 
           // Verify clean first.
           final cleanVerdict = await dest.store.verifyIngestChain();
-          expect(cleanVerdict.ok, isTrue);
+          expect(cleanVerdict.isValid, isTrue);
 
           // Directly tamper e2's stored record. Under the unified event
           // store, ingested events land in 'events' keyed by local
@@ -222,7 +222,7 @@ void main() {
 
           // Now verify — should detect one failure at seq 2.
           final verdict = await dest.store.verifyIngestChain();
-          expect(verdict.ok, isFalse);
+          expect(verdict.isValid, isFalse);
           expect(verdict.failures, hasLength(1));
           expect(verdict.failures.first.position, equals(2));
           expect(
@@ -277,7 +277,7 @@ void main() {
           fromSequenceNumber: 1,
           toSequenceNumber: 2,
         );
-        expect(verdictClean.ok, isTrue);
+        expect(verdictClean.isValid, isTrue);
         expect(verdictClean.failures, isEmpty);
 
         // Walking 1..5 should detect the failure at seq 3.
@@ -285,7 +285,7 @@ void main() {
           fromSequenceNumber: 1,
           toSequenceNumber: 5,
         );
-        expect(verdictFull.ok, isFalse);
+        expect(verdictFull.isValid, isFalse);
         expect(verdictFull.failures, hasLength(1));
         expect(verdictFull.failures.first.position, equals(3));
       } finally {

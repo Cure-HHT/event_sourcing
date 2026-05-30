@@ -110,7 +110,7 @@ void main() {
           ScopeClassSpec(name: 'site'),
           ScopeClassSpec(
             name: 'patient',
-            containedIn: ContainmentRef(
+            containedIn: ContainmentReference(
               parentClass: 'site',
               projection: 'patient_site',
               keyColumn: 'patient_id',
@@ -158,7 +158,7 @@ void main() {
 }
 
 /// Minimal projection descriptor whose columns cover the test
-/// `ContainmentRef` (so `ScopeClassRegistry` accepts the registration).
+/// `ContainmentReference` (so `ScopeClassRegistry` accepts the registration).
 class _MinimalDescriptor implements ScopeProjectionDescriptor {
   const _MinimalDescriptor();
   @override

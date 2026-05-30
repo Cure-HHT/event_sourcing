@@ -29,7 +29,7 @@ var _dbCounter = 0;
 
 class _Fixture {
   _Fixture({required this.datastore, required this.backend});
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   Future<void> close() => backend.close();
 }
@@ -53,7 +53,7 @@ Future<_Fixture> _openDatastore({
   final backend = SembastBackend(database: db);
   final effectiveProjections =
       projections ?? (ProjectionRegistry()..register(_kToyViewSpec));
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: Source(
       hopId: hopId,

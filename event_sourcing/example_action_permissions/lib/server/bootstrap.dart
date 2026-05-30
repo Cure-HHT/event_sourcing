@@ -85,7 +85,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
     classes: const <ScopeClassSpec>[ScopeClassSpec(name: 'site')],
     projectionLookup: (_) => null,
   );
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: Source(
       hopId: 'portal-server',
@@ -238,7 +238,7 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
     registeredVersion: 1,
     name: 'User Provisioned',
   ),
-  // Permissions module emits these via EventSeedApplier on bootstrap.
+  // Permissions module emits these via PermissionSeedApplier on bootstrap.
   // The role_permission_grants view is projected by rolePermissionGrantsSpec
   // (TableProjectionSpec) registered in the ProjectionRegistry.
   EntryTypeDefinition(

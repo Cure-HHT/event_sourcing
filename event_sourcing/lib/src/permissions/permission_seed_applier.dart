@@ -1,4 +1,4 @@
-// lib/src/permissions/event_seed_applier.dart
+// lib/src/permissions/permission_seed_applier.dart
 // Implements: EVS-PRD-permissions-as-events/A — emits permission_granted
 //   events for any seed grants not yet in the log, ensuring all grants are
 //   recorded as events alongside other state changes.
@@ -22,8 +22,11 @@ class SeedApplyResult {
   final List<String> grantsInViewNotInSeed; // aggregate ids
 }
 
-class EventSeedApplier {
-  EventSeedApplier({required this.eventStore, required this.seedInitiator});
+class PermissionSeedApplier {
+  PermissionSeedApplier({
+    required this.eventStore,
+    required this.seedInitiator,
+  });
 
   final EventStore eventStore;
   final Initiator seedInitiator;

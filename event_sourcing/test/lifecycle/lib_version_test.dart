@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('LibVersion', () {
     test('current version is a non-empty string', () {
-      expect(LibVersion.current, isNotEmpty);
+      expect(LibVersion.version, isNotEmpty);
     });
 
     test('compare returns expected ordering', () {

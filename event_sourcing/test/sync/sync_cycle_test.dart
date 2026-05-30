@@ -1,6 +1,6 @@
 // Verifies: EVS-PRD-destinations/C (FIFO order — drains run concurrently per
 //   destination under Future.wait; within each destination the fillBatch+drain
-//   sequence preserves FIFO order; portalInboundPoll runs after outbound drains)
+//   sequence preserves FIFO order; pollInbound runs after outbound drains)
 // Verifies: EVS-PRD-destinations/E (pluggable delivery — exception from one
 //   destination's send does not cancel another destination's drain; SyncCycle
 //   swallows per-destination errors so all registered destinations are attempted)
@@ -113,7 +113,7 @@ void main() {
     });
 
     // Observed via a subclass that records the order of events.
-    test('portalInboundPoll runs after outbound drains complete', () async {
+    test('pollInbound runs after outbound drains complete', () async {
       final order = <String>[];
       final dest = _RecordingDestination(order, id: 'fake');
       await registry.addDestination(dest, initiator: _testInit);
@@ -152,7 +152,7 @@ void main() {
       // Give the first call enough microtasks to reach `send` and block
       // on the gate.
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(sync.inFlight, isTrue);
+      expect(sync.isInFlight, isTrue);
       expect(dest.sent, hasLength(1));
 
       // Reentrant call — returns immediately, no new drain work.
@@ -161,7 +161,7 @@ void main() {
 
       gate.complete();
       await first;
-      expect(sync.inFlight, isFalse);
+      expect(sync.isInFlight, isFalse);
     });
 
     // After the first cycle completes, a subsequent call drains
@@ -266,8 +266,8 @@ void main() {
     });
 
     // Defensive: when no destinations are registered, the cycle is a
-    // near-no-op (just invokes portalInboundPoll).
-    test('empty registry: cycle runs portalInboundPoll and exits', () async {
+    // near-no-op (just invokes pollInbound).
+    test('empty registry: cycle runs pollInbound and exits', () async {
       final sync = SyncCycle(backend: backend, registry: registry);
       await sync.call(); // no throw, no error
     });
@@ -290,7 +290,7 @@ class _RecordingDestination extends FakeDestination {
 }
 
 /// Subclass that records "inbound-poll" in [order] inside
-/// [portalInboundPoll], so the ordering test can assert outbound-drain
+/// [pollInbound], so the ordering test can assert outbound-drain
 /// happens before inbound-poll.
 class _OrderRecordingSyncCycle extends SyncCycle {
   _OrderRecordingSyncCycle({
@@ -303,9 +303,9 @@ class _OrderRecordingSyncCycle extends SyncCycle {
   final List<String> order;
 
   @override
-  Future<void> portalInboundPoll() async {
+  Future<void> pollInbound() async {
     order.add('inbound-poll');
-    return super.portalInboundPoll();
+    return super.pollInbound();
   }
 }
 

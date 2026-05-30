@@ -38,7 +38,7 @@ class _PaneRuntime {
     required this.policyNotifier,
   });
 
-  final AppendOnlyDatastore datastore;
+  final EventStoreBundle datastore;
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
@@ -124,7 +124,7 @@ Future<_PaneRuntime> _bootstrapPane({
       ),
     );
 
-  final datastore = await bootstrapAppendOnlyDatastore(
+  final datastore = await bootstrapEventStore(
     backend: backend,
     source: source,
     entryTypes: allDemoEntryTypes,
