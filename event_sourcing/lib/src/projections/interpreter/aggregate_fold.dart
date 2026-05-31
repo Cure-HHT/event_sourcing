@@ -84,6 +84,13 @@ class AggregateFold {
 
     final next = Map<String, Object?>.from(merged);
     next['aggregateId'] = event.aggregateId;
+    // Stamp the event's classifying metadata onto the row so consumers can read
+    // it directly rather than inferring it from the payload shape. Two entry
+    // types of the same aggregate (e.g. a day marker that may be a "no events"
+    // or an "unknown" record, with identical payloads) are otherwise
+    // indistinguishable once materialized.
+    next['entryType'] = event.entryType;
+    next['aggregateType'] = event.aggregateType;
     next['latestEventId'] = event.eventId;
     next['updatedAt'] = event.clientTimestamp.toUtc().toIso8601String();
     next['firstEventTimestamp'] = firstEventTimestamp.toUtc().toIso8601String();
