@@ -11,7 +11,7 @@ A flow correlation token is an opaque value that a consuming application mints o
 
 A. The dispatcher SHALL accept an optional opaque correlation token on an action submission.
 
-B. The dispatcher SHALL thread that token onto every event the action emits in that dispatch.
+B. The dispatcher SHALL thread that token onto every event it appends during that dispatch (including denial events).
 
 C. The token SHALL be preserved unchanged when an event carrying it is relayed to or ingested by another deployment.
 
