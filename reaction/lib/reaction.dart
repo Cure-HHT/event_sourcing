@@ -101,6 +101,7 @@ export 'src/interfaces/principal_auth_validator.dart'
 export 'src/interfaces/view_source.dart' show ViewSource;
 
 // State
+export 'src/state/action_client.dart' show ActionClient;
 export 'src/state/action_state.dart'
     show ActionState, Denied, Failed, Idle, Submitting, Success;
 export 'src/state/idempotency_key_generator.dart'
