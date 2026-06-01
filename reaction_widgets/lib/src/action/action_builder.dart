@@ -85,14 +85,11 @@ class _ActionBuilderState extends State<ActionBuilder> {
       sub = base;
     } else {
       // Generated-key path: mint on first submit of a Submitting phase,
-      // reuse for retries until terminal state clears _activeKey.
+      // reuse for retries until terminal state clears _activeKey. The
+      // submission-keying itself is the single implementation shared with
+      // ActionClient (solve once).
       final key = _activeKey ??= _keyGen.generate();
-      sub = ActionSubmission(
-        actionName: base.actionName,
-        rawInput: base.rawInput,
-        idempotencyKey: key,
-        flowToken: base.flowToken,
-      );
+      sub = ActionClient.withGeneratedKey(base, key);
     }
 
     setState(() => _state = const Submitting());
