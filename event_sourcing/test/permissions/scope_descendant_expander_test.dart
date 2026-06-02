@@ -54,6 +54,7 @@ ScopeClassRegistry _participantInSite() => ScopeClassRegistry(
 
 void main() {
   group('ScopeDescendantExpander single-hop', () {
+    // Verifies: EVS-DEV-scope-descendant-expander/C — per-hop inverse query.
     test('expands a site assignment to all its participants', () async {
       final reg = _participantInSite();
       final backend = _FakeBackend({
@@ -104,6 +105,7 @@ void main() {
       ),
     );
 
+    // Verifies: EVS-DEV-scope-descendant-expander/E — breadth-first multi-hop.
     test('two-hop: region expands to all participants in its sites', () async {
       final backend = _FakeBackend({
         'site_region_index': [
@@ -129,6 +131,7 @@ void main() {
       expect(result, equals({'P-1', 'P-2'}));
     });
 
+    // Verifies: EVS-DEV-scope-descendant-expander/A — identity short-circuit.
     test('identity: assignment class equals target class', () async {
       final expander = ScopeDescendantExpander(
         registry: regionSiteParticipant(),
@@ -142,6 +145,7 @@ void main() {
       expect(result, equals({'P-7'}));
     });
 
+    // Verifies: EVS-DEV-scope-descendant-expander/B — non-ancestor empty.
     test('non-ancestor target returns empty set', () async {
       final expander = ScopeDescendantExpander(
         registry: regionSiteParticipant(),
@@ -156,6 +160,7 @@ void main() {
       expect(result, isEmpty);
     });
 
+    // Verifies: EVS-DEV-scope-descendant-expander/D — fail-closed on empty.
     test('empty index (fail-closed) yields empty set', () async {
       final backend = _FakeBackend({'participant_site_index': []});
       final expander = ScopeDescendantExpander(
@@ -170,6 +175,7 @@ void main() {
       expect(result, isEmpty);
     });
 
+    // Verifies: EVS-DEV-scope-descendant-expander/D — malformed row skipped.
     test('malformed row (missing/empty key) is skipped', () async {
       final backend = _FakeBackend({
         'participant_site_index': [

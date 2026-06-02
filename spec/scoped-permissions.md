@@ -789,3 +789,26 @@ E. When a scope value was returned (any of cases C or D, but not B), the dispatc
 - 2026-05-14 | 4a2db650 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 4a2db650
+
+## EVS-DEV-scope-descendant-expander: Downward containment expansion for read-path scope narrowing
+
+**Level**: DEV | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-scoped-permissions
+
+### Assertions
+
+A. `ScopeDescendantExpander.expand(assignment, targetClass)` SHALL return `{assignment.value}` when `assignment.class_ == targetClass` (identity short-circuit).
+
+B. `ScopeDescendantExpander.expand(assignment, targetClass)` SHALL return the empty set when `assignment.class_` is not an ancestor of `targetClass` in the registry's containment graph.
+
+C. `ScopeDescendantExpander.expand` SHALL descend the containment chain from `assignment.class_` toward `targetClass`, and at each hop read the child class's `ContainmentReference.projection` (via the injected transactional read) with a `where` filter on the `parentColumn` equal to each current-frontier value, collecting the rows' `keyColumn` values as the next frontier — the inverse traversal of `ContainmentResolver` (parent-to-children, not child-to-parent).
+
+D. `ScopeDescendantExpander.expand` SHALL be fail-closed: a hop whose projection returns zero rows contributes nothing, a row whose `keyColumn` is missing, non-string, or empty is skipped, and a broken chain (a child class with no `ContainmentReference`) yields the empty set — missing containment data never widens the result.
+
+E. `ScopeDescendantExpander.expand` SHALL fan out breadth-first across multiple hops, unioning every child value reached from every value in the current frontier, so a multi-hop expansion (e.g. region to site to participant) yields all transitive descendants at `targetClass`.
+
+### Changelog
+
+- 2026-06-01 | 226f108f | - | Michael Lewis (michael@anspar.org) | Auto-fix: add missing changelog section
+
+*End* *Downward containment expansion for read-path scope narrowing* | **Hash**: 226f108f
