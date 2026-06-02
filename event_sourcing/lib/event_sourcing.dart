@@ -239,6 +239,8 @@ export 'src/permissions/bootstrap_role_assignments.dart'
     show RoleAssignmentSeedResult, bootstrapRoleAssignments;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
+export 'src/permissions/scope_descendant_expander.dart'
+    show ScopeDescendantExpander;
 export 'src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
 export 'src/permissions/permission_seed_applier.dart'
