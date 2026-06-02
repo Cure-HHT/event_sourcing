@@ -44,6 +44,7 @@ class RemoteScope implements ReactionScope {
     required Uri baseUrl,
     http.Client? httpClient,
     WebSocketChannel Function(Uri)? wsFactory,
+    ExponentialBackoff? reconnectBackoff,
   }) : _connection = RemoteConnection(
          baseUrl: baseUrl,
          httpClient: httpClient ?? http.Client(),
@@ -55,6 +56,7 @@ class RemoteScope implements ReactionScope {
          // WS message (not upgrade headers) precisely so web — which
          // cannot set WS headers — is supported.
          wsFactory: wsFactory ?? WebSocketChannel.connect,
+         reconnectBackoff: reconnectBackoff ?? const ExponentialBackoff(),
        ) {
     // Wire 4001/4003 close-frame routing AFTER _connection is built
     // and BEFORE the first WS open: the lazy connect path is driven
@@ -143,6 +145,19 @@ class RemoteScope implements ReactionScope {
   Stream<ConnectionStatus> get connectionStatusStream {
     _checkDisposed();
     return _statusController.stream;
+  }
+
+  // Implements: EVS-PRD-cross-process-event-transport/H — delegates to
+  //   RemoteConnection.reconnect(), exposing the manual re-auth + re-issue
+  //   path to consumers that hold a concrete RemoteScope.
+  /// Force the underlying connection to reconnect (re-auth + re-issue live
+  /// subscribes) with the current credential. Used after a change to the
+  /// effective authorization context (e.g. active-role switch) so live view
+  /// subscriptions re-open under the new context. AuthStatus is unaffected —
+  /// this is a transport reconnect, not a credential change.
+  Future<void> reconnect() async {
+    _checkDisposed();
+    await _connection.reconnect();
   }
 
   @override

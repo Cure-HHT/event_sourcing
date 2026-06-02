@@ -122,6 +122,7 @@ export 'src/local/local_view_source.dart' show LocalViewSource;
 // Remote impls
 export 'src/remote/remote_action_submitter.dart' show RemoteActionSubmitter;
 export 'src/remote/remote_auth_session.dart' show RemoteAuthSession;
+export 'src/remote/remote_connection.dart' show ExponentialBackoff;
 export 'src/remote/remote_permission_source.dart' show RemotePermissionSource;
 export 'src/remote/remote_scope.dart' show RemoteScope;
 export 'src/remote/remote_view_source.dart' show RemoteViewSource;

@@ -171,6 +171,7 @@ class RemoteConnection {
   bool _isDisposed = false;
 
   WebSocketChannel? _channel;
+  StreamSubscription<dynamic>? _wsStreamSub;
   Future<void>? _connecting;
 
   /// True while [_runReconnectLoop] is awaiting a backoff delay or a
@@ -207,6 +208,34 @@ class RemoteConnection {
   /// message will use the new value.
   void setCredential(String? credential) {
     _credential = credential;
+  }
+
+  // Implements: EVS-PRD-cross-process-event-transport/H — exposes the
+  //   same re-auth + re-issue machinery as the auto-reconnect loop to
+  //   callers that need to force a reconnect on a credential context
+  //   change (e.g. active-role switch) rather than waiting for a wire drop.
+  /// Force a WS reconnect that re-authenticates with the CURRENT credential
+  /// and re-issues every live subscribe. Used when the effective
+  /// authorization context changes (e.g. an active-role switch carried in
+  /// the credential) so already-open subscriptions re-open under the new
+  /// context. No-op when no socket is open (the next openSubscription will
+  /// connect with the current credential anyway) or after dispose.
+  Future<void> reconnect() async {
+    final ch = _channel;
+    if (ch == null || _isDisposed) return;
+    // Cancel + null the old stream subscription FIRST so that the
+    // channel's real close-handshake echo (which fires asynchronously
+    // on a real WS, potentially AFTER the reconnect loop has already
+    // opened a new _channel) can never reach _onWsClosed and clobber
+    // the new generation's _authComplete. _isReconnecting remains a
+    // belt-and-suspenders backstop.
+    // The fake WS doesn't echo a close, so the direct _onWsClosed()
+    // call below is what drives the reconnect loop in tests.
+    await _wsStreamSub?.cancel();
+    _wsStreamSub = null;
+    _channel = null;
+    unawaited(ch.sink.close(1000, 'reconnect'));
+    _onWsClosed();
   }
 
   Map<String, String> _authHeaders() {
@@ -296,7 +325,7 @@ class RemoteConnection {
     _channel = channel;
     final authComplete = Completer<void>();
     _authComplete = authComplete;
-    channel.stream.listen(
+    _wsStreamSub = channel.stream.listen(
       _onMessage,
       onDone: _onWsClosed,
       onError: (_) => _onWsClosed(),
@@ -512,6 +541,8 @@ class RemoteConnection {
     for (final ctrl in controllers) {
       await ctrl.close();
     }
+    await _wsStreamSub?.cancel();
+    _wsStreamSub = null;
     await _channel?.sink.close(1000, 'normal');
     _channel = null;
     _httpClient.close();
