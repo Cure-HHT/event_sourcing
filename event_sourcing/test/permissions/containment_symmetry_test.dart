@@ -76,6 +76,12 @@ void main() {
       targetClass: 'participant',
     );
 
+    // Completeness: the expander returns EXACTLY site-A's participants —
+    // not a subset. Guards against an under-expansion regression that the
+    // per-element soundness loop below would not catch (it only checks that
+    // whatever IS returned resolves back to site-A).
+    expect(downFromA, equals({'P-1', 'P-2'}));
+
     for (final pid in downFromA) {
       final up = await resolver.resolve(
         txn: const _FakeTxn(),

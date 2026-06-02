@@ -43,7 +43,7 @@
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 7b577371 |
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 98a3dab0 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | f24ffdf5 |
-| EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       |          |
+| EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | a02a8238 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                                   | dev-ingest-promotes-before-fold.md      | a3519bfb |
 | EVS-DEV-postgres-backend                   | Postgres backend reference impl                              | dev-postgres-backend.md                 | e69b5a15 |
 | EVS-DEV-role-assignment-aggregate-id       | Canonical-JSON aggregate id for role assignments             | scoped-permissions.md                   | 05adadf2 |
