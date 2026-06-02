@@ -41,6 +41,18 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 /// reject the subscription on `Deny`.
 typedef ViewPermissionNamer = String? Function(String viewName);
 
+/// Expands an ancestor-class [BoundScope] assignment into the set of
+/// descendant-class scope values it covers, by walking the containment
+/// graph downward (the read-path inverse of `ContainmentResolver`).
+///
+/// Injected so the handler stays decoupled from the storage backend and
+/// the expander is independently testable. `ReactionHandlers` supplies the
+/// production implementation (a short read transaction over
+/// `ScopeDescendantExpander`); a `null` callback disables ancestor
+/// `BoundScope` expansion (the conservative pre-feature behaviour).
+typedef DescendantExpansion =
+    Future<Set<String>> Function(BoundScope assignment, String targetClass);
+
 /// Run the per-connection state machine for an already-upgraded
 /// WebSocket [channel]. Spawns a message loop that:
 ///
@@ -77,6 +89,7 @@ void runSubscriptionHandler({
   required ViewPermissionNamer viewPermissionNamer,
   required WsConnectionRegistry connectionRegistry,
   ScopeClassRegistry? scopeClassRegistry,
+  DescendantExpansion? expandDescendants,
 }) {
   _ConnectionState(
     channel: channel,
@@ -87,6 +100,7 @@ void runSubscriptionHandler({
     viewPermissionNamer: viewPermissionNamer,
     connectionRegistry: connectionRegistry,
     scopeClassRegistry: scopeClassRegistry,
+    expandDescendants: expandDescendants,
   ).start();
 }
 
@@ -100,6 +114,7 @@ class _ConnectionState {
     required this.viewPermissionNamer,
     required this.connectionRegistry,
     required this.scopeClassRegistry,
+    required this.expandDescendants,
   });
 
   final WebSocketChannel channel;
@@ -116,6 +131,11 @@ class _ConnectionState {
   /// (conservative-correct: under-grants the ancestor-wildcard case,
   /// never over-grants).
   final ScopeClassRegistry? scopeClassRegistry;
+
+  /// Injected expander for ancestor-class `BoundScope` assignments. When
+  /// `null`, ancestor `BoundScope`s are conservatively skipped (the
+  /// pre-feature under-grant behaviour).
+  final DescendantExpansion? expandDescendants;
 
   Principal? _principal;
   final Map<String, StreamSubscription<Update<Map<String, Object?>>>> _subs =
@@ -258,7 +278,7 @@ class _ConnectionState {
     final binding = viewScopes.lookup(msg.viewName);
     if (binding != null) {
       final eff = await policy.effectivePermissionsFor(principal);
-      allowedAggregates = _expandAssignments(
+      allowedAggregates = await _expandAssignments(
         assignments: eff.scopeAssignments,
         binding: binding,
       );
@@ -322,14 +342,15 @@ class _ConnectionState {
   /// never over-grants).
   ///
   /// Ancestor `BoundScope`s (e.g. `BoundScope('site', 'site-A')` on a
-  /// 'patient' view) require `ContainmentResolver` expansion to enumerate
-  /// "patients at site-A"; that plumbing is deferred to a follow-up task,
-  /// so such assignments are conservatively SKIPPED here (under-grant,
-  /// never over-grant). This is intentional, not a bug.
-  Set<String>? _expandAssignments({
+  /// 'patient' view) are expanded into the covered descendant aggregate
+  /// IDs via the injected [expandDescendants] callback (the read-path
+  /// inverse of `ContainmentResolver`). When [expandDescendants] is
+  /// `null`, such assignments are conservatively SKIPPED (under-grant,
+  /// never over-grant) — the pre-feature behaviour.
+  Future<Set<String>?> _expandAssignments({
     required List<ScopeAssignment> assignments,
     required ViewScopeBinding binding,
-  }) {
+  }) async {
     final registry = scopeClassRegistry;
     final result = <String>{};
     for (final a in assignments) {
@@ -394,11 +415,19 @@ class _ConnectionState {
               // narrowing applies.
               return null;
             case BoundScope():
-              // An ancestor BoundScope (e.g. BoundScope('site', 'site-A') on
-              // a 'patient' view) needs ContainmentResolver expansion to
-              // enumerate the descendants; that plumbing arrives in a
-              // follow-up, so skip conservatively (under-grant, never over).
-              break;
+              final expand = expandDescendants;
+              if (expand == null) {
+                // No expander wired: conservatively skip (under-grant,
+                // never over-grant) exactly as the pre-feature behaviour.
+                break;
+              }
+              final descendants = await expand(scope, binding.scopeClass);
+              for (final value in descendants) {
+                final aggId = binding.aggregateIdResolver(
+                  BoundScope(class_: binding.scopeClass, value: value),
+                );
+                if (aggId != null) result.add(aggId);
+              }
           }
       }
     }
