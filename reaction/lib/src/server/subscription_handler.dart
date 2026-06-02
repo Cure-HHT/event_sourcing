@@ -402,8 +402,9 @@ class _ConnectionState {
               if (aggId != null) {
                 result.add(aggId);
               }
-            // null = resolver couldn't directly translate; needs the
-            // containment resolver, wired in a follow-up.
+            // null: this exact-class scope value doesn't resolve to an
+            // aggregate id via the direct resolver (e.g. the value doesn't
+            // exist or the binding's resolver can't map it). Skip it.
           }
         case ScopeClassMatch.appliesViaAncestor:
           switch (scope) {

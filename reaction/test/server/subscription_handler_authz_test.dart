@@ -292,9 +292,11 @@ void main() {
           scope: BoundScope(class_: 'site', value: 'X'),
         ),
       ],
-      // Even with a registry that knows site is an ancestor, the
-      // ancestor-BoundScope containment expansion is deferred, so the
-      // patient row 'X' must NOT be granted.
+      // No expandDescendants callback is supplied here, so the ancestor-
+      // BoundScope case conservatively skips and grants nothing (the
+      // pre-expansion fallback). The full expansion path is covered by
+      // reaction_handlers_containment_test.dart and the example_clinical_scopes
+      // e2e suite.
       scopeClassRegistry: _siteOverPatientRegistry(),
     );
     expect(captured, isNotNull);
