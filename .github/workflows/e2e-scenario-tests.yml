@@ -59,9 +59,15 @@ jobs:
       - name: Resolve deps (reaction/example)
         run: flutter pub get
         working-directory: reaction/example
+      - name: Resolve deps (example_clinical_scopes)
+        run: flutter pub get
+        working-directory: event_sourcing/example_clinical_scopes
       - name: Multi-client e2e (reaction/example)
         run: flutter test test/e2e/
         working-directory: reaction/example
       - name: Permission/projection scenarios (action_permissions_demo)
         run: flutter test test/scenarios/
         working-directory: event_sourcing/example_action_permissions
+      - name: Hierarchy-scoped read e2e + widget (example_clinical_scopes)
+        run: flutter test
+        working-directory: event_sourcing/example_clinical_scopes

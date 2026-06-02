@@ -20,10 +20,16 @@ server as well as the mobile client.
 
 ### Demos
 
-`event_sourcing/example/` and `event_sourcing/example_action_permissions/`
-are intra-lib worked examples that exercise the public API. The latter
+`event_sourcing/example/`, `event_sourcing/example_action_permissions/`,
+and `event_sourcing/example_clinical_scopes/` are intra-lib worked
+examples that exercise the public API. `example_action_permissions/`
 hosts a Flutter dual-pane shell + shelf-based server demonstrating the
 action-dispatch + permission-snapshot flow end to end.
+`example_clinical_scopes/` is a Flutter + shelf demo of hierarchy-scoped
+reads — a `region → site → participant` model with Investigator (site-
+scoped), Overseer (region-scoped, two-hop), and Admin roles, where each
+user's reactive participant list is narrowed by the read-path
+`ScopeDescendantExpander`.
 
 ## Roadmap
 

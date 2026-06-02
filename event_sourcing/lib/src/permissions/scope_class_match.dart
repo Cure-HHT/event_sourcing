@@ -20,10 +20,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// Three-way classification of an assigned scope's class against a target
 /// scope class.
 ///
-/// Deliberately three-way (not boolean): the read path treats
-/// [appliesExact] (resolve to an aggregate id) differently from
-/// [appliesViaAncestor] (containment resolution, which it does not yet
-/// plumb, so it conservatively defers).
+/// Deliberately three-way (not boolean): the read path handles
+/// [appliesExact] (direct aggregate-id resolution) differently from
+/// [appliesViaAncestor] (downward containment expansion via
+/// `ScopeDescendantExpander` on the reaction subscription path).
 enum ScopeClassMatch {
   /// The assigned scope's class neither equals nor is an ancestor of the
   /// target class. The assignment does not apply to the target.

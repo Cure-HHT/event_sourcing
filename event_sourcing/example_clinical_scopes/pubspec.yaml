@@ -1,0 +1,36 @@
+name: example_clinical_scopes
+description: Hierarchy-scoped read-path demo — region/site/participant with Investigator/Overseer roles.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.10.7
+  flutter: ">=3.38.7"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  event_sourcing:
+    path: ../
+  reaction:
+    path: ../../reaction
+  reaction_widgets:
+    path: ../../reaction_widgets
+  http: ^1.4.0
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  sembast: ^3.7.1
+  uuid: ^4.5.1
+  args: ^2.5.0
+  meta: ^1.16.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  test: any
+  reaction_widgets_testing:
+    path: ../../reaction_widgets_testing
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
