@@ -80,11 +80,17 @@ widgets, theming, and modality-aware affordances — none of which a
 `Semantics` wrapper is. The library may therefore emit a non-painting
 `Semantics` node without violating the charter.
 
-During implementation we will author a clarifying assertion in
-`spec/prd-reaction.md` (in-place, via elspais) stating that the Builder
-primitives MAY surface an optional, non-painting semantic identifier
-carrying lifecycle state for automation, and that this does not
-constitute a rendered/styled widget.
+During implementation we will, in `spec/prd-reaction.md` (in-place, via
+elspais), both:
+
+- author a clarifying **normative** assertion under
+  `EVS-PRD-reaction-widget-contract` stating that the Builder primitives
+  MAY surface an optional, non-painting semantic identifier carrying
+  lifecycle state for automation, and that this does not constitute a
+  rendered/styled widget; and
+- add a **non-normative remainder** chapter, "Automation instrumentation
+  for downstream widget libraries", carrying the consumer how-to (see
+  Downstream auto-instrumentation below).
 
 ## Design
 
@@ -191,6 +197,15 @@ Playwright
 ```
 
 ## Downstream auto-instrumentation
+
+> **Home for this guidance.** This section is non-normative consumer
+> how-to. Per `spec/README.md:52` (cross-system narrative belongs in a
+> remainder section of the spec/ file it contextualizes, not a separate
+> prose document), during implementation it migrates verbatim into a
+> non-normative remainder chapter of `spec/prd-reaction.md` titled
+> "Automation instrumentation for downstream widget libraries", sitting
+> beside the new `EVS-PRD-reaction-widget-contract` assertion. The draft
+> below is authoritative until that migration.
 
 Downstream apps build their own widget libraries on top of
 `reaction_widgets` (e.g. a `MyStandardButton`). They auto-instrument the
