@@ -30,8 +30,11 @@ cutover.
 ## Layout
 
 - `event_sourcing/` — core lib (storage, sync, ingest, materialization,
-  action dispatch, permissions). Contains two intra-lib demos under
-  `example/` and `example_action_permissions/`.
+  action dispatch, permissions). Contains three intra-lib demos under
+  `example/`, `example_action_permissions/`, and `example_clinical_scopes/`
+  (the last a Flutter + shelf demo of hierarchy-scoped reads:
+  region/site/participant with Investigator/Overseer/Admin roles, showing
+  the read-path `ScopeDescendantExpander` narrowing a subscription).
 - `reaction/` — substrate-agnostic action submission, view subscription,
   permission snapshots, and credential lifecycle for apps built on
   `event_sourcing`. Pure Dart at runtime; ships in-process Local
