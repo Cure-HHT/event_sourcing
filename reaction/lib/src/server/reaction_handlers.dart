@@ -24,7 +24,7 @@ import 'package:shelf_web_socket/shelf_web_socket.dart';
 // [ViewPermissionNamer] from this file rather than from the package-
 // private `subscription_handler.dart`).
 export 'package:reaction/src/server/subscription_handler.dart'
-    show ViewPermissionNamer;
+    show ViewPermissionNamer, DescendantExpansion;
 
 /// Composition bundle for the reaction server-side adapters.
 ///
@@ -88,6 +88,24 @@ class ReactionHandlers {
       policy: policy,
     );
     unawaited(_authzWatcher.start());
+
+    final registry = scopeClassRegistry;
+    if (registry != null) {
+      final expander = ScopeDescendantExpander(
+        registry: registry,
+        findRowsInTxn: eventStore.backend.findViewRowsInTxn,
+      );
+      _expandDescendants = (assignment, targetClass) =>
+          eventStore.backend.transaction(
+            (txn) => expander.expand(
+              txn: txn,
+              assignment: assignment,
+              targetClass: targetClass,
+            ),
+          );
+    } else {
+      _expandDescendants = null;
+    }
   }
 
   final EventStore eventStore;
@@ -106,6 +124,14 @@ class ReactionHandlers {
   final WsConnectionRegistry connectionRegistry;
   final ViewPermissionNamer _viewPermissionNamer;
   late final AuthorizationWatcher _authzWatcher;
+
+  /// Production read-path expander for ancestor-class `BoundScope`
+  /// assignments. Built only when a [scopeClassRegistry] is supplied;
+  /// `null` otherwise (the conservative pre-feature behaviour, where
+  /// ancestor `BoundScope`s are skipped rather than expanded). Each
+  /// invocation runs a short read transaction over the backend's
+  /// containment index via [ScopeDescendantExpander].
+  late final DescendantExpansion? _expandDescendants;
 
   /// Default view-permission name resolver: `view:<viewName>`.
   static String? defaultViewPermissionNamer(String viewName) =>
@@ -151,6 +177,7 @@ class ReactionHandlers {
           viewPermissionNamer: _viewPermissionNamer,
           connectionRegistry: connectionRegistry,
           scopeClassRegistry: scopeClassRegistry,
+          expandDescendants: _expandDescendants,
         );
       });
 
