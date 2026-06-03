@@ -413,6 +413,65 @@ void main() {
       expect(node.identifier, isEmpty);
       handle.dispose();
     });
+
+    testWidgets('value tracks to ready after EndOfReplay', (tester) async {
+      final handle = tester.ensureSemantics();
+      final fake = FakeReaction();
+
+      await pumpReactionWidget(
+        tester,
+        fake: fake,
+        child: ViewBuilder<_Row>(
+          viewName: 'v',
+          semanticIdentifier: 'notes-view',
+          mapper: (row) => row,
+          aggregateIdOf: _aggregateIdOf,
+          builder: (ctx, state) => const SizedBox(key: ValueKey('leaf')),
+        ),
+      );
+
+      fake.emitViewUpdate<_Row>(
+        'v',
+        Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
+      );
+      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      await _settleStream(tester);
+
+      final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+      expect(node.value, 'ready');
+      handle.dispose();
+    });
+
+    testWidgets('value tracks to stale on disconnect', (tester) async {
+      final handle = tester.ensureSemantics();
+      final fake = FakeReaction();
+
+      await pumpReactionWidget(
+        tester,
+        fake: fake,
+        child: ViewBuilder<_Row>(
+          viewName: 'v',
+          semanticIdentifier: 'notes-view',
+          mapper: (row) => row,
+          aggregateIdOf: _aggregateIdOf,
+          builder: (ctx, state) => const SizedBox(key: ValueKey('leaf')),
+        ),
+      );
+
+      fake.emitViewUpdate<_Row>(
+        'v',
+        Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
+      );
+      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      await _settleStream(tester);
+
+      fake.driveConnectionStatus(const Reconnecting());
+      await _settleStream(tester);
+
+      final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+      expect(node.value, 'stale');
+      handle.dispose();
+    });
   });
 
   group('ViewBuilder (isProgressive mode)', () {

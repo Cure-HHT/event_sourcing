@@ -104,9 +104,12 @@ class ViewBuilder<T> extends StatefulWidget {
   /// Optional automation identifier. When non-null, the builder wraps its
   /// delegated child in a non-painting [Semantics] node carrying this
   /// `identifier` and the current [ViewState] as a machine-readable
-  /// `value` token (`loading | ready | stale`). Default `null` => no extra
-  /// node. On Flutter web the identifier surfaces as a
-  /// `flt-semantics-identifier` DOM attribute.
+  /// `value` token (`loading | ready | stale`).
+  ///
+  /// Layout-neutral and charter-compliant (a [Semantics] node is not a
+  /// rendered or styled widget). Default `null` => no extra node, no
+  /// behavior change. On Flutter web the identifier surfaces as a
+  /// `flt-semantics-identifier` DOM attribute for tools like Playwright.
   final String? semanticIdentifier;
 
   @override
