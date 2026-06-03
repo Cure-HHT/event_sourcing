@@ -130,25 +130,29 @@ class _NoteListView extends StatelessWidget {
       itemBuilder: (context, i) {
         final note = sorted[i];
         final color = workspaceColor(note.workspace);
-        return Card(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: scheme.outlineVariant),
-          ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.15),
-              foregroundColor: color,
-              child: const Icon(Icons.sticky_note_2_outlined),
+        return Semantics(
+          identifier: 'note-row',
+          value: note.title,
+          child: Card(
+            elevation: 0,
+            margin: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: scheme.outlineVariant),
             ),
-            title: Text(
-              note.title,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: color.withValues(alpha: 0.15),
+                foregroundColor: color,
+                child: const Icon(Icons.sticky_note_2_outlined),
+              ),
+              title: Text(
+                note.title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
+              trailing: TagChip(label: note.workspace, color: color),
             ),
-            subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
-            trailing: TagChip(label: note.workspace, color: color),
           ),
         );
       },

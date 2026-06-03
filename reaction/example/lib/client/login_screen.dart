@@ -97,24 +97,33 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  TextField(
-                    controller: _controller,
-                    decoration: const InputDecoration(
-                      labelText: 'Username',
-                      hintText: 'alice / bob / carol / dave',
-                      helperText:
-                          'alice/bob: editor (west/east). carol: admin. '
-                          'dave: viewer.',
-                      prefixIcon: Icon(Icons.person_outline),
-                      border: OutlineInputBorder(),
+                  Semantics(
+                    identifier: 'login-username',
+                    textField: true,
+                    explicitChildNodes: true,
+                    child: TextField(
+                      controller: _controller,
+                      decoration: const InputDecoration(
+                        labelText: 'Username',
+                        hintText: 'alice / bob / carol / dave',
+                        helperText:
+                            'alice/bob: editor (west/east). carol: admin. '
+                            'dave: viewer.',
+                        prefixIcon: Icon(Icons.person_outline),
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => _signIn(),
                     ),
-                    onSubmitted: (_) => _signIn(),
                   ),
                   const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _signIn,
-                    icon: const Icon(Icons.login),
-                    label: const Text('Sign in'),
+                  Semantics(
+                    identifier: 'login-button',
+                    button: true,
+                    child: FilledButton.icon(
+                      onPressed: _signIn,
+                      icon: const Icon(Icons.login),
+                      label: const Text('Sign in'),
+                    ),
                   ),
                 ],
               ),

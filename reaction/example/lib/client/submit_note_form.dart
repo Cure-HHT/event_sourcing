@@ -100,6 +100,7 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
         ),
       ),
       child: ActionBuilder(
+        semanticIdentifier: 'submit-note',
         submissionFactory: () => ActionSubmission(
           actionName: 'submit_note',
           rawInput: <String, Object?>{
@@ -130,51 +131,65 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    DropdownButton<String>(
-                      value: _workspace,
-                      // Declared explicitly so the web icon tree-shaker keeps
-                      // the glyph (a bare default arrow rendered as tofu).
-                      icon: const Icon(Icons.arrow_drop_down),
-                      onChanged: submitting
-                          ? null
-                          : (v) {
-                              if (v != null) setState(() => _workspace = v);
-                            },
-                      items: <DropdownMenuItem<String>>[
-                        for (final ws in kKnownWorkspaces)
-                          DropdownMenuItem<String>(
-                            value: ws,
-                            child: Text(
-                              authorized.contains(ws)
-                                  ? ws
-                                  : '$ws (no permission)',
+                    Semantics(
+                      identifier: 'submit-note-workspace',
+                      child: DropdownButton<String>(
+                        value: _workspace,
+                        // Declared explicitly so the web icon tree-shaker keeps
+                        // the glyph (a bare default arrow rendered as tofu).
+                        icon: const Icon(Icons.arrow_drop_down),
+                        onChanged: submitting
+                            ? null
+                            : (v) {
+                                if (v != null) setState(() => _workspace = v);
+                              },
+                        items: <DropdownMenuItem<String>>[
+                          for (final ws in kKnownWorkspaces)
+                            DropdownMenuItem<String>(
+                              value: ws,
+                              child: Text(
+                                authorized.contains(ws)
+                                    ? ws
+                                    : '$ws (no permission)',
+                              ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _titleController,
-                        enabled: !submitting,
-                        decoration: const InputDecoration(
-                          labelText: 'New note title',
-                          isDense: true,
-                          border: OutlineInputBorder(),
-                        ),
-                        onSubmitted: (_) => onSubmit(),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 12),
-                    FilledButton(
-                      onPressed: submitting ? null : onSubmit,
-                      child: submitting
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Submit'),
+                    Expanded(
+                      child: Semantics(
+                        identifier: 'submit-note-title',
+                        textField: true,
+                        explicitChildNodes: true,
+                        child: TextField(
+                          controller: _titleController,
+                          enabled: !submitting,
+                          decoration: const InputDecoration(
+                            labelText: 'New note title',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          onSubmitted: (_) => onSubmit(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Semantics(
+                      identifier: 'submit-note-button',
+                      button: true,
+                      child: FilledButton(
+                        onPressed: submitting ? null : onSubmit,
+                        child: submitting
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Text('Submit'),
+                      ),
                     ),
                   ],
                 ),
