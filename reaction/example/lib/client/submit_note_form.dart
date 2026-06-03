@@ -160,8 +160,6 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
                     Expanded(
                       child: Semantics(
                         identifier: 'submit-note-title',
-                        textField: true,
-                        explicitChildNodes: true,
                         child: TextField(
                           controller: _titleController,
                           enabled: !submitting,
@@ -177,7 +175,8 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
                     const SizedBox(width: 12),
                     Semantics(
                       identifier: 'submit-note-button',
-                      button: true,
+                      container: true,
+                      explicitChildNodes: true,
                       child: FilledButton(
                         onPressed: submitting ? null : onSubmit,
                         child: submitting

@@ -118,7 +118,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 16),
                   Semantics(
                     identifier: 'login-button',
-                    button: true,
+                    container: true,
+                    explicitChildNodes: true,
                     child: FilledButton.icon(
                       onPressed: _signIn,
                       icon: const Icon(Icons.login),

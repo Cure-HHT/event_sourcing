@@ -29,12 +29,35 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The web platform scaffold (web/index.html etc.) is gitignored and
+# regenerated on demand — see .gitignore and README. `flutter build web`
+# fails with "not configured for the web" if it is missing, so create it.
+if [[ ! -d web ]]; then
+  echo "==> Scaffolding web platform (flutter create --platforms web)"
+  flutter create . --platforms web --project-name reaction_example >/dev/null
+fi
+
 echo "==> Booting demo server on :$SERVER_PORT"
 dart run bin/server.dart --port "$SERVER_PORT" &
 SERVER_PID=$!
 
-# Give the server a moment to bind.
-sleep 2
+# Wait for the server to bind rather than racing a fixed sleep.
+echo "==> Waiting for server readiness on :$SERVER_PORT"
+for _ in $(seq 1 30); do
+  if curl -sf -o /dev/null "http://127.0.0.1:$SERVER_PORT/" 2>/dev/null; then
+    break
+  fi
+  # A 404 still proves the port is bound and answering HTTP.
+  if curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SERVER_PORT/" \
+    2>/dev/null | grep -qE '^[0-9]{3}$'; then
+    break
+  fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "ERROR: demo server exited before binding :$SERVER_PORT" >&2
+    exit 1
+  fi
+  sleep 1
+done
 
 echo "==> Building Flutter web bundle"
 flutter build web -t lib/client/main.dart \
