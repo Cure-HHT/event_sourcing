@@ -276,6 +276,44 @@ real seam; there is no free ride from existing keys.
 4. **Two server processes**: bundle server + demo server lifecycle is
    managed by Playwright `webServer` entries to avoid orphaned processes.
 
+### Downstream-trial findings (hht_diary, 2026-06-03)
+
+The technique was exercised against a real downstream app (the
+`clinical_diary` Flutter-web client, driving its CUR-528 font selector) to
+validate it outside the example. Three additional web-semantics behaviours
+surfaced that downstream annotators should expect — they refine risks 1–2
+above:
+
+- **Zero-area semantics nodes are pruned on web.** A dedicated machine-
+  readable readout node built as `Semantics(value: x, child:
+  const SizedBox.shrink())` (0×0) does **not** appear in the web DOM — the
+  engine drops zero-area nodes. Give such a node a non-zero footprint
+  (`SizedBox(width: 1, height: 1)`) and `container: true` so it
+  materializes. (Relevant to the "dedicated `<id>-status` node" fallback
+  in risk 2 — make the fallback node non-zero-area.)
+- **`Semantics(value:)` carrier depends on the node's role.** On an
+  interactive/role-bearing node (e.g. the `ActionBuilder` wrapper) the
+  value surfaces as `aria-label`. On a plain *leaf* node it instead
+  renders as the element's **text content** (a nested `<span>`), with no
+  `aria-label`. Readers should fall back from `aria-label` to trimmed
+  `textContent`. (Refines risk 2's "verify the carrier attribute": there
+  is no single carrier — it varies by node role.)
+- **A collapsed `DropdownButtonFormField` reuses its option identifier.**
+  A closed dropdown renders its *selected* item as a nested node carrying
+  the same `font-option-<x>` identifier inside the (pointer-events:none)
+  selector container; once the overlay opens, that identifier exists
+  twice. Open the dropdown by clicking the visible selected label, and
+  select the option via the **last** matching node (the overlay node
+  mounts after the collapsed one), with a `getByText(displayName)`
+  fallback. General lesson: overlay/menu widgets can duplicate an
+  identifier across the collapsed control and the open overlay — prefer
+  `.last()` or text-scoped selection for menu items.
+
+These also reinforce the core debugging discipline: when a selector
+misses, dump `document.querySelectorAll('[flt-semantics-identifier]')`
+(and the open-overlay nodes) to see the actual DOM before adjusting an
+annotation or selector.
+
 ## Scope boundaries (YAGNI)
 
 In scope: the `reaction_widgets` `semanticIdentifier` hook; the example
