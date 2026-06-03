@@ -732,7 +732,11 @@ npm install
 npx playwright install chromium
 ```
 
-Expected: dependencies installed; Chromium downloaded.
+Expected: dependencies installed. `playwright install chromium` reuses the
+host's existing `~/.cache/ms-playwright` build when it matches the pinned
+`@playwright/test`; otherwise it downloads the matching build (no sudo —
+system deps are already present on this host). No container is used:
+Playwright runs directly on the host per the chosen install approach.
 
 - [ ] **Step 5: Commit**
 
@@ -763,6 +767,17 @@ set -euo pipefail
 
 EXAMPLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$EXAMPLE_DIR"
+
+# `flutter` may not be on PATH (this host keeps it under flutter-sdk/).
+# Add the known location if the command is missing.
+if ! command -v flutter >/dev/null 2>&1; then
+  if [[ -x "$HOME/flutter-sdk/flutter/bin/flutter" ]]; then
+    export PATH="$HOME/flutter-sdk/flutter/bin:$PATH"
+  else
+    echo "ERROR: flutter not found on PATH and not at \$HOME/flutter-sdk/flutter/bin" >&2
+    exit 1
+  fi
+fi
 
 SERVER_PORT="${REACTION_SERVER_PORT:-8080}"
 

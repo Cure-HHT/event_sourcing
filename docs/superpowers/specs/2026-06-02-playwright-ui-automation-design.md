@@ -297,3 +297,12 @@ Out of scope (deliberately deferred):
 - `reaction/example` targets Flutter `>=3.38.7`, Dart SDK `^3.10.7`.
 - Playwright (TypeScript, `@playwright/test`) under
   `reaction/example/e2e/`, Chromium engine.
+- **Install approach: host (no container).** Playwright runs directly on
+  the dev host. Rationale: the host already has Node, a Flutter SDK,
+  Chrome, and a cached Playwright Chromium build, so a host install is the
+  fastest path with no container networking glue. The Flutter SDK lives at
+  `~/flutter-sdk/flutter/bin` (not on the default PATH — the bundled `dart`
+  is what resolves), so `run-e2e.sh` prepends it when `flutter` is absent.
+  A container-based, version-pinned setup (the official
+  `mcr.microsoft.com/playwright` image) is the natural choice for the
+  deferred CI job, where reproducibility outweighs iteration speed.
