@@ -42,22 +42,26 @@ dart run bin/server.dart --port "$SERVER_PORT" &
 SERVER_PID=$!
 
 # Wait for the server to bind rather than racing a fixed sleep.
+# A real HTTP status (any 3-digit code other than 000) means the port is up.
+# curl returns 000 when the connection is refused; we treat that as "not ready".
 echo "==> Waiting for server readiness on :$SERVER_PORT"
-for _ in $(seq 1 30); do
-  if curl -sf -o /dev/null "http://127.0.0.1:$SERVER_PORT/" 2>/dev/null; then
-    break
-  fi
-  # A 404 still proves the port is bound and answering HTTP.
-  if curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SERVER_PORT/" \
-    2>/dev/null | grep -qE '^[0-9]{3}$'; then
-    break
-  fi
+READY=0
+for i in $(seq 1 30); do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "ERROR: demo server exited before binding :$SERVER_PORT" >&2
     exit 1
   fi
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SERVER_PORT/" || true)
+  if [[ "$code" =~ ^[0-9]{3}$ ]] && [[ "$code" != "000" ]]; then
+    READY=1
+    break
+  fi
   sleep 1
 done
+if [[ "$READY" -ne 1 ]]; then
+  echo "ERROR: demo server did not become ready on :$SERVER_PORT after 30 attempts" >&2
+  exit 1
+fi
 
 echo "==> Building Flutter web bundle"
 flutter build web -t lib/client/main.dart \
