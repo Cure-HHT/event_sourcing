@@ -61,6 +61,7 @@ class ViewBuilder<T> extends StatefulWidget {
     this.filter,
     this.aggregates,
     this.isProgressive = false,
+    this.semanticIdentifier,
   });
 
   /// Registered `ProjectionSpec.viewName` to subscribe to.
@@ -99,6 +100,14 @@ class ViewBuilder<T> extends StatefulWidget {
   /// surfacing [Loading] until [EndOfReplay]). Default false. See
   /// `EVS-PRD-reaction-widget-contract`-J.
   final bool isProgressive;
+
+  /// Optional automation identifier. When non-null, the builder wraps its
+  /// delegated child in a non-painting [Semantics] node carrying this
+  /// `identifier` and the current [ViewState] as a machine-readable
+  /// `value` token (`loading | ready | stale`). Default `null` => no extra
+  /// node. On Flutter web the identifier surfaces as a
+  /// `flt-semantics-identifier` DOM attribute.
+  final String? semanticIdentifier;
 
   @override
   State<ViewBuilder<T>> createState() => _ViewBuilderState<T>();
@@ -190,5 +199,16 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, _state);
+  Widget build(BuildContext context) {
+    final child = widget.builder(context, _state);
+    final id = widget.semanticIdentifier;
+    if (id == null) return child;
+    return Semantics(identifier: id, value: _stateToken(_state), child: child);
+  }
+
+  static String _stateToken(ViewState<Object?> state) => switch (state) {
+    Loading() => 'loading',
+    Ready() => 'ready',
+    Stale() => 'stale',
+  };
 }

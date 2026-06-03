@@ -371,6 +371,50 @@ void main() {
     });
   });
 
+  group('semanticIdentifier hook', () {
+    testWidgets('identifier surfaces with loading state token', (tester) async {
+      final handle = tester.ensureSemantics();
+      final fake = FakeReaction();
+
+      await pumpReactionWidget(
+        tester,
+        fake: fake,
+        child: ViewBuilder<_Row>(
+          viewName: 'v',
+          semanticIdentifier: 'notes-view',
+          mapper: (row) => row,
+          aggregateIdOf: _aggregateIdOf,
+          builder: (ctx, state) => const SizedBox(key: ValueKey('leaf')),
+        ),
+      );
+
+      final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+      expect(node.identifier, 'notes-view');
+      expect(node.value, 'loading');
+      handle.dispose();
+    });
+
+    testWidgets('null identifier adds no Semantics node', (tester) async {
+      final handle = tester.ensureSemantics();
+      final fake = FakeReaction();
+
+      await pumpReactionWidget(
+        tester,
+        fake: fake,
+        child: ViewBuilder<_Row>(
+          viewName: 'v',
+          mapper: (row) => row,
+          aggregateIdOf: _aggregateIdOf,
+          builder: (ctx, state) => const SizedBox(key: ValueKey('leaf')),
+        ),
+      );
+
+      final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+      expect(node.identifier, isEmpty);
+      handle.dispose();
+    });
+  });
+
   group('ViewBuilder (isProgressive mode)', () {
     testWidgets('isProgressive mode emits Ready during snapshot replay', (
       tester,
