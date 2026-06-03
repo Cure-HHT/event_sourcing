@@ -334,6 +334,42 @@ void main() {
         expect(node().value, 'success');
         handle.dispose();
       });
+
+      testWidgets('value becomes denied on non-success result', (tester) async {
+        final handle = tester.ensureSemantics();
+        final fake = FakeReaction();
+        final completer = Completer<DispatchResult<Object?>>();
+        fake.queueDispatchResultFuture(completer.future);
+        late void Function() triggerSubmit;
+
+        await pumpReactionWidget(
+          tester,
+          fake: fake,
+          child: ActionBuilder(
+            semanticIdentifier: 'submit-note',
+            submissionFactory: _sub,
+            builder: (ctx, state, submit) {
+              triggerSubmit = submit;
+              return const SizedBox(key: ValueKey('leaf'));
+            },
+          ),
+        );
+
+        SemanticsNode node() =>
+            tester.getSemantics(find.byKey(const ValueKey('leaf')));
+        expect(node().value, 'idle');
+
+        triggerSubmit();
+        await tester.pump();
+        expect(node().value, 'submitting');
+
+        completer.complete(
+          const DispatchResult<Object?>.validationDenied('bad input'),
+        );
+        await tester.pumpAndSettle();
+        expect(node().value, 'denied');
+        handle.dispose();
+      });
     });
   });
 }
