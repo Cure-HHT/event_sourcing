@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:flutter/semantics.dart' show SemanticsNode;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
@@ -255,6 +256,84 @@ void main() {
       );
 
       expect(find.text('CUSTOM'), findsOneWidget);
+    });
+
+    group('semanticIdentifier hook', () {
+      testWidgets('null identifier adds no Semantics node', (tester) async {
+        final handle = tester.ensureSemantics();
+        final fake = FakeReaction();
+
+        await pumpReactionWidget(
+          tester,
+          fake: fake,
+          child: ActionBuilder(
+            submissionFactory: _sub,
+            builder: (ctx, state, submit) =>
+                const SizedBox(key: ValueKey('leaf')),
+          ),
+        );
+
+        final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+        expect(node.identifier, isEmpty);
+        handle.dispose();
+      });
+
+      testWidgets('identifier surfaces with idle state token', (tester) async {
+        final handle = tester.ensureSemantics();
+        final fake = FakeReaction();
+
+        await pumpReactionWidget(
+          tester,
+          fake: fake,
+          child: ActionBuilder(
+            semanticIdentifier: 'submit-note',
+            submissionFactory: _sub,
+            builder: (ctx, state, submit) =>
+                const SizedBox(key: ValueKey('leaf')),
+          ),
+        );
+
+        final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
+        expect(node.identifier, 'submit-note');
+        expect(node.value, 'idle');
+        handle.dispose();
+      });
+
+      testWidgets('value tracks Idle -> Submitting -> Success', (tester) async {
+        final handle = tester.ensureSemantics();
+        final fake = FakeReaction();
+        final completer = Completer<DispatchResult<Object?>>();
+        fake.queueDispatchResultFuture(completer.future);
+        late void Function() triggerSubmit;
+
+        await pumpReactionWidget(
+          tester,
+          fake: fake,
+          child: ActionBuilder(
+            semanticIdentifier: 'submit-note',
+            submissionFactory: _sub,
+            builder: (ctx, state, submit) {
+              triggerSubmit = submit;
+              return const SizedBox(key: ValueKey('leaf'));
+            },
+          ),
+        );
+
+        SemanticsNode node() =>
+            tester.getSemantics(find.byKey(const ValueKey('leaf')));
+        expect(node().value, 'idle');
+
+        triggerSubmit();
+        await tester.pump();
+        expect(node().value, 'submitting');
+
+        completer.complete(
+          const DispatchResult<Object?>.success('ok', <String>[]),
+        );
+        await tester.pumpAndSettle();
+        expect(node().value, 'success');
+        handle.dispose();
+      });
     });
   });
 }

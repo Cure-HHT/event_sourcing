@@ -36,6 +36,7 @@ class ActionBuilder extends StatefulWidget {
     required this.submissionFactory,
     required this.builder,
     this.idempotencyKeyGenerator,
+    this.semanticIdentifier,
   });
 
   /// Factory that produces the [ActionSubmission] to dispatch on each
@@ -53,6 +54,17 @@ class ActionBuilder extends StatefulWidget {
   /// [UuidIdempotencyKeyGenerator]. Tests typically inject a
   /// deterministic stub.
   final IdempotencyKeyGenerator? idempotencyKeyGenerator;
+
+  /// Optional automation identifier. When non-null, the builder wraps its
+  /// delegated child in a non-painting [Semantics] node carrying this
+  /// `identifier` and the current [ActionState] as a machine-readable
+  /// `value` token (`idle | submitting | success | denied | failed`).
+  ///
+  /// Layout-neutral and charter-compliant (a [Semantics] node is not a
+  /// rendered or styled widget). Default `null` => no extra node, no
+  /// behavior change. On Flutter web the identifier surfaces as a
+  /// `flt-semantics-identifier` DOM attribute for tools like Playwright.
+  final String? semanticIdentifier;
 
   @override
   State<ActionBuilder> createState() => _ActionBuilderState();
@@ -116,6 +128,18 @@ class _ActionBuilderState extends State<ActionBuilder> {
   }
 
   @override
-  Widget build(BuildContext context) =>
-      widget.builder(context, _state, _submit);
+  Widget build(BuildContext context) {
+    final child = widget.builder(context, _state, _submit);
+    final id = widget.semanticIdentifier;
+    if (id == null) return child;
+    return Semantics(identifier: id, value: _stateToken(_state), child: child);
+  }
+
+  static String _stateToken(ActionState state) => switch (state) {
+    Idle() => 'idle',
+    Submitting() => 'submitting',
+    Success() => 'success',
+    Denied() => 'denied',
+    Failed() => 'failed',
+  };
 }
