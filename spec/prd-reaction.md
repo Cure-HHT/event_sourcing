@@ -342,6 +342,8 @@ I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>`
 
 J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes partial row sets to the builder during snapshot replay, allowing large-view first-paint without blocking on the full snapshot. The default mode SHALL surface `Loading` until `EndOfReplay`, then transition to `Ready` with the full snapshot.
 
+K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optional automation identifier. When supplied, a primitive SHALL wrap its delegated child in a single non-painting `Semantics` node carrying that `identifier` and the primitive's current lifecycle state as a machine-readable `value` token, and SHALL introduce no layout. A `Semantics` node is not a rendered or styled widget, so this does not violate the headless obligation (assertion G). When the identifier is absent the primitive SHALL introduce no additional semantics node.
+
 ### Rationale
 
 **Why headless — no rendered or styled widgets in the base (G)?** The two near-term consumers (hht_diary mobile and the Flutter-web portal UI) are very different modalities: a mobile submit button (large tap target, "queued offline" posture, haptic feedback) is wrong for the web portal (refuses offline, desktop affordances, hover states), and vice versa. A shared styled widget would inevitably encode the wrong assumption for one of them, forcing each consumer to fight overrides. The base layer therefore stops at the **headless plumbing** that is identical across modalities — state machines, lifecycle management, scope threading, test doubles — and leaves rendering to per-app sugar. The two tiers (primitives and sugar) live in different packages with the package boundary running along the modality split: base provides primitives; each app provides its own sugar.
@@ -360,7 +362,7 @@ J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes part
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Baking in a single choice (signals, Provider, Riverpod, BLoC) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca, and a `Stream` bridges cleanly to signals (stream-to-signal), Provider, or Riverpod alike. The opt-in adapter that earns its keep is `reaction_widgets_signals`: signals is the reactive idiom both consumers use — hht_diary mobile, and the portal-ui after its Phase IV substrate cutover. Provider/Riverpod adapters would follow the same additive pattern only behind an external consumer that needs them.
 
-*End* *Reaction Widget Contract* | **Hash**: 53508e6a
+*End* *Reaction Widget Contract* | **Hash**: 72a4ad0a
 
 ## Decisions and alternatives rejected
 
@@ -389,6 +391,76 @@ These shaped the design but live nowhere in the assertions above; they are recor
 **Why ship FakeReaction in a sibling `reaction_widgets_testing` package, not in `reaction_widgets/lib/src/testing/`?** FakeReaction imports `flutter_test`'s `WidgetTester` and `pumpEventQueue` to provide `pumpReactionWidget`. If it lived in `reaction_widgets`'s main `dependencies` (not `dev_dependencies`), every consumer's release build would pull `test_api`/`matcher`/etc. into shipped binaries — pure bloat. The sibling package keeps the test-double deliverable first-class per assertion H while letting consumers add it as a `dev_dependency` only.
 
 **Why not build cursor/batched snapshot delivery into the wire now?** The whole repo is in-scope for this work, so it would be possible. But there is no consumer with measured large-view scale, and the substrate's snapshot-then-deltas semantics serve the expected scale. Building cursor pagination now would be speculative complexity. The right move is to **define the contract to be additive-ready** (`EVS-PRD-view-subscriber`-E) so cursor delivery can ship later as a non-breaking enhancement, plus give the widget layer an opt-in `progressive` mode (`EVS-PRD-reaction-widget-contract`-J) for the rendering half of the problem. This is YAGNI with a non-breaking future, not a workaround.
+
+## Automation instrumentation for downstream widget libraries
+
+> Non-normative guidance. The normative rule is
+> `EVS-PRD-reaction-widget-contract`-K (the Builder primitives MAY surface
+> an optional non-painting automation `Semantics` node). This chapter
+> explains how downstream apps instrument their own widgets for UI
+> automation (e.g. Playwright) on top of that.
+
+On Flutter web, the CanvasKit renderer paints the whole app into a single
+`<canvas>`, so DOM-based automation has nothing to target. The mitigation
+is Flutter's accessibility/semantics tree: a `Semantics(identifier: x)`
+surfaces on web as a `flt-semantics-identifier` DOM attribute (a stable,
+locale-independent selector, unlike localized labels). Apps force-enable
+the tree at boot with `SemanticsBinding.instance.ensureSemantics()` under
+`kIsWeb`.
+
+There are two kinds of identity, and they live in different places:
+
+- **Interactable targets** (the button, the field, the row a test clicks
+  or types into) are rendered by the *consumer app*, not the headless
+  base. The base ships no button to label, so annotating these is a
+  consumer responsibility — it cannot be a library API without violating
+  assertion G.
+- **Lifecycle / outcome state** (submitting? success? denied? loading?
+  stale?) is owned by the `ActionBuilder` / `ViewBuilder` state machines.
+  The library surfaces this via the optional automation identifier of
+  assertion K, so a test can assert outcome without scraping localized
+  status text.
+
+**Define-once auto-instrumentation.** A consumer that builds its own widget
+library (e.g. `MyStandardButton`) wraps `Semantics` *once* inside that
+widget's `build()`; every instance then inherits annotation without
+touching raw `Semantics` at call sites:
+
+```dart
+class MyStandardButton extends StatelessWidget {
+  const MyStandardButton(this.label, {this.onPressed, this.semanticId, super.key});
+  final String label;
+  final VoidCallback? onPressed;
+  final String? semanticId;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        identifier: semanticId ?? 'btn-${_slug(label)}', // auto default
+        button: true,
+        child: FilledButton(onPressed: onPressed, child: Text(label)),
+      );
+}
+
+MyStandardButton('Submit')                             // id = btn-submit
+MyStandardButton('Submit', semanticId: 'submit-note')  // pinned where it matters
+```
+
+What cannot be auto-generated is a **unique, stable** identifier value when
+two same-labelled controls share a screen — the framework cannot invent a
+distinguishing id. So one per-instance disambiguator is irreducible; the
+app chooses how cheap it is (a slug-of-label default with a `semanticId`
+override only where a durable test handle is needed). This is strictly
+cheaper than per-call-site `Semantics`.
+
+For action/view widgets specifically, the assertion-K `semanticIdentifier`
+hook **is** the auto-instrument path: a `MySubmitButton` built on
+`ActionBuilder` threads its `semanticId` into the builder, so every
+instance gets both the click target and the live
+`value=submitting|success|denied` for free.
+
+Note `ValueKey` does **not** map to `flt-semantics-identifier`, so the
+`Semantics(identifier:)` wrap is the real seam — there is no free ride from
+existing widget keys.
 
 ## Open questions
 
