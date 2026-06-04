@@ -25,6 +25,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';
 import 'package:reaction/reaction.dart';
+import 'package:reaction_example/client/automation.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
 
 import 'home_screen.dart' show kKnownWorkspaces;
@@ -131,7 +132,7 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
               children: <Widget>[
                 Row(
                   children: <Widget>[
-                    Semantics(
+                    AutomationTarget(
                       identifier: 'submit-note-workspace',
                       child: DropdownButton<String>(
                         value: _workspace,
@@ -158,8 +159,9 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
                     ),
                     const SizedBox(width: 12),
                     Expanded(
-                      child: Semantics(
+                      child: AutomationTarget(
                         identifier: 'submit-note-title',
+                        field: true,
                         child: TextField(
                           controller: _titleController,
                           enabled: !submitting,
@@ -173,10 +175,9 @@ class _SubmitNoteFormState extends State<SubmitNoteForm> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Semantics(
+                    AutomationTarget(
                       identifier: 'submit-note-button',
-                      container: true,
-                      explicitChildNodes: true,
+                      button: true,
                       child: FilledButton(
                         onPressed: submitting ? null : onSubmit,
                         child: submitting

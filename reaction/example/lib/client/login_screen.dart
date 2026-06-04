@@ -1,6 +1,7 @@
 // reaction/example/lib/client/login_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:reaction_example/client/automation.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
 
 /// Login screen: enter one of the seeded usernames (alice, bob, carol,
@@ -97,10 +98,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     const SizedBox(height: 16),
                   ],
-                  Semantics(
+                  AutomationTarget(
                     identifier: 'login-username',
-                    textField: true,
-                    explicitChildNodes: true,
+                    field: true,
                     child: TextField(
                       controller: _controller,
                       decoration: const InputDecoration(
@@ -116,10 +116,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Semantics(
+                  AutomationTarget(
                     identifier: 'login-button',
-                    container: true,
-                    explicitChildNodes: true,
+                    button: true,
                     child: FilledButton.icon(
                       onPressed: _signIn,
                       icon: const Icon(Icons.login),

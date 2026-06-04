@@ -20,6 +20,7 @@
 // `material.dart` also exports a `ViewBuilder` (from SearchAnchor); hide it
 // so the unqualified name resolves to reaction_widgets' view primitive.
 import 'package:flutter/material.dart' hide ViewBuilder;
+import 'package:reaction_example/client/automation.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
 
 import 'ui.dart';
@@ -130,7 +131,7 @@ class _NoteListView extends StatelessWidget {
       itemBuilder: (context, i) {
         final note = sorted[i];
         final color = workspaceColor(note.workspace);
-        return Semantics(
+        return AutomationTarget(
           identifier: 'note-row',
           value: note.title,
           child: Card(
