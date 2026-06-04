@@ -515,6 +515,43 @@ recreates its semantics nodes each time. Two consequences:
   library deliberately ships **no** projection-backed action-result
   surface — read-from-view covers it without eroding assertion G.
 
+### Reactive UX continuity (what survives a rebuild)
+
+`ViewBuilder` is headless — it owns no `ScrollController` and renders no
+list; on each update it `setState`s a fresh immutable `rows` list and the
+*consumer's* builder rebuilds. Scroll- and transient-state continuity is
+therefore mostly a consumer-rendering concern, with one library-level
+exception. Three cases, because they behave differently:
+
+- **An ordinary `Delta` / `Tombstone` does NOT reset scroll.** A `setState`
+  rebuild preserves the `Scrollable`'s scroll offset (Flutter holds it in
+  the scroll position's `State`, which survives the rebuild). The real
+  hazards are subtler: (a) since `ViewBuilder` does not sort, a row inserted
+  or reordered *above* the viewport keeps the pixel offset but shifts what
+  is visible there — a jump, not a reset; (b) without a stable per-row key
+  (`ValueKey(aggregateId)`), Flutter recycles element/`State` by position,
+  so a reorder lands the wrong expansion/animation/inline-edit state on the
+  wrong row. **Mitigation: stable per-row keys + a stable sort.**
+- **A reconnect DOES reset scroll and transient state — this is the one
+  library-level limitation.** On `ConnectionStatus` transitions
+  `ViewBuilder` goes `Reconnecting/Disconnected -> Stale(lastRows)` (still
+  shows the last rows), then `Connected -> rows.clear(); Loading` and
+  re-replays the full `Snapshot×N -> EndOfReplay -> Ready` (the substrate
+  re-issues every subscription fresh on reconnect). If the consumer renders
+  `Loading` as a spinner, the list unmounts and rebuilds from empty, so
+  **scroll resets to top and any transient child state is lost** — even
+  when the data returns identical. This is a deliberate tradeoff:
+  `ViewBuilder` chose reset-and-re-replay (simple, trivially consistent)
+  over diff-the-fresh-snapshot-against-retained-rows (continuous, more
+  complex). **Mitigation (consumer-side):** render `Loading`-after-`Stale`
+  as the retained `lastRows` (greyed, with a reconnecting banner) rather
+  than a spinner, so the list — and its scroll offset — stays mounted
+  across the blip. A library-side "retain and diff on reconnect" mode would
+  be a real `reaction_widgets` change, deliberately out of scope here.
+- **Stateful disclosure / inline-edit widgets in the list are fragile**
+  across the rebuild churn (see the `ExpansionTile` rule above) — keep
+  per-row affordances inline and stateless.
+
 ### Text input on Flutter web
 
 A `TextField` under a `Semantics(textField: true)` wrapper renders **two**
