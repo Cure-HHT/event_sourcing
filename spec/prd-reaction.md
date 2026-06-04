@@ -470,6 +470,127 @@ Note `ValueKey` does **not** map to `flt-semantics-identifier`, so the
 `Semantics(identifier:)` wrap is the real seam — there is no free ride from
 existing widget keys.
 
+The rules below were validated by driving a real, multi-screen, two-app
+reactive product flow (a coordinator portal **and** a participant diary,
+both Flutter-web, driven UI-to-UI in one browser against a live
+Postgres-backed server) — not just the toy example. They are non-normative
+consumer conventions; the in-repo `reaction/example` app is the worked
+demonstration (`lib/client/automation.dart` for the annotate-once wrapper,
+`e2e/helpers.ts` for the shared Playwright kit).
+
+### Annotation rules for interactive targets
+
+- **Every interactive target needs `container: true, explicitChildNodes:
+  true`** on its `Semantics(identifier:)`. A bare annotation node around a
+  role-bearing child (button, checkbox, field) is silently merged away on
+  web and the selector vanishes. The assertion-K hook does this for
+  action/view widgets; for everything else, bake it into one wrapper
+  (`reaction/example`'s `AutomationTarget`, or a production app's own
+  `AppButton`) rather than repeating it per call site.
+- **Give list rows domain-keyed identifiers** (`participant-${id}`,
+  `note-row` + a `value` disambiguator) so multiple rows are addressable.
+  A reactive list reorders on deltas — never rely on positional selectors.
+
+### Driving reactive screens
+
+A `ViewBuilder` list re-renders on every projection delta, and Flutter
+recreates its semantics nodes each time. Two consequences:
+
+- **Don't gate interactions behind stateful disclosure widgets** (e.g.
+  `ExpansionTile`) inside a reactive list. The header node churns on
+  rebuild and the expand toggle races the next delta — non-deterministic
+  for mouse *and* keyboard, and a `PageStorageKey` does not fix the
+  per-rebuild node identity. Render the per-row affordances **inline**
+  (always present). This is also better UX in a list that updates under
+  the user.
+- **Read outcomes from the view, not from the action.** An
+  `ActionBuilder`'s `Success(result)` is transient widget state; the action
+  usually mutates a projection the enclosing `ViewBuilder` watches, so the
+  success triggers a rebuild that destroys the result display before a test
+  (or user) can read it. Use the **lifecycle token** (`value=success`) to
+  know the action completed, then read the resulting *data* from the
+  reactive view (or a follow-on dialog backed by it). Corollary for product
+  design: if an outcome value must be shown durably, route it through the
+  event/projection, not the ephemeral action result. This is also why the
+  library deliberately ships **no** projection-backed action-result
+  surface — read-from-view covers it without eroding assertion G.
+
+### Text input on Flutter web
+
+A `TextField` under a `Semantics(textField: true)` wrapper renders **two**
+`<input>`s on web: a `disabled` placeholder on the wrapper node and the
+real editable input nested in a child node. Filling it robustly takes three
+steps, each load-bearing:
+
+```ts
+async function fillField(page, id, value) {
+  const input = page.locator(`${byId(id)} input:not([disabled])`);
+  await page.locator(byId(id)).click();      // 1. focus first (see below)
+  await expect(input).toBeFocused();         //    barrier: focus landed
+  await input.fill(value);                   // 2. fill(), not keyboard.type()
+  await expect(input).toHaveValue(value);    // 3. barrier: edit committed
+}
+```
+
+1. **Focus the field first.** The enabled semantic input only becomes
+   Flutter's live editing element once focused; filling an un-focused input
+   writes a value Flutter **wipes on its next semantics rebuild**, so the
+   bound `TextEditingController` never sees it and a subsequent submit reads
+   empty and no-ops. (This is the non-obvious one — a bare
+   `input:not([disabled])` + `fill()` looks correct but fails
+   intermittently.)
+2. **`.fill()`, not `keyboard.type()`** — typing races Flutter's text-field
+   setup and drops leading characters.
+3. **Wait for the value to land** (`toHaveValue`) before the next action,
+   so a follow-on submit click doesn't read the controller mid-commit.
+
+For split / auto-advancing fields (e.g. a two-segment code entry that
+focus-advances on fill), drive each segment explicitly rather than typing
+through the advance.
+
+### Harness rules for real flows
+
+- **`ensureSemantics()` at boot per app, under `kIsWeb`** — it is per-app,
+  not inherited; every app's `main.dart` must do it.
+- **Wait on nodes `attached`, not `visible`** — the `flt-semantics-host` is
+  intentionally hidden, so presence (not visibility) is the correct intent
+  for every semantics interaction (Copilot caught this for a row assertion;
+  it generalizes).
+- **Multi-app loops, one test.** Build each app's web bundle against the
+  live server, serve them on distinct ports, and drive them as separate
+  `browser.newPage({ baseURL })` pages in a single test — code minted in
+  app A's UI read and consumed in app B's UI is the real end-to-end
+  assertion.
+- **Block backend calls the test environment can't serve** (e.g. a
+  sponsor-config fetch) with `page.route(pattern, r => r.abort())` so the
+  app boots to a usable state while the flow under test goes through.
+- **Reset + reseed per run for non-idempotent flows.** A loop that issues
+  and consumes a one-time value isn't repeatable; drop+recreate the schema
+  and restart the server (re-seeding fresh state) before each run.
+  Idempotency-keyed actions also return a `cachedResult` on replay — handle
+  both, or reset.
+- **Pin the throwaway DB config; never inherit it.** If the shell carries
+  credentials pointing at a real database, the harness must hard-code its
+  local throwaway values so a reset can never touch the real DB.
+
+### A minimal shared instrumentation kit
+
+Standardize a tiny surface so screens are drivable by default rather than
+one-off (see `reaction/example/e2e/helpers.ts`):
+
+- `byId(id)` → `[flt-semantics-identifier="${id}"]`
+- `waitForFlutter(page)` → wait `flt-semantics-host` **attached**
+- `readSemanticValue(page, id)` → read `aria-label`, fall back to text
+  content (the `value` carrier varies by node role on web)
+- `fillField(page, id, value)` → `input:not([disabled])` + `fill()`
+- `clickMenuItem` / `blockRequests` for overlay menus + offline shaping
+
+Plus the one app-side convention: interactive widgets get a labeled wrapper
+(`container: true, explicitChildNodes: true`, plus the right role flag)
+defined once in the app's widget kit. Action/view widgets get it for free
+via `semanticIdentifier`. With those two pieces, a new screen is drivable
+without inventing per-screen automation code.
+
 ## Open questions
 
 These are tracked here for resolution during implementation; resolution should land as new assertions or as Rationale updates to the affected PRDs.
