@@ -16,8 +16,17 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # trailing-whitespace and end-of-file-fixer open each file read-write
+      # ('rb+') even just to verify it, so they crash on elspais's generated
+      # artifacts, which `elspais fix` writes read-only (0444). Those files are
+      # generated — they must not be hand-normalized by these hooks anyway — so
+      # exclude them. (The read-only bit is only a local "don't edit" nudge:
+      # git doesn't track it, so it doesn't survive a fresh checkout; the
+      # exclude is the portable guard.)
       - id: trailing-whitespace
+        exclude: '^spec/(INDEX\.md$|_generated/)'
       - id: end-of-file-fixer
+        exclude: '^spec/(INDEX\.md$|_generated/)'
       - id: check-merge-conflict
       - id: check-yaml
       - id: check-added-large-files
