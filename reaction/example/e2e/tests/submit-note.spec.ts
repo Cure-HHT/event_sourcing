@@ -45,9 +45,11 @@ test('submit a note and see it appear in the list', async ({ page }) => {
     .poll(async () => valueOf(page, 'submit-note'), { timeout: 15_000 })
     .toBe('success');
 
-  // Assert a note-row carrying our unique title exists (the row's
-  // Semantics(value:) becomes its aria-label, and its text content too).
+  // Assert a note-row carrying our unique title exists. Semantics nodes
+  // live under the intentionally-hidden `flt-semantics-host`, so assert the
+  // node is ATTACHED (present in the DOM) rather than "visible" — visibility
+  // is brittle for an off-screen / opacity-0 host.
   await expect(
     page.locator(byId('note-row'), { hasText: title }),
-  ).toBeVisible({ timeout: 15_000 });
+  ).toBeAttached({ timeout: 15_000 });
 });
