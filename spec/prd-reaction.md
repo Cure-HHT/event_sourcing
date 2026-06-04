@@ -342,6 +342,8 @@ I. `ViewBuilder<T>` SHALL expose its rendering state via a sealed `ViewState<T>`
 
 J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes partial row sets to the builder during snapshot replay, allowing large-view first-paint without blocking on the full snapshot. The default mode SHALL surface `Loading` until `EndOfReplay`, then transition to `Ready` with the full snapshot.
 
+K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optional automation identifier. When supplied, a primitive SHALL wrap its delegated child in a single non-painting `Semantics` node carrying that `identifier` and the primitive's current lifecycle state as a machine-readable `value` token, and SHALL introduce no layout. A `Semantics` node is not a rendered or styled widget, so this does not violate the headless obligation (assertion G). When the identifier is absent the primitive SHALL introduce no additional semantics node.
+
 ### Rationale
 
 **Why headless — no rendered or styled widgets in the base (G)?** The two near-term consumers (hht_diary mobile and the Flutter-web portal UI) are very different modalities: a mobile submit button (large tap target, "queued offline" posture, haptic feedback) is wrong for the web portal (refuses offline, desktop affordances, hover states), and vice versa. A shared styled widget would inevitably encode the wrong assumption for one of them, forcing each consumer to fight overrides. The base layer therefore stops at the **headless plumbing** that is identical across modalities — state machines, lifecycle management, scope threading, test doubles — and leaves rendering to per-app sugar. The two tiers (primitives and sugar) live in different packages with the package boundary running along the modality split: base provides primitives; each app provides its own sugar.
@@ -360,7 +362,7 @@ J. `ViewBuilder<T>` SHALL support an opt-in `progressive` mode that exposes part
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Baking in a single choice (signals, Provider, Riverpod, BLoC) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca, and a `Stream` bridges cleanly to signals (stream-to-signal), Provider, or Riverpod alike. The opt-in adapter that earns its keep is `reaction_widgets_signals`: signals is the reactive idiom both consumers use — hht_diary mobile, and the portal-ui after its Phase IV substrate cutover. Provider/Riverpod adapters would follow the same additive pattern only behind an external consumer that needs them.
 
-*End* *Reaction Widget Contract* | **Hash**: 53508e6a
+*End* *Reaction Widget Contract* | **Hash**: 72a4ad0a
 
 ## Decisions and alternatives rejected
 
@@ -389,6 +391,242 @@ These shaped the design but live nowhere in the assertions above; they are recor
 **Why ship FakeReaction in a sibling `reaction_widgets_testing` package, not in `reaction_widgets/lib/src/testing/`?** FakeReaction imports `flutter_test`'s `WidgetTester` and `pumpEventQueue` to provide `pumpReactionWidget`. If it lived in `reaction_widgets`'s main `dependencies` (not `dev_dependencies`), every consumer's release build would pull `test_api`/`matcher`/etc. into shipped binaries — pure bloat. The sibling package keeps the test-double deliverable first-class per assertion H while letting consumers add it as a `dev_dependency` only.
 
 **Why not build cursor/batched snapshot delivery into the wire now?** The whole repo is in-scope for this work, so it would be possible. But there is no consumer with measured large-view scale, and the substrate's snapshot-then-deltas semantics serve the expected scale. Building cursor pagination now would be speculative complexity. The right move is to **define the contract to be additive-ready** (`EVS-PRD-view-subscriber`-E) so cursor delivery can ship later as a non-breaking enhancement, plus give the widget layer an opt-in `progressive` mode (`EVS-PRD-reaction-widget-contract`-J) for the rendering half of the problem. This is YAGNI with a non-breaking future, not a workaround.
+
+## Automation instrumentation for downstream widget libraries
+
+> Non-normative guidance. The normative rule is
+> `EVS-PRD-reaction-widget-contract`-K (the Builder primitives MAY surface
+> an optional non-painting automation `Semantics` node). This chapter
+> explains how downstream apps instrument their own widgets for UI
+> automation (e.g. Playwright) on top of that.
+
+On Flutter web, the CanvasKit renderer paints the whole app into a single
+`<canvas>`, so DOM-based automation has nothing to target. The mitigation
+is Flutter's accessibility/semantics tree: a `Semantics(identifier: x)`
+surfaces on web as a `flt-semantics-identifier` DOM attribute (a stable,
+locale-independent selector, unlike localized labels). Apps force-enable
+the tree at boot with `SemanticsBinding.instance.ensureSemantics()` under
+`kIsWeb`.
+
+There are two kinds of identity, and they live in different places:
+
+- **Interactable targets** (the button, the field, the row a test clicks
+  or types into) are rendered by the *consumer app*, not the headless
+  base. The base ships no button to label, so annotating these is a
+  consumer responsibility — it cannot be a library API without violating
+  assertion G.
+- **Lifecycle / outcome state** (submitting? success? denied? loading?
+  stale?) is owned by the `ActionBuilder` / `ViewBuilder` state machines.
+  The library surfaces this via the optional automation identifier of
+  assertion K, so a test can assert outcome without scraping localized
+  status text.
+
+**Define-once auto-instrumentation.** A consumer that builds its own widget
+library (e.g. `MyStandardButton`) wraps `Semantics` *once* inside that
+widget's `build()`; every instance then inherits annotation without
+touching raw `Semantics` at call sites:
+
+```dart
+class MyStandardButton extends StatelessWidget {
+  const MyStandardButton(this.label, {this.onPressed, this.semanticId, super.key});
+  final String label;
+  final VoidCallback? onPressed;
+  final String? semanticId;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+        identifier: semanticId ?? 'btn-${_slug(label)}', // auto default
+        button: true,
+        // container + explicitChildNodes keep the identifier on its own node;
+        // otherwise the web flt-semantics flattener merges it into the button's
+        // node and the selector disappears.
+        container: true,
+        explicitChildNodes: true,
+        child: FilledButton(onPressed: onPressed, child: Text(label)),
+      );
+}
+
+MyStandardButton('Submit')                             // id = btn-submit
+MyStandardButton('Submit', semanticId: 'submit-note')  // pinned where it matters
+```
+
+What cannot be auto-generated is a **unique, stable** identifier value when
+two same-labelled controls share a screen — the framework cannot invent a
+distinguishing id. So one per-instance disambiguator is irreducible; the
+app chooses how cheap it is (a slug-of-label default with a `semanticId`
+override only where a durable test handle is needed). This is strictly
+cheaper than per-call-site `Semantics`.
+
+For action/view widgets specifically, the assertion-K `semanticIdentifier`
+hook **is** the auto-instrument path: a `MySubmitButton` built on
+`ActionBuilder` threads its `semanticId` into the builder, so every
+instance gets both the click target and the live
+`value=submitting|success|denied` for free. The hook wraps with
+`container` + `explicitChildNodes`, so the identifier survives even when the
+delegated child is itself a button — the consumer adds no `Semantics` of its
+own and the identifier never merges away on web.
+
+Note `ValueKey` does **not** map to `flt-semantics-identifier`, so the
+`Semantics(identifier:)` wrap is the real seam — there is no free ride from
+existing widget keys.
+
+The rules below were validated by driving a real, multi-screen, two-app
+reactive product flow (a coordinator portal **and** a participant diary,
+both Flutter-web, driven UI-to-UI in one browser against a live
+Postgres-backed server) — not just the toy example. They are non-normative
+consumer conventions; the in-repo `reaction/example` app is the worked
+demonstration (`lib/client/automation.dart` for the annotate-once wrapper,
+`e2e/helpers.ts` for the shared Playwright kit).
+
+### Annotation rules for interactive targets
+
+- **Every interactive target needs `container: true, explicitChildNodes:
+  true`** on its `Semantics(identifier:)`. A bare annotation node around a
+  role-bearing child (button, checkbox, field) is silently merged away on
+  web and the selector vanishes. The assertion-K hook does this for
+  action/view widgets; for everything else, bake it into one wrapper
+  (`reaction/example`'s `AutomationTarget`, or a production app's own
+  `AppButton`) rather than repeating it per call site.
+- **Give list rows domain-keyed identifiers** (`participant-${id}`,
+  `note-row` + a `value` disambiguator) so multiple rows are addressable.
+  A reactive list reorders on deltas — never rely on positional selectors.
+
+### Driving reactive screens
+
+A `ViewBuilder` list re-renders on every projection delta, and Flutter
+recreates its semantics nodes each time. Two consequences:
+
+- **Don't gate interactions behind stateful disclosure widgets** (e.g.
+  `ExpansionTile`) inside a reactive list. The header node churns on
+  rebuild and the expand toggle races the next delta — non-deterministic
+  for mouse *and* keyboard, and a `PageStorageKey` does not fix the
+  per-rebuild node identity. Render the per-row affordances **inline**
+  (always present). This is also better UX in a list that updates under
+  the user.
+- **Read outcomes from the view, not from the action.** An
+  `ActionBuilder`'s `Success(result)` is transient widget state; the action
+  usually mutates a projection the enclosing `ViewBuilder` watches, so the
+  success triggers a rebuild that destroys the result display before a test
+  (or user) can read it. Use the **lifecycle token** (`value=success`) to
+  know the action completed, then read the resulting *data* from the
+  reactive view (or a follow-on dialog backed by it). Corollary for product
+  design: if an outcome value must be shown durably, route it through the
+  event/projection, not the ephemeral action result. This is also why the
+  library deliberately ships **no** projection-backed action-result
+  surface — read-from-view covers it without eroding assertion G.
+
+### Reactive UX continuity (what survives a rebuild)
+
+`ViewBuilder` is headless — it owns no `ScrollController` and renders no
+list; on each update it `setState`s a fresh immutable `rows` list and the
+*consumer's* builder rebuilds. Scroll- and transient-state continuity is
+therefore mostly a consumer-rendering concern, with one library-level
+exception. Three cases, because they behave differently:
+
+- **An ordinary `Delta` / `Tombstone` does NOT reset scroll.** A `setState`
+  rebuild preserves the `Scrollable`'s scroll offset (Flutter holds it in
+  the scroll position's `State`, which survives the rebuild). The real
+  hazards are subtler: (a) since `ViewBuilder` does not sort, a row inserted
+  or reordered *above* the viewport keeps the pixel offset but shifts what
+  is visible there — a jump, not a reset; (b) without a stable per-row key
+  (`ValueKey(aggregateId)`), Flutter recycles element/`State` by position,
+  so a reorder lands the wrong expansion/animation/inline-edit state on the
+  wrong row. **Mitigation: stable per-row keys + a stable sort.**
+- **A reconnect DOES reset scroll and transient state — this is the one
+  library-level limitation.** On `ConnectionStatus` transitions
+  `ViewBuilder` goes `Reconnecting/Disconnected -> Stale(lastRows)` (still
+  shows the last rows), then `Connected -> rows.clear(); Loading` and
+  re-replays the full `Snapshot×N -> EndOfReplay -> Ready` (the substrate
+  re-issues every subscription fresh on reconnect). If the consumer renders
+  `Loading` as a spinner, the list unmounts and rebuilds from empty, so
+  **scroll resets to top and any transient child state is lost** — even
+  when the data returns identical. This is a deliberate tradeoff:
+  `ViewBuilder` chose reset-and-re-replay (simple, trivially consistent)
+  over diff-the-fresh-snapshot-against-retained-rows (continuous, more
+  complex). **Mitigation (consumer-side):** render `Loading`-after-`Stale`
+  as the retained `lastRows` (greyed, with a reconnecting banner) rather
+  than a spinner, so the list — and its scroll offset — stays mounted
+  across the blip. A library-side "retain and diff on reconnect" mode would
+  be a real `reaction_widgets` change, deliberately out of scope here.
+- **Stateful disclosure / inline-edit widgets in the list are fragile**
+  across the rebuild churn (see the `ExpansionTile` rule above) — keep
+  per-row affordances inline and stateless.
+
+### Text input on Flutter web
+
+A `TextField` under a `Semantics(textField: true)` wrapper renders **two**
+`<input>`s on web: a `disabled` placeholder on the wrapper node and the
+real editable input nested in a child node. Filling it robustly takes three
+steps, each load-bearing:
+
+```ts
+async function fillField(page, id, value) {
+  const input = page.locator(`${byId(id)} input:not([disabled])`);
+  await page.locator(byId(id)).click();      // 1. focus first (see below)
+  await expect(input).toBeFocused();         //    barrier: focus landed
+  await input.fill(value);                   // 2. fill(), not keyboard.type()
+  await expect(input).toHaveValue(value);    // 3. barrier: edit committed
+}
+```
+
+1. **Focus the field first.** The enabled semantic input only becomes
+   Flutter's live editing element once focused; filling an un-focused input
+   writes a value Flutter **wipes on its next semantics rebuild**, so the
+   bound `TextEditingController` never sees it and a subsequent submit reads
+   empty and no-ops. (This is the non-obvious one — a bare
+   `input:not([disabled])` + `fill()` looks correct but fails
+   intermittently.)
+2. **`.fill()`, not `keyboard.type()`** — typing races Flutter's text-field
+   setup and drops leading characters.
+3. **Wait for the value to land** (`toHaveValue`) before the next action,
+   so a follow-on submit click doesn't read the controller mid-commit.
+
+For split / auto-advancing fields (e.g. a two-segment code entry that
+focus-advances on fill), drive each segment explicitly rather than typing
+through the advance.
+
+### Harness rules for real flows
+
+- **`ensureSemantics()` at boot per app, under `kIsWeb`** — it is per-app,
+  not inherited; every app's `main.dart` must do it.
+- **Wait on nodes `attached`, not `visible`** — the `flt-semantics-host` is
+  intentionally hidden, so presence (not visibility) is the correct intent
+  for every semantics interaction (Copilot caught this for a row assertion;
+  it generalizes).
+- **Multi-app loops, one test.** Build each app's web bundle against the
+  live server, serve them on distinct ports, and drive them as separate
+  `browser.newPage({ baseURL })` pages in a single test — code minted in
+  app A's UI read and consumed in app B's UI is the real end-to-end
+  assertion.
+- **Block backend calls the test environment can't serve** (e.g. a
+  sponsor-config fetch) with `page.route(pattern, r => r.abort())` so the
+  app boots to a usable state while the flow under test goes through.
+- **Reset + reseed per run for non-idempotent flows.** A loop that issues
+  and consumes a one-time value isn't repeatable; drop+recreate the schema
+  and restart the server (re-seeding fresh state) before each run.
+  Idempotency-keyed actions also return a `cachedResult` on replay — handle
+  both, or reset.
+- **Pin the throwaway DB config; never inherit it.** If the shell carries
+  credentials pointing at a real database, the harness must hard-code its
+  local throwaway values so a reset can never touch the real DB.
+
+### A minimal shared instrumentation kit
+
+Standardize a tiny surface so screens are drivable by default rather than
+one-off (see `reaction/example/e2e/helpers.ts`):
+
+- `byId(id)` → `[flt-semantics-identifier="${id}"]`
+- `waitForFlutter(page)` → wait `flt-semantics-host` **attached**
+- `readSemanticValue(page, id)` → read `aria-label`, fall back to text
+  content (the `value` carrier varies by node role on web)
+- `fillField(page, id, value)` → `input:not([disabled])` + `fill()`
+- `clickMenuItem` / `blockRequests` for overlay menus + offline shaping
+
+Plus the one app-side convention: interactive widgets get a labeled wrapper
+(`container: true, explicitChildNodes: true`, plus the right role flag)
+defined once in the app's widget kit. Action/view widgets get it for free
+via `semanticIdentifier`. With those two pieces, a new screen is drivable
+without inventing per-screen automation code.
 
 ## Open questions
 

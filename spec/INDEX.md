@@ -25,7 +25,7 @@
 | EVS-PRD-portability                   | Portability                     | prd-portability.md                   | edf3c977 |
 | EVS-PRD-provenance                    | Provenance Chain Tracking       | prd-provenance.md                    | 4755ef8b |
 | EVS-PRD-reaction-scope                | Reaction Scope                  | prd-reaction.md                      | 3752964b |
-| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | 53508e6a |
+| EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | 72a4ad0a |
 | EVS-PRD-regulatory-alignment          | Regulatory Alignment            | prd-regulatory-alignment.md          | c68731c0 |
 | EVS-PRD-scoped-permissions            | Scope-aware authorization model | scoped-permissions.md                | d3eee322 |
 | EVS-PRD-subscription                  | Subscription                    | prd-subscription.md                  | 5d398de1 |

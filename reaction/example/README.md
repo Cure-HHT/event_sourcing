@@ -244,3 +244,28 @@ admin user — e.g. for a first-time walk-through with a single client.
 **The primary mechanism going forward is the in-app `unassign_role`
 action** (admin-gated, audited, idempotency-tracked); production
 deployments would simply not expose `/admin/revoke`.
+
+## Playwright end-to-end (web UI automation)
+
+The Flutter web client renders through CanvasKit (a single `<canvas>`),
+so Playwright drives it via Flutter's accessibility/semantics tree, which
+`main.dart` force-enables on web. Widgets carry stable
+`Semantics(identifier:)`s that surface as `flt-semantics-identifier` DOM
+attributes.
+
+One-shot local run (builds web, boots the demo server, runs the suite):
+
+```sh
+cd reaction/example
+scripts/run-e2e.sh
+```
+
+First time only, install the Playwright browser:
+
+```sh
+cd reaction/example/e2e && npm install && npx playwright install chromium
+```
+
+The suite lives in `e2e/tests/`. Selectors use
+`[flt-semantics-identifier="..."]`. CI wiring (headless Chromium + server
+orchestration) is deferred to a follow-up ticket.

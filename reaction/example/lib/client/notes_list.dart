@@ -20,6 +20,7 @@
 // `material.dart` also exports a `ViewBuilder` (from SearchAnchor); hide it
 // so the unqualified name resolves to reaction_widgets' view primitive.
 import 'package:flutter/material.dart' hide ViewBuilder;
+import 'package:reaction_example/client/automation.dart';
 import 'package:reaction_widgets/reaction_widgets.dart';
 
 import 'ui.dart';
@@ -130,25 +131,29 @@ class _NoteListView extends StatelessWidget {
       itemBuilder: (context, i) {
         final note = sorted[i];
         final color = workspaceColor(note.workspace);
-        return Card(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: BorderSide(color: scheme.outlineVariant),
-          ),
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.15),
-              foregroundColor: color,
-              child: const Icon(Icons.sticky_note_2_outlined),
+        return AutomationTarget(
+          identifier: 'note-row',
+          value: note.title,
+          child: Card(
+            elevation: 0,
+            margin: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: scheme.outlineVariant),
             ),
-            title: Text(
-              note.title,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+            child: ListTile(
+              leading: CircleAvatar(
+                backgroundColor: color.withValues(alpha: 0.15),
+                foregroundColor: color,
+                child: const Icon(Icons.sticky_note_2_outlined),
+              ),
+              title: Text(
+                note.title,
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
+              trailing: TagChip(label: note.workspace, color: color),
             ),
-            subtitle: Text(note.id, style: const TextStyle(fontSize: 11)),
-            trailing: TagChip(label: note.workspace, color: color),
           ),
         );
       },
