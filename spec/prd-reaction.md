@@ -437,6 +437,11 @@ class MyStandardButton extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
         identifier: semanticId ?? 'btn-${_slug(label)}', // auto default
         button: true,
+        // container + explicitChildNodes keep the identifier on its own node;
+        // otherwise the web flt-semantics flattener merges it into the button's
+        // node and the selector disappears.
+        container: true,
+        explicitChildNodes: true,
         child: FilledButton(onPressed: onPressed, child: Text(label)),
       );
 }
@@ -456,7 +461,10 @@ For action/view widgets specifically, the assertion-K `semanticIdentifier`
 hook **is** the auto-instrument path: a `MySubmitButton` built on
 `ActionBuilder` threads its `semanticId` into the builder, so every
 instance gets both the click target and the live
-`value=submitting|success|denied` for free.
+`value=submitting|success|denied` for free. The hook wraps with
+`container` + `explicitChildNodes`, so the identifier survives even when the
+delegated child is itself a button — the consumer adds no `Semantics` of its
+own and the identifier never merges away on web.
 
 Note `ValueKey` does **not** map to `flt-semantics-identifier`, so the
 `Semantics(identifier:)` wrap is the real seam — there is no free ride from

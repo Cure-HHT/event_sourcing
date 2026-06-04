@@ -206,7 +206,18 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
     final child = widget.builder(context, _state);
     final id = widget.semanticIdentifier;
     if (id == null) return child;
-    return Semantics(identifier: id, value: _stateToken(_state), child: child);
+    // container + explicitChildNodes keep the identifier on a node of its own.
+    // The web flt-semantics flattener drops a pure-annotation node, and an
+    // interactive child (e.g. an action button) otherwise merges the identifier
+    // away — so Playwright cannot find it. Empirically required to drive action
+    // buttons / view roots through the semantics tree (CUR-1307).
+    return Semantics(
+      identifier: id,
+      value: _stateToken(_state),
+      container: true,
+      explicitChildNodes: true,
+      child: child,
+    );
   }
 
   static String _stateToken(ViewState<Object?> state) => switch (state) {

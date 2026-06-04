@@ -370,6 +370,36 @@ void main() {
         expect(node().value, 'denied');
         handle.dispose();
       });
+
+      testWidgets(
+        'identifier Semantics sets container + explicitChildNodes so the '
+        'identifier survives an interactive child on the web semantics tree',
+        (tester) async {
+          // Regression guard for CUR-1307: without these flags the web
+          // flt-semantics flattener merges the identifier away when the child
+          // is a button, so Playwright cannot find it. The Dart semantics tree
+          // does not reproduce the web merge, so assert the construction.
+          final handle = tester.ensureSemantics();
+          await pumpReactionWidget(
+            tester,
+            fake: FakeReaction(),
+            child: ActionBuilder(
+              semanticIdentifier: 'submit-note',
+              submissionFactory: _sub,
+              builder: (ctx, state, submit) =>
+                  const SizedBox(key: ValueKey('leaf')),
+            ),
+          );
+          final sem = tester.widget<Semantics>(
+            find.byWidgetPredicate(
+              (w) => w is Semantics && w.properties.identifier == 'submit-note',
+            ),
+          );
+          expect(sem.container, isTrue);
+          expect(sem.explicitChildNodes, isTrue);
+          handle.dispose();
+        },
+      );
     });
   });
 }
