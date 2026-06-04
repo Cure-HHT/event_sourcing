@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart'
+    show TransactionRetryExhaustedException;
 import 'package:sembast/sembast.dart';
 
 /// Storage-layer failure taxonomy. Callers that catch exceptions from the
@@ -63,6 +65,9 @@ class StorageCorruptException extends StorageException {
 ///
 /// Mapping today:
 /// * `dart:async` `TimeoutException` → transient
+/// * `TransactionRetryExhaustedException` → transient (the backend's bounded
+///   serialization-conflict retry was exhausted under sustained contention; a
+///   re-drive with backoff can still succeed)
 /// * `dart:core` `FormatException`, sembast `DatabaseException.errInvalidCodec`
 ///   → corrupt (event-data decode / hash-chain break / codec-decode failure
 ///   that is indistinguishable from on-disk corruption)
@@ -75,6 +80,14 @@ StorageException classifyStorageException(Object error, StackTrace stack) {
   return switch (error) {
     final TimeoutException e => StorageTransientException(
       e.message ?? 'timeout',
+      e,
+      stack,
+    ),
+    // Bounded serialization-conflict retry exhausted: contention-driven and
+    // probabilistic, so a re-drive (with backoff/backpressure) can still
+    // commit — retryable, never a data-integrity failure.
+    final TransactionRetryExhaustedException e => StorageTransientException(
+      e.toString(),
       e,
       stack,
     ),
