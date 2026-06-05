@@ -85,6 +85,56 @@ class PostgresBackendClosedException implements Exception {
       're-open via PostgresBackend.open() to perform further I/O.';
 }
 
+/// Thrown by [PostgresBackend.transaction] when a transaction body keeps
+/// failing with a transient serialization/deadlock conflict (SQLSTATE 40001
+/// `serialization_failure` / 40P01 `deadlock_detected`) and the bounded
+/// in-request retry is exhausted without the body ever committing.
+///
+/// This is **retryable**, not terminal. A serialization conflict is a
+/// probabilistic outcome of write contention — losing the race
+/// [attempts] times in a row signals *sustained* contention, not that the work
+/// is impossible. A later attempt can still commit. The library bounds its own
+/// tight fast-path retry and hands control back precisely so the caller can
+/// apply a recovery a tight loop must not: a longer/jittered backoff,
+/// load-shedding/backpressure, queue-and-re-drive, or a "system busy, retry"
+/// response. Accordingly `classifyStorageException` maps this to a
+/// `StorageTransientException`.
+///
+/// It is surfaced as its own type (rather than a bare driver exception) so that
+/// callers can *also* recognize the "fast-path exhausted under sustained
+/// contention" condition specifically — e.g. to emit an ops metric/alert — and
+/// so they need not sniff the driver's SQLSTATE. The library stays neutral
+/// about what happens next: alerting/Slack/metrics are the caller's concern.
+///
+/// The data is intact: the final attempt rolled back, so nothing partial was
+/// written. [lastError] preserves the final [ServerException] (carrying its
+/// SQLSTATE on `code`) for forensics.
+// Implements: EVS-PRD-event-log/E — once the bounded retry is exhausted the
+//   transient conflict is surfaced as a distinguishable, typed (and
+//   transient-classified) failure rather than a bare driver exception, so
+//   callers can re-drive it without coupling to the storage driver's taxonomy.
+class TransactionRetryExhaustedException implements Exception {
+  const TransactionRetryExhaustedException({
+    required this.attempts,
+    required this.lastError,
+  });
+
+  /// Number of attempts made before giving up (equals the configured bound,
+  /// [PostgresBackend._maxTransactionAttempts]).
+  final int attempts;
+
+  /// The serialization/deadlock failure from the final attempt; its `code`
+  /// holds the SQLSTATE (`40001` or `40P01`).
+  final ServerException lastError;
+
+  @override
+  String toString() =>
+      'TransactionRetryExhaustedException: transaction aborted by a transient '
+      'serialization/deadlock conflict (SQLSTATE ${lastError.code}) on all '
+      '$attempts attempts; data is intact (final attempt rolled back). '
+      'Investigate write contention before re-driving the operation.';
+}
+
 /// Concrete Postgres-backed implementation of [StorageBackend].
 class PostgresBackend extends StorageBackend {
   PostgresBackend._(this._pool);
@@ -197,28 +247,70 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 5: transactions --------
 
+  /// Maximum number of times [transaction] re-runs its body when Postgres
+  /// aborts the transaction with a transient serialization/deadlock failure.
+  /// Bounded so pathological contention eventually surfaces as a rethrown
+  /// error (after [_maxTransactionAttempts] tries) rather than spinning
+  /// forever; the rethrow is then the caller's to handle (e.g., a reactor's
+  /// catchError backstop logs it instead of crashing).
+  static const int _maxTransactionAttempts = 8;
+
   // Implements: EVS-PRD-event-log/A — successful body commits atomically;
   //   thrown exception rolls back. Postgres SERIALIZABLE isolation prevents
   //   the per-device sequence counter from being read+written by concurrent
   //   transactions.
+  // Implements: EVS-PRD-event-log/E — under SERIALIZABLE, concurrent
+  //   transactions that touch the global sequence counter (or the hash-chain
+  //   tip, or overlapping view rows) make Postgres abort one with SQLSTATE
+  //   40001 (serialization_failure) / 40P01 (deadlock_detected); the standard,
+  //   safe remedy is to re-run the whole transaction body. Retrying here is
+  //   transparent to every caller (EventStore.append and every reactor get
+  //   conflict-retry for free) and correct because the body is idempotent: the
+  //   sequence reservation, hash read, event insert, and projection writes all
+  //   live inside the rolled-back transaction, so a retry re-derives them
+  //   cleanly from the latest committed state.
   // Implements: EVS-DEV-postgres-backend/C — Transaction handle invalidated after
   //   body returns or throws.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     _checkOpen();
-    return _pool.runTx<T>(
-      (tx) async {
-        final wrapper = PostgresTxn(tx);
-        try {
-          return await body(wrapper);
-        } finally {
-          wrapper.invalidate();
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _pool.runTx<T>(
+          (tx) async {
+            final wrapper = PostgresTxn(tx);
+            try {
+              return await body(wrapper);
+            } finally {
+              wrapper.invalidate();
+            }
+          },
+          settings: TransactionSettings(
+            isolationLevel: IsolationLevel.serializable,
+          ),
+        );
+      } on ServerException catch (e, st) {
+        // 40001 serialization_failure and 40P01 deadlock_detected are
+        // transient under SERIALIZABLE: the loser of a race is aborted and
+        // must simply re-run. The SQLSTATE is exposed on `e.code` by the
+        // `postgres` v3 package (ServerException.code). Any other ServerException
+        // (constraint violation, syntax error, …) is a real failure — rethrow.
+        final retryable = e.code == '40001' || e.code == '40P01';
+        if (!retryable) rethrow;
+        if (attempt >= _maxTransactionAttempts) {
+          // Bound exhausted: surface a distinguishable, typed failure (not the
+          // bare driver exception) so callers can alert/quarantine without
+          // coupling to the SQLSTATE. Preserve the original stack for forensics.
+          Error.throwWithStackTrace(
+            TransactionRetryExhaustedException(attempts: attempt, lastError: e),
+            st,
+          );
         }
-      },
-      settings: TransactionSettings(
-        isolationLevel: IsolationLevel.serializable,
-      ),
-    );
+        // Small linear backoff so the winning transaction can commit before we
+        // re-contend; keeps a thundering herd of retries from livelocking.
+        await Future<void>.delayed(Duration(milliseconds: 5 * attempt));
+      }
+    }
   }
 
   // -------- Task 6: event log --------
