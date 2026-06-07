@@ -78,6 +78,7 @@ class ReactionHandlers {
     ViewScopeRegistry? viewScopeRegistry,
     ViewPermissionNamer? viewPermissionNamer,
     this.scopeClassRegistry,
+    this.pingInterval,
   }) : viewScopeRegistry = viewScopeRegistry ?? ViewScopeRegistry(),
        connectionRegistry = WsConnectionRegistry(),
        _viewPermissionNamer =
@@ -125,6 +126,14 @@ class ReactionHandlers {
   final ViewPermissionNamer _viewPermissionNamer;
   late final AuthorizationWatcher _authzWatcher;
 
+  /// Optional WebSocket keepalive interval for the [subscriptions] endpoint.
+  /// When non-null, the server emits periodic ping frames to each connection
+  /// (browsers auto-pong), keeping the connection non-idle so intermediaries do
+  /// not silently reap it, and closes a peer that fails the ping round-trip.
+  /// When null (the default), no keepalive frames are sent — unchanged behavior.
+  // Implements: EVS-PRD-cross-process-event-transport/J
+  final Duration? pingInterval;
+
   /// Production read-path expander for ancestor-class `BoundScope`
   /// assignments. Built only when a [scopeClassRegistry] is supplied;
   /// `null` otherwise (the conservative pre-feature behaviour, where
@@ -166,20 +175,23 @@ class ReactionHandlers {
   /// from Flutter web — credentials arrive in the first WS message.
   /// Consumers typically wrap the same auth logic used in their HTTP
   /// auth middleware in a `PrincipalAuthValidator` and pass it here.
-  Handler subscriptions(PrincipalAuthValidator validator) =>
-      webSocketHandler((channel, _) {
-        runSubscriptionHandler(
-          channel: channel,
-          validator: validator,
-          eventStore: eventStore,
-          policy: policy,
-          viewScopes: viewScopeRegistry,
-          viewPermissionNamer: _viewPermissionNamer,
-          connectionRegistry: connectionRegistry,
-          scopeClassRegistry: scopeClassRegistry,
-          expandDescendants: _expandDescendants,
-        );
-      });
+  Handler subscriptions(PrincipalAuthValidator validator) => webSocketHandler(
+    (channel, _) {
+      runSubscriptionHandler(
+        channel: channel,
+        validator: validator,
+        eventStore: eventStore,
+        policy: policy,
+        viewScopes: viewScopeRegistry,
+        viewPermissionNamer: _viewPermissionNamer,
+        connectionRegistry: connectionRegistry,
+        scopeClassRegistry: scopeClassRegistry,
+        expandDescendants: _expandDescendants,
+      );
+    },
+    // Implements: EVS-PRD-cross-process-event-transport/J
+    pingInterval: pingInterval,
+  );
 
   /// Stop the AuthorizationWatcher subscription. Call on graceful shutdown.
   Future<void> dispose() => _authzWatcher.stop();
