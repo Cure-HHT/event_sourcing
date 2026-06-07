@@ -258,6 +258,8 @@ H. The Remote-side wire transport SHALL implement automatic reconnection with ex
 
 I. The Remote-side transport SHALL surface its observable connection state via the `ReactionScope`'s `ConnectionStatus` stream defined in `EVS-PRD-reaction-scope`. Status transitions SHALL be driven by observable WS lifecycle events (open, close, reconnect-attempt, retry-exhausted) — the library SHALL NOT synthesize ping requests or poll to derive status, and consumer code SHALL NOT need to infer connection state from subscription-stream liveness.
 
+J. The server-side wire handler SHALL support a configurable WebSocket keepalive interval. When set, it SHALL emit periodic ping frames on each connection and close any connection whose peer fails the ping/pong round-trip; when unset, it SHALL send no keepalive frames. Keepalive SHALL keep otherwise-idle connections from being silently reaped by network intermediaries and SHALL surface a dead peer as an observable close-frame.
+
 ### Rationale
 
 **Why JSON rather than a binary protocol?** The wire serves Flutter web clients (where Dart compiles to JavaScript) and pure-Dart server endpoints. JSON has zero-cost ergonomics in both environments, plays nicely with browser dev-tools, and matches the existing portal's transport format. Binary protocols (protobuf, MessagePack) would be a premature optimization at the expected portal-UI scale of ~1–20 concurrent users.
@@ -274,7 +276,9 @@ I. The Remote-side transport SHALL surface its observable connection state via t
 
 **Why is `ConnectionStatus` defined on the scope (per `EVS-PRD-reaction-scope`) rather than per Remote impl (I)?** Connection state is a property of the shared transport (`RemoteConnection`), not of any one interface. All four Remote impls share the WS; the status belongs in one place. Exposing it on the scope also lets the `LocalScope` report `Connected` trivially, so widget code consuming `ConnectionStatus` is source-identical across Local and Remote (per the substrate-agnostic widget contract). Driving from observable WS events rather than synthetic pings keeps the signal cheap, accurate, and free of contention with normal traffic.
 
-*End* *Cross-Process Event Transport* | **Hash**: a36d45f2
+**Why server-side keepalive (J), and how does it relate to status (I) and reconnect (H)?** The Remote client cannot detect a silently dropped connection on web: a browser `WebSocket` neither lets application code send timed pings nor surfaces incoming ping/pong frames, and a half-open socket may never deliver a close event. Without keepalive, an idle connection behind a proxy/load-balancer can be reaped with no close-frame, so the client's lifecycle-driven status (I) stays `Connected` and the backoff reconnect (H) — which is edge-triggered by a close — never fires. A *server-side* keepalive (the host's `pingInterval`, which browsers auto-pong) solves both halves: it keeps the connection non-idle so it is not reaped in the first place, and when a peer is genuinely gone it forces a server-side close that reaches the client as the observable close-frame that I and H already act on. This is distinct from I's prohibition: I forbids the client from *synthesizing pings to derive status*; J is transport-level liveness on the *server*, and it feeds — rather than bypasses — the lifecycle-event path. It is opt-in (interval supplied by the consumer) so the library imposes no traffic by default.
+
+*End* *Cross-Process Event Transport* | **Hash**: 2df8cc19
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
