@@ -534,11 +534,20 @@ class EventStore {
           controller.add(Snapshot<T>(value: mode.mapper(row), sequence: seq));
         }
       } else {
+        // Implements: EVS-PRD-subscription/A — a filtered (row-scoped)
+        // materialized-state snapshot. Materialize the whole allow-list in ONE
+        // bulk read (CUR-1471) instead of a BEGIN/SELECT/COMMIT per aggregate id —
+        // the former per-id transaction loop was an N+1 round-trip storm
+        // (~3xN Cloud SQL round-trips for a site-scoped subscriber). Each
+        // requested id still emits a Snapshot, with a null value for an absent
+        // row, preserving the prior per-id tombstoned/absent signal.
+        final byKey = await backend.readViewRowsByKeys(
+          mode.viewName,
+          aggregateIds,
+        );
         for (final aggId in aggregateIds) {
           if (controller.isClosed) return;
-          final row = await backend.transaction(
-            (txn) => backend.readViewRowInTxn(txn, mode.viewName, aggId),
-          );
+          final row = byKey[aggId];
           final seq = (row?['sequence'] as int?) ?? 0;
           if (seq > maxSequenceSeen) maxSequenceSeen = seq;
           controller.add(

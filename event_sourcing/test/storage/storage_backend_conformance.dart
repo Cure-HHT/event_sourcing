@@ -1037,6 +1037,45 @@ void _registerViewRowTests(
       expect(skip2, hasLength(3));
     });
 
+    // Verifies: EVS-PRD-subscription/A — the batched key-set read returns
+    //   exactly the present keys (as a key->row map), omitting absent keys, in
+    //   a single query. Backs the scoped (filtered materialized-state)
+    //   AggregateMode snapshot's one-round-trip materialization (replacing the
+    //   per-id transaction loop).
+    test('readViewRowsByKeys returns present keys as a key->row map, '
+        'omitting absent keys', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        for (var i = 0; i < 5; i++) {
+          await backend.upsertViewRowInTxn(txn, 'v_bykeys', 'k$i', {'i': i});
+        }
+      });
+      final got = await backend.readViewRowsByKeys('v_bykeys', {
+        'k1',
+        'k3',
+        'absent',
+      });
+      expect(got.keys.toSet(), {'k1', 'k3'});
+      expect(got['k1'], {'i': 1});
+      expect(got['k3'], {'i': 3});
+      expect(got.containsKey('absent'), isFalse);
+    });
+
+    test('readViewRowsByKeys with an empty key set returns an empty map '
+        '(no query needed)', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.upsertViewRowInTxn(txn, 'v_bykeys_empty', 'k0', {'i': 0});
+      });
+      final got = await backend.readViewRowsByKeys(
+        'v_bykeys_empty',
+        <String>{},
+      );
+      expect(got, isEmpty);
+    });
+
     // Verifies: EVS-PRD-permissions-as-events — multi-row in-txn read is
     //   the substrate primitive that lets the scoped-permissions authorize
     //   stage enumerate user_role_scopes inside the dispatch transaction
