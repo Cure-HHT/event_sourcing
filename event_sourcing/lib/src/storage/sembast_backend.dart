@@ -776,6 +776,28 @@ class SembastBackend extends StorageBackend {
         .toList(growable: false);
   }
 
+  // Implements: EVS-PRD-subscription/A — bulk key-set read backing the scoped
+  //   (filtered materialized-state) AggregateMode snapshot. `records(keys).get`
+  //   returns values aligned with the requested key list (null for absent),
+  //   zipped back into a key->row map so the caller can re-associate and signal
+  //   absent ids.
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  ) async {
+    if (keys.isEmpty) return const <String, Map<String, dynamic>>{};
+    final db = _database();
+    final keyList = keys.toList(growable: false);
+    final values = await _viewStore(viewName).records(keyList).get(db);
+    final out = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < keyList.length; i++) {
+      final v = values[i];
+      if (v != null) out[keyList[i]] = Map<String, dynamic>.from(v);
+    }
+    return out;
+  }
+
   // Implements: EVS-PRD-permissions-as-events — transactional multi-row
   //   view-read primitive for the scoped-permissions authorize stage.
   // Implements: EVS-PRD-action-dispatch — same dispatch-transaction

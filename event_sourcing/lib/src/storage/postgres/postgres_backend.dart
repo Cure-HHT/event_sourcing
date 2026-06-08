@@ -725,6 +725,30 @@ class PostgresBackend extends StorageBackend {
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
+  // Implements: EVS-DEV-postgres-backend/B — bulk view_rows key-set read for the
+  //   scoped AggregateMode snapshot: one `row_key = ANY(@keys)` query for the
+  //   whole allow-list instead of a BEGIN/SELECT/COMMIT per id (CUR-1471). The
+  //   Dart `List<String>` binds to a Postgres text[] (same as the event_type
+  //   `ANY(@types)` filter); selecting row_key lets the caller re-key the map.
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  ) async {
+    _checkOpen();
+    if (keys.isEmpty) return const <String, Map<String, dynamic>>{};
+    final result = await _pool.execute(
+      Sql.named('''
+        SELECT row_key, row_data FROM view_rows
+        WHERE view_name = @v AND row_key = ANY(@keys)
+      '''),
+      parameters: {'v': viewName, 'keys': keys.toList()},
+    );
+    return <String, Map<String, dynamic>>{
+      for (final r in result) r[0] as String: _asJsonMap(r[1]),
+    };
+  }
+
   // Implements: EVS-DEV-postgres-backend/B — in-txn multi-row read with
   //   optional column-equality filter; required by the scoped-permissions
   //   authorize stage so its policy reads and the dispatch's event-append

@@ -205,6 +205,25 @@ abstract class StorageBackend {
     int? offset,
   });
 
+  /// Read the rows of [viewName] whose row key is in [keys], in a SINGLE
+  /// bulk query, returned as a map from row key to row payload. Keys with no
+  /// row are omitted from the result; an empty [keys] yields an empty map
+  /// (no query). Non-transactional, mirroring [findViewRows].
+  ///
+  /// This is the batched counterpart to a loop of per-key [readViewRowInTxn]
+  /// calls: a row-scoped `AggregateMode` snapshot materializes its allow-list
+  /// of aggregate ids in one round-trip instead of one transaction per id
+  /// (the former N+1 storm). The key is the storage row key (for an
+  /// `AggregateProjectionSpec`, the aggregate id), which `findViewRows` does
+  /// not surface — hence the map return so callers can re-associate each row
+  /// with the id they asked for and emit absent-key signals.
+  // Implements: EVS-PRD-subscription/A — a filtered (row-scoped) materialized-
+  //   state snapshot reads its allow-list in one batched call, not per id.
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  );
+
   /// Iterate rows in [viewName] inside [txn] optionally filtered by
   /// column equality. `where` is interpreted as "every key/value pair
   /// must match the row's column of that name." A null or empty

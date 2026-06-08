@@ -167,6 +167,11 @@ class _InMemoryBackend extends StorageBackend {
     int? offset,
   }) => throw UnimplementedError();
   @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  ) => throw UnimplementedError();
+  @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
     String viewName, {
