@@ -4,6 +4,8 @@
 // schema). Both tests gated on PG_TEST_URL; tests skip themselves when
 // PG_TEST_URL is unset so they're inert in CI/dev environments that
 // don't have a Postgres available.
+// Verifies: EVS-DEV-postgres-backend/B — view_rows stored as a single JSONB-blob
+//   table keyed by (view_name, row_key).
 
 @TestOn('vm')
 library;
@@ -119,6 +121,37 @@ void main() {
       final store = PostgresIdempotencyStore.over(pool);
       final hit = await store.lookup('a', 'p', 'k');
       expect(hit, isNull);
+    });
+
+    test('view_rows has the JSONB-blob shape with composite PK', () async {
+      final backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+      );
+      addTearDown(backend.close);
+      final conn = await _connect(url);
+      addTearDown(conn.close);
+
+      // Columns + types.
+      final cols = await conn.execute(
+        'SELECT column_name, data_type FROM information_schema.columns '
+        "WHERE table_schema = 'public' AND table_name = 'view_rows'",
+      );
+      final types = {for (final r in cols) r[0]! as String: r[1]! as String};
+      expect(types['view_name'], 'text');
+      expect(types['row_key'], 'text');
+      expect(types['row_data'], 'jsonb');
+      expect(types['updated_at'], 'timestamp with time zone');
+
+      // Primary key is exactly (view_name, row_key).
+      final pk = await conn.execute(
+        "SELECT a.attname FROM pg_index i "
+        "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+        "WHERE i.indrelid = 'view_rows'::regclass AND i.indisprimary "
+        "ORDER BY a.attname",
+      );
+      final pkCols = pk.map((r) => r[0]! as String).toList();
+      expect(pkCols, ['row_key', 'view_name']);
     });
   });
 }

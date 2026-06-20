@@ -5,6 +5,9 @@
 // .transaction's bounded retry re-runs each loser to completion so NO 40001
 // escapes to the caller and every append is assigned a distinct, gapless
 // sequence number. Gated on PG_TEST_URL; inert where no Postgres is available.
+// Verifies: EVS-DEV-postgres-backend/C — transaction<T> runs at SERIALIZABLE
+//   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
+//   commit on return, handle invalidated after body.
 
 @TestOn('vm')
 library;
