@@ -116,6 +116,8 @@ directories = [
   "canonical_json_jcs/test",
   "provenance/test",
   "reaction/test",
+  "reaction_widgets/test",
+  "reaction_widgets_testing/test",
 ]
 file_patterns = ["*_test.dart", "test_*.dart"]
 skip_files = []
@@ -158,6 +160,16 @@ cwd = "provenance"
 name = "reaction"
 command = "flutter test"
 cwd = "reaction"
+
+[[scanning.test.runners]]
+name = "reaction_widgets"
+command = "flutter test"
+cwd = "reaction_widgets"
+
+[[scanning.test.runners]]
+name = "reaction_widgets_testing"
+command = "flutter test"
+cwd = "reaction_widgets_testing"
 
 [scanning.result]
 directories = ["build-reports"]
