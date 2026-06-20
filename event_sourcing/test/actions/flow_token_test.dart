@@ -334,7 +334,10 @@ void main() {
                 'byte-identically; got "${ingestedEvents.single.flowToken}"',
           );
         } finally {
-          await second.backend.close();
+          // Close the EventStore (not just its backend) so the subscription
+          // engine is released alongside storage. EventStore.close() closes
+          // _subs then backend.
+          await second.store.close();
         }
       },
     );

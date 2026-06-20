@@ -8,13 +8,12 @@
 // run is gated on PG_TEST_URL.
 // Verifies: EVS-PRD-portability/D — second concrete StorageBackend impl
 // passes the same contract.
-// Verifies: EVS-DEV-find-all-events-extended-filters/A, EVS-DEV-find-all-events-extended-filters/B, EVS-DEV-find-all-events-extended-filters/C, EVS-DEV-find-all-events-extended-filters/D
+// Verifies: EVS-DEV-find-all-events-extended-filters/A, EVS-DEV-find-all-events-extended-filters/B, EVS-DEV-find-all-events-extended-filters/C
 //   — entryType + client-timestamp filters AND-compose on findAllEvents and
-//   findAllEventsInTxn via the shared compose helper; exercised by the
-//   conformance harness 'findAllEvents extended filters' group.
-//   Assertion D (single shared _composeFindAllEventsFilter helper used by
-//   both code paths) is verified behaviorally: the harness runs identical
-//   filter assertions through both findAllEvents and findAllEventsInTxn.
+//   findAllEventsInTxn; exercised by the conformance harness 'findAllEvents
+//   extended filters' group. (Assertion D names the reference SembastBackend's
+//   single shared _composeFindAllEventsFilter helper — it does not apply to
+//   PostgresBackend and is covered by find_all_events_shared_filter_test.dart.)
 
 @TestOn('vm')
 library;

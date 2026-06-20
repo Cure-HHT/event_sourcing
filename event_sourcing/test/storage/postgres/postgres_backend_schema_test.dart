@@ -143,15 +143,20 @@ void main() {
       expect(types['row_data'], 'jsonb');
       expect(types['updated_at'], 'timestamp with time zone');
 
-      // Primary key is exactly (view_name, row_key).
+      // Primary key is exactly (view_name, row_key) IN THAT ORDER. Order by
+      // the index's own key ordinality (unnest WITH ORDINALITY over indkey),
+      // not alphabetically — composite-PK column order is semantically
+      // load-bearing and an alphabetical sort would mask a wrong definition.
       final pk = await conn.execute(
-        "SELECT a.attname FROM pg_index i "
-        "JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) "
+        'SELECT a.attname FROM pg_index i '
+        'JOIN unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord) ON true '
+        'JOIN pg_attribute a '
+        '  ON a.attrelid = i.indrelid AND a.attnum = k.attnum '
         "WHERE i.indrelid = 'view_rows'::regclass AND i.indisprimary "
-        "ORDER BY a.attname",
+        'ORDER BY k.ord',
       );
       final pkCols = pk.map((r) => r[0]! as String).toList();
-      expect(pkCols, ['row_key', 'view_name']);
+      expect(pkCols, ['view_name', 'row_key']);
     });
   });
 }
