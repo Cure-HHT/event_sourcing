@@ -11,9 +11,13 @@
 // Verifies: EVS-PRD-event-log/D — findAllEvents + findAllEventsInTxn read in
 //   order from any starting position (afterSequence + limit); findEventById
 //   reads single events; client-timestamp + originator filters.
-// Verifies: EVS-DEV-find-all-events-extended-filters/A,B,C — entry-type,
-//   client-timestamp, and originator filters on findAllEvents and
-//   findAllEventsInTxn; filters AND-compose.
+// Verifies: EVS-DEV-find-all-events-extended-filters/A, EVS-DEV-find-all-events-extended-filters/B, EVS-DEV-find-all-events-extended-filters/C, EVS-DEV-find-all-events-extended-filters/D
+//   — entry-type, client-timestamp, and originator filters on findAllEvents
+//   and findAllEventsInTxn; filters AND-compose. Assertion D: both code
+//   paths share a single _composeFindAllEventsFilter helper, verified
+//   behaviorally by this harness running identical assertions through both.
+//   NOTE: this file is not *_test.dart so this annotation does not bind
+//   in elspais; the binding lives on the two conformance entrypoints.
 //
 // This file MUST NOT register any `main()` of its own — it exposes one
 // public function, [runStorageBackendConformanceTests], which concrete
