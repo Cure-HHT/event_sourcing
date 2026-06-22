@@ -3,6 +3,7 @@
 // Implements: EVS-PRD-action-dispatch/C (every dispatch produces a recorded outcome: success events or denial event)
 // Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
 // Implements: EVS-PRD-action-dispatch/E (Stage 4 compares the submitted rawInput's canonical JSON against the cached entry's rawInputCanonicalJson; mismatch emits idempotency_mismatch denial and returns DispatchIdempotencyMismatch)
+// Implements: EVS-DEV-flow-token/B - threads flowToken onto every appended event (Stage 8) and onto every denial event via _persistDenial.
 // Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
 // Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
 // Implements: EVS-PRD-scoped-permissions/E/H/I — dispatcher resolves the

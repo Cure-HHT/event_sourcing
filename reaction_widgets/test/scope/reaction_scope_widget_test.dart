@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-reaction-widget-contract/A, /B
+// Verifies: EVS-PRD-reaction-widget-contract/A/B
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';

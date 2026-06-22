@@ -10,7 +10,7 @@
 //
 // Verifies: EVS-PRD-event-log/A — all reserved system entry types have
 //   isMaterialized:false, ensuring audit events never corrupt view-side state.
-// Verifies: EVS-DEV-event-store-open/B,C — lib_version_initialized and
+// Verifies: EVS-DEV-event-store-open/B/C — lib_version_initialized and
 //   lib_version_changed are registered in kSystemEntryTypes so byId() returns
 //   non-null and SubscriptionFilter correctly gates them behind
 //   includeSystemEvents:true.

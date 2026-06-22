@@ -1,6 +1,9 @@
-// Verifies: EVS-PRD-view-subscriber/A — the library defines a
+// Verifies: EVS-PRD-view-subscriber/A/E — the library defines a
 // `ViewSource` interface whose `watch<T>(viewName, mapper, filter,
-// aggregates)` returns `Stream<Update<T>>`.
+// aggregates)` returns `Stream<Update<T>>` (A), and the `Update<T>`
+// variant set is a stable, exhaustively-switchable contract so that
+// batched/cursor snapshot delivery can be added additively without
+// changing existing variant shapes or breaking consumers (E).
 //
 // Structural interface-shape assertion. The test body is intentionally
 // tautological at runtime: the assertion is that this file COMPILES,
@@ -49,6 +52,34 @@ void main() {
         mapper: (row) => '',
       );
       expect(stream, isA<Stream<Update<String>>>());
+    });
+  });
+
+  group('Update<T> variant set is a stable, additive-evolution contract', () {
+    test('the sealed variant set is exhaustively switchable (E)', () {
+      // EVS-PRD-view-subscriber/E: snapshot delivery MAY evolve
+      // (chunking/paging/cursor resumption) only additively. The proof is
+      // that Update<T> is a sealed union whose complete variant set is
+      // Snapshot/EndOfReplay/Delta/Tombstone — this switch is compiler-
+      // checked total, so a non-additive change (a new variant, or a changed
+      // variant shape) would fail to compile here, and a consumer handling
+      // these variants is unaffected by how snapshot rows are delivered.
+      String describe(Update<int> u) => switch (u) {
+        Snapshot<int>() => 'snapshot',
+        EndOfReplay<int>() => 'end-of-replay',
+        Delta<int>() => 'delta',
+        Tombstone<int>() => 'tombstone',
+      };
+      expect(describe(const Snapshot(value: 1, sequence: 1)), 'snapshot');
+      expect(describe(const EndOfReplay(sequence: 2)), 'end-of-replay');
+      expect(
+        describe(const Delta(value: 3, sequence: 3, cause: 'evt')),
+        'delta',
+      );
+      expect(
+        describe(const Tombstone(aggregateId: 'a', sequence: 4)),
+        'tombstone',
+      );
     });
   });
 }

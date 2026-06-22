@@ -1,4 +1,7 @@
-// Implements: EVS-PRD-permissions-as-events (scope-class registration; substrate ships the mechanism, apps declare classes)
+// Implements: EVS-PRD-scoped-permissions/A — scope-class registration: the
+//   substrate ships the ScopeClassRegistry mechanism, apps declare classes
+//   that an action's scoped permission refers to by registered name.
+//   ContainmentReference declares the hierarchy-expansion shape named in /A.
 
 import 'package:meta/meta.dart';
 
