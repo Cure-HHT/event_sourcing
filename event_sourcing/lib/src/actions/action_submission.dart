@@ -1,4 +1,5 @@
 // Implements: EVS-PRD-action-dispatch/A (value type that carries a principal's action submission into the dispatch flow)
+// Implements: EVS-DEV-flow-token/A - ActionSubmission carries the optional opaque flowToken correlation token into the dispatch flow.
 
 /// The complete input to one [ActionDispatcher.dispatch] call.
 ///

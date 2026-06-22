@@ -2,6 +2,7 @@
 //   ActionSubmission wire envelopes; round-trip preserves all fields.
 // Implements: EVS-PRD-action-submitter/C — wire shape consumed by
 //   POST /actions.
+// Implements: EVS-DEV-flow-token/C - round-trip codec preserves flowToken unchanged across a deployment boundary.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

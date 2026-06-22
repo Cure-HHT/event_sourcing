@@ -80,6 +80,10 @@ class ConflictException extends EventStoreException {
   }
 }
 
+// Implements: EVS-PRD-library-charter/A
+// Implements: EVS-PRD-hash-chain-integrity/C — ChainVerificationException is
+//   the failure signal of the end-to-end chain-verification operation; raised
+//   on signature/hash mismatch indicating possible tampering.
 /// Exception thrown when signature verification fails.
 ///
 /// This is a CRITICAL security exception indicating possible tampering.
@@ -107,6 +111,7 @@ class ChainVerificationException extends EventStoreException {
   }
 }
 
+// Implements: EVS-PRD-library-charter/A
 /// Exception thrown when configuration is invalid.
 class ConfigurationException extends EventStoreException {
   const ConfigurationException(super.message, {super.cause, super.stackTrace});

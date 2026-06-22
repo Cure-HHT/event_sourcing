@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-reaction-scope/A, /C, /E
+// Verifies: EVS-PRD-reaction-scope/A/C/E
 //
 // LocalScope is the in-process composition root. It owns four
 // externally-constructed Local* impls, exposes them via the

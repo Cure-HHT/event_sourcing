@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-postgres-backend/D — PostgresBackend SHALL pass the
+// Verifies: EVS-DEV-postgres-backend/C/D — transaction commit/rollback (C); PostgresBackend SHALL pass the
 // backend-agnostic conformance harness. Same suite SembastBackend passes;
 // run is gated on PG_TEST_URL.
 // Verifies: EVS-PRD-portability/D — second concrete StorageBackend impl

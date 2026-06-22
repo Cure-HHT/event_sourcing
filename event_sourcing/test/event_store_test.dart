@@ -1,5 +1,6 @@
 // Verifies: EVS-PRD-library-charter/A
 // Verifies: EVS-PRD-event-log/A/B/C/D
+// Verifies: EVS-DEV-flow-token/B - flowToken is threaded onto appended events, round-trips on StoredEvent, and participates in the event hash.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
