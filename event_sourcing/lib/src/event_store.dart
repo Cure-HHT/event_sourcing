@@ -1421,6 +1421,7 @@ class EventStore {
     return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
+  // Implements: EVS-DEV-flow-token/C - ingest copies the incoming event verbatim (flow_token included); only metadata/sequence_number/event_hash are rewritten, so the token is preserved unchanged.
   /// Build a new [StoredEvent] with [receiverEntry] appended to
   /// `metadata.provenance`, `sequence_number` reassigned to [localSeq], and
   /// `event_hash` recomputed.

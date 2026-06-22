@@ -103,6 +103,8 @@ directories = [
   "canonical_json_jcs/lib",
   "provenance/lib",
   "reaction/lib",
+  "reaction_widgets/lib",
+  "reaction_widgets_testing/lib",
 ]
 file_patterns = []
 skip_files = []
@@ -127,62 +129,91 @@ prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
 
-# Test runners — one per package. `elspais checks --run-tests` invokes
-# each entry's `command` from its `cwd` before evaluating coverage.
-# Without --run-tests, these are not invoked; static checks run only.
+# CUR-1533 test targets: one per Flutter package. Each runs `flutter test
+# --machine` (native JSON on stdout, real `suite.path` per test file) and reads
+# the package's `coverage/lcov.info`. `match = "precise"` wires file-granular
+# RESULT->TEST verification by real path (no tojunit, no gen-junit script).
+# `credit_coverage = "verified"` credits the lcov_tested dimension from covered
+# // Implements: lines. `elspais checks --run-tests` runs these; CI omits
+# `command` and points at pre-produced coverage/results.
+#
+# flutter is not on elspais's PATH in the dev env; run with:
+#   PATH="$HOME/flutter-sdk/flutter/bin:$PATH" elspais checks --run-tests
+# Postgres-backed packages (event_sourcing, example_action_permissions) share a
+# single DB across multiple test files; `flutter test` runs files in parallel by
+# default, so they race on schema setup. Force `--concurrency=1` for them.
 
-[[scanning.test.runners]]
-name = "event_sourcing"
-command = "flutter test"
-cwd = "event_sourcing"
-
-[[scanning.test.runners]]
-name = "event_sourcing-example"
-command = "flutter test"
-cwd = "event_sourcing/example"
-
-[[scanning.test.runners]]
-name = "event_sourcing-example_action_permissions"
-command = "flutter test"
-cwd = "event_sourcing/example_action_permissions"
-
-[[scanning.test.runners]]
-name = "canonical_json_jcs"
-command = "flutter test"
-cwd = "canonical_json_jcs"
-
-[[scanning.test.runners]]
+[[scanning.test.targets]]
 name = "provenance"
-command = "flutter test"
 cwd = "provenance"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
 
-[[scanning.test.runners]]
+[[scanning.test.targets]]
 name = "reaction"
-command = "flutter test"
 cwd = "reaction"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
 
-[[scanning.test.runners]]
-name = "reaction_widgets"
-command = "flutter test"
-cwd = "reaction_widgets"
-
-[[scanning.test.runners]]
+[[scanning.test.targets]]
 name = "reaction_widgets_testing"
-command = "flutter test"
 cwd = "reaction_widgets_testing"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
 
-[scanning.result]
-directories = ["build-reports"]
-file_patterns = ["**/TEST-*.xml", "pytest-results.json"]
-skip_files = []
-skip_dirs = []
-run_meta_file = ""
+[[scanning.test.targets]]
+name = "reaction_widgets"
+cwd = "reaction_widgets"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
 
-[scanning.coverage]
-directories = ["."]
-file_patterns = []
-skip_files = []
-skip_dirs = []
+[[scanning.test.targets]]
+name = "canonical_json_jcs"
+cwd = "canonical_json_jcs"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "event_sourcing/example"
+cwd = "event_sourcing/example"
+command = "flutter test --machine --coverage"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "event_sourcing"
+cwd = "event_sourcing"
+command = "flutter test --machine --coverage --concurrency=1"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "event_sourcing/example_action_permissions"
+cwd = "event_sourcing/example_action_permissions"
+command = "flutter test --machine --coverage --concurrency=1"
+reporter = "flutter-machine"
+coverage = "coverage/lcov.info"
+match = "precise"
+credit_coverage = "verified"
 
 [scanning.docs]
 directories = ["docs"]

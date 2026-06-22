@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-postgres-backend/A — PostgresBackend.open emits the
+// Verifies: EVS-DEV-postgres-backend/A/B — schema includes the JSONB view_rows table (B); PostgresBackend.open emits the
 // schema DDL (every expected CREATE TABLE) and is idempotent on re-open
 // (the second open against a provisioned database is a no-op on the
 // schema). Both tests gated on PG_TEST_URL; tests skip themselves when

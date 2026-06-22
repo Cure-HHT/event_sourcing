@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-reaction-widget-contract/D, /G
+// Verifies: EVS-PRD-reaction-widget-contract/D/G
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';

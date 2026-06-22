@@ -1,6 +1,7 @@
 // Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
 //   for ActionSubmission preserves all fields.
 // Verifies: EVS-PRD-action-submitter/C — wire shape of POST /actions.
+// Verifies: EVS-DEV-flow-token/C - flowToken survives the wire round-trip unchanged.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
