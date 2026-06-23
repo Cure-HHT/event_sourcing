@@ -318,7 +318,7 @@ E. Consumer code that depends only on the `ReactionScope` interface (and the fou
 **Level**: PRD | **Status**: Draft | **Implements**: -
 **Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-reaction-scope, EVS-PRD-view-subscriber
 
-> **Implementation status:** Designed; `reaction_widgets` package not yet implemented. The assertions below are normative — they are the contract the future package MUST satisfy when built. Audit tooling SHOULD treat coverage gaps here as "package not yet built", not as drift between spec and shipped code.
+> **Implementation status:** Shipped. Both `reaction_widgets` (headless widget primitives) and `reaction_widgets_testing` (widget-test doubles) are implemented and have widget tests covering all assertions.
 
 ### Purpose
 

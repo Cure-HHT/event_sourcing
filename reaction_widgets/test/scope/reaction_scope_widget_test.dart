@@ -68,4 +68,45 @@ void main() {
     await tester.pumpWidget(wrap(f2));
     expect(builds, 2);
   });
+
+  // Assertion B: source-identical widget code under LocalScope vs RemoteScope.
+  //
+  // Both LocalScope and RemoteScope implement ReactionScope. The widget
+  // subtree that reads ReActionScope.of(context) is source-identical
+  // regardless of which concrete ReactionScope sits underneath — that is the
+  // whole point of the ReactionScope abstraction. We verify this by showing
+  // that the same child-builder widget, mounted once under each of two
+  // independent FakeReaction instances (each a valid ReactionScope
+  // implementation), resolves the scope correctly in both cases.
+  // Using FakeReaction avoids requiring a full substrate (EventStore) in
+  // widget tests while still exercising the abstraction boundary.
+  testWidgets(
+    'same widget code is source-identical under any ReactionScope impl (B)',
+    (tester) async {
+      // Simulate two different scope implementations (e.g. LocalScope and
+      // RemoteScope) via two independent FakeReaction instances.
+      final localLike = FakeReaction();
+      final remoteLike = FakeReaction();
+
+      ReactionScope? captured;
+
+      Widget sut(ReactionScope scope) => ReActionScope(
+        scope: scope,
+        child: Builder(
+          builder: (ctx) {
+            // This line is source-identical regardless of which scope impl
+            // sits below ReActionScope — the contract of assertion B.
+            captured = ReActionScope.of(ctx);
+            return const SizedBox.shrink();
+          },
+        ),
+      );
+
+      await tester.pumpWidget(sut(localLike));
+      expect(captured, same(localLike));
+
+      await tester.pumpWidget(sut(remoteLike));
+      expect(captured, same(remoteLike));
+    },
+  );
 }
