@@ -54,6 +54,9 @@
 # worktree for later analysis, not committed.
 docs/superpowers/
 
+# Resolved upstream by Anspar-Org/elspais#97 (CUR-1329); kept locally only.
+docs/elspais-refines-coverage-propagation-repro.md
+
 # elspais MCP runtime cache and daemon state. The persistent config lives
 # in .elspais.toml (tracked); only the runtime directory is ignored.
 .elspais/
