@@ -1187,8 +1187,6 @@ void main() {
   });
 
   // Verifies: EVS-DEV-transactional-authorize-execute/A (one storage transaction for authorize + execute + persist; policy receives the active Transaction)
-  // Verifies: EVS-DEV-transactional-authorize-execute/B (authorize-stage denial commits authorization_denied in the same dispatch transaction)
-  // Verifies: EVS-DEV-transactional-authorize-execute/C (execute/append throws → dispatch tx rolled back; execution_failed emitted in a separate append)
   // Verifies: EVS-PRD-scoped-permissions/H (authorize-stage policy reads and execute-stage appends share one storage transaction)
   group('Stage 6–8 — authorize+execute share one transaction', () {
     test(
@@ -1222,7 +1220,7 @@ void main() {
     );
 
     // Verifies: EVS-DEV-transactional-authorize-execute/A (each dispatch opens its own storage transaction)
-    // Verifies: EVS-PRD-scoped-permissions/H (authorize-stage policy reads share the same storage transaction across dispatches)
+    // Verifies: EVS-PRD-scoped-permissions/H (each dispatch opens its own isolated storage transaction — transactions are not shared across dispatches)
     test(
       'two dispatches receive distinct Transaction instances (each dispatch opens '
       'its own backend transaction)',
