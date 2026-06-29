@@ -102,6 +102,7 @@ class RemotePermissionSource implements PermissionSource {
   /// triggered fetch is superseded; the last writer wins. Quiet on
   /// transport errors (same shape as the Authenticated-transition
   /// path).
+  @override
   Future<void> refresh() async {
     if (_isDisposed) return;
     if (authSession.current is! Authenticated) return;
