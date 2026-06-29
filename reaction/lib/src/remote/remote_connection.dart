@@ -501,7 +501,19 @@ class RemoteConnection {
 
   void _closeSubscription(String subscriptionId) {
     _subs.remove(subscriptionId);
-    _sendClient(UnsubscribeMsg(subscriptionId: subscriptionId));
+    // Only tell the server when the socket is up AND past its auth handshake.
+    // During a reconnect the channel is open but NOT yet authenticated; sending
+    // an Unsubscribe then makes it the FIRST frame on the new socket, which the
+    // server rejects (the first frame MUST be Auth) by closing the connection
+    // with 4001 — surfacing to the app as a spurious "session ended". The sub
+    // is already removed from `_subs`, so the post-auth re-issue simply won't
+    // re-open it; the old socket that carried the server-side subscription is
+    // gone, so no explicit unsubscribe is owed. (Mirrors the subscribe path,
+    // which only sends after `_ensureConnected` resolves on `auth_ok`.)
+    final authed = _channel != null && (_authComplete?.isCompleted ?? true);
+    if (authed) {
+      _sendClient(UnsubscribeMsg(subscriptionId: subscriptionId));
+    }
     _maybeScheduleIdleClose();
   }
 

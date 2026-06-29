@@ -250,6 +250,16 @@ class _FakePermissionSource implements PermissionSource {
   Stream<EffectiveAuthorization?> get stream => _fake._permController.stream;
 
   @override
+  Future<void> refresh() async {
+    // Re-emit the current snapshot so consumers awaiting a refresh settle.
+    // Tests drive snapshot changes through [FakeReaction]; this mirrors the
+    // real sources' "re-read and emit current" contract without a backend.
+    if (!_fake._permController.isClosed) {
+      _fake._permController.add(_fake._effectiveAuth);
+    }
+  }
+
+  @override
   Future<void> dispose() async {
     // No-op; [FakeReaction] owns the controllers.
   }

@@ -40,6 +40,19 @@ abstract interface class PermissionSource {
   /// as the snapshot updates.
   Stream<EffectiveAuthorization?> get stream;
 
+  /// Force a re-read of the snapshot for the active Principal and emit it on
+  /// [stream]. Updates [current] IN PLACE — it does NOT first clear to `null` —
+  /// so consumers (e.g. permission gates) never flash a "not-loaded" state
+  /// mid-refresh.
+  ///
+  /// Use when the effective authorization context changes in a way the source
+  /// can't observe on its own — e.g. an active-role switch carried as a
+  /// per-request credential claim, where the active role changes but the
+  /// co-mounted [AuthSession] never leaves Authenticated (so neither the
+  /// Authenticated-transition refetch nor a server `stale_data` envelope
+  /// fires). No-op when no Principal is active.
+  Future<void> refresh();
+
   /// Release any underlying resources (the stream controller, the
   /// substrate-subscription this source uses internally, etc.).
   /// After [dispose], the source is no longer usable.

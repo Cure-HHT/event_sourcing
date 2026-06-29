@@ -138,6 +138,70 @@ void main() {
     );
 
     test(
+      'cancelling a subscription mid-reconnect does NOT send Unsubscribe on '
+      'the still-unauthenticated new socket',
+      () async {
+        // Regression: a subscription cancelled while a reconnect is mid-
+        // handshake (new socket open, auth not yet acked) used to push an
+        // Unsubscribe onto that socket — making it the FIRST frame, which the
+        // server rejects (first frame MUST be Auth) by closing 4001. That
+        // surfaced as a spurious "session ended" on an active-role switch
+        // (whose snapshot refresh unmounts screens -> cancels subs -> mid
+        // reconnect).
+        final factory = FakeWsFactory();
+        final conn = RemoteConnection(
+          baseUrl: Uri.parse('http://test.local'),
+          httpClient: FakeHttpClient(),
+          wsFactory: factory.build,
+          reconnectBackoff: const ExponentialBackoff(
+            initial: Duration(milliseconds: 1),
+            maxAttempts: 3,
+            multiplier: 2,
+          ),
+        );
+
+        final sub = conn
+            .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
+            .listen((_) {}, onError: (_) {});
+
+        await factory.latest.acceptAuth();
+        await pumpEventLoop();
+        expect(factory.pairs, hasLength(1));
+
+        // Begin a reconnect: a fresh WS generation opens and sends its auth,
+        // but we deliberately do NOT accept it — the new socket is open yet
+        // unauthenticated.
+        unawaited(conn.reconnect());
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(factory.pairs, hasLength(2));
+        final secondGen = factory.pairs.last;
+
+        // Cancel while the new socket is mid-handshake.
+        await sub.cancel();
+        await pumpEventLoop();
+
+        // No Unsubscribe may have been written to the unauthenticated socket.
+        expect(
+          secondGen.sentMessages.where(
+            (m) => m.contains('"type":"unsubscribe"'),
+          ),
+          isEmpty,
+          reason: 'no Unsubscribe before auth on the reconnect socket',
+        );
+        // The only client frame so far is the auth handshake.
+        expect(
+          secondGen.sentMessages.where((m) => m.contains('"type":"auth"')),
+          hasLength(1),
+        );
+
+        for (final p in factory.pairs) {
+          await p.dispose();
+        }
+        await conn.dispose();
+      },
+    );
+
+    test(
       'late close echo on old channel does not clobber new generation (Case B)',
       () async {
         // Regression test: before the _wsStreamSub fix, the old channel's

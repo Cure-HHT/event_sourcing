@@ -115,6 +115,9 @@ class LocalPermissionSource implements PermissionSource {
     unawaited(_recompute());
   }
 
+  @override
+  Future<void> refresh() => _recompute();
+
   Future<void> _recompute() async {
     final p = _principal;
     if (p == null) {
