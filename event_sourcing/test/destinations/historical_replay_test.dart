@@ -267,8 +267,11 @@ void main() {
       // are interleaved into the event_log and consume sequence
       // numbers, but never reach the FIFO; the cursor matches the
       // last user event's seq, whatever that ends up being.
+      // Match only the seeded user events (e1..eN). Audit emissions get random
+      // v4-UUID ids that may begin with the hex digit 'e', so `startsWith('e')`
+      // is flaky; `^e\d+$` matches `e<digits>` exactly and excludes UUIDs.
       final lastUserEvent = (await backend.findAllEvents()).lastWhere(
-        (e) => e.eventId.startsWith('e'),
+        (e) => RegExp(r'^e\d+$').hasMatch(e.eventId),
       );
       expect(await backend.readFillCursor('x'), lastUserEvent.sequenceNumber);
     });

@@ -1,12 +1,3 @@
-// Verifies: EVS-PRD-subscription/A (AggregateMode delivers filtered
-//   materialized state: Snapshot for existing aggregate, null Snapshot for
-//   absent aggregate, Delta for subsequent appends, Tombstone on deletion)
-// Verifies: EVS-PRD-subscription/B (Delta arrives reactively after append;
-//   Tombstone arrives reactively after tombstone event)
-// Verifies: EVS-PRD-subscription/C (snapshot sequence reflects max folded
-//   event sequence; Delta sequence monotonically advances)
-// Verifies: EVS-PRD-subscription/D (every matching append after subscribe
-//   produces a Delta; no updates dropped)
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
@@ -83,6 +74,8 @@ Future<void> _append(
 );
 
 void main() {
+  // Verifies: EVS-PRD-subscription/A (null-value Snapshot delivered for an
+  //   aggregate that does not yet exist)
   test(
     'snapshot for not-yet-existing aggregate emits null-value Snapshot',
     () async {
@@ -109,6 +102,11 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-subscription/A (Snapshot carries current state for an
+  //   existing aggregate; a subsequent append emits a Delta)
+  // Verifies: EVS-PRD-subscription/B (Delta arrives reactively after append)
+  // Verifies: EVS-PRD-subscription/D (a matching append after subscribe
+  //   produces a Delta)
   test(
     'snapshot for existing aggregate carries current state; subsequent appends emit Delta',
     () async {
@@ -147,6 +145,8 @@ void main() {
     },
   );
 
+  // Verifies: EVS-PRD-subscription/C (snapshot sequence reflects the max
+  //   folded event sequence)
   test('snapshot sequence reflects latest folded event sequence', () async {
     final store = await _open();
     await _append(store, 'e1', 'finalized', {
@@ -182,6 +182,9 @@ void main() {
     await store.close();
   });
 
+  // Verifies: EVS-PRD-subscription/A (Tombstone delivered on deletion)
+  // Verifies: EVS-PRD-subscription/B (Tombstone arrives reactively after a
+  //   tombstone event)
   test('tombstone produces Tombstone update for active subscribers', () async {
     final store = await _open();
     await _append(store, 'e1', 'finalized', {

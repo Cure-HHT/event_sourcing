@@ -131,11 +131,32 @@ reference_patterns = []
 
 # CUR-1533 test targets: one per Flutter package. Each runs `flutter test
 # --machine` (native JSON on stdout, real `suite.path` per test file) and reads
-# the package's `coverage/lcov.info`. `match = "precise"` wires file-granular
+# the package's `coverage/lcov.info`. `match = "source"` wires file-granular
 # RESULT->TEST verification by real path (no tojunit, no gen-junit script).
 # `credit_coverage = "verified"` credits the lcov_tested dimension from covered
 # // Implements: lines. `elspais checks --run-tests` runs these; CI omits
 # `command` and points at pre-produced coverage/results.
+#
+# CUR-1556: each command also writes the same machine JSON to a file via
+# `--file-reporter=json:coverage/machine.jsonl`, and `results` points at it
+# (path/name matched to hht_diary's CUR-1556 targets for cross-repo
+# consistency). The `flutter-machine` reporter is a stdout channel, so
+# `--run-tests` ingests results transiently from captured stdout -- but commands
+# that do NOT run the tests (`elspais trace`, `viewer`, `graph`) have no captured
+# stdout and fall back to globbing `results`. Without a persisted file they
+# skipped result ingestion entirely, so `verified` (and the viewer's VER links)
+# showed 0 even though tests passed. Persisting to `coverage/` (gitignored,
+# alongside lcov.info) makes the verified dimension survive outside a
+# `--run-tests` invocation. The `--file-reporter` sink is additive: stdout still
+# carries the machine JSON, so `--run-tests` capture and the real exit code are
+# unaffected. NOTE: the daemon only watches spec/code/test dirs, not coverage/ or
+# this config -- run `elspais daemon --force` after producing results so the
+# viewer rebuilds. Because results now persist, every `checks` run (not just
+# `--run-tests`) loads the per-test-case RESULT nodes; flutter-machine emits no
+# stable test_id, so those nodes have no FILE ancestor and trip
+# `spec.structural_orphans`. That is inherent to path-based (not edge-based)
+# result matching and benign for verification, so `[rules.hierarchy]
+# allow_structural_orphans` below suppresses it (as hht_diary already does).
 #
 # flutter is not on elspais's PATH in the dev env; run with:
 #   PATH="$HOME/flutter-sdk/flutter/bin:$PATH" elspais checks --run-tests
@@ -146,73 +167,81 @@ reference_patterns = []
 [[scanning.test.targets]]
 name = "provenance"
 cwd = "provenance"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction"
 cwd = "reaction"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction_widgets_testing"
 cwd = "reaction_widgets_testing"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "reaction_widgets"
 cwd = "reaction_widgets"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "canonical_json_jcs"
 cwd = "canonical_json_jcs"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing/example"
 cwd = "event_sourcing/example"
-command = "flutter test --machine --coverage"
+command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing"
 cwd = "event_sourcing"
-command = "flutter test --machine --coverage --concurrency=1"
+command = "flutter test --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing/example_action_permissions"
 cwd = "event_sourcing/example_action_permissions"
-command = "flutter test --machine --coverage --concurrency=1"
+command = "flutter test --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
-match = "precise"
+match = "source"
 credit_coverage = "verified"
 
 [scanning.docs]
@@ -236,3 +265,17 @@ active = ["Active", "Draft"]
 provisional = ["Proposed"]
 aspirational = ["Roadmap", "Future", "Idea"]
 retired = ["Deprecated", "Superseded", "Rejected"]
+
+# Structural-orphan suppression (CUR-1556).
+#
+# A "structural orphan" is a node with no FILE ancestor. The flutter-machine
+# reporter emits one RESULT node per executed test case with no stable
+# `test_id`, so elspais cannot wire those nodes to a TEST/FILE by edge -- it
+# instead credits `verified` by matching the RESULT's `source_file` to the test
+# file's path. The result nodes are therefore structurally orphaned by design,
+# not by a build bug. Once `results` persists to disk (above), every `checks`
+# run loads them, so the default `spec.structural_orphans` check would fail the
+# pre-push hook (`elspais checks --lenient`) on ~1 orphan-per-test-case even
+# though nothing is wrong. Suppress it -- matching hht_diary's CUR-1556 config.
+[rules.hierarchy]
+allow_structural_orphans = true
