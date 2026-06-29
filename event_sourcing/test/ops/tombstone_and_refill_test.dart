@@ -592,8 +592,13 @@ void main() {
       // consume sequence_number slots in event_log, so the absolute
       // value is offset; assert against the last user event's seq
       // instead of a literal.
+      // Match only the seeded user events (e1..e9). The registry's audit
+      // emissions get random v4-UUID event ids, and a UUID may begin with the
+      // hex digit 'e' (~1/16), so `startsWith('e')` intermittently catches one
+      // and inflates the max seq above the fill cursor — a flaky failure.
+      // `^e\d+$` matches `e<digits>` exactly, excluding UUIDs.
       final lastUserSeq = (await backend.findAllEvents())
-          .where((e) => e.eventId.startsWith('e'))
+          .where((e) => RegExp(r'^e\d+$').hasMatch(e.eventId))
           .map((e) => e.sequenceNumber)
           .reduce((a, b) => a > b ? a : b);
       expect(await backend.readFillCursor(destination.id), lastUserSeq);
