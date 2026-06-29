@@ -69,6 +69,16 @@ repos:
   # without blocking unrelated pushes.
   - repo: local
     hooks:
+      # Sole elspais version pin lives in .github/versions.env; this gate fails
+      # the push if the installed elspais is older (keeps local in sync with the
+      # config's `match = "source"` expectations). Runs before elspais-checks.
+      - id: elspais-version
+        name: elspais version pin
+        entry: scripts/check-elspais-version.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: elspais-checks
         name: elspais checks
         entry: elspais checks --lenient
