@@ -52,9 +52,8 @@ agnostic conformance harness.
   into consumers' release builds.
 - `canonical_json_jcs/` — JCS (RFC 8785).
 - `provenance/` — append-only provenance chain types.
-- `spec/` — formal requirements in EVS namespace (PRD level today;
-  OPS and DEV land alongside implementation work). See
-  `spec/requirements-spec.md` for the canonical grammar and
+- `spec/` — formal requirements in EVS namespace (PRD and DEV
+  levels). See `spec/requirements-spec.md` for the canonical grammar and
   `spec/README.md` for the directory layout. Future work is recorded
   only in `spec/roadmap/`.
 - `docs/` — explanatory documentation: `event-sourcing-guide.md` (the

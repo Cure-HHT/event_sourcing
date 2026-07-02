@@ -34,8 +34,8 @@ class ProjectionRegistry {
   Iterable<ProjectionSpec> all() => _byView.values;
 
   /// Called by EventStore.open after composition; further register() calls
-  /// throw. Phase II's settings-event-driven registration is gated behind
-  /// a separate substrate-level event flow that bypasses this seal.
+  /// throw. A future settings-event-driven registration flow
+  /// (`spec/roadmap/multi-source-editing.md`) would bypass this seal.
   void seal() {
     _sealed = true;
   }

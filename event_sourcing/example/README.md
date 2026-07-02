@@ -1,7 +1,7 @@
 # event_sourcing_datastore_demo
 
 Linux-desktop sandbox exercising every public surface of
-`event_sourcing_datastore`. Two datastores in one process, one mobile
+`event_sourcing`. Two datastores in one process, one mobile
 pane bridged into one hub pane, every panel driven from real lib
 APIs (no mocks, no fixtures).
 
@@ -81,7 +81,7 @@ sudo apt-get install \
 ### Run
 
 ```bash
-cd apps/common-dart/event_sourcing_datastore/example
+cd event_sourcing/example
 flutter pub get
 flutter run -d linux
 ```

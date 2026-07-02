@@ -22,8 +22,9 @@ client implementations, and the reference shelf server handlers
 
 - `lib/src/interfaces/` — the abstract interfaces (transport-agnostic).
 - `lib/src/state/` — `ActionState` sealed type + idempotency-key generator.
-- `lib/src/scope/` — `ReactionScope` (`LocalScope` / `RemoteScope`) with the
-  authoritative `ConnectionStatus` stream.
+- `lib/src/scope/` — `ReactionScope` abstraction + `LocalScope`, with the
+  authoritative `ConnectionStatus` stream; the `RemoteScope` implementation
+  lives in `lib/src/remote/`.
 - `lib/src/local/` — in-process implementations wrapping `event_sourcing`'s
   `ActionDispatcher`, `EventStore.subscribe<T>`, and permission machinery.
 - `lib/src/remote/` — cross-process client implementations (HTTP + WebSocket).

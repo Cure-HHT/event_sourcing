@@ -44,8 +44,8 @@ class EventStoreBundle {
 
   /// Register or update a (`viewName`, `entryType`) → `version` entry in
   /// the persisted `view_target_versions`. Used to add a new entry type
-  /// to a materialized view after bootstrap (e.g., when a sponsor adds a
-  /// new entry type at runtime).
+  /// to a materialized view after bootstrap (e.g., when an application
+  /// adds a new entry type at runtime).
   Future<void> setViewTargetVersion(
     String viewName,
     String entryType,

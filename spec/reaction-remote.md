@@ -296,8 +296,8 @@ uniform across Flutter native and Flutter web.
 }
 ```
 
-The wire reserves space for a future `{"type":"resume","fromSequence":N}`
-message; not implemented in v1 but the codec layout accommodates it
+A `{"type":"resume","fromSequence":N}` message is an additive extension
+recorded in `spec/roadmap/reaction.md`; the codec layout accommodates it
 without breaking change.
 
 #### Server -> Client messages
