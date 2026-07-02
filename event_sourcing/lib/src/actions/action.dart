@@ -7,7 +7,7 @@ import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
 
-/// A portal command. Concrete subclasses define one action and one
+/// A dispatchable command. Concrete subclasses define one action and one
 /// command shape (`TInput`) and one result shape (`TResult`).
 ///
 /// Lifecycle inside `ActionDispatcher`:

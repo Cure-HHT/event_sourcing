@@ -1,6 +1,6 @@
 # EVS-PRD-regulatory-alignment: Regulatory Alignment
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -52,5 +52,9 @@ Timestamps are not strictly necessary for an event log to be a valid event log �
 ### Why integrity-violation surfacing is this PRD's obligation, not hash-chain-integrity's
 
 EVS-PRD-hash-chain-integrity defines the verification operation: a holder of the log can recompute and verify. This PRD adds the operational-system-check obligation: the library surfaces verification failures encountered during normal use, rather than absorbing them. Together, these satisfy §11.10(c) and §11.10(f); separately, neither does. The three classes of failure are split into separate assertions (B, C, D) because each is independently testable: hash-chain mismatch is detected via the chain-verification path; canonicalization-rule conflict is detected by the rule-evaluation path; provenance verification failure is detected at the ingest boundary.
+
+## Changelog
+
+- 2026-07-02 | c68731c0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Regulatory Alignment* | **Hash**: c68731c0

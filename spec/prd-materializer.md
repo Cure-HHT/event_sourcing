@@ -1,6 +1,6 @@
 # EVS-PRD-materializer: Materializer
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -48,5 +48,9 @@ TimeBucketProjectionSpec(
 ```
 
   Open design questions (deferred): late-arrival semantics (a `sensor_reading` event whose `data.timestamp` lands in an already-closed bucket — re-fold, refuse, separate-late-bucket?), retention/rollup (one-minute buckets compacted to hour buckets after N days?), the interaction with promoters (the `bucketField` referent might rename across entry-type versions). Lands when a real consumer demand materializes; cited here so future work doesn't rediscover the gap.
+
+## Changelog
+
+- 2026-07-02 | 02028dcf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Materializer* | **Hash**: 02028dcf

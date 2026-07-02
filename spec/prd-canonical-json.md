@@ -1,6 +1,6 @@
 # EVS-PRD-canonical-json: Canonical JSON Serialization
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -30,5 +30,9 @@ F. The package SHALL be pure Dart.
 **Why a separate package?** Canonical-form serialization is reusable beyond event sourcing. Any component that signs, hashes, or audits structured payloads can depend on `canonical_json_jcs` directly without inheriting the event-log machinery.
 
 **Why pure Dart?** The package must run identically on every tier — mobile clients producing canonical hashes, server tiers verifying them. Any platform-specific branching would break byte-identical output across tiers, defeating the package's purpose.
+
+## Changelog
+
+- 2026-07-02 | cd11dd12 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Canonical JSON Serialization* | **Hash**: cd11dd12

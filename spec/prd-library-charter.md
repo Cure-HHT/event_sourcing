@@ -1,7 +1,6 @@
 # EVS-PRD-library-charter: Library Charter
 
-**Level**: prd | **Status**: Draft | **Implements**: -
-**Refines**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 
 ## Purpose
 
@@ -80,5 +79,9 @@ The library bundles these as primitives because most consumers want them, but th
 - **Append-Only Primitives discipline** applies to Layer 2 conventions too. Once a convention ships under a name with given semantics, those semantics are frozen; alternative behaviour is a new primitive, not a re-interpretation of an existing one.
 
 **Authoring guidance.** When proposing new library primitives, code comments, or PRD assertions, be explicit about which layer the claim sits at. "The library SHALL preserve hash-chain integrity" is Layer 1 and absolute. "The library SHALL treat tombstone event types as row deletions" is Layer 2 and should read more like "The library's default `AggregateProjectionSpec` interpretation TREATS event types in `tombstoneEventTypes` as row deletions." Applying the same precision to existing surfaces is part of the ongoing authoring discipline that assertion I imposes.
+
+## Changelog
+
+- 2026-07-02 | 6b89020b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Library Charter* | **Hash**: 6b89020b

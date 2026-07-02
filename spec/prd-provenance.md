@@ -1,6 +1,6 @@
 # EVS-PRD-provenance: Provenance Chain Tracking
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -26,5 +26,9 @@ D. The package SHALL be pure Dart and run identically on every Dart-supported pl
 **Why immutability and pure-functional append?** Provenance entries are themselves audit data. A chain that can be silently mutated downstream offers an attacker the same surface as a mutable event log. Pure-functional append gives strong static guarantees that no hop can rewrite earlier entries.
 
 **Why a separate package?** Provenance chains are useful beyond event sourcing — any component that processes structured data through multiple stages (signing, transformation, distribution) can use the same chain types. Keeping the package narrow and dependency-free preserves that reusability.
+
+## Changelog
+
+- 2026-07-02 | 4755ef8b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Provenance Chain Tracking* | **Hash**: 4755ef8b

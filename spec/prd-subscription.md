@@ -1,6 +1,6 @@
 # EVS-PRD-subscription: Subscription
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -26,5 +26,9 @@ D. Subscription delivery SHALL be at-least-once: every event matching a subscrip
 **Why order-preserving delivery?** State derivation depends on per-aggregate event order. A consumer that receives events out of order would have to resort them itself, which is both extra complexity and a place where consumer bugs can corrupt state. The library guarantees order at delivery so the consumer can fold incrementally.
 
 **Why at-least-once rather than exactly-once?** Exactly-once delivery requires either consumer-side acknowledgement protocols that complicate the API, or end-to-end transactionality that is impractical across reconnects and across tiers. At-least-once with hash-addressable events is operationally simpler: the consumer's deduplication is a one-line check against the event's hash, and loss — which is unrecoverable — is ruled out.
+
+## Changelog
+
+- 2026-07-02 | 5d398de1 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Subscription* | **Hash**: 5d398de1

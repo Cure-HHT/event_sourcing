@@ -1,6 +1,6 @@
 # EVS-DEV-event-store-open: EventStore.open boot flow
 
-**Level**: DEV | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-event-log
 
 ## Purpose
@@ -26,5 +26,9 @@ E. `EventStore.open` SHALL open two storage transactions in sequence: (1) a **li
 **Why two transactions rather than one outer transaction?** Each boot phase reads state derived from its own writes (e.g., snapshot promotion seeds `view_target_versions` rows it then updates), and within a phase those mutations MUST commit atomically — otherwise concurrent readers see torn intermediate states and the closed-under-events guarantee breaks. Across phases, however, the boot sequence is restartable: a crash between phases leaves the log in a state the next boot can detect and resume from (the library-version check is idempotent — no-op when the recorded version already matches; the entry-type downgrade check is read-only and idempotent; `view_target_versions` seeding is idempotent given the registry; snapshot promotion re-derives target versions from the registry). Wrapping both phases in one outer transaction would conflate the library-version audit-event append with the per-pair `view_snapshot_promoted` audits inside the promotion phase, and would force backend implementations to support nested transactions for no semantic gain. The shipped impl therefore commits each phase independently and relies on the per-phase atomicity for correctness, with cross-phase recovery handled by re-running the boot sequence.
 
 **Why library-version first, then snapshot-promotion?** The library-version event is the audit trail of "which lib version booted at sequence N." Emitting it before snapshot promotion means that any `view_snapshot_promoted` audits emitted by phase 2 sit *after* their causal `lib_version_changed` event in the log — a reader replaying from genesis sees the version bump, then the promotions it triggered, in causal order. The reverse order would surface promotion audits whose justification (the lib-version transition) hadn't been recorded yet.
+
+## Changelog
+
+- 2026-07-02 | 98a3dab0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *EventStore.open boot flow* | **Hash**: 98a3dab0

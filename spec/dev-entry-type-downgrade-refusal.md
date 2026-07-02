@@ -1,6 +1,6 @@
 # EVS-DEV-entry-type-downgrade-refusal: Entry-type version downgrade refusal
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-event-log
 
 ## Purpose
@@ -20,5 +20,9 @@ C. The error SHALL carry the offending entry type's id, the registry's `register
 **Why before any mutation?** A failed downgrade-check after partial seeding would leave `view_target_versions` rows seeded at the new (lower) version, contradicting the higher-versioned data already in the views. Eager refusal preserves the invariant `view_target_versions ≥ event.entryTypeVersion` for already-promoted rows.
 
 **Why is downgrade refused rather than downgraded?** Downgrading would require an inverse-promoter primitive set; the project's promoter primitives are intentionally shape-changers (not invertible without information loss for `DropField`). Refusing forces the library version to be a monotonically-rising contract, which simplifies reasoning about replayability and audit reconstruction.
+
+## Changelog
+
+- 2026-07-02 | 7b577371 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Entry-type version downgrade refusal* | **Hash**: 7b577371

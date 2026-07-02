@@ -1,6 +1,6 @@
 # EVS-PRD-multi-source-canonicalization: Multi-Source Canonicalization
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -48,5 +48,9 @@ F. A non-canonical event SHALL remain visible in the log and in subscriptions; t
 - `docs/scenarios/retail-pos.md` — offline-first registers as Sources during a working day, reconciled at close. v1's first-author-canonicalization gets the day's first register but not the cross-register merges that close-of-day reconciliation implies.
 
 These three scenarios are not gating v1; they are the explicit unlock conditions for Phase II activation.
+
+## Changelog
+
+- 2026-07-02 | 3e087d41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Multi-Source Canonicalization* | **Hash**: 3e087d41

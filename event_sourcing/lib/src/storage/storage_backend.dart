@@ -80,7 +80,7 @@ abstract class StorageBackend {
   /// Returned in `sequence_number` order.
   ///
   /// [originatorHopId] matches `provenance[0].hopId` — the hop class of
-  /// the originator (e.g. `'mobile-device'`, `'portal-server'`).
+  /// the originator (e.g. `'mobile-device'`, `'relay-server'`).
   /// [originatorIdentifier] matches `provenance[0].identifier` — the
   /// originator's install identity. When both are supplied results SHALL
   /// match both (AND semantics); when neither is supplied no originator

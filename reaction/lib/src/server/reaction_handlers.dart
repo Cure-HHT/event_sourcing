@@ -34,16 +34,15 @@ export 'package:reaction/src/server/subscription_handler.dart'
 /// like — there is no "reaction server" class that owns its own
 /// router or `HttpServer`.
 ///
-/// Example consumer composition (the expected first consumers are
-/// `portal_server` and `diary_server` in `hht_diary`, which already
-/// run their own shelf pipelines with their own auth middleware):
+/// Example consumer composition (for consumer deployments that already
+/// run their own shelf servers with their own auth middleware):
 ///
 /// ```dart
 /// final reaction = ReactionHandlers(
 ///   eventStore: store,
 ///   dispatcher: dispatcher,
 ///   policy: policy,
-///   viewScopeRegistry: portalViewScopes,
+///   viewScopeRegistry: consumerViewScopes,
 /// );
 ///
 /// // HTTP routes are gated by the consumer's auth middleware (it
@@ -55,16 +54,16 @@ export 'package:reaction/src/server/subscription_handler.dart'
 /// // route behind HTTP-bearer middleware would reject every upgrade
 /// // with HTTP 401.
 /// final httpRouter = Router()
-///   ..get('/api/v1/portal/me',                   reaction.me)
-///   ..post('/api/v1/portal/actions',             reaction.actions)
-///   ..get('/api/v1/portal/permissions/snapshot', reaction.permissions);
+///   ..get('/api/v1/me',                   reaction.me)
+///   ..post('/api/v1/actions',             reaction.actions)
+///   ..get('/api/v1/permissions/snapshot', reaction.permissions);
 ///
 /// final httpPipeline = const Pipeline()
 ///     .addMiddleware(consumerAuthMiddleware)
 ///     .addHandler(httpRouter.call);
 ///
 /// final topRouter = Router()
-///   ..get('/api/v1/portal/subscriptions',
+///   ..get('/api/v1/subscriptions',
 ///         reaction.subscriptions(validator))
 ///   ..mount('/', httpPipeline);
 ///

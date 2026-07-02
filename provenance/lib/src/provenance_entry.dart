@@ -8,10 +8,10 @@ import 'package:provenance/src/batch_context.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.
 ///
-/// Mobile-device, diary-server, portal-server, and EDC hops each append one
-/// `ProvenanceEntry` to `event.metadata.provenance` when they receive the
-/// event. The class is pure data; the append-and-don't-mutate invariants live
-/// in the `appendHop()` helper.
+/// Each hop that receives the event (originating device, relay server,
+/// controlling server) appends one `ProvenanceEntry` to
+/// `event.metadata.provenance`. The class is pure data; the
+/// append-and-don't-mutate invariants live in the `appendHop()` helper.
 ///
 /// `receivedAt` is a UTC or timezone-offset-explicit instant; `fromJson`
 /// rejects offsetless ISO 8601 strings to preserve the ALCOA+
@@ -19,7 +19,7 @@ import 'package:provenance/src/batch_context.dart';
 ///
 /// `identifier` and `softwareVersion` shape rules (-D, -E) are
 /// **permanent caller obligations**, not deferred validation: the source of
-/// each hop — mobile device, diary server, portal — is the only place that
+/// each hop — originator, relay, controller — is the only place that
 /// knows which shape applies, so there is no hop-ingress validator that can
 /// take ownership. The type documents the contract; callers construct
 /// conforming values.

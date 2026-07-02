@@ -89,7 +89,7 @@ The PRDs below are best read in this order on first contact, because each later 
 
 ## EVS-PRD-auth-session: Auth Session
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ### Purpose
@@ -128,11 +128,15 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 **Why no `JwtAuthValidator` in v1?** JWT validation needs a key-loading strategy, an issuer convention, and a claim-mapping policy — all of which depend on the deployment's identity-provider choices. A premature default would either be too narrow (only fits Firebase, only fits Auth0) or too configurable (weighed down with options no consumer actually needs). Defer until consumer demand makes the right shape obvious.
 
+### Changelog
+
+- 2026-07-02 | 9c087173 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *Auth Session* | **Hash**: 9c087173
 
 ## EVS-PRD-action-submitter: Action Submitter
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch, EVS-PRD-library-charter
 
 ### Purpose
@@ -161,11 +165,15 @@ E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be s
 
 **Why "source-identical" widget code (E)?** This is the central user-facing promise of the interface. Without it, mobile widget code and web widget code would diverge structurally, which defeats the purpose of building a substrate-agnostic widget library on top.
 
+### Changelog
+
+- 2026-07-02 | 22898b0a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *Action Submitter* | **Hash**: 22898b0a
 
 ## EVS-PRD-view-subscriber: View Subscriber
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
@@ -194,11 +202,15 @@ E. The `ViewSource.watch<T>` contract — its return type (`Stream<Update<T>>`),
 
 **Why pin pagination-readiness (E) without building pagination?** Pagination (cursor-based or batched snapshot delivery) is genuine YAGNI today — no consumer has a measured large-view problem, and the substrate's snapshot-then-deltas semantics serve the expected scale. But the library is greenfield; the right move is to define the contract such that adding pagination later is non-breaking, rather than ship a contract that locks consumers in and then has to migrate them. Concretely: `Snapshot<T>` already carries one row at a time, so a future "batched snapshot" can ship as either a new variant (e.g., `SnapshotBatch<T>`) that defaults-translates to a sequence of `Snapshot<T>` for consumers that don't observe it, or as a flag on `Snapshot<T>` (e.g., `lastInBatch`) that consumers may safely ignore. The `EndOfReplay` marker stays definitive. Pinning the additive-evolution promise as a normative assertion prevents future authors from shipping a breaking redesign in the name of "cleanup."
 
+### Changelog
+
+- 2026-07-02 | bfaba693 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *View Subscriber* | **Hash**: bfaba693
 
 ## EVS-PRD-permission-source: Permission Source
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-permissions-as-events
 
 ### Purpose
@@ -227,11 +239,15 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 **Why route through `AuthorizationPolicy.effectivePermissionsFor` rather than reading `role_permission_grants` directly (B)?** Reading `role_permission_grants` alone would bypass the membership gate — a Principal claiming `activeRole: 'admin'` would see admin permissions even if no `user_role_scopes` row bound that user to the admin role. `AuthorizationPolicy.effectivePermissionsFor` reads BOTH projections, verifying the (userId, activeRole) binding against `user_role_scopes` before granting anything from `role_permission_grants`. Routing `LocalPermissionSource` through the policy keeps local and remote sources computing identical snapshots and realizes the closed-under-events trust model (see `EVS-PRD-library-charter` narrative chapter "Closed under events"): the substrate refuses to honour an unverified role claim, regardless of which `PermissionSource` impl serves the snapshot.
 
+### Changelog
+
+- 2026-07-02 | 1fa3332a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *Permission Source* | **Hash**: 1fa3332a
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter, EVS-PRD-subscription
 
 ### Purpose
@@ -278,11 +294,15 @@ J. The server-side wire handler SHALL support a configurable WebSocket keepalive
 
 **Why server-side keepalive (J), and how does it relate to status (I) and reconnect (H)?** The Remote client cannot detect a silently dropped connection on web: a browser `WebSocket` neither lets application code send timed pings nor surfaces incoming ping/pong frames, and a half-open socket may never deliver a close event. Without keepalive, an idle connection behind a proxy/load-balancer can be reaped with no close-frame, so the client's lifecycle-driven status (I) stays `Connected` and the backoff reconnect (H) — which is edge-triggered by a close — never fires. A *server-side* keepalive (the host's `pingInterval`, which browsers auto-pong) solves both halves: it keeps the connection non-idle so it is not reaped in the first place, and when a peer is genuinely gone it forces a server-side close that reaches the client as the observable close-frame that I and H already act on. This is distinct from I's prohibition: I forbids the client from *synthesizing pings to derive status*; J is transport-level liveness on the *server*, and it feeds — rather than bypasses — the lifecycle-event path. It is opt-in (interval supplied by the consumer) so the library imposes no traffic by default.
 
+### Changelog
+
+- 2026-07-02 | 2df8cc19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *Cross-Process Event Transport* | **Hash**: 2df8cc19
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-cross-process-event-transport, EVS-PRD-library-charter, EVS-PRD-permission-source, EVS-PRD-view-subscriber
 
 ### Purpose
@@ -311,11 +331,15 @@ E. Consumer code that depends only on the `ReactionScope` interface (and the fou
 
 **Why drive transitions from the WS lifecycle rather than HTTP?** The HTTP client makes one request at a time; its "is the network up" answer coincides with each request's success/failure and is therefore discontinuous. The WS is a long-lived channel whose liveness is observable directly via close-frames and reopen events. Tying `ConnectionStatus` to WS lifecycle gives a continuous, accurate signal; tying it to HTTP would require synthetic ping requests, which add traffic and add an inference layer that can disagree with WS reality.
 
+### Changelog
+
+- 2026-07-02 | 3752964b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
+
 *End* *Reaction Scope* | **Hash**: 3752964b
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-submitter, EVS-PRD-auth-session, EVS-PRD-permission-source, EVS-PRD-reaction-scope, EVS-PRD-view-subscriber
 
 > **Implementation status:** Shipped. Both `reaction_widgets` (headless widget primitives) and `reaction_widgets_testing` (widget-test doubles) are implemented and have widget tests covering all assertions.
@@ -365,6 +389,10 @@ K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optiona
 **Why progressive rendering as opt-in, default `Loading`-until-`EndOfReplay` (J)?** The default deterministic behavior matches the substrate's snapshot-then-deltas guarantee semantically: until `EndOfReplay`, the snapshot is incomplete. For most views this is the right default — render once with everything. For very large views (where snapshot delivery takes seconds), opt-in `progressive: true` lets the list paint as rows arrive. Making it opt-in keeps small-view callers from accidentally rendering against partial state, and keeps the contract additive-compatible with future cursor-based snapshot delivery (per `EVS-PRD-view-subscriber`-E): a future `SnapshotBatch` variant simply becomes another source of partial rows under `progressive` mode.
 
 **Why agnostic state management?** The widget library's value proposition is the substrate-agnostic widget contract, not a state-management opinion. Baking in a single choice (signals, Provider, Riverpod, BLoC) excludes consumers who use the others. Agnostic primitives (`Stream`, `ValueListenable`, `InheritedWidget`) are the lingua franca, and a `Stream` bridges cleanly to signals (stream-to-signal), Provider, or Riverpod alike. The opt-in adapter that earns its keep is `reaction_widgets_signals`: signals is the reactive idiom both consumers use — hht_diary mobile, and the portal-ui after its Phase IV substrate cutover. Provider/Riverpod adapters would follow the same additive pattern only behind an external consumer that needs them.
+
+### Changelog
+
+- 2026-07-02 | 72a4ad0a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Reaction Widget Contract* | **Hash**: 72a4ad0a
 

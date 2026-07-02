@@ -1,6 +1,6 @@
 # EVS-PRD-ingest: Ingest Path
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -36,5 +36,9 @@ F. The ingest path SHALL be idempotent: re-presenting an event already admitted 
 **Why is ingest idempotent?** Cross-tier transports retry. The same upstream event may be presented at the ingest path many times (delivery retries, replay after restart, reconfiguration of upstream destinations). Idempotency on event identity (the upstream hash) makes retries safe and ensures the local log records each upstream event exactly once.
 
 **Why does ingest participate in canonicalization rules rather than being canonical by default?** Multi-source editing is the case where ingested events and locally-originated events both target the same aggregate. The library's resolution of "which events are canonical for this aggregate?" is governed by configurable canonicalization rules (the multi-source-canonicalization PRD specifies the rule grammar), which can be configured per aggregate or per aggregate type. Ingest doesn't presume canonicality; it presents the event for the rule to evaluate.
+
+## Changelog
+
+- 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Ingest Path* | **Hash**: 92f2bd91

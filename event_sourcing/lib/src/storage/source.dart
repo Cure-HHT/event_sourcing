@@ -12,7 +12,7 @@
 /// a system aggregate on any receiver they both bridge to.
 ///
 /// `hopId` is the role-class string (e.g. `'mobile-device'`,
-/// `'portal-server'`). Two installations of the same
+/// `'relay-server'`). Two installations of the same
 /// role class are distinct originators — discrimination on
 /// `EventStore.isLocallyOriginated` compares
 /// `identifier`, not `hopId`.

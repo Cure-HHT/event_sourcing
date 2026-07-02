@@ -1,6 +1,6 @@
 # EVS-DEV-snapshot-promotion-on-open: Snapshot promotion at EventStore.open
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-event-log, EVS-PRD-materializer
 
 ## Purpose
@@ -22,5 +22,9 @@ D. Snapshot promotion at boot SHALL be provably equivalent to event-replay-with-
 **Why promote at boot rather than on read?** Promotion-on-read would push the version-check cost into every subscriber path. Boot-time promotion pays the cost once per library-version transition and lets the subscriber path stay simple.
 
 **Why is fold-commutativity required?** The promoter primitive set is restricted to shape-changers (`RenameField`, `DefaultField`, `DropField`); the deep-merge fold commutes with each. Without commutativity, snapshot promotion would diverge from event-replay-with-promotion and the closed-under-events guarantee would break.
+
+## Changelog
+
+- 2026-07-02 | 62425b7b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Snapshot promotion at EventStore.open* | **Hash**: 62425b7b

@@ -1,6 +1,6 @@
 # EVS-DEV-view-target-versions-seeding: view_target_versions seeding at boot
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-event-log
 
 ## Purpose
@@ -22,5 +22,9 @@ D. The set of (viewName, entryType) pairs to consider for seeding SHALL be deriv
 **Why seed lazily rather than at registry-mutation time?** The registry is immutable post-`EventStore.open` (per EVS-DEV-event-store-open), so there is no other write moment. Seeding inline with the boot pass guarantees the table is populated before any subscriber can observe it.
 
 **Why preserve existing rows rather than reset to the registered version?** An existing row carries history — it was set to its current value by a prior promotion or initialization. Overwriting it would silently undo promotion progress and confuse the downgrade-refusal check on a subsequent boot.
+
+## Changelog
+
+- 2026-07-02 | eb373312 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *view_target_versions seeding at boot* | **Hash**: eb373312

@@ -1,6 +1,6 @@
 # EVS-PRD-portability: Portability
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -35,5 +35,9 @@ D. The library SHALL abstract platform-divergent capabilities (persistent storag
   2. **Backend-side partitioning** — a hypothetical `ShardedPostgresBackend` (or similar) that partitions the event table across multiple Postgres instances by `(originatorId, aggregateType)` or by sequence range, presenting the substrate with a single logical `StorageBackend`. This is out of scope for v1: it requires a non-trivial sequence-number coordination strategy across shards, and the hash chain's per-installation linearity is what makes integrity verifiable in the first place.
 
   The substrate's commitment is that v1 ships one reference `StorageBackend` per supported deployment shape (`SembastBackend` on mobile, `PostgresBackend` on server) and any horizontal-partitioning impl is a downstream extension under the same trust-boundary discipline (CLAUDE.md, "Trust boundaries"). Cited here so future work doesn't quietly assume "obviously you'd shard Postgres" without engaging with the hash-chain-integrity costs.
+
+## Changelog
+
+- 2026-07-02 | edf3c977 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Portability* | **Hash**: edf3c977

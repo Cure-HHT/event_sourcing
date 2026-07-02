@@ -6,7 +6,7 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
-/// One synchronization target — the primary diary server, a future
+/// One synchronization target — e.g. a primary upstream server, a future
 /// analytics backend, etc. — that owns its own FIFO, transform, and send.
 ///
 /// A `Destination` has four responsibilities:
@@ -30,7 +30,7 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// immutable for the process lifetime. A destination's [id] is the key of
 /// its FIFO Sembast store (`fifo_{id}`) and SHALL be stable: changing it
 /// later would orphan the store's contents. The typical id is a short
-/// slug, e.g. `"primary"` for the primary diary server.
+/// slug, e.g. `"primary"` for the primary upstream server.
 abstract class Destination {
   const Destination();
 

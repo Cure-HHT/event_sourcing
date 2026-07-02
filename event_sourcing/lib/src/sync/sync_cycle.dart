@@ -160,13 +160,12 @@ class SyncCycle {
     }
   }
 
-  /// Poll the portal read-side API for inbound tombstones authored on the
-  /// portal (clinician-initiated deletions) and apply them locally. Phase
-  /// 4 ships this as a no-op stub so the call site is in place; Phase 5
-  /// implements the polling body per design doc §11.1.
-  // TODO(CUR-1154, Phase 5): implement inbound tombstone polling per
-  // design §11.1.
+  /// Poll a relay's read-side API for inbound tombstones authored there
+  /// (deletions initiated by another party) and apply them locally. Ships
+  /// as a no-op stub so the call site is in place; a future revision
+  /// implements the polling body.
+  // TODO(CUR-1154): implement inbound tombstone polling.
   Future<void> pollInbound() async {
-    // Intentionally empty. Phase 5.
+    // Intentionally empty.
   }
 }

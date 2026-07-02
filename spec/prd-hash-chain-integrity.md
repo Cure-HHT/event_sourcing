@@ -1,6 +1,6 @@
 # EVS-PRD-hash-chain-integrity: Hash-Chain Integrity
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -30,5 +30,9 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 **Why third-party verifiability?** Regulatory audit cannot rest on trusting the system being audited. By making integrity verifiable from the log alone — no application code, no privileged credentials — the library separates "the system that produced the log" from "the system that verifies it", which is the property that lets a regulator independently confirm the audit trail.
 
 **Multiple chains per log.** A deployment that holds only locally-originated events has one chain, anchored to that deployment. A deployment that ingests events from upstream (per EVS-PRD-ingest) also holds the chains of its upstreams — each chain remains anchored to its originating deployment. Verification is the union of per-chain verifications: each chain is verified against its own anchor, and ingested events are verified at the boundary against the upstream chain they came from.
+
+## Changelog
+
+- 2026-07-02 | b49cdace | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Hash-Chain Integrity* | **Hash**: b49cdace
