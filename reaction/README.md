@@ -8,17 +8,25 @@ sits on top. Note: the test harness transitively requires the
 Flutter SDK (via `event_sourcing`'s Sembast test binding), even
 though the package itself imports no Flutter at runtime.
 
-See `spec/prd-reaction.md` (in the parent repo) for the architectural
+See `spec/prd-reaction.md` (repo root) for the architectural
 spec.
 
 ## Status
 
-Pre-shipping. Local in-process impls only (this package's scope per
-Plan B-local). Wire codecs + Remote impls land in Plan B-remote.
+Shipped. In-process `Local*` implementations, wire codecs, `Remote*`
+client implementations, and the reference shelf server handlers
+(`ReactionHandlers`) are all present and tested. See
+`spec/reaction-remote.md` for the wire-layer spec.
 
 ## Layout
 
-- `lib/src/interfaces/` — the 5 abstract interfaces (transport-agnostic).
+- `lib/src/interfaces/` — the abstract interfaces (transport-agnostic).
 - `lib/src/state/` — `ActionState` sealed type + idempotency-key generator.
+- `lib/src/scope/` — `ReactionScope` (`LocalScope` / `RemoteScope`) with the
+  authoritative `ConnectionStatus` stream.
 - `lib/src/local/` — in-process implementations wrapping `event_sourcing`'s
   `ActionDispatcher`, `EventStore.subscribe<T>`, and permission machinery.
+- `lib/src/remote/` — cross-process client implementations (HTTP + WebSocket).
+- `lib/src/server/` — reference shelf handlers, auth middleware,
+  `AuthorizationWatcher`, `WsConnectionRegistry`, `ViewScopeRegistry`.
+- `lib/src/wire/` — wire codecs for the protocol envelopes.

@@ -4,10 +4,10 @@ JSON Canonicalization Scheme ([RFC 8785](https://www.rfc-editor.org/rfc/rfc8785)
 
 Produces a deterministic, byte-identical serialization of JSON values so
 cross-platform receivers can independently recompute a hash over the same
-input and arrive at the same digest. Used on the hht_diary mobile client
-to stamp `event_hash` values that downstream systems (Python diary-server,
-Dart portal, future Postgres verifier) can verify without needing to
-preserve Dart's Map insertion order or number-formatting quirks (CUR-1154).
+input and arrive at the same digest. Used to stamp `event_hash` values
+that independent systems — any RFC 8785-conformant implementation — can
+verify without needing to preserve Dart's Map insertion order or
+number-formatting quirks.
 
 ## Usage
 
@@ -41,7 +41,7 @@ final digest = sha256.convert(canonicalizeBytes(event));
 
 ## Scope limits
 
-- Only the JSON types that occur in hht_diary events: null, bool, num,
+- Only the JSON types that occur in canonical event payloads: null, bool, num,
   String, List, Map. Unsupported types raise `FormatException`.
 - Map keys with colliding string representations (e.g., `1` (int) vs
   `'1'` (String)) are undefined — the class normalises all keys to their
