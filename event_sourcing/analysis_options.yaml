@@ -5,13 +5,13 @@ analyzer:
     strict-casts: true
     strict-inference: true
     strict-raw-types: true
-  
+
   errors:
     # Treat warnings as errors for production medical software
     missing_required_param: error
     missing_return: error
     parameter_assignments: error
-    
+
   exclude:
     - '**/*.g.dart'
     - '**/*.freezed.dart'
@@ -32,7 +32,7 @@ linter:
     - throw_in_finally
     - unnecessary_statements
     - unrelated_type_equality_checks
-    
+
     # Style rules for medical software quality
     - always_declare_return_types
     - always_put_required_named_parameters_first

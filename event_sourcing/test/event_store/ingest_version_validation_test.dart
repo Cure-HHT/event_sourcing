@@ -28,7 +28,7 @@ Uint8List _envelope({
   final now = DateTime.now().toUtc();
   const senderHop = 'remote-mobile-1';
   const senderIdentifier = 'remote-device-uuid-demo';
-  const senderSoftwareVersion = 'remote-diary@1.0.0';
+  const senderSoftwareVersion = 'remote-my_app@1.0.0';
   final originEntry = <String, Object?>{
     'hop': senderHop,
     'received_at': now.toIso8601String(),
@@ -84,8 +84,8 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
   return bootstrapEventStore(
     backend: backend,
     source: const Source(
-      hopId: 'portal',
-      identifier: 'demo-portal',
+      hopId: 'control-server',
+      identifier: 'demo-control',
       softwareVersion: 'test',
     ),
     entryTypes: <EntryTypeDefinition>[

@@ -120,9 +120,9 @@ void main() {
     // subscription sees both write paths.
     test('watchEvents emits ingested events (unified store)', () async {
       const destSource = Source(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
       final registry = EntryTypeRegistry()
         ..register(
@@ -152,7 +152,7 @@ void main() {
         source: const Source(
           hopId: 'mobile-device',
           identifier: 'device-1',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         ),
         securityContexts: origSecCtx,
       );

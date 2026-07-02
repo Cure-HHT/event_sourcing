@@ -88,7 +88,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
   final datastore = await bootstrapEventStore(
     backend: backend,
     source: Source(
-      hopId: 'portal-server',
+      hopId: 'app-server',
       identifier: installIdentifier,
       softwareVersion: '0.1.0+1',
     ),

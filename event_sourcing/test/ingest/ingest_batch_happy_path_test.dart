@@ -31,7 +31,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -95,12 +95,12 @@ void main() {
         final orig = await _openStore(
           hopId: 'mobile-device',
           identifier: 'device-1',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         );
         final dest = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -144,7 +144,7 @@ void main() {
             [e1!, e2!, e3!],
             senderHop: 'mobile-device',
             senderIdentifier: 'device-1',
-            senderSoftwareVersion: 'clinical_diary@1.0.0',
+            senderSoftwareVersion: 'my_app@1.0.0',
           );
           final bytes = envelope.encode();
           final expectedHash = sha256.convert(bytes).toString();
@@ -191,7 +191,7 @@ void main() {
           // 4c. No ingest.batch_received event exists (alt design: batch_context
           //     IS the per-event audit trail; no batch-level wrapper event).
           final allBatchEvents = await dest.backend.findEventsForAggregate(
-            'ingest-audit:portal-server',
+            'ingest-audit:control-server',
           );
           expect(
             allBatchEvents
@@ -235,9 +235,9 @@ void main() {
     test('single-event batch (batchSize=1, batchPosition=0) works', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -255,7 +255,7 @@ void main() {
           [e!],
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
         final bytes = envelope.encode();
 
@@ -291,9 +291,9 @@ void main() {
         'dup marker carries batch_context', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -336,7 +336,7 @@ void main() {
           [e1, e2!, e3!],
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
         final bytes = envelope.encode();
         final expectedHash = sha256.convert(bytes).toString();
@@ -364,7 +364,7 @@ void main() {
 
         // 4c. One ingest.duplicate_received event emitted for e1.
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         final dupEvents = auditEvents
             .where((e) => e.eventType == 'ingest.duplicate_received')
@@ -397,9 +397,9 @@ void main() {
         '', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -450,7 +450,7 @@ void main() {
           [e2!, e1Tampered, e3!],
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
         final bytes = envelope.encode();
 
@@ -484,7 +484,7 @@ void main() {
 
         // 8. No duplicate_received audit events emitted.
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, isEmpty);
       } finally {
@@ -494,7 +494,7 @@ void main() {
     });
 
     test('unsupported wireFormat throws IngestDecodeFailure', () async {
-      final dest = await _openStore(hopId: 'portal-server');
+      final dest = await _openStore(hopId: 'control-server');
 
       try {
         await expectLater(

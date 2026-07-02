@@ -934,10 +934,10 @@ void _registerOriginatorFilterTests(
             seq: s3,
             entryType: 'epistaxis_event',
             clientTimestamp: DateTime.utc(2026, 4, 26),
-            aggregateId: 'agg-ev-portalP',
-            hopId: 'portal-server',
+            aggregateId: 'agg-ev-controlP',
+            hopId: 'control-server',
             identifier: 'install-P',
-            eventId: 'ev-portalP',
+            eventId: 'ev-controlP',
           ),
         );
       });

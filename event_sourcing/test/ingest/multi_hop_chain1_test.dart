@@ -34,7 +34,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   required String hopId,
   String? identifier,
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -103,7 +103,7 @@ Future<StoredEvent> _fetchStored(_Fixture fixture, String eventId) async {
 void main() {
   group('Multi-hop Chain 1 verification', () {
     // -------------------------------------------------------------------
-    // 3-hop chain: originator A -> mobile relay B -> portal C
+    // 3-hop chain: originator A -> mobile relay B -> control-server C
     //
     // Verifies that `verifyEventChain` correctly walks back through both
     // receiver hops AND the originator-hash terminal step. This exercises
@@ -120,12 +120,12 @@ void main() {
         final relayB = await _openStore(
           hopId: 'mobile-relay-B',
           identifier: 'relay-BBB',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         );
-        final portalC = await _openStore(
-          hopId: 'portal-server-C',
-          identifier: 'portal-CCC',
-          softwareVersion: 'portal@0.1.0',
+        final controlC = await _openStore(
+          hopId: 'control-server-C',
+          identifier: 'control-CCC',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -184,14 +184,14 @@ void main() {
           // B's stored copy IS the wire-supplied incoming event:
           // provenance is already [origin-A, receiver-B], and C will
           // append a third hop.
-          final outAtC1 = await portalC.store.ingestEvent(atB1);
-          final outAtC2 = await portalC.store.ingestEvent(atB2);
+          final outAtC1 = await controlC.store.ingestEvent(atB1);
+          final outAtC2 = await controlC.store.ingestEvent(atB2);
           expect(outAtC1.outcome, equals(IngestOutcome.ingested));
           expect(outAtC2.outcome, equals(IngestOutcome.ingested));
 
           // Read C's stored copies — provenance now has 3 entries.
-          final atC1 = await _fetchStored(portalC, eA1.eventId);
-          final atC2 = await _fetchStored(portalC, eA2.eventId);
+          final atC1 = await _fetchStored(controlC, eA1.eventId);
+          final atC2 = await _fetchStored(controlC, eA2.eventId);
 
           final provAtC1 = (atC1.metadata['provenance'] as List<Object?>)
               .cast<Map<String, Object?>>();
@@ -207,7 +207,7 @@ void main() {
           // Sanity: the hop entries identify each hop's source.
           expect(provAtC1[0]['hop'], equals('mobile-device-A'));
           expect(provAtC1[1]['hop'], equals('mobile-relay-B'));
-          expect(provAtC1[2]['hop'], equals('portal-server-C'));
+          expect(provAtC1[2]['hop'], equals('control-server-C'));
 
           // Sanity: hop-mapping data is present on the receiver entries.
           //   provenance[1].origin_sequence_number == A's wire seq
@@ -233,7 +233,7 @@ void main() {
           //   k > 1 -> provenance[k-1].ingest_sequence_number
           // substitution branch in `_verifyChainOn` that the 2-hop
           // fixtures cannot reach.
-          final verdict1 = await portalC.store.verifyEventChain(atC1);
+          final verdict1 = await controlC.store.verifyEventChain(atC1);
           expect(
             verdict1.isValid,
             isTrue,
@@ -243,7 +243,7 @@ void main() {
           );
           expect(verdict1.failures, isEmpty);
 
-          final verdict2 = await portalC.store.verifyEventChain(atC2);
+          final verdict2 = await controlC.store.verifyEventChain(atC2);
           expect(
             verdict2.isValid,
             isTrue,
@@ -255,14 +255,14 @@ void main() {
         } finally {
           await originatorA.close();
           await relayB.close();
-          await portalC.close();
+          await controlC.close();
         }
       },
     );
 
     // -------------------------------------------------------------------
     // 4-hop chain confirms the hop-mapping recursion holds for arbitrary
-    // depth. originator A -> mobile relay B -> mobile relay D -> portal C.
+    // depth. originator A -> mobile relay B -> mobile relay D -> control-server C.
     // -------------------------------------------------------------------
     test(
       'Verifies: -A — verifyEventChain succeeds across a 4-hop chain (A->B->D->C)',
@@ -279,10 +279,10 @@ void main() {
           hopId: 'mobile-relay-D',
           identifier: 'relay-DDD',
         );
-        final portalC = await _openStore(
-          hopId: 'portal-server-C',
-          identifier: 'portal-CCC',
-          softwareVersion: 'portal@0.1.0',
+        final controlC = await _openStore(
+          hopId: 'control-server-C',
+          identifier: 'control-CCC',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -305,10 +305,10 @@ void main() {
           await relayD.store.ingestEvent(atB);
           final atD = await _fetchStored(relayD, eA.eventId);
 
-          final outAtC = await portalC.store.ingestEvent(atD);
+          final outAtC = await controlC.store.ingestEvent(atD);
           expect(outAtC.outcome, equals(IngestOutcome.ingested));
 
-          final atC = await _fetchStored(portalC, eA.eventId);
+          final atC = await _fetchStored(controlC, eA.eventId);
           final provAtC = (atC.metadata['provenance'] as List<Object?>)
               .cast<Map<String, Object?>>();
           expect(
@@ -319,9 +319,9 @@ void main() {
           expect(provAtC[0]['hop'], equals('mobile-device-A'));
           expect(provAtC[1]['hop'], equals('mobile-relay-B'));
           expect(provAtC[2]['hop'], equals('mobile-relay-D'));
-          expect(provAtC[3]['hop'], equals('portal-server-C'));
+          expect(provAtC[3]['hop'], equals('control-server-C'));
 
-          final verdict = await portalC.store.verifyEventChain(atC);
+          final verdict = await controlC.store.verifyEventChain(atC);
           expect(
             verdict.isValid,
             isTrue,
@@ -334,7 +334,7 @@ void main() {
           await originatorA.close();
           await relayB.close();
           await relayD.close();
-          await portalC.close();
+          await controlC.close();
         }
       },
     );

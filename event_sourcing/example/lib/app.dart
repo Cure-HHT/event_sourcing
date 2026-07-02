@@ -116,7 +116,7 @@ class DemoPane extends StatefulWidget {
   final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
-  /// Short identifier shown in the header strip (e.g. "MOBILE", "PORTAL").
+  /// Short identifier shown in the header strip (e.g. "MOBILE", "HUB").
   /// Drives only the visual differentiation between panes; no behavior
   /// depends on it.
   final String paneLabel;

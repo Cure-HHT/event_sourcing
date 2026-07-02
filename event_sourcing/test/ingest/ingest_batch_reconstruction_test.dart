@@ -27,7 +27,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -127,9 +127,9 @@ void main() {
         'batchWireBytesHash', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -155,7 +155,7 @@ void main() {
           events,
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
         final bytes = envelope.encode();
         final wireBytesHash = sha256.convert(bytes).toString();
@@ -217,9 +217,9 @@ void main() {
       // equals sha256 of the exact bytes passed to ingestBatch.
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -237,7 +237,7 @@ void main() {
           [e!],
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
         final bytes = envelope.encode();
         final expectedHash = sha256.convert(bytes).toString();
@@ -280,9 +280,9 @@ void main() {
       final sentAt = DateTime.utc(2026, 4, 21, 12, 0, 0);
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -309,7 +309,7 @@ void main() {
           events,
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
           sentAt: sentAt,
         );
         final originalBytes = envelope.encode();

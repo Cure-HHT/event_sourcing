@@ -140,19 +140,19 @@ Future<void> _appendDemoNote(_Pane pane, String aggregateId) async {
 }
 
 void main() {
-  group('mobile -> portal one-way sync', () {
+  group('mobile -> hub one-way sync', () {
     test(
-      'three demo_notes appended on mobile arrive in portal with portal-stamped provenance',
+      'three demo_notes appended on mobile arrive in hub with hub-stamped provenance',
       () async {
-        final portal = await _mkPane(
-          dbName: 'portal-e2e.db',
+        final hub = await _mkPane(
+          dbName: 'hub-e2e.db',
           source: const Source(
-            hopId: 'portal-server',
+            hopId: 'hub-server',
             identifier: '11111111-1111-4111-8111-111111111111',
             softwareVersion: 'test',
           ),
         );
-        final bridge = DownstreamBridge(portal.datastore.eventStore);
+        final bridge = DownstreamBridge(hub.datastore.eventStore);
         final mobile = await _mkPane(
           dbName: 'mobile-e2e.db',
           source: const Source(
@@ -168,83 +168,80 @@ void main() {
         await _appendDemoNote(mobile, 'agg-c');
 
         // Two ticks: tick 1 fills the FIFO + drains; the bridge ingests
-        // into portal during drain. Tick 2 lets portal's own destinations
+        // into hub during drain. Tick 2 lets hub's own destinations
         // process the freshly-ingested events.
         await mobile.tick();
-        await portal.tick();
+        await hub.tick();
 
-        // Filter out the portal's own bootstrap-emitted system audit
+        // Filter out the hub's own bootstrap-emitted system audit
         // events  so the assertion stays focused on
         // user payload arriving from mobile.
-        final portalEvents = (await portal.backend.findAllEvents())
+        final hubEvents = (await hub.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
             .toList();
-        expect(portalEvents.length, 3);
-        for (final ev in portalEvents) {
+        expect(hubEvents.length, 3);
+        for (final ev in hubEvents) {
           final provenance = (ev.metadata['provenance'] as List<Object?>)
               .cast<Map<String, Object?>>();
           final hops = provenance.map((p) => p['hop'] as String).toList();
           expect(
             hops,
-            containsAllInOrder(<String>['mobile-device', 'portal-server']),
+            containsAllInOrder(<String>['mobile-device', 'hub-server']),
             reason: 'event ${ev.eventId} provenance hops: $hops',
           );
         }
       },
     );
 
+    test('events appended locally on hub do not flow back to mobile', () async {
+      final hub = await _mkPane(
+        dbName: 'hub-oneway.db',
+        source: const Source(
+          hopId: 'hub-server',
+          identifier: '11111111-1111-4111-8111-111111111111',
+          softwareVersion: 'test',
+        ),
+      );
+      final bridge = DownstreamBridge(hub.datastore.eventStore);
+      final mobile = await _mkPane(
+        dbName: 'mobile-oneway.db',
+        source: const Source(
+          hopId: 'mobile-device',
+          identifier: '22222222-2222-4222-8222-222222222222',
+          softwareVersion: 'test',
+        ),
+        bridge: bridge,
+      );
+
+      await _appendDemoNote(hub, 'agg-hub-only');
+      await hub.tick();
+      await mobile.tick();
+
+      // Filter out mobile's own bootstrap-emitted system audit
+      // events  so this assertion stays focused on
+      // whether hub-originated user payloads leaked back.
+      final mobileEvents = (await mobile.backend.findAllEvents())
+          .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
+          .toList();
+      expect(
+        mobileEvents,
+        isEmpty,
+        reason: 'mobile must not receive events from hub (one-way sync)',
+      );
+    });
+
     test(
-      'events appended locally on portal do not flow back to mobile',
+      'mobile.Native connection=broken keeps mobile FIFO pending and hub empty',
       () async {
-        final portal = await _mkPane(
-          dbName: 'portal-oneway.db',
+        final hub = await _mkPane(
+          dbName: 'hub-broken.db',
           source: const Source(
-            hopId: 'portal-server',
+            hopId: 'hub-server',
             identifier: '11111111-1111-4111-8111-111111111111',
             softwareVersion: 'test',
           ),
         );
-        final bridge = DownstreamBridge(portal.datastore.eventStore);
-        final mobile = await _mkPane(
-          dbName: 'mobile-oneway.db',
-          source: const Source(
-            hopId: 'mobile-device',
-            identifier: '22222222-2222-4222-8222-222222222222',
-            softwareVersion: 'test',
-          ),
-          bridge: bridge,
-        );
-
-        await _appendDemoNote(portal, 'agg-portal-only');
-        await portal.tick();
-        await mobile.tick();
-
-        // Filter out mobile's own bootstrap-emitted system audit
-        // events  so this assertion stays focused on
-        // whether portal-originated user payloads leaked back.
-        final mobileEvents = (await mobile.backend.findAllEvents())
-            .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
-            .toList();
-        expect(
-          mobileEvents,
-          isEmpty,
-          reason: 'mobile must not receive events from portal (one-way sync)',
-        );
-      },
-    );
-
-    test(
-      'mobile.Native connection=broken keeps mobile FIFO pending and portal empty',
-      () async {
-        final portal = await _mkPane(
-          dbName: 'portal-broken.db',
-          source: const Source(
-            hopId: 'portal-server',
-            identifier: '11111111-1111-4111-8111-111111111111',
-            softwareVersion: 'test',
-          ),
-        );
-        final bridge = DownstreamBridge(portal.datastore.eventStore);
+        final bridge = DownstreamBridge(hub.datastore.eventStore);
         final mobile = await _mkPane(
           dbName: 'mobile-broken.db',
           source: const Source(
@@ -266,16 +263,16 @@ void main() {
 
         await _appendDemoNote(mobile, 'agg-stuck');
         await mobile.tick();
-        await portal.tick();
+        await hub.tick();
 
-        // Filter out portal's own bootstrap-emitted system audit events.
-        final portalEvents = (await portal.backend.findAllEvents())
+        // Filter out hub's own bootstrap-emitted system audit events.
+        final hubEvents = (await hub.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
             .toList();
         expect(
-          portalEvents,
+          hubEvents,
           isEmpty,
-          reason: 'broken link must not deliver to portal',
+          reason: 'broken link must not deliver to hub',
         );
         final mobileFifo = await mobile.backend.listFifoEntries('NativeUser');
         expect(

@@ -36,7 +36,8 @@ void main() {
     expect(
       declCount,
       1,
-      reason: 'expected a single shared filter-compose helper, found '
+      reason:
+          'expected a single shared filter-compose helper, found '
           '$declCount declarations',
     );
   });
@@ -53,13 +54,15 @@ void main() {
     expect(
       beforeDecl.contains(call),
       isTrue,
-      reason: 'findAllEvents (out-of-transaction path, defined before the '
+      reason:
+          'findAllEvents (out-of-transaction path, defined before the '
           'helper) must call _composeFindAllEventsFilter',
     );
     expect(
       afterDecl.contains(call),
       isTrue,
-      reason: 'findAllEventsInTxn (in-transaction path, defined after the '
+      reason:
+          'findAllEventsInTxn (in-transaction path, defined after the '
           'helper) must call _composeFindAllEventsFilter',
     );
   });

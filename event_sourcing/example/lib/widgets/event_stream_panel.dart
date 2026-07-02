@@ -128,7 +128,7 @@ class _EventRow extends StatelessWidget {
         ? event.aggregateId.substring(event.aggregateId.length - 6)
         : event.aggregateId;
     //   `[L]` flags rows originated on this pane's install; `[R]` flags
-    //   rows ingested from another hop (e.g. mobile -> portal via the
+    //   rows ingested from another hop (e.g. mobile -> hub via the
     //   downstream bridge).
     final originBadge = locallyOriginated ? '[L]' : '[R]';
     return InkWell(

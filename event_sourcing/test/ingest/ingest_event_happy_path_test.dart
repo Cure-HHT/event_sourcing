@@ -30,7 +30,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
   DateTime? now,
 }) async {
   _dbCounter += 1;
@@ -97,9 +97,9 @@ void main() {
         identifier: 'device-1',
       );
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -139,7 +139,7 @@ void main() {
         expect(provenance[0], equals(origProv[0]));
 
         // 4c. provenance[1].hop == destination's hopId.
-        expect(provenance[1]['hop'], equals('portal-server'));
+        expect(provenance[1]['hop'], equals('control-server'));
 
         // 4d. arrival_hash == H0.
         expect(provenance[1]['arrival_hash'], equals(h0));
@@ -171,7 +171,7 @@ void main() {
       'ingestEvent returns PerEventIngestOutcome with outcome=ingested',
       () async {
         final orig = await _openStore(hopId: 'mobile-device');
-        final dest = await _openStore(hopId: 'portal-server');
+        final dest = await _openStore(hopId: 'control-server');
 
         try {
           final original = await orig.store.append(
@@ -200,7 +200,7 @@ void main() {
     test('second unique event gets ingestSequenceNumber=2 and '
         'previousIngestHash=first stored hash', () async {
       final orig = await _openStore(hopId: 'mobile-device');
-      final dest = await _openStore(hopId: 'portal-server');
+      final dest = await _openStore(hopId: 'control-server');
 
       try {
         // Originate two distinct events.

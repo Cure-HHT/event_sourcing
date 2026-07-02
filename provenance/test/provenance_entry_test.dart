@@ -14,22 +14,22 @@ void main() {
         hop: 'mobile-device',
         receivedAt: receivedAt,
         identifier: 'device-uuid-abc123',
-        softwareVersion: 'clinical_diary@1.2.3+45',
+        softwareVersion: 'my_app@1.2.3+45',
       );
 
       expect(entry.hop, 'mobile-device');
       expect(entry.receivedAt, receivedAt);
       expect(entry.identifier, 'device-uuid-abc123');
-      expect(entry.softwareVersion, 'clinical_diary@1.2.3+45');
+      expect(entry.softwareVersion, 'my_app@1.2.3+45');
       expect(entry.transformVersion, isNull);
     });
 
     test('construct with transformVersion; getter returns value', () {
       final entry = ProvenanceEntry(
-        hop: 'portal-server',
+        hop: 'control-server',
         receivedAt: DateTime.utc(2026, 4, 21, 11, 0, 0),
-        identifier: 'portal-instance-7',
-        softwareVersion: 'portal-functions@0.5.0',
+        identifier: 'control-instance-7',
+        softwareVersion: 'control-functions@0.5.0',
         transformVersion: 'fhir-r4-v1',
       );
 
@@ -41,24 +41,24 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.utc(2026, 4, 21, 10, 30, 0),
         identifier: 'device-uuid-abc123',
-        softwareVersion: 'clinical_diary@1.2.3+45',
+        softwareVersion: 'my_app@1.2.3+45',
       );
 
       expect(entry.toJson(), {
         'hop': 'mobile-device',
         'received_at': '2026-04-21T10:30:00.000Z',
         'identifier': 'device-uuid-abc123',
-        'software_version': 'clinical_diary@1.2.3+45',
+        'software_version': 'my_app@1.2.3+45',
         'transform_version': null,
       });
     });
 
     test('toJson emits non-null transform_version when set', () {
       final entry = ProvenanceEntry(
-        hop: 'portal-server',
+        hop: 'control-server',
         receivedAt: DateTime.utc(2026, 4, 21, 11, 0, 0),
-        identifier: 'portal-instance-7',
-        softwareVersion: 'portal-functions@0.5.0',
+        identifier: 'control-instance-7',
+        softwareVersion: 'control-functions@0.5.0',
         transformVersion: 'fhir-r4-v1',
       );
 
@@ -67,10 +67,10 @@ void main() {
 
     test('toJson/fromJson round-trip preserves all fields', () {
       final original = ProvenanceEntry(
-        hop: 'diary-server',
+        hop: 'relay-server',
         receivedAt: DateTime.utc(2026, 4, 21, 12, 15, 30, 500),
-        identifier: 'diary-instance-42',
-        softwareVersion: 'diary_functions@0.8.2+101',
+        identifier: 'relay-instance-42',
+        softwareVersion: 'relay_functions@0.8.2+101',
         transformVersion: 'v2',
       );
 
@@ -84,7 +84,7 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
         identifier: 'device-xyz',
-        softwareVersion: 'clinical_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
 
       final roundTripped = ProvenanceEntry.fromJson(original.toJson());
@@ -98,7 +98,7 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.utc(2026, 4, 21, 10, 30, 0),
         identifier: 'd',
-        softwareVersion: 'clinical_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
 
       final json = entry.toJson();
@@ -111,7 +111,7 @@ void main() {
         'hop': 'mobile-device',
         'received_at': '2026-04-21T10:30:00.000Z',
         'identifier': 'device-uuid',
-        'software_version': 'clinical_diary@1.0.0',
+        'software_version': 'my_app@1.0.0',
         'transform_version': null,
       };
 
@@ -192,7 +192,7 @@ void main() {
           hop: 'mobile-device',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
           identifier: '550e8400-e29b-41d4-a716-446655440000',
-          softwareVersion: 'clinical_diary@1.2.3+45',
+          softwareVersion: 'my_app@1.2.3+45',
         );
         expect(
           entry.identifier,
@@ -202,16 +202,16 @@ void main() {
 
       test('accepts a server hop with a server instance identifier', () {
         final entry = ProvenanceEntry(
-          hop: 'diary-server',
+          hop: 'relay-server',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
-          identifier: 'diary-instance-42',
-          softwareVersion: 'diary_functions@0.8.2',
+          identifier: 'relay-instance-42',
+          softwareVersion: 'relay_functions@0.8.2',
         );
-        expect(entry.identifier, startsWith('diary-instance-'));
+        expect(entry.identifier, startsWith('relay-instance-'));
       });
 
       test('software_version round-trips package@semver+build verbatim', () {
-        const target = 'clinical_diary@1.2.3+45';
+        const target = 'my_app@1.2.3+45';
         final entry = ProvenanceEntry(
           hop: 'mobile-device',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
@@ -229,13 +229,13 @@ void main() {
           hop: 'mobile-device',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
           identifier: 'd',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         );
         final b = ProvenanceEntry(
           hop: 'mobile-device',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
           identifier: 'd',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         );
 
         expect(a, equals(b));
@@ -247,7 +247,7 @@ void main() {
           hop: 'mobile-device',
           receivedAt: DateTime.utc(2026, 4, 21, 10, 0, 0),
           identifier: 'd',
-          softwareVersion: 'clinical_diary@1.0.0',
+          softwareVersion: 'my_app@1.0.0',
         );
 
         expect(
@@ -255,7 +255,7 @@ void main() {
           isNot(
             equals(
               ProvenanceEntry(
-                hop: 'diary-server',
+                hop: 'relay-server',
                 receivedAt: base.receivedAt,
                 identifier: base.identifier,
                 softwareVersion: base.softwareVersion,
@@ -286,7 +286,7 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.parse('2026-04-24T12:00:00Z'),
         identifier: 'device-abc',
-        softwareVersion: 'daily_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
       expect(entry.arrivalHash, isNull);
       expect(entry.previousIngestHash, isNull);
@@ -296,10 +296,10 @@ void main() {
 
     test('non-null ingest fields round-trip through JSON', () {
       final entry = ProvenanceEntry(
-        hop: 'portal-server',
+        hop: 'control-server',
         receivedAt: DateTime.parse('2026-04-24T12:00:01Z'),
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
         arrivalHash: 'abc123',
         previousIngestHash: 'def456',
         ingestSequenceNumber: 42,
@@ -326,7 +326,7 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.parse('2026-04-24T12:00:00Z'),
         identifier: 'device-abc',
-        softwareVersion: 'daily_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
       final json = entry.toJson();
       expect(json.containsKey('arrival_hash'), isFalse);
@@ -361,17 +361,17 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.parse('2026-04-24T12:00:00Z'),
         identifier: 'device-abc',
-        softwareVersion: 'daily_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
       expect(entry.originSequenceNumber, isNull);
     });
 
     test('non-null originSequenceNumber round-trips through JSON', () {
       final entry = ProvenanceEntry(
-        hop: 'diary-server',
+        hop: 'relay-server',
         receivedAt: DateTime.parse('2026-04-24T12:00:01Z'),
-        identifier: 'diary-instance-7',
-        softwareVersion: 'diary_functions@0.8.2',
+        identifier: 'relay-instance-7',
+        softwareVersion: 'relay_functions@0.8.2',
         arrivalHash: 'aaa',
         previousIngestHash: 'bbb',
         ingestSequenceNumber: 42,
@@ -389,7 +389,7 @@ void main() {
         hop: 'mobile-device',
         receivedAt: DateTime.parse('2026-04-24T12:00:00Z'),
         identifier: 'device-abc',
-        softwareVersion: 'daily_diary@1.0.0',
+        softwareVersion: 'my_app@1.0.0',
       );
       final json = entry.toJson();
       expect(json.containsKey('origin_sequence_number'), isFalse);
@@ -400,7 +400,7 @@ void main() {
         'hop': 'mobile-device',
         'received_at': '2026-04-24T12:00:00Z',
         'identifier': 'device-abc',
-        'software_version': 'daily_diary@1.0.0',
+        'software_version': 'my_app@1.0.0',
         'transform_version': null,
       };
       final entry = ProvenanceEntry.fromJson(input);
@@ -409,10 +409,10 @@ void main() {
 
     test('non-int origin_sequence_number throws FormatException', () {
       final bad = <String, Object?>{
-        'hop': 'diary-server',
+        'hop': 'relay-server',
         'received_at': '2026-04-24T12:00:00Z',
-        'identifier': 'diary-instance-1',
-        'software_version': 'diary_functions@0.8.2',
+        'identifier': 'relay-instance-1',
+        'software_version': 'relay_functions@0.8.2',
         'transform_version': null,
         'origin_sequence_number': '17',
       };
@@ -440,10 +440,10 @@ void main() {
 
     test('toString includes originSequenceNumber', () {
       final entry = ProvenanceEntry(
-        hop: 'diary-server',
+        hop: 'relay-server',
         receivedAt: DateTime.parse('2026-04-24T12:00:00Z'),
-        identifier: 'diary-instance-1',
-        softwareVersion: 'diary_functions@0.8.2',
+        identifier: 'relay-instance-1',
+        softwareVersion: 'relay_functions@0.8.2',
         originSequenceNumber: 99,
       );
       expect(entry.toString(), contains('originSequenceNumber: 99'));

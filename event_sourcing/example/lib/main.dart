@@ -49,7 +49,7 @@ class _PaneRuntime {
 /// Bootstraps one datastore with its own destinations and starts a
 /// 1-second sync tick. The optional [bridge] is wired into the Native
 /// destination's `send()` so mobile's outgoing wire stream lands in
-/// portal's `EventStore.ingestBatch`. The portal pane passes
+/// hub's `EventStore.ingestBatch`. The hub pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
 /// simulator (existing behavior).
 // The tick body drives fillBatch + drain per destination with live policy
@@ -202,30 +202,30 @@ Future<void> main() async {
   final mobileInstallUUID = await _readOrMintUUID(
     p.join(demoDir.path, 'MOBILE.install.uuid'),
   );
-  final portalInstallUUID = await _readOrMintUUID(
-    p.join(demoDir.path, 'PORTAL.install.uuid'),
+  final hubInstallUUID = await _readOrMintUUID(
+    p.join(demoDir.path, 'HUB.install.uuid'),
   );
 
   final mobileDbPath = p.join(demoDir.path, 'demo.db');
-  final portalDbPath = p.join(demoDir.path, 'demo_portal.db');
+  final hubDbPath = p.join(demoDir.path, 'demo_hub.db');
   stdout
     ..writeln('[demo] mobile storage: $mobileDbPath')
-    ..writeln('[demo] portal storage: $portalDbPath')
+    ..writeln('[demo] hub storage: $hubDbPath')
     ..writeln('[demo] mobile install UUID: $mobileInstallUUID')
-    ..writeln('[demo] portal install UUID: $portalInstallUUID');
+    ..writeln('[demo] hub install UUID: $hubInstallUUID');
 
-  // Portal must be bootstrapped first so the bridge can capture its
+  // Hub must be bootstrapped first so the bridge can capture its
   // EventStore before mobile's NativeDemoDestination is constructed.
-  final portal = await _bootstrapPane(
-    dbPath: portalDbPath,
+  final hub = await _bootstrapPane(
+    dbPath: hubDbPath,
     source: Source(
-      hopId: 'portal-server',
-      identifier: portalInstallUUID,
+      hopId: 'hub-server',
+      identifier: hubInstallUUID,
       softwareVersion: 'event_sourcing_datastore_demo@0.1.0+1',
     ),
   );
 
-  final bridge = DownstreamBridge(portal.datastore.eventStore);
+  final bridge = DownstreamBridge(hub.datastore.eventStore);
 
   final mobile = await _bootstrapPane(
     dbPath: mobileDbPath,
@@ -249,13 +249,13 @@ Future<void> main() async {
         paneLabel: 'MOBILE',
       ),
       bottom: DemoPaneConfig(
-        datastore: portal.datastore,
-        backend: portal.backend,
-        appState: portal.appState,
-        dbPath: portal.dbPath,
-        tickController: portal.tick,
-        policyNotifier: portal.policyNotifier,
-        paneLabel: 'PORTAL',
+        datastore: hub.datastore,
+        backend: hub.backend,
+        appState: hub.appState,
+        dbPath: hub.dbPath,
+        tickController: hub.tick,
+        policyNotifier: hub.policyNotifier,
+        paneLabel: 'HUB',
       ),
     ),
   );

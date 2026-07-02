@@ -43,7 +43,7 @@ const EntryTypeDefinition _demoNoteDef = EntryTypeDefinition(
 Future<_Fixture> _openDatastore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
   ProjectionRegistry? projections,
 }) async {
   _dbCounter += 1;
@@ -98,9 +98,9 @@ void main() {
         identifier: 'device-1',
       );
       final dest = await _openDatastore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -157,9 +157,9 @@ void main() {
         identifier: 'device-1',
       );
       final dest = await _openDatastore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -201,7 +201,7 @@ void main() {
           <StoredEvent>[e1!, e2!, e3!],
           senderHop: 'mobile-device',
           senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
 
         final result = await dest.datastore.eventStore.ingestBatch(
@@ -247,9 +247,9 @@ void main() {
     test('ingested system events do NOT populate toy_view '
         '(excluded by SubscriptionFilter)', () async {
       final dest = await _openDatastore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       final sender = await _openDatastore(
@@ -275,7 +275,7 @@ void main() {
           <StoredEvent>[senderSystemEvent],
           senderHop: 'mobile-device',
           senderIdentifier: 'sender-id-1',
-          senderSoftwareVersion: 'clinical_diary@1.0.0',
+          senderSoftwareVersion: 'my_app@1.0.0',
         );
 
         final result = await dest.datastore.eventStore.ingestBatch(

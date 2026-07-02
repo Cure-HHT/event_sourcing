@@ -21,7 +21,7 @@ Future<EventStore> _bootstrap({
     source: Source(
       hopId: hopId,
       identifier: identifier,
-      softwareVersion: 'clinical_diary@1.0.0',
+      softwareVersion: 'my_app@1.0.0',
     ),
     entryTypes: <EntryTypeDefinition>[
       const EntryTypeDefinition(

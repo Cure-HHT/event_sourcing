@@ -73,7 +73,7 @@ Future<_Fixture> _setup({
     source: const Source(
       hopId: 'mobile-device',
       identifier: 'device-1',
-      softwareVersion: 'clinical_diary@1.0.0',
+      softwareVersion: 'my_app@1.0.0',
     ),
     securityContexts: securityContexts,
     projections: projections,

@@ -137,18 +137,18 @@ Future<_PaneHandle> _mkPane({
   );
 }
 
-Future<({_PaneHandle mobile, _PaneHandle portal, Widget app})> _setupDualApp({
+Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
   required String testId,
 }) async {
-  final portal = await _mkPane(
-    dbName: 'portal-$testId.db',
+  final hub = await _mkPane(
+    dbName: 'hub-$testId.db',
     source: const Source(
-      hopId: 'portal-server',
+      hopId: 'hub-server',
       identifier: '11111111-1111-4111-8111-111111111111',
       softwareVersion: 'integ-test',
     ),
   );
-  final bridge = DownstreamBridge(portal.datastore.eventStore);
+  final bridge = DownstreamBridge(hub.datastore.eventStore);
   final mobile = await _mkPane(
     dbName: 'mobile-$testId.db',
     source: const Source(
@@ -175,16 +175,16 @@ Future<({_PaneHandle mobile, _PaneHandle portal, Widget app})> _setupDualApp({
       policyNotifier: mobile.policyNotifier,
     ),
     bottom: DemoPaneConfig(
-      datastore: portal.datastore,
-      backend: portal.backend,
-      appState: portal.appState,
-      dbPath: 'portal-$testId.db',
+      datastore: hub.datastore,
+      backend: hub.backend,
+      appState: hub.appState,
+      dbPath: 'hub-$testId.db',
       tickController: dummyTick,
-      paneLabel: 'PORTAL',
-      policyNotifier: portal.policyNotifier,
+      paneLabel: 'HUB',
+      policyNotifier: hub.policyNotifier,
     ),
   );
-  return (mobile: mobile, portal: portal, app: app);
+  return (mobile: mobile, hub: hub, app: app);
 }
 
 Finder _paneByLabel(String label) =>
@@ -206,7 +206,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('MOBILE'), findsOneWidget);
-    expect(find.text('PORTAL'), findsOneWidget);
+    expect(find.text('HUB'), findsOneWidget);
   });
 
   testWidgets('Divider drag resizes panes', (tester) async {
@@ -221,9 +221,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final mobilePane = _paneByLabel('MOBILE');
-    final portalPane = _paneByLabel('PORTAL');
+    final hubPane = _paneByLabel('HUB');
     final initialMobileSize = tester.getSize(mobilePane);
-    final initialPortalSize = tester.getSize(portalPane);
+    final initialHubSize = tester.getSize(hubPane);
 
     // The pane divider inside DualDemoApp is the only GestureDetector that
     // handles onVerticalDragUpdate (the column dividers inside DemoPane use
@@ -241,13 +241,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final newMobileSize = tester.getSize(mobilePane);
-    final newPortalSize = tester.getSize(portalPane);
+    final newHubSize = tester.getSize(hubPane);
     expect(newMobileSize.height, greaterThan(initialMobileSize.height));
-    expect(newPortalSize.height, lessThan(initialPortalSize.height));
+    expect(newHubSize.height, lessThan(initialHubSize.height));
   });
 
   testWidgets(
-    'Tapping GREEN on mobile produces a GreenButtonPressed row in portal events',
+    'Tapping GREEN on mobile produces a GreenButtonPressed row in hub events',
     (tester) async {
       final setup = await _setupDualApp(testId: 'green-sync');
       tester.view.physicalSize = const Size(4000, 2800);
@@ -258,10 +258,10 @@ void main() {
       await tester.pumpWidget(setup.app);
       await tester.pumpAndSettle();
 
-      // Sanity: portal pane shows no GreenButtonPressed row initially.
+      // Sanity: hub pane shows no GreenButtonPressed row initially.
       expect(
         find.descendant(
-          of: _paneByLabel('PORTAL'),
+          of: _paneByLabel('HUB'),
           matching: find.textContaining('GreenButtonPressed'),
         ),
         findsNothing,
@@ -276,16 +276,16 @@ void main() {
       await tester.tap(greenInMobile, warnIfMissed: false);
       await tester.pumpAndSettle();
 
-      // Drive sync ticks: mobile fills + drains (bridge delivers to portal);
-      // then portal fills + drains its own destinations.
+      // Drive sync ticks: mobile fills + drains (bridge delivers to hub);
+      // then hub fills + drains its own destinations.
       await setup.mobile.tick();
-      await setup.portal.tick();
+      await setup.hub.tick();
       await tester.pumpAndSettle();
 
-      // Expect at least one GreenButtonPressed row in the PORTAL pane.
+      // Expect at least one GreenButtonPressed row in the HUB pane.
       expect(
         find.descendant(
-          of: _paneByLabel('PORTAL'),
+          of: _paneByLabel('HUB'),
           matching: find.textContaining('GreenButtonPressed'),
         ),
         findsAtLeastNWidgets(1),
@@ -293,7 +293,7 @@ void main() {
     },
   );
 
-  testWidgets('Broken Native connection blocks delivery to portal', (
+  testWidgets('Broken Native connection blocks delivery to hub', (
     tester,
   ) async {
     final setup = await _setupDualApp(testId: 'broken');
@@ -322,13 +322,13 @@ void main() {
     await tester.pumpAndSettle();
 
     await setup.mobile.tick();
-    await setup.portal.tick();
+    await setup.hub.tick();
     await tester.pumpAndSettle();
 
-    // Broken link must not deliver to portal.
+    // Broken link must not deliver to hub.
     expect(
       find.descendant(
-        of: _paneByLabel('PORTAL'),
+        of: _paneByLabel('HUB'),
         matching: find.textContaining('GreenButtonPressed'),
       ),
       findsNothing,
@@ -338,7 +338,7 @@ void main() {
   // Mobile records a GREEN press locally. After sync, that event lives on
   // both panes' event logs. The pane whose source originated the event
   // renders `[L]`; the pane that ingested it from another hop renders `[R]`.
-  testWidgets('portal pane shows [R] for ingested events; mobile shows [L]', (
+  testWidgets('hub pane shows [R] for ingested events; mobile shows [L]', (
     tester,
   ) async {
     final setup = await _setupDualApp(testId: 'hop-badge');
@@ -351,7 +351,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Tap GREEN inside the mobile pane to record a locally-originated
-    // event that the bridge will carry to the portal pane.
+    // event that the bridge will carry to the hub pane.
     final greenInMobile = find.descendant(
       of: _paneByLabel('MOBILE'),
       matching: find.widgetWithText(TextButton, 'GREEN'),
@@ -360,9 +360,9 @@ void main() {
     await tester.tap(greenInMobile, warnIfMissed: false);
     await tester.pumpAndSettle();
 
-    // Drive sync: mobile fills + drains, portal ingests + processes.
+    // Drive sync: mobile fills + drains, hub ingests + processes.
     await setup.mobile.tick();
-    await setup.portal.tick();
+    await setup.hub.tick();
     await tester.pumpAndSettle();
 
     // Mobile pane: at least one `[L]` row (the locally-recorded GREEN).
@@ -377,16 +377,16 @@ void main() {
           'event it originated locally',
     );
 
-    // Portal pane: at least one `[R]` row (the GREEN ingested from
+    // Hub pane: at least one `[R]` row (the GREEN ingested from
     // mobile via the downstream bridge).
     expect(
       find.descendant(
-        of: _paneByLabel('PORTAL'),
+        of: _paneByLabel('HUB'),
         matching: find.textContaining('[R] '),
       ),
       findsAtLeastNWidgets(1),
       reason:
-          'portal pane must render at least one [R] row for the GREEN '
+          'hub pane must render at least one [R] row for the GREEN '
           'event it ingested from mobile',
     );
   });

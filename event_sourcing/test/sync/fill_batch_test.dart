@@ -571,7 +571,7 @@ void main() {
       const source = Source(
         hopId: 'mobile-device',
         identifier: 'device-fb-native',
-        softwareVersion: 'clinical_diary@1.2.3',
+        softwareVersion: 'my_app@1.2.3',
       );
       final clientTs = DateTime.utc(2026, 4, 22, 10);
       await _appendEvent(backend, eventId: 'e1', clientTimestamp: clientTs);
@@ -601,10 +601,7 @@ void main() {
       expect(head.envelopeMetadata, isNotNull);
       expect(head.envelopeMetadata!.senderHop, 'mobile-device');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-fb-native');
-      expect(
-        head.envelopeMetadata!.senderSoftwareVersion,
-        'clinical_diary@1.2.3',
-      );
+      expect(head.envelopeMetadata!.senderSoftwareVersion, 'my_app@1.2.3');
       expect(head.envelopeMetadata!.batchFormatVersion, '1');
       expect(
         head.envelopeMetadata!.sentAt,

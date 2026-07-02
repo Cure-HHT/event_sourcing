@@ -275,71 +275,68 @@ void main() {
     // persistence AND survives ingest into a second backend unchanged.
     // -----------------------------------------------------------------------
 
-    test(
-      'C/D: an arbitrary opaque token is preserved byte-identically '
-      'through persistence and ingest into a second deployment',
-      () async {
-        // Verifies: EVS-DEV-flow-token/C — token preserved across ingest
-        // Verifies: EVS-DEV-flow-token/D — token is opaque: substrate
-        //   stores/returns it byte-identically without parsing
-        //
-        // The token below is intentionally pathological: it contains URL
-        // meta-chars, embedded JSON, whitespace, and a non-ASCII code point.
-        // The substrate has no schema for the token content and must pass it
-        // through untouched.
-        const weird = 'a/b+c=  {"not":"json-to-the-substrate"} é';
+    test('C/D: an arbitrary opaque token is preserved byte-identically '
+        'through persistence and ingest into a second deployment', () async {
+      // Verifies: EVS-DEV-flow-token/C — token preserved across ingest
+      // Verifies: EVS-DEV-flow-token/D — token is opaque: substrate
+      //   stores/returns it byte-identically without parsing
+      //
+      // The token below is intentionally pathological: it contains URL
+      // meta-chars, embedded JSON, whitespace, and a non-ASCII code point.
+      // The substrate has no schema for the token content and must pass it
+      // through untouched.
+      const weird = 'a/b+c=  {"not":"json-to-the-substrate"} é';
 
-        final result = await allowDispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'hello',
-            rawInput: <String, Object?>{'who': 'opacity-test'},
-            flowToken: weird,
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchSuccess<Object?>>());
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'opacity-test'},
+          flowToken: weird,
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
 
-        // D: round-trip through Sembast storage — token must be identical.
-        final stored = await eventStore.backend.findAllEvents(
+      // D: round-trip through Sembast storage — token must be identical.
+      final stored = await eventStore.backend.findAllEvents(
+        entryType: 'greeting',
+      );
+      expect(stored, isNotEmpty);
+      final evt = stored.single;
+      expect(
+        evt.flowToken,
+        weird,
+        reason:
+            'flowToken must survive Sembast persistence byte-identically; '
+            'got "${evt.flowToken}"',
+      );
+
+      // C: ingest the stored event into a SECOND backend and assert the
+      // token is preserved unchanged. The substrate's ingest path records
+      // the event verbatim (identity fields preserved per EVS-PRD-ingest/B);
+      // flow_token is an identity-level field on StoredEvent and must survive.
+      final second = await _openSecondStore();
+      try {
+        final outcome = await second.store.ingestEvent(evt);
+        expect(outcome.outcome, IngestOutcome.ingested);
+
+        final ingestedEvents = await second.backend.findAllEvents(
           entryType: 'greeting',
         );
-        expect(stored, isNotEmpty);
-        final evt = stored.single;
+        expect(ingestedEvents, hasLength(1));
         expect(
-          evt.flowToken,
+          ingestedEvents.single.flowToken,
           weird,
           reason:
-              'flowToken must survive Sembast persistence byte-identically; '
-              'got "${evt.flowToken}"',
+              'flowToken must survive ingest into a second backend '
+              'byte-identically; got "${ingestedEvents.single.flowToken}"',
         );
-
-        // C: ingest the stored event into a SECOND backend and assert the
-        // token is preserved unchanged. The substrate's ingest path records
-        // the event verbatim (identity fields preserved per EVS-PRD-ingest/B);
-        // flow_token is an identity-level field on StoredEvent and must survive.
-        final second = await _openSecondStore();
-        try {
-          final outcome = await second.store.ingestEvent(evt);
-          expect(outcome.outcome, IngestOutcome.ingested);
-
-          final ingestedEvents = await second.backend.findAllEvents(
-            entryType: 'greeting',
-          );
-          expect(ingestedEvents, hasLength(1));
-          expect(
-            ingestedEvents.single.flowToken,
-            weird,
-            reason:
-                'flowToken must survive ingest into a second backend '
-                'byte-identically; got "${ingestedEvents.single.flowToken}"',
-          );
-        } finally {
-          // Close the EventStore (not just its backend) so the subscription
-          // engine is released alongside storage. EventStore.close() closes
-          // _subs then backend.
-          await second.store.close();
-        }
-      },
-    );
+      } finally {
+        // Close the EventStore (not just its backend) so the subscription
+        // engine is released alongside storage. EventStore.close() closes
+        // _subs then backend.
+        await second.store.close();
+      }
+    });
   });
 }

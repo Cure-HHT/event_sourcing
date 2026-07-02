@@ -30,7 +30,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   required String hopId,
   String? identifier,
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -132,9 +132,9 @@ void main() {
           identifier: 'device-BBB',
         );
         final destination = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -312,9 +312,9 @@ void main() {
           identifier: 'device-BBB',
         );
         final destination = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -372,7 +372,7 @@ void main() {
             [eA1!, eA2!],
             senderHop: 'mobile-device-A',
             senderIdentifier: 'device-AAA',
-            senderSoftwareVersion: 'clinical_diary@1.0.0',
+            senderSoftwareVersion: 'my_app@1.0.0',
           );
           final bytesA = envelopeA.encode();
 
@@ -381,7 +381,7 @@ void main() {
             [eB1!, eB2!],
             senderHop: 'mobile-device-B',
             senderIdentifier: 'device-BBB',
-            senderSoftwareVersion: 'clinical_diary@1.0.0',
+            senderSoftwareVersion: 'my_app@1.0.0',
           );
           final bytesB = envelopeB.encode();
 
@@ -472,7 +472,7 @@ void main() {
           // Assertion: no batch-level audit events emitted (alt design:
           // batch_context on each event IS the audit trail).
           final allAuditEvents = await destination.backend
-              .findEventsForAggregate('ingest-audit:portal-server');
+              .findEventsForAggregate('ingest-audit:control-server');
           expect(
             allAuditEvents
                 .where((e) => e.eventType == 'ingest.batch_received')
