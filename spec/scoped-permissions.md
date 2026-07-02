@@ -497,7 +497,7 @@ The substrate ships domain-neutral, app-registered scope-class machinery (`Scope
 
 ### Changelog
 
-- 2026-05-14 | d3eee322 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | d3eee322 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Scope-aware authorization model* | **Hash**: d3eee322
 
@@ -517,12 +517,13 @@ C. `ScopeClassRegistry` SHALL throw `StateError` at construction when a `Contain
 D. `ScopeClassRegistry` SHALL throw `StateError` at construction when the class-containment graph contains a cycle.
 
 E. `ScopeClassRegistry` SHALL expose lookup-by-name and an ancestor-chain walk such that `isAncestor(a, d)` returns true iff `a` appears in `d`'s containment chain (inclusive of `d`).
+
 ---
 
 ### Changelog
 
-- 2026-05-29 | 385c89c8 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
-- 2026-05-14 | 4a76c916 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 385c89c8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-05-14 | 4a76c916 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Composition-time scope-class registry validation* | **Hash**: 385c89c8
 
@@ -542,11 +543,12 @@ C. `TotalWildcardScope.toJson` SHALL produce exactly `{"wildcard_class": true}`,
 D. `ScopeValue.fromJson` SHALL be a complete-on-shape polymorphic decoder: it returns `BoundScope`, `ValueWildcardScope`, or `TotalWildcardScope` for inputs matching exactly one of the three shapes, and SHALL throw `FormatException` for any other object (including objects whose discriminator keys are present but whose value is not the literal `true`, or whose key set is ambiguous between shapes).
 
 E. The round-trip `ScopeValue.fromJson(v.toJson()) == v` SHALL hold for every concrete `ScopeValue` instance constructible via the public constructors.
+
 ---
 
 ### Changelog
 
-- 2026-05-14 | 1e192982 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | 1e192982 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Sealed ScopeValue JSON contract* | **Hash**: 1e192982
 
@@ -564,12 +566,13 @@ B. `ContainmentResolver.resolve(from, target)` SHALL return `null` when `target`
 C. `ContainmentResolver.resolve(from, target)` SHALL walk the ancestor chain by reading each hop's `ContainmentReference.projection` (via the injected transactional read), returning the resolved ancestor `BoundScope` at class `target`.
 
 D. `ContainmentResolver.resolve` SHALL return `null` when any hop's projection returns zero rows for the current key, or returns a row whose `parentColumn` is missing, non-string, or empty (fail-closed on missing containment data).
+
 ---
 
 ### Changelog
 
-- 2026-05-29 | 9013633f | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
-- 2026-05-14 | 8b7a3f36 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 9013633f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-05-14 | 8b7a3f36 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Containment-chain walk via TableProjections* | **Hash**: 9013633f
 
@@ -591,6 +594,7 @@ D. For a scoped permission, the policy SHALL allow the request when at least one
 E. The policy SHALL deny with `DenyReason.notGranted` when no assignment matches the requested scope, including when containment resolution returns `null` for every assignment (fail-closed propagation from the resolver).
 
 F. The policy SHALL return `Deny(notGranted)` for principals that are not `UserPrincipal` (anonymous principals have no role assignments).
+
 ---
 
 ### Rationale
@@ -601,9 +605,9 @@ Reusing the assignment row set for the scope-match step keeps the cost a single 
 
 ### Changelog
 
-- 2026-05-24 | 87555bb8 | - | Michael Lewis (michael@anspar.org) | Auto-fix: sync changelog hash
-- 2026-05-14 | 899af570 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
-- 2026-05-24 | - | - | Michael Lewis (michael.lewis.c@gmail.com) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
+- 2026-05-24 | 87555bb8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
 
 *End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 87555bb8
 
@@ -621,13 +625,14 @@ B. `effectivePermissionsFor` SHALL return `EffectiveAuthorization.empty` for pri
 C. `ScopeAssignment` SHALL carry exactly one `ScopeValue` (the assigned scope), so that clients composing the surface against their own projections see assignments as sealed-variant values rather than encoded strings.
 
 D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `rolePermissions` set, and an empty `scopeAssignments` list, and SHALL satisfy structural equality with another empty instance.
+
 ---
 
 ### Changelog
 
-- 2026-05-24 | deab9862 | - | Michael Lewis (michael@anspar.org) | Auto-fix: sync changelog hash
-- 2026-05-14 | b688e6ed | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
-- 2026-05-24 | - | - | Michael Lewis (michael.lewis.c@gmail.com) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
+- 2026-05-24 | deab9862 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
 
 *End* *effectivePermissionsFor surface* | **Hash**: deab9862
 
@@ -645,12 +650,13 @@ B. When the authorize stage produces a `Deny` from within the dispatch transacti
 C. When the execute stage throws or the stage-8 append throws, the dispatch transaction SHALL be rolled back, and the dispatcher SHALL emit the corresponding denial event (`execution_failed`) in a separate append after the rollback.
 
 D. The transactional posture SHALL ensure that a role or scope revocation committed concurrently with an in-flight dispatch does not change that dispatch's outcome; the revocation SHALL take effect on subsequent dispatches.
+
 ---
 
 ### Changelog
 
-- 2026-05-29 | 4b9e68a5 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
-- 2026-05-14 | 6461dd31 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 4b9e68a5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-05-14 | 6461dd31 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 4b9e68a5
 
@@ -666,12 +672,13 @@ A. `computeRoleAssignmentAggregateId(userId, role, scope)` SHALL return the cano
 B. Distinct `(userId, role, scope)` tuples SHALL produce distinct aggregate ids; identical tuples SHALL produce byte-identical aggregate ids regardless of construction order.
 
 C. The aggregate id SHALL be safe against segment-encoding ambiguity: a userId, role, or scope value containing characters like `:` or `/` SHALL NOT collide with a different tuple's id.
+
 ---
 
 ### Changelog
 
-- 2026-05-29 | 05adadf2 | - | Michael Lewis (michael@anspar.org) | Auto-fix: update hash
-- 2026-05-14 | abb4d0a5 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-29 | 05adadf2 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-05-14 | abb4d0a5 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Canonical-JSON aggregate id for role assignments* | **Hash**: 05adadf2
 
@@ -694,7 +701,7 @@ E. When a scope value was returned (any of cases C or D, but not B), the dispatc
 
 ### Changelog
 
-- 2026-05-14 | 4a2db650 | - | Developer (dev@example.com) | Initial authoring under CUR-1331 scope-aware permissions
+- 2026-05-14 | 4a2db650 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
 *End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 4a2db650
 
@@ -717,6 +724,6 @@ E. `ScopeDescendantExpander.expand` SHALL fan out breadth-first across multiple 
 
 ### Changelog
 
-- 2026-06-01 | 226f108f | - | Michael Lewis (michael@anspar.org) | Auto-fix: add missing changelog section
+- 2026-06-01 | 226f108f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Downward containment expansion for read-path scope narrowing* | **Hash**: 226f108f
