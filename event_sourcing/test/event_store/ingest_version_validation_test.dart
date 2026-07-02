@@ -17,7 +17,7 @@ const _uuid = Uuid();
 /// Build an `esd/batch@1` envelope manually with a one-event payload, with
 /// caller-controlled `entry_type_version` / `lib_format_version` on the
 /// embedded event. Mirrors the shape produced by
-/// `apps/common-dart/event_sourcing/example/lib/synthetic_ingest.dart`'s
+/// `event_sourcing/example/lib/synthetic_ingest.dart`'s
 /// `SyntheticBatchBuilder.buildSingleEventBatch`, but lives here so the
 /// ingest-validation tests stay self-contained.
 Uint8List _envelope({

@@ -705,7 +705,7 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // -------- Generic view storage (Phase 4.4) --------
+  // -------- Generic view storage --------
 
   final Map<String, StoreRef<String, Map<String, Object?>>> _viewStoreCache =
       <String, StoreRef<String, Map<String, Object?>>>{};
@@ -839,7 +839,7 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // -------- View target versions (Phase 4.19) --------
+  // -------- View target versions --------
   //
   // Persists the per-(viewName, entryType) target schema version that the
   // promoter pipeline reads on every materialization. One sembast store

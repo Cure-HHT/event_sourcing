@@ -4,9 +4,9 @@
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/synthetic_ingest.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/synthetic_ingest.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -18,7 +18,7 @@ Future<EventStoreBundle> _bootstrapHub(String path) async {
     source: const Source(
       hopId: 'hub-server',
       identifier: '11111111-1111-4111-8111-111111111111',
-      softwareVersion: 'event_sourcing_datastore_demo@0.1.0+1',
+      softwareVersion: 'event_sourcing_demo@0.1.0+1',
     ),
     entryTypes: allDemoEntryTypes,
     destinations: const <Destination>[],

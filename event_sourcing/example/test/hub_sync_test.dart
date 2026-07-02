@@ -3,12 +3,12 @@
 // Verifies: EVS-PRD-ingest/A/E
 // Verifies: EVS-PRD-provenance/B/C
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

@@ -14,9 +14,9 @@ correctness, and flags the hidden-information problem as the place where Layer
 **Storage and topology.** Server uses `PostgresBackend` (one DB per region).
 Browser/mobile clients hold no local log — they're thin `RemoteScope`
 consumers. The server is the single `Source` for every match aggregate;
-clients never run their own substrate, so the v1 single-source-per-aggregate-
+clients never run their own substrate, so the 0.x single-source-per-aggregate-
 type constraint is honoured trivially. (Predict-then-reconcile would require
-multi-source, which is dormant in v1 — defer.)
+multi-source, which is dormant in 0.x — defer.)
 
 **Actions** (`Action<TInput, TResult>`):
 

@@ -7,9 +7,9 @@
 // Verifies the refined `dedupeByContent` semantic on `EventStore.append`:
 // dedupe matches against the most-recent prior event of MATCHING entry_type
 // within the aggregate, not the unconditional last event of any type. This
-// is a pre-condition for system-event aggregate consolidation (Phase 4.22
-// Task 4 / -D), where multiple system entry types share the
-// install-scoped `source.identifier` aggregate and must dedupe per stream.
+// is a pre-condition for system-event aggregate consolidation, where
+// multiple system entry types share the install-scoped `source.identifier`
+// aggregate and must dedupe per stream.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

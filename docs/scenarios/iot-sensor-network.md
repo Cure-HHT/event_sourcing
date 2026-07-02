@@ -134,7 +134,7 @@ global-sequence allocation becomes a contention point, and the hash chain
 forces serialization. The realistic shape is **one substrate per farm-
 cluster** (region/customer-shard), with cross-shard reads handled by the
 forecasting service subscribing as a remote consumer of each shard. That's
-*outside* the v1 substrate's stated scope, but doesn't violate any
+*outside* the 0.x substrate's stated scope, but doesn't violate any
 architectural commitment — each shard remains closed-under-events; the
 forecaster reads many shards the way any cross-installation consumer would.
 Making the per-shard log itself horizontally partitionable is a much larger

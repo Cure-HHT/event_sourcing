@@ -3,9 +3,9 @@
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 WirePayload _payload() => WirePayload(

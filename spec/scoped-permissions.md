@@ -390,7 +390,7 @@ commit
 
 This closes the narrow race where an ingest-arriving revocation could land between authorize's projection read and execute's event append. Under the transaction, authorize and execute see the same projection state, and the appended events are committed atomically against that state. Future dispatches see the post-revoke state.
 
-The decision this pins: a revocation arriving between two dispatches takes effect on the *second* one; a revocation arriving during a single dispatch's transaction takes effect *after* it commits. Concretely on a single-source v1 deployment without ingest, the race window doesn't exist at all; the transaction stance is the correct posture regardless and prepares for ingest-active deployments.
+The decision this pins: a revocation arriving between two dispatches takes effect on the *second* one; a revocation arriving during a single dispatch's transaction takes effect *after* it commits. Concretely on a single-source 0.x deployment without ingest, the race window doesn't exist at all; the transaction stance is the correct posture regardless and prepares for ingest-active deployments.
 
 **Transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. `StorageBackend` (`event_sourcing/lib/src/storage/storage_backend.dart`) exposes `findViewRowsInTxn(Transaction txn, String viewName, {Map<String, Object?>? where, int? limit, int? offset})` for these transaction-consistent authorization reads, so the authorize-stage read sees the same snapshot as the execute-stage append. It is implemented by both backends and follows the same abstract-backend-agnostic contract as the other `*InTxn` methods.
 

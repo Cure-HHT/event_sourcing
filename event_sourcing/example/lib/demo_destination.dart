@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:flutter/foundation.dart';
 
 class DemoDestination implements Destination, DemoKnobs {

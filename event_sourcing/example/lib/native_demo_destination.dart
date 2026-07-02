@@ -1,6 +1,6 @@
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:flutter/foundation.dart';
 
 /// Native demo destination — declares it speaks `esd/batch@1` so the

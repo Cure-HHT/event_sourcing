@@ -3,7 +3,7 @@
 // or role event into the substrate and asserts the registry's
 // channels received the right reaction (close-frame or stale_data).
 //
-// All tests are skipped — full coverage is deferred to the Phase 4
+// All tests are skipped — full coverage is deferred to the
 // e2e harness (test/e2e/authz_test.dart). Stubs here serve as a
 // checklist of the behavior surface to cover.
 //
@@ -24,7 +24,7 @@ void main() {
       // CaptureChannel for alice on the registry; emit a
       // role_unassigned event; assert closedCode == 4003.
     },
-    skip: 'unit pattern; covered in e2e/authz_test.dart (Phase 4)',
+    skip: 'unit pattern; covered in e2e/authz_test.dart',
   );
 
   test(
@@ -33,7 +33,7 @@ void main() {
       // Seed; emit role_assigned for alice; assert the CaptureChannel
       // received a stale_data envelope with reason: role_assigned.
     },
-    skip: 'unit pattern; covered in e2e/authz_test.dart (Phase 4)',
+    skip: 'unit pattern; covered in e2e/authz_test.dart',
   );
 
   test(
@@ -42,7 +42,7 @@ void main() {
       // Seed; emit permission_revoked for a role; assert all users
       // currently holding that activeRole get their WS closed with 4003.
     },
-    skip: 'unit pattern; covered in e2e/authz_test.dart (Phase 4)',
+    skip: 'unit pattern; covered in e2e/authz_test.dart',
   );
 
   test(
@@ -51,6 +51,6 @@ void main() {
       // Seed; emit permission_granted; assert all users with that
       // activeRole receive a stale_data envelope.
     },
-    skip: 'unit pattern; covered in e2e/authz_test.dart (Phase 4)',
+    skip: 'unit pattern; covered in e2e/authz_test.dart',
   );
 }

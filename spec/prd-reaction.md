@@ -126,7 +126,7 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 **Why `TrustingAuthValidator` ships at all?** Development and test environments need *something*; without a default reference impl, every test fixture and every demo would have to author its own. The "DO NOT USE IN PRODUCTION" docstring is the safety; the convenience of having a working default is too high to skip.
 
-**Why no `JwtAuthValidator` in v1?** JWT validation needs a key-loading strategy, an issuer convention, and a claim-mapping policy — all of which depend on the deployment's identity-provider choices. A premature default would either be too narrow (only fits Firebase, only fits Auth0) or too configurable (weighed down with options no consumer actually needs). Defer until consumer demand makes the right shape obvious.
+**Why no `JwtAuthValidator` in 0.x?** JWT validation needs a key-loading strategy, an issuer convention, and a claim-mapping policy — all of which depend on the deployment's identity-provider choices. A premature default would either be too narrow (only fits Firebase, only fits Auth0) or too configurable (weighed down with options no consumer actually needs). Defer until consumer demand makes the right shape obvious.
 
 ### Changelog
 

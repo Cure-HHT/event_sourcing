@@ -166,7 +166,7 @@ abstract class StorageBackend {
   /// when no event has been appended yet. Non-transactional, read-only.
   Future<int> readSequenceCounter();
 
-  // -------- Generic view storage (Phase 4.4) --------
+  // -------- Generic view storage --------
   //
   // Projection fold interpreters read and write view rows via these
   // methods. The view namespace is flat — addressed by `(viewName,
@@ -252,7 +252,7 @@ abstract class StorageBackend {
   /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
   Future<void> clearViewInTxn(Transaction txn, String viewName);
 
-  // -------- View target versions (Phase 4.19) --------
+  // -------- View target versions --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
   /// if no entry has been registered. Used by [rebuildView]

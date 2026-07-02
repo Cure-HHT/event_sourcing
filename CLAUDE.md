@@ -83,8 +83,9 @@ These commitments shape the library's design.
   shipped; bug fixes ship as new primitive names).
 - **Permission policy is substrate code.** `AuthorizationPolicy`
   cannot be app-supplied without breaking closed-under-events for
-  action outcomes. v1 ships exactly one policy mechanism — the
-  role/permission/scope model in `event_sourcing/lib/src/permissions/`.
+  action outcomes. The 0.x release line ships exactly one policy
+  mechanism — the role/permission/scope model in
+  `event_sourcing/lib/src/permissions/`.
   Alternative policy models require library extension (same Append-
   Only Primitives discipline as projections), not app-side replacement.
 - **Library version recorded in the log.** Substrate emits
@@ -270,7 +271,7 @@ The currently-trusted inputs are:
   Principal-on-faith gap for that deployment.
 
 Everything else — projection rules (`ProjectionSpec`), promoter rules
-(`PromoterSpec`), policy logic (in-lib for v1, see Architectural
+(`PromoterSpec`), policy logic (in-lib in 0.x, see Architectural
 Commitments), event payloads, hash chains, library version, action
 outcomes — is derivable from the log under one of the trusted
 backends above.

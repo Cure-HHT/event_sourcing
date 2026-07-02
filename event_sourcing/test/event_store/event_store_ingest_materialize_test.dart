@@ -2,7 +2,6 @@
 //   materialized views identically to local-appended events. The projection
 //   interpreter on the ingest path is symmetric with the interpreter on the
 //   append path (same gates, same atomicity, same throw-rolls-back semantics).
-//   Closes Phase 4.9 design spec §398.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';

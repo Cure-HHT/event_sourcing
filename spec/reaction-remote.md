@@ -88,7 +88,7 @@ The reaction lib ships only the `PrincipalAuthValidator` interface
 Concrete production validators (Firebase, Auth0, linking-code) live
 in app code where they can encode the deployment's identity-provider
 choices. The lib never commits to one shape. See
-`EVS-PRD-auth-session/F` and its "Why no JwtAuthValidator in v1?"
+`EVS-PRD-auth-session/F` and its "Why no JwtAuthValidator in 0.x?"
 rationale.
 
 ### 4. Permission policy stays substrate code
@@ -1380,7 +1380,7 @@ considered for handling mid-session permission changes:
    accept that revoked users continue receiving events until they
    reconnect (token expiry, network drop, manual logout). Bounds
    the staleness window only by token TTL — minutes in practice.
-   Rejected for v1: too long a window for security-narrowing
+   Rejected for 0.x: too long a window for security-narrowing
    admin actions.
 2. *Reactive re-narrowing*: on permission change, mutate the open
    subscription's `aggregates` filter and emit `tombstone` /

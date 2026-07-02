@@ -3,15 +3,15 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/dual_demo_app.dart';
-import 'package:event_sourcing_datastore_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/app.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/dual_demo_app.dart';
+import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';

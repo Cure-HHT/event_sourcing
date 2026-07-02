@@ -247,7 +247,7 @@ Specs are written in the final-state voice. Avoid framing in terms of removal, r
 
 ## Library Neutrality
 
-This repo is a **library**. Requirements MUST be neutral with respect to consumer applications: do not name specific server roles (e.g. "diary server", "portal server"), specific sponsors, or specific deployment topologies. Use role-based names instead (e.g. "originator", "relay", "controller", "downstream consumer").
+This repo is a **library**. Requirements MUST be neutral with respect to consumer applications: do not name specific consumer systems or server roles, specific sponsors, or specific deployment topologies. Use role-based names instead (e.g. "originator", "relay", "controller", "downstream consumer").
 
 If a requirement is unavoidably consumer-specific, it does not belong in this repo — it belongs in the consumer's spec/.
 

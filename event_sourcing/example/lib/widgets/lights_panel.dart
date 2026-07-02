@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/lights_materializer.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/lights_materializer.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 /// Three RGB "lights" rendered from the `rgb_lights` materialized view.

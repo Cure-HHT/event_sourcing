@@ -82,7 +82,7 @@ void main() {
                 'stream events out of view-side projection. '
                 'Flipping a reserved system entry type to isMaterialized:true '
                 'would start firing materializers on system audits — out '
-                'of scope for Phase 4.22.',
+                'of scope here.',
           );
         }
       } finally {

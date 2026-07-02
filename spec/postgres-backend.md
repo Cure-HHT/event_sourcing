@@ -178,7 +178,7 @@ store to the dedicated `backend_state` table.
 
 ## Decisions rejected
 
-- **Per-spec typed columns for view rows.** Rejected for v1; deferred
+- **Per-spec typed columns for view rows.** Rejected for 0.x; deferred
   to a future `SqlNativeTableProjectionSpec` primitive shipped under
   the Append-Only Primitives discipline.
 - **Per-destination FIFO tables.** Rejected; cleaner DDL surface with a

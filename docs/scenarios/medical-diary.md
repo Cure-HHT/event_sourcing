@@ -71,8 +71,8 @@ requiring read-only access across the study uses `ValueWildcardScope('site')`.
 
 **Cross-process.** Two composition roots. The phone runs `LocalScope` against
 `SembastBackend` — `AuthSession.Authenticated(Principal(patientId,
-PatientSelf))` is set once during enrollment and never changes. The study
-server's Flutter web app runs `RemoteScope` against the study server's
+PatientSelf))` is set once during enrollment and never changes. Study staff's
+Flutter web app runs `RemoteScope` against the study server's
 `ReactionHandlers`; the study server hosts the Postgres-backed `EventStore`
 and the dispatcher, with `authMiddleware(FirebasePrincipalAuthValidator())`
 populating the request context. Patient apps additionally open a `Destination`

@@ -176,8 +176,8 @@ they shape what's possible:
   explicitly opted in. "What did the library do at sequence N?" is
   answerable from the log alone.
 - **Single-source-per-aggregate-type, today.** The multi-source
-  machinery exists in design but is dormant in v1. In practice this
-  means: in the v1 model, each kind of aggregate is produced by one
+  machinery exists in design but is dormant in 0.x. In practice this
+  means: in the 0.x model, each kind of aggregate is produced by one
   deployment.
 
 ## Dispatching an action — what happens
@@ -1006,7 +1006,7 @@ deployments handled an event and when.
 ### Cross-installation ingest
 
 The library is designed for multi-installation deployment from the
-ground up, though the v1 substrate treats one source per aggregate
+ground up, though the 0.x substrate treats one source per aggregate
 type as canonical. The ingest path is the inbound side of that
 design:
 

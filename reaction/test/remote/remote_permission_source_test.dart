@@ -1,6 +1,6 @@
 // Verifies: EVS-PRD-permission-source/A/C/D/E — Remote impl surface.
 //   Full per-assertion coverage (two-phase load + AuthSession
-//   dependency) lives in e2e/permission_test.dart in Phase 4; the
+//   dependency) lives in e2e/permission_test.dart; the
 //   null-on-empty-role parity test below runs here because it exercises
 //   only the snapshot-decode branch, which needs no live server.
 

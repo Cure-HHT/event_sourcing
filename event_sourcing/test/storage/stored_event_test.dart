@@ -46,7 +46,7 @@ Map<String, Object?> _validEventMap() => <String, Object?>{
 };
 
 void main() {
-  group('StoredEvent Phase 4.4 shape', () {
+  group('StoredEvent storage shape', () {
     // round-trips through fromMap/toMap.
     test('initiator round-trips through fromMap/toMap', () {
       final map = _minimalMap();

@@ -1,6 +1,6 @@
 // Verifies: EVS-PRD-event-log/A
 // Verifies: EVS-PRD-event-log/A
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

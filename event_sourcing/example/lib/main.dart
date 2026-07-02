@@ -2,13 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/dual_demo_app.dart';
-import 'package:event_sourcing_datastore_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/dual_demo_app.dart';
+import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -194,9 +194,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   final appSupportDir = await getApplicationSupportDirectory();
-  final demoDir = Directory(
-    p.join(appSupportDir.path, 'event_sourcing_datastore_demo'),
-  );
+  final demoDir = Directory(p.join(appSupportDir.path, 'event_sourcing_demo'));
   await demoDir.create(recursive: true);
 
   final mobileInstallUUID = await _readOrMintUUID(
@@ -221,7 +219,7 @@ Future<void> main() async {
     source: Source(
       hopId: 'hub-server',
       identifier: hubInstallUUID,
-      softwareVersion: 'event_sourcing_datastore_demo@0.1.0+1',
+      softwareVersion: 'event_sourcing_demo@0.1.0+1',
     ),
   );
 
@@ -232,7 +230,7 @@ Future<void> main() async {
     source: Source(
       hopId: 'mobile-device',
       identifier: mobileInstallUUID,
-      softwareVersion: 'event_sourcing_datastore_demo@0.1.0+1',
+      softwareVersion: 'event_sourcing_demo@0.1.0+1',
     ),
     bridge: bridge,
   );

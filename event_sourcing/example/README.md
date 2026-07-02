@@ -1,4 +1,4 @@
-# event_sourcing_datastore_demo
+# event_sourcing_demo
 
 Linux-desktop sandbox exercising every public surface of
 `event_sourcing`. Two datastores in one process, one mobile
@@ -89,7 +89,7 @@ flutter run -d linux
 ### Storage paths
 
 Both panes persist their state under
-`<applicationSupportDirectory>/event_sourcing_datastore_demo/`:
+`<applicationSupportDirectory>/event_sourcing_demo/`:
 
 - `demo.db` — mobile pane's Sembast event log + views + FIFOs.
 - `demo_hub.db` — hub pane's same.

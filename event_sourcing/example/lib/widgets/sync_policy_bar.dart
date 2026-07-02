@@ -1,7 +1,7 @@
 import 'dart:math';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 // Validated by: JNY-04 (transient disconnect), JNY-05 (policy tuning).

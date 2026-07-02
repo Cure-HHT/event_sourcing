@@ -83,5 +83,5 @@ void main() {
   );
 
   // The 'submit and decode DispatchResult' happy path is exercised in
-  // the E2E suite (Phase 4) where a full substrate response is available.
+  // the e2e suite where a full substrate response is available.
 }

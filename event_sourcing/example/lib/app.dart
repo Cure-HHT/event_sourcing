@@ -3,16 +3,16 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_datastore_demo/widgets/audit_panel.dart';
-import 'package:event_sourcing_datastore_demo/widgets/detail_panel.dart';
-import 'package:event_sourcing_datastore_demo/widgets/event_stream_panel.dart';
-import 'package:event_sourcing_datastore_demo/widgets/fifo_panel.dart';
-import 'package:event_sourcing_datastore_demo/widgets/materialized_panel.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
-import 'package:event_sourcing_datastore_demo/widgets/sync_policy_bar.dart';
-import 'package:event_sourcing_datastore_demo/widgets/top_action_bar.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/widgets/audit_panel.dart';
+import 'package:event_sourcing_demo/widgets/detail_panel.dart';
+import 'package:event_sourcing_demo/widgets/event_stream_panel.dart';
+import 'package:event_sourcing_demo/widgets/fifo_panel.dart';
+import 'package:event_sourcing_demo/widgets/materialized_panel.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/widgets/sync_policy_bar.dart';
+import 'package:event_sourcing_demo/widgets/top_action_bar.dart';
 import 'package:flutter/material.dart';
 
 const double _kMinColumnWidth = 80;

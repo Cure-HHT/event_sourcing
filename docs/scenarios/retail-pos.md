@@ -27,7 +27,7 @@ provenance ride along: corporate audit can see "this sale was rung at register
 R-7 (originator), forwarded by store S-12, ingested at corp at T+3h." Per-
 aggregate-per-Source ordering means each register's transaction stream is
 monotonic on arrival even when registers are reconciled out of wall-clock
-order. This is precisely the v1 single-source-per-aggregate-type model: a
+order. This is precisely the 0.x single-source-per-aggregate-type model: a
 `transaction` aggregate is "owned" by the register that opened it; the
 store/corp installs ingest read-only.
 

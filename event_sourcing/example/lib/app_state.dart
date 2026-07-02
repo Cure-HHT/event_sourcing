@@ -1,5 +1,5 @@
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:flutter/foundation.dart';
 
 /// UI state container for the demo. Holds the cross-panel selection tri-

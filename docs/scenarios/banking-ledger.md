@@ -21,7 +21,7 @@ offline clients holding writable logs.
 *the* `Source` for every `account` and `transaction` aggregate. ATMs,
 web/mobile banking, branch teller stations, and clearinghouse batch importers
 are all *clients*, not Sources — they connect via `RemoteScope` over the
-`reaction` wire and submit `ActionSubmission`s. This keeps the v1 single-
+`reaction` wire and submit `ActionSubmission`s. This keeps the 0.x single-
 source-per-aggregate-type constraint satisfied and matches the regulatory
 reality (one canonical log per chartered institution).
 
