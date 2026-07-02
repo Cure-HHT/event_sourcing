@@ -15,7 +15,8 @@ Use **`requirements-spec.md`** for the authoritative rules and grammar.
 The `spec/` directory contains **formal requirements only**.
 
 - **spec/**: Normative obligations defining what must be true of the library.
-- **docs/**: Explanatory documentation, ADRs, plans, and design specs.
+- **spec/roadmap/**: The only place future work is recorded (see `spec/roadmap/README.md`); non-normative.
+- **docs/**: Explanatory documentation — the consumer guide (`event-sourcing-guide.md`), e2e-testing notes, naming conventions, and speculative scenario sketches (`scenarios/`).
 
 If it defines *what must be true*, it belongs in `spec/`.
 If it explains *how to do something* or *why a decision was made*, it belongs in `docs/`.
@@ -55,14 +56,22 @@ Conventions (recommended, not enforced by elspais):
 
 ## Lifecycle of a design spec
 
-Design ideas evolve through three stages:
+Designs are authored in place in `spec/`:
 
-1. **Brainstorm.** Output goes to `docs/superpowers/specs/YYYY-MM-DD-<topic>-design.md`. Prose-heavy. Captures the conversational design process, alternatives considered + rejected, and open questions. Transient scaffolding intended for reader and reviewer orientation, not for long-term residency.
-2. **Stabilize.** When the design has settled, author the corresponding `spec/<topic>.md` (or `spec/prd-<topic>.md`) containing the normative requirement blocks plus the cross-system narrative carried over as remainder sections (overview, architecture mermaid, decisions-rejected commentary, future work). The spec/ file is now the single authoritative source.
-3. **Archive.** The original brainstorm doc is deleted (or moved to `docs/archive/<year>/`). Its content has migrated; keeping it would be a DRY violation and risks drift.
+1. **Author.** A new design lands directly as `spec/<topic>.md` prose —
+   overview, architecture, decisions considered and rejected. elspais
+   treats the file as non-normative remainder content until a
+   requirement-block heading appears.
+2. **Stabilize.** As the design firms up (usually alongside
+   implementation), normative `EVS-{TYPE}-{component}` requirement
+   blocks are added to the same file. The surrounding prose stays as
+   remainder sections; there is no separate brainstorm document and no
+   migration step.
+3. **Maintain.** The file always describes the present state of the
+   design. Deferred ideas move to `spec/roadmap/`; everything else in
+   the file is true of the shipped library.
 
-DEV-level requirements continue to be authored alongside code per CLAUDE.md "Requirement traceability". They MAY be added to the existing `spec/<topic>.md` as new requirement blocks, or split into a companion `spec/dev-<topic>.md` if the DEV bulk warrants it.
-
-Roadmap and time-evolving status documents (e.g., `docs/superpowers/specs/2026-05-11-roadmap.md`) are a different artifact from design specs and stay in `docs/superpowers/specs/`. They are not normative.
-
-Implementation plans live at `docs/superpowers/plans/YYYY-MM-DD-<topic>-implementation.md` and reference `spec/` requirement IDs.
+DEV-level requirements continue to be authored alongside code per
+CLAUDE.md "Requirement traceability". They MAY be added to the existing
+`spec/<topic>.md` as new requirement blocks, or split into a companion
+`spec/dev-<topic>.md` if the DEV bulk warrants it.

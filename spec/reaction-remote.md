@@ -1,39 +1,23 @@
 # Reaction Remote Impls, Reference Server, and Wire Protocol
 
-**Phase**: I (in-process impl shipped; cross-process impl gated on CUR-1331 impl)
-**Status**: Design draft (no normative requirement blocks yet;
-`EVS-DEV-*` requirements land in-place against this file as impl
-stabilizes)
-**Linear**: CUR-1317 (libify); impl ticket TBD
+**Status**: Implemented — cross-process client (`reaction/lib/src/remote/`),
+reference server handlers (`reaction/lib/src/server/`), and wire codecs
+(`reaction/lib/src/wire/`). Normative `EVS-DEV-*` requirement blocks are
+in Section 6.
 **Elaborates**: `spec/prd-reaction.md` PRDs `EVS-PRD-auth-session`,
 `EVS-PRD-action-submitter`, `EVS-PRD-view-subscriber`,
 `EVS-PRD-permission-source`, and
 `EVS-PRD-cross-process-event-transport`.
-**Depends on**: `spec/scoped-permissions.md` (CUR-1331) for the
+**Depends on**: `spec/scoped-permissions.md` for the
 `AuthorizationPolicy`, `EffectiveAuthorization`, and `ScopeValue`
 shapes that the reference server's per-subscription authorization
-consults. The cross-process client + server impl is sequenced to land
-after CUR-1331 impl so the server's permission-consulting code targets
-the final API shape directly rather than being written against the
-pre-1331 surface and then swept.
-
-> **Lifecycle note.** This file is authored as a design document and
-> will grow normative `EVS-{TYPE}-{component}` requirement blocks in
-> place as the design stabilizes through implementation. The
-> brainstorm → stabilize → migrate lifecycle in `spec/README.md` is
-> short-circuited here: the design lives in `spec/` from the start to
-> preserve fidelity (avoid information loss in a migration step), and
-> the same file is edited to add assertions later. elspais treats
-> this file as non-normative prose until a requirement block heading
-> is added.
+consults.
 
 **Note on scope.** This design covers client and server together in one
 cohesive document. The wire protocol cannot be specified, codec-tested,
 or end-to-end-validated without both sides; the PRD architecture
-(`spec/prd-reaction.md` lines 26-55) already puts `local/`, `remote/`,
-`server/`, and `wire/` in one package. See the roadmap document
-(`docs/superpowers/specs/2026-05-11-roadmap.md`) for the current
-implementation status.
+(`spec/prd-reaction.md`) already puts `local/`, `remote/`,
+`server/`, and `wire/` in one package.
 
 ## Scope
 
@@ -61,16 +45,15 @@ Out of scope (deferred):
 - Production validators (Firebase JWT, Auth0, install-UUID linking
   code, etc.) — these live in app code per the substrate's trust-
   boundary discipline; see "Trust boundary expansion" below.
-- v1.1 `resume-from-sequence` reconnect optimization — wire format
-  reserves space; not implemented here.
 - Reactive re-narrowing of active subscriptions' `aggregates`
   filters mid-stream (mutating an open `subscribe<T>` to narrow it).
-  The chosen mid-session permission-change handling (force-logout
+  The mid-session permission-change handling (force-logout
   on revocation + stale-data signal on expansion / containment
   change) avoids this entirely; see Section 4.
-- Snapshot pagination for very large views (PRD Open Question 1).
-- Connection-state observability stream on the client
-  (`Stream<ConnectionState>` for "Reconnecting…" UX) — defer to v1.1.
+
+Further deferred optimizations (resume-from-sequence reconnect, batched
+snapshot delivery for very large views) are recorded in
+`spec/roadmap/reaction.md`.
 
 ## Architectural commitments
 
@@ -136,7 +119,7 @@ reaction/lib/src/
     action_submission_codec.dart   ActionSubmission JSON codec
     dispatch_result_codec.dart     DispatchResult JSON codec
     effective_authorization_codec.dart EffectiveAuthorization JSON codec
-                                       (CUR-1331 substrate type)
+                                       (substrate type)
     subscription_messages.dart     Subscribe/Unsubscribe/Update msgs
     filter_codec.dart              SubscriptionFilter JSON codec
     principal_codec.dart           Principal JSON codec
@@ -172,12 +155,11 @@ reaction/lib/src/
       trusting_auth_validator.dart Dev/test only
 ```
 
-There is intentionally no `ReactionServer` class. Existing consumers
-(`hht_diary`'s `portal_server`, `diary_server`) already run their own
-`shelf` + `shelf_router` pipelines with deployment-specific
-middleware (Firebase auth, OpenTelemetry, CORS, request logging);
-they compose `reaction`'s handlers into their existing routers
-directly. The "server" is whatever consumer-owned shelf app the
+There is intentionally no `ReactionServer` class. Consumer deployments
+that already run their own shelf servers — `shelf` + `shelf_router`
+pipelines with deployment-specific middleware (authentication,
+telemetry, CORS, request logging) — compose `reaction`'s handlers into
+their existing routers directly. The "server" is whatever consumer-owned shelf app the
 handlers are mounted into; `reaction` itself never calls
 `shelf_io.serve` and never owns an `HttpServer`. See
 "Decisions and alternatives rejected" for the full rationale.
@@ -276,8 +258,8 @@ JSON shape notes:
 - `parse_denied`, `validation_denied`, and `execution_failed` each carry
   a single `error` field. The substrate field is `Object error`; the
   wire codec emits `error.toString()` and decodes it back as the raw
-  String. **This is lossy** — see Future work for the structured-error
-  path.
+  String. **This is lossy** — the structured-error path is recorded in
+  `spec/roadmap/reaction.md`.
 - `authorization_denied` carries only the substrate's `Permission`
   (inlined `{name, scopeClass}`). The substrate's
   `DispatchAuthorizationDenied` carries no `DenyReason` / `scope` /
@@ -399,12 +381,19 @@ JSON shape notes:
 - `1006 abnormal_closure` (network drop) — client reconnects with
   backoff.
 
-### Reconnect strategy (v1 baseline: refetch)
+### Reconnect strategy (refetch)
 
-Client reconnects with exponential backoff (250ms initial, 30s cap,
-doubling). On reconnect:
+`RemoteConnection` reconnects with exponential backoff, governed by an
+`ExponentialBackoff` policy whose defaults are: 250ms initial delay, a
+2x multiplier per attempt, a 30-second per-attempt cap, and 10 attempts
+before the connection gives up and transitions to `Disconnected` (a
+total budget of roughly two minutes). The policy is overridable per
+deployment via the `reconnectBackoff` parameter on the `RemoteScope`
+(and `RemoteConnection`) constructor — tests pass ms-scale intervals so
+the suite runs in seconds. On each reconnect attempt:
 
-1. Send `{"type":"auth", "credential": <stored>}`.
+1. Send `{"type":"auth", "credential": <stored>}` and await the
+   server's `auth_ok` before flushing any subscribe.
 2. For each active subscription, re-send the original
    `{"type":"subscribe", "subscriptionId": <same as before>, ...}`.
 3. Server treats reconnect as fresh: opens new substrate
@@ -414,11 +403,12 @@ doubling). On reconnect:
 4. Client-side `Stream<Update<T>>` (the one returned to widget code)
    sees the snapshot-replay flash.
 
-PRD Open Question 3 explicitly frames this as the v1 baseline.
-v1.1's `resume-from-sequence` optimization is wire-compatible: it
-would add a `{"type":"resume","subscriptionId":N,"fromSequence":N}`
-message; the existing sequence field already on every envelope is
-sufficient to drive it. Non-breaking add.
+This full-refetch reconnect is the shipped baseline. The
+resume-from-sequence optimization — which would add a
+`{"type":"resume","subscriptionId":...,"fromSequence":N}` message and
+resume from the last-applied sequence rather than re-replaying — is
+wire-compatible (the sequence field is already on every envelope) and
+is recorded in `spec/roadmap/reaction.md`.
 
 ## Section 3 — Client lifecycle
 
@@ -433,7 +423,7 @@ Constructed once per user-session at app boot. Implements the
 
 ```dart
 final scope = RemoteScope(
-  baseUrl: Uri.parse('https://portal.cure-hht.example'),
+  baseUrl: Uri.parse('https://api.example.com'),
   // Optional overrides for tests:
   httpClient: ...,
   wsFactory: ...,
@@ -503,7 +493,14 @@ Owns the shared wire-state across all four `Remote*` impls of one
 - **Reconnect loop** — on close-frames 1006 / 1011 / 4002, schedules
   exponential backoff and reconnects. Replays auth message then
   every active subscribe message. Suppressed for 4001 (auth_rejected;
-  that path flips `RemoteAuthSession` to `Expired` instead).
+  that path flips `RemoteAuthSession` to `Expired` instead) and 4003
+  (permissions_changed).
+- **Subscribe-during-reconnect queueing** — a `watch<T>` that opens
+  while the socket is down or mid-handshake registers its subscription
+  immediately and awaits `_ensureConnected`, which blocks on the
+  server's `auth_ok` before flushing the `SubscribeMsg`. So a subscribe
+  issued during backoff is queued and sent once the reconnect completes,
+  never racing ahead of authentication.
 - **Credential storage** — single `String?` field. Writers:
   `RemoteAuthSession.setCredential`. Readers: HTTP bearer injection
   and WS auth message. Atomic across the four impls.
@@ -612,17 +609,17 @@ final reaction = ReactionHandlers(
 // router however they like:
 final router = Router()
   // Consumer's custom routes:
-  ..get('/api/v1/sponsor/config', sponsorConfigHandler)
-  ..post('/api/v1/auth/login',    loginHandler)         // pre-auth
+  ..get('/api/v1/app/config', appConfigHandler)
+  ..post('/api/v1/auth/login', loginHandler)            // pre-auth
   // Reaction handlers, mounted wherever the consumer chooses:
-  ..get('/api/v1/portal/me',                   reaction.me)
-  ..post('/api/v1/portal/actions',             reaction.actions)
-  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions)
-  ..get('/api/v1/portal/subscriptions',
+  ..get('/api/v1/me',                   reaction.me)
+  ..post('/api/v1/actions',             reaction.actions)
+  ..get('/api/v1/permissions/snapshot', reaction.permissions)
+  ..get('/api/v1/subscriptions',
         reaction.subscriptions(validator));
 
 final pipeline = const Pipeline()
-    .addMiddleware(existingFirebaseAuthMiddleware) // consumer-supplied
+    .addMiddleware(existingAuthMiddleware) // consumer-supplied
     .addHandler(router.call);
 
 await shelf_io.serve(pipeline, '0.0.0.0', 8080);
@@ -671,7 +668,7 @@ GET   /subscriptions        -> WS upgrade (auth via first WS msg)
 ```
 
 Consumers that mount under a path prefix (e.g.,
-`/api/v1/portal/...`) configure the `Remote*` impls' `baseUrl`
+`/api/v1/...`) configure the `Remote*` impls' `baseUrl`
 parameter accordingly. There is no `/healthz` handler in
 `ReactionHandlers` — the consumer's existing healthz route serves
 that purpose. The lib does not impose one.
@@ -683,10 +680,10 @@ request context via `principalFromContext(req)`. Two ways the
 context gets populated:
 
 1. **Consumer-supplied auth middleware already attaches `Principal`.**
-   Portal_server's existing Firebase middleware extracts and verifies
-   the Firebase ID token, looks up the user, and attaches a
-   `Principal` to the request context. Reaction's handlers read that
-   `Principal` directly. No `reaction`-supplied middleware is needed.
+   A consumer's existing auth middleware (for example one that verifies
+   a Firebase ID token, looks up the user, and attaches a `Principal`
+   to the request context) is read by reaction's handlers directly. No
+   `reaction`-supplied middleware is needed.
 
 2. **Mount `reaction`'s `authMiddleware(validator)` on routes the
    consumer is authenticating itself.** For deployments without an
@@ -802,16 +799,18 @@ On each Update<T> from this watcher (a substrate event):
 ```
 
 The watcher is **a single subscription on the server-wide
-substrate**, not per-connection. At portal scale this is one
-substrate subscription serving the entire shelf process. No state
-mirror is maintained.
+substrate**, not per-connection. At the deployment scale this library
+targets (tens of concurrent connections) this is one substrate
+subscription serving the entire shelf process. No state mirror is
+maintained.
 
 Determining which users hold a given role (for `permission_*`
 events) requires a one-time lookup at watcher-event time: read the
 substrate's `role_permission_grants` projection to find the role's
 current grants, then walk the connection registry's userIds and
-check which Principal's `activeRole` matches. At portal scale (~20
-users) the walk is trivial.
+check which Principal's `activeRole` matches. At the deployment scale
+this library targets (tens of concurrent connections) the walk is
+trivial.
 
 ### Force logout vs stale-data signal: when each applies
 
@@ -881,19 +880,17 @@ propagation latency). Far smaller than the original snapshot-at-
 subscribe window (bounded by token TTL, ~minutes). Acceptable for
 the deployment classes this lib targets.
 
-### Per-subscription authorization (Approach B, aligned to CUR-1331)
+### Per-subscription authorization (two-tier: deny then narrow)
 
 Two-tier: view-level deny + row-level narrowing.
 
 The mechanism consults the API shapes `spec/scoped-permissions.md`
-(CUR-1331) defines: `AuthorizationPolicy.isPermitted(principal,
+defines: `AuthorizationPolicy.isPermitted(principal,
 permission, scopeValue)`, `effectivePermissionsFor(principal) ->
 EffectiveAuthorization`, sealed `ScopeValue` with `BoundScope` /
 `ValueWildcardScope` / `TotalWildcardScope`, and the `ContainmentReference`
-expansion against app-registered scope-class projections. This
-section is the design surface where the cross-process client+server
-impl plugs into CUR-1331's primitives; the impl ticket runs after
-CUR-1331 impl lands so this code is written against the final API.
+expansion against app-registered scope-class projections. The shipped
+implementation is `reaction/lib/src/server/subscription_handler.dart`.
 
 ```text
 On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
@@ -928,15 +925,14 @@ On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
   //   (b) Reading effectivePermissionsFor(principal).scopeAssignments
   //       under the active role.
   //   (c) For each assignment, walking the containment graph
-  //       (ContainmentResolver from CUR-1331) downward to expand
-  //       'site A' (ValueAt class 'site') into the set of patient_ids
-  //       under site A.
+  //       (the substrate's ContainmentResolver) downward to expand
+  //       'site A' (ValueAt class 'site') into the set of participant
+  //       ids under site A.
   //   (d) Unioning the expansion across all assignments.
   //
-  // Implementations should treat this expansion as a snapshot at
-  // subscribe-time (consistent with the v1 baseline; reactive
-  // re-narrowing on permission change is a separate concern;
-  // see Open Question 1).
+  // The expansion is a snapshot at subscribe-time; reactive
+  // re-narrowing on permission change is handled separately (the
+  // force-logout / stale-data machinery in Section 4).
 
   viewScope = viewScopeRegistry.lookup(viewName)
   // viewScope: { scopeClass, aggregateIdFromScopeValue,
@@ -980,18 +976,22 @@ On {type: subscribe, subscriptionId, viewName, filter, aggregates}:
 The reaction handlers need a `viewName -> ScopeClass` mapping for
 the row-level narrowing step. This is composition-time data the
 consumer supplies alongside `viewPermissionNamer`; the lib does NOT
-bake in a default beyond "no view-scope, no narrowing." Concrete
-shape lands in the impl ticket; provisional sketch:
+bake in a default beyond "no view-scope, no narrowing." The shape
+(`reaction/lib/src/server/view_scope_registry.dart`): a
+`ViewScopeRegistry` whose `register` takes `viewName`, `scopeClass`,
+and a `String? Function(ScopeValue) aggregateIdResolver`, and whose
+`lookup(viewName)` returns the `ViewScopeBinding` (or null for an
+unregistered, row-unscoped view):
 
 ```text
 ReactionHandlers(
   ...,
   viewScopeRegistry: ViewScopeRegistry()
     ..register(
-      viewName: 'patient_files',
-      scopeClass: 'patient',
+      viewName: 'participant_files',
+      scopeClass: 'participant',
       aggregateIdResolver: (scopeValue) => scopeValue.value,
-      // patient_id IS the aggregate id directly
+      // participant id IS the aggregate id directly
     )
     ..register(
       viewName: 'site_summaries',
@@ -1001,12 +1001,12 @@ ReactionHandlers(
 )
 ```
 
-When `aggregateIdResolver` is a 1:1 mapping (patient scope value =
-patient aggregate id), expansion is `O(assignments)`. When the
+When `aggregateIdResolver` is a 1:1 mapping (participant scope value =
+participant aggregate id), expansion is `O(assignments)`. When the
 mapping requires containment walks (e.g., view is keyed by
-`patient_id` but the assignment is `(site, A)`), expansion goes
+participant id but the assignment is `(site, A)`), expansion goes
 through `ContainmentResolver` walks per assignment. This is the same
-mechanism CUR-1331 uses for action-side authorize evaluation —
+mechanism the substrate uses for action-side authorize evaluation —
 reused on the read path.
 
 **Defensible "no-scope" behavior**: if `effectiveAggregates` resolves
@@ -1068,7 +1068,7 @@ Graceful shutdown sequence:
   and configures the `Remote*` impls' `baseUrl` accordingly.
 - Does not mandate a `PrincipalAuthValidator` — for deployments
   whose existing auth middleware already populates `Principal` on
-  the request context (e.g., portal_server's Firebase middleware),
+  the request context (e.g., a consumer's own Firebase middleware),
   `authMiddleware(validator)` is not mounted at all and no validator
   is required.
 
@@ -1233,14 +1233,15 @@ The AuthorizationWatcher's behavior gets dedicated coverage:
 
 - Production validators (Firebase JWT, Auth0, linking-code) — tested
   in app code per the trust-boundary discipline.
-- Snapshot pagination — PRD Open Question 1 defer.
+- Batched / cursor snapshot delivery — deferred; see
+  `spec/roadmap/reaction.md`.
 
 ## Section 6 — Normative requirements
 
 The remainder of this file is design prose; the following requirement
-blocks are the normative obligations binding the implementation. New
-`EVS-DEV-*` blocks land here in-place as additional surfaces stabilize,
-per the lifecycle note at the top of this file.
+blocks are the normative obligations binding the implementation.
+Additional `EVS-DEV-*` blocks MAY be added here if further surfaces need
+normative pinning.
 
 ## EVS-DEV-authz-watcher: Mid-session permission-change signalling
 
@@ -1296,8 +1297,7 @@ not) is what closes the gap *externally*, inside a single
 deployment. A different deployment with different middleware gets
 different trust semantics.
 
-Adding this to CLAUDE.md is a follow-up action; the trust-boundary
-enumeration is the right place.
+CLAUDE.md's "Trust boundaries" section enumerates this input.
 
 ## Decisions and alternatives rejected
 
@@ -1310,12 +1310,13 @@ validated without both sides present. The PRD architecture already puts
 client + server + wire in one package, and a single design document
 captures the cohesive cross-cutting concerns naturally.
 
-**Why refetch reconnect instead of resume-from-sequence?** v1
-baseline matches PRD Open Q3. Resume-from-sequence is a wire-
-compatible v1.1 optimization; the sequence field is already on every
-envelope. UX flash is acceptable at portal scale (~1-20 users); the
-extra moving parts (client sequence tracking, server `read(from:)`
-semantics) can wait until measurement demands them.
+**Why refetch reconnect instead of resume-from-sequence?**
+Resume-from-sequence is a wire-compatible optimization; the sequence
+field is already on every envelope. The snapshot-replay flash is
+acceptable at the deployment scale this library targets (tens of
+concurrent connections); the extra moving parts (client sequence
+tracking, server `read(from:)` semantics) can wait until measurement
+demands them. Recorded in `spec/roadmap/reaction.md`.
 
 **Why no `JwtAuthValidator` reference impl in this plan?** Per
 `EVS-PRD-auth-session/F`'s rationale: production validators encode
@@ -1329,7 +1330,7 @@ shape and forces it on every consumer. The pluggable seam
 deny then narrow) instead of A (narrow only)?** B gives a clean
 client error path (`subscription_denied` envelope), distinguishes
 "no data" from "no permission" (which Approach A conflates), and
-maps cleanly onto CUR-1331's two-layer model (role-to-permission
+maps cleanly onto the substrate's two-layer scope model (role-to-permission
 grants drive view-level deny; user-role-scope assignments expanded
 through containment projections drive row-level narrowing). C
 (post-filter) was rejected outright — leaks information via
@@ -1337,16 +1338,15 @@ timing/count side-channels and violates substrate-shaped filter
 composition.
 
 **Why no `ReactionServer` class? Why ship handlers + middleware
-directly?** The expected first consumers — `portal_server` and
-`diary_server` in `hht_diary` — already run their own
+directly?** Consumer server deployments typically already run their own
 `shelf` + `shelf_router` pipelines with deployment-specific
-middleware (Firebase auth, OpenTelemetry, CORS, logging). Forcing
+middleware (authentication, telemetry, CORS, logging). Forcing
 them to mount a `ReactionServer.handler` would either (a) put the
 reaction routes in an awkward nested subtree separate from their
 other routes, or (b) reduce `ReactionServer` to a property bag for
 extracting individual handlers — which is what `ReactionHandlers`
-just is, more honestly. The collapse-not-add migration story
-(the consumers' existing 30+ bespoke REST handlers shrink to ~5
+just is, more honestly. The collapse-not-add composition story
+(a consumer's existing bespoke REST handlers shrink to a handful of
 reaction handlers plus a few stragglers) makes the "framework
 wrapper" approach actively unhelpful: the consumer wants the
 reaction handlers *interleaved* with their own remaining routes,
@@ -1360,8 +1360,8 @@ A server-side cache mirroring the substrate's permission projection
 was considered and rejected for two reasons: (a) `policy.isPermitted`
 and `policy.effectivePermissionsFor` against `findViewRowsInTxn` are
 sub-millisecond for the row counts in question, and `subscribe` messages
-are not high-frequency (a portal user opens a handful of panels per
-session, not thousands), so the optimization has no measurable benefit;
+are not high-frequency (an interactive UI user opens a handful of panels
+per session, not thousands), so the optimization has no measurable benefit;
 (b) the cache would introduce per-connection state (cache mirror +
 substrate subscription managing it) that has to be cleaned up on
 disconnect and managed against race conditions when grants change
@@ -1440,88 +1440,9 @@ completion, transition is atomic. A fourth state would be redundant
 tab toggles, drawer-open-drawer-close, etc. Empirical sweet spot
 from similar systems; cheap to keep idle WS open for 30s.
 
-## Open questions
-
-1. **`Principal` wire encoding canonicalization.** The codec must
-   handle future `Principal` field additions without breaking older
-   clients. Tentative rule: unknown fields are preserved opaquely on
-   decode + re-encode (lossless), known fields are typed. Settled
-   during implementation as we encounter the case.
-2. **HTTP timeout defaults.** What's the right out-of-the-box
-   timeout for action submissions and snapshot fetches? 30 seconds
-   suggested as a placeholder; refine when we have measurement.
-3. **Reconnect backoff parameters.** 250ms initial, 30s cap,
-   doubling is a placeholder. Validate during testing; expose
-   override via `RemoteScope` constructor parameter (`reconnectBackoff`)
-   so deployments can tune.
-4. **Concurrent subscribes during reconnect.** If the client opens
-   `watch<T>` while the WS is in backoff, behavior should be: queue
-   the subscribe message until reconnection completes, then send.
-   Confirm during implementation.
-
 ## Future work
 
-Explicitly out of scope for this plan but anticipated:
-
-- **`resume-from-sequence` reconnect optimization** (v1.1). Wire-
-  compatible add. Client tracks last-applied sequence per
-  subscription; server resumes from that sequence on resubscribe.
-  Eliminates the snapshot-replay flash on reconnect.
-- **Connection-state observability** (v1.1). `Stream<ConnectionState>`
-  on `RemoteScope` for "Reconnecting…" UX. Variants:
-  `Connected`, `Disconnected`, `Reconnecting(attempt: N)`.
-- **Snapshot pagination** for very large views. Defer until measured
-  scale demands it. Wire shape: `{"type":"snapshot_batch", ...}` or
-  similar; details when implemented.
-- **Server-side metrics + observability hooks.** Connection counts,
-  subscription counts, message rates, errors. Probably exposed by
-  `ReactionHandlers` as a `metrics` getter feeding a consumer-supplied
-  sink (or per-handler counters that the consumer's existing
-  OpenTelemetry middleware can pick up).
-- **`JwtAuthValidator` reference impl in a sibling lib.** If
-  multiple consumers converge on the same JWT shape (e.g., a
-  `reaction_firebase_auth` package), a concrete validator could ship
-  separately from `reaction` proper. Same pluggability discipline.
-- **Cross-process predicates.** `SubscriptionFilter.predicate` is a
-  Dart closure and cannot be serialized over the wire; the wire codec
-  drops it on encode (decoded remote filters always have
-  `predicate == null`). If a future consumer needs predicate-based
-  filtering on remote subscriptions, the recommended path is a
-  named-predicate registry: register the predicate with the same
-  string identifier on both the client and the server (via
-  `ReactionHandlers` config), and the wire ships only the identifier.
-  Today no consumer uses `SubscriptionFilter.predicate`, so this is
-  documented as a future path rather than specified.
-- **Structured error encoding.** `DispatchParseDenied`,
-  `DispatchValidationDenied`, and `DispatchExecutionFailed` each carry
-  a substrate `error: Object` field. The wire codec encodes errors via
-  `error.toString()`; on decode, the error field is reconstructed as
-  the raw String (the substrate's `Object` field accepts it).
-  Consequence: structured error types do not round-trip with their
-  full structure. If a future consumer needs richer error info on the
-  client, the recommended path is either (a) the substrate adopts a
-  sealed `Error` type the wire can encode/decode generically, or
-  (b) an `ErrorCodec` extension point that consumers register on both
-  sides (analogous to the named-predicate path). Today no consumer
-  requires structured errors, so this is documented as a future path.
-
-## Roadmap and sequencing
-
-The roadmap document
-(`docs/superpowers/specs/2026-05-11-roadmap.md`) reflects:
-
-- Cross-process scope (Remote* impls + wire codecs + reference
-  server + `TrustingAuthValidator`).
-- Defers: production validators, resume-from-sequence, reactive
-  re-narrowing on permission/scope change.
-- **Sequencing:** impl ticket is gated on CUR-1331 impl landing. The
-  reaction server's per-subscription authz consults
-  `AuthorizationPolicy.isPermitted` /
-  `effectivePermissionsFor` / `ContainmentResolver` shapes that
-  CUR-1331 defines; targeting the final API directly avoids a sweep
-  of the same code when CUR-1331 impl lands.
-- Status: design draft committed; impl ticket TBD after CUR-1331
-  impl lands.
+Deferred work for this area is recorded in `spec/roadmap/reaction.md`.
 
 ## Reading order recommendation
 
@@ -1529,7 +1450,7 @@ For first contact:
 
 1. `spec/prd-reaction.md` Reading Order section (PRDs 1-5) — pins
    the obligations this design satisfies.
-2. `spec/scoped-permissions.md` (CUR-1331) — the substrate
+2. `spec/scoped-permissions.md` — the substrate
    permission shapes this design's server-side authz consults.
 3. This document, Sections 1 → 5 (module → wire → client → server →
    test).
@@ -1541,11 +1462,7 @@ For first contact:
 ## References
 
 - `spec/prd-reaction.md` — the 6 PRDs this design elaborates.
-- `spec/scoped-permissions.md` — CUR-1331 substrate primitives the
-  reference server's per-subscription authz consults.
+- `spec/scoped-permissions.md` — the substrate permission primitives
+  the reference server's per-subscription authz consults.
 - `spec/prd-library-charter.md` — epistemic-layer framing and AOP
   discipline.
-- `docs/superpowers/specs/2026-05-11-roadmap.md` — Phase progress,
-  cross-process impl status, sequencing notes.
-- Linear: CUR-1317 (libify), CUR-1331 (scope-aware permissions;
-  blocks cross-process impl).

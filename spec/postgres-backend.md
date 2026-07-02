@@ -16,24 +16,25 @@ that remains. The normative DEV-level obligations live in
 
 ## Why
 
-Phase IV (portal+server cutover) needs a server-side `StorageBackend`.
+Server-side deployments need a server-side `StorageBackend`.
 The substrate is backend-agnostic via the abstract `StorageBackend`
 interface. Shipping a second concrete impl alongside `SembastBackend`
 serves three purposes:
 
-- **Activates the deferred backend-portability commitment.** The
+- **Activates the backend-portability commitment.** The
   `EVS-PRD-portability` PRD asserts that the substrate runs on every
   Dart-supported runtime. Postgres is the first concrete server-side
   backend to prove this for server deployments.
-- **Unblocks Phase IV.** The portal-server / diary-server / portal-UI
-  cutover needs a backend it can actually deploy on Cloud SQL. Sembast
-  on a server is technically possible but operationally awkward.
+- **Unblocks server-side deployment of the full substrate.** A
+  server-side deployment needs a backend it can actually deploy on
+  Cloud SQL. Sembast on a server is technically possible but
+  operationally awkward.
 - **Hardens the `StorageBackend` contract.** Having two impls that both
   pass the conformance harness verifies that the abstraction boundary
   holds and that no sembast-specific behavior leaks through. The
   conformance harness covers both backends with the same assertions.
 
-## Open architectural decision: view-row representation
+## Architectural decision: view-row representation
 
 Three candidates were considered for materialized-view row storage:
 
@@ -48,8 +49,8 @@ Three candidates were considered for materialized-view row storage:
 **Chosen: JSONB blob per row** (option 1).
 
 The tradeoff: SQL-native queries on view contents go through JSONB
-operators (`row_data->>'field'`) rather than typed columns. The
-portal-side consumers of view rows query through the substrate's
+operators (`row_data->>'field'`) rather than typed columns. Consumers
+of view rows query through the substrate's
 `findViewRows` API today; they do not reach past the abstraction to
 query the table directly. Choosing JSONB now commits to that pattern.
 
@@ -185,22 +186,19 @@ store to the dedicated `backend_state` table.
 - **READ COMMITTED transactions.** Rejected; risk of phantom-read
   corrupting the sequence counter under concurrent writers.
 
-## Open questions
-
-- None blocking. Reactive change streams and connection pool sizing are
-  scoped follow-ups tracked in "Future work" below, not design gaps.
-
 ## Future work
 
-- **Reactive `subscribe<T>` over Postgres.** The sembast backend emits
-  `StoredEvent` on a `StreamController.broadcast` after each commit;
-  `subscribe<T>` consumes that stream. The Postgres backend does not
-  implement an equivalent stream — `subscribe<T>` over Postgres will
-  need polling or `LISTEN`/`NOTIFY` plumbing, and the choice between
-  them depends on the portal-server load profile. Follow-up ticket.
-- **Connection pool sizing for the portal load profile.** The current
-  `PostgresBackend` opens a single connection; portal-server deployment
-  will need a pool. Sizing depends on concurrent action submissions and
-  the read load from `findViewRows` calls, neither of which is
-  characterised yet. Follow-up alongside Phase IV portal-server
-  deployment.
+Deferred work for this area is recorded in `spec/roadmap/storage.md`.
+Two clarifications about the shipped baseline, to head off common
+misreadings:
+
+- **Same-process reactive `subscribe<T>` works on Postgres.** Live
+  updates flow through the `EventStore`-level post-commit publish bus
+  (`SubscriptionEngine`), which is backend-agnostic — nothing about
+  reactive subscribe is bound to sembast's change notifications. The
+  open item is only cross-process notification (another process's
+  writes against the same database are invisible without polling).
+- **`PostgresBackend` already runs over a connection pool.** It uses a
+  `Pool` (`maxConnectionCount: 4`) with SERIALIZABLE transactions and
+  serialization-failure retry; the only open item is exposing the pool
+  size as an `open()` parameter.

@@ -37,17 +37,19 @@ F. A non-canonical event SHALL remain visible in the log and in subscriptions; t
 
 **Why is this in the substrate, not the application?** The library is the only component with the necessary visibility — it sees every event, it runs the materializer, it evaluates the rules. Pushing canonicalization to the application would require every consumer to reimplement multi-source resolution, with all the audit-divergence risks that entails. Concentrating it in the substrate keeps the audit story uniform across consumers.
 
-## Status and future work
+## Status
 
-**Status (v1):** Designed; dormant. The PRD pins the rule grammar (assertions A–F), and the substrate retains the per-event authority identifier needed to evaluate rules later. v1 ships single-source-per-aggregate-type as the only behavior; the `single-source-per-aggregate-type today` architectural commitment in CLAUDE.md is in force. No rule events are emitted or interpreted by v1 code paths.
-
-**Activation (Phase II):** Implementing the assertions above unlocks scenarios surfaced in `docs/scenarios/` that v1 cannot serve end-to-end:
-
-- `docs/scenarios/supply-chain.md` — the cross-org provenance chain IS the value proposition, but v1's single-source assumption means a cross-org canonical timeline only exists *per org*; consolidating multiple org logs into one canonical view requires rules admitting other authorities, plus the approval pattern in assertion E.
-- `docs/scenarios/iot-sensor-network.md` — multi-source-per-farm is intrinsic: each gateway is a Source, each farm aggregates gateways. v1 works if a single gateway is canonical per sensor aggregate, but the design space the scenario explores (fleet operations, multi-farm consolidation) needs Phase II.
-- `docs/scenarios/retail-pos.md` — offline-first registers as Sources during a working day, reconciled at close. v1's first-author-canonicalization gets the day's first register but not the cross-register merges that close-of-day reconciliation implies.
-
-These three scenarios are not gating v1; they are the explicit unlock conditions for Phase II activation.
+This PRD pins the rule grammar (assertions A–F). The substrate retains
+the per-event authority-identity and ordering seams the rules would
+evaluate, but the canonicalization layer itself is unbuilt: no rule
+events are emitted or interpreted, and the single-source-per-aggregate-type
+invariant holds (the `single-source-per-aggregate-type today`
+architectural commitment in CLAUDE.md is in force). Building the
+canonicalization layer — and the scenarios it unlocks
+(`docs/scenarios/supply-chain.md`, `iot-sensor-network.md`,
+`retail-pos.md`, whose cross-authority consolidations single-source
+deployments cannot serve end-to-end) — is recorded in
+`spec/roadmap/multi-source-editing.md`.
 
 ## Changelog
 

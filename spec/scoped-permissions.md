@@ -1,15 +1,13 @@
 # Scoped Permissions
 
-**Phase**: I (substrate primitive; precedes portal cutover in CUR-1170)
-**Status**: Implemented — normative requirement blocks (`EVS-PRD-scoped-permissions` plus supporting `EVS-DEV-*`) are present in this file (see below) and active in the requirement graph.
-**Last updated**: 2026-05-13
-**Linear**: CUR-1331
-
-> **Lifecycle note.** This file was authored as a design document and grew its normative `EVS-{TYPE}-{component}` requirement blocks in place as the design stabilized — the brainstorm → stabilize → migrate lifecycle in `spec/README.md` is short-circuited here so the design lives in `spec/` from the start (avoiding information loss in a migration step). Those blocks are now present (see the `## EVS-PRD-scoped-permissions` / `## EVS-DEV-*` sections), so elspais treats this file as normative.
+**Status**: Implemented — normative requirement blocks (`EVS-PRD-scoped-permissions` plus supporting `EVS-DEV-*`) are in this file.
 
 ## Scope
 
-This document designs the substrate's scope-aware permission mechanism. The v1 substrate ships role-to-permission grants only — coarse-grained, no scope value binding. The portal already runs site-scoped Study Coordinator and patient-scoped roles in production (today, via Postgres RLS). Porting the portal onto the substrate without scoping would silently downgrade production functionality. This design supplies the mechanism.
+This document designs the substrate's scope-aware permission mechanism. Applications routinely need role grants bound to scope values — a
+coordinator role limited to one site, a participant role limited to
+one person's records. Coarse role-to-permission grants cannot express
+that; this design supplies the scope-aware mechanism.
 
 In scope:
 
@@ -19,18 +17,17 @@ In scope:
 - Action API extension so actions supply scope values from parsed input at dispatch time.
 - `AuthorizationPolicy` signature reshape.
 - Dispatch consistency stance: authorize and execute share a single storage-transaction snapshot.
-- Migration of existing in-lib types (`ScopeClass` enum, `Permission.scope`, `Principal.activeSite`) — pre-ship, so cleanest cut rather than promoter chain.
 - Forward-compatibility check against future bundling / CRUD primitive work.
 
-Out of scope (deferred to follow-on tickets):
+Out of scope:
 
-- Implementation. This spec is the design; impl lands in a separate ticket once design stabilizes.
-- Permission bundling / `PermissionGroup` primitive (see Future Work).
-- Substrate-defined CRUD Action templates per `ProjectionSpec` (see Future Work).
-- Range comparison (numeric/date) on scope values (see Future Work).
-- Explicit deny-grants that override allows (see Future Work).
-- Multi-source-aware grant visibility (Phase II; this v1 design is single-source-per-aggregate-type per the existing commitment).
-- Portal/hht_diary-side migration off Postgres RLS (CUR-1170, downstream of this).
+- Permission bundling / `PermissionGroup` primitive.
+- Substrate-defined CRUD Action templates per `ProjectionSpec`.
+- Range comparison (numeric/date) on scope values.
+- Explicit deny-grants that override allows.
+- Multi-source-aware grant visibility (this design is single-source-per-aggregate-type per the existing commitment).
+
+Deferred work for these areas is recorded in `spec/roadmap/permissions.md` (and `spec/roadmap/multi-source-editing.md` for multi-source grant visibility).
 
 ## Architectural framing
 
@@ -40,7 +37,7 @@ This is a **Layer 2 convention extension** under the Append-Only Primitives disc
 - The `AuthorizationPolicy` mechanism remains substrate code (closed-under-events trust model). Alternatives are library extensions, not app-supplied policy logic.
 - Once a primitive ships under a name with given semantics, those semantics are frozen; alternative behavior is a new primitive, not a re-interpretation.
 
-This design is **pre-ship** (Phase I has not released). The `permission_granted` / `permission_revoked` event types and their payload shapes are reshaped here; the shapes pinned in this spec become frozen under AOP once Phase I ships.
+The `permission_granted` / `permission_revoked` event types and payload shapes pinned in this spec are frozen under the Append-Only Primitives discipline.
 
 The scope-class mechanism is **domain-neutral**: the substrate ships the registration and matching machinery; apps register their own scope classes (`site`, `patient`, `project`, etc.). The substrate has no built-in knowledge of clinical-trial concepts. This is a corollary of the lib's domain-neutral commitment; the substrate carries no hardcoded scope-class enum.
 
@@ -276,7 +273,7 @@ grants:
     - patient.view
 ```
 
-User-role assignments are **not** in the YAML seed — they are runtime user-management events that the application emits (the portal, hht_diary). The substrate exposes the event types; the application chooses when to emit them.
+User-role assignments are **not** in the YAML seed — they are runtime user-management events that the consuming application emits. The substrate exposes the event types; the application chooses when to emit them.
 
 A `BootstrapRoleAssignments` seed applier mirrors the existing `bootstrap_action_permissions.dart` pattern for test fixtures (declarative list of `(user_id, role, scope)` tuples that the substrate folds into the projection without the full event pipeline).
 
@@ -310,6 +307,8 @@ abstract class Action<TInput, TResult> {
 ```
 
 Default returns `null` so existing/unscoped actions don't need to override. Scoped actions provide an impl. Purity contract matches `parseInput` / `validate`.
+
+Registration-time validation cannot detect a `scopeFor` that returns `null` for some input shape; such dispatches deny at runtime with `scopeUnresolvable`. Consumers SHOULD exercise each scoped action's `scopeFor` against realistic and edge-case inputs in their own tests.
 
 **`ScopeValue`** (sealed, three variants matching the JSON shapes):
 
@@ -393,7 +392,7 @@ This closes the narrow race where an ingest-arriving revocation could land betwe
 
 The decision this pins: a revocation arriving between two dispatches takes effect on the *second* one; a revocation arriving during a single dispatch's transaction takes effect *after* it commits. Concretely on a single-source v1 deployment without ingest, the race window doesn't exist at all; the transaction stance is the correct posture regardless and prepares for ingest-active deployments.
 
-**Implementation pre-req — transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. The current `StorageBackend` surface (`event_sourcing/lib/src/storage/storage_backend.dart`) provides `readViewRowInTxn` (single-row, in-txn) and `findViewRows` (multi-row, non-transactional); the transactional-snapshot guarantee requires a transactional multi-row read. The impl ticket adds `findViewRowsInTxn(Transaction, viewName, {filter})` (or equivalent — name TBD by impl) to the abstract `StorageBackend` interface, with implementations in each backend (sembast first). This is a substrate-interface addition, not an app surface; follows the same abstract-backend-agnostic contract as existing `*InTxn` methods.
+**Transactional view-row scan.** The match algorithm enumerates all `user_role_scopes` rows for a given `(userId, role)` pair inside the dispatch transaction. `StorageBackend` (`event_sourcing/lib/src/storage/storage_backend.dart`) exposes `findViewRowsInTxn(Transaction txn, String viewName, {Map<String, Object?>? where, int? limit, int? offset})` for these transaction-consistent authorization reads, so the authorize-stage read sees the same snapshot as the execute-stage append. It is implemented by both backends and follows the same abstract-backend-agnostic contract as the other `*InTxn` methods.
 
 **Denial reasons**:
 
@@ -409,134 +408,45 @@ DenyReason:
                        captures it so it surfaces loudly.
 ```
 
-### Section 4 — Migration and cleanup
+### Section 4 — Type surface
 
-This design is pre-ship; per the libify greenfield posture, we prefer cleanest design over backwards-compat shims. No promoters are required; the existing event-type names are reused with reshaped payloads, and the substrate emits one `lib_version_initialized` carrying the new shapes.
+`Principal` carries `userId` and `activeRole`; there is no session-scope
+context on the principal (the substrate auto-discovers every scope the
+user is assigned to under the active role). `Permission` carries `name`
+and a nullable `scopeClass` (null = unscoped). `ScopeValue` is the sealed
+three-variant type (`BoundScope` / `ValueWildcardScope` /
+`TotalWildcardScope`) with the JSON contract in Section 2.
 
-**Deletions:**
+The scope machinery lives in `event_sourcing/lib/src/permissions/`
+(`scope_class_spec.dart` for `ScopeClassSpec` / `ContainmentReference` /
+`ScopeClassRegistry`; `table_backed_authorization_policy.dart` for the
+match algorithm and `effectivePermissionsFor`; `containment_resolver.dart`
+for the containment walk; `scope_assignment.dart` /
+`effective_authorization.dart` for the read surface; the
+`role_assigned` / `role_unassigned` payloads and the `user_role_scopes`
+projection spec) and in `event_sourcing/lib/src/actions/`
+(`scope_value.dart`, `permission.dart`, `authorization_decision.dart`).
+A `BootstrapRoleAssignments` seed applier folds declarative
+`(user_id, role, scope)` tuples into the projection for test fixtures.
 
-```text
-event_sourcing/lib/src/actions/scope_class.dart                  DELETE
-  - the ScopeClass{global, site, self} enum
+### Section 5 — Future work
 
-event_sourcing/lib/src/actions/permission.dart                   MODIFY
-  - drop 'scope' field; add nullable 'scopeClass: String?'
-
-event_sourcing/lib/src/actions/principal.dart                    MODIFY
-  - drop UserPrincipal.activeSite (legacy hht_diary debt)
-
-event_sourcing/lib/src/permissions/permission_granted_payload.dart  MODIFY
-  - drop 'scope' field
-
-event_sourcing/lib/src/permissions/table_backed_authorization_policy.dart
-  - remove _scopePreconditionMet                                 MODIFY
-  - rewrite isPermitted around the new match algorithm (Section 2)
-  - implement effectivePermissionsFor
-
-event_sourcing/lib/src/actions/authorization_decision.dart       MODIFY
-  - drop DenyReason.sessionPreconditionMissing
-  - add DenyReason.scopeUnresolvable
-```
-
-**Additions:**
-
-```text
-event_sourcing/lib/src/permissions/scope_class_spec.dart         NEW
-  - ScopeClassSpec, ContainmentReference
-  - ScopeClassRegistry (composition-time validation)
-
-event_sourcing/lib/src/actions/scope_value.dart                  NEW
-  - sealed ScopeValue + BoundScope / ValueWildcardScope /
-    TotalWildcardScope; JSON ser/de
-
-event_sourcing/lib/src/permissions/role_assigned_payload.dart    NEW
-event_sourcing/lib/src/permissions/role_unassigned_payload.dart  NEW
-
-event_sourcing/lib/src/permissions/user_role_scopes_spec.dart    NEW
-
-event_sourcing/lib/src/permissions/scope_assignment.dart         NEW
-event_sourcing/lib/src/permissions/effective_authorization.dart  NEW
-
-event_sourcing/lib/src/permissions/role_assignment_seed.dart     NEW
-event_sourcing/lib/src/permissions/bootstrap_role_assignments.dart  NEW
-
-event_sourcing/lib/src/permissions/containment_resolver.dart     NEW
-```
-
-**Updates** (sketch; not exhaustive):
-
-```text
-- ActionDispatcher authorize stage      rewire per Section 3
-- ActionDispatcher                      wrap authorize+execute in one tx
-- yaml_seed_loader.dart                 drop 'scope' field
-- in_memory_role_matrix_reader.dart     drop scope handling
-- materialized_view_role_matrix_reader.dart  same
-- snapshot_role_matrix_reader.dart      same
-- permission_seed.dart                  drop scope from seed shape
-- seed_validator.dart                   add scope-class-registry validation
-- bootstrap_action_permissions.dart     unchanged in shape; payload change
-- fail_safe_authorization_policy.dart   replace permissionsFor with
-                                         effectivePermissionsFor returning
-                                         an empty EffectiveAuthorization
-- example/ and example_action_permissions/  add a scoped action sample
-```
-
-**Test impact:** the 13 files under `event_sourcing/test/permissions/` need updates. The largest rewrite is `table_backed_authorization_policy_test.dart` for the new match algorithm. New test files cover `ScopeClassSpec` validation, `ContainmentResolver`, hierarchy expansion, all wildcard cases, multi-assignment union within active role, fail-closed-on-missing-containment, and `scopeUnresolvable` denials.
-
-**Spec / PRD work:**
-
-- This design doc lives at `spec/scoped-permissions.md` from the start (see the lifecycle note at the top of this file). Normative `EVS-PRD-scoped-permissions` and supporting `EVS-DEV-*` requirement blocks land in-place against this file as impl stabilizes; no migration step.
-- `spec/prd-permissions-as-events.md` likely picks up additional assertions about scope-class registration and event-derived containment evaluation.
-- `spec/prd-action-dispatch.md` may need refinement of assertion B (the authorize stage acquires scope-binding sub-steps) and of the consistency / transaction stance.
-- DEV-level requirements (`EVS-DEV-*`) authored alongside impl per CLAUDE.md.
-
-**Downstream impact** (out of scope; for context):
-
-`hht_diary` (only consumer today) will need to:
-
-- Register `ScopeClassSpec`s for `site` and `patient`.
-- Register the `patient_site_index` table projection (it already exists in some form).
-- Implement `scopeFor` on every scoped Action.
-- Emit `role_assigned` events on user-management operations (replaces today's RLS-driven assignments at portal cutover).
-- Drop `activeSite` from Principal construction.
-
-This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-1331 or its impl follow-up.
-
-### Section 5 — Open questions and future work
-
-**Open (pre-impl decisions still to make):**
-
-1. **Containment-ref column-mapping typing.** Today's `TableProjection` rows have a row-key plus arbitrary columns. `ContainmentReference` carries column-name strings. The projection-row contract could be more typed for scope-class projections (e.g., a `ScopeIndexProjection` subtype with declared `keyType` / `parentValueType`). Cleaner type discipline; more boilerplate. Tend yes for future tightening; not load-bearing for v1.
-
-2. **Action validation for scoped-permission completeness.** A scoped `Action` whose `scopeFor` returns `null` for some input shape silently denies with `scopeUnresolvable`. Registration-time validation cannot detect this (return value depends on input). Recommended posture: runtime denial as designed, with a **DEV-level test obligation per scoped action** that exercises `scopeFor` against realistic and edge-case inputs.
-
-**Future work (deliberately deferred):**
-
-- **F1 — Range / numeric scope classes.** Equality + wildcard + containment is v1. Range comparison (numeric, lexical, date) ships as a future primitive under AOP discipline if a real use case arises. None today.
-
-- **F2 — Explicit deny-grants.** "Supervisor cannot edit, even at sites they are assigned to." Today's model is union of allows; a deny-grant primitive (new event type) plus conflict-resolution semantics ships separately if needed. Out of scope.
-
-- **F3 — Multi-source-aware grant visibility.** The substrate's `single-source-per-aggregate-type today` commitment defers this to Phase II. Each source remains authority over its own log: a remote source's authorization state at the time it emitted an event is what's recorded in the remote source's log; ingesting peers can refuse to apply such events to their own views (and that refusal is itself a recorded event), but cannot retroactively unmake the remote source's log.
-
-- **F4 — Permission inheritance / role composition.** "Role SC inherits from role Clinician." Modelable but adds match-algorithm complexity. Not requested; defer.
-
-- **F5 — Caching for hot-path authorization.** Every dispatch reads `role_permission_grants`, `user_role_scopes`, and (often) a containment projection. Phase I is fine without caching; a substrate-internal LRU keyed by `(userId, permName, scopeClass, scopeValue)` is a Phase II optimization if profiling demands it.
-
-- **F6 — Action bundling / `PermissionGroup` primitive.** Apps in practice construct several Actions per projection (CRUD plus custom verbs). Today each gets its own Permission. A `PermissionGroup` primitive (named bundle of permission names, grantable in one stroke) would compress the YAML and grant model. Pure-app-side bundling via YAML macros is already possible without substrate change; a substrate-level primitive is an opt-in AOP follow-up.
-
-- **F7 — Substrate-defined CRUD Action templates per `ProjectionSpec`.** The substrate knows projection row shapes; it could in principle define standard create/update/delete Action classes per registered `ProjectionSpec`, with field-level permissions derived from the row shape. This is a substantial Layer-2 convention extension — a separate brainstorming exercise of its own scope. Not bundled into CUR-1331. The v1 design here (one Permission per Action) is forward-compatible: F6 and F7 both layer as additional ways to declare grants and unfold to individual `(permission, scopeClass)` pairs at evaluation time without changing the match algorithm or grant data model.
-
-- **F8 — Per-row authorization predicate (`RowFilterSpec`).** Today's model authorizes *actions* against scopes; a row a user can read is determined at view-subscription time by the projection's scope contract or by the view-level `ViewScopeRegistry` binding in `reaction`. Some domains need *per-row* visibility predicates that cannot be reduced to a single scope: the multiplayer-game scenario (`docs/scenarios/multiplayer-game.md`) needs "you can only read your own hand of cards, not the opponent's, even though both rows are in the same `hands` view." The shape of the primitive (working name `RowFilterSpec`, attached to a `ProjectionSpec` or a `ViewScopeBinding`) would let a projection or binding declare a row-level visibility predicate evaluated against `(principal, row, effectiveAuthorization)`; rows that fail evaluation are suppressed from subscriptions and reads. Today's workaround is to make every privacy boundary its own aggregate so view-level scoping suffices; this works but multiplies aggregates and projections. F8 ships as an AOP-discipline primitive when a real use case arrives; the multiplayer-game scenario is the motivating sketch.
+Deferred extensions to this model — range/numeric scope classes, explicit
+deny-grants, multi-source-aware grant visibility, role composition,
+hot-path authorization caching, `PermissionGroup` bundling,
+substrate-defined CRUD Action templates, the per-row `RowFilterSpec`
+predicate, and typed containment-ref column mapping — are recorded in
+`spec/roadmap/permissions.md`.
 
 ## Decisions considered and rejected
 
-- **Hardcoded substrate scope-class enum extended with `patient`.** Rejected: violates the lib's domain-neutral commitment. The same charter clause that says "Diary belongs in hht_diary" applies to "Site / Patient" as named substrate concepts. Generalizing to app-registered `ScopeClassSpec`s is the correct cleanup.
+- **Hardcoded substrate scope-class enum extended with `patient`.** Rejected: violates the lib's domain-neutral commitment. The same charter clause that keeps domain types out of the substrate applies to "Site" / "Patient" as named substrate concepts. Generalizing to app-registered `ScopeClassSpec`s is the correct cleanup.
 
-- **Scope value on the role-to-permission grant** (so a grant carries `(role, permission, scopeClass, scopeValue)` directly). Rejected: implies synthesized `SC@SiteA` roles, exploding role names by N sites and breaking the role-as-template mental model the portal uses today.
+- **Scope value on the role-to-permission grant** (so a grant carries `(role, permission, scopeClass, scopeValue)` directly). Rejected: implies synthesized `SC@SiteA` roles, exploding role names by N sites and breaking the role-as-template mental model.
 
 - **Both grant-side and assignment-side scope binding, with intersection semantics.** Rejected: maximum flexibility, but intersection-of-wildcards-with-values produces non-intuitive behaviors and an incoherent YAML grammar.
 
-- **Multi-role union across all of a user's assigned roles simultaneously.** Rejected: the portal's user-experience and audit story treat one role as actively assumed at a time (`activeRole`). The substrate filters assignments by `activeRole`; "change hats to act as another role" is a session-level operation. Within the active role, union across multiple scope assignments is the rule.
+- **Multi-role union across all of a user's assigned roles simultaneously.** Rejected: the user-experience and audit story treat one role as actively assumed at a time (`activeRole`). The substrate filters assignments by `activeRole`; "change hats to act as another role" is a session-level operation. Within the active role, union across multiple scope assignments is the rule.
 
 - **Sentinel `'*'` string for wildcard in `scope_value`.** Rejected: collides with the (vanishingly rare but real) case of a legitimate scope value being the literal `'*'`. Instead, `ScopeValue` is a sealed type with three variants and three distinct JSON shapes (`bound`, `value-wildcard`, `total-wildcard`).
 
@@ -551,8 +461,6 @@ This work is portal-cutover-side (CUR-1170 is blocked-by). Not in scope for CUR-
 - `spec/prd-permissions-as-events.md` — base PRD for permissions-as-events.
 - `spec/prd-action-dispatch.md` — the dispatch pipeline this design extends.
 - `spec/prd-library-charter.md` — the epistemic-layer framing and AOP discipline.
-- `docs/superpowers/specs/2026-05-09-projections-and-subscribe-design.md` — the projection model this design's match algorithm reads against.
-- Linear: CUR-1331 (this design), CUR-869 (multi-role symptom), CUR-988 (cascading 403 symptom), CUR-1170 (portal cutover, blocked-by), CUR-1192 (origin of the `AuthorizationPolicy` interface), CUR-1317 (libify).
 
 ---
 
