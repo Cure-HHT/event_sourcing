@@ -13,7 +13,7 @@ void main() {
       // coverage lives in the per-handler tests; E2E coverage in
       // e2e/auth_test.dart.
     },
-    skip: 'full coverage in e2e/auth_test.dart (Task 27) and per-handler tests',
+    skip: 'full coverage in e2e/auth_test.dart and per-handler tests',
   );
 
   test(

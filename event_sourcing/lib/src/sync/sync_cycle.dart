@@ -160,11 +160,10 @@ class SyncCycle {
     }
   }
 
-  /// Poll a relay's read-side API for inbound tombstones authored there
-  /// (deletions initiated by another party) and apply them locally. Ships
-  /// as a no-op stub so the call site is in place; a future revision
-  /// implements the polling body.
-  // TODO(CUR-1154): implement inbound tombstone polling.
+  /// Inbound-tombstone hook, invoked once per cycle after every outbound
+  /// drain completes. The body is a no-op: remote-authored tombstones
+  /// (deletions initiated by another party) do not propagate inbound.
+  /// The capability is recorded in `spec/roadmap/sync.md`.
   Future<void> pollInbound() async {
     // Intentionally empty.
   }

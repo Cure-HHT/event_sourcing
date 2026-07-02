@@ -79,6 +79,7 @@ Rules:
 - `Implements` is **deprecated** as of this repo's authoring; use `Refines` for the inheritance relationship and `Satisfies` for template instantiation.
 - Parent requirements MUST NOT reference children.
 - Use `-` if the requirement has no parent at this relationship type.
+- Root requirements (no parent at any relationship type) MAY omit the `Refines` line entirely; `elspais fix` normalizes root headers to this form, and its output is the canonical formatting.
 
 ---
 
