@@ -1,6 +1,6 @@
 # Designing a multiplayer card-game backend on `event_sourcing`
 
-A turn-based card game (Hearts) deployed as a portal-style topology: a single
+A turn-based card game (Hearts) deployed as a single-server topology: a single
 authoritative Dart server holds the substrate (one log, Postgres), and Flutter
 clients (browser + mobile) talk to it through `reaction`'s `RemoteScope`. Each
 table is its own aggregate; concurrent matches are independent log subtrees
@@ -125,7 +125,8 @@ but not to spectators" you'd need yet another aggregate. **Gap to flag:** the
 substrate has no per-row authorization predicate; everything must reduce to
 aggregate-id narrowing. For a game with three or four privacy tiers per match,
 this gets baroque, and a `RowFilterSpec` on `ProjectionSpec` (declarative,
-composing the same containment primitives) would map the domain more directly.
+composing the same containment primitives) would map the domain more
+directly — tracked as a roadmap item (`spec/roadmap/permissions.md`).
 
 **Spectator views** are then naturally derived projections: a
 `match_state_public` projection with `SelectedFields([...])` strips any leaked

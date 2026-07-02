@@ -23,7 +23,7 @@ under "Two layers of trust" and in `CLAUDE.md` under "Epistemic layers" (with
 |---|---|
 | [Medical diary](medical-diary.md) | Near-perfect fit. Hash chain → FDA tamper evidence; per-aggregate ordering → pharmacokinetics correctness; provenance → multi-hop chain-of-custody. Hide-not-delete instead of tombstones. |
 | [Banking ledger](banking-ledger.md) | Near-perfect fit. Append-atomic-with-view is *existential* (projection drift = insolvency). NO tombstones — reversals are compensating events. Double-entry enforced at the Action level. |
-| [Supply chain](supply-chain.md) | Provenance chain literally IS the value proposition. v1 works per-org; true cross-org canonical timeline needs Phase II multi-source. |
+| [Supply chain](supply-chain.md) | Provenance chain literally IS the value proposition. Works per-org today; a true cross-org canonical timeline needs the multi-source roadmap item (`spec/roadmap/multi-source-editing.md`). |
 | [Multiplayer game](multiplayer-game.md) | Per-aggregate ordering makes turn correctness fall out without locks. The hidden-information problem stretches scoping — every privacy boundary must be its own aggregate-with-scope. |
 | [Retail POS](retail-pos.md) | Offline-first registers as Sources. Append-atomic-with-view → honest inventory; hash chain → fraud-resistant cash drawer. End-of-day reconciliation needs Events() mode. |
 | [IoT sensor network](iot-sensor-network.md) | Per-aggregate ordering doubles as a clock-drift detector. Multi-source per farm is built-in. Three gaps: bypass dispatcher for telemetry volume; TimeBucketProjectionSpec doesn't exist; volume forces sharding. |
@@ -62,10 +62,10 @@ under "Two layers of trust" and in `CLAUDE.md` under "Epistemic layers" (with
 
 | Gap | Hit by | Status |
 |---|---|---|
-| Phase II multi-source canonicalization | Supply chain, IoT, retail POS | Designed; dormant in v1 |
-| Per-row authorization predicates | Multiplayer game (hidden info) | Not in spec; `RowFilterSpec` would help |
-| Time-bucketed projection primitive | IoT | Future Layer-2 primitive candidate |
-| Volume scaling beyond single Postgres | IoT at scale | Substrate-per-shard works; per-shard partitioning is out-of-scope |
+| Multi-source canonicalization | Supply chain, IoT, retail POS | Roadmap item (`spec/roadmap/multi-source-editing.md`); dormant today |
+| Per-row authorization predicates | Multiplayer game (hidden info) | Roadmap item (`spec/roadmap/permissions.md`); `RowFilterSpec` would help |
+| Time-bucketed projection primitive | IoT | Roadmap item (`spec/roadmap/projections.md`); `TimeBucketProjectionSpec` candidate |
+| Volume scaling beyond single Postgres | IoT at scale | Roadmap item (`spec/roadmap/storage.md`); substrate-per-shard works today, per-shard partitioning is out of scope |
 | Cross-org transport auth federation | Supply chain | Known incomplete trust boundary (CLAUDE.md) |
 | CRDT/OT semantics | Collaborative editing | Explicitly outside scope; app-side concern |
 

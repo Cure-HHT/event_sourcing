@@ -127,8 +127,8 @@ multiple registers in S AND by `ReceiveShipmentAction` dispatched at a
 back-office terminal. Today this works because the *projection* is the
 aggregator and the underlying events live on different aggregate types — but
 a cleaner model would let multiple Sources contribute events to one logical
-`store_sku_inventory` aggregate. That's the Phase II multi-source machinery,
-currently dormant. For v1 retail, the workaround is to keep inventory state in
-the projection rather than in an aggregate, which is fine but means inventory
-reconciliation arithmetic lives in projection-row updates rather than in event
-payloads.
+`store_sku_inventory` aggregate. That's the multi-source roadmap item
+(`spec/roadmap/multi-source-editing.md`), currently dormant. The workaround
+today is to keep inventory state in the projection rather than in an
+aggregate, which is fine but means inventory reconciliation arithmetic lives
+in projection-row updates rather than in event payloads.
