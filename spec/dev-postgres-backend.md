@@ -1,6 +1,6 @@
 # EVS-DEV-postgres-backend: Postgres backend reference impl
 
-**Level**: DEV | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-event-log, EVS-PRD-portability
 
 ## Purpose
@@ -8,8 +8,7 @@
 A second `StorageBackend` implementation alongside `SembastBackend`, targeting
 server-side deployments (Cloud SQL / managed Postgres). Demonstrates that the
 substrate's persistence contract is backend-agnostic, and provides the
-storage layer for the portal-server / diary-server / portal-ui phase-IV
-cutover.
+storage layer for server-side deployments.
 
 ## Assertions
 
@@ -41,11 +40,9 @@ F. `PostgresIdempotencyStore` SHALL pass the conformance harness in
 
 ## Rationale
 
-**Why JSONB-blob for view rows?** See design spec
-`docs/superpowers/specs/2026-05-12-postgres-backend-design.md`. Briefly:
-closest fit to sembast semantics; minimal DDL evolution machinery; the
-portal-side consumers query view rows through the substrate's
-`findViewRows` API, not directly against the table.
+**Why JSONB-blob for view rows?** Closest fit to sembast semantics;
+minimal DDL evolution machinery; consumers query view rows through the
+substrate's `findViewRows` API, not directly against the table.
 
 **Why a single `fifo_entries` table?** Cleaner DDL surface than the
 sembast `fifo_<destinationId>` store-per-destination layout; observable
@@ -58,5 +55,9 @@ calls cannot both read the same value and stamp two events with the same
 sequence number. The substrate is single-writer-per-source by design
 but the storage layer should not assume the caller has external
 synchronization.
+
+## Changelog
+
+- 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Postgres backend reference impl* | **Hash**: e69b5a15

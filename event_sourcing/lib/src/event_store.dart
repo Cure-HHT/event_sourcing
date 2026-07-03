@@ -161,9 +161,9 @@ class EntryTypeVersionDowngradeError extends Error {
       'registeredVersion >= $fromVersion for "$entryType".';
 }
 
-/// The substrate's append-only event log. Serves both mobile widgets and
-/// portal callers via one `append` method that takes per-field arguments
-/// plus optional `SecurityDetails`.
+/// The substrate's append-only event log. Serves callers across mobile and
+/// server deployments via one `append` method that takes per-field
+/// arguments plus optional `SecurityDetails`.
 ///
 /// `EventStore` is permission-blind: it exposes unguarded
 /// read/write APIs to anything holding a reference. All access control

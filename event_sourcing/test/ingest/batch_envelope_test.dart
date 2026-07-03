@@ -36,7 +36,7 @@ void main() {
         batchId: 'batch-xyz',
         senderHop: 'mobile-device',
         senderIdentifier: 'device-abc',
-        senderSoftwareVersion: 'daily_diary@1.0.0',
+        senderSoftwareVersion: 'my_app@1.0.0',
         sentAt: DateTime.parse('2026-04-24T12:00:00Z'),
         events: <Map<String, Object?>>[_fakeEventMap('e1')],
       );
@@ -53,7 +53,7 @@ void main() {
         batchId: 'batch-xyz',
         senderHop: 'mobile-device',
         senderIdentifier: 'device-abc',
-        senderSoftwareVersion: 'daily_diary@1.0.0',
+        senderSoftwareVersion: 'my_app@1.0.0',
         sentAt: DateTime.parse('2026-04-24T12:00:00Z'),
         events: <Map<String, Object?>>[
           _fakeEventMap('e1'),

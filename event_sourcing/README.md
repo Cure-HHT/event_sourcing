@@ -252,7 +252,7 @@ deployment — see the guide's "Advanced" chapter for detail:
   transport; the inbound ingest path verifies the hash chain against
   what's stored, extends the provenance chain, and admits events into the
   same log (flowing into projections identically to local appends).
-  v1 treats one source per aggregate type as canonical; multi-source
+  0.x treats one source per aggregate type as canonical; multi-source
   canonicalization is designed but dormant.
 - **Verification** — `verifyEventChain` / `verifyIngestChain` recompute
   the hash chains from the stored log alone and return a `ChainVerdict`.

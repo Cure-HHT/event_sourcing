@@ -4,21 +4,21 @@
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/synthetic_ingest.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/synthetic_ingest.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
-Future<EventStoreBundle> _bootstrapPortal(String path) async {
+Future<EventStoreBundle> _bootstrapHub(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
   return bootstrapEventStore(
     backend: backend,
     source: const Source(
-      hopId: 'portal-server',
+      hopId: 'hub-server',
       identifier: '11111111-1111-4111-8111-111111111111',
-      softwareVersion: 'event_sourcing_datastore_demo@0.1.0+1',
+      softwareVersion: 'event_sourcing_demo@0.1.0+1',
     ),
     entryTypes: allDemoEntryTypes,
     destinations: const <Destination>[],
@@ -37,16 +37,16 @@ void main() {
 
   group('DownstreamBridge.deliver', () {
     test('valid esd/batch@1 envelope returns SendOk', () async {
-      final portal = await _bootstrapPortal(nextPath());
-      final bridge = DownstreamBridge(portal.eventStore);
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
       final result = await bridge.deliver(_wirePayload(envelope.encode()));
       expect(result, isA<SendOk>());
     });
 
     test('garbage bytes return SendPermanent (decode failure)', () async {
-      final portal = await _bootstrapPortal(nextPath());
-      final bridge = DownstreamBridge(portal.eventStore);
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
       final result = await bridge.deliver(
         _wirePayload(Uint8List.fromList(<int>[0, 1, 2, 3])),
       );
@@ -54,8 +54,8 @@ void main() {
     });
 
     test('unsupported wireFormat returns SendPermanent', () async {
-      final portal = await _bootstrapPortal(nextPath());
-      final bridge = DownstreamBridge(portal.eventStore);
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
       final payload = WirePayload(
         bytes: envelope.encode(),

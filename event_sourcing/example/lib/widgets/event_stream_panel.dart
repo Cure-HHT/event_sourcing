@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 // Validated by: JNY-01 event order; JNY-02 CQRS (aggregate_type variety).
@@ -128,7 +128,7 @@ class _EventRow extends StatelessWidget {
         ? event.aggregateId.substring(event.aggregateId.length - 6)
         : event.aggregateId;
     //   `[L]` flags rows originated on this pane's install; `[R]` flags
-    //   rows ingested from another hop (e.g. mobile -> portal via the
+    //   rows ingested from another hop (e.g. mobile -> hub via the
     //   downstream bridge).
     final originBadge = locallyOriginated ? '[L]' : '[R]';
     return InkWell(

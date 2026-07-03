@@ -24,7 +24,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -88,9 +88,9 @@ void main() {
       () async {
         final orig = await _openStore(hopId: 'mobile-device');
         final dest = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -142,9 +142,9 @@ void main() {
         '(transaction rolled back)', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -174,7 +174,7 @@ void main() {
 
         // No ingest.duplicate_received events (throw path, not dup path).
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, isEmpty);
       } finally {

@@ -1,7 +1,7 @@
 // Verifies: EVS-PRD-subscription remote-server side — WS subscription
 // state machine accepts AuthMessage first and emits AuthOkMsg; per-subscribe
 // view-level authorization rejects with subscription_denied on policy
-// deny. Snapshot/Delta relay covered in Phase 4 e2e tests where the
+// deny. Snapshot/Delta relay covered in e2e tests where the
 // full substrate is exercised.
 //
 // Verifies: EVS-PRD-cross-process-event-transport/D/E — multiplex by

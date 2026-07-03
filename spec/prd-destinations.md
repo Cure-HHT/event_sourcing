@@ -1,6 +1,6 @@
 # EVS-PRD-destinations: Destinations
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -34,5 +34,9 @@ F. Destinations SHALL be addable and removable dynamically over the deployment's
 **Why pluggable delivery mechanisms?** Real deployments transit events over a wide range of transports — HTTPS to a clinical EDC, push notifications to mobile devices, a relay's own HTTP endpoint, a sponsor's custom protocol. Picking one transport in the library would force every consumer to either use that transport or shim around it. Treating the transport as a per-destination plug-in keeps the library transport-agnostic.
 
 **Why dynamic registration?** A diary user signs up for a sponsored trial after the diary has been operating for some time. Adding the sponsor's destination at that point must work without restarting the deployment or invalidating its log. The same property supports linking and unlinking destinations as a participant moves between trials.
+
+## Changelog
+
+- 2026-07-02 | ec656743 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Destinations* | **Hash**: ec656743

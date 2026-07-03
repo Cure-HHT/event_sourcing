@@ -1,6 +1,6 @@
 # EVS-DEV-ingest-promotes-before-fold: Ingest-time promoter chain
 
-**Level**: dev | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-ingest, EVS-PRD-materializer
 
 ## Purpose
@@ -22,5 +22,9 @@ D. When an event's `entryTypeVersion` equals the registered version, the substra
 **Why in-memory promotion rather than rewriting the event?** Rewriting would break hash-chain integrity (a Layer 1 substrate fact, per EVS-PRD-hash-chain-integrity and the charter's Assertion A). The in-memory copy mechanism preserves the chain while delivering up-to-date data to the projection fold.
 
 **Why per-view chains?** Two views materialize different facets of the same event; their lift-strategies for an older event are independent. A "comments" view might add a new field with a default; a "summary" view might drop the same field. Forcing one chain across both would couple them artificially.
+
+## Changelog
+
+- 2026-07-02 | a3519bfb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Ingest-time promoter chain* | **Hash**: a3519bfb

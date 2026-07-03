@@ -160,13 +160,11 @@ class SyncCycle {
     }
   }
 
-  /// Poll the portal read-side API for inbound tombstones authored on the
-  /// portal (clinician-initiated deletions) and apply them locally. Phase
-  /// 4 ships this as a no-op stub so the call site is in place; Phase 5
-  /// implements the polling body per design doc §11.1.
-  // TODO(CUR-1154, Phase 5): implement inbound tombstone polling per
-  // design §11.1.
+  /// Inbound-tombstone hook, invoked once per cycle after every outbound
+  /// drain completes. The body is a no-op: remote-authored tombstones
+  /// (deletions initiated by another party) do not propagate inbound.
+  /// The capability is recorded in `spec/roadmap/sync.md`.
   Future<void> pollInbound() async {
-    // Intentionally empty. Phase 5.
+    // Intentionally empty.
   }
 }

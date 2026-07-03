@@ -2,9 +2,9 @@
 // Verifies: EVS-PRD-destinations/A/E
 // Verifies: EVS-PRD-library-charter/D/E
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

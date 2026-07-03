@@ -7,7 +7,7 @@ import 'package:sembast/sembast.dart';
 
 /// Storage-layer failure taxonomy. Callers that catch exceptions from the
 /// backend, materializer, or event-append path can run the raw error through
-/// the classifier (Phase 4.5 Task 4) and then switch on the returned variant
+/// the classifier and then switch on the returned variant
 /// to decide whether to retry, surface to the user, or quarantine.
 ///
 /// The three variants correspond to disjoint recovery strategies:

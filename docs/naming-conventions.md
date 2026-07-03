@@ -13,8 +13,8 @@ authored fresh for this library, not carried over from any origin system.
   `httpClient`, `Jcs`), consistently.
 - **R2 — No heritage/provenance names.** Describe the symbol's role in
   *this* library — never the system it was extracted from, nor a type that
-  no longer exists here. No `Datastore` carryover, no `diary`/`hht`/
-  `portal`/`clinical` domain leakage.
+  no longer exists here. No carryover names from any system this library
+  was extracted from, and no consumer-domain leakage.
 - **R3 — No temporal/versioning qualifiers.** No `legacy`, `old`, `new`,
   `current` (as a disambiguator), `v2`, `2`, `Ex`. History lives in git.
 - **R4 — Domain-neutral substrate vocabulary.** event, aggregate,

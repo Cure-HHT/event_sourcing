@@ -105,7 +105,7 @@ void main() {
           isNot(
             equals(
               const EntryTypeDefinition(
-                id: 'nose_hht_survey',
+                id: 'nose_symptom_survey',
                 registeredVersion: 1,
                 name: 'Nosebleed',
               ),

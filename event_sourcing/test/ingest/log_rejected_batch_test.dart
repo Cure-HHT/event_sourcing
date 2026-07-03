@@ -27,9 +27,9 @@ class _Fixture {
 }
 
 Future<_Fixture> _openStore({
-  String hopId = 'portal-server',
-  String identifier = 'portal-1',
-  String softwareVersion = 'portal@0.1.0',
+  String hopId = 'control-server',
+  String identifier = 'control-1',
+  String softwareVersion = 'control@0.1.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -84,13 +84,13 @@ void main() {
           );
 
           final auditEvents = await dest.backend.findEventsForAggregate(
-            'ingest-audit:portal-server',
+            'ingest-audit:control-server',
           );
           expect(auditEvents, hasLength(1));
           expect(auditEvents[0].eventType, equals('ingest.batch_rejected'));
           expect(
             auditEvents[0].aggregateId,
-            equals('ingest-audit:portal-server'),
+            equals('ingest-audit:control-server'),
           );
         } finally {
           await dest.close();
@@ -109,7 +109,7 @@ void main() {
         );
 
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, hasLength(1));
 
@@ -137,7 +137,7 @@ void main() {
         );
 
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, hasLength(1));
         final data = auditEvents[0].data;
@@ -156,7 +156,7 @@ void main() {
     test('provenance[0]: hop matches source, arrival_hash null, '
         'batch_context absent/null, ingest_sequence_number populated '
         'on first call (empty log)', () async {
-      final dest = await _openStore(hopId: 'portal-server');
+      final dest = await _openStore(hopId: 'control-server');
       try {
         final bytes = Uint8List.fromList([0xAA, 0xBB]);
         await dest.store.logRejectedBatch(
@@ -166,7 +166,7 @@ void main() {
         );
 
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, hasLength(1));
 
@@ -175,7 +175,7 @@ void main() {
         expect(prov, hasLength(1));
 
         final p0 = prov[0];
-        expect(p0['hop'], equals('portal-server'));
+        expect(p0['hop'], equals('control-server'));
         expect(p0['arrival_hash'], isNull);
         // previous_ingest_hash is null on first call (empty ingest log)
         expect(p0['previous_ingest_hash'], isNull);
@@ -210,7 +210,7 @@ void main() {
         );
 
         final auditEvents = await dest.backend.findEventsForAggregate(
-          'ingest-audit:portal-server',
+          'ingest-audit:control-server',
         );
         expect(auditEvents, hasLength(2));
 
@@ -247,7 +247,7 @@ void main() {
           );
 
           final auditEvents = await dest.backend.findEventsForAggregate(
-            'ingest-audit:portal-server',
+            'ingest-audit:control-server',
           );
           expect(auditEvents, hasLength(1));
 

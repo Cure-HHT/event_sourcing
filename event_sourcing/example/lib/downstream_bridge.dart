@@ -3,7 +3,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// In-memory bridge from one datastore's outgoing `Native` wire payload
 /// to another datastore's [EventStore.ingestBatch]. Demo-only glue used
 /// by the dual-pane example to wire the mobile pane's outgoing native
-/// stream into the portal pane.
+/// stream into the hub pane.
 ///
 /// Maps [EventStore.ingestBatch] outcomes to [SendResult]:
 /// - success ([IngestBatchResult]) → [SendOk] (per-event partial outcomes

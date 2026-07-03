@@ -53,7 +53,7 @@ void _defaultLogSink(String message) {
 //   backend_state; monotonic; never reset.
 ///
 /// - `events` — append-only event log, keyed by Sembast auto-increment int.
-/// - `diary_entries` — materialized view, keyed by `entry_id` (string).
+/// - `notes` — materialized view, keyed by `note_id` (string).
 /// - `fifo_<destinationId>` — one per registered destination.
 /// - `backend_state` — key-value bookkeeping for the sequence counter and
 ///   the persisted schema version. Deliberately NOT named `metadata` — that
@@ -67,9 +67,10 @@ void _defaultLogSink(String message) {
 class SembastBackend extends StorageBackend {
   /// Construct a backend over an already-opened Sembast [Database]. The
   /// caller owns the database's lifecycle; this backend does not open or
-  /// close it. Tests can use `SembastBackendInMemory.open()` from
-  /// `package:event_sourcing/src/storage/sembast_backend_in_memory.dart`
-  /// to get a self-contained in-memory instance.
+  /// close it. Tests can get a self-contained in-memory instance by opening
+  /// a database via `package:sembast/sembast_memory.dart`'s
+  /// `newDatabaseFactoryMemory()` and passing it to this constructor, as
+  /// the conformance test suite does.
   SembastBackend({required Database database}) : _db = database;
 
   final Database _db;
@@ -704,7 +705,7 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // -------- Generic view storage (Phase 4.4) --------
+  // -------- Generic view storage --------
 
   final Map<String, StoreRef<String, Map<String, Object?>>> _viewStoreCache =
       <String, StoreRef<String, Map<String, Object?>>>{};
@@ -838,7 +839,7 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // -------- View target versions (Phase 4.19) --------
+  // -------- View target versions --------
   //
   // Persists the per-(viewName, entryType) target schema version that the
   // promoter pipeline reads on every materialization. One sembast store

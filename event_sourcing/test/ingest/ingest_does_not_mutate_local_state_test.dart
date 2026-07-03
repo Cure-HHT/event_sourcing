@@ -147,8 +147,8 @@ void main() {
         destinations: <Destination>[_NoopDestination(id: 'OriginatorPrimary')],
       );
       final receiver = await _bootstrapDatastore(
-        hopId: 'portal-server',
-        identifier: 'install-portal',
+        hopId: 'control-server',
+        identifier: 'install-control',
         destinations: <Destination>[_NoopDestination(id: 'ReceiverPrimary')],
       );
 
@@ -254,8 +254,8 @@ void main() {
         entryTypes: const <EntryTypeDefinition>[_demoNoteDef],
       );
       final receiver = await _bootstrapDatastore(
-        hopId: 'portal-server',
-        identifier: 'install-portal',
+        hopId: 'control-server',
+        identifier: 'install-control',
       );
 
       try {
@@ -373,8 +373,8 @@ void main() {
         destinations: <Destination>[_NoopDestination(id: 'orig-dest')],
       );
       final receiver = await _bootstrapDatastore(
-        hopId: 'portal-server',
-        identifier: 'install-portal',
+        hopId: 'control-server',
+        identifier: 'install-control',
         destinations: <Destination>[_NoopDestination(id: 'recv-dest')],
       );
 

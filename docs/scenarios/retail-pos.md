@@ -27,7 +27,7 @@ provenance ride along: corporate audit can see "this sale was rung at register
 R-7 (originator), forwarded by store S-12, ingested at corp at T+3h." Per-
 aggregate-per-Source ordering means each register's transaction stream is
 monotonic on arrival even when registers are reconciled out of wall-clock
-order. This is precisely the v1 single-source-per-aggregate-type model: a
+order. This is precisely the 0.x single-source-per-aggregate-type model: a
 `transaction` aggregate is "owned" by the register that opened it; the
 store/corp installs ingest read-only.
 
@@ -127,8 +127,8 @@ multiple registers in S AND by `ReceiveShipmentAction` dispatched at a
 back-office terminal. Today this works because the *projection* is the
 aggregator and the underlying events live on different aggregate types — but
 a cleaner model would let multiple Sources contribute events to one logical
-`store_sku_inventory` aggregate. That's the Phase II multi-source machinery,
-currently dormant. For v1 retail, the workaround is to keep inventory state in
-the projection rather than in an aggregate, which is fine but means inventory
-reconciliation arithmetic lives in projection-row updates rather than in event
-payloads.
+`store_sku_inventory` aggregate. That's the multi-source roadmap item
+(`spec/roadmap/multi-source-editing.md`), currently dormant. The workaround
+today is to keep inventory state in the projection rather than in an
+aggregate, which is fine but means inventory reconciliation arithmetic lives
+in projection-row updates rather than in event payloads.

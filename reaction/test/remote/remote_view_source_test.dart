@@ -2,7 +2,7 @@
 // test is skipped: they keep the impl file in the compilation graph so
 // the test runner surfaces breakage if the file is removed or fails to
 // load. Real coverage of the mapper round-trip lives in
-// e2e/view_test.dart in Phase 4.
+// e2e/view_test.dart.
 //
 // Verifies: EVS-PRD-view-subscriber/C — full mapper round-trip covered
 //   in e2e/view_test.dart.

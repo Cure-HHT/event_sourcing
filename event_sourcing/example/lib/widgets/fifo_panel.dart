@@ -10,9 +10,9 @@ import 'package:event_sourcing/event_sourcing.dart'
         SembastBackend,
         SetEndDateResult,
         UserInitiator;
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 // Validated by: JNY-03, JNY-04, JNY-07, JNY-08, JNY-09.

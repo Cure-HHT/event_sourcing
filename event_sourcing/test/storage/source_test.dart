@@ -12,11 +12,11 @@ void main() {
       const s = Source(
         hopId: 'mobile-device',
         identifier: 'dev-1',
-        softwareVersion: 'clinical_diary@1.2.3+4',
+        softwareVersion: 'my_app@1.2.3+4',
       );
       expect(s.hopId, 'mobile-device');
       expect(s.identifier, 'dev-1');
-      expect(s.softwareVersion, 'clinical_diary@1.2.3+4');
+      expect(s.softwareVersion, 'my_app@1.2.3+4');
     });
 
     test('equality and hashCode', () {
@@ -35,12 +35,12 @@ void main() {
         softwareVersion: 'v',
       );
       const p = Source(
-        hopId: 'portal-server',
+        hopId: 'control-server',
         identifier: 'h',
         softwareVersion: 'v',
       );
       expect(m.hopId, 'mobile-device');
-      expect(p.hopId, 'portal-server');
+      expect(p.hopId, 'control-server');
     });
 
     test('softwareVersion is accepted without runtime validation', () {

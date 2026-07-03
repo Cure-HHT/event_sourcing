@@ -27,9 +27,9 @@ class _Fixture {
 }
 
 Future<_Fixture> _openStore({
-  String hopId = 'portal-server',
-  String identifier = 'portal-1',
-  String softwareVersion = 'portal@0.1.0',
+  String hopId = 'control-server',
+  String identifier = 'control-1',
+  String softwareVersion = 'control@0.1.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -129,7 +129,7 @@ Future<List<StoredEvent>> _originate(int count) async {
     source: const Source(
       hopId: 'mobile-device',
       identifier: 'device-1',
-      softwareVersion: 'clinical_diary@1.0.0',
+      softwareVersion: 'my_app@1.0.0',
     ),
     securityContexts: secCtx,
   );

@@ -1,6 +1,6 @@
 # EVS-PRD-event-log: Event Log
 
-**Level**: PRD | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -34,5 +34,9 @@ E. The library SHALL make append progress under concurrent writers: when the sto
 **Why retry transient conflicts instead of exposing them?** A storage backend that serializes concurrent writers (for example, one using a strict isolation level to keep the global order and the hash-chain tip consistent) signals an unresolvable concurrent access by aborting the loser with a transient "try again" error. That error is a normal, expected outcome of contention, not a defect — the documented remedy is simply to re-run the aborted work. Re-running is safe because every step of an append (order reservation, hash-tip read, insert, and derived-view writes) happens inside the aborted, rolled-back transaction, so a retry re-derives all of it from the latest committed state. Surfacing the transient error to application code instead would force every caller — including internal reactors — to re-implement the same retry, and a single unguarded caller would turn routine contention into a crash. Bounding the attempts keeps pathological contention from spinning forever; once the bound is reached the failure is surfaced honestly.
 
 **Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
+
+## Changelog
+
+- 2026-07-02 | e710dcce | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Event Log* | **Hash**: e710dcce

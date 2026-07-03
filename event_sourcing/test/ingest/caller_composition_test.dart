@@ -26,7 +26,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -67,7 +67,7 @@ BatchEnvelope _buildEnvelope(List<StoredEvent> events) {
     batchId: const Uuid().v4(),
     senderHop: 'mobile-device',
     senderIdentifier: 'device-1',
-    senderSoftwareVersion: 'clinical_diary@1.0.0',
+    senderSoftwareVersion: 'my_app@1.0.0',
     sentAt: DateTime.now().toUtc(),
     events: events.map((e) => Map<String, Object?>.from(e.toMap())).toList(),
   );
@@ -85,9 +85,9 @@ void main() {
       () async {
         final orig = await _openStore(hopId: 'mobile-device');
         final dest = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -155,7 +155,7 @@ void main() {
           );
 
           // 4c. Exactly one ingest.batch_rejected event with expected fields.
-          const auditAggId = 'ingest-audit:portal-server';
+          const auditAggId = 'ingest-audit:control-server';
           final auditEvents = await dest.backend.findEventsForAggregate(
             auditAggId,
           );
@@ -193,9 +193,9 @@ void main() {
         'the pre-ingest event hash (not null on second Chain 2 entry)', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -235,7 +235,7 @@ void main() {
 
         // 3. The rejection audit event's provenance[0].previous_ingest_hash
         //    == ingestResult.resultHash (the stored hash of the pre-ingested e1).
-        const auditAggId = 'ingest-audit:portal-server';
+        const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(
           auditAggId,
         );

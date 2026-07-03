@@ -6,17 +6,17 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_sync_policy.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/downstream_bridge.dart';
-import 'package:event_sourcing_datastore_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_sync_policy.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/downstream_bridge.dart';
+import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 // ---------------------------------------------------------------------------
-// _Pane / _mkPane — inlined from portal_sync_test.dart (private classes
+// _Pane / _mkPane — inlined from hub_sync_test.dart (private classes
 // cannot be imported across test files).
 // ---------------------------------------------------------------------------
 
@@ -158,15 +158,15 @@ void main() {
       '60s RGB soak with batched FIFOs',
       () async {
         // ---- Setup -------------------------------------------------------
-        final portal = await _mkPane(
-          dbName: 'portal-soak.db',
+        final hub = await _mkPane(
+          dbName: 'hub-soak.db',
           source: const Source(
-            hopId: 'portal-server',
+            hopId: 'hub-server',
             identifier: '11111111-1111-4111-8111-111111111111',
             softwareVersion: 'test',
           ),
         );
-        final bridge = DownstreamBridge(portal.datastore.eventStore);
+        final bridge = DownstreamBridge(hub.datastore.eventStore);
         final mobile = await _mkPane(
           dbName: 'mobile-soak.db',
           source: const Source(
@@ -202,18 +202,18 @@ void main() {
           n.sendLatency.value = Duration.zero;
         }
 
-        // ---- Portal knobs: zero send latency on all 3 destinations ------
-        // Portal destinations default to DemoDestination with sendLatency=10s
-        // which would cause portal drain to take 10s per row × many rows.
+        // ---- Hub knobs: zero send latency on all 3 destinations ------
+        // Hub destinations default to DemoDestination with sendLatency=10s
+        // which would cause hub drain to take 10s per row × many rows.
         // Zero them so drain completes instantly (test uses in-memory
         // backends; production defaults are not changed by this test).
-        final portalPrimary =
-            portal.datastore.destinations.byId('Primary')! as DemoDestination;
-        portalPrimary.sendLatency.value = Duration.zero;
-        final portalSecondary =
-            portal.datastore.destinations.byId('Secondary')! as DemoDestination;
-        portalSecondary.sendLatency.value = Duration.zero;
-        // portal.Native has no bridge and default sendLatency=0 already
+        final hubPrimary =
+            hub.datastore.destinations.byId('Primary')! as DemoDestination;
+        hubPrimary.sendLatency.value = Duration.zero;
+        final hubSecondary =
+            hub.datastore.destinations.byId('Secondary')! as DemoDestination;
+        hubSecondary.sendLatency.value = Duration.zero;
+        // hub.Native has no bridge and default sendLatency=0 already
 
         // ---- Tick loops --------------------------------------------------
         // Each pane uses a single shared async tick function gated by a
@@ -221,7 +221,7 @@ void main() {
         // sequence both call through this function, so they can never
         // overlap and race on markFinal (which is one-way).
         var mobileSyncInFlight = false;
-        var portalSyncInFlight = false;
+        var hubSyncInFlight = false;
 
         Future<void> mobileSyncTick() async {
           if (mobileSyncInFlight) return;
@@ -254,34 +254,34 @@ void main() {
           }
         }
 
-        Future<void> portalSyncTick() async {
-          if (portalSyncInFlight) return;
-          portalSyncInFlight = true;
+        Future<void> hubSyncTick() async {
+          if (hubSyncInFlight) return;
+          hubSyncInFlight = true;
           try {
-            final dests = portal.datastore.destinations.all();
+            final dests = hub.datastore.destinations.all();
             for (final dest in dests) {
-              final schedule = await portal.datastore.destinations.scheduleOf(
+              final schedule = await hub.datastore.destinations.scheduleOf(
                 dest.id,
               );
               await fillBatch(
                 dest,
-                backend: portal.backend,
+                backend: hub.backend,
                 schedule: schedule,
-                source: portal.source,
+                source: hub.source,
               );
             }
             for (final dest in dests) {
               await drain(
                 dest,
-                backend: portal.backend,
-                policy: portal.policyNotifier.value,
+                backend: hub.backend,
+                policy: hub.policyNotifier.value,
               );
             }
           } catch (e, s) {
             // ignore: avoid_print
-            print('[soak:portal] tick error: $e\n$s');
+            print('[soak:hub] tick error: $e\n$s');
           } finally {
-            portalSyncInFlight = false;
+            hubSyncInFlight = false;
           }
         }
 
@@ -289,9 +289,9 @@ void main() {
           const Duration(seconds: 1),
           (_) => mobileSyncTick(),
         );
-        final portalTick = Timer.periodic(
+        final hubTick = Timer.periodic(
           const Duration(seconds: 1),
-          (_) => portalSyncTick(),
+          (_) => hubSyncTick(),
         );
 
         // ---- 60-second click loop ----------------------------------------
@@ -321,12 +321,12 @@ void main() {
         // ---- Cancel tick timers ------------------------------------------
         // cancel() stops future firings. Any already-queued timer callback
         // that fires after this point will call mobileSyncTick() /
-        // portalSyncTick(), which check the in-flight bool and skip if
+        // hubSyncTick(), which check the in-flight bool and skip if
         // a tick is already running. The flush ticks below use the same
         // guarded functions, so timer bodies and manual flush bodies are
         // mutually exclusive — no double-markFinal is possible.
         mobileTick.cancel();
-        portalTick.cancel();
+        hubTick.cancel();
 
         // ---- Flush sequence: 8 alternating guarded ticks ----------------
         // Use the same guarded tick functions so any late-firing periodic
@@ -338,10 +338,10 @@ void main() {
           }
           await mobileSyncTick();
           await Future<void>.delayed(const Duration(milliseconds: 250));
-          while (portalSyncInFlight) {
+          while (hubSyncInFlight) {
             await Future<void>.delayed(const Duration(milliseconds: 10));
           }
-          await portalSyncTick();
+          await hubSyncTick();
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
 
@@ -353,7 +353,7 @@ void main() {
         final mobileEvents = (await mobile.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
             .toList();
-        final portalEvents = (await portal.backend.findAllEvents())
+        final hubEvents = (await hub.backend.findAllEvents())
             .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
             .toList();
 
@@ -369,16 +369,12 @@ void main() {
         final mobileFifoNativeAudit = await mobile.backend.listFifoEntries(
           'NativeAudit',
         );
-        final portalFifoPrimary = await portal.backend.listFifoEntries(
-          'Primary',
-        );
-        final portalFifoSecondary = await portal.backend.listFifoEntries(
-          'Secondary',
-        );
-        final portalFifoNativeUser = await portal.backend.listFifoEntries(
+        final hubFifoPrimary = await hub.backend.listFifoEntries('Primary');
+        final hubFifoSecondary = await hub.backend.listFifoEntries('Secondary');
+        final hubFifoNativeUser = await hub.backend.listFifoEntries(
           'NativeUser',
         );
-        final portalFifoNativeAudit = await portal.backend.listFifoEntries(
+        final hubFifoNativeAudit = await hub.backend.listFifoEntries(
           'NativeAudit',
         );
 
@@ -397,17 +393,17 @@ void main() {
         final nativeUserDist = batchSizeDist(mobileFifoNativeUser);
         final nativeAuditDist = batchSizeDist(mobileFifoNativeAudit);
 
-        // Per-entryType counts on portal
-        final portalByType = <String, int>{};
-        for (final ev in portalEvents) {
-          portalByType[ev.entryType] = (portalByType[ev.entryType] ?? 0) + 1;
+        // Per-entryType counts on hub
+        final hubByType = <String, int>{};
+        for (final ev in hubEvents) {
+          hubByType[ev.entryType] = (hubByType[ev.entryType] ?? 0) + 1;
         }
 
         // ---- Print report ------------------------------------------------
         // ignore: avoid_print
         print('=' * 60);
         // ignore: avoid_print
-        print('PORTAL SOAK RESULTS');
+        print('HUB SOAK RESULTS');
         // ignore: avoid_print
         print('=' * 60);
         // ignore: avoid_print
@@ -422,9 +418,9 @@ void main() {
         // ignore: avoid_print
         print('Mobile events: ${mobileEvents.length}');
         // ignore: avoid_print
-        print('Portal events: ${portalEvents.length}');
+        print('Hub events: ${hubEvents.length}');
         // ignore: avoid_print
-        print('Portal per-entryType: $portalByType');
+        print('Hub per-entryType: $hubByType');
         // ignore: avoid_print
         print(
           'Mobile FIFO rows — Primary: ${mobileFifoPrimary.length}, '
@@ -434,10 +430,10 @@ void main() {
         );
         // ignore: avoid_print
         print(
-          'Portal FIFO rows — Primary: ${portalFifoPrimary.length}, '
-          'Secondary: ${portalFifoSecondary.length}, '
-          'NativeUser: ${portalFifoNativeUser.length}, '
-          'NativeAudit: ${portalFifoNativeAudit.length}',
+          'Hub FIFO rows — Primary: ${hubFifoPrimary.length}, '
+          'Secondary: ${hubFifoSecondary.length}, '
+          'NativeUser: ${hubFifoNativeUser.length}, '
+          'NativeAudit: ${hubFifoNativeAudit.length}',
         );
 
         String distStr(Map<int, int> dist) {
@@ -458,7 +454,7 @@ void main() {
         // ignore: avoid_print
         print(
           'Wedged FIFOs — mobile: ${await mobile.backend.hasFifoWedged()}, '
-          'portal: ${await portal.backend.hasFifoWedged()}',
+          'hub: ${await hub.backend.hasFifoWedged()}',
         );
         // ignore: avoid_print
         print('=' * 60);
@@ -474,38 +470,37 @@ void main() {
               '(got ${mobileEvents.length})',
         );
         expect(
-          portalEvents.length,
+          hubEvents.length,
           equals(totalClicks),
           reason:
-              'portal must have exactly $totalClicks events '
-              '(got ${portalEvents.length})',
+              'hub must have exactly $totalClicks events '
+              '(got ${hubEvents.length})',
         );
 
-        // 2. Per-entryType counts match between mobile and portal
+        // 2. Per-entryType counts match between mobile and hub
         final mobileByType = <String, int>{};
         for (final ev in mobileEvents) {
           mobileByType[ev.entryType] = (mobileByType[ev.entryType] ?? 0) + 1;
         }
         for (final entryType in mobileByType.keys) {
           expect(
-            portalByType[entryType],
+            hubByType[entryType],
             equals(mobileByType[entryType]),
-            reason:
-                'portal.$entryType count must match mobile.$entryType count',
+            reason: 'hub.$entryType count must match mobile.$entryType count',
           );
         }
 
-        // 3. Provenance chain on every portal event
-        for (final ev in portalEvents) {
+        // 3. Provenance chain on every hub event
+        for (final ev in hubEvents) {
           final provenanceRaw = ev.metadata['provenance'] as List<Object?>;
           final provenance = provenanceRaw.cast<Map<String, Object?>>();
           final hops = provenance.map((p) => p['hop'] as String).toList();
           expect(
             hops,
-            containsAllInOrder(<String>['mobile-device', 'portal-server']),
+            containsAllInOrder(<String>['mobile-device', 'hub-server']),
             reason:
                 'event ${ev.eventId} provenance hops $hops must contain '
-                "['mobile-device', 'portal-server'] in order",
+                "['mobile-device', 'hub-server'] in order",
           );
         }
 
@@ -516,34 +511,34 @@ void main() {
           reason: 'mobile must have no wedged FIFOs after flush',
         );
 
-        // 5. No wedged FIFOs on portal
+        // 5. No wedged FIFOs on hub
         expect(
-          await portal.backend.hasFifoWedged(),
+          await hub.backend.hasFifoWedged(),
           isFalse,
-          reason: 'portal must have no wedged FIFOs after flush',
+          reason: 'hub must have no wedged FIFOs after flush',
         );
 
-        // 6. System audits originated on mobile reach portal via NativeAudit.
+        // 6. System audits originated on mobile reach hub via NativeAudit.
         //   Setting `includeSystemEvents: true` on a destination admits
         //   reserved system entry types into its FIFO; the downstream bridge
-        //   then carries those rows to the portal pane's event log.
-        final allPortalEvents = await portal.backend.findAllEvents();
-        final portalSystemEvents = allPortalEvents
+        //   then carries those rows to the hub pane's event log.
+        final allHubEvents = await hub.backend.findAllEvents();
+        final hubSystemEvents = allHubEvents
             .where((e) => kReservedSystemEntryTypeIds.contains(e.entryType))
             .toList();
         expect(
-          portalSystemEvents,
+          hubSystemEvents,
           isNotEmpty,
-          reason: 'NativeAudit must bridge mobile system audits to portal',
+          reason: 'NativeAudit must bridge mobile system audits to hub',
         );
-        final mobileOriginated = portalSystemEvents.where(
+        final mobileOriginated = hubSystemEvents.where(
           (e) => e.originatorHop.identifier == mobile.source.identifier,
         );
         expect(
           mobileOriginated,
           isNotEmpty,
           reason:
-              'at least one portal-stored system event must originate from '
+              'at least one hub-stored system event must originate from '
               "mobile install (source.identifier='${mobile.source.identifier}')",
         );
       },

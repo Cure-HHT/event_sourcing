@@ -8,8 +8,9 @@ substrate's provenance chain and hash-chain integrity (Layer 1) are a
 near-perfect mechanical fit for "prove this vaccine was continuously
 refrigerated and never left a verifiable hop." The role/permission/scope model
 and projection interpreter (Layer 2) handle in-org workflows today; **the true
-cross-org chain-of-custody flow is unlocked only by Phase II multi-source
-activation**, which is currently designed but dormant.
+cross-org chain-of-custody flow is unlocked only by the multi-source roadmap
+item** (`spec/roadmap/multi-source-editing.md`), which is designed but
+dormant.
 
 ## 1. Initialization and use
 
@@ -144,18 +145,19 @@ provenance themselves.
 
 ## Gaps to flag explicitly
 
-1. **Multi-source activation (Phase II).**
+1. **Multi-source activation** (`spec/roadmap/multi-source-editing.md`).
    `prd-multi-source-canonicalization.md` specifies the rule grammar — "events
    from the originator's authority are canonical by default; other authorities
    admit via approval events." Today, the substrate behaves as
    single-source-per-aggregate. **A supply chain lot has many legitimate
-   writers** (every facility it passes through). v1 works in practice because
-   per-org logs see only their own + ingested events and each org's
+   writers** (every facility it passes through). This works in practice
+   because per-org logs see only their own + ingested events and each org's
    projections present a local-perspective view; **but a "global custody
    truth"** across orgs — one canonical timeline merging all writers —
-   requires Phase II canonicalization rules (e.g., "facility currently-holding
-   the lot is the canonical author until handoff"). Until then, the global
-   view is reconstructed app-side by walking each org's local projection.
+   requires the multi-source roadmap item's canonicalization rules (e.g.,
+   "facility currently-holding the lot is the canonical author until
+   handoff"). Until then, the global view is reconstructed app-side by
+   walking each org's local projection.
 
 2. **Cross-org transport auth.** The substrate's `Principal`-on-faith and the
    lack of an inbound `AuthenticationProvider` means inter-org mTLS / signed
@@ -168,11 +170,13 @@ provenance themselves.
    org A's substrate has no row; this is correct (org A *shouldn't* authorize
    an action on org B's lot) but it means cross-org custody handoff workflows
    are not modelled by extending containment — they are modelled as ingest of
-   org B's events into org A's log under multi-source rules (Phase II again).
+   org B's events into org A's log under multi-source rules
+   (`spec/roadmap/multi-source-editing.md`).
 
 Net: the substrate's Layer 1 properties (provenance + hash chain) make it the
 most natural fit for supply chain of any use case in the substrate's design
 vocabulary; the Layer 2 conventions cover the in-org and the per-org-
 perspective cross-org case today; **the symmetric cross-org canonical-timeline
-case is exactly what Phase II multi-source canonicalization was designed for,
-and is the only material gap.**
+case is exactly what the multi-source roadmap item's canonicalization
+(`spec/roadmap/multi-source-editing.md`) was designed for, and is the only
+material gap.**

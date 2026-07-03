@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 /// Demonstrates the typed cross-store audit query (`StorageBackend.queryAudit`,

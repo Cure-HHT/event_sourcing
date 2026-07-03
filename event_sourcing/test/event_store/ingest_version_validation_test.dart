@@ -17,7 +17,7 @@ const _uuid = Uuid();
 /// Build an `esd/batch@1` envelope manually with a one-event payload, with
 /// caller-controlled `entry_type_version` / `lib_format_version` on the
 /// embedded event. Mirrors the shape produced by
-/// `apps/common-dart/event_sourcing/example/lib/synthetic_ingest.dart`'s
+/// `event_sourcing/example/lib/synthetic_ingest.dart`'s
 /// `SyntheticBatchBuilder.buildSingleEventBatch`, but lives here so the
 /// ingest-validation tests stay self-contained.
 Uint8List _envelope({
@@ -28,7 +28,7 @@ Uint8List _envelope({
   final now = DateTime.now().toUtc();
   const senderHop = 'remote-mobile-1';
   const senderIdentifier = 'remote-device-uuid-demo';
-  const senderSoftwareVersion = 'remote-diary@1.0.0';
+  const senderSoftwareVersion = 'remote-my_app@1.0.0';
   final originEntry = <String, Object?>{
     'hop': senderHop,
     'received_at': now.toIso8601String(),
@@ -84,8 +84,8 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
   return bootstrapEventStore(
     backend: backend,
     source: const Source(
-      hopId: 'portal',
-      identifier: 'demo-portal',
+      hopId: 'control-server',
+      identifier: 'demo-control',
       softwareVersion: 'test',
     ),
     entryTypes: <EntryTypeDefinition>[

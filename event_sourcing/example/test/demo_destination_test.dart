@@ -5,8 +5,8 @@
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/demo_destination.dart';
-import 'package:event_sourcing_datastore_demo/demo_knobs.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
+import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 StoredEvent _mkEvent(String id) => StoredEvent.synthetic(

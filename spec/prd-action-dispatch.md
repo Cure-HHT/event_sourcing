@@ -1,6 +1,6 @@
 # EVS-PRD-action-dispatch: Action Dispatch
 
-**Level**: prd | **Status**: Draft | **Implements**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-library-charter
 
 ## Purpose
@@ -36,5 +36,9 @@ F. All consumer-initiated events recorded in the local log SHALL be produced by 
 **Why idempotency by identifier?** Consumers retry. Network glitches, app restarts, and tier-to-tier replays all produce duplicate submissions of the same logical action. Without dispatcher-level idempotency, every consumer would have to deduplicate themselves before submitting; with it, retries are safe by default and the audit log records each logical action once even when it is submitted many times.
 
 **Why is mismatched content under a duplicate identifier a denial?** Two cases need distinct handling. A retry with identical content is the consumer's intended duplicate suppression — return the cached outcome. A submission with the same identifier but different content is either a consumer bug or an attack; silently overwriting or silently returning the cached outcome would absorb the discrepancy, leaving no audit trail. A denial event records the conflict explicitly so the audit captures what was attempted, not just what was accepted.
+
+## Changelog
+
+- 2026-07-02 | 3b0a0ef4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Action Dispatch* | **Hash**: 3b0a0ef4

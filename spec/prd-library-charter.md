@@ -1,7 +1,6 @@
 # EVS-PRD-library-charter: Library Charter
 
-**Level**: prd | **Status**: Draft | **Implements**: -
-**Refines**: -
+**Level**: PRD | **Status**: Active | **Implements**: -
 
 ## Purpose
 
@@ -41,7 +40,7 @@ I. The library SHALL distinguish, in documentation and code, between substrate g
 
 **Why role-based tiers from one codebase?** Multi-tier deployments historically use distinct codebases per tier, with cross-tier protocol churn at every change. A single substrate that plays different roles by configuration eliminates a class of cross-tier integration bugs and keeps the audit machinery uniform.
 
-**Why companion libraries (`canonical_json_jcs`, `provenance`)?** Tamper-evidence requires byte-identical serialization across systems; provenance requires a structured chain travelling with each event. Both are concentrated in narrow, dependency-free, pure-Dart packages so that any other Cure-HHT component can share the same canonical-form and provenance contracts without pulling the full event-sourcing stack.
+**Why companion libraries (`canonical_json_jcs`, `provenance`)?** Tamper-evidence requires byte-identical serialization across systems; provenance requires a structured chain travelling with each event. Both are concentrated in narrow, dependency-free, pure-Dart packages so that any other component can share the same canonical-form and provenance contracts without pulling the full event-sourcing stack.
 
 **Why enumerate trust boundaries (assertion H)?** The library's central trust commitment is that state at any sequence is reconstructable from the event log under a known library version. That commitment only holds if the substrate doesn't quietly accept additional inputs that participate in state derivation. Enumerating the trust boundaries — a small, named set of pluggable interfaces (storage, outbound transport) plus any explicitly-acknowledged unaudited inputs (today: the caller-supplied `Principal`, pending future authentication-flow work) — makes the trust surface visible and review-gated. Any proposal to add a fourth trusted input is then a charter-level architectural change, not a quiet API addition. The enumeration itself is maintained in `CLAUDE.md`'s "Trust boundaries" section; downstream PRDs that introduce or modify a boundary interface refine assertion H.
 
@@ -79,6 +78,10 @@ The library bundles these as primitives because most consumers want them, but th
 - The **declarative projection model** (refining assertion A) ships one Layer 2 materialization per registered `ProjectionSpec`. Applications needing different materializations build them on top of `subscribe<T>(_, Events())` or `EventStore.read(...)` — and that is an expected, supported pattern, not a fallback.
 - **Append-Only Primitives discipline** applies to Layer 2 conventions too. Once a convention ships under a name with given semantics, those semantics are frozen; alternative behaviour is a new primitive, not a re-interpretation of an existing one.
 
-**Authoring guidance.** When proposing new library primitives, code comments, or PRD assertions, be explicit about which layer the claim sits at. "The library SHALL preserve hash-chain integrity" is Layer 1 and absolute. "The library SHALL treat tombstone event types as row deletions" is Layer 2 and should read more like "The library's default `AggregateProjectionSpec` interpretation TREATS event types in `tombstoneEventTypes` as row deletions." Applying the same precision to existing surfaces is part of the ongoing authoring discipline that assertion I imposes.
+**Authoring guidance.** When proposing new library primitives, code comments, or PRD assertions, be explicit about which layer the claim sits at. "The library SHALL preserve hash-chain integrity" is Layer 1 and absolute. "The library SHALL treat tombstone event types as row deletions" is Layer 2 and should read more like "The library's default `AggregateProjectionSpec` interpretation TREATS event types in `tombstoneEventTypes` as row deletions." Existing and new surfaces alike are held to this precision under the authoring discipline that assertion I imposes.
+
+## Changelog
+
+- 2026-07-02 | 6b89020b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Library Charter* | **Hash**: 6b89020b

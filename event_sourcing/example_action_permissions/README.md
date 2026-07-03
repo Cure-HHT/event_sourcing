@@ -332,5 +332,6 @@ wins.
 
 ## Design doc
 
-Full design rationale, scope decisions, and REQ traceability live in
-`docs/superpowers/specs/2026-05-06-action-permissions-demo-design.md`.
+Full design rationale and REQ traceability for the action-dispatch and
+permission model this demo exercises live in `spec/prd-action-dispatch.md`
+and `spec/prd-permissions-as-events.md`.

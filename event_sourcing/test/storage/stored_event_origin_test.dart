@@ -34,13 +34,13 @@ void main() {
         'hop': 'mobile-device',
         'received_at': '2026-04-26T00:00:00.000Z',
         'identifier': 'install-A',
-        'software_version': 'clinical_diary@1.0.0',
+        'software_version': 'my_app@1.0.0',
       },
       <String, Object?>{
-        'hop': 'portal-server',
+        'hop': 'control-server',
         'received_at': '2026-04-26T00:00:01.000Z',
-        'identifier': 'portal-1',
-        'software_version': 'portal@0.1.0',
+        'identifier': 'control-1',
+        'software_version': 'control@0.1.0',
       },
     ]);
 

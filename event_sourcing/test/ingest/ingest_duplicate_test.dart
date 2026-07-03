@@ -26,7 +26,7 @@ class _Fixture {
 Future<_Fixture> _openStore({
   String hopId = 'mobile-device',
   String identifier = 'device-1',
-  String softwareVersion = 'clinical_diary@1.0.0',
+  String softwareVersion = 'my_app@1.0.0',
 }) async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -70,9 +70,9 @@ void main() {
         'does not mutate the stored subject', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -128,9 +128,9 @@ void main() {
       () async {
         final orig = await _openStore(hopId: 'mobile-device');
         final dest = await _openStore(
-          hopId: 'portal-server',
-          identifier: 'portal-1',
-          softwareVersion: 'portal@0.1.0',
+          hopId: 'control-server',
+          identifier: 'control-1',
+          softwareVersion: 'control@0.1.0',
         );
 
         try {
@@ -148,7 +148,7 @@ void main() {
           await dest.store.ingestEvent(e);
 
           // Query the ingest-audit aggregate.
-          const auditAggId = 'ingest-audit:portal-server';
+          const auditAggId = 'ingest-audit:control-server';
           final auditEvents = await dest.backend.findEventsForAggregate(
             auditAggId,
           );
@@ -169,9 +169,9 @@ void main() {
         'ingestEvent path', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -189,7 +189,7 @@ void main() {
         await dest.store.ingestEvent(e);
 
         // The audit event's provenance[0].batchContext must be absent/null.
-        const auditAggId = 'ingest-audit:portal-server';
+        const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(
           auditAggId,
         );
@@ -209,9 +209,9 @@ void main() {
         '', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -233,7 +233,7 @@ void main() {
         await dest.store.ingestEvent(e);
 
         // 4. Query the ingest-audit aggregate for the duplicate_received event.
-        const auditAggId = 'ingest-audit:portal-server';
+        const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(
           auditAggId,
         );
@@ -269,9 +269,9 @@ void main() {
     test('consecutive re-ingests emit one duplicate_received each', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
-        hopId: 'portal-server',
-        identifier: 'portal-1',
-        softwareVersion: 'portal@0.1.0',
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
       );
 
       try {
@@ -289,7 +289,7 @@ void main() {
         await dest.store.ingestEvent(e);
         await dest.store.ingestEvent(e);
 
-        const auditAggId = 'ingest-audit:portal-server';
+        const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(
           auditAggId,
         );

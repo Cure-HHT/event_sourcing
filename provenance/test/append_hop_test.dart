@@ -25,8 +25,8 @@ void main() {
 
     test('appending to a non-empty chain adds exactly one entry', () {
       final first = makeEntry('mobile-device');
-      final second = makeEntry('diary-server');
-      final third = makeEntry('portal-server');
+      final second = makeEntry('relay-server');
+      final third = makeEntry('control-server');
 
       final start = appendHop(const <ProvenanceEntry>[], first);
       final afterSecond = appendHop(start, second);
@@ -39,7 +39,7 @@ void main() {
 
     test('the new entry is placed at the tail', () {
       final first = makeEntry('mobile-device');
-      final second = makeEntry('diary-server');
+      final second = makeEntry('relay-server');
 
       final chain = appendHop(appendHop([], first), second);
 
@@ -49,7 +49,7 @@ void main() {
 
     test('appendHop does not mutate the input chain', () {
       final first = makeEntry('mobile-device');
-      final second = makeEntry('diary-server');
+      final second = makeEntry('relay-server');
       final start = appendHop([], first);
       final before = List<ProvenanceEntry>.of(start);
 
@@ -65,7 +65,7 @@ void main() {
       final chain = appendHop([], entry);
 
       expect(
-        () => chain.add(makeEntry('diary-server')),
+        () => chain.add(makeEntry('relay-server')),
         throwsUnsupportedError,
       );
       expect(chain.removeLast, throwsUnsupportedError);
@@ -97,8 +97,8 @@ void main() {
         final originalFirst = first;
 
         var chain = appendHop([], first);
-        chain = appendHop(chain, makeEntry('diary-server'));
-        chain = appendHop(chain, makeEntry('portal-server'));
+        chain = appendHop(chain, makeEntry('relay-server'));
+        chain = appendHop(chain, makeEntry('control-server'));
 
         expect(chain[0], equals(originalFirst));
       },

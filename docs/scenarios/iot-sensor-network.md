@@ -15,10 +15,11 @@ Postgres log probably breaks.
 **Topology.** Each farm runs a **gateway** process — the smallest unit that
 holds a substrate. Sensors themselves are too dumb to host one; they emit
 MQTT/LoRaWAN frames to the gateway over symmetric-key transport. The gateway
-opens `SembastBackend` (or SQLite, once a third backend lands) as a local edge
-cache, with a registered `Destination` forwarding to a cloud cluster running
-`PostgresBackend`. The agronomist dashboard and grower mobile app are pure
-`RemoteScope` clients of cloud reaction handlers.
+opens `SembastBackend` (or a future SQLite backend —
+`spec/roadmap/storage.md`) as a local edge cache, with a registered
+`Destination` forwarding to a cloud cluster running `PostgresBackend`. The
+agronomist dashboard and grower mobile app are pure `RemoteScope` clients of
+cloud reaction handlers.
 
 **Sensors-as-events, not actions.** Action dispatch (parse → validate →
 authorize → execute → persist, all atomic) is overkill for 70k pure telemetry
@@ -98,9 +99,10 @@ writes its own bucketed tables outside the substrate's projection machinery —
 a supported pattern per the guide's "Layer 1 fallback" framing, but you lose
 append-atomic-with-view; (b) extend the substrate with a new declarative
 primitive — `TimeBucketProjectionSpec(bucketField, bucketGranularity,
-aggregations: {field: Sum/Avg/Min/Max})`. Honest answer: (a) ships now, (b) is
-the right long-term move and is precisely the kind of new Layer-2 primitive
-the Append-Only Primitives discipline contemplates.
+aggregations: {field: Sum/Avg/Min/Max})`, tracked as a roadmap item
+(`spec/roadmap/projections.md`). Honest answer: (a) ships now, (b) is the
+right long-term move and is precisely the kind of new Layer-2 primitive the
+Append-Only Primitives discipline contemplates.
 
 **Permission scopes** map naturally: `farm` → `field` → `sensor` via
 `ContainmentRef`s, exactly as the guide's `site` → `patient` example.
@@ -132,8 +134,9 @@ global-sequence allocation becomes a contention point, and the hash chain
 forces serialization. The realistic shape is **one substrate per farm-
 cluster** (region/customer-shard), with cross-shard reads handled by the
 forecasting service subscribing as a remote consumer of each shard. That's
-*outside* the v1 substrate's stated scope, but doesn't violate any
+*outside* the 0.x substrate's stated scope, but doesn't violate any
 architectural commitment — each shard remains closed-under-events; the
 forecaster reads many shards the way any cross-installation consumer would.
 Making the per-shard log itself horizontally partitionable is a much larger
-change with no committed design.
+change with no committed design; see `spec/roadmap/storage.md` for the
+backend/scaling roadmap.

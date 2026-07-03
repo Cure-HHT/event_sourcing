@@ -14,18 +14,13 @@ Builder primitives, `ViewListener`, `PermissionGate`,
 split out so consumers' release builds don't pull `flutter_test`).
 All other packages remain pure Dart. CI therefore runs `dart test`
 on the pure-Dart packages and `flutter test` on both
-`reaction_widgets/` and `reaction_widgets_testing/`. The primary
-downstream consumer is `cure-hht/hht_diary`, which pins this repo by
-git ref.
+`reaction_widgets/` and `reaction_widgets_testing/`. Downstream
+consumers pin this repo by git ref.
 
-This repo was extracted from `cure-hht/hht_diary` on 2026-05-08
-(CUR-1317). See [README.md](README.md) for the cut-point and roadmap.
-
-As of CUR-1330, the substrate ships two concrete `StorageBackend`
-reference implementations — `SembastBackend` (mobile/Flutter) and
+The substrate ships two concrete `StorageBackend` reference
+implementations — `SembastBackend` (mobile/Flutter) and
 `PostgresBackend` (server-side) — both passing the same backend-
-agnostic conformance harness. This unblocks the Phase IV portal-server
-cutover.
+agnostic conformance harness.
 
 ## Layout
 
@@ -57,14 +52,14 @@ cutover.
   into consumers' release builds.
 - `canonical_json_jcs/` — JCS (RFC 8785).
 - `provenance/` — append-only provenance chain types.
-- `spec/` — formal requirements in EVS namespace (PRD level today;
-  OPS and DEV land alongside implementation work). See
-  `spec/requirements-spec.md` for the canonical grammar and
-  `spec/README.md` for the directory layout.
-- `docs/superpowers/specs/` — design specs that elaborate the PRDs
-  into mechanism-level decisions ahead of implementation.
-- `docs/superpowers/plans/` — implementation plans that reference the
-  specs.
+- `spec/` — formal requirements in EVS namespace (PRD and DEV
+  levels). See `spec/requirements-spec.md` for the canonical grammar and
+  `spec/README.md` for the directory layout. Future work is recorded
+  only in `spec/roadmap/`.
+- `docs/` — explanatory documentation: `event-sourcing-guide.md` (the
+  consumer-facing guide), `e2e-testing.md`, `naming-conventions.md`,
+  and `scenarios/` (speculative architecture sketches stress-testing
+  the substrate against varied domains).
 
 The path-deps inside `event_sourcing/pubspec.yaml` point at
 `../canonical_json_jcs` and `../provenance` — siblings at repo root.
@@ -72,16 +67,13 @@ The path-deps inside `event_sourcing/pubspec.yaml` point at
 
 ## Architectural commitments (load-bearing)
 
-These were brainstormed and committed during the CUR-1192 / CUR-1317
-sessions in `hht_diary`. They survive the extraction and shape Phase I /
-Phase II work.
+These commitments shape the library's design.
 
 - **Domain-neutral lib.** This repo is a substrate. It must not ship
   domain types (e.g., `DiaryEntry`), domain materializers, or domain-
-  specific event-type names. Diary code in the lib today is kick-start
-  extraction debt being removed in CUR-1317; downstream consumers like
-  `hht_diary` author their own `ProjectionSpec`s and register them
-  against the lib's `ProjectionRegistry`.
+  specific event-type names. Downstream consumers author their own
+  `ProjectionSpec`s and register them against the lib's
+  `ProjectionRegistry`.
 - **Declarative projections (no author-supplied fold).** Materialized
   views are computed by the substrate from declarative `ProjectionSpec`
   data (Aggregate, Table shapes); promoters are declarative
@@ -91,8 +83,9 @@ Phase II work.
   shipped; bug fixes ship as new primitive names).
 - **Permission policy is substrate code.** `AuthorizationPolicy`
   cannot be app-supplied without breaking closed-under-events for
-  action outcomes. v1 ships exactly one policy mechanism — the
-  role/permission/scope model in `event_sourcing/lib/src/permissions/`.
+  action outcomes. The 0.x release line ships exactly one policy
+  mechanism — the role/permission/scope model in
+  `event_sourcing/lib/src/permissions/`.
   Alternative policy models require library extension (same Append-
   Only Primitives discipline as projections), not app-side replacement.
 - **Library version recorded in the log.** Substrate emits
@@ -109,16 +102,21 @@ Phase II work.
   bump and refuses downgrade. Promoter primitives are restricted to
   shape-changers (`RenameField`, `DefaultField`, `DropField`) so the
   chain commutes with the deep-merge fold — snapshot promotion at boot
-  is provably equivalent to event-replay-with-promotion. See
-  `docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md`
-  for the full design.
+  is provably equivalent to event-replay-with-promotion. The normative
+  requirements live in the boot-flow DEV specs
+  (`spec/dev-append-stamps-registered-version.md`,
+  `spec/dev-ingest-promotes-before-fold.md`,
+  `spec/dev-snapshot-promotion-on-open.md`,
+  `spec/dev-entry-type-downgrade-refusal.md`,
+  `spec/dev-view-target-versions-seeding.md`).
 - **Originator-of-first-event canonicalization convention.** A Layer-2
   convention (see Epistemic layers): whoever appends the first event
   for an aggregate is treated as the initial canonicalization authority
   for that aggregate. Terminates rule recursion at deployment
-  infrastructure. Phase II's multi-source rule grammar may add
-  settings-event-driven overrides; the originator-of-first-event
-  convention itself remains the substrate's default.
+  infrastructure. The multi-source roadmap item
+  (`spec/roadmap/multi-source-editing.md`) may add settings-event-driven
+  overrides; the originator-of-first-event convention itself remains the
+  substrate's default.
 - **Closed-under-events trust model.** Permissions/role-assignment data
   are events in the same log; the substrate's projection interpreter
   reads its own outputs; external systems integrate at ingest, not at
@@ -129,15 +127,14 @@ Phase II work.
   DataInvalidation targets software. Multi-editor work likely subsumes
   DataInvalidation.
 - **Reactive substrate intent.** Ingest-always + filters + at-least-
-  once delivery + per-aggregate-per-Source ordering. Phase I realizes
-  this with a unified `subscribe<T>(filter, mode)` primitive (modes:
+  once delivery + per-aggregate-per-Source ordering. This is realized by
+  a unified `subscribe<T>(filter, mode)` primitive (modes:
   `Events`, `AggregateMode<T>`; `View<T>` deferred) and the declarative
   projection interpreter described above. Cross-process resume /
-  persistent watermark lives in `Destination`, not `subscribe<T>`. The
-  earlier `watchEvents` / `watchView` / `watchFifo` decomposition is
-  abandoned.
+  persistent watermark lives in `Destination`, not `subscribe<T>`.
 - **Single-source-per-aggregate-type today.** Multi-source machinery
-  exists in design but is dormant in v1; Phase II activates it.
+  is designed and dormant; activation is a roadmap item
+  (`spec/roadmap/multi-source-editing.md`).
 
 ## Epistemic layers
 
@@ -211,8 +208,8 @@ preserve hash-chain integrity" is Layer 1 and absolute. "The library
 SHALL treat tombstone event types as row deletions" is Layer 2 and
 should read more like "The library's default `AggregateProjectionSpec`
 interpretation TREATS event types in `tombstoneEventTypes` as row
-deletions." The same precision applied to existing surfaces is part of
-the ongoing authoring discipline (charter assertion I).
+deletions." Existing and new surfaces alike are held to this precision
+(charter assertion I).
 
 ## Trust boundaries
 
@@ -249,7 +246,7 @@ The currently-trusted inputs are:
   deployments still bear the userId-on-faith trust input. Full
   substrate-level closure (an `AuthenticationProvider` pluggable
   interface that participates in the closed-under-events guarantee)
-  remains future work.
+  is a roadmap item (`spec/roadmap/authentication.md`).
 
   Note the narrow scope of this gap: the `Principal.activeRole`
   field is **not** trusted. The substrate verifies the (userId,
@@ -274,7 +271,7 @@ The currently-trusted inputs are:
   Principal-on-faith gap for that deployment.
 
 Everything else — projection rules (`ProjectionSpec`), promoter rules
-(`PromoterSpec`), policy logic (in-lib for v1, see Architectural
+(`PromoterSpec`), policy logic (in-lib in 0.x, see Architectural
 Commitments), event payloads, hash chains, library version, action
 outcomes — is derivable from the log under one of the trusted
 backends above.
@@ -315,12 +312,6 @@ that performs it. Treat the policy the same as a breaking change to a
 published API: rare, deliberate, and worth a sentence of
 justification.
 
-Code annotations from the kick-start commit reference the legacy
-`REQ-d{NNNNN}` IDs from `hht_diary`. Those references are stale and
-will be re-bound to `EVS-DEV-{name}` IDs as DEV-level requirements are
-authored alongside implementation work. Until then, treat the legacy
-references as historical pointers.
-
 ## Conventions
 
 - **Branch naming**: `CUR-NNNN-{kebab-slug}` — Linear ticket reference plus a short kebab-case description of the change. No user prefix; no slashes. Examples: `CUR-1317-pre-commit`, `CUR-1317-req-naming`.
@@ -328,59 +319,51 @@ references as historical pointers.
 - **PR titles**: must include the Linear ticket reference (`[CUR-NNNN]`). The org-level branch-protection ruleset enforces this; the squash-merge commit on `main` uses the PR title verbatim.
 - **Spec/INDEX maintenance**: via the `elspais` MCP. The repo's `.elspais.toml` is set up under namespace `EVS` with named-component IDs (no numeric assignment); regeneration of `spec/INDEX.md` is automated.
 
-## What downstream consumers see
+## Consuming this repo
 
-`hht_diary`'s `clinical_diary/pubspec.yaml` will pin this repo by `git:`
-ref. During active Phase I/II development, devs override locally with
-`pubspec_overrides.yaml` pointing at a sibling clone. That override is
-gitignored in `hht_diary`. No other consumer depends directly on these
-packages today.
+Consumers pin this repo by `git:` ref. When developing against a
+consumer locally, override with `pubspec_overrides.yaml` pointing at a
+sibling clone (gitignore the override in the consumer).
 
 ## Reading the design specs
 
-Design ideas in this repo evolve through a brainstorm → stabilize →
-archive lifecycle. **Brainstorm output** is prose-heavy and lives
-transiently in `docs/superpowers/specs/`. **Stabilized designs** migrate
-into `spec/<topic>.md` files containing the normative requirement blocks
-alongside the cross-system narrative (overview, architecture, decisions
-rejected, open questions, future work) as remainder sections. The
-original brainstorm doc is archived once its content has migrated. See
-`spec/README.md` for the full lifecycle convention and file-organization
-rules (multi-requirement files, remainder sections, mermaid diagrams).
+Design work is authored in place: a design lands directly in
+`spec/<topic>.md` as prose, and normative `EVS-{TYPE}-{component}`
+requirement blocks are added to the same file as the design
+stabilizes. See `spec/README.md` for the lifecycle and
+file-organization rules.
 
-Brainstorm-stage design specs currently in `docs/superpowers/specs/`
-that have NOT yet been migrated to `spec/`:
+Good starting points:
 
-- `2026-05-09-substrate-and-materializer-design.md` — the original
-  Phase I overview. Pins the substrate's component model, the event log
-  and hash-chain layout, the action-dispatch flow, the ingest path, and
-  the storage abstraction. **Partially superseded:** the "Subscribe
-  primitive", "Materializer", "Filter, query, and the closed-set rule",
-  and "Multi-source readiness" sections are superseded by the spec
-  below.
-- `2026-05-09-projections-and-subscribe-design.md` — the authoritative
-  spec for the projection model (declarative `ProjectionSpec` shapes
-  interpreted by the substrate), the promoter model (declarative
-  `PromoterSpec` composing library-supplied transformation primitives),
-  the `subscribe<T>` primitive, and the library-version lifecycle.
-  Embodies the "Domain-neutral lib", "Declarative projections",
-  "Permission policy is substrate code", and "Library version recorded
-  in the log" commitments above.
-- `2026-05-11-entry-type-version-substrate-owned-design.md` — entry-type
-  version is substrate-owned; promoter primitives restricted to shape-
-  changers (RenameField/DefaultField/DropField); snapshot-promotion at
-  boot is provably equivalent to event-replay-with-promotion.
+- `spec/prd-library-charter.md` — the charter and the epistemic-layers
+  discussion.
+- `spec/prd-reaction.md` and `spec/reaction-remote.md` — the reaction
+  layer end to end (interfaces, wire protocol, reference server).
+- `spec/scoped-permissions.md` — the scope-aware permission mechanism.
+- `spec/postgres-backend.md` and `spec/dev-postgres-backend.md` —
+  backend portability.
+- The boot-flow DEV specs (`spec/dev-*.md`) — substrate-owned
+  entry-type versioning and `EventStore.open` semantics.
 
-The implementation plan that turns these specs into working code is at
-`docs/superpowers/plans/2026-05-09-projections-and-subscribe-implementation.md`.
-DEV-level requirements (`EVS-DEV-*`) are authored alongside the code
-that satisfies them per the plan's task structure.
+Future work is recorded only in `spec/roadmap/` (see its README).
 
-Subsequent design specs land in `docs/superpowers/specs/` as design work
-demands; once stabilized they migrate to `spec/<topic>.md` per the
-lifecycle above. Roadmap and time-evolving status documents (e.g.,
-`docs/superpowers/specs/2026-05-11-roadmap.md`) stay in
-`docs/superpowers/specs/` — they are not normative design specs.
+## Documentation policy
+
+Three rules govern all documentation in this repo — README files,
+`docs/`, `spec/` prose, and Dart doc comments alike:
+
+- **Final-state voice.** Documentation describes the library as it is.
+  No development history, ticket sequencing, migration narratives, or
+  "previously/now" contrasts. (Requirement text already mandates this
+  via `spec/requirements-spec.md` "Voice — final-state, not delta";
+  the rule applies to all prose. Requirement-block Changelog lines and
+  package CHANGELOGs are the recorded exceptions.)
+- **Consumer neutrality.** This is a library. No document names
+  consumer applications, repos, or deployment systems; use role-based
+  names ("originator", "relay", "controller", "downstream consumer")
+  per `spec/requirements-spec.md` "Library Neutrality".
+- **Future work lives in `spec/roadmap/` only.** Everything outside
+  that directory describes present state; deferred ideas move there.
 
 ## License
 

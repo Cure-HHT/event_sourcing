@@ -1,8 +1,8 @@
-# event_sourcing_datastore_demo
+# event_sourcing_demo
 
 Linux-desktop sandbox exercising every public surface of
-`event_sourcing_datastore`. Two datastores in one process, one mobile
-pane bridged into one portal pane, every panel driven from real lib
+`event_sourcing`. Two datastores in one process, one mobile
+pane bridged into one hub pane, every panel driven from real lib
 APIs (no mocks, no fixtures).
 
 ## Contents
@@ -38,24 +38,24 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 |         |  -> DownstreamBridge.deliver(payload)       |
 |         v                                             |
 +---------v---------------------------------------------+
-|  PORTAL pane                                          |
+|  HUB pane                                             |
 |  +-----------+----------+----------+----+----+----+   |
 |  | MATERIAL- | EVENTS   | AUDIT    | FIFO panels  |   |
 |  | IZED      | (watch)  |          |              |   |
 |  +-----------+----------+----------+----+----+----+   |
 |                                                       |
-|  AppendOnlyDatastore B (hopId='portal-server')        |
-|  Source.identifier = PORTAL.install.uuid              |
-|  EventStore.ingestBatch(...) materializes on portal   |
+|  AppendOnlyDatastore B (hopId='hub-server')           |
+|  Source.identifier = HUB.install.uuid                 |
+|  EventStore.ingestBatch(...) materializes on hub      |
 +-------------------------------------------------------+
 ```
 
 Both panes are the same code with different `Source` and a different
 on-disk database. Mobile's two `NativeDemoDestination` instances
-deliver via an in-process `DownstreamBridge` straight into portal's
-`EventStore.ingestBatch`. Portal sees the events with mobile's
-provenance entry stamped at hop 0 and a portal-stamped receiver entry
-at hop 1. Materializer rows appear on portal as ingest commits, not
+deliver via an in-process `DownstreamBridge` straight into hub's
+`EventStore.ingestBatch`. Hub sees the events with mobile's
+provenance entry stamped at hop 0 and a hub-stamped receiver entry
+at hop 1. Materializer rows appear on hub as ingest commits, not
 on a separate code path.
 
 The single MaterialApp hosts the two panes split by a draggable
@@ -81,7 +81,7 @@ sudo apt-get install \
 ### Run
 
 ```bash
-cd apps/common-dart/event_sourcing_datastore/example
+cd event_sourcing/example
 flutter pub get
 flutter run -d linux
 ```
@@ -89,12 +89,12 @@ flutter run -d linux
 ### Storage paths
 
 Both panes persist their state under
-`<applicationSupportDirectory>/event_sourcing_datastore_demo/`:
+`<applicationSupportDirectory>/event_sourcing_demo/`:
 
 - `demo.db` — mobile pane's Sembast event log + views + FIFOs.
-- `demo_portal.db` — portal pane's same.
+- `demo_hub.db` — hub pane's same.
 - `MOBILE.install.uuid` — mobile pane's persisted `Source.identifier`.
-- `PORTAL.install.uuid` — portal pane's persisted `Source.identifier`.
+- `HUB.install.uuid` — hub pane's persisted `Source.identifier`.
 
 The two `*.install.uuid` files are minted on first launch and re-read
 on every subsequent boot. To start over from scratch, delete the four
@@ -111,8 +111,8 @@ button also deletes the database file).
    exists.
 2. `_readOrMintUUID` reads (or mints + persists) each pane's install
    UUID.
-3. Bootstrap the **portal pane first** — the `DownstreamBridge` needs a
-   reference to portal's `EventStore` before mobile's
+3. Bootstrap the **hub pane first** — the `DownstreamBridge` needs a
+   reference to hub's `EventStore` before mobile's
    `NativeDemoDestination` is constructed.
 4. Construct the bridge.
 5. Bootstrap the **mobile pane** with the bridge wired into its native
@@ -155,8 +155,8 @@ Future<_PaneRuntime> _bootstrapPane({
 }
 ```
 
-The mobile pane passes `bridge: <bridge>`; the portal pane passes
-`bridge: null` so portal's native destinations are no-op simulators.
+The mobile pane passes `bridge: <bridge>`; the hub pane passes
+`bridge: null` so hub's native destinations are no-op simulators.
 
 ---
 
@@ -194,7 +194,7 @@ MATERIALIZED panel. That is the CQRS discriminator demo.
 System entry types (the ten reserved ids covered in the lib README's
 "Event Types" section) are emitted automatically by lib operations
 and surface in the AUDIT panel and (via the `NativeAudit` destination)
-on the wire to portal.
+on the wire to hub.
 
 ---
 
@@ -215,10 +215,10 @@ appears on BOTH panes. When mobile appends a `demo_note` event:
 - Mobile's local `applyInTxn` upserts a row in mobile's
   `diary_entries` view; mobile's `MaterializedPanel` re-renders on the
   emitted snapshot.
-- The same event flows through `NativeUser` to portal via the bridge.
-- Portal's `EventStore.ingestBatch` runs the SAME materializer code
-  path on the SAME event; portal's `diary_entries` view gets its own
-  row; portal's `MaterializedPanel` re-renders on portal's snapshot.
+- The same event flows through `NativeUser` to hub via the bridge.
+- Hub's `EventStore.ingestBatch` runs the SAME materializer code
+  path on the SAME event; hub's `diary_entries` view gets its own
+  row; hub's `MaterializedPanel` re-renders on hub's snapshot.
 
 Same code, two independent stores, two independently observable view
 states. The materialize-on-ingest behavior is what the receiver-side
@@ -254,7 +254,7 @@ inside `fillBatch` and persists `envelope_metadata` with
 `wire_payload: null`. Drain reconstructs the wire bytes
 deterministically on each send attempt and (when a bridge is wired)
 hands them to `DownstreamBridge.deliver`, which calls
-`EventStore.ingestBatch` on portal and maps the outcome to a
+`EventStore.ingestBatch` on hub and maps the outcome to a
 `SendResult`.
 
 `NativeAudit` ships only system events. Its filter is the canonical
@@ -303,16 +303,16 @@ Walk-through to see the badge shift across the bridge:
    note, press Red / Green / Blue).
 2. The new event row appears in mobile's EVENTS panel with `[L]`
    prefixed (mobile-originated).
-3. Within ~1 second, the same event flows via `NativeUser` to portal.
-   The portal pane's EVENTS panel shows the event with `[R]` prefixed
-   — portal evaluates `isLocallyOriginated` against PORTAL's
+3. Within ~1 second, the same event flows via `NativeUser` to hub.
+   The hub pane's EVENTS panel shows the event with `[R]` prefixed
+   — hub evaluates `isLocallyOriginated` against HUB's
    identifier, the event's `provenance[0].identifier` is MOBILE's
    UUID, the comparison returns false.
 
 The system-event AUDIT panel shows receiver-stamped audit rows
 (`ingest.batch_rejected` / `ingest.duplicate_received`) on the panel
-that did the receiving. Because portal's NativeAudit destination has
-`bridge: null`, those audit events stop at portal — the demo does not
+that did the receiving. Because hub's NativeAudit destination has
+`bridge: null`, those audit events stop at hub — the demo does not
 chain a third hop.
 
 ---
@@ -333,7 +333,7 @@ edit again and click **Edit selected** then **Complete** (another
 four rows appear in EVENTS sharing one `aggregate_id`, the
 materialized row state shift through partial / complete / deleted
 markers, all four FIFOs drain those rows independently at their own
-send-latency cadence, and the same four rows materialize on the portal
+send-latency cadence, and the same four rows materialize on the hub
 pane via the bridge.
 
 ### CQRS invariant
@@ -414,17 +414,17 @@ presses no longer enqueue to Primary either, but DO appear in EVENTS
 — the event log is the source of truth and is not filtered by
 destination schedules.
 
-### Mobile-to-portal sync (the dual-pane story)
+### Mobile-to-hub sync (the dual-pane story)
 
 To see one event flow end-to-end across the bridge: in the mobile
 pane click Start, type a title, click Complete. Observe two new rows
 in mobile's EVENTS each prefixed `[L]`; mobile's MATERIALIZED gains
 a row with the title; mobile's NativeUser FIFO holds the rows
-briefly then flips them to `sent`. Look at the portal pane (within
-~1 second): two new rows in portal's EVENTS each prefixed `[R]`
-(portal evaluates `isLocallyOriginated` against portal's UUID and
-reads mobile's identifier on `provenance[0]`); portal's MATERIALIZED
-gains the same row (materialize-on-ingest); portal's AUDIT panel
+briefly then flips them to `sent`. Look at the hub pane (within
+~1 second): two new rows in hub's EVENTS each prefixed `[R]`
+(hub evaluates `isLocallyOriginated` against hub's UUID and
+reads mobile's identifier on `provenance[0]`); hub's MATERIALIZED
+gains the same row (materialize-on-ingest); hub's AUDIT panel
 shows an `ingest.duplicate_received` audit row if the same envelope
 is replayed.
 
@@ -433,8 +433,8 @@ is replayed.
 To see two installs of the same role class as distinct origins:
 delete only `MOBILE.install.uuid` (leave the database). Re-run the
 demo. The mobile pane mints a fresh UUID and re-bootstraps; mobile's
-events from this run appear with `[L]` on mobile, `[R]` on portal.
-Pre-existing portal events that were originated by the previous
+events from this run appear with `[L]` on mobile, `[R]` on hub.
+Pre-existing hub events that were originated by the previous
 mobile install still show their old `provenance[0].identifier` —
 the prior mobile UUID — and read as `[R]` on the running mobile pane
 (different identifier from the running pane's `Source.identifier`).

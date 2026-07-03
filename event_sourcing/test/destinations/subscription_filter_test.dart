@@ -34,7 +34,7 @@ void main() {
       expect(f.matches(_mkEvent()), isTrue);
       expect(
         f.matches(
-          _mkEvent(entryType: 'nose_hht_survey', eventType: 'tombstone'),
+          _mkEvent(entryType: 'nose_symptom_survey', eventType: 'tombstone'),
         ),
         isTrue,
       );
@@ -43,7 +43,7 @@ void main() {
     test('entryTypes allow-list selects by entry_type', () {
       const f = SubscriptionFilter(entryTypes: {'epistaxis_event'});
       expect(f.matches(_mkEvent(entryType: 'epistaxis_event')), isTrue);
-      expect(f.matches(_mkEvent(entryType: 'nose_hht_survey')), isFalse);
+      expect(f.matches(_mkEvent(entryType: 'nose_symptom_survey')), isFalse);
     });
 
     test('eventTypes allow-list selects by event_type', () {
@@ -73,7 +73,7 @@ void main() {
       );
       expect(
         f.matches(
-          _mkEvent(entryType: 'nose_hht_survey', eventType: 'finalized'),
+          _mkEvent(entryType: 'nose_symptom_survey', eventType: 'finalized'),
         ),
         isFalse,
       );
@@ -86,7 +86,7 @@ void main() {
       const emptyEntryTypes = SubscriptionFilter(entryTypes: {});
       expect(emptyEntryTypes.matches(_mkEvent()), isFalse);
       expect(
-        emptyEntryTypes.matches(_mkEvent(entryType: 'nose_hht_survey')),
+        emptyEntryTypes.matches(_mkEvent(entryType: 'nose_symptom_survey')),
         isFalse,
       );
     });
@@ -122,7 +122,7 @@ void main() {
           return true;
         },
       );
-      expect(f.matches(_mkEvent(entryType: 'nose_hht_survey')), isFalse);
+      expect(f.matches(_mkEvent(entryType: 'nose_symptom_survey')), isFalse);
       expect(predicateCalls, 0);
 
       // Sanity: the predicate IS invoked when allow-lists pass.
@@ -148,7 +148,11 @@ void main() {
     // everything"; equivalent to its any-event behavior.
     test('default SubscriptionFilter (no constraints) matches everything', () {
       const f = SubscriptionFilter();
-      for (final entry in ['epistaxis_event', 'nose_hht_survey', 'random']) {
+      for (final entry in [
+        'epistaxis_event',
+        'nose_symptom_survey',
+        'random',
+      ]) {
         for (final event in ['finalized', 'checkpoint', 'tombstone']) {
           expect(
             f.matches(_mkEvent(entryType: entry, eventType: event)),

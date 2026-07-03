@@ -144,6 +144,7 @@ client-side conflict resolution primitive, no CRDT merge semantics. It also
 doesn't help with offline editing on clients without a local substrate: a
 Flutter mobile client wanting true offline collaborative editing would need
 either (a) `LocalScope` + an `event_sourcing` install per device with
-bi-directional ingest (Phase II multi-source territory, currently dormant) or
-(b) an app-side queue of pending actions replayed when the WS reconnects.
+bi-directional ingest (the multi-source roadmap item,
+`spec/roadmap/multi-source-editing.md`, currently dormant) or (b) an
+app-side queue of pending actions replayed when the WS reconnects.
 Option (b) is what ships today.

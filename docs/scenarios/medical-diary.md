@@ -5,18 +5,18 @@ A clinical-trial eDiary fits the substrate's grain unusually well: every input
 event with an identified initiator (the patient, the coordinator), a timestamp,
 and a regulatory obligation to remain visible forever. The deployment splits
 into two processes — the patient's mobile install owns the authoritative log
-for that patient's entries, the portal server owns the consolidated study-wide
-log — bridged by `reaction`'s wire layer and (eventually, Phase II)
-cross-installation sync. ALCOA+ is not an afterthought; it is the reason this
-substrate exists in this app's stack.
+for that patient's entries, the study server owns the consolidated study-wide
+log — bridged by `reaction`'s wire layer and, per the multi-source roadmap
+item (`spec/roadmap/multi-source-editing.md`), eventual cross-installation
+sync. ALCOA+ is not an afterthought; it is the reason this substrate exists in
+this app's stack.
 
 ## 1. Initialization and use
 
-**Storage.** `SembastBackend` on the patient's phone (already shipping; works
-offline, encrypted at rest by Flutter Secure Storage on the database key).
-`PostgresBackend` on the portal server. Both pass the same conformance harness,
-so the *substrate* code on both sides is identical; only the backend handle
-differs.
+**Storage.** `SembastBackend` on the patient's phone (works offline, encrypted
+at rest by Flutter Secure Storage on the database key). `PostgresBackend` on
+the study server. Both pass the same conformance harness, so the *substrate*
+code on both sides is identical; only the backend handle differs.
 
 **Action shapes** — representative subset:
 
@@ -50,15 +50,15 @@ Plus several `TableProjectionSpec`s:
   for cross-site dashboards.
 - `query_open_index` — open data-clarification queries per coordinator.
 
-**Sync topology.** Phase I: each patient install is single-source for its own
-entries; the portal is single-source for its derived study-management data
+**Sync topology.** Each patient install is single-source for its own entries;
+the study server is single-source for its derived study-management data
 (queries, role assignments, site config). Patient install opens a `Destination`
-to the portal that forwards `patient_*` events; the portal accepts them via the
-ingest path. Coordinators only ever read patient data on the portal — they do
-not produce events on the patient's behalf except via `Action`s that emit *new*
-aggregate events (queries, AE follow-ups). The "originator of first event"
-convention naturally pins canonicalization to the phone for entries and to the
-portal for queries.
+to the study server that forwards `patient_*` events; the study server accepts
+them via the ingest path. Coordinators only ever read patient data on the study
+server — they do not produce events on the patient's behalf except via
+`Action`s that emit *new* aggregate events (queries, AE follow-ups). The
+"originator of first event" convention naturally pins canonicalization to the
+phone for entries and to the study server for queries.
 
 **Auth model.** Three roles to start: `PatientSelf`, `StudyCoordinator`,
 `Supervisor`. Two scope classes: `site` (top-level) and `patient`
@@ -71,12 +71,12 @@ requiring read-only access across the study uses `ValueWildcardScope('site')`.
 
 **Cross-process.** Two composition roots. The phone runs `LocalScope` against
 `SembastBackend` — `AuthSession.Authenticated(Principal(patientId,
-PatientSelf))` is set once during enrollment and never changes. The portal's
-Flutter web app runs `RemoteScope` against the portal server's
-`ReactionHandlers`; the portal server hosts the Postgres-backed `EventStore`
+PatientSelf))` is set once during enrollment and never changes. Study staff's
+Flutter web app runs `RemoteScope` against the study server's
+`ReactionHandlers`; the study server hosts the Postgres-backed `EventStore`
 and the dispatcher, with `authMiddleware(FirebasePrincipalAuthValidator())`
 populating the request context. Patient apps additionally open a `Destination`
-to the portal's ingest endpoint to forward their entries upstream.
+to the study server's ingest endpoint to forward their entries upstream.
 
 ## 2. Layer 1 guarantees that are load-bearing
 
@@ -113,12 +113,12 @@ this decision?" is reconstructable from the log: `EventStore.read(uptoSequence:
 N)` reproduces both the events and the derived view exactly as they stood at N.
 
 Provenance is the supporting cast: when the patient's phone forwards an entry
-to the portal, the `ProvenanceEntry` chain records the originating install
-(UUIDv4 per phone), the timestamp at originator, the forwarding hop, and the
-software version at each. The audit trail does not just say "this entry
-exists"; it says "patient install X-123 created it at T₁ running app v1.4.2;
-portal received it at T₂ running app v2.0.1." That's the multi-hop attribution
-Part 11 §11.10(e) wants.
+to the study server, the `ProvenanceEntry` chain records the originating
+install (UUIDv4 per phone), the timestamp at originator, the forwarding hop,
+and the software version at each. The audit trail does not just say "this
+entry exists"; it says "patient install X-123 created it at T₁ running app
+v1.4.2; study server received it at T₂ running app v2.0.1." That's the
+multi-hop attribution Part 11 §11.10(e) wants.
 
 ## 3. Layer 2 machinery — defaults vs. customizations
 
@@ -137,9 +137,9 @@ WholePayload()`) over the same event types — the same source-of-truth, two
 materializations, both reconstructable from the log.
 
 **Scope class hierarchy — straight use of the primitive.** Two-level `site →
-patient`. The eDiary doesn't need `study` as a third level in v1 (single-study
-deployments); a multi-study sponsor portal adds a `study` scope class as a
-registered `ScopeClassSpec` with `patient_site_index`'s parent class set to `study`.
+patient`. A single-study deployment doesn't need `study` as a third level; a
+multi-study deployment adds a `study` scope class as a registered
+`ScopeClassSpec` with `patient_site_index`'s parent class set to `study`.
 The substrate's containment expansion gives coordinators per-patient grants
 from their site assignment without any code change.
 
@@ -161,16 +161,17 @@ and supports without extension.
 role-permission-scope mechanism handles coordinators-at-site and
 patients-edit-own without extension. The one gap, called out in CLAUDE.md as a
 known incomplete trust boundary: `Principal.userId` is trusted on faith from
-the auth layer. The portal's `FirebasePrincipalAuthValidator` closes this from
-outside, and `reaction`'s middleware enforces it on every HTTP request;
-*however*, the patient app currently has no concept of a logged-out patient
+the auth layer. The study server's `FirebasePrincipalAuthValidator` closes
+this from outside, and `reaction`'s middleware enforces it on every HTTP
+request; *however*, the patient app has no concept of a logged-out patient
 (the device is the credential after enrollment). For a multi-patient shared
 device (rare but not impossible in some trial designs), an app-level session
 abstraction is needed — not a substrate change, but worth flagging because the
 substrate does not provide one.
 
 **One non-gap.** Cross-installation canonicalization conflicts (a phone sends
-an entry the portal also somehow has) are squarely deferred to Phase II's
-multi-source machinery. v1's "originator-of-first-event" convention is fine:
-the phone is canonical for its patient's entries, period. The portal's job is
+an entry the study server also somehow has) are squarely deferred to the
+multi-source roadmap item (`spec/roadmap/multi-source-editing.md`). The
+substrate's "originator-of-first-event" convention is fine as is: the phone is
+canonical for its patient's entries, period. The study server's job is
 to accept and propagate, not to arbitrate.

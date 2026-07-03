@@ -26,7 +26,8 @@ import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
 // Minimal concrete Action under test
 // ---------------------------------------------------------------------------
 
-/// Invites a user by email. The realistic action the portal will dispatch.
+/// Invites a user by email. The realistic action a control-plane app will
+/// dispatch.
 class InviteUserAction extends Action<Map<String, Object?>, String> {
   @override
   String get name => 'invite_user';

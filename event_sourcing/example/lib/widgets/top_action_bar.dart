@@ -1,9 +1,9 @@
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_datastore_demo/app_state.dart';
-import 'package:event_sourcing_datastore_demo/demo_types.dart';
-import 'package:event_sourcing_datastore_demo/synthetic_ingest.dart';
-import 'package:event_sourcing_datastore_demo/widgets/add_destination_dialog.dart';
-import 'package:event_sourcing_datastore_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_types.dart';
+import 'package:event_sourcing_demo/synthetic_ingest.dart';
+import 'package:event_sourcing_demo/widgets/add_destination_dialog.dart';
+import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -16,7 +16,7 @@ const _uuid = Uuid();
 /// non-empty rows when the toggle is on.
 const SecurityDetails _kDemoSecurityDetails = SecurityDetails(
   ipAddress: '203.0.113.42',
-  userAgent: 'event_sourcing_datastore_demo/0.1.0 (Flutter; Linux desktop)',
+  userAgent: 'event_sourcing_demo/0.1.0 (Flutter; Linux desktop)',
   sessionId: 'demo-session-001',
   geoCountry: 'US',
   geoRegion: 'CA',

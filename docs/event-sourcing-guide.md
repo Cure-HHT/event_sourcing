@@ -176,8 +176,8 @@ they shape what's possible:
   explicitly opted in. "What did the library do at sequence N?" is
   answerable from the log alone.
 - **Single-source-per-aggregate-type, today.** The multi-source
-  machinery exists in design but is dormant in v1. In practice this
-  means: in the v1 model, each kind of aggregate is produced by one
+  machinery exists in design but is dormant in 0.x. In practice this
+  means: in the 0.x model, each kind of aggregate is produced by one
   deployment.
 
 ## Dispatching an action — what happens
@@ -424,12 +424,16 @@ The backend is trusted for persistence, atomicity, and durability.
 Everything else is derived from the events it holds.
 
 > **Note on Postgres + subscriptions.** Both backends pass the same
-> conformance harness for storage, transactions, and view materialization,
-> but reactive `subscribe<T>` over `PostgresBackend` is not yet wired —
-> the existing implementation streams via Sembast change notifications.
-> Until polling or `LISTEN/NOTIFY` plumbing lands (tracked separately
-> in `spec/postgres-backend.md` Future Work), server-side reactive UIs
-> against Postgres need to poll `findViewRows` on a cadence.
+> conformance harness for storage, transactions, and view
+> materialization, and reactive `subscribe<T>` works on both: live
+> updates are published by the `EventStore` after each commit, so a
+> subscriber sees every change made through its own `EventStore`
+> instance regardless of backend. What no backend provides today is
+> cross-process change notification — a write made by a different
+> process against the same Postgres database produces no emission, so
+> multi-process deployments poll `findViewRows` on a cadence for
+> cross-process freshness. Push-based cross-process notification
+> (`LISTEN/NOTIFY`) is a roadmap item (`spec/roadmap/storage.md`).
 
 ### 2. Build an action registry
 
@@ -476,7 +480,7 @@ register them. Then add your own.
 final datastore = await bootstrapAppendOnlyDatastore(
   backend: backend,
   source: Source(
-    hopId: 'portal-server',
+    hopId: 'server-1',
     identifier: installId,             // UUIDv4, persisted across boots
     softwareVersion: '0.1.0+1',
   ),
@@ -805,7 +809,7 @@ The sections above describe the substrate as you'd use it for a
 single-installation app: one server, one database, one source of truth.
 Everything below is what the substrate also provides, mostly invisibly,
 to support audit, regulatory compliance, and cross-installation sync
-(Phase II multi-source).
+(the multi-source roadmap item, `spec/roadmap/multi-source-editing.md`).
 
 You can ship a working application without engaging with any of this.
 But knowing it's there shapes how you think about debugging, retention,
@@ -1002,7 +1006,7 @@ deployments handled an event and when.
 ### Cross-installation ingest
 
 The library is designed for multi-installation deployment from the
-ground up, though the v1 substrate treats one source per aggregate
+ground up, though the 0.x substrate treats one source per aggregate
 type as canonical. The ingest path is the inbound side of that
 design:
 
@@ -1020,10 +1024,10 @@ design:
   diverged from what was expected; the local install can refuse the
   batch and emit an audit event explaining the refusal.
 
-When the multi-source machinery is activated (Phase II, post-v1), the
-substrate will add canonicalization rules: per-aggregate-type rules
-saying who is the canonical authority for that aggregate, who can
-approve another deployment's edits, and how conflicts resolve.
+Activating that machinery — canonicalization rules: per-aggregate-type
+rules saying who is the canonical authority for that aggregate, who can
+approve another deployment's edits, and how conflicts resolve — is the
+multi-source roadmap item (`spec/roadmap/multi-source-editing.md`).
 
 ### Hash chain and ALCOA+
 
@@ -1066,14 +1070,14 @@ build runs the substrate directly: it opens an `EventStore`, holds the
 its local sembast database. This is the entirety of a mobile-only
 deployment — one install, one log, one principal.
 
-Many real deployments are not shaped that way. A clinical-trial
-portal, for example, has Study Coordinators and Supervisors using a
-Flutter web app from their browsers, talking to a portal server that
-runs the substrate against a Postgres database. The browser is too
-constrained to run a full `EventStore` and shouldn't anyway — the
-portal database is the authoritative log for that deployment. The
-substrate is single-process; the deployment is two-process. Something
-has to bridge them.
+Many real deployments are not shaped that way. A server deployment,
+for example, has several roles of users working from a Flutter web
+app in their browsers, talking to a server that runs the substrate
+against a Postgres database. The browser is too constrained to run a
+full `EventStore` and shouldn't anyway — the server's database is the
+authoritative log for that deployment. The substrate is
+single-process; the deployment is two-process. Something has to
+bridge them.
 
 That something is `reaction`. It's a sibling package, not part of
 `event_sourcing` itself, because adding HTTP + WebSocket + shelf
@@ -1090,7 +1094,7 @@ design.
 
 **1. Identity becomes a wire concern.** Whatever process the
 deployment already uses to authenticate browser clients — Firebase,
-an in-house OAuth flow, a portal-issued linking code — is also the
+an in-house OAuth flow, an issued linking code — is also the
 process that hands the server an identity for the substrate to use.
 The substrate has no built-in opinion about credential format; it
 just requires the deployment to supply a `PrincipalAuthValidator`
@@ -1132,13 +1136,13 @@ write queue that preserves per-subscription ordering on the wire.
 **3. Read-path authorization happens at the wire.**
 
 In the integrated case, a UI gating decision ("can this user see
-patient P-42?") happens client-side against the locally-known
+record R-42?") happens client-side against the locally-known
 permission state. There's no risk: the user already has the entire
 log in front of them, and the UI is just choosing what to render.
 
 Cross-process, the server *must* enforce. A browser-side filter on a
 WebSocket subscription is a UI affordance, not a security boundary.
-The portal server must compose the requesting Principal's permitted
+The server must compose the requesting Principal's permitted
 scope into the substrate `subscribe<T>` filter so events outside
 scope never travel over the wire.
 
@@ -1211,9 +1215,9 @@ while the fresh snapshot streams. Existing subscription streams surface a
 observe all of this through the authoritative `ConnectionStatus` surface
 (see below), not by inferring it from stream liveness.
 
-One non-breaking optimization remains future work: a
-"resume-from-sequence" mode that re-tails from the client-known sequence
-on reconnect instead of replaying the full snapshot.
+A resume-from-sequence reconnect mode is a roadmap item
+(`spec/roadmap/reaction.md`): it would re-tail from the client-known
+sequence on reconnect instead of replaying the full snapshot.
 
 Auth expiry is the parallel concern. The wire surfaces it explicitly:
 HTTP 401 from any route and either a `4001 auth_rejected` or `4003
@@ -1277,17 +1281,13 @@ There's no separate "reaction server" process. There's no
 `ReactionServer` class either. The lib ships **shelf-compatible
 handlers** that you mount inside whatever server you already have.
 
-The expected consumers — `portal_server` and `diary_server` in
-`hht_diary` — already run `shelf` + `shelf_router` with their own
-middleware pipelines (Firebase auth, OpenTelemetry, CORS, request
-logging). The plan is to **replace** most of their existing bespoke
-REST handlers with reaction handlers, not add a parallel routing
-subtree alongside them. Today each server has 30+ hand-written
-handlers, each doing its own business logic against Postgres
-directly. Post-migration, those collapse to about five generic
-reaction handlers, with the per-feature business logic moving into
-substrate `Action`s — same dispatch pipeline, same audit trail, same
-permission story as a single-process app.
+Deployments that already run `shelf` + `shelf_router` servers — with
+their own middleware pipelines (auth, OpenTelemetry, CORS, request
+logging) — mount the reaction handlers alongside their existing
+routes; bespoke per-view REST read endpoints collapse into the
+generic subscription handler, with the per-feature business logic
+living in substrate `Action`s — same dispatch pipeline, same audit
+trail, same permission story as a single-process app.
 
 What `reaction` exposes to make that work:
 
@@ -1314,43 +1314,44 @@ they like:
 ```text
 final reaction = ReactionHandlers(
   eventStore: store, dispatcher: dispatcher,
-  policy: policy, viewScopeRegistry: portalViewScopes,
+  policy: policy, viewScopeRegistry: appViewScopes,
 );
 
-// HTTP routes go behind the portal's existing auth middleware (it
+// HTTP routes go behind the app's existing auth middleware (it
 // reads the Bearer header and attaches a Principal to the request
 // context). The WS route is registered on the outer router with NO
 // middleware — the WS upgrade path cannot carry an Authorization
 // header from Flutter web; credentials arrive in the first WS
 // message and are validated by the supplied PrincipalAuthValidator.
 final httpRouter = Router()
-  // The portal's existing custom routes:
-  ..get('/api/v1/sponsor/config', sponsorConfigHandler)
+  // The app's existing custom routes:
+  ..get('/api/v1/config', appConfigHandler)
   ..post('/api/v1/auth/login', loginHandler)         // pre-auth
-  // The reaction HTTP handlers, gated by the portal's auth middleware:
-  ..get('/api/v1/portal/me',                   reaction.me)
-  ..post('/api/v1/portal/actions',             reaction.actions)
-  ..get('/api/v1/portal/permissions/snapshot', reaction.permissions);
+  // The reaction HTTP handlers, gated by the app's auth middleware:
+  ..get('/api/v1/me',                   reaction.me)
+  ..post('/api/v1/actions',             reaction.actions)
+  ..get('/api/v1/permissions/snapshot', reaction.permissions);
 
 final httpPipeline = const Pipeline()
-    .addMiddleware(portalAuthMiddleware)
+    .addMiddleware(appAuthMiddleware)
     .addHandler(httpRouter.call);
 
 final topRouter = Router()
-  ..get('/api/v1/portal/subscriptions',
+  ..get('/api/v1/subscriptions',
         reaction.subscriptions(validator))
   ..mount('/', httpPipeline);
 ```
 
 Authentication composes with whatever the consumer is already doing.
-The portal_server already runs Firebase ID-token middleware on its
-authenticated routes; reaction's handlers just read `Principal` from
-the request context via `principalFromContext(req)`. The portal's
-existing Firebase middleware populates that context, and reaction's
-handlers consume it — one auth flow, two route consumers. For
-deployments that don't have their own middleware yet (early demos,
-local dev), `authMiddleware(TrustingAuthValidator(...))` is a
-one-liner; reaction will use it identically.
+A deployment that already runs Firebase ID-token middleware on its
+authenticated routes needs no change to that middleware; reaction's
+handlers just read `Principal` from the request context via
+`principalFromContext(req)`. The existing Firebase middleware
+populates that context, and reaction's handlers consume it — one auth
+flow, two route consumers. For deployments that don't have their own
+middleware yet (early demos, local dev),
+`authMiddleware(TrustingAuthValidator(...))` is a one-liner; reaction will
+use it identically.
 
 `ReactionHandlers` is a config bundle, not a server. It doesn't own
 the `EventStore`, doesn't own the `ActionDispatcher`, doesn't own
@@ -1458,17 +1459,14 @@ references are:
   per-subscription authorization mechanism, and the trust-boundary
   expansion.
 - `spec/prd-reaction.md` — the PRD-level requirements for `reaction`'s
-  four interfaces, the wire transport, and the future Flutter widget
-  layer (`reaction_widgets`, also out of scope for this chapter).
+  four interfaces, the wire transport, and the Flutter widget layer
+  (`reaction_widgets`, also out of scope for this chapter).
 - `reaction/lib/src/local/` — the `Local*` impls of the four
   interfaces. Read these to understand how the substrate-agnostic seam
   composes against the in-process substrate.
 - `reaction/lib/src/remote/` and `reaction/lib/src/server/` — the
   `Remote*`-plus-server half. Mirror images of the `Local*` impls,
   just with HTTP/WS instead of direct method calls.
-- `docs/superpowers/plans/2026-05-13-reaction-remote-impl.md` — the
-  task-by-task implementation plan; useful for understanding what each
-  sub-component does and how the pieces fit together.
 
 Both halves of `reaction` are shipped and tested. The substrate's
 two demos (`event_sourcing/example_action_permissions/` and

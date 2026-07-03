@@ -1,6 +1,6 @@
 # EVS-DEV-flow-token: Flow Correlation Token
 
-**Level**: DEV | **Status**: Draft | **Implements**: -
+**Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-action-dispatch
 
 ## Purpose
@@ -20,5 +20,9 @@ D. The token SHALL be opaque to the substrate — neither parsed nor interpreted
 ## Rationale
 
 Correlation across non-event-sourced gaps needs a token minted on an originating intent and echoed by the downstream events the flow produces. The substrate already records such a token on every event; this requirement formalizes its contract: accept it on submission, thread it onto every emitted event, preserve it unchanged across relay and ingest, and keep it opaque and free of cleartext secrets. Recording the token on every emitted event and preserving it across hops makes end-to-end tracing possible without weakening the immutable log; keeping it opaque and secret-free keeps short-lived credentials out of the forever-immutable record. The token is a generic library primitive; consuming applications mint and interpret it for their own flows.
+
+## Changelog
+
+- 2026-07-02 | a02a8238 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
 *End* *Flow Correlation Token* | **Hash**: a02a8238
