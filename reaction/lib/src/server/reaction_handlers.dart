@@ -152,6 +152,17 @@ class ReactionHandlers {
   void watchContainment(String aggregateType) =>
       _authzWatcher.watchContainment(aggregateType);
 
+  /// Opt-in: force-log-out (WS close 4003) the affected user when one of
+  /// [eventTypes] occurs on [aggregateType], mirroring the core
+  /// `role_unassigned` close. Lets a consumer wire an account-level narrowing
+  /// the substrate does not model — e.g. a portal `user_deactivated` event.
+  /// [userIdOf] extracts the affected user from each matching event.
+  void watchForceLogout(
+    String aggregateType,
+    Set<String> eventTypes,
+    String Function(StoredEvent event) userIdOf,
+  ) => _authzWatcher.watchForceLogout(aggregateType, eventTypes, userIdOf);
+
   /// GET handler: returns the authenticated Principal as JSON.
   Handler get me => meHandler();
 

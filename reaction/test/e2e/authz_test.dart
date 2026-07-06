@@ -155,6 +155,70 @@ void main() {
     await sub.cancel();
   });
 
+  // Verifies: EVS-DEV-authz-watcher/F — a consumer-registered force-logout
+  //   trigger (an account-level narrowing on a consumer aggregate, the way the
+  //   portal wires `user_deactivated` on `portal_user`) closes the affected
+  //   user's WS with 4003, exactly like the core role_unassigned path.
+  test('watchForceLogout closes the WS on a consumer narrowing event',
+      () async {
+    final h = await ReactionRemoteTestHarness.open();
+    addTearDown(h.close);
+
+    // Opt in: an `account_disabled` event on the `account` aggregate
+    // force-logs-out the aggregate-id user (the account-level analogue of
+    // role_unassigned; the portal registers `user_deactivated` / `portal_user`
+    // the same way).
+    h.reaction.watchForceLogout(
+      'account',
+      const {'account_disabled'},
+      (event) => event.aggregateId,
+    );
+
+    // Authenticate alice and open a subscription so her connection registers
+    // in the WsConnectionRegistry.
+    await h.grantPermission(role: 'install', permission: 'view:notes_today');
+    await h.assignRole(
+      userId: 'alice',
+      role: 'install',
+      scope: const BoundScope(class_: 'site', value: 'A'),
+    );
+    h.scope.authSession.setCredential('alice');
+    await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+
+    final stream = h.scope.viewSource.watch<Map<String, Object?>>(
+      viewName: 'notes_today',
+      mapper: (m) => m,
+    );
+    final errors = <Object>[];
+    final sub = stream.listen((_) {}, onError: errors.add);
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+
+    // Disable alice's account: an account-aggregate event whose aggregateId IS
+    // the user (mirrors the portal's user_deactivated on portal_user).
+    await h.substrate.eventStore.append(
+      entryType: 'account_disabled',
+      aggregateType: 'account',
+      aggregateId: 'alice',
+      eventType: 'account_disabled',
+      data: const <String, Object?>{'reason': 'test'},
+      initiator: const AutomationInitiator(service: 'test'),
+    );
+
+    // The watcher closes alice's WS with 4003; RemoteAuthSession flips Expired.
+    await h.scope.authSession.stream
+        .firstWhere((s) => s is Expired)
+        .timeout(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(h.scope.authSession.current, isA<Expired>());
+    expect(
+      errors.any((e) => e.toString().contains('wire_disconnected')),
+      isTrue,
+    );
+
+    await sub.cancel();
+  });
+
   test(
     'after force-logout, re-login + submit denies via substrate membership check',
     () async {
