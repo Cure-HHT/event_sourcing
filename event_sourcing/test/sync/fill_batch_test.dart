@@ -179,6 +179,33 @@ void main() {
       expect(await backend.readFillCursor('fake'), -1);
     });
 
+    // flushHeld bypasses the single-event hold: even within
+    // maxAccumulateTime, a lone in-window event is promoted immediately.
+    test('fillBatch with flushHeld=true flushes a lone event within '
+        'maxAccumulateTime', () async {
+      final ts = DateTime.utc(2026, 4, 22, 11, 59, 50);
+      await _appendEvent(backend, eventId: 'e1', clientTimestamp: ts);
+
+      final dest = FakeDestination(
+        id: 'fake',
+        batchCapacity: 10,
+        maxAccumulateTime: const Duration(minutes: 5),
+      );
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      // age = 10s, well below the 5-minute window — but flushHeld overrides.
+      await fillBatch(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+        flushHeld: true,
+      );
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+      expect(await backend.readFillCursor('fake'), 1);
+    });
+
     // Once maxAccumulateTime has elapsed, the single-event batch
     // flushes: a FIFO row is written and fill_cursor advances to the
     // event's sequence_number.

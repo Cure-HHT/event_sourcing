@@ -77,12 +77,20 @@ const _uuidGen = Uuid();
 ///
 /// [clock] defaults to `() => DateTime.now().toUtc()`; tests inject a
 /// fixed-time closure so the `now()` reference point is deterministic.
+///
+/// [flushHeld] bypasses step 8's single-event `maxAccumulateTime` hold for
+/// this invocation: a lone in-window event is promoted immediately instead of
+/// being held to coalesce with a later one. Used by a caller-forced sync cycle
+/// (e.g. a user-visible submission that must ship promptly) so the coalescing
+/// window still applies to ordinary background cycles. Defaults to false, so
+/// the normal hold is unchanged.
 Future<void> fillBatch(
   Destination destination, {
   required StorageBackend backend,
   required DestinationSchedule schedule,
   Source? source,
   Clock? clock,
+  bool flushHeld = false,
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
 
@@ -185,8 +193,11 @@ Future<void> fillBatch(
   // maxAccumulateTime hold: single-event batches are held until the oldest
   // event's age exceeds maxAccumulateTime. Multi-event batches are not held
   // because canAddToBatch returning false already indicated size pressure.
+  // A forced cycle (flushHeld) bypasses the hold so the lone event ships now.
   final oldestAge = now.difference(batch.first.clientTimestamp);
-  if (batch.length == 1 && oldestAge < destination.maxAccumulateTime) {
+  if (!flushHeld &&
+      batch.length == 1 &&
+      oldestAge < destination.maxAccumulateTime) {
     // Hold: do NOT advance the cursor either — the event is still a
     // live match that we want to re-evaluate on the next tick, possibly
     // joined by a newer event that clears the hold via canAddToBatch
