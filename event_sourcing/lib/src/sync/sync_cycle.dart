@@ -71,30 +71,61 @@ class SyncCycle {
 
   bool _inFlight = false;
 
+  /// Set when a forced [call] (`flushHeld: true`) arrives while a cycle is
+  /// already running. The running cycle checks this after each pass and runs
+  /// one more forced pass, so a forced flush is never dropped by the
+  /// reentrancy guard (the event it wanted shipped is still held otherwise).
+  bool _pendingForce = false;
+
   /// True while a prior [call] invocation has not yet completed. Exposed
   /// for tests to assert the guard's internal state.
   bool get isInFlight => _inFlight;
 
   /// Run one drain-and-poll cycle. Returns immediately (without side
   /// effects) when a prior [call] is still running.
+  ///
+  /// [flushHeld] forces this cycle to bypass fillBatch's single-event
+  /// `maxAccumulateTime` hold, so a lone matching event ships now instead of
+  /// waiting for the coalescing window (or a later trigger) to elapse. If a
+  /// prior cycle is in flight, the forced request is not dropped: it is
+  /// recorded and the running cycle runs one additional forced pass once it
+  /// finishes. Ordinary (unforced) triggers still coalesce as before.
   // inbound poll + reentrancy guard + per-cycle policy resolution.
-  Future<void> call() async {
-    if (_inFlight) return;
+  Future<void> call({bool flushHeld = false}) async {
+    if (_inFlight) {
+      // A cycle is already running. A forced flush must not be dropped by the
+      // guard — mark it pending so the running cycle runs one more forced pass.
+      if (flushHeld) _pendingForce = true;
+      return;
+    }
     _inFlight = true;
     try {
-      // Resolve once per cycle, after the reentrancy guard. The same
-      // SyncPolicy value is forwarded to every destination's drain in
-      // this cycle.
-      final cyclePolicy = _policyResolver != null ? _policyResolver() : _policy;
+      var force = flushHeld;
+      while (true) {
+        _pendingForce = false;
+        // Resolve once per cycle, after the reentrancy guard. The same
+        // SyncPolicy value is forwarded to every destination's drain in
+        // this cycle.
+        final cyclePolicy = _policyResolver != null
+            ? _policyResolver()
+            : _policy;
 
-      final destinations = _registry.all();
-      // A thrown exception from one destination's fill or drain does
-      // not cancel the others. See `_fillAndDrainOrSwallow` for the
-      // per-destination exception handling.
-      await Future.wait(
-        destinations.map((d) => _fillAndDrainOrSwallow(d, cyclePolicy)),
-      );
-      await pollInbound();
+        final destinations = _registry.all();
+        // A thrown exception from one destination's fill or drain does
+        // not cancel the others. See `_fillAndDrainOrSwallow` for the
+        // per-destination exception handling.
+        await Future.wait(
+          destinations.map(
+            (d) => _fillAndDrainOrSwallow(d, cyclePolicy, force),
+          ),
+        );
+        await pollInbound();
+
+        // A forced call that arrived mid-cycle: run one more pass with the
+        // hold bypassed so the event it wanted flushed actually ships.
+        if (!_pendingForce) break;
+        force = true;
+      }
     } finally {
       _inFlight = false;
     }
@@ -103,6 +134,7 @@ class SyncCycle {
   Future<void> _fillAndDrainOrSwallow(
     Destination destination,
     SyncPolicy? cyclePolicy,
+    bool flushHeld,
   ) async {
     // Step 1: promote events appended since the last cycle into this
     // destination's FIFO. Without this, drain has nothing to read past
@@ -116,6 +148,7 @@ class SyncCycle {
         schedule: schedule,
         source: _source,
         clock: _clock,
+        flushHeld: flushHeld,
       );
     } catch (e, st) {
       // Swallow — one destination's fill failure must
