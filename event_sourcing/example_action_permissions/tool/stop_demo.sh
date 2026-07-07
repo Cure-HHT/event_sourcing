@@ -11,7 +11,9 @@ cd "$HERE/.."
 if [ -f tool/.demo-server.pid ]; then
   PID=$(cat tool/.demo-server.pid)
   if kill -0 "$PID" 2>/dev/null; then
-    kill "$PID" 2>/dev/null || true
+    if ! kill "$PID" 2>/dev/null; then
+      echo "note: demo server (pid $PID) already exited (tolerated)" >&2
+    fi
     echo "demo server stopped (pid $PID)."
   else
     echo "demo server pid $PID is not running."

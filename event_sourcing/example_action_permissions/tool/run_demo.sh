@@ -17,7 +17,9 @@ if [ -f tool/.demo-server.pid ]; then
   PRIOR_PID=$(cat tool/.demo-server.pid)
   if kill -0 "$PRIOR_PID" 2>/dev/null; then
     echo "killing prior demo server (pid $PRIOR_PID)..."
-    kill "$PRIOR_PID" 2>/dev/null || true
+    if ! kill "$PRIOR_PID" 2>/dev/null; then
+      echo "note: prior demo server (pid $PRIOR_PID) already exited (tolerated)" >&2
+    fi
     sleep 1
   fi
   rm -f tool/.demo-server.pid
