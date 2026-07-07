@@ -26,8 +26,8 @@ cleanup() {
     if ! kill "$SERVER_PID" 2>/dev/null; then
       echo "note: demo server (pid $SERVER_PID) already exited (tolerated)" >&2
     fi
-    wait "$SERVER_PID" 2>/dev/null
-    rc=$?
+    rc=0
+    wait "$SERVER_PID" 2>/dev/null || rc=$?
     if [ "$rc" -ne 0 ] && [ "$rc" -ne 143 ]; then
       echo "note: wait on demo server (pid $SERVER_PID) returned unexpected status $rc (tolerated)" >&2
     fi
