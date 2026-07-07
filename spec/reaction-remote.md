@@ -1258,7 +1258,9 @@ C. On `role_assigned` for a `userId` or `permission_granted` for a role `R` held
 
 D. Containment-projection changes SHALL emit no signal by default; consumers opt in per containment projection via `ReactionHandlers.watchContainment(aggregateType)`, after which a `Delta` on that projection causes the `AuthorizationWatcher` to send a `stale_data` envelope with `reason: containment_changed` to every currently-connected user.
 
-E. The `AuthorizationWatcher` SHALL maintain exactly one substrate subscription for the core permission/role-assignment event types (`role_permission_grant`, `user_role_scope`) — server-wide, not per-connection — plus one additional subscription per opted-in containment projection. Per-connection state SHALL live in the separate `WsConnectionRegistry` so the watcher remains O(1) in connection count for its substrate subscriptions.
+E. The `AuthorizationWatcher` SHALL maintain exactly one substrate subscription for the core permission/role-assignment event types (`role_permission_grant`, `user_role_scope`) — server-wide, not per-connection — plus one additional subscription per opted-in containment projection and per opted-in force-logout trigger (F). Per-connection state SHALL live in the separate `WsConnectionRegistry` so the watcher remains O(1) in connection count for its substrate subscriptions.
+
+F. Consumers MAY opt in an account-level narrowing the substrate does not model via `ReactionHandlers.watchForceLogout(aggregateType, eventTypes, userIdOf)`, after which a `Delta` on `aggregateType` whose `eventType` is in `eventTypes` SHALL force-close (close code `4003`, reason `permissions_changed`) every WS connection registered for the `userId` returned by `userIdOf(event)` — the account-level analogue of assertion A (e.g. a portal `user_deactivated` on a `portal_user` aggregate). The trigger keys by user, ending all of that user's live sessions; it SHALL NOT be pointed at a per-session termination signal.
 
 ### Rationale
 

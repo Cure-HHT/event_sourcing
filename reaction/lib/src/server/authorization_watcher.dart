@@ -76,6 +76,42 @@ class AuthorizationWatcher {
     _containmentSubs.add(sub);
   }
 
+  /// Opt-in: treat [eventTypes] on [aggregateType] as security-NARROWING
+  /// events that force-log-out the affected user — closing their WS
+  /// connections with 4003, exactly like the core `role_unassigned` path.
+  ///
+  /// The core watcher only knows the substrate's role/permission aggregates;
+  /// this lets a consumer register an account-level narrowing the substrate
+  /// does not model (e.g. a portal `user_deactivated` event), supplying
+  /// [userIdOf] to extract the affected user from each matching event (for a
+  /// `portal_user` deactivation that is the event's `aggregateId`).
+  ///
+  /// Force-logout keys by user, so it ends ALL of that user's live sessions —
+  /// appropriate for an account-level disable. Do NOT point it at a per-session
+  /// termination signal (that would close a user's other device sessions on a
+  /// single-session logout).
+  // Implements: EVS-DEV-authz-watcher/F — consumer-registered force-logout on
+  //   an account-level narrowing event outside the core role/permission set.
+  void watchForceLogout(
+    String aggregateType,
+    Set<String> eventTypes,
+    String Function(StoredEvent event) userIdOf,
+  ) {
+    final sub = eventStore
+        .subscribe<StoredEvent>(
+          SubscriptionFilter(aggregateTypes: {aggregateType}),
+          const Events(),
+        )
+        .listen((update) {
+          if (update is! Delta<StoredEvent>) return;
+          final event = update.value;
+          if (eventTypes.contains(event.eventType)) {
+            _forceLogout(userIdOf(event));
+          }
+        });
+    _containmentSubs.add(sub);
+  }
+
   Future<void> stop() async {
     await _coreSub?.cancel();
     for (final s in _containmentSubs) {

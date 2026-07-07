@@ -93,6 +93,19 @@ class ReactionTestHarness {
           name: 'Action Denial',
           isMaterialized: false,
         ),
+      )
+      // Generic account-level entry type so e2e/authz_test.dart can exercise
+      // AuthorizationWatcher.watchForceLogout on a consumer aggregate outside
+      // the core role/permission set (the portal wires its own user_deactivated
+      // event this way). Portal-agnostic: the reaction package models the
+      // mechanism, not the portal's event names.
+      ..register(
+        const EntryTypeDefinition(
+          id: 'account_disabled',
+          registeredVersion: 1,
+          name: 'Account Disabled',
+          isMaterialized: false,
+        ),
       );
 
     // --- Projections ---
