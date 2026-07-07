@@ -67,8 +67,11 @@ if [ "$WITH_COVERAGE" = true ] && [ $EXIT_CODE -eq 0 ] && [ -f "coverage/lcov.in
           '**/*.freezed.dart' \
           '**/test/**' \
           --ignore-errors unused \
-          -o coverage/lcov.info 2>/dev/null; then
+          -o coverage/lcov.info.filtered 2>/dev/null; then
           echo "note: lcov filtering failed (tolerated: coverage report still usable unfiltered)" >&2
+          rm -f coverage/lcov.info.filtered
+        else
+          mv coverage/lcov.info.filtered coverage/lcov.info
         fi
     fi
 
