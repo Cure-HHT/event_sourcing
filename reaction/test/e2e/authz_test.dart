@@ -159,8 +159,7 @@ void main() {
   //   trigger (an account-level narrowing on a consumer aggregate, the way the
   //   portal wires `user_deactivated` on `portal_user`) closes the affected
   //   user's WS with 4003, exactly like the core role_unassigned path.
-  test('watchForceLogout closes the WS on a consumer narrowing event',
-      () async {
+  test('watchForceLogout closes the WS on a consumer narrowing event', () async {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);
 
@@ -168,11 +167,9 @@ void main() {
     // force-logs-out the aggregate-id user (the account-level analogue of
     // role_unassigned; the portal registers `user_deactivated` / `portal_user`
     // the same way).
-    h.reaction.watchForceLogout(
-      'account',
-      const {'account_disabled'},
-      (event) => event.aggregateId,
-    );
+    h.reaction.watchForceLogout('account', const {
+      'account_disabled',
+    }, (event) => event.aggregateId);
 
     // Authenticate alice and open a subscription so her connection registers
     // in the WsConnectionRegistry.
