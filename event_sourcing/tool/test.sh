@@ -62,16 +62,23 @@ if [ "$WITH_COVERAGE" = true ] && [ $EXIT_CODE -eq 0 ] && [ -f "coverage/lcov.in
     if command -v lcov &> /dev/null; then
         echo ""
         echo "Filtering coverage data..."
-        lcov --remove coverage/lcov.info \
+        if ! lcov --remove coverage/lcov.info \
           '**/*.g.dart' \
           '**/*.freezed.dart' \
           '**/test/**' \
           --ignore-errors unused \
-          -o coverage/lcov.info 2>/dev/null || true
+          -o coverage/lcov.info.filtered 2>/dev/null; then
+          echo "note: lcov filtering failed (tolerated: coverage report still usable unfiltered)" >&2
+          rm -f coverage/lcov.info.filtered
+        else
+          mv coverage/lcov.info.filtered coverage/lcov.info
+        fi
     fi
 
     if command -v genhtml &> /dev/null; then
-        genhtml coverage/lcov.info -o coverage/html 2>/dev/null || true
+        if ! genhtml coverage/lcov.info -o coverage/html 2>/dev/null; then
+          echo "note: genhtml report generation failed (tolerated: lcov.info still available)" >&2
+        fi
         echo "HTML report: coverage/html/index.html"
     fi
 fi

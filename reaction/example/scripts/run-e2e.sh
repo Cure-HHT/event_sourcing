@@ -23,8 +23,14 @@ SERVER_PORT="${REACTION_SERVER_PORT:-8080}"
 
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+    if ! kill "$SERVER_PID" 2>/dev/null; then
+      echo "note: demo server (pid $SERVER_PID) already exited (tolerated)" >&2
+    fi
+    local rc=0
+    wait "$SERVER_PID" 2>/dev/null || rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -ne 143 ]; then
+      echo "note: wait on demo server (pid $SERVER_PID) returned unexpected status $rc (tolerated)" >&2
+    fi
   fi
 }
 trap cleanup EXIT
@@ -51,7 +57,7 @@ for i in $(seq 1 30); do
     echo "ERROR: demo server exited before binding :$SERVER_PORT" >&2
     exit 1
   fi
-  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SERVER_PORT/" || true)
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$SERVER_PORT/")" || code="000"
   if [[ "$code" =~ ^[0-9]{3}$ ]] && [[ "$code" != "000" ]]; then
     READY=1
     break
