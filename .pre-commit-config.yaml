@@ -34,7 +34,7 @@ repos:
 
   # Cure-HHT cross-cutting hooks — shared house rules enforced across repos.
   - repo: https://github.com/Cure-HHT/hht_workflows
-    rev: v1.2.0
+    rev: v1.3.0
     hooks:
       - id: no-or-true-guard
 
