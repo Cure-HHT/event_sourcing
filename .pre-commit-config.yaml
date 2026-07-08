@@ -32,6 +32,12 @@ repos:
       - id: check-added-large-files
         args: [--maxkb=500]
 
+  # Cure-HHT cross-cutting hooks — shared house rules enforced across repos.
+  - repo: https://github.com/Cure-HHT/hht_workflows
+    rev: v1.2.0
+    hooks:
+      - id: no-or-true-guard
+
   # Secret scanning — same gitleaks version pinned in the org's CI.
   # Runs at both pre-commit (catch secrets while editing) and pre-push
   # (last line of defence before they reach the remote).
