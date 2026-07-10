@@ -1268,11 +1268,12 @@ The asymmetry between force-logout (security narrowing) and `stale_data` (securi
 
 ### Changelog
 
+- 2026-07-09 | 49ed4e67 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | cc1908b5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | add96480 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Initial authoring; locks in shipped AuthorizationWatcher behavior
 
-*End* *Mid-session permission-change signalling* | **Hash**: cc1908b5
+*End* *Mid-session permission-change signalling* | **Hash**: 49ed4e67
 
 ## Trust boundary expansion
 
