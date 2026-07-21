@@ -24,4 +24,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - uses: Cure-HHT/hht_workflows/.github/actions/validate-pr-title@main
+      - uses: Cure-HHT/hht_workflows/.github/actions/validate-pr-title@490bd17f6d080796aee35800a3c6e16657b5a216  # main
