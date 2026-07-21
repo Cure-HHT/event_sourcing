@@ -32,4 +32,4 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary@490bd17f6d080796aee35800a3c6e16657b5a216  # main
+      - uses: Cure-HHT/hht_workflows/.github/actions/validation-summary@f17bd950a6aa3e3b10dd4737ea3008ac27bba396  # v1.6.0
