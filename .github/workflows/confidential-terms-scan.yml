@@ -47,3 +47,5 @@ jobs:
         with:
           doppler_identity_id: ${{ vars.CONFIDENTIAL_SCAN_DOPPLER_IDENTITY_ID }}
           doppler_project: scan-event-sourcing
+          base_ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head_ref: ${{ github.event.pull_request.head.sha || github.sha }}
