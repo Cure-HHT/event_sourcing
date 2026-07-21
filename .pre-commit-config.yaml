@@ -33,10 +33,20 @@ repos:
         args: [--maxkb=500]
 
   # Cure-HHT cross-cutting hooks — shared house rules enforced across repos.
+  # Implements: HHT-OPS-confidential-keywords-scrubbing/H,I
   - repo: https://github.com/Cure-HHT/hht_workflows
-    rev: v1.3.0
+    rev: v1.6.0
     hooks:
       - id: no-or-true-guard
+      # Confidential-terms guard, pre-push surface: scans added content,
+      # file/directory names, and the branch name against the prohibit
+      # list fetched via the developer's own doppler login.
+      # --on-fetch-error=warn: a dev without scan-event-sourcing read
+      # access gets a loud warning and CI (confidential-terms-scan.yml)
+      # stays the authoritative gate. Report locations are masked; matched
+      # text is never printed.
+      - id: confidential-terms-scan
+        args: [--doppler-project=scan-event-sourcing, --on-fetch-error=warn]
 
   # Secret scanning — same gitleaks version pinned in the org's CI.
   # Runs at both pre-commit (catch secrets while editing) and pre-push
