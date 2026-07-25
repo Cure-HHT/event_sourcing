@@ -11,6 +11,26 @@ set -e
 # .pre-commit-config.yaml regardless of where the script was invoked.
 cd "$(git rev-parse --show-toplevel)"
 
+# --check: report whether this clone is already set up, via exit status
+# only. Changes nothing.
+if [ "${1:-}" = "--check" ]; then
+  status=0
+
+  if hooks_path="$(git config --get core.hooksPath)"; then
+    :
+  else
+    hooks_path=""
+  fi
+  if [ "$hooks_path" = ".githooks" ]; then
+    echo "ok: core.hooksPath = .githooks"
+  else
+    echo "not set up: core.hooksPath is '${hooks_path:-<unset>}', expected .githooks" >&2
+    status=1
+  fi
+
+  exit "$status"
+fi
+
 if ! command -v pre-commit >/dev/null 2>&1; then
   cat >&2 <<'MSG'
 Error: pre-commit not found on PATH.
@@ -22,7 +42,7 @@ Install via one of:
 
 Docs: https://pre-commit.com/#install
 
-After installation, re-run scripts/setup.sh
+After installation, re-run tools/setup-repo.sh
 MSG
   exit 1
 fi
