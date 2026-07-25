@@ -3,7 +3,7 @@
 # Configured via .pre-commit-config.yaml at the repo root. Tracked in
 # version control; activated for this clone via:
 #   git config core.hooksPath .githooks
-# (run scripts/setup.sh once per clone).
+# (run tools/setup-repo.sh once per clone).
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # git invokes hooks from the worktree root, but `cd` here defends
 # against manual invocation from a subdirectory so the relative

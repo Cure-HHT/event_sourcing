@@ -5,6 +5,28 @@ Flutter applications, with companion libraries for canonical JSON
 serialization and provenance tracking. Built for FDA 21 CFR Part 11
 compliant audit trails.
 
+## Start here
+
+After cloning, run once:
+
+```sh
+./tools/setup-repo.sh          # activate this clone's git hooks
+./tools/setup-repo.sh --check  # verify the clone is set up (reports via exit status)
+(cd event_sourcing && flutter test)  # run the core library's tests
+```
+
+Each package under this repo (`event_sourcing/`, `canonical_json_jcs/`,
+`provenance/`, `reaction/`, `reaction_widgets/`,
+`reaction_widgets_testing/`) carries its own `pubspec.yaml` and test
+suite; run `flutter test` from inside any package directory to run
+that package's tests.
+
+## Related repositories
+
+- `hht_diary` — the core application that consumes this library.
+- `hht_workflows` — shared CI checks used across Cure-HHT repos.
+- `hht_admin` — org infrastructure and the authoritative `HHT-OPS-*` spec.
+
 ## Packages
 
 | Package | Purpose |
@@ -41,16 +63,10 @@ multi-source machinery activates under that roadmap item.
 
 ## Setup
 
-After cloning, run once per clone:
-
-```sh
-scripts/setup.sh
-```
-
-This sets `core.hooksPath = .githooks` (shared across all worktrees of
-the clone) and pre-populates the hook environments. Pre-commit
-framework runs hooks listed in `.pre-commit-config.yaml` on every
-commit; gitleaks runs additionally on push. Hooks include
+`tools/setup-repo.sh` sets `core.hooksPath = .githooks` (shared across
+all worktrees of the clone) and pre-populates the hook environments.
+Pre-commit framework runs hooks listed in `.pre-commit-config.yaml` on
+every commit; gitleaks runs additionally on push. Hooks include
 trailing-whitespace / EOF / merge-conflict checks, gitleaks (secret
 scanning), markdownlint, and `dart format`.
 
