@@ -60,3 +60,14 @@ docs/elspais-refines-coverage-propagation-repro.md
 # elspais MCP runtime cache and daemon state. The persistent config lives
 # in .elspais.toml (tracked); only the runtime directory is ignored.
 .elspais/
+
+# elspais report outputs (viewer/traceability exports and checks dumps).
+# Regenerated on demand from the tracked .elspais.toml; never committed.
+traceability.html
+traceability.md
+traceability.csv
+traceability_view.html
+traceability_matrix.csv
+traceability_matrix.html
+traceability_matrix.md
+checks--*.json
