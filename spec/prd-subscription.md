@@ -29,6 +29,7 @@ D. Subscription delivery SHALL be at-least-once: every event matching a subscrip
 
 ## Changelog
 
+- 2026-08-10 | 57530d86 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 5d398de1 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Subscription* | **Hash**: 5d398de1
+*End* *Subscription* | **Hash**: 57530d86

@@ -130,9 +130,10 @@ G. The `AuthSession`'s active `Principal` SHALL be the source of truth for which
 
 ### Changelog
 
+- 2026-08-10 | 6b3b75e2 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 9c087173 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Auth Session* | **Hash**: 9c087173
+*End* *Auth Session* | **Hash**: 6b3b75e2
 
 ## EVS-PRD-action-submitter: Action Submitter
 
@@ -167,9 +168,10 @@ E. Consumer code that depends only on the `ActionSubmitter` interface SHALL be s
 
 ### Changelog
 
+- 2026-08-10 | fec6feb6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 22898b0a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Action Submitter* | **Hash**: 22898b0a
+*End* *Action Submitter* | **Hash**: fec6feb6
 
 ## EVS-PRD-view-subscriber: View Subscriber
 
@@ -204,9 +206,10 @@ E. The `ViewSource.watch<T>` contract — its return type (`Stream<Update<T>>`),
 
 ### Changelog
 
+- 2026-08-10 | 4dd6e5f0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | bfaba693 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *View Subscriber* | **Hash**: bfaba693
+*End* *View Subscriber* | **Hash**: 4dd6e5f0
 
 ## EVS-PRD-permission-source: Permission Source
 
@@ -241,9 +244,10 @@ E. When the active `Principal` changes, `PermissionSource` SHALL re-fetch and re
 
 ### Changelog
 
+- 2026-08-10 | 5fa8d048 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 1fa3332a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Permission Source* | **Hash**: 1fa3332a
+*End* *Permission Source* | **Hash**: 5fa8d048
 
 ## EVS-PRD-cross-process-event-transport: Cross-Process Event Transport
 
@@ -296,9 +300,10 @@ J. The server-side wire handler SHALL support a configurable WebSocket keepalive
 
 ### Changelog
 
+- 2026-08-10 | 3e0bf707 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 2df8cc19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Cross-Process Event Transport* | **Hash**: 2df8cc19
+*End* *Cross-Process Event Transport* | **Hash**: 3e0bf707
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 
@@ -333,9 +338,10 @@ E. Consumer code that depends only on the `ReactionScope` interface (and the fou
 
 ### Changelog
 
+- 2026-08-10 | 6c2b0c02 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 3752964b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Reaction Scope* | **Hash**: 3752964b
+*End* *Reaction Scope* | **Hash**: 6c2b0c02
 
 ## EVS-PRD-reaction-widget-contract: Reaction Widget Contract
 
@@ -392,9 +398,10 @@ K. The Builder primitives (`ActionBuilder`, `ViewBuilder`) MAY accept an optiona
 
 ### Changelog
 
+- 2026-08-10 | 57462176 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 72a4ad0a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Reaction Widget Contract* | **Hash**: 72a4ad0a
+*End* *Reaction Widget Contract* | **Hash**: 57462176
 
 ## Decisions and alternatives rejected
 

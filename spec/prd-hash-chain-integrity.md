@@ -33,6 +33,7 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 ## Changelog
 
+- 2026-08-10 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | b49cdace | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Hash-Chain Integrity* | **Hash**: b49cdace
+*End* *Hash-Chain Integrity* | **Hash**: efeb5afb

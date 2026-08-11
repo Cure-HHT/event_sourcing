@@ -35,9 +35,10 @@ D. The `AuthorizationPolicy` implementation evaluating decisions SHALL live in l
 
 ## Changelog
 
+- 2026-08-10 | 0fe7afbd | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 5617d92d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Permissions as Events* | **Hash**: 5617d92d
+*End* *Permissions as Events* | **Hash**: 0fe7afbd
 
 ## EVS-DEV-bootstrap-action-permissions: YAML-seeded role/permission bootstrap
 
@@ -56,7 +57,8 @@ D. Seed application SHALL be idempotent: re-running `bootstrapActionPermissions`
 
 ### Changelog
 
+- 2026-08-10 | c76af2cd | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | fe9d9a46 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Initial authoring; locks in shipped bootstrapActionPermissions surface
 
-*End* *YAML-seeded role/permission bootstrap* | **Hash**: fe9d9a46
+*End* *YAML-seeded role/permission bootstrap* | **Hash**: c76af2cd

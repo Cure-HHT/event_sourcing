@@ -29,6 +29,7 @@ E. `EventStore.open` SHALL open two storage transactions in sequence: (1) a **li
 
 ## Changelog
 
+- 2026-08-10 | 963d9e19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 98a3dab0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *EventStore.open boot flow* | **Hash**: 98a3dab0
+*End* *EventStore.open boot flow* | **Hash**: 963d9e19

@@ -25,6 +25,7 @@ D. The set of (viewName, entryType) pairs to consider for seeding SHALL be deriv
 
 ## Changelog
 
+- 2026-08-10 | 911a148f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | eb373312 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *view_target_versions seeding at boot* | **Hash**: eb373312
+*End* *view_target_versions seeding at boot* | **Hash**: 911a148f

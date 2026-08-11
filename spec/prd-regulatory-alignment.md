@@ -55,6 +55,7 @@ EVS-PRD-hash-chain-integrity defines the verification operation: a holder of the
 
 ## Changelog
 
+- 2026-08-10 | d8a802ad | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | c68731c0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Regulatory Alignment* | **Hash**: c68731c0
+*End* *Regulatory Alignment* | **Hash**: d8a802ad

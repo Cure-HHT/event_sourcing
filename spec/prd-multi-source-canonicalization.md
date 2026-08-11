@@ -53,6 +53,7 @@ deployments cannot serve end-to-end) — is recorded in
 
 ## Changelog
 
+- 2026-08-10 | ccf88a3b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 3e087d41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Multi-Source Canonicalization* | **Hash**: 3e087d41
+*End* *Multi-Source Canonicalization* | **Hash**: ccf88a3b

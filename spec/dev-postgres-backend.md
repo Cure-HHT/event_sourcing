@@ -58,6 +58,7 @@ synchronization.
 
 ## Changelog
 
+- 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: e69b5a15
+*End* *Postgres backend reference impl* | **Hash**: 4e78d64b

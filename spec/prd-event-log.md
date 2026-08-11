@@ -37,6 +37,7 @@ E. The library SHALL make append progress under concurrent writers: when the sto
 
 ## Changelog
 
+- 2026-08-10 | 06d5104c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e710dcce | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Event Log* | **Hash**: e710dcce
+*End* *Event Log* | **Hash**: 06d5104c

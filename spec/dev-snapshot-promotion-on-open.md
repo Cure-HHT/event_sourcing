@@ -25,6 +25,7 @@ D. Snapshot promotion at boot SHALL be provably equivalent to event-replay-with-
 
 ## Changelog
 
+- 2026-08-10 | 7ccb1106 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 62425b7b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Snapshot promotion at EventStore.open* | **Hash**: 62425b7b
+*End* *Snapshot promotion at EventStore.open* | **Hash**: 7ccb1106

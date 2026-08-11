@@ -279,3 +279,15 @@ retired = ["Deprecated", "Superseded", "Rejected"]
 # though nothing is wrong. Suppress it -- matching hht_diary's CUR-1556 config.
 [rules.hierarchy]
 allow_structural_orphans = true
+
+# Cross-repo federation scope
+#
+# Read operations always federate; these flags gate only the write and generate
+# surfaces. With both false, `elspais fix` and the MCP mutations modify this
+# repo's spec files alone, and never fold an associate's requirements into this
+# repo's INDEX. Associate links are machine-local, so a developer who links one
+# to resolve a cross-repo reference cannot rewrite the linked repo by running
+# a fix here.
+[federation]
+write_associates = false
+index_associates = false

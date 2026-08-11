@@ -33,6 +33,7 @@ F. The package SHALL be pure Dart.
 
 ## Changelog
 
+- 2026-08-10 | 14bb1343 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | cd11dd12 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Canonical JSON Serialization* | **Hash**: cd11dd12
+*End* *Canonical JSON Serialization* | **Hash**: 14bb1343

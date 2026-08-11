@@ -43,7 +43,8 @@ G. The ingest path SHALL admit every event that passes this requirement's integr
 
 ## Changelog
 
+- 2026-08-10 | 79454334 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-08-06 | a8814731 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Ingest Path* | **Hash**: a8814731
+*End* *Ingest Path* | **Hash**: 79454334
