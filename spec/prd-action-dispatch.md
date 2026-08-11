@@ -39,6 +39,7 @@ F. All consumer-initiated events recorded in the local log SHALL be produced by 
 
 ## Changelog
 
+- 2026-08-10 | 98f5ca1e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 3b0a0ef4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Action Dispatch* | **Hash**: 3b0a0ef4
+*End* *Action Dispatch* | **Hash**: 98f5ca1e

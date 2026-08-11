@@ -25,6 +25,7 @@ D. When an event's `entryTypeVersion` equals the registered version, the substra
 
 ## Changelog
 
+- 2026-08-10 | e855369a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | a3519bfb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Ingest-time promoter chain* | **Hash**: a3519bfb
+*End* *Ingest-time promoter chain* | **Hash**: e855369a

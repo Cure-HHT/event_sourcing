@@ -23,6 +23,7 @@ C. The error SHALL carry the offending entry type's id, the registry's `register
 
 ## Changelog
 
+- 2026-08-10 | 3e482dbc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 7b577371 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Entry-type version downgrade refusal* | **Hash**: 7b577371
+*End* *Entry-type version downgrade refusal* | **Hash**: 3e482dbc

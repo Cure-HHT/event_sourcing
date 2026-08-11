@@ -23,6 +23,7 @@ C. The `entryTypeVersion` parameter SHALL NOT appear on the public `append` / `a
 
 ## Changelog
 
+- 2026-08-10 | 2a4348d3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 17d2982d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Substrate stamps entryTypeVersion on append* | **Hash**: 17d2982d
+*End* *Substrate stamps entryTypeVersion on append* | **Hash**: 2a4348d3

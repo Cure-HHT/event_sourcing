@@ -37,6 +37,7 @@ F. Destinations SHALL be addable and removable dynamically over the deployment's
 
 ## Changelog
 
+- 2026-08-10 | 872fc0dc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | ec656743 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Destinations* | **Hash**: ec656743
+*End* *Destinations* | **Hash**: 872fc0dc

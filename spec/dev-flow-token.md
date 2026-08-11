@@ -23,6 +23,7 @@ Correlation across non-event-sourced gaps needs a token minted on an originating
 
 ## Changelog
 
+- 2026-08-10 | 45a08e62 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | a02a8238 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Flow Correlation Token* | **Hash**: a02a8238
+*End* *Flow Correlation Token* | **Hash**: 45a08e62

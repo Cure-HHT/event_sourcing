@@ -35,6 +35,7 @@ in `spec/roadmap/projections.md`.
 
 ## Changelog
 
+- 2026-08-10 | 88f90336 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 02028dcf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Materializer* | **Hash**: 02028dcf
+*End* *Materializer* | **Hash**: 88f90336

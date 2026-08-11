@@ -82,6 +82,7 @@ The library bundles these as primitives because most consumers want them, but th
 
 ## Changelog
 
+- 2026-08-10 | 0021ec08 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 6b89020b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Library Charter* | **Hash**: 6b89020b
+*End* *Library Charter* | **Hash**: 0021ec08

@@ -33,6 +33,7 @@ Deferred work for this area (horizontal scaling beyond a single backend instance
 
 ## Changelog
 
+- 2026-08-10 | 9a3f1e98 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | edf3c977 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Portability* | **Hash**: edf3c977
+*End* *Portability* | **Hash**: 9a3f1e98

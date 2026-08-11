@@ -25,6 +25,7 @@ D. The reference `SembastBackend` implementation SHALL realize the composed filt
 
 ## Changelog
 
+- 2026-08-10 | 3248479c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | f24ffdf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Extended findAllEvents filters* | **Hash**: f24ffdf5
+*End* *Extended findAllEvents filters* | **Hash**: 3248479c

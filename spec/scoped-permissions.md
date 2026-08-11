@@ -497,9 +497,10 @@ The substrate ships domain-neutral, app-registered scope-class machinery (`Scope
 
 ### Changelog
 
+- 2026-08-10 | 3442b415 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | d3eee322 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Scope-aware authorization model* | **Hash**: d3eee322
+*End* *Scope-aware authorization model* | **Hash**: 3442b415
 
 ## EVS-DEV-scope-class-registry-validation: Composition-time scope-class registry validation
 
@@ -522,10 +523,11 @@ E. `ScopeClassRegistry` SHALL expose lookup-by-name and an ancestor-chain walk s
 
 ### Changelog
 
+- 2026-08-10 | 010a6b1f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | 385c89c8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | 4a76c916 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Composition-time scope-class registry validation* | **Hash**: 385c89c8
+*End* *Composition-time scope-class registry validation* | **Hash**: 010a6b1f
 
 ## EVS-DEV-scope-value-json: Sealed ScopeValue JSON contract
 
@@ -548,9 +550,10 @@ E. The round-trip `ScopeValue.fromJson(v.toJson()) == v` SHALL hold for every co
 
 ### Changelog
 
+- 2026-08-10 | 35e57fd0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | 1e192982 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Sealed ScopeValue JSON contract* | **Hash**: 1e192982
+*End* *Sealed ScopeValue JSON contract* | **Hash**: 35e57fd0
 
 ## EVS-DEV-containment-resolver: Containment-chain walk via TableProjections
 
@@ -571,10 +574,11 @@ D. `ContainmentResolver.resolve` SHALL return `null` when any hop's projection r
 
 ### Changelog
 
+- 2026-08-10 | aa0359a8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | 9013633f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | 8b7a3f36 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Containment-chain walk via TableProjections* | **Hash**: 9013633f
+*End* *Containment-chain walk via TableProjections* | **Hash**: aa0359a8
 
 ## EVS-DEV-scoped-permissions-match-algorithm: TableBackedAuthorizationPolicy match semantics
 
@@ -605,11 +609,12 @@ Reusing the assignment row set for the scope-match step keeps the cost a single 
 
 ### Changelog
 
+- 2026-08-10 | f186081d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | 87555bb8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | 899af570 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /C with shipped membership-first gate (62b2bcc); add Rationale on the trust-model fix
 
-*End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: 87555bb8
+*End* *TableBackedAuthorizationPolicy match semantics* | **Hash**: f186081d
 
 ## EVS-DEV-effective-permissions-shape: effectivePermissionsFor surface
 
@@ -630,11 +635,12 @@ D. `EffectiveAuthorization.empty` SHALL carry an empty active role, an empty `ro
 
 ### Changelog
 
+- 2026-08-10 | c6cee772 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | deab9862 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-05-14 | b688e6ed | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Align /B with membership-gate fix (62b2bcc): empty returned for verified-absent-membership
 
-*End* *effectivePermissionsFor surface* | **Hash**: deab9862
+*End* *effectivePermissionsFor surface* | **Hash**: c6cee772
 
 ## EVS-DEV-transactional-authorize-execute: Dispatch tx encompasses authorize + execute + persist
 
@@ -655,10 +661,11 @@ D. The transactional posture SHALL ensure that a role or scope revocation commit
 
 ### Changelog
 
+- 2026-08-10 | 5e07a961 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | 4b9e68a5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | 6461dd31 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 4b9e68a5
+*End* *Dispatch tx encompasses authorize + execute + persist* | **Hash**: 5e07a961
 
 ## EVS-DEV-role-assignment-aggregate-id: Canonical-JSON aggregate id for role assignments
 
@@ -677,10 +684,11 @@ C. The aggregate id SHALL be safe against segment-encoding ambiguity: a userId, 
 
 ### Changelog
 
+- 2026-08-10 | bec821d0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | 05adadf2 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | abb4d0a5 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Canonical-JSON aggregate id for role assignments* | **Hash**: 05adadf2
+*End* *Canonical-JSON aggregate id for role assignments* | **Hash**: bec821d0
 
 ## EVS-DEV-scope-unresolvable-denial: Dispatcher denial when Action.scopeFor is unusable
 
@@ -701,9 +709,10 @@ E. When a scope value was returned (any of cases C or D, but not B), the dispatc
 
 ### Changelog
 
+- 2026-08-10 | 2cfc7054 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-14 | 4a2db650 | - | Developer (<dev@example.com>) | Initial authoring under CUR-1331 scope-aware permissions
 
-*End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 4a2db650
+*End* *Dispatcher denial when Action.scopeFor is unusable* | **Hash**: 2cfc7054
 
 ## EVS-DEV-scope-descendant-expander: Downward containment expansion for read-path scope narrowing
 
@@ -724,6 +733,7 @@ E. `ScopeDescendantExpander.expand` SHALL fan out breadth-first across multiple 
 
 ### Changelog
 
+- 2026-08-10 | 8a0979c9 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-06-01 | 226f108f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Downward containment expansion for read-path scope narrowing* | **Hash**: 226f108f
+*End* *Downward containment expansion for read-path scope narrowing* | **Hash**: 8a0979c9

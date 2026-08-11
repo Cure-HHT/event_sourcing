@@ -29,6 +29,7 @@ D. The package SHALL be pure Dart and run identically on every Dart-supported pl
 
 ## Changelog
 
+- 2026-08-10 | 3a037c9e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 4755ef8b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Provenance Chain Tracking* | **Hash**: 4755ef8b
+*End* *Provenance Chain Tracking* | **Hash**: 3a037c9e
