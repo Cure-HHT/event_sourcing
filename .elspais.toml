@@ -35,8 +35,6 @@ name = "Cure-HHT Event Sourcing Library"
 
 [id-patterns]
 canonical = "{namespace}-{level.letter}-{component}"
-separators = ["-"]
-prefix_optional = false
 
 [id-patterns.aliases]
 short = "{level.letter}-{component}"
@@ -46,7 +44,6 @@ short = "{level.letter}-{component}"
 # Built-in style; the regex is fixed and unambiguous against uppercase
 # assertion labels (`/A`, `/A/B/C`).
 style = "kebab-case"
-max_length = 64
 
 [id-patterns.assertions]
 label_style = "uppercase"
