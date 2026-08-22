@@ -28,9 +28,11 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 /// `eventIds` is a non-empty `List<String>`, `sequenceRange` is an
 /// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
 /// the whole batch (no per-event payload is stored).
-// Implements: EVS-PRD-portability/C — pure Dart value type; serialises
+// Implements: EVS-PRD-portability/C
+// pure Dart value type; serialises
 //   identically on every Dart-supported runtime; no platform dependency.
-// Implements: EVS-PRD-portability/D — part of the platform-agnostic
+// Implements: EVS-PRD-portability/D
+// part of the platform-agnostic
 //   StorageBackend abstraction layer (FIFO persistence).
 // final_status is nullable (null means not-yet-terminal; non-null
 // values are one of {sent, wedged, tombstoned}).

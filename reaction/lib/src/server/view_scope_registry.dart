@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-cross-process-event-transport/E — supplies the
+// Implements: EVS-PRD-cross-process-event-transport/E
+// supplies the
 //   viewName -> scope-class binding the subscription handler consults
 //   when narrowing each per-subscription request to the requesting
 //   Principal's EffectiveAuthorization.

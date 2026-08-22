@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-action-dispatch/A (registry stores and looks up Action instances by name; collision detection)
-// Verifies: EVS-PRD-action-dispatch/B (Stage 1 contract: lookup returns action or null for unknown name)
+// Verifies: EVS-PRD-action-dispatch/A
+// (registry stores and looks up Action instances by name; collision detection)
+// Verifies: EVS-PRD-action-dispatch/B
+// (Stage 1 contract: lookup returns action or null for unknown name)
 
 import 'package:event_sourcing/event_sourcing.dart' show EventDraft;
 import 'package:event_sourcing/src/actions/action.dart';

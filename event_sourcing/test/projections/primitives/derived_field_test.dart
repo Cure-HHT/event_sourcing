@@ -1,8 +1,10 @@
 // event_sourcing/test/projections/primitives/derived_field_test.dart
 //
-// Verifies: EVS-PRD-materializer/A — DottedPathLookup / ConstantValue /
+// Verifies: EVS-PRD-materializer/A
+// DottedPathLookup / ConstantValue /
 //   FirstEventTimestamp are library-supplied materializer primitives.
-// Verifies: EVS-PRD-materializer/B — each computation is a pure function;
+// Verifies: EVS-PRD-materializer/B
+// each computation is a pure function;
 //   tests confirm deterministic resolution across single-segment, dotted,
 //   missing-path, and timestamp-fallback cases.
 import 'package:event_sourcing/src/projections/primitives/derived_field.dart';

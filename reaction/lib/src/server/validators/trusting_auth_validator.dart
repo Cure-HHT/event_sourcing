@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-auth-session/F — TrustingAuthValidator reference impl.
+// Implements: EVS-PRD-auth-session/F
+// TrustingAuthValidator reference impl.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';

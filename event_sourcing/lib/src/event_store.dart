@@ -1,34 +1,49 @@
-// Implements: EVS-PRD-event-log/A — EventStore is the append-only, immutable
+// Implements: EVS-PRD-event-log/A
+// EventStore is the append-only, immutable
 //   log; append/appendInTxn are its sole write paths.
-// Implements: EVS-PRD-event-log/B — the storage backend preserves a stable
+// Implements: EVS-PRD-event-log/B
+// the storage backend preserves a stable
 //   total order; EventStore surfaces it via read/findAll/subscribe.
-// Implements: EVS-PRD-event-log/D — EventStore.read and subscribe both
+// Implements: EVS-PRD-event-log/D
+// EventStore.read and subscribe both
 //   accept a starting sequence position for replay from any offset.
-// Implements: EVS-DEV-event-store-open/A — EventStore.open is the sole
+// Implements: EVS-DEV-event-store-open/A
+// EventStore.open is the sole
 //   public constructor; EventStore._ is private and library-internal only.
-// Implements: EVS-DEV-event-store-open/B — open emits lib_version_initialized
+// Implements: EVS-DEV-event-store-open/B
+// open emits lib_version_initialized
 //   on first boot via _runBootVersionCheck.
-// Implements: EVS-DEV-event-store-open/C — open emits lib_version_changed
+// Implements: EVS-DEV-event-store-open/C
+// open emits lib_version_changed
 //   on version upgrade via _runBootVersionCheck.
-// Implements: EVS-DEV-event-store-open/D — open throws DowngradeRefusedError
+// Implements: EVS-DEV-event-store-open/D
+// open throws DowngradeRefusedError
 //   on lib-version downgrade (unless allowDowngrade: true) via
 //   _runBootVersionCheck.
-// Implements: EVS-DEV-event-store-open/E — both the version check and the
+// Implements: EVS-DEV-event-store-open/E
+// both the version check and the
 //   snapshot-promotion pass run inside single backend.transaction calls in
 //   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
-// Implements: EVS-DEV-append-stamps-registered-version/A — append looks up
+// Implements: EVS-DEV-append-stamps-registered-version/A
+// append looks up
 //   entryTypes.byId(entryType).registeredVersion and stamps it on the event.
-// Implements: EVS-DEV-append-stamps-registered-version/B — appendInTxn
+// Implements: EVS-DEV-append-stamps-registered-version/B
+// appendInTxn
 //   applies the same registry-lookup stamping as append.
-// Implements: EVS-DEV-append-stamps-registered-version/C — entryTypeVersion
+// Implements: EVS-DEV-append-stamps-registered-version/C
+// entryTypeVersion
 //   does not appear on the public append/appendInTxn signatures.
-// Implements: EVS-DEV-snapshot-promotion-on-open — _runBootSnapshotPromotionPass
+// Implements: EVS-DEV-snapshot-promotion-on-open
+// _runBootSnapshotPromotionPass
 //   promotes lagging view rows and emits view_snapshot_promoted audit events.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/A — EntryTypeVersionDowngradeError
+// Implements: EVS-DEV-entry-type-downgrade-refusal/A
+// EntryTypeVersionDowngradeError
 //   is thrown from open when registeredVersion < stored target version.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/B — verifyNoEntryTypeDowngrade
+// Implements: EVS-DEV-entry-type-downgrade-refusal/B
+// verifyNoEntryTypeDowngrade
 //   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/C — EntryTypeVersionDowngradeError
+// Implements: EVS-DEV-entry-type-downgrade-refusal/C
+// EntryTypeVersionDowngradeError
 //   carries entryType id, fromVersion, and toVersion for diagnostic logging.
 
 import 'dart:async';
@@ -225,7 +240,8 @@ class EventStore {
   /// This is the single production entry point. All required collaborators
   /// ([entryTypes], [source], [securityContexts]) must be supplied; the
   /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open/A,B,C,D,E — sole public constructor;
+  // Implements: EVS-DEV-event-store-open/A,B,C,D,E
+  // sole public constructor;
   //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
   static Future<EventStore> open({
     required StorageBackend storage,
@@ -327,7 +343,8 @@ class EventStore {
   /// All three run inside a single [backend.transaction] so a mid-pass
   /// crash rolls back atomically and the next boot retries from a clean
   /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A,B — refusal before any
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A,B
+  // refusal before any
   //   mutation; EVS-DEV-snapshot-promotion-on-open/A,B,C — promote lagging
   //   rows and emit view_snapshot_promoted; EVS-DEV-event-store-open/E —
   //   all three steps run inside one storage.transaction.
@@ -534,7 +551,8 @@ class EventStore {
           controller.add(Snapshot<T>(value: mode.mapper(row), sequence: seq));
         }
       } else {
-        // Implements: EVS-PRD-subscription/A — a filtered (row-scoped)
+        // Implements: EVS-PRD-subscription/A
+        // a filtered (row-scoped)
         // materialized-state snapshot. Materialize the whole allow-list in ONE
         // bulk read (CUR-1471) instead of a BEGIN/SELECT/COMMIT per aggregate id —
         // the former per-id transaction loop was an N+1 round-trip storm
@@ -621,7 +639,8 @@ class EventStore {
   /// substrate is the single source of truth for both fields; callers do
   /// not (and cannot) supply them. Ingest still validates
   /// `entry_type_version` against the registry
-  // Implements: EVS-DEV-append-stamps-registered-version — substrate stamps
+  // Implements: EVS-DEV-append-stamps-registered-version
+  // substrate stamps
   //   entry_type_version from registry.registeredVersion; callers do not
   //   supply this field. dedupeByContent skips the append when content
   //   matches the prior event; any throw rolls back the entire append.
@@ -906,7 +925,8 @@ class EventStore {
     );
 
     final def = entryTypes.byId(entryType)!;
-    // Implements: EVS-DEV-append-stamps-registered-version — substrate is
+    // Implements: EVS-DEV-append-stamps-registered-version
+    // substrate is
     //   the single source of truth for entry_type_version on every append;
     //   the value is read from the registry, not supplied by callers.
     final entryTypeVersion = def.registeredVersion;
@@ -954,6 +974,10 @@ class EventStore {
       if (candidateHash == priorHash) return null;
     }
 
+    // Implements: EVS-PRD-hash-chain-integrity/B
+    // every appended event carries the
+    //   hash of the one before it in its chain, read inside the same
+    //   transaction so the link cannot straddle a concurrent append.
     final previousHash = await backend.readLatestEventHash(txn);
     final sequenceNumber = await backend.nextSequenceNumber(txn);
     final eventId = _uuid.v4();
@@ -1021,6 +1045,10 @@ class EventStore {
     return event;
   }
 
+  // Implements: EVS-PRD-hash-chain-integrity/A
+  // the hash is taken over the
+  //   canonical-form encoding of the event's content, so the same content
+  //   always yields the same hash.
   String _contentHash({
     required String eventType,
     required Map<String, Object?> data,
@@ -1421,7 +1449,8 @@ class EventStore {
     return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
-  // Implements: EVS-DEV-flow-token/C - ingest copies the incoming event verbatim (flow_token included); only metadata/sequence_number/event_hash are rewritten, so the token is preserved unchanged.
+  // Implements: EVS-DEV-flow-token/C
+  // ingest copies the incoming event verbatim (flow_token included); only metadata/sequence_number/event_hash are rewritten, so the token is preserved unchanged.
   /// Build a new [StoredEvent] with [receiverEntry] appended to
   /// `metadata.provenance`, `sequence_number` reassigned to [localSeq], and
   /// `event_hash` recomputed.
@@ -1740,7 +1769,8 @@ Future<void> _appendLibVersionEventToBackend(
 /// Bypasses [EventStore.appendInTxn] because this boot-time helper runs
 /// before the [EventStore] instance exists. Uses [_appendRawInternalEventInTxn]
 /// for record assembly and hashing.
-// Implements: EVS-DEV-snapshot-promotion-on-open — audit event emission.
+// Implements: EVS-DEV-snapshot-promotion-on-open
+// audit event emission.
 Future<void> _appendViewSnapshotPromotedAuditInTxn(
   Transaction txn,
   StorageBackend backend,

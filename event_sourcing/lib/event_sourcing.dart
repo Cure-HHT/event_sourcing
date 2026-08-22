@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-library-charter — this barrel is the complete public
+// Implements: EVS-PRD-library-charter
+// this barrel is the complete public
 //   surface of the library; exporting it constitutes the library's contract
 //   across all assertions (A–I) of the charter.
 

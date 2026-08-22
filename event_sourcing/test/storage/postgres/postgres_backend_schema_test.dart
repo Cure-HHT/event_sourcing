@@ -1,10 +1,12 @@
-// Verifies: EVS-DEV-postgres-backend/A/B — schema includes the JSONB view_rows table (B); PostgresBackend.open emits the
+// Verifies: EVS-DEV-postgres-backend/A/B
+// schema includes the JSONB view_rows table (B); PostgresBackend.open emits the
 // schema DDL (every expected CREATE TABLE) and is idempotent on re-open
 // (the second open against a provisioned database is a no-op on the
 // schema). Both tests gated on PG_TEST_URL; tests skip themselves when
 // PG_TEST_URL is unset so they're inert in CI/dev environments that
 // don't have a Postgres available.
-// Verifies: EVS-DEV-postgres-backend/B — view_rows stored as a single JSONB-blob
+// Verifies: EVS-DEV-postgres-backend/B
+// view_rows stored as a single JSONB-blob
 //   table keyed by (view_name, row_key).
 
 @TestOn('vm')

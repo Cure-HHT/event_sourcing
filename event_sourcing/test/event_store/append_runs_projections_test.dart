@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-event-store-open/E — appending an event with a registered
+// Verifies: EVS-DEV-event-store-open/E
+// appending an event with a registered
 //   ProjectionRegistry causes the matching AggregateFold to run inside the
 //   same transaction as the event-log write, producing a view row that is
 //   readable after commit.

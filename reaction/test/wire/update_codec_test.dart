@@ -1,8 +1,11 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// round-trip codec
 //   for the four Update<T> variants preserves all fields.
-// Verifies: EVS-PRD-cross-process-event-transport/B — sequence +
+// Verifies: EVS-PRD-cross-process-event-transport/B
+// sequence +
 //   subscriptionId on every encoded envelope.
-// Verifies: EVS-PRD-cross-process-event-transport/G — raw rows ship as
+// Verifies: EVS-PRD-cross-process-event-transport/G
+// raw rows ship as
 //   Map<String, Object?>; consumer-side mapper applies later.
 
 import 'package:event_sourcing/event_sourcing.dart';

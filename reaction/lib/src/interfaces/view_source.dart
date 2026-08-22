@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-view-subscriber/A — defines the ViewSource
+// Implements: EVS-PRD-view-subscriber/A
+// defines the ViewSource
 // interface whose watch<T> returns Stream<Update<T>> for a given
 // (viewName, mapper, filter, aggregates).
 import 'dart:async';

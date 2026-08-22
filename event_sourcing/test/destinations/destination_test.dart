@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/B/E — exercises the Destination abstract
+// Verifies: EVS-PRD-destinations/B/E
+// exercises the Destination abstract
 // interface: filter dispatching (B) and the app-supplied delivery contract
 // (transform, send, SendResult variants — E).
 import 'dart:typed_data';

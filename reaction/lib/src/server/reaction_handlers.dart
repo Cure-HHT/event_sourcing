@@ -1,7 +1,9 @@
-// Implements: EVS-PRD-cross-process-event-transport — composition bundle
+// Implements: EVS-PRD-cross-process-event-transport
+// composition bundle
 //   for the server side of the wire: exposes .me, .actions, .permissions
 //   as shelf.Handler getters and .subscriptions(validator) as a factory.
-// Implements: EVS-DEV-authz-watcher/E — owns the single server-wide
+// Implements: EVS-DEV-authz-watcher/E
+// owns the single server-wide
 //   AuthorizationWatcher instance and the connection registry it uses; lifecycle
 //   bound to the handlers' constructor / dispose pair.
 

@@ -7,7 +7,8 @@
 // e2e harness (test/e2e/authz_test.dart). Stubs here serve as a
 // checklist of the behavior surface to cover.
 //
-// Verifies: EVS-DEV-authz-watcher/A/B/C/D/E — force-logout on
+// Verifies: EVS-DEV-authz-watcher/A/B/C/D/E
+// force-logout on
 //   role_unassigned and permission_revoked, stale_data on role_assigned
 //   and permission_granted, containment opt-in via watchContainment,
 //   single server-wide substrate subscription. Coverage currently

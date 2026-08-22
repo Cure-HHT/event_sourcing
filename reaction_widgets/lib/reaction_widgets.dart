@@ -1,3 +1,8 @@
+// Implements: EVS-PRD-reaction-widget-contract/F
+// the library's export surface is the
+//   whole of its substrate access: no widget reaches the storage backend,
+//   the dispatcher or the projection registry, only ReactionScope and the
+//   four interfaces it exposes.
 /// Headless Flutter widget primitives for apps built on the `reaction`
 /// package. See `spec/prd-reaction.md` (EVS-PRD-reaction-widget-contract).
 ///

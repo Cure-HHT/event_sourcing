@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/A/D — verifies that every DestinationRegistry
+// Verifies: EVS-PRD-destinations/A/D
+// verifies that every DestinationRegistry
 // mutation (addDestination, setStartDate, setEndDate, deactivateDestination,
 // deleteDestination, tombstoneAndRefill) emits a system audit event in the
 // same transaction as the mutation (D), and that the audit carries the

@@ -1,10 +1,14 @@
-// Verifies: EVS-PRD-subscription/A (Events mode delivers filtered event stream;
+// Verifies: EVS-PRD-subscription/A
+// (Events mode delivers filtered event stream;
 //   pre-existing history is not replayed — live-only delivery)
-// Verifies: EVS-PRD-subscription/B (appends after subscribe are reactively
+// Verifies: EVS-PRD-subscription/B
+// (appends after subscribe are reactively
 //   delivered to the listener)
-// Verifies: EVS-PRD-subscription/C (events arrive in append order: after1
+// Verifies: EVS-PRD-subscription/C
+// (events arrive in append order: after1
 //   precedes after2)
-// Verifies: EVS-PRD-subscription/D (every matching event post-subscribe is
+// Verifies: EVS-PRD-subscription/D
+// (every matching event post-subscribe is
 //   delivered; no events dropped across the two appends)
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';

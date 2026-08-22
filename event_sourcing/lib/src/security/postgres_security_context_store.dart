@@ -1,13 +1,16 @@
-// Implements: EVS-PRD-event-log/A — all mutations accept a caller-supplied
+// Implements: EVS-PRD-event-log/A
+// all mutations accept a caller-supplied
 //   `Transaction` so they commit atomically with the event-log row they describe.
 //   Postgres-side, the [Transaction] passed in is a [PostgresTxn] holding the
 //   `TxSession` opened by [PostgresBackend.transaction]; writes routed
 //   through `txn.session` therefore live inside the same transaction as
 //   the `events` row produced by [PostgresBackend.appendEvent].
-// Implements: EVS-PRD-regulatory-alignment — `findUnredactedOlderThanInTxn`
+// Implements: EVS-PRD-regulatory-alignment
+// `findUnredactedOlderThanInTxn`
 //   and `findOlderThanInTxn` drive the retention compact/purge sweeps that
 //   satisfy ALCOA+ Enduring / §11.10(c) protection-of-records obligations.
-// Implements: EVS-DEV-postgres-backend/D — fills the second SecurityContext
+// Implements: EVS-DEV-postgres-backend/D
+// fills the second SecurityContext
 //   sidecar implementation needed for the Postgres backend to support
 //   the substrate's full action-dispatch path. The `security_context`
 //   DDL is emitted by `ensurePostgresSchema` alongside the events table.

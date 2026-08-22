@@ -209,7 +209,8 @@ void main() {
 
   // -------------------------------------------------------------------------
   // Boot-version check fires through the production bootstrap path
-  // Verifies: EVS-DEV-event-store-open (via bootstrapEventStore) —
+  // Verifies: EVS-DEV-event-store-open
+  // (via bootstrapEventStore) —
   //   the production entry point routes through EventStore.open so the
   //   lib-version check fires in real app boots, not only in direct
   //   EventStore.open calls.

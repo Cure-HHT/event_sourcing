@@ -7,9 +7,11 @@
 // aggregate spanning bootstrap, destination registry, and security /
 // retention audits.
 //
-// Verifies: EVS-PRD-event-log/A — audit events are appended to the immutable
+// Verifies: EVS-PRD-event-log/A
+// audit events are appended to the immutable
 //   log for every covered substrate mutation (redact, compact, purge, sweep).
-// Verifies: EVS-PRD-regulatory-alignment/A — retention and redaction audit
+// Verifies: EVS-PRD-regulatory-alignment/A
+// retention and redaction audit
 //   events carry timestamps, satisfying the ALCOA+ Contemporaneous obligation.
 
 import 'package:event_sourcing/event_sourcing.dart';

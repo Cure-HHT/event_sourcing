@@ -1,6 +1,9 @@
-// Implements: EVS-PRD-permissions-as-events — scope-value carrier for grants and dispatch.
-// Implements: EVS-PRD-scoped-permissions/A — scope value addresses a registered scope class.
-// Implements: EVS-DEV-scope-value-json — sealed-variant JSON contract (BoundScope, ValueWildcardScope, TotalWildcardScope), complete-on-shape `fromJson` decoder, round-trip equality.
+// Implements: EVS-PRD-permissions-as-events
+// scope-value carrier for grants and dispatch.
+// Implements: EVS-PRD-scoped-permissions/A
+// scope value addresses a registered scope class.
+// Implements: EVS-DEV-scope-value-json
+// sealed-variant JSON contract (BoundScope, ValueWildcardScope, TotalWildcardScope), complete-on-shape `fromJson` decoder, round-trip equality.
 
 /// The scope a permission grant or an action-dispatch operation targets.
 ///

@@ -1,9 +1,11 @@
 // event_sourcing/lib/src/projections/primitives/merge.dart
 //
-// Implements: EVS-PRD-materializer/A — Merge is a library-supplied
+// Implements: EVS-PRD-materializer/A
+// Merge is a library-supplied
 //   materializer primitive; it is the key-wise delta-application algorithm
 //   the library ships for consumers using the default Layer-2 fold.
-// Implements: EVS-PRD-materializer/B — both applyDelta and applyDeepDelta
+// Implements: EVS-PRD-materializer/B
+// both applyDelta and applyDeepDelta
 //   are pure functions (no side effects, no non-deterministic inputs); the
 //   same (prior, delta) pair always produces the same result.
 

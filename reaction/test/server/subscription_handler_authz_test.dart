@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E — row-level
+// Verifies: EVS-PRD-cross-process-event-transport/E
+// row-level
 //   narrowing of a subscription via the view's scope binding. These
 //   tests exercise the REAL _expandAssignments path: they assert the
 //   AggregateMode.aggregates set the handler computes from a principal's

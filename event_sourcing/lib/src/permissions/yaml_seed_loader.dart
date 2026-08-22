@@ -1,5 +1,6 @@
 // lib/src/permissions/yaml_seed_loader.dart
-// Implements: EVS-PRD-permissions-as-events/A — parses YAML seed
+// Implements: EVS-PRD-permissions-as-events/A
+// parses YAML seed
 // configuration into a PermissionSeed value; the resulting seed is
 // realised as permission_granted events by PermissionSeedApplier, ensuring
 // that all initial grants enter the event log.

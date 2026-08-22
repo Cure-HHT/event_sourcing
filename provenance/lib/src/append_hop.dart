@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-provenance assertion B (pure-functional append producing
+// Implements: EVS-PRD-provenance/B
+// (pure-functional append producing
 //   a new immutable chain without mutating the input)
 
 import 'package:provenance/src/provenance_entry.dart';

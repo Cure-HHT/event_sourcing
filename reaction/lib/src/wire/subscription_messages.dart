@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — JSON codecs for
+// Implements: EVS-PRD-cross-process-event-transport/A
+// JSON codecs for
 //   the WS control plane (auth, subscribe, unsubscribe, auth_ok,
 //   subscription_denied, stale_data, error) and the StaleDataReason
 //   sealed enum the AuthorizationWatcher emits over the wire.
-// Implements: EVS-PRD-cross-process-event-transport/B — every server-to-
+// Implements: EVS-PRD-cross-process-event-transport/B
+// every server-to-
 //   client envelope carries subscriptionId where applicable.
-// Implements: EVS-PRD-cross-process-event-transport/D — SubscribeMsg
+// Implements: EVS-PRD-cross-process-event-transport/D
+// SubscribeMsg
 //   carries the client-chosen subscriptionId that drives multiplexing.
 
 import 'package:event_sourcing/event_sourcing.dart';

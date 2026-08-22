@@ -1,6 +1,8 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+// Implements: EVS-PRD-cross-process-event-transport/A
+// JSON codec for
 //   DispatchResult wire envelopes (one variant per "type" discriminator).
-// Implements: EVS-PRD-action-submitter/C — wire shape of the
+// Implements: EVS-PRD-action-submitter/C
+// wire shape of the
 //   POST /actions response body.
 
 import 'package:event_sourcing/event_sourcing.dart';

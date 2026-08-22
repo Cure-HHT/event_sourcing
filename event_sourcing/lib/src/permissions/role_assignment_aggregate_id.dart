@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-permissions-as-events — aggregate-id for role_assigned /
+// Implements: EVS-PRD-permissions-as-events
+// aggregate-id for role_assigned /
 //   role_unassigned events.
-// Implements: EVS-PRD-scoped-permissions/C — aggregate id deterministically
+// Implements: EVS-PRD-scoped-permissions/C
+// aggregate id deterministically
 //   derived from (user_id, role, scope) via canonical JSON, so the
 //   projection's insert/remove discipline keys per-tuple uniqueness.
-// Implements: EVS-DEV-role-assignment-aggregate-id — canonical-JSON (JCS,
-//   RFC 8785) encoding; distinct tuples yield distinct ids; safe against
+// Implements: EVS-DEV-role-assignment-aggregate-id/A/B/C
+// canonical-JSON (JCS, RFC 8785)
+//   encoding; distinct tuples yield distinct ids; safe against
 //   segment-encoding ambiguity.
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';

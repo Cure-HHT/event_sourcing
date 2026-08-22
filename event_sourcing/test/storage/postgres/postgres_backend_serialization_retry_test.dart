@@ -1,11 +1,13 @@
-// Verifies: EVS-PRD-event-log/E — concurrent appends against the Postgres
+// Verifies: EVS-PRD-event-log/E
+// concurrent appends against the Postgres
 // backend make progress: the per-transaction reserve-and-increment of the
 // global sequence counter under SERIALIZABLE isolation provokes SQLSTATE 40001
 // (serialization_failure) on the losers of each race, and PostgresBackend
 // .transaction's bounded retry re-runs each loser to completion so NO 40001
 // escapes to the caller and every append is assigned a distinct, gapless
 // sequence number. Gated on PG_TEST_URL; inert where no Postgres is available.
-// Verifies: EVS-DEV-postgres-backend/C — transaction<T> runs at SERIALIZABLE
+// Verifies: EVS-DEV-postgres-backend/C
+// transaction<T> runs at SERIALIZABLE
 //   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
 //   commit on return, handle invalidated after body.
 

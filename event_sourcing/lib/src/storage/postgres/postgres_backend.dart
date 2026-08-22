@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-portability/D — second concrete StorageBackend impl
+// Implements: EVS-PRD-portability/D
+// second concrete StorageBackend impl
 //   alongside SembastBackend; selectable per deployment with no caller
 //   changes (the contract is Dart-pure).
-// Implements: EVS-DEV-postgres-backend/A — `PostgresBackend.open` connects
+// Implements: EVS-DEV-postgres-backend/A
+// `PostgresBackend.open` connects
 //   and emits `CREATE TABLE IF NOT EXISTS` DDL for every table the backend
 //   uses; re-open against a provisioned database is a no-op on the schema.
-// Implements: EVS-PRD-event-log/A,B,C,D — event-log surface: append-only;
+// Implements: EVS-PRD-event-log/A,B,C,D
+// event-log surface: append-only;
 //   stable total order via sequence counter (reserve-and-increment);
 //   per-aggregate order isolated by aggregate_id; read events in order
 //   from any starting position; findEventById/-InTxn lookups.
@@ -12,17 +15,21 @@
 //   clientTimestampStart, clientTimestampEnd filters AND-compose with
 //   afterSequence/limit/originator filters; both in-txn and out-of-txn
 //   variants share a single composition helper (_findAllEventsComposed).
-// Implements: EVS-DEV-postgres-backend/B — view rows persisted as JSONB
+// Implements: EVS-DEV-postgres-backend/B
+// view rows persisted as JSONB
 //   blobs in a single view_rows(view_name, row_key, row_data JSONB,
 //   updated_at) table with primary key (view_name, row_key).
-// Implements: EVS-PRD-destinations — FIFO-queue surface: per-destination
+// Implements: EVS-PRD-destinations
+// FIFO-queue surface: per-destination
 //   monotone sequence_in_queue, head behavior, attempt log, final-status
 //   transitions, wedged-FIFO summary, trail-sweep delete, full FIFO
 //   delete on destination teardown.
-// Implements: EVS-PRD-event-log/B — sequence counter durability (via
+// Implements: EVS-PRD-event-log/B
+// sequence counter durability (via
 //   backend_state schema_version), per-destination fill cursors,
 //   destination schedules.
-// Implements: EVS-PRD-regulatory-alignment — queryAudit joins events and
+// Implements: EVS-PRD-regulatory-alignment
+// queryAudit joins events and
 //   security_context for ALCOA+-aligned audit access; the join lives in
 //   the storage layer so callers cannot reach past the abstraction.
 
@@ -74,7 +81,8 @@ void _defaultLogSink(String message) {
 ///
 /// The instance has no fields; the closed state is binary. Callers
 /// inspecting the exception receive a stable `toString()` for logs.
-// Implements: EVS-DEV-postgres-backend/D — post-close I/O throws an
+// Implements: EVS-DEV-postgres-backend/D
+// post-close I/O throws an
 //   Exception subtype (not Error), matching the storage-backend conformance
 //   harness' `throwsA(isA<Exception>())` expectation on the close subgroup.
 class PostgresBackendClosedException implements Exception {
@@ -109,7 +117,8 @@ class PostgresBackendClosedException implements Exception {
 /// The data is intact: the final attempt rolled back, so nothing partial was
 /// written. [lastError] preserves the final [ServerException] (carrying its
 /// SQLSTATE on `code`) for forensics.
-// Implements: EVS-PRD-event-log/E — once the bounded retry is exhausted the
+// Implements: EVS-PRD-event-log/E
+// once the bounded retry is exhausted the
 //   transient conflict is surfaced as a distinguishable, typed (and
 //   transient-classified) failure rather than a bare driver exception, so
 //   callers can re-drive it without coupling to the storage driver's taxonomy.
@@ -144,7 +153,8 @@ class PostgresBackend extends StorageBackend {
   /// Latches true on the first call to [close]. Subsequent I/O on this
   /// backend instance throws [PostgresBackendClosedException]; the flag
   /// also makes [close] itself idempotent (a second call is a no-op).
-  // Implements: EVS-DEV-postgres-backend/D — closed-state guard for the
+  // Implements: EVS-DEV-postgres-backend/D
+  // closed-state guard for the
   //   conformance harness' close subgroup.
   bool _closed = false;
 
@@ -156,7 +166,8 @@ class PostgresBackend extends StorageBackend {
   /// without depending on a global logger. Setting this to `null`
   /// suppresses diagnostics entirely. Parallels
   /// `SembastBackend.debugLogSink` field by name, shape, and semantics.
-  // Implements: EVS-PRD-destinations — appendAttempt/markFinal emit a
+  // Implements: EVS-PRD-destinations
+  // appendAttempt/markFinal emit a
   //   warning-level diagnostic when the target row is absent (drain/unjam
   //   or drain/delete race tolerance).
   void Function(String)? debugLogSink = _defaultLogSink;
@@ -176,7 +187,8 @@ class PostgresBackend extends StorageBackend {
   /// Production deployments against a managed Postgres over the
   /// public internet should consider `SslMode.verifyFull` to validate
   /// the server certificate.
-  // Implements: EVS-DEV-postgres-backend/A — connects and emits the schema
+  // Implements: EVS-DEV-postgres-backend/A
+  // connects and emits the schema
   //   DDL on every open; idempotent on re-open against a provisioned db.
   static Future<PostgresBackend> open({
     required String url,
@@ -216,7 +228,8 @@ class PostgresBackend extends StorageBackend {
   /// Close the underlying connection pool. Idempotent: a second call is
   /// a no-op. After close, every public I/O method on this instance
   /// throws [PostgresBackendClosedException].
-  // Implements: EVS-DEV-postgres-backend/D — close is idempotent and
+  // Implements: EVS-DEV-postgres-backend/D
+  // close is idempotent and
   //   subsequent I/O surfaces a typed Exception (not the underlying
   //   `package:pool` StateError, which `isA<Exception>()` would reject).
   @override
@@ -231,7 +244,8 @@ class PostgresBackend extends StorageBackend {
   /// receives a typed [Exception] rather than the `package:pool`
   /// `StateError` that would otherwise leak through. Cheap (single
   /// field read); inlined trivially.
-  // Implements: EVS-DEV-postgres-backend/D — closed-state guard.
+  // Implements: EVS-DEV-postgres-backend/D
+  // closed-state guard.
   void _checkOpen() {
     if (_closed) throw const PostgresBackendClosedException();
   }
@@ -255,11 +269,13 @@ class PostgresBackend extends StorageBackend {
   /// catchError backstop logs it instead of crashing).
   static const int _maxTransactionAttempts = 8;
 
-  // Implements: EVS-PRD-event-log/A — successful body commits atomically;
+  // Implements: EVS-PRD-event-log/A
+  // successful body commits atomically;
   //   thrown exception rolls back. Postgres SERIALIZABLE isolation prevents
   //   the per-device sequence counter from being read+written by concurrent
   //   transactions.
-  // Implements: EVS-PRD-event-log/E — under SERIALIZABLE, concurrent
+  // Implements: EVS-PRD-event-log/E
+  // under SERIALIZABLE, concurrent
   //   transactions that touch the global sequence counter (or the hash-chain
   //   tip, or overlapping view rows) make Postgres abort one with SQLSTATE
   //   40001 (serialization_failure) / 40P01 (deadlock_detected); the standard,
@@ -269,7 +285,8 @@ class PostgresBackend extends StorageBackend {
   //   sequence reservation, hash read, event insert, and projection writes all
   //   live inside the rolled-back transaction, so a retry re-derives them
   //   cleanly from the latest committed state.
-  // Implements: EVS-DEV-postgres-backend/C — Transaction handle invalidated after
+  // Implements: EVS-DEV-postgres-backend/C
+  // Transaction handle invalidated after
   //   body returns or throws.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
@@ -323,9 +340,11 @@ class PostgresBackend extends StorageBackend {
   ///
   /// A mismatch surfaces as `StateError` rather than a silent skipped
   /// sequence number — both branches indicate a caller bug.
-  // Implements: EVS-PRD-event-log/A — persists event to append-only log
+  // Implements: EVS-PRD-event-log/A
+  // persists event to append-only log
   //   atomically inside the supplied transaction.
-  // Implements: EVS-PRD-event-log/B — sequence number stamped by caller
+  // Implements: EVS-PRD-event-log/B
+  // sequence number stamped by caller
   //   from nextSequenceNumber; persisted verbatim preserving total order;
   //   advance owned by nextSequenceNumber, not appendEvent.
   @override
@@ -391,7 +410,8 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-PRD-event-log/C — events for a single aggregate are
+  // Implements: EVS-PRD-event-log/C
+  // events for a single aggregate are
   //   returned in sequence_number order; the aggregate_id index keeps the
   //   lookup O(log n + k).
   @override
@@ -407,7 +427,8 @@ class PostgresBackend extends StorageBackend {
     return result.map(_storedEventFromRow).toList(growable: false);
   }
 
-  // Implements: EVS-PRD-event-log/C — transactional variant; reads inside
+  // Implements: EVS-PRD-event-log/C
+  // transactional variant; reads inside
   //   the same txn see writes staged in the same body (read-your-writes).
   @override
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
@@ -425,12 +446,14 @@ class PostgresBackend extends StorageBackend {
     return result.map(_storedEventFromRow).toList(growable: false);
   }
 
-  // Implements: EVS-PRD-event-log/D — read all events in sequence order
+  // Implements: EVS-PRD-event-log/D
+  // read all events in sequence order
   //   from any starting position (afterSequence + limit).
   // Implements: EVS-DEV-find-all-events-extended-filters/A,C — entryType,
   //   clientTimestampStart, clientTimestampEnd filters AND-compose with
   //   afterSequence, limit, originatorHopId, originatorIdentifier.
-  // Implements: EVS-DEV-find-all-events-extended-filters/D — single shared
+  // Implements: EVS-DEV-find-all-events-extended-filters/D
+  // single shared
   //   composition helper (_findAllEventsComposed) used by both this method
   //   and findAllEventsInTxn.
   @override
@@ -461,9 +484,11 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-PRD-event-log/D — transactional variant; reads see
+  // Implements: EVS-PRD-event-log/D
+  // transactional variant; reads see
   //   writes staged in the same txn body.
-  // Implements: EVS-DEV-find-all-events-extended-filters/B,C,D — same
+  // Implements: EVS-DEV-find-all-events-extended-filters/B,C,D
+  // same
   //   three filters with same AND-composition semantics; shared helper.
   //
   // `async` (not arrow) so that the synchronous `_asPgTxn(txn).session`
@@ -504,7 +529,8 @@ class PostgresBackend extends StorageBackend {
   /// CLAUDE.md). Reading the JSONB sub-field as text via `->>` keeps the
   /// comparison string-typed and matches the way `ProvenanceEntry.fromJson`
   /// reads the same keys on the Dart side.
-  // Implements: EVS-DEV-find-all-events-extended-filters/D — single shared
+  // Implements: EVS-DEV-find-all-events-extended-filters/D
+  // single shared
   //   helper reused by both variants.
   Future<List<StoredEvent>> _findAllEventsComposed({
     Session? session,
@@ -554,7 +580,8 @@ class PostgresBackend extends StorageBackend {
     return result.map(_storedEventFromRow).toList(growable: false);
   }
 
-  // Implements: EVS-PRD-event-log/A — readLatestEventHash is transactional;
+  // Implements: EVS-PRD-event-log/A
+  // readLatestEventHash is transactional;
   //   value reflects writes staged in the same txn so a caller can build
   //   the next event's previous_event_hash atomically with the append that
   //   uses it.
@@ -580,7 +607,8 @@ class PostgresBackend extends StorageBackend {
   /// reserves `1`. The counter is stored as a JSONB number; the
   /// `::text::int` round-trip keeps both the read and the increment
   /// explicit (JSONB doesn't have a direct arithmetic operator).
-  // Implements: EVS-PRD-event-log/B — monotonic per-transaction reserve.
+  // Implements: EVS-PRD-event-log/B
+  // monotonic per-transaction reserve.
   @override
   Future<int> nextSequenceNumber(Transaction txn) async {
     final session = _asPgTxn(txn).session;
@@ -604,7 +632,8 @@ class PostgresBackend extends StorageBackend {
     return result.first[0] as int;
   }
 
-  // Implements: EVS-PRD-event-log/B — counter is readable outside any txn
+  // Implements: EVS-PRD-event-log/B
+  // counter is readable outside any txn
   //   for diagnostics; returns 0 when the row has never been materialized.
   @override
   Future<int> readSequenceCounter() async {
@@ -616,7 +645,8 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? 0 : result.first[0] as int;
   }
 
-  // Implements: EVS-PRD-event-log/D — single-event lookup by event_id
+  // Implements: EVS-PRD-event-log/D
+  // single-event lookup by event_id
   //   inside the supplied transaction; returns null when absent.
   @override
   Future<StoredEvent?> findEventByIdInTxn(
@@ -631,7 +661,8 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? null : _storedEventFromRow(result.first);
   }
 
-  // Implements: EVS-PRD-event-log/D — single-event lookup by event_id
+  // Implements: EVS-PRD-event-log/D
+  // single-event lookup by event_id
   //   outside any transaction; returns null when absent.
   @override
   Future<StoredEvent?> findEventById(String eventId) async {
@@ -645,7 +676,8 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 7: view rows --------
 
-  // Implements: EVS-DEV-postgres-backend/B — read a single JSONB blob from
+  // Implements: EVS-DEV-postgres-backend/B
+  // read a single JSONB blob from
   //   view_rows; returns null when the (view_name, row_key) pair is absent.
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
@@ -666,7 +698,8 @@ class PostgresBackend extends StorageBackend {
     return _asJsonMap(result.first[0]);
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — whole-row upsert via
+  // Implements: EVS-DEV-postgres-backend/B
+  // whole-row upsert via
   //   INSERT … ON CONFLICT (view_name, row_key) DO UPDATE.
   @override
   Future<void> upsertViewRowInTxn(
@@ -687,7 +720,8 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — delete a single row from
+  // Implements: EVS-DEV-postgres-backend/B
+  // delete a single row from
   //   view_rows by (view_name, row_key); no-op when absent.
   @override
   Future<void> deleteViewRowInTxn(
@@ -702,7 +736,8 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — list all rows for a view in
+  // Implements: EVS-DEV-postgres-backend/B
+  // list all rows for a view in
   //   deterministic row_key ASC order; optional LIMIT/OFFSET for paging.
   @override
   Future<List<Map<String, dynamic>>> findViewRows(
@@ -725,7 +760,8 @@ class PostgresBackend extends StorageBackend {
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — bulk view_rows key-set read for the
+  // Implements: EVS-DEV-postgres-backend/B
+  // bulk view_rows key-set read for the
   //   scoped AggregateMode snapshot: one `row_key = ANY(@keys)` query for the
   //   whole allow-list instead of a BEGIN/SELECT/COMMIT per id (CUR-1471). The
   //   Dart `List<String>` binds to a Postgres text[] (same as the event_type
@@ -749,7 +785,8 @@ class PostgresBackend extends StorageBackend {
     };
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — in-txn multi-row read with
+  // Implements: EVS-DEV-postgres-backend/B
+  // in-txn multi-row read with
   //   optional column-equality filter; required by the scoped-permissions
   //   authorize stage so its policy reads and the dispatch's event-append
   //   share one read-consistent snapshot. The `where` map is compiled into
@@ -796,7 +833,8 @@ class PostgresBackend extends StorageBackend {
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
-  // Implements: EVS-DEV-postgres-backend/B — delete all rows for a view
+  // Implements: EVS-DEV-postgres-backend/B
+  // delete all rows for a view
   //   without touching other views (WHERE view_name = @v).
   @override
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
@@ -809,7 +847,8 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 8: view target versions --------
 
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; readViewTargetVersionInTxn reads a single row from the
   //   view_target_versions(view_name, entry_type, target_version) table and
   //   returns null when the (view_name, entry_type) pair is absent.
@@ -831,7 +870,8 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? null : result.first[0] as int;
   }
 
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; writeViewTargetVersionInTxn upserts via INSERT … ON CONFLICT
   //   DO UPDATE so repeated writes for the same (view_name, entry_type) pair
   //   reflect the latest target_version value.
@@ -854,7 +894,8 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; readAllViewTargetVersionsInTxn returns all (entry_type →
   //   target_version) pairs for the given view_name as a Map<String, int>.
   @override
@@ -873,7 +914,8 @@ class PostgresBackend extends StorageBackend {
     return {for (final row in result) row[0] as String: row[1] as int};
   }
 
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; clearViewTargetVersionsInTxn deletes all rows for the given
   //   view_name without touching rows belonging to other views.
   @override
@@ -901,7 +943,8 @@ class PostgresBackend extends StorageBackend {
   /// delegates row construction to [enqueueFifoTxn]. Callers composing a
   /// larger transaction (e.g., `fillBatch` advancing fill_cursor) SHALL use
   /// [enqueueFifoTxn] directly.
-  // Implements: EVS-PRD-destinations — standalone enqueue path; opens
+  // Implements: EVS-PRD-destinations
+  // standalone enqueue path; opens
   //   its own transaction so the row write is atomic for callers that
   //   aren't already inside one.
   @override
@@ -942,7 +985,8 @@ class PostgresBackend extends StorageBackend {
   /// - Native (`nativeEnvelope`): `envelope_metadata` stores the
   ///   `BatchEnvelopeMetadata` map; `wire_payload = null`;
   ///   `wire_format = 'esd/batch@1'`; `transform_version = null`.
-  // Implements: EVS-PRD-destinations — empty batch rejected with
+  // Implements: EVS-PRD-destinations
+  // empty batch rejected with
   //   ArgumentError; XOR(wirePayload, nativeEnvelope) enforced; v4 UUID
   //   entry_id minted; sequence_in_queue assigned monotone via
   //   per-destination counter in backend_state; row persisted with all
@@ -1092,7 +1136,8 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Implements: EVS-PRD-destinations — readFifoHead returns the first row
+  // Implements: EVS-PRD-destinations
+  // readFifoHead returns the first row
   //   in sequence_in_queue order whose final_status is null OR 'wedged';
   //   sent and tombstoned rows are skipped. Returns null on empty FIFO.
   //   Uses the partial `fifo_entries_head_idx` for an index-only scan.
@@ -1112,7 +1157,8 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
 
-  // Implements: EVS-PRD-destinations — listFifoEntries enumerates rows
+  // Implements: EVS-PRD-destinations
+  // listFifoEntries enumerates rows
   //   in sequence_in_queue ASC; afterSequenceInQueue is exclusive; limit
   //   caps from the start of the ordered range. Empty list on unknown
   //   destination (no rows match the WHERE clause).
@@ -1142,7 +1188,8 @@ class PostgresBackend extends StorageBackend {
   /// array; we pass `[attempt.toJson()]` so the driver encodes a
   /// single-element array which gets concatenated onto the existing
   /// attempts list.
-  // Implements: EVS-PRD-destinations — appendAttempt no-ops with a
+  // Implements: EVS-PRD-destinations
+  // appendAttempt no-ops with a
   //   warning when the target row is absent (drain/unjam race
   //   tolerance). Postgres collapses the sembast distinction between
   //   "missing row" and "missing FIFO store" — both surface as zero
@@ -1174,7 +1221,8 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  // Implements: EVS-PRD-destinations — markFinal:
+  // Implements: EVS-PRD-destinations
+  // markFinal:
   //   - no-op + warning when target row absent;
   //   - idempotent return when row already final with matching status;
   //   - StateError naming both statuses on mismatched already-final;
@@ -1240,7 +1288,8 @@ class PostgresBackend extends StorageBackend {
     });
   }
 
-  // Implements: EVS-PRD-destinations — hasFifoWedged true iff any
+  // Implements: EVS-PRD-destinations
+  // hasFifoWedged true iff any
   //   destination's head row (first sequence_in_queue with
   //   final_status IN {null, wedged}) is wedged. Single SQL pass via
   //   DISTINCT ON (destination_id) so we visit each FIFO's head row in
@@ -1262,7 +1311,8 @@ class PostgresBackend extends StorageBackend {
     return result.first[0] as bool;
   }
 
-  // Implements: EVS-PRD-destinations — wedgedFifos returns one summary
+  // Implements: EVS-PRD-destinations
+  // wedgedFifos returns one summary
   //   per wedged FIFO. headEventId is the first event_id on the wedged
   //   head row; wedgedAt = last attempt's attemptedAt (or enqueued_at
   //   when no attempts recorded); lastError = last attempt's
@@ -1321,7 +1371,8 @@ class PostgresBackend extends StorageBackend {
         .toList(growable: false);
   }
 
-  // Implements: EVS-PRD-destinations — readFifoRow looks up a single row
+  // Implements: EVS-PRD-destinations
+  // readFifoRow looks up a single row
   //   by (destination_id, entry_id); returns null when absent. Used by
   //   tooling/tests to inspect a specific row.
   @override
@@ -1338,7 +1389,8 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
 
-  // Implements: EVS-PRD-destinations — setFinalStatusTxn enforces legal
+  // Implements: EVS-PRD-destinations
+  // setFinalStatusTxn enforces legal
   //   transitions: {null -> sent | wedged | tombstoned, wedged ->
   //   tombstoned}. Throws StateError on illegal transitions and on
   //   missing rows (caller is expected to have verified existence via
@@ -1422,7 +1474,8 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  // Implements: EVS-PRD-destinations — trail-sweep DELETE used by
+  // Implements: EVS-PRD-destinations
+  // trail-sweep DELETE used by
   //   tombstoneAndRefill: removes rows whose sequence_in_queue is
   //   strictly greater than [afterSequenceInQueue] AND whose
   //   final_status IS null. Terminal rows are retained forever as
@@ -1447,7 +1500,8 @@ class PostgresBackend extends StorageBackend {
     return result.affectedRows;
   }
 
-  // Implements: EVS-PRD-destinations — drop the FIFO store for
+  // Implements: EVS-PRD-destinations
+  // drop the FIFO store for
   //   [destinationId] entirely (used by `deleteDestination`).
   //   Postgres has no per-destination store, so we delete every row
   //   under the destination_id discriminator AND the persisted
@@ -1470,7 +1524,8 @@ class PostgresBackend extends StorageBackend {
 
   // -------- Task 10: backend_state (schema version, fill cursor, schedule) --------
 
-  // Implements: EVS-DEV-postgres-backend/D — backend-state KV (schema
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend-state KV (schema
   //   version, fill cursor, schedules) persisted in the backend_state
   //   table keyed by stable string keys.
 
@@ -1607,10 +1662,12 @@ class PostgresBackend extends StorageBackend {
   /// traffic. When [eventTypes] is null no type filter is applied;
   /// otherwise the filter binds as a Postgres `event_type = ANY(@types)`
   /// against a `List<String>` parameter.
-  // Implements: EVS-PRD-event-log/D — read events in (reverse) order from
+  // Implements: EVS-PRD-event-log/D
+  // read events in (reverse) order from
   //   any starting position; underpins `VersionCheck.findMostRecent`'s
   //   first-match-and-break consumer.
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; method materialized so callers (lifecycle version-check) can
   //   bind PostgresBackend interchangeably with SembastBackend.
   @override
@@ -1665,10 +1722,12 @@ class PostgresBackend extends StorageBackend {
   /// sembast `_AuditCursorPoint` shape so a cursor minted under one
   /// backend would be readable under the other if/when shared — though
   /// the contract does not require this and tests do not exercise it.
-  // Implements: EVS-PRD-regulatory-alignment — queryAudit provides the
+  // Implements: EVS-PRD-regulatory-alignment
+  // queryAudit provides the
   //   ALCOA+-Available retrieval path; join lives in the storage layer
   //   so consumers cannot reach past the abstraction.
-  // Implements: EVS-DEV-postgres-backend/D — backend passes the conformance
+  // Implements: EVS-DEV-postgres-backend/D
+  // backend passes the conformance
   //   harness; queryAudit materialized so the security-context store's
   //   delegator round-trips identically to sembast.
   @override

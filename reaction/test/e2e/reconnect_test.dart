@@ -1,6 +1,7 @@
 // reaction/test/e2e/reconnect_test.dart
 //
-// Verifies: EVS-PRD-cross-process-event-transport/H — on non-auth WS
+// Verifies: EVS-PRD-cross-process-event-transport/H
+// on non-auth WS
 //   drops, RemoteConnection auto-reconnects with exponential backoff
 //   and re-issues every active subscribe. The substrate's snapshot-
 //   then-deltas semantics replays a fresh `Snapshot x N -> EndOfReplay

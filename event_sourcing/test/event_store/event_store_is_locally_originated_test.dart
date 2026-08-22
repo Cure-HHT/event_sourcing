@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-provenance/A — ProvenanceEntry records the hop's
+// Verifies: EVS-PRD-provenance/A
+// ProvenanceEntry records the hop's
 //   identifier; isLocallyOriginated compares provenance[0].identifier to
 //   the store's source.identifier, not the hop class.  Two installs of the
 //   same hop class with different identifiers are distinguished correctly.

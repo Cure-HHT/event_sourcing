@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-auth-session/C — PrincipalAuthValidator
+// Verifies: EVS-PRD-auth-session/C
+// PrincipalAuthValidator
 // interface contract: authenticate(String) returns the Principal on
 // success or throws AuthenticationDenied on rejection.
 import 'package:event_sourcing/event_sourcing.dart';

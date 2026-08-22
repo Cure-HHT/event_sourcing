@@ -1,7 +1,9 @@
-// Verifies: EVS-DEV-postgres-backend/D — SembastBackend SHALL pass the
+// Verifies: EVS-DEV-postgres-backend/D
+// SembastBackend SHALL pass the
 //   backend-agnostic conformance harness. Both SembastBackend and
 //   PostgresBackend call the same harness via their own factories.
-// Verifies: EVS-PRD-portability/D — same contract realized by a second
+// Verifies: EVS-PRD-portability/D
+// same contract realized by a second
 //   concrete backend implementation. The harness is the source of truth
 //   for the abstract StorageBackend contract; assertions are written
 //   against the interface and exercised against this concrete impl.

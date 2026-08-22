@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-reaction-widget-contract/E —
+// Verifies: EVS-PRD-reaction-widget-contract/E
 // UuidIdempotencyKeyGenerator emits UUID v4 keys (the format the
 // widget library is required to use), and the IdempotencyKeyGenerator
 // interface admits deterministic stub replacements for tests

@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-permissions-as-events (containment lookup via projection; fail-closed on miss)
-// Verifies: EVS-PRD-scoped-permissions/G — fail-closed on missing containment
+// Verifies: EVS-PRD-permissions-as-events
+// (containment lookup via projection; fail-closed on miss)
+// Verifies: EVS-PRD-scoped-permissions/G
+// fail-closed on missing containment
 //   rows.
 // Verifies: EVS-DEV-containment-resolver/A/B/C/D — identity on equal class,
 //   null on non-ancestor target, per-hop projection read, and fail-closed

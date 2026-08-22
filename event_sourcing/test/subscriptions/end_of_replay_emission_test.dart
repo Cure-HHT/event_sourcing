@@ -1,9 +1,12 @@
-// Verifies: EVS-PRD-subscription/A (AggregateMode emits EndOfReplay as the
+// Verifies: EVS-PRD-subscription/A
+// (AggregateMode emits EndOfReplay as the
 //   deterministic "snapshot complete; stream is now live" boundary marker;
 //   Events() mode emits no EndOfReplay — no replay phase)
-// Verifies: EVS-PRD-subscription/B (post-replay Deltas are reactively
+// Verifies: EVS-PRD-subscription/B
+// (post-replay Deltas are reactively
 //   delivered; EndOfReplay precedes any live Delta in stream order)
-// Verifies: EVS-PRD-subscription/C (EndOfReplay.sequence equals max snapshot
+// Verifies: EVS-PRD-subscription/C
+// (EndOfReplay.sequence equals max snapshot
 //   sequence, anchoring the ordering boundary; N Snapshots precede
 //   EndOfReplay in emission order)
 import 'dart:async';

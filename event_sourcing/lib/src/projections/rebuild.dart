@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-materializer/A — rebuildView is the library-supplied
+// Implements: EVS-PRD-materializer/A
+// rebuildView is the library-supplied
 //   helper that replays the event log to reconstruct a single view from
 //   scratch; it is part of the library's materializer surface.
-// Implements: EVS-PRD-materializer/B — rebuild is deterministic and
+// Implements: EVS-PRD-materializer/B
+// rebuild is deterministic and
 //   idempotent: the same log + same targetVersionByEntryType always produces
 //   identical view rows.
-// Implements: EVS-PRD-materializer/C (partial) — the strict-superset check
+// Implements: EVS-PRD-materializer/C
+// (partial) — the strict-superset check
 //   and explicit targetVersionByEntryType map ensure the rebuild's scope is
 //   fully specified and auditable; rebuild does not silently shrink the set
 //   of entry types the view covers.

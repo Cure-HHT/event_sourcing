@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/C/D — exercises runHistoricalReplay via
+// Verifies: EVS-PRD-destinations/C/D
+// exercises runHistoricalReplay via
 // setStartDate: events matching a destination's filter are enqueued in FIFO
 // order (C), replay runs in the same transaction so batches survive restart
 // without duplication (D).

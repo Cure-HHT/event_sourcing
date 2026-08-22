@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — shared
+// Implements: EVS-PRD-cross-process-event-transport/A
+// shared
 //   discriminator/extraction primitives every JSON envelope codec
 //   reuses for type-tag dispatch and field validation.
 

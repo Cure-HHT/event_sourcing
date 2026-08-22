@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-view-subscriber/A/E — the library defines a
+// Verifies: EVS-PRD-view-subscriber/A/E
+// the library defines a
 // `ViewSource` interface whose `watch<T>(viewName, mapper, filter,
 // aggregates)` returns `Stream<Update<T>>` (A), and the `Update<T>`
 // variant set is a stable, exhaustively-switchable contract so that

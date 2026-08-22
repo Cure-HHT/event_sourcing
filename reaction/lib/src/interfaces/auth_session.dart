@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-auth-session/A/B/G — defines the AuthSession
+// Implements: EVS-PRD-auth-session/A/B/G
+// defines the AuthSession
 // interface (A: current/stream/setCredential/principal), its
 // AuthStatus sealed type (B: Authenticated/NotAuthenticated/Expired),
 // and the rule that the active Principal flows from here into

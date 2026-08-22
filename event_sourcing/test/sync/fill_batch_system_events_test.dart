@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/B (per-destination filter — system-event
+// Verifies: EVS-PRD-destinations/B
+// (per-destination filter — system-event
 //   admission is driven entirely by SubscriptionFilter.matches via the
 //   includeSystemEvents flag; fillBatch holds no hard-drop guard against
 //   reserved system entry types; that decision lives on the destination's

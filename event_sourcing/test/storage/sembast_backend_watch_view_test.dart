@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/D — watchView is a SembastBackend-specific
+// Verifies: EVS-PRD-portability/D
+// watchView is a SembastBackend-specific
 //   reactive surface exposing view-store mutations; snapshot-on-subscribe +
 //   re-emit-on-mutation; cross-view-name isolation.
 import 'package:event_sourcing/event_sourcing.dart';

@@ -4,7 +4,8 @@
 /// is blocked and on which entry. The entry remains in its FIFO with
 /// `final_status = "wedged"`; this summary carries the derived fields
 /// a UI or log needs to show without replaying the whole FIFO.
-// Implements: EVS-PRD-portability/C — pure Dart value type; platform-
+// Implements: EVS-PRD-portability/C
+// pure Dart value type; platform-
 //   independent JSON serialisation.
 class WedgedFifoSummary {
   const WedgedFifoSummary({

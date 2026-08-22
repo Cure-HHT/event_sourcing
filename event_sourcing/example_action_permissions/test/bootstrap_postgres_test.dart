@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-postgres-backend/D — demo bootstrap runs against
+// Verifies: EVS-DEV-postgres-backend/D
+// demo bootstrap runs against
 //   PostgresBackend, satisfying the conformance harness alongside the
 //   sembast flavor in bootstrap_test.dart.
 //

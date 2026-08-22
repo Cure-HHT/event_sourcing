@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// round-trip codec
 //   for SubscriptionFilter (carried inside SubscribeMsg envelopes).
 
 import 'package:event_sourcing/event_sourcing.dart';

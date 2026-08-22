@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/B (Action.scopeFor default impl)
+// Verifies: EVS-PRD-action-dispatch/B
+// (Action.scopeFor default impl)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';

@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-auth-session/D — the library SHALL NOT impose a
+// Verifies: EVS-PRD-auth-session/D
+// the library SHALL NOT impose a
 // format on the credential string; format selection SHALL be
 // delegated entirely to the consumer-supplied `PrincipalAuthValidator`.
 //

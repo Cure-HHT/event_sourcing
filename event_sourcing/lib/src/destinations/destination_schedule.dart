@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-destinations/A — DestinationSchedule value type
+// Implements: EVS-PRD-destinations/A
+// DestinationSchedule value type
 // representing the wall-clock window configuration (startDate/endDate)
 // that is part of each destination's configuration on the deployment.
 /// Persisted schedule for a registered `Destination`.

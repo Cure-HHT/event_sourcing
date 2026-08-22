@@ -16,9 +16,11 @@
 /// role class are distinct originators — discrimination on
 /// `EventStore.isLocallyOriginated` compares
 /// `identifier`, not `hopId`.
-// Implements: EVS-PRD-event-log/C — per-aggregate-per-authority order; Source
+// Implements: EVS-PRD-event-log/C
+// per-aggregate-per-authority order; Source
 //   identifies the authority whose events must stay ordered within an aggregate.
-// Implements: EVS-PRD-portability/C — pure Dart value; no platform dependency.
+// Implements: EVS-PRD-portability/C
+// pure Dart value; no platform dependency.
 class Source {
   const Source({
     required this.hopId,

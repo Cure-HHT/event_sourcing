@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-permissions-as-events (role_unassigned payload shape)
+// Verifies: EVS-PRD-permissions-as-events
+// (role_unassigned payload shape)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:test/test.dart';

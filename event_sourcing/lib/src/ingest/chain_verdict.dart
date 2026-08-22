@@ -1,7 +1,9 @@
-// Implements: EVS-PRD-hash-chain-integrity/C — operation by which any holder
+// Implements: EVS-PRD-hash-chain-integrity/C
+// operation by which any holder
 //   can verify the chain without privileged access; ChainVerdict is the
 //   non-throwing result type returned by verifyEventChain / verifyIngestChain
-// Implements: EVS-PRD-ingest/D — chain verification at ingest boundary;
+// Implements: EVS-PRD-ingest/D
+// chain verification at ingest boundary;
 //   ChainFailure captures per-hop failure details surfaced to callers
 
 /// Reason a single chain link failed verification.

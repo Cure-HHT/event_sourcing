@@ -8,11 +8,15 @@ import 'package:provenance/provenance.dart';
 /// travel through the `StorageBackend` contract without leaking backend
 /// details into the abstraction. Lives in `lib/src/storage/` alongside the
 /// other storage value types (`FifoEntry`, etc.).
-// Implements: EVS-PRD-event-log/A — immutable event record; fields are all
+// Implements: EVS-PRD-event-log/A
+// immutable event record; fields are all
 //   final; once stored, no field is modified by the substrate.
-// Implements: EVS-DEV-flow-token/D - flow_token is stored as an opaque String, type-checked only (never parsed or interpreted by the substrate).
-// Implements: EVS-PRD-event-log/B — carries sequenceNumber for total ordering.
-// Implements: EVS-PRD-portability/C — pure Dart value type; no platform
+// Implements: EVS-DEV-flow-token/D
+// flow_token is stored as an opaque String, type-checked only (never parsed or interpreted by the substrate).
+// Implements: EVS-PRD-event-log/B
+// carries sequenceNumber for total ordering.
+// Implements: EVS-PRD-portability/C
+// pure Dart value type; no platform
 //   dependency; serialises identically on every Dart-supported runtime.
 class StoredEvent {
   const StoredEvent({

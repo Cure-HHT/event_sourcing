@@ -1,7 +1,11 @@
-// Verifies: EVS-PRD-action-dispatch/B (sealed DispatchResult variants cover every pipeline stage)
-// Verifies: EVS-PRD-action-dispatch/C (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
-// Verifies: EVS-PRD-action-dispatch/D (DispatchIdempotencyHit carries cachedResult + priorEmittedEventIds)
-// Verifies: EVS-PRD-action-dispatch/E (DispatchIdempotencyMismatch carries actionName, idempotencyKey, and SHA-256 hashes of both canonical-JSON inputs)
+// Verifies: EVS-PRD-action-dispatch/B
+// (sealed DispatchResult variants cover every pipeline stage)
+// Verifies: EVS-PRD-action-dispatch/C
+// (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
+// Verifies: EVS-PRD-action-dispatch/D
+// (DispatchIdempotencyHit carries cachedResult + priorEmittedEventIds)
+// Verifies: EVS-PRD-action-dispatch/E
+// (DispatchIdempotencyMismatch carries actionName, idempotencyKey, and SHA-256 hashes of both canonical-JSON inputs)
 
 import 'package:event_sourcing/src/actions/dispatch_result.dart';
 import 'package:event_sourcing/src/actions/permission.dart';

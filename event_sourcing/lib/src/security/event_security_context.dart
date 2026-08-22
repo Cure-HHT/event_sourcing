@@ -5,9 +5,11 @@ import 'package:event_sourcing/src/security/security_retention_policy.dart';
 /// direction is one-way: `security_context.event_id` → the event log's
 /// `event_id`. The event row holds no reference back to security, so
 /// redacting telemetry never touches the legal event record.
-// Implements: EVS-PRD-event-log/A — redacting telemetry never modifies the
+// Implements: EVS-PRD-event-log/A
+// redacting telemetry never modifies the
 //   immutable event-log row; the one-way FK preserves append-only semantics.
-// Implements: EVS-PRD-regulatory-alignment/A — `recordedAt` captures the
+// Implements: EVS-PRD-regulatory-alignment/A
+// `recordedAt` captures the
 //   time at which the originating action's security context was recorded
 //   (ALCOA+ Contemporaneous).
 class EventSecurityContext {
@@ -99,7 +101,8 @@ class EventSecurityContext {
 
   /// Apply a retention policy's truncation rules to this row. Used by
   /// `EventStore.applyRetentionPolicy` on the compact sweep.
-  // Implements: EVS-PRD-regulatory-alignment — truncation enforces the
+  // Implements: EVS-PRD-regulatory-alignment
+  // truncation enforces the
   //   configured retention window while keeping the event-log row intact.
   EventSecurityContext applyTruncation(SecurityRetentionPolicy policy) {
     return EventSecurityContext(

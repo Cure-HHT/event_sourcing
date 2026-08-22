@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-action-submitter/A — non-widget dispatch path that
+// Implements: EVS-PRD-action-submitter/A
+// non-widget dispatch path that
 // mints an idempotency key when the submission lacks one, then delegates to
 // the pass-through ActionSubmitter (so actions declaring Idempotency.required
 // are not parse-denied for programmatic/sequential callers).

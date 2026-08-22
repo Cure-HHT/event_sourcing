@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/J — ReactionHandlers
+// Verifies: EVS-PRD-cross-process-event-transport/J
+// ReactionHandlers
 //   accepts and exposes the optional WebSocket keepalive interval that the
 //   `subscriptions` handler threads into shelf_web_socket's webSocketHandler.
 //   The actual ping emission is shelf_web_socket's own (tested) behavior; this

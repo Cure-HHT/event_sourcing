@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-reaction-scope/E (source-identical consumer code)
+// Verifies: EVS-PRD-reaction-scope/E
+// (source-identical consumer code)
 //
 // Cross-impl contract test: runs the same assertions against both
 // LocalScope and RemoteScope to enforce source-identical behavior per

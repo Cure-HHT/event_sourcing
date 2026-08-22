@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/D — classifyStorageException maps concrete
+// Verifies: EVS-PRD-portability/D
+// classifyStorageException maps concrete
 //   backend / platform error types (dart:io, sembast, dart:async) into the
 //   abstract StorageException hierarchy so callers never see Sembast-specific
 //   or IO-specific types.

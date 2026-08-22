@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/D — verifies atomicity of DestinationRegistry
+// Verifies: EVS-PRD-destinations/D
+// verifies atomicity of DestinationRegistry
 // mutations: when the audit appendInTxn fails the surrounding transaction
 // rolls back, so the schedule write / FIFO mutation never persists without
 // its audit (D — durable queues commit atomically with their audit).

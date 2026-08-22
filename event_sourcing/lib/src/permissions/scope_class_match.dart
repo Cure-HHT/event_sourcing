@@ -11,7 +11,8 @@
 // are each caller responsibilities. Callers already hold the ScopeValue and
 // do their own value-equality / containment resolution / row accumulation.
 //
-// Implements: EVS-DEV-scoped-permissions-match-algorithm — the class-and-
+// Implements: EVS-DEV-scoped-permissions-match-algorithm
+// the class-and-
 //   ancestry gate shared by the bound, value-wildcard, and total-wildcard
 //   variants per Section 2 of spec/scoped-permissions.md.
 

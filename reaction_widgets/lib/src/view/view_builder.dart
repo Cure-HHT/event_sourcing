@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-reaction-widget-contract/C, /G, /I, /J
+// Implements: EVS-PRD-reaction-widget-contract/C/G/I/J
 
 import 'dart:async';
 
@@ -211,6 +211,11 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
     // interactive child (e.g. an action button) otherwise merges the identifier
     // away — so Playwright cannot find it. Empirically required to drive action
     // buttons / view roots through the semantics tree (CUR-1307).
+    // Implements: EVS-PRD-reaction-widget-contract/K
+    // when an automation identifier is
+    //   supplied the child is wrapped in a single non-painting Semantics
+    //   node carrying it and the current lifecycle state; absent one, no
+    //   node is introduced.
     return Semantics(
       identifier: id,
       value: _stateToken(_state),

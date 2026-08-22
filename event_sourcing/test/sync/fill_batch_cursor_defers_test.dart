@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/B (per-destination filter — fill_cursor
+// Verifies: EVS-PRD-destinations/B
+// (per-destination filter — fill_cursor
 //   advances past permanently-rejected events (subscription mismatch,
 //   client_timestamp < startDate) but NOT past events deferred by the upper
 //   bound (client_timestamp > min(endDate, now())). The upper bound is
@@ -6,7 +7,8 @@
 //   (future startDate) or is malformed (startDate > endDate). When endDate is
 //   in the past with startDate <= endDate, fillBatch still scans in-window
 //   events.)
-// Verifies: EVS-PRD-destinations/C (FIFO order — cursor advances to
+// Verifies: EVS-PRD-destinations/C
+// (FIFO order — cursor advances to
 //   batch.last.sequenceNumber so deferred events remain re-evaluable and are
 //   enqueued in sequence order when the window widens)
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';

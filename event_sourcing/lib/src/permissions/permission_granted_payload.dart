@@ -1,5 +1,6 @@
 // lib/src/permissions/permission_granted_payload.dart
-// Implements: EVS-PRD-permissions-as-events/A — payload for the
+// Implements: EVS-PRD-permissions-as-events/A
+// payload for the
 // permission_granted event type, which records the grant as an immutable
 // log entry. Scope class lives on the registered Permission definition,
 // not in the per-grant payload.

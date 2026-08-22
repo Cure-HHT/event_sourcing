@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-auth-session/A/B/G — in-process AuthSession
+// Implements: EVS-PRD-auth-session/A/B/G
+// in-process AuthSession
 // impl: realizes the interface (A), flips between Authenticated and
 // NotAuthenticated of the AuthStatus sealed type (B; never reaches
 // Expired in the in-process case), and exposes the active Principal

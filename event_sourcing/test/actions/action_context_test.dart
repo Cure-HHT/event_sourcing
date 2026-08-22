@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/A (ActionContext bundles Principal + security + timestamp for passing through every dispatch stage)
+// Verifies: EVS-PRD-action-dispatch/A
+// (ActionContext bundles Principal + security + timestamp for passing through every dispatch stage)
 
 import 'package:event_sourcing/src/actions/action_context.dart';
 import 'package:event_sourcing/src/actions/principal.dart';

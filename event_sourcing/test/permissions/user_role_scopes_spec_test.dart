@@ -1,11 +1,14 @@
 // test/permissions/user_role_scopes_spec_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A — role_assigned and
+// Verifies: EVS-PRD-permissions-as-events/A
+// role_assigned and
 //   role_unassigned events are written into the same event log as all
 //   other state changes, and the projection spec responds to them.
-// Verifies: EVS-PRD-permissions-as-events/B — the user_role_scopes view
+// Verifies: EVS-PRD-permissions-as-events/B
+// the user_role_scopes view
 //   is the substrate-readable surface that TableBackedAuthorizationPolicy
 //   queries to enumerate (user, role, scope) assignments.
-// Verifies: EVS-PRD-permissions-as-events/C — insert and remove driven by
+// Verifies: EVS-PRD-permissions-as-events/C
+// insert and remove driven by
 //   the event log alone confirms the view is fully reconstructable from
 //   the log.
 

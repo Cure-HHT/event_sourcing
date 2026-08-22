@@ -35,8 +35,6 @@ name = "Cure-HHT Event Sourcing Library"
 
 [id-patterns]
 canonical = "{namespace}-{level.letter}-{component}"
-separators = ["-"]
-prefix_optional = false
 
 [id-patterns.aliases]
 short = "{level.letter}-{component}"
@@ -46,7 +44,6 @@ short = "{level.letter}-{component}"
 # Built-in style; the regex is fixed and unambiguous against uppercase
 # assertion labels (`/A`, `/A/B/C`).
 style = "kebab-case"
-max_length = 64
 
 [id-patterns.assertions]
 label_style = "uppercase"
@@ -277,6 +274,25 @@ retired = ["Deprecated", "Superseded", "Rejected"]
 # run loads them, so the default `spec.structural_orphans` check would fail the
 # pre-push hook (`elspais checks --lenient`) on ~1 orphan-per-test-case even
 # though nothing is wrong. Suppress it -- matching hht_diary's CUR-1556 config.
+# Reference and format severities
+#
+# The keys left at their default are named rather than omitted, so the levers
+# available here are visible in the file. keyword_form, identifier_form,
+# no_assertions and no_traceability all read clean today and are held at error
+# so a regression is a failure rather than a line of output nobody reads.
+
+[rules.references]
+retired = "warning"
+provisional = "info"
+aspirational = "info"
+malformed = "warning"
+keyword_form = "error"
+identifier_form = "error"
+
+[rules.format]
+no_assertions_severity = "error"
+no_traceability_severity = "error"
+
 [rules.hierarchy]
 allow_structural_orphans = true
 

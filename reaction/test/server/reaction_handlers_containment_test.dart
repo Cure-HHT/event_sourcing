@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E — end-to-end proof
+// Verifies: EVS-PRD-cross-process-event-transport/E
+// end-to-end proof
 //   that ReactionHandlers wires the PRODUCTION ScopeDescendantExpander
 //   into the subscription handler. A principal assigned an ancestor-class
 //   BoundScope (site-A) subscribing to a descendant-class view

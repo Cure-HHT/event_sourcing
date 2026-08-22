@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-postgres-backend/D — end-to-end PostgresBackend exercise
+// Verifies: EVS-DEV-postgres-backend/D
+// end-to-end PostgresBackend exercise
 //   via the action_permissions demo server. Action dispatch over HTTP
 //   writes an event into the `events` table and the role-permission
 //   matrix view rows into `view_rows` on a Postgres instance.

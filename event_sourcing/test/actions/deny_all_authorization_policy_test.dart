@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/B (DenyAllAuthorizationPolicy satisfies the AuthorizationPolicy interface used in the authorize stage)
+// Verifies: EVS-PRD-action-dispatch/B
+// (DenyAllAuthorizationPolicy satisfies the AuthorizationPolicy interface used in the authorize stage)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/deny_all_authorization_policy.dart';

@@ -1,9 +1,12 @@
-// Implements: EVS-PRD-scoped-permissions/F — read-path hierarchy expansion:
+// Implements: EVS-PRD-scoped-permissions/F
+// read-path hierarchy expansion:
 //   enumerate the descendant-class scope values reachable from an ancestor
 //   assignment by reading ContainmentReference projections downward.
-// Implements: EVS-PRD-scoped-permissions/G — fail-closed on missing
+// Implements: EVS-PRD-scoped-permissions/G
+// fail-closed on missing
 //   containment rows (a missing/malformed row contributes nothing).
-// Implements: EVS-DEV-scope-descendant-expander — downward chain-walk:
+// Implements: EVS-DEV-scope-descendant-expander
+// downward chain-walk:
 //   A identity on equal class; B empty on non-ancestor target; C per-hop
 //   inverse projection read (where parentColumn = value -> read keyColumn);
 //   D fail-closed skip on missing/malformed row; E breadth-first multi-hop

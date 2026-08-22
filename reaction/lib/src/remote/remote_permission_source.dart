@@ -1,12 +1,16 @@
-// Implements: EVS-PRD-permission-source/A — Remote implementation of
+// Implements: EVS-PRD-permission-source/A
+// Remote implementation of
 //   PermissionSource: synchronous current getter + Stream of
 //   EffectiveAuthorization? snapshot updates.
-// Implements: EVS-PRD-permission-source/C — fetches the initial snapshot
+// Implements: EVS-PRD-permission-source/C
+// fetches the initial snapshot
 //   via HTTP GET /permissions/snapshot and refreshes on the AuthorizationWatcher's
 //   stale_data envelope (wired by RemoteScope).
-// Implements: EVS-PRD-permission-source/D — Principal is sourced from
+// Implements: EVS-PRD-permission-source/D
+// Principal is sourced from
 //   the co-mounted AuthSession; no direct mutator.
-// Implements: EVS-PRD-permission-source/E — re-fetches and re-emits the
+// Implements: EVS-PRD-permission-source/E
+// re-fetches and re-emits the
 //   snapshot on every Authenticated transition of the AuthSession.
 
 import 'dart:async';

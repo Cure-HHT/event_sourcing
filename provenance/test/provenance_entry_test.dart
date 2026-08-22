@@ -1,6 +1,7 @@
-// Verifies: EVS-PRD-provenance assertion A (ProvenanceEntry value type shape,
+// Verifies: EVS-PRD-provenance/A (ProvenanceEntry value type shape,
 //   required and optional fields, value equality, identity shapes)
-// Verifies: EVS-PRD-provenance assertion C (toJson/fromJson round-trip without
+// Verifies: EVS-PRD-provenance/C
+// (toJson/fromJson round-trip without
 //   loss, timezone-offset validation, ingest and origin fields)
 
 import 'package:provenance/provenance.dart';

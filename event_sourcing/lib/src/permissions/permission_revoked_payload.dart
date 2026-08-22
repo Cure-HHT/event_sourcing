@@ -1,5 +1,6 @@
 // lib/src/permissions/permission_revoked_payload.dart
-// Implements: EVS-PRD-permissions-as-events/A — payload for the
+// Implements: EVS-PRD-permissions-as-events/A
+// payload for the
 // permission_revoked event type, which records permission revocations as
 // immutable log entries alongside all other application state changes.
 

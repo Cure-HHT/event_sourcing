@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-action-dispatch/A (Action interface contract: name, description, permissions, idempotency, parseInput, validate, execute)
-// Verifies: EVS-PRD-action-dispatch/B (execute returns ExecutionResult with events for Stage 8 atomic persist)
+// Verifies: EVS-PRD-action-dispatch/A
+// (Action interface contract: name, description, permissions, idempotency, parseInput, validate, execute)
+// Verifies: EVS-PRD-action-dispatch/B
+// (execute returns ExecutionResult with events for Stage 8 atomic persist)
 
 import 'package:event_sourcing/event_sourcing.dart'
     show EventDraft, SecurityDetails;

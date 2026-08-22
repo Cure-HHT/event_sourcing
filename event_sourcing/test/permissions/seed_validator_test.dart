@@ -1,5 +1,6 @@
 // test/permissions/seed_validator_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A — SeedValidator rejects seeds
+// Verifies: EVS-PRD-permissions-as-events/A
+// SeedValidator rejects seeds
 // that reference undeclared permissions, roles absent from the grants map,
 // or names containing reserved characters, ensuring that only well-formed
 // grants are admitted to the event log.

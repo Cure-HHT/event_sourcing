@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-action-dispatch/B (ExecutionResult carries the events list returned from the execute stage for Stage 8 persist)
-// Verifies: EVS-PRD-action-dispatch/C (events in ExecutionResult are the payload of the recorded success outcome)
+// Verifies: EVS-PRD-action-dispatch/B
+// (ExecutionResult carries the events list returned from the execute stage for Stage 8 persist)
+// Verifies: EVS-PRD-action-dispatch/C
+// (events in ExecutionResult are the payload of the recorded success outcome)
 
 import 'package:event_sourcing/event_sourcing.dart'
     show EventDraft, SecurityDetails;

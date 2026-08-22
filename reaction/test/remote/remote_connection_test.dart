@@ -1,10 +1,14 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — Update<T> envelope
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// Update<T> envelope
 //   round-trip through openSubscription.
-// Verifies: EVS-PRD-cross-process-event-transport/B — sequence +
+// Verifies: EVS-PRD-cross-process-event-transport/B
+// sequence +
 //   subscriptionId carried on every routed envelope.
-// Verifies: EVS-PRD-cross-process-event-transport/D — multiplex multiple
+// Verifies: EVS-PRD-cross-process-event-transport/D
+// multiplex multiple
 //   subscriptions over a single WebSocket.
-// Verifies: EVS-PRD-cross-process-event-transport/F — bearer credential
+// Verifies: EVS-PRD-cross-process-event-transport/F
+// bearer credential
 //   injection on HTTP POST + WS auth message.
 
 import 'dart:async';

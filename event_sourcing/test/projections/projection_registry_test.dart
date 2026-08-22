@@ -1,7 +1,9 @@
-// Verifies: EVS-PRD-materializer/A — ProjectionRegistry holds the active set
+// Verifies: EVS-PRD-materializer/A
+// ProjectionRegistry holds the active set
 //   of materializer rules; tests confirm register, lookup, all(), duplicate
 //   rejection, and post-seal enforcement.
-// Verifies: EVS-PRD-materializer/C (partial) — the seal() behavior ensures
+// Verifies: EVS-PRD-materializer/C
+// (partial) — the seal() behavior ensures
 //   the rule set is fixed for the lifetime of one store instance.
 import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';

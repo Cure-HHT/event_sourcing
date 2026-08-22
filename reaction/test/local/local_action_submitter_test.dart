@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-submitter/B — LocalActionSubmitter
+// Verifies: EVS-PRD-action-submitter/B
+// LocalActionSubmitter
 // delegates to an in-process ActionDispatcher.dispatch and surfaces
 // every DispatchResult variant (success, parse failure, auth denial,
 // idempotency hit) to the caller. Also exercises the

@@ -1,5 +1,7 @@
-// Implements: EVS-PRD-action-dispatch/A (registry that maps action names to Action instances for dispatch lookup)
-// Implements: EVS-PRD-action-dispatch/B (Stage 1 lookup contract: unknown name → unknownAction denial)
+// Implements: EVS-PRD-action-dispatch/A
+// (registry that maps action names to Action instances for dispatch lookup)
+// Implements: EVS-PRD-action-dispatch/B
+// (Stage 1 lookup contract: unknown name → unknownAction denial)
 
 import 'package:event_sourcing/src/actions/action.dart';
 import 'package:event_sourcing/src/actions/permission.dart';

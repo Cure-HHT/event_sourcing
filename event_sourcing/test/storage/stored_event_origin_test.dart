@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-event-log/C — originatorHop exposes provenance[0] for
+// Verifies: EVS-PRD-event-log/C
+// originatorHop exposes provenance[0] for
 //   per-aggregate-per-authority discrimination; StateError on missing/empty
 //   provenance signals a malformed event record.
 

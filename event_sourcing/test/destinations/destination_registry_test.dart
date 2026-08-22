@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/A/F — exercises DestinationRegistry:
+// Verifies: EVS-PRD-destinations/A/F
+// exercises DestinationRegistry:
 // configuring destinations (add, all, byId — A) and dynamic registration
 // after first read (F).
 import 'dart:typed_data';

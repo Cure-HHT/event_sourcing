@@ -1,8 +1,13 @@
-// Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts principal-submitted actions end-to-end)
-// Verifies: EVS-PRD-action-dispatch/B (all five stages exercised across six scenarios)
-// Verifies: EVS-PRD-action-dispatch/C (every scenario produces a recorded denial or success event in the log)
-// Verifies: EVS-PRD-action-dispatch/D (idempotency replay scenario: second dispatch returns DispatchIdempotencyHit; no new events)
-// Verifies: EVS-PRD-library-charter/C (authorization-checked dispatch pipeline; authorization failure recorded as authorization_denied event)
+// Verifies: EVS-PRD-action-dispatch/A
+// (dispatcher accepts principal-submitted actions end-to-end)
+// Verifies: EVS-PRD-action-dispatch/B
+// (all five stages exercised across six scenarios)
+// Verifies: EVS-PRD-action-dispatch/C
+// (every scenario produces a recorded denial or success event in the log)
+// Verifies: EVS-PRD-action-dispatch/D
+// (idempotency replay scenario: second dispatch returns DispatchIdempotencyHit; no new events)
+// Verifies: EVS-PRD-library-charter/C
+// (authorization-checked dispatch pipeline; authorization failure recorded as authorization_denied event)
 // End-to-end integration test for the full 10-stage dispatcher pipeline.
 //
 // Uses flutter_test (not package:test) because EventStore depends on

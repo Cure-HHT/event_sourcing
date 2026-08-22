@@ -1,9 +1,12 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+// Implements: EVS-PRD-cross-process-event-transport/A
+// JSON codec for
 //   the Update<T> family (Snapshot, Delta, Tombstone, EndOfReplay) with
 //   field-level round-trip preservation.
-// Implements: EVS-PRD-cross-process-event-transport/B — each envelope
+// Implements: EVS-PRD-cross-process-event-transport/B
+// each envelope
 //   carries sequence + subscriptionId in the encoded shape.
-// Implements: EVS-PRD-cross-process-event-transport/G — ships raw rows
+// Implements: EVS-PRD-cross-process-event-transport/G
+// ships raw rows
 //   as Map<String, Object?>; consumer-supplied mapper applies client-
 //   side so Layer-2 conventions stay equivalent across Local/Remote.
 

@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-event-log/A — EntryTypeDefinition is the static schema
+// Implements: EVS-PRD-event-log/A
+// EntryTypeDefinition is the static schema
 //   metadata the substrate uses to classify each event appended to the
 //   append-only log.
-// Implements: EVS-DEV-append-stamps-registered-version/A — the
+// Implements: EVS-DEV-append-stamps-registered-version/A
+// the
 //   registeredVersion field is the source value that EventStore.append
 //   stamps onto every appended event's entryTypeVersion field.
-// Implements: EVS-DEV-append-stamps-registered-version/C — registeredVersion
+// Implements: EVS-DEV-append-stamps-registered-version/C
+// registeredVersion
 //   is owned by this definition and the EntryTypeRegistry; it does not
 //   appear on the public append/appendInTxn signatures.
 

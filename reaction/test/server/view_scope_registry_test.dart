@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E — ViewScopeRegistry
+// Verifies: EVS-PRD-cross-process-event-transport/E
+// ViewScopeRegistry
 //   provides the viewName -> scope-class binding the subscription
 //   handler uses for per-subscription row-level narrowing.
 

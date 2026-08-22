@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-subscription/A (Update<T> and SubscriptionMode<T> sealed
+// Verifies: EVS-PRD-subscription/A
+// (Update<T> and SubscriptionMode<T> sealed
 //   types carry correct structural shapes for both subscription kinds)
-// Verifies: EVS-PRD-subscription/C (sequence field present on every variant
+// Verifies: EVS-PRD-subscription/C
+// (sequence field present on every variant
 //   provides the per-subscription ordering anchor)
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';

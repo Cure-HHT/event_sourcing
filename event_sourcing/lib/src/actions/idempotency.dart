@@ -1,5 +1,7 @@
-// Implements: EVS-PRD-action-dispatch/D (Idempotency enum declares the per-action policy; IdempotencyEntry carries the cached outcome)
-// Implements: EVS-PRD-action-dispatch/E (IdempotencyEntry.rawInputCanonicalJson lets the dispatcher detect same-key, different-content collisions; nullable for forward-compatibility with rows that pre-date the column)
+// Implements: EVS-PRD-action-dispatch/D
+// (Idempotency enum declares the per-action policy; IdempotencyEntry carries the cached outcome)
+// Implements: EVS-PRD-action-dispatch/E
+// (IdempotencyEntry.rawInputCanonicalJson lets the dispatcher detect same-key, different-content collisions; nullable for forward-compatibility with rows that pre-date the column)
 
 /// Per-action declaration of how the dispatcher treats `idempotencyKey`.
 ///

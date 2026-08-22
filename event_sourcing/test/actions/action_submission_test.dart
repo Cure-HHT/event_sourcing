@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-action-dispatch/A (ActionSubmission value type carries actionName, rawInput, idempotencyKey, flowToken into dispatch)
-// Verifies: EVS-DEV-flow-token/A - flowToken is optional, can be supplied on a submission, and round-trips.
+// Verifies: EVS-PRD-action-dispatch/A
+// (ActionSubmission value type carries actionName, rawInput, idempotencyKey, flowToken into dispatch)
+// Verifies: EVS-DEV-flow-token/A
+// flowToken is optional, can be supplied on a submission, and round-trips.
 
 import 'package:event_sourcing/src/actions/action_submission.dart';
 import 'package:test/test.dart';

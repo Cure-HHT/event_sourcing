@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-find-all-events-extended-filters/D — the reference
+// Verifies: EVS-DEV-find-all-events-extended-filters/D
+// the reference
 //   SembastBackend SHALL realize the composed filter via a SINGLE shared
 //   helper (`_composeFindAllEventsFilter`) used by BOTH the out-of-transaction
 //   (`findAllEvents`) and in-transaction (`findAllEventsInTxn`) code paths.

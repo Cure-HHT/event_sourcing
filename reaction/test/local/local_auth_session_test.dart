@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-auth-session/A/B/G — LocalAuthSession honors
+// Verifies: EVS-PRD-auth-session/A/B/G
+// LocalAuthSession honors
 // the AuthSession interface (A: current/stream/setCredential/
 // principal), the AuthStatus sealed-type variants exposed via state
 // transitions (B), and the rule that the active Principal flows

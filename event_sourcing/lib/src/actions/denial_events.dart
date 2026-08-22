@@ -1,6 +1,9 @@
-// Implements: EVS-PRD-action-dispatch/C (denial event factories that record the outcome for every failed dispatch stage)
-// Implements: EVS-PRD-action-dispatch/B (one factory per stage: unknown-action, parse, validate, authorize, execute)
-// Implements: EVS-PRD-action-dispatch/E (denialIdempotencyMismatch records the conflict when the same (action, principal, key) is reused with different rawInput; the payload carries SHA-256 hashes of the cached and submitted canonical-JSON inputs, NOT the inputs themselves, so the audit log does not leak potentially-sensitive payloads)
+// Implements: EVS-PRD-action-dispatch/C
+// (denial event factories that record the outcome for every failed dispatch stage)
+// Implements: EVS-PRD-action-dispatch/B
+// (one factory per stage: unknown-action, parse, validate, authorize, execute)
+// Implements: EVS-PRD-action-dispatch/E
+// (denialIdempotencyMismatch records the conflict when the same (action, principal, key) is reused with different rawInput; the payload carries SHA-256 hashes of the cached and submitted canonical-JSON inputs, NOT the inputs themselves, so the audit log does not leak potentially-sensitive payloads)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;

@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-permission-source/C — server side of
+// Verifies: EVS-PRD-permission-source/C
+// server side of
 //   GET /permissions/snapshot that RemotePermissionSource fetches.
-// Verifies: EVS-PRD-cross-process-event-transport/A — EffectiveAuthorization
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// EffectiveAuthorization
 //   codec round-trip through the route.
 
 import 'dart:convert';

@@ -1,7 +1,11 @@
-// Implements: EVS-PRD-action-dispatch/B (authorize stage pluggable interface)
-// Implements: EVS-PRD-permissions-as-events/B (concrete impls evaluate decisions from event-derived projections only)
-// Implements: EVS-PRD-permissions-as-events/D (the AuthorizationPolicy interface and its concrete impls live in library code; apps do not subclass it to inject alternative Allow/Deny logic — closed-under-events requires the decision function itself to be part of the substrate)
-// Implements: EVS-PRD-library-charter/H (trust-boundary interface: AuthorizationPolicy is the named, registered policy surface)
+// Implements: EVS-PRD-action-dispatch/B
+// (authorize stage pluggable interface)
+// Implements: EVS-PRD-permissions-as-events/B
+// (concrete impls evaluate decisions from event-derived projections only)
+// Implements: EVS-PRD-permissions-as-events/D
+// (the AuthorizationPolicy interface and its concrete impls live in library code; apps do not subclass it to inject alternative Allow/Deny logic — closed-under-events requires the decision function itself to be part of the substrate)
+// Implements: EVS-PRD-library-charter/H
+// (trust-boundary interface: AuthorizationPolicy is the named, registered policy surface)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart';
 import 'package:event_sourcing/src/actions/permission.dart';

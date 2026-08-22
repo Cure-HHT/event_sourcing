@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-reaction-widget-contract/C — ActionState sealed
+// Verifies: EVS-PRD-reaction-widget-contract/C
+// ActionState sealed
 // type covers the 5 widget-side submission states (Idle/Submitting/
 // Success/Denied/Failed) that ActionBuilder exposes to the caller-
 // supplied builder, with exhaustive switching enforced by the sealed

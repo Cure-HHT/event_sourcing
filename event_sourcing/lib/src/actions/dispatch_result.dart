@@ -1,7 +1,11 @@
-// Implements: EVS-PRD-action-dispatch/B (sealed outcome type covering every pipeline stage result)
-// Implements: EVS-PRD-action-dispatch/C (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
-// Implements: EVS-PRD-action-dispatch/D (DispatchIdempotencyHit is returned on cache hit: same outcome, no new event emitted)
-// Implements: EVS-PRD-action-dispatch/E (DispatchIdempotencyMismatch is returned when a cached entry exists for the (action, principal, key) tuple but the submitted rawInput's canonical JSON differs from the cached value; the corresponding idempotency_mismatch denial event is appended by the dispatcher)
+// Implements: EVS-PRD-action-dispatch/B
+// (sealed outcome type covering every pipeline stage result)
+// Implements: EVS-PRD-action-dispatch/C
+// (DispatchSuccess carries emittedEventIds; denial variants represent recorded denial outcomes)
+// Implements: EVS-PRD-action-dispatch/D
+// (DispatchIdempotencyHit is returned on cache hit: same outcome, no new event emitted)
+// Implements: EVS-PRD-action-dispatch/E
+// (DispatchIdempotencyMismatch is returned when a cached entry exists for the (action, principal, key) tuple but the submitted rawInput's canonical JSON differs from the cached value; the corresponding idempotency_mismatch denial event is appended by the dispatcher)
 
 import 'package:event_sourcing/src/actions/permission.dart';
 

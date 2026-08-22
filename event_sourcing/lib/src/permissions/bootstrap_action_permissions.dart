@@ -1,18 +1,22 @@
 // lib/src/permissions/bootstrap_action_permissions.dart
-// Implements: EVS-PRD-permissions-as-events/A — orchestrates the full
+// Implements: EVS-PRD-permissions-as-events/A
+// orchestrates the full
 //   bootstrap: loads seed, validates it, then emits permission_granted
 //   events into the event log for any missing grants, so that all grants
 //   are recorded as first-class events.
-// Implements: EVS-PRD-permissions-as-events/B — constructs a
+// Implements: EVS-PRD-permissions-as-events/B
+// constructs a
 //   TableBackedAuthorizationPolicy reading directly from the event-derived
 //   role_permission_grants and user_role_scopes projections, ensuring the
 //   resulting policy evaluates decisions solely from the log (load seed ->
 //   validate -> emit events -> construct policy).
-// Implements: EVS-PRD-permissions-as-events/C — idempotent event emission
+// Implements: EVS-PRD-permissions-as-events/C
+// idempotent event emission
 //   guarantees that the event log alone is sufficient to reproduce the
 //   permission state; re-running bootstrap produces no new events when the
 //   log already contains all required grants.
-// Implements: EVS-DEV-bootstrap-action-permissions/A/B/C/D — the full
+// Implements: EVS-DEV-bootstrap-action-permissions/A/B/C/D
+// the full
 //   YAML-seeded bootstrap flow: append permission_granted events for
 //   missing grants (A), return PolicyFailSafe on parse/validation failure
 //   (B), return PolicyReady with a TableBackedAuthorizationPolicy on

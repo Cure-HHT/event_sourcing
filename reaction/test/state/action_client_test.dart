@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-submitter/A — ActionClient mints an idempotency
+// Verifies: EVS-PRD-action-submitter/A
+// ActionClient mints an idempotency
 // key when the submission lacks one (so Idempotency.required actions are not
 // parse-denied for programmatic callers), passes consumer-supplied keys
 // through unchanged, and returns the submitter's DispatchResult.

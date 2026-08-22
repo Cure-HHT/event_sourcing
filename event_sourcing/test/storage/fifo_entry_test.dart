@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/C — FifoEntry pure-Dart value type;
+// Verifies: EVS-PRD-portability/C
+// FifoEntry pure-Dart value type;
 //   toJson/fromJson round-trips produce identical results on any runtime;
 //   constructor invariants (non-empty eventIds, firstSeq <= lastSeq) are
 //   enforced in both release and debug builds.

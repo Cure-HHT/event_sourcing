@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-postgres-backend/D — demo state projection
+// Verifies: EVS-DEV-postgres-backend/D
+// demo state projection
 //   (matrix grants, directory, idempotency cache, events stream) runs
 //   against PostgresBackend, satisfying the conformance harness
 //   alongside the sembast flavor in demo_state_projection_test.dart.

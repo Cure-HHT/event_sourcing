@@ -1,13 +1,16 @@
-// Implements: EVS-PRD-action-dispatch/D — IdempotencyStore contract:
+// Implements: EVS-PRD-action-dispatch/D
+// IdempotencyStore contract:
 //   record stores the dispatch outcome; lookup hit returns the cached
 //   IdempotencyEntry verbatim; expired entries miss on lookup;
 //   sweepExpired physically removes them.
-// Implements: EVS-DEV-postgres-backend/E — persist entries in the
+// Implements: EVS-DEV-postgres-backend/E
+// persist entries in the
 //   `idempotency` table keyed by (action_name, principal_id,
 //   idempotency_key). The DDL is emitted by `ensurePostgresSchema`
 //   (Task 1 of the Postgres backend plan) and shared with the rest of
 //   the backend.
-// Implements: EVS-DEV-postgres-backend/F — passes the
+// Implements: EVS-DEV-postgres-backend/F
+// passes the
 //   `runIdempotencyStoreConformanceTests` harness alongside
 //   InMemoryIdempotencyStore.
 
@@ -35,11 +38,13 @@ class PostgresIdempotencyStore implements IdempotencyStore {
 
   final Pool<void> _pool;
 
-  // Implements: EVS-PRD-action-dispatch/D — entries past their
+  // Implements: EVS-PRD-action-dispatch/D
+  // entries past their
   //   `expires_at` MUST NOT be returned by lookup, even before
   //   sweepExpired physically removes them. The `expires_at > @cutoff`
   //   predicate enforces this at read time.
-  // Implements: EVS-PRD-action-dispatch/E — returns
+  // Implements: EVS-PRD-action-dispatch/E
+  // returns
   //   `rawInputCanonicalJson` so the dispatcher can compare the
   //   submitted rawInput's canonical form against the cached one.
   //   NULL passes through as null; the dispatcher treats null as
@@ -89,7 +94,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     );
   }
 
-  // Implements: EVS-DEV-postgres-backend/E — upsert via
+  // Implements: EVS-DEV-postgres-backend/E
+  // upsert via
   //   `INSERT ... ON CONFLICT (action_name, principal_id,
   //   idempotency_key) DO UPDATE`. Repeat records for the same tuple
   //   overwrite, matching the in-memory store's map-overwrite
@@ -98,7 +104,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   //   `record` on the success path; this UPSERT only ever fires when
   //   the dispatcher has decided the submission is a fresh-or-matching
   //   write, never to overwrite a conflicting entry.
-  // Implements: EVS-PRD-action-dispatch/E — persists
+  // Implements: EVS-PRD-action-dispatch/E
+  // persists
   //   `raw_input_canonical_json` alongside the cached outcome so a
   //   subsequent lookup can drive the dispatcher's content-mismatch
   //   check.
@@ -144,7 +151,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     );
   }
 
-  // Implements: EVS-PRD-action-dispatch/D — sweepExpired physically
+  // Implements: EVS-PRD-action-dispatch/D
+  // sweepExpired physically
   //   removes entries whose expires_at <= cutoff and returns the
   //   count deleted (via the postgres driver's `affectedRows`).
   @override
@@ -157,7 +165,8 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     return result.affectedRows;
   }
 
-  // Implements: EVS-PRD-action-dispatch/D — listEntries enumerates every
+  // Implements: EVS-PRD-action-dispatch/D
+  // listEntries enumerates every
   //   currently-cached entry; not filtered by expiry (callers decide).
   @override
   Future<List<IdempotencyEntry>> listEntries() async {

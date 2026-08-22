@@ -7,19 +7,24 @@
 //
 // Package-private; not exported from reaction.dart.
 //
-// Implements: EVS-DEV-authz-watcher/A — role_unassigned -> close
+// Implements: EVS-DEV-authz-watcher/A
+// role_unassigned -> close
 //   4003 permissions_changed for every connection registered for that
 //   userId in WsConnectionRegistry.
-// Implements: EVS-DEV-authz-watcher/B — permission_revoked from a role
+// Implements: EVS-DEV-authz-watcher/B
+// permission_revoked from a role
 //   R closes 4003 every connection whose registered Principal's
 //   activeRole == R (verified via policy.effectivePermissionsFor).
-// Implements: EVS-DEV-authz-watcher/C — role_assigned -> stale_data
+// Implements: EVS-DEV-authz-watcher/C
+// role_assigned -> stale_data
 //   with reason: role_assigned; permission_granted to a held role ->
 //   stale_data with reason: permission_added; neither closes the WS.
-// Implements: EVS-DEV-authz-watcher/D — containment-projection changes
+// Implements: EVS-DEV-authz-watcher/D
+// containment-projection changes
 //   emit no signal by default; watchContainment(aggregateType) opts a
 //   projection in and emits stale_data with reason: containment_changed.
-// Implements: EVS-DEV-authz-watcher/E — exactly one substrate
+// Implements: EVS-DEV-authz-watcher/E
+// exactly one substrate
 //   subscription for the core (role_permission_grant, user_role_scope)
 //   event types, plus one per opted-in containment projection; per-
 //   connection state lives in WsConnectionRegistry.
@@ -90,7 +95,8 @@ class AuthorizationWatcher {
   /// appropriate for an account-level disable. Do NOT point it at a per-session
   /// termination signal (that would close a user's other device sessions on a
   /// single-session logout).
-  // Implements: EVS-DEV-authz-watcher/F — consumer-registered force-logout on
+  // Implements: EVS-DEV-authz-watcher/F
+  // consumer-registered force-logout on
   //   an account-level narrowing event outside the core role/permission set.
   void watchForceLogout(
     String aggregateType,

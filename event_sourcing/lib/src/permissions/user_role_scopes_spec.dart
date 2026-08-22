@@ -1,15 +1,19 @@
 // lib/src/permissions/user_role_scopes_spec.dart
 // Declares the TableProjectionSpec for the user_role_scopes view.
-// Implements: EVS-PRD-permissions-as-events/A — user-role-scope assignments
+// Implements: EVS-PRD-permissions-as-events/A
+// user-role-scope assignments
 //   are events in the same log as application state changes (role_assigned /
 //   role_unassigned are appended alongside every other state transition).
-// Implements: EVS-PRD-permissions-as-events/B — the substrate's authorize
+// Implements: EVS-PRD-permissions-as-events/B
+// the substrate's authorize
 //   stage reads user_role_scopes (via TableBackedAuthorizationPolicy) to
 //   evaluate scope coverage; no external store participates in the decision.
-// Implements: EVS-PRD-permissions-as-events/C — the projection is fully
+// Implements: EVS-PRD-permissions-as-events/C
+// the projection is fully
 //   reconstructable from the event log alone; replaying role_assigned /
 //   role_unassigned events reproduces the view deterministically.
-// Implements: EVS-PRD-scoped-permissions/C/D — declares the event-derived
+// Implements: EVS-PRD-scoped-permissions/C/D
+// declares the event-derived
 //   projection the policy reads from at authorize time, sealing scope
 //   evaluation inside the closed-under-events trust model.
 //

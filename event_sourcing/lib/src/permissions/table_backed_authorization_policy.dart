@@ -1,24 +1,31 @@
 // lib/src/permissions/table_backed_authorization_policy.dart
-// Implements: EVS-PRD-permissions-as-events/B — evaluates authorization
+// Implements: EVS-PRD-permissions-as-events/B
+// evaluates authorization
 //   decisions solely from event-derived projections (role_permission_grants,
 //   user_role_scopes, and containment projections via ContainmentResolver).
-// Implements: EVS-PRD-permissions-as-events/A — reads grants and assignments
+// Implements: EVS-PRD-permissions-as-events/A
+// reads grants and assignments
 //   that are themselves recorded as events in the same log.
-// Implements: EVS-PRD-permissions-as-events/D — this policy IS the substrate's
+// Implements: EVS-PRD-permissions-as-events/D
+// this policy IS the substrate's
 //   policy code; v1 ships exactly one AuthorizationPolicy implementation
 //   (this one, plus FailSafeAuthorizationPolicy for the boot-failure path)
 //   and apps do not register alternatives. Alternative policy mechanisms
 //   require lib extension under the Append-Only Primitives discipline.
-// Implements: EVS-PRD-action-dispatch/B — Allow/Deny decisions delivered to
+// Implements: EVS-PRD-action-dispatch/B
+// Allow/Deny decisions delivered to
 //   the dispatcher's authorize stage.
-// Implements: EVS-PRD-scoped-permissions/D/F/G — evaluates solely from
+// Implements: EVS-PRD-scoped-permissions/D/F/G
+// evaluates solely from
 //   event-derived projections; allows when any active-role assignment
 //   matches via equality / wildcard / containment; fails closed on missing
 //   containment rows.
-// Implements: EVS-DEV-scoped-permissions-match-algorithm — first-match-wins
+// Implements: EVS-DEV-scoped-permissions-match-algorithm
+// first-match-wins
 //   union of active-role assignments; bound, value-wildcard, and total-
 //   wildcard variants handled per Section 2 of spec/scoped-permissions.md.
-// Implements: EVS-DEV-effective-permissions-shape — effectivePermissionsFor
+// Implements: EVS-DEV-effective-permissions-shape
+// effectivePermissionsFor
 //   returns EffectiveAuthorization { activeRole, rolePermissions,
 //   scopeAssignments }, and EffectiveAuthorization.empty for non-user
 //   principals.
