@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-ingest/E — the ingest path projects ingested events into
+// Verifies: EVS-PRD-ingest/E
+// the ingest path projects ingested events into
 //   materialized views identically to local-appended events. The projection
 //   interpreter on the ingest path is symmetric with the interpreter on the
 //   append path (same gates, same atomicity, same throw-rolls-back semantics).

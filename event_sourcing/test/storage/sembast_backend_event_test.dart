@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-event-log/B — sequence-counter bookkeeping lands in
+// Verifies: EVS-PRD-event-log/B
+// sequence-counter bookkeeping lands in
 //   the `backend_state` store rather than in an event-level `metadata`
 //   namespace. This file holds the sembast-specific layout assertions
 //   that pin where bookkeeping lives in the on-disk shape; the abstract

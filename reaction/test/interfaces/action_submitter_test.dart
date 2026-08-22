@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-submitter/A — the library defines an
+// Verifies: EVS-PRD-action-submitter/A
+// the library defines an
 // `ActionSubmitter` interface whose `submit(ActionSubmission)` returns
 // a `Future<DispatchResult<Object?>>`.
 //

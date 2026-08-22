@@ -1,5 +1,6 @@
 // lib/src/permissions/seed_validator.dart
-// Implements: EVS-DEV-bootstrap-action-permissions/B — validates the seed
+// Implements: EVS-DEV-bootstrap-action-permissions/B
+// validates the seed
 // before any events are emitted (unknown permission name, scope-class
 // reference not registered, etc.); an invalid seed drives the PolicyFailSafe
 // path rather than emitting malformed permission grants into the event log.

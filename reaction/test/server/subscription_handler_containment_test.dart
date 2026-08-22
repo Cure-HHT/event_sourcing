@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/E — row-level
+// Verifies: EVS-PRD-cross-process-event-transport/E
+// row-level
 //   narrowing of a subscription when a principal's scope assignment is
 //   an ANCESTOR-class BoundScope of the view's scope class. These tests
 //   exercise the injected `DescendantExpansion` callback path: an

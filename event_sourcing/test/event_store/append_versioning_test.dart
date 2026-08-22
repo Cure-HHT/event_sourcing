@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-append-stamps-registered-version/A — substrate stamps
+// Verifies: EVS-DEV-append-stamps-registered-version/A
+// substrate stamps
 //   entry_type_version from the registry's registeredVersion on every local
 //   append; also verifies that lib_format_version is stamped from
 //   StoredEvent.currentLibFormatVersion (EVS-PRD-event-log/A: immutable
@@ -33,7 +34,8 @@ Future<EventStore> _bootstrap() async {
 
 void main() {
   group('EventStore.append stamps version fields', () {
-    // Verifies: EVS-DEV-append-stamps-registered-version/A — substrate stamps
+    // Verifies: EVS-DEV-append-stamps-registered-version/A
+    // substrate stamps
     // entry_type_version from the registry's registeredVersion.
     test('entry_type_version is stamped from the registry', () async {
       final es = await _bootstrap();

@@ -1,8 +1,10 @@
-// Implements: EVS-PRD-cross-process-event-transport/F — bearer-credential
+// Implements: EVS-PRD-cross-process-event-transport/F
+// bearer-credential
 //   carriage is enforced upstream by auth_middleware (or the consumer's
 //   own middleware); this handler reads the validated Principal from
 //   the request context and dispatches against the in-process substrate.
-// Implements: EVS-PRD-action-submitter/C — server side of the HTTP POST
+// Implements: EVS-PRD-action-submitter/C
+// server side of the HTTP POST
 //   /actions round-trip that RemoteActionSubmitter consumes.
 
 import 'dart:convert';

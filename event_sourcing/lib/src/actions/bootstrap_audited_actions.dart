@@ -1,5 +1,7 @@
-// Implements: EVS-PRD-action-dispatch/A (entry-point factory that wires registry, policy, store, and events into a dispatch-ready ActionDispatcher)
-// Implements: EVS-PRD-library-charter/C (composes the authorization-checked action dispatch pipeline)
+// Implements: EVS-PRD-action-dispatch/A
+// (entry-point factory that wires registry, policy, store, and events into a dispatch-ready ActionDispatcher)
+// Implements: EVS-PRD-library-charter/C
+// (composes the authorization-checked action dispatch pipeline)
 
 import 'package:event_sourcing/event_sourcing.dart' show EventStore;
 import 'package:event_sourcing/src/actions/action.dart';

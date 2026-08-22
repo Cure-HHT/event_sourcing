@@ -1,19 +1,27 @@
-// Verifies: EVS-DEV-view-target-versions-seeding/A — seedViewTargetVersions
+// Verifies: EVS-DEV-view-target-versions-seeding/A
+// seedViewTargetVersions
 //   inserts a row for every (viewName, interest-matched entryType) pair where
 //   no row currently exists.
-// Verifies: EVS-DEV-view-target-versions-seeding/B — seedViewTargetVersions
+// Verifies: EVS-DEV-view-target-versions-seeding/B
+// seedViewTargetVersions
 //   does NOT overwrite an existing row (lagging value is preserved).
-// Verifies: EVS-DEV-view-target-versions-seeding/C — newly-seeded rows
+// Verifies: EVS-DEV-view-target-versions-seeding/C
+// newly-seeded rows
 //   carry the current registeredVersion as their target.
-// Verifies: EVS-DEV-view-target-versions-seeding/D — only entry types
+// Verifies: EVS-DEV-view-target-versions-seeding/D
+// only entry types
 //   explicitly named in a projection's interest filter are seeded.
-// Verifies: EVS-DEV-snapshot-promotion-on-open/A — promoteViewSnapshots
+// Verifies: EVS-DEV-snapshot-promotion-on-open/A
+// promoteViewSnapshots
 //   promotes every view row whose stored target version lags registeredVersion.
-// Verifies: EVS-DEV-snapshot-promotion-on-open/B — only view rows are
+// Verifies: EVS-DEV-snapshot-promotion-on-open/B
+// only view rows are
 //   mutated; events in the log are unchanged.
-// Verifies: EVS-DEV-snapshot-promotion-on-open/C — exactly one audit
+// Verifies: EVS-DEV-snapshot-promotion-on-open/C
+// exactly one audit
 //   callback fires per promoted (viewName, entryType) pair.
-// Verifies: EVS-DEV-snapshot-promotion-on-open/D — boot integration test
+// Verifies: EVS-DEV-snapshot-promotion-on-open/D
+// boot integration test
 //   confirms that snapshot-promoting a row from v1→v2 yields the same state
 //   as replaying the v1 event through the v1→v2 promoter chain (equivalence).
 

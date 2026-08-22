@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-scope-descendant-expander — the read-path expander and
+// Verifies: EVS-DEV-scope-descendant-expander
+// the read-path expander and
 //   the write-path ContainmentResolver traverse the SAME index data in
 //   opposite directions and must agree: if the resolver maps a participant
 //   UP to a site, the expander must include that participant when expanding

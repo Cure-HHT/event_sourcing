@@ -1,5 +1,7 @@
-// Implements: EVS-PRD-action-dispatch/B (execute stage return type: carries events for atomic persistence in Stage 8)
-// Implements: EVS-PRD-action-dispatch/C (events list fed into the atomic persist stage that records the success outcome)
+// Implements: EVS-PRD-action-dispatch/B
+// (execute stage return type: carries events for atomic persistence in Stage 8)
+// Implements: EVS-PRD-action-dispatch/C
+// (events list fed into the atomic persist stage that records the success outcome)
 
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/security/security_details.dart';

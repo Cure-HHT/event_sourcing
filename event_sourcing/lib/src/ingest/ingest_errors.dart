@@ -1,8 +1,11 @@
-// Implements: EVS-PRD-ingest/A — ingest path existence; these exceptions are
+// Implements: EVS-PRD-ingest/A
+// ingest path existence; these exceptions are
 //   the typed error surface of the ingest path
-// Implements: EVS-PRD-ingest/D — IngestChainBroken reports hash-chain
+// Implements: EVS-PRD-ingest/D
+// IngestChainBroken reports hash-chain
 //   verification failure at the ingest boundary
-// Implements: EVS-PRD-ingest/F — IngestIdentityMismatch is thrown (not
+// Implements: EVS-PRD-ingest/F
+// IngestIdentityMismatch is thrown (not
 //   silently duplicated) when a re-presented event's hash differs, preserving
 //   idempotency semantics (identical re-presentations are safe; divergent
 //   re-presentations are rejected)

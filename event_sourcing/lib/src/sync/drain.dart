@@ -1,9 +1,12 @@
-// Implements: EVS-PRD-destinations/C (FIFO delivery order — drain attempts rows
+// Implements: EVS-PRD-destinations/C
+// (FIFO delivery order — drain attempts rows
 //   in sequence_in_queue order; a wedged head halts the pass so trail rows are
 //   never sent ahead of it)
-// Implements: EVS-PRD-destinations/D (durable queue — drain reads from the
+// Implements: EVS-PRD-destinations/D
+// (durable queue — drain reads from the
 //   StorageBackend so queued rows survive restarts and are delivered on resume)
-// Implements: EVS-PRD-destinations/E (pluggable delivery — drain delegates
+// Implements: EVS-PRD-destinations/E
+// (pluggable delivery — drain delegates
 //   each attempt to Destination.send, the application-supplied transport)
 import 'dart:convert';
 import 'dart:typed_data';

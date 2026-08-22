@@ -1,10 +1,15 @@
-// Verifies: EVS-PRD-ingest/A — EventStore.ingestBatch exists and admits events
-// Verifies: EVS-PRD-ingest/B — upstream identity preserved on each stored event
-// Verifies: EVS-PRD-ingest/C — receiver provenance hop appended with
+// Verifies: EVS-PRD-ingest/A
+// EventStore.ingestBatch exists and admits events
+// Verifies: EVS-PRD-ingest/B
+// upstream identity preserved on each stored event
+// Verifies: EVS-PRD-ingest/C
+// receiver provenance hop appended with
 //   batch_context, arrival_hash, previous_ingest_hash, ingest_sequence_number
-// Verifies: EVS-PRD-ingest/F — idempotency: duplicate in batch yields
+// Verifies: EVS-PRD-ingest/F
+// idempotency: duplicate in batch yields
 //   IngestOutcome.duplicate; identity-mismatching event rolls back entire batch
-// Verifies: EVS-PRD-hash-chain-integrity/B — Chain 2 previous_ingest_hash
+// Verifies: EVS-PRD-hash-chain-integrity/B
+// Chain 2 previous_ingest_hash
 //   threads across events in order within a batch
 
 import 'dart:typed_data';

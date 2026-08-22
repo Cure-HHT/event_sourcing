@@ -1,4 +1,5 @@
-// Implements: EVS-DEV-postgres-backend/A — idempotent CREATE TABLE IF NOT
+// Implements: EVS-DEV-postgres-backend/A
+// idempotent CREATE TABLE IF NOT
 // EXISTS DDL for every table the PostgresBackend reads or writes. Running
 // this against an already-provisioned database is a no-op on the schema.
 

@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-destinations/E — BatchEnvelopeMetadata: metadata
+// Implements: EVS-PRD-destinations/E
+// BatchEnvelopeMetadata: metadata
 // persisted on FIFO rows for library-native destinations (serializesNatively)
 // so the drain path can reconstruct wire bytes deterministically at send
 // time without requiring the app to supply a transform.

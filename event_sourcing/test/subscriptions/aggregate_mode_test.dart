@@ -74,7 +74,8 @@ Future<void> _append(
 );
 
 void main() {
-  // Verifies: EVS-PRD-subscription/A (null-value Snapshot delivered for an
+  // Verifies: EVS-PRD-subscription/A
+  // (null-value Snapshot delivered for an
   //   aggregate that does not yet exist)
   test(
     'snapshot for not-yet-existing aggregate emits null-value Snapshot',
@@ -105,7 +106,8 @@ void main() {
   // Verifies: EVS-PRD-subscription/A (Snapshot carries current state for an
   //   existing aggregate; a subsequent append emits a Delta)
   // Verifies: EVS-PRD-subscription/B (Delta arrives reactively after append)
-  // Verifies: EVS-PRD-subscription/D (a matching append after subscribe
+  // Verifies: EVS-PRD-subscription/D
+  // (a matching append after subscribe
   //   produces a Delta)
   test(
     'snapshot for existing aggregate carries current state; subsequent appends emit Delta',
@@ -145,7 +147,8 @@ void main() {
     },
   );
 
-  // Verifies: EVS-PRD-subscription/C (snapshot sequence reflects the max
+  // Verifies: EVS-PRD-subscription/C
+  // (snapshot sequence reflects the max
   //   folded event sequence)
   test('snapshot sequence reflects latest folded event sequence', () async {
     final store = await _open();
@@ -183,7 +186,8 @@ void main() {
   });
 
   // Verifies: EVS-PRD-subscription/A (Tombstone delivered on deletion)
-  // Verifies: EVS-PRD-subscription/B (Tombstone arrives reactively after a
+  // Verifies: EVS-PRD-subscription/B
+  // (Tombstone arrives reactively after a
   //   tombstone event)
   test('tombstone produces Tombstone update for active subscribers', () async {
     final store = await _open();

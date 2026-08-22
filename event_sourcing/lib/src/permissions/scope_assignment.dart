@@ -1,6 +1,8 @@
-// Implements: EVS-PRD-permissions-as-events — raw assignment record exposed to
+// Implements: EVS-PRD-permissions-as-events
+// raw assignment record exposed to
 //   clients/UI via effectivePermissionsFor.
-// Implements: EVS-DEV-effective-permissions-shape/C — sub-shape carrying
+// Implements: EVS-DEV-effective-permissions-shape/C
+// sub-shape carrying
 //   exactly one sealed-variant ScopeValue per assignment.
 
 import 'package:meta/meta.dart';

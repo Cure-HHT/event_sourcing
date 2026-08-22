@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-permission-source/B/E —
+// Verifies: EVS-PRD-permission-source/B/E
 // LocalPermissionSource derives the snapshot from the substrate's
 // permissions projections via AuthorizationPolicy.effectivePermissionsFor
 // (B), and re-fetches + re-emits when the active Principal changes via

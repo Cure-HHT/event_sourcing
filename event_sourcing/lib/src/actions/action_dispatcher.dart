@@ -1,20 +1,31 @@
-// Implements: EVS-PRD-action-dispatch/A (accepts actions submitted by principals)
-// Implements: EVS-PRD-action-dispatch/B (parse → validate → authorize → execute → record, in that order)
-// Implements: EVS-PRD-action-dispatch/C (every dispatch produces a recorded outcome: success events or denial event)
-// Implements: EVS-PRD-action-dispatch/D (idempotency: same identifier + matching content → same outcome, no new event)
-// Implements: EVS-PRD-action-dispatch/E (Stage 4 compares the submitted rawInput's canonical JSON against the cached entry's rawInputCanonicalJson; mismatch emits idempotency_mismatch denial and returns DispatchIdempotencyMismatch)
-// Implements: EVS-DEV-flow-token/B - threads flowToken onto every appended event (Stage 8) and onto every denial event via _persistDenial.
-// Implements: EVS-PRD-action-dispatch/F (single path by which consumer-initiated events enter the log)
-// Implements: EVS-PRD-library-charter/C (authorization-checked dispatch; decision and state change both recorded)
-// Implements: EVS-PRD-scoped-permissions/E/H/I — dispatcher resolves the
+// Implements: EVS-PRD-action-dispatch/A
+// (accepts actions submitted by principals)
+// Implements: EVS-PRD-action-dispatch/B
+// (parse → validate → authorize → execute → record, in that order)
+// Implements: EVS-PRD-action-dispatch/C
+// (every dispatch produces a recorded outcome: success events or denial event)
+// Implements: EVS-PRD-action-dispatch/D
+// (idempotency: same identifier + matching content → same outcome, no new event)
+// Implements: EVS-PRD-action-dispatch/E
+// (Stage 4 compares the submitted rawInput's canonical JSON against the cached entry's rawInputCanonicalJson; mismatch emits idempotency_mismatch denial and returns DispatchIdempotencyMismatch)
+// Implements: EVS-DEV-flow-token/B
+// threads flowToken onto every appended event (Stage 8) and onto every denial event via _persistDenial.
+// Implements: EVS-PRD-action-dispatch/F
+// (single path by which consumer-initiated events enter the log)
+// Implements: EVS-PRD-library-charter/C
+// (authorization-checked dispatch; decision and state change both recorded)
+// Implements: EVS-PRD-scoped-permissions/E/H/I
+// dispatcher resolves the
 //   per-permission scope, wraps authorize+execute+persist in one storage
 //   transaction, and stamps the resolved scope onto authorization_denied
 //   events when it was non-null.
-// Implements: EVS-DEV-transactional-authorize-execute — single dispatch
+// Implements: EVS-DEV-transactional-authorize-execute
+// single dispatch
 //   tx covers Stage 6 policy reads, Stage 7 execute, and Stage 8 appends;
 //   authorize-stage denials commit inside the tx; execute / append throws
 //   roll back and emit execution_failed in a separate append.
-// Implements: EVS-DEV-scope-unresolvable-denial — pre-tx invocation of
+// Implements: EVS-DEV-scope-unresolvable-denial
+// pre-tx invocation of
 //   Action.scopeFor, denial with scopeUnresolvable for null /
 //   TotalWildcardScope / class-mismatched returns, and scope stamping
 //   onto the denial event when one was returned.

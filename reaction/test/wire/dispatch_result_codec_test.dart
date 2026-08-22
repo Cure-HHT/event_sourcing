@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// round-trip codec
 //   for every DispatchResult variant preserves all fields.
-// Verifies: EVS-PRD-action-submitter/C — wire shape of the POST
+// Verifies: EVS-PRD-action-submitter/C
+// wire shape of the POST
 //   /actions response body.
 
 import 'package:event_sourcing/event_sourcing.dart';

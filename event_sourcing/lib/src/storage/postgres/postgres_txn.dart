@@ -1,4 +1,5 @@
-// Implements: EVS-DEV-postgres-backend/C — Transaction handle SHALL be invalidated
+// Implements: EVS-DEV-postgres-backend/C
+// Transaction handle SHALL be invalidated
 // after the transaction() body returns or throws.
 
 import 'package:event_sourcing/src/storage/transaction.dart';

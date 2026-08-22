@@ -1,25 +1,33 @@
-// Implements: EVS-PRD-cross-process-event-transport — composition of the
+// Implements: EVS-PRD-cross-process-event-transport
+// composition of the
 //   four interface PRDs into one client-side bundle: RemoteScope assembles
 //   RemoteAuthSession, RemoteActionSubmitter, RemoteViewSource, and
 //   RemotePermissionSource over a shared RemoteConnection, and routes
 //   auth-related WS close-frame codes (4001 / 4003) to the auth session.
-// Implements: EVS-PRD-auth-session/G — the AuthSession's active Principal
+// Implements: EVS-PRD-auth-session/G
+// the AuthSession's active Principal
 //   is exposed via authSession to actionSubmitter, viewSource, and
 //   permissionSource consumers; the composition guarantees a single
 //   source of truth.
-// Implements: EVS-PRD-action-submitter/E — composition mirrors the Local
+// Implements: EVS-PRD-action-submitter/E
+// composition mirrors the Local
 //   side so source-identical consumer code works against either.
-// Implements: EVS-PRD-view-subscriber/D — same.
-// Implements: EVS-PRD-permission-source/D — Principal is sourced from the
+// Implements: EVS-PRD-view-subscriber/D
+// same.
+// Implements: EVS-PRD-permission-source/D
+// Principal is sourced from the
 //   co-mounted AuthSession (no direct setPrincipal on PermissionSource).
-// Implements: EVS-PRD-reaction-scope/A — RemoteScope satisfies the
+// Implements: EVS-PRD-reaction-scope/A
+// RemoteScope satisfies the
 //   ReactionScope interface (four interface getters + connectionStatus
 //   + connectionStatusStream + dispose).
-// Implements: EVS-PRD-reaction-scope/D — drives ConnectionStatus
+// Implements: EVS-PRD-reaction-scope/D
+// drives ConnectionStatus
 //   transitions from the underlying RemoteConnection's WS lifecycle by
 //   wiring its onConnectionStatusChanged callback into a broadcast
 //   StreamController.
-// Implements: EVS-PRD-reaction-scope/E — post-dispose, the four
+// Implements: EVS-PRD-reaction-scope/E
+// post-dispose, the four
 //   interface getters and the connection-status getters throw
 //   StateError so consumer code is source-identical with LocalScope.
 
@@ -147,7 +155,8 @@ class RemoteScope implements ReactionScope {
     return _statusController.stream;
   }
 
-  // Implements: EVS-PRD-cross-process-event-transport/H — delegates to
+  // Implements: EVS-PRD-cross-process-event-transport/H
+  // delegates to
   //   RemoteConnection.reconnect(), exposing the manual re-auth + re-issue
   //   path to consumers that hold a concrete RemoteScope.
   /// Force the underlying connection to reconnect (re-auth + re-issue live

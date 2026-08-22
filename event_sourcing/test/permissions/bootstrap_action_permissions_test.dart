@@ -1,14 +1,18 @@
 // test/permissions/bootstrap_action_permissions_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A — bootstrap emits permission_granted
+// Verifies: EVS-PRD-permissions-as-events/A
+// bootstrap emits permission_granted
 //   events into the event log for all seed grants; mismatched yaml yields
 //   PolicyFailSafe with no events written.
-// Verifies: EVS-PRD-permissions-as-events/B — PolicyReady wraps a policy that
+// Verifies: EVS-PRD-permissions-as-events/B
+// PolicyReady wraps a policy that
 //   reads solely from the event-derived projection; valid declared perms ->
 //   PolicyReady; mismatched yaml -> PolicyFailSafe.
-// Verifies: EVS-PRD-permissions-as-events/C — re-running bootstrap with the
+// Verifies: EVS-PRD-permissions-as-events/C
+// re-running bootstrap with the
 //   same yaml is idempotent (no new events), confirming the log alone
 //   suffices to reconstruct permission state.
-// Verifies: EVS-DEV-bootstrap-action-permissions/A/B/C/D — full YAML-seeded
+// Verifies: EVS-DEV-bootstrap-action-permissions/A/B/C/D
+// full YAML-seeded
 //   bootstrap behavior: missing-grant event emission (A), PolicyFailSafe on
 //   parse/validation failure (B), PolicyReady wrapping
 //   TableBackedAuthorizationPolicy on success (C), idempotent on re-run (D).

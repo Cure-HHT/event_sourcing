@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-auth-session/A — Remote implementation of
+// Implements: EVS-PRD-auth-session/A
+// Remote implementation of
 //   AuthSession: current, stream, setCredential, principal.
-// Implements: EVS-PRD-auth-session/E — handleAuthRejected (wired by
+// Implements: EVS-PRD-auth-session/E
+// handleAuthRejected (wired by
 //   RemoteScope from WS close-frames 4001 / 4003) and HTTP 401 from
 //   the GET /me round-trip both transition the session to Expired and
 //   emit the new status on the stream.
-// Implements: EVS-PRD-auth-session/G — exposes the validated Principal
+// Implements: EVS-PRD-auth-session/G
+// exposes the validated Principal
 //   as the source of truth for downstream interfaces.
 
 import 'dart:async';

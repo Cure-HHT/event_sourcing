@@ -1,6 +1,9 @@
-// Verifies: EVS-PRD-action-dispatch/A (Principal sealed type: UserPrincipal and AnonymousPrincipal carry caller identity through every stage)
-// Verifies: EVS-PRD-action-dispatch/C (toInitiator() stamps the Principal onto emitted events for the audit trail)
-// Verifies: EVS-PRD-library-charter/H (Principal is accepted on faith from the caller — the acknowledged-unaudited trust input)
+// Verifies: EVS-PRD-action-dispatch/A
+// (Principal sealed type: UserPrincipal and AnonymousPrincipal carry caller identity through every stage)
+// Verifies: EVS-PRD-action-dispatch/C
+// (toInitiator() stamps the Principal onto emitted events for the audit trail)
+// Verifies: EVS-PRD-library-charter/H
+// (Principal is accepted on faith from the caller — the acknowledged-unaudited trust input)
 
 import 'package:event_sourcing/event_sourcing.dart'
     show UserInitiator, AnonymousInitiator;

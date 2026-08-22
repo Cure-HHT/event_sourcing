@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-provenance assertion D (pure Dart, platform-independent)
+// Implements: EVS-PRD-provenance/D
+// (pure Dart, platform-independent)
 
 /// Chain-of-custody provenance types for cross-system event flow.
 ///

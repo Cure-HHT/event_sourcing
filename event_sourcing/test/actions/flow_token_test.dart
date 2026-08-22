@@ -1,13 +1,17 @@
-// Verifies: EVS-DEV-flow-token/A — dispatcher accepts an optional opaque
+// Verifies: EVS-DEV-flow-token/A
+// dispatcher accepts an optional opaque
 //   correlation token on submission (null and non-null; the field is a
 //   plain nullable String with no validation constraints).
-// Verifies: EVS-DEV-flow-token/B — token is threaded onto every emitted
+// Verifies: EVS-DEV-flow-token/B
+// token is threaded onto every emitted
 //   event, including denial events (authorization denied, unknown-action
 //   denial), as well as success events.
-// Verifies: EVS-DEV-flow-token/C — token is preserved unchanged when the
+// Verifies: EVS-DEV-flow-token/C
+// token is preserved unchanged when the
 //   event is ingested by another deployment (the ingest leg re-reads the
 //   stored event from a second backend and asserts flowToken == original).
-// Verifies: EVS-DEV-flow-token/D — token is opaque: the substrate stores
+// Verifies: EVS-DEV-flow-token/D
+// token is opaque: the substrate stores
 //   and returns any valid UTF-8 string byte-identically, without parsing
 //   or interpreting its contents.
 //

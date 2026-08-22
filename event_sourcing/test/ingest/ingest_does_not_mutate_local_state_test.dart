@@ -1,8 +1,11 @@
-// Verifies: EVS-PRD-ingest/A — ingest path admits events from another
+// Verifies: EVS-PRD-ingest/A
+// ingest path admits events from another
 //   deployment into the local log (system audit events bridged cross-hop)
-// Verifies: EVS-PRD-ingest/B — upstream identity preserved; ingested system
+// Verifies: EVS-PRD-ingest/B
+// upstream identity preserved; ingested system
 //   audit retains its originator aggregate and event identity
-// Verifies: EVS-PRD-ingest/E — ingested events land in the local event log
+// Verifies: EVS-PRD-ingest/E
+// ingested events land in the local event log
 //   identically to locally-originated events (stored for observability)
 //
 //   path that lands a wire-side audit event in `event_log` and stamps

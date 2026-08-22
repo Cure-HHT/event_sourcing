@@ -1,7 +1,9 @@
-// Implements: EVS-PRD-provenance assertion A (immutable ProvenanceEntry value
+// Implements: EVS-PRD-provenance/A
+// (immutable ProvenanceEntry value
 //   type with hop, receivedAt, identifier, softwareVersion, transformVersion
 //   and optional ingest/receiver fields)
-// Implements: EVS-PRD-provenance assertion C (JSON serialization and
+// Implements: EVS-PRD-provenance/C
+// (JSON serialization and
 //   deserialization without loss of information)
 
 import 'package:provenance/src/batch_context.dart';

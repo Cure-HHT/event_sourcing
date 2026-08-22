@@ -11,9 +11,11 @@ import 'package:sembast/sembast.dart' as sembast show Transaction;
 /// security_context + events join) live on the backend via
 /// [SembastBackend.queryAudit]; this store's [queryAudit] is a thin
 /// delegator.
-// Implements: EVS-PRD-event-log/A — all mutations accept a caller-supplied
+// Implements: EVS-PRD-event-log/A
+// all mutations accept a caller-supplied
 //   `Transaction` so they commit atomically with the event-log row they describe.
-// Implements: EVS-PRD-regulatory-alignment — `findUnredactedOlderThanInTxn`
+// Implements: EVS-PRD-regulatory-alignment
+// `findUnredactedOlderThanInTxn`
 //   and `findOlderThanInTxn` drive the retention compact/purge sweeps that
 //   satisfy ALCOA+ Enduring / §11.10(c) protection-of-records obligations.
 class SembastSecurityContextStore extends MutableSecurityContextStore {

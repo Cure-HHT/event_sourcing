@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-destinations/C (FIFO order — SyncPolicy governs the
+// Implements: EVS-PRD-destinations/C
+// (FIFO order — SyncPolicy governs the
 //   retry/backoff curve that controls when drain re-attempts a queued entry;
 //   the maxAttempts cap and backoff prevent indefinite blocking on a bad head
 //   while preserving strict-FIFO ordering within each drain pass)

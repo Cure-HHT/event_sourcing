@@ -1,8 +1,11 @@
-// Implements: EVS-PRD-ingest/A — ingest path existence (wire-format codec)
-// Implements: EVS-PRD-ingest/B — upstream identity preserved (BatchEnvelope
+// Implements: EVS-PRD-ingest/A
+// ingest path existence (wire-format codec)
+// Implements: EVS-PRD-ingest/B
+// upstream identity preserved (BatchEnvelope
 //   carries originator events verbatim; receiver adds its own provenance hop
 //   inside ingestBatch, not here)
-// Implements: EVS-PRD-hash-chain-integrity/D — encoding uses JCS canonical
+// Implements: EVS-PRD-hash-chain-integrity/D
+// encoding uses JCS canonical
 //   form so hash values are reproducible across observers
 
 import 'dart:convert';

@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/C (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
+// Verifies: EVS-PRD-action-dispatch/C
+// (every dispatched action produces a recorded denial event or DispatchSuccess with emittedEventIds)
 // Uses flutter_test (not package:test) because EventStore depends on
 // Sembast, which requires the Flutter test binding to run in this package.
 // All other tests in event_sourcing/ that touch EventStore use flutter_test
@@ -56,7 +57,8 @@ void main() {
   });
 
   group('Stage 1 — lookup', () {
-    // Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts principal-submitted actions and processes each through the dispatch flow)
+    // Verifies: EVS-PRD-action-dispatch/A
+    // (dispatcher accepts principal-submitted actions and processes each through the dispatch flow)
     test('unknown action returns DispatchUnknownAction', () async {
       final r = await dispatcher.dispatch(
         const ActionSubmission(
@@ -182,7 +184,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/B (stages in order: Stage 4 idempotency key check precedes Stage 3 parseInput; missing required key emits parse_denied before parse runs)
+    // Verifies: EVS-PRD-action-dispatch/B
+    // (stages in order: Stage 4 idempotency key check precedes Stage 3 parseInput; missing required key emits parse_denied before parse runs)
     test(
       'missing required key emits parse_denied before parseInput runs',
       () async {
@@ -205,7 +208,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (idempotency cache hit short-circuits; DispatchIdempotencyHit returned; no new events appended)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (idempotency cache hit short-circuits; DispatchIdempotencyHit returned; no new events appended)
     test(
       'idempotency hit short-circuits and returns DispatchIdempotencyHit',
       () async {
@@ -242,7 +246,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (same key + matching rawInput → DispatchIdempotencyHit; no new events appended)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (same key + matching rawInput → DispatchIdempotencyHit; no new events appended)
     test(
       'idempotency content match (same key, same rawInput) returns DispatchIdempotencyHit; no new events',
       () async {
@@ -283,7 +288,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/E (same key + different rawInput → DispatchIdempotencyMismatch denial; idempotency_mismatch event emitted with hashed inputs)
+    // Verifies: EVS-PRD-action-dispatch/E
+    // (same key + different rawInput → DispatchIdempotencyMismatch denial; idempotency_mismatch event emitted with hashed inputs)
     test(
       'idempotency content mismatch (same key, different rawInput) emits '
       'idempotency_mismatch denial and returns DispatchIdempotencyMismatch',
@@ -341,7 +347,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (JCS canonicalization prevents false mismatches on key-order differences → same content still yields DispatchIdempotencyHit)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (JCS canonicalization prevents false mismatches on key-order differences → same content still yields DispatchIdempotencyHit)
     test(
       'idempotency mismatch is keyed on canonical JSON, not raw dict order',
       () async {
@@ -370,7 +377,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (legacy entries without rawInputCanonicalJson fall back to cache-hit semantics; no false mismatch raised)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (legacy entries without rawInputCanonicalJson fall back to cache-hit semantics; no false mismatch raised)
     test('legacy cache entry without rawInputCanonicalJson returns '
         'DispatchIdempotencyHit (forward-compat, no false mismatch)', () async {
       await idempotency.record(
@@ -400,7 +408,8 @@ void main() {
       );
     });
 
-    // Verifies: EVS-PRD-action-dispatch/D (mismatch check is per (actionName, principalId, key); different key → cache miss, no idempotency_mismatch event)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (mismatch check is per (actionName, principalId, key); different key → cache miss, no idempotency_mismatch event)
     test(
       'different idempotency keys do not interfere — distinct cache slots',
       () async {
@@ -435,7 +444,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/E (Idempotency.optional + no key → Stage 4 bypassed entirely; no idempotency_mismatch fired)
+    // Verifies: EVS-PRD-action-dispatch/E
+    // (Idempotency.optional + no key → Stage 4 bypassed entirely; no idempotency_mismatch fired)
     test(
       'idempotency.optional with no key bypasses mismatch detection',
       () async {
@@ -469,7 +479,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/E (Idempotency.none + key supplied → Stage 4 bypassed; no idempotency_mismatch fired)
+    // Verifies: EVS-PRD-action-dispatch/E
+    // (Idempotency.none + key supplied → Stage 4 bypassed; no idempotency_mismatch fired)
     test(
       'idempotency.none with key supplied bypasses mismatch detection',
       () async {
@@ -627,7 +638,8 @@ void main() {
     );
 
     // Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts principal-submitted actions and processes through the full dispatch flow)
-    // Verifies: EVS-PRD-action-dispatch/B (stages 1–10 in order: all-Allow falls through all stages to DispatchSuccess)
+    // Verifies: EVS-PRD-action-dispatch/B
+    // (stages 1–10 in order: all-Allow falls through all stages to DispatchSuccess)
     test(
       'all-Allow falls through all stages and returns DispatchSuccess',
       () async {
@@ -650,7 +662,8 @@ void main() {
   });
 
   group('Stage 6 — authorize scope resolution', () {
-    // Verifies: EVS-DEV-scope-unresolvable-denial/A (dispatcher invokes scopeFor before opening the dispatch transaction; class-matching BoundScope → Allow)
+    // Verifies: EVS-DEV-scope-unresolvable-denial/A
+    // (dispatcher invokes scopeFor before opening the dispatch transaction; class-matching BoundScope → Allow)
     test(
       'scopeFor returns class-matching BoundScope → Allow falls through',
       () async {
@@ -682,7 +695,8 @@ void main() {
     );
 
     // Verifies: EVS-DEV-scope-unresolvable-denial/B (scopeFor null → authorization_denied with scopeUnresolvable; no scope stamped)
-    // Verifies: EVS-PRD-scoped-permissions/E (scopeUnresolvable denial when action supplies no scope value)
+    // Verifies: EVS-PRD-scoped-permissions/E
+    // (scopeUnresolvable denial when action supplies no scope value)
     test('scopeFor returns null → Deny(scopeUnresolvable)', () async {
       registry.register(const ScopedPatientEditAction(forceNull: true));
       final allowDispatcher = makeAllowDispatcher(
@@ -713,7 +727,8 @@ void main() {
     // Verifies: EVS-DEV-scope-unresolvable-denial/D (scopeFor class-mismatched BoundScope → authorization_denied with scopeUnresolvable; scope stamped)
     // Verifies: EVS-DEV-scope-unresolvable-denial/E (offending scope value stamped on denial for class-mismatch case)
     // Verifies: EVS-PRD-scoped-permissions/E (scopeUnresolvable denial for class-mismatch)
-    // Verifies: EVS-PRD-scoped-permissions/I (mismatched scope value stamped onto authorization_denied)
+    // Verifies: EVS-PRD-scoped-permissions/I
+    // (mismatched scope value stamped onto authorization_denied)
     test(
       'scopeFor returns class-mismatched BoundScope → Deny(scopeUnresolvable)',
       () async {
@@ -757,7 +772,8 @@ void main() {
     // Verifies: EVS-DEV-scope-unresolvable-denial/C (scopeFor TotalWildcardScope → authorization_denied with scopeUnresolvable; scope stamped)
     // Verifies: EVS-DEV-scope-unresolvable-denial/E (offending scope value stamped on denial for TotalWildcardScope case)
     // Verifies: EVS-PRD-scoped-permissions/E (scopeUnresolvable denial for TotalWildcardScope)
-    // Verifies: EVS-PRD-scoped-permissions/I (TotalWildcardScope value stamped onto authorization_denied)
+    // Verifies: EVS-PRD-scoped-permissions/I
+    // (TotalWildcardScope value stamped onto authorization_denied)
     test(
       'scopeFor returns TotalWildcardScope → Deny(scopeUnresolvable)',
       () async {
@@ -793,7 +809,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-scoped-permissions/I (class-matched resolved scope value stamped onto authorization_denied when policy denies)
+    // Verifies: EVS-PRD-scoped-permissions/I
+    // (class-matched resolved scope value stamped onto authorization_denied when policy denies)
     test(
       'class-matched scope is stamped onto policy-deny authorization_denied event',
       () async {
@@ -836,7 +853,8 @@ void main() {
       allowDispatcher = makeAllowDispatcher(registry, eventStore, idempotency);
     });
 
-    // Verifies: EVS-PRD-action-dispatch/B (execute stage is part of the dispatch pipeline; execute throw → DispatchExecutionFailed returned)
+    // Verifies: EVS-PRD-action-dispatch/B
+    // (execute stage is part of the dispatch pipeline; execute throw → DispatchExecutionFailed returned)
     test('execute throw returns DispatchExecutionFailed', () async {
       final result = await allowDispatcher.dispatch(
         const ActionSubmission(
@@ -865,7 +883,8 @@ void main() {
     });
 
     // Verifies: EVS-PRD-action-dispatch/A (dispatcher accepts actions and processes all the way through to DispatchSuccess)
-    // Verifies: EVS-PRD-action-dispatch/B (all stages complete in order for a successful dispatch)
+    // Verifies: EVS-PRD-action-dispatch/B
+    // (all stages complete in order for a successful dispatch)
     test(
       'execute success persists events and returns DispatchSuccess',
       () async {
@@ -1058,7 +1077,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (Stage 9 records idempotency entry when key is present; lookup returns matching entry)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (Stage 9 records idempotency entry when key is present; lookup returns matching entry)
     test(
       'Idempotency.optional + key records entry; lookup returns entry with matching emittedEventIds',
       () async {
@@ -1087,7 +1107,8 @@ void main() {
     );
 
     // Verifies: EVS-PRD-action-dispatch/D (Stage 9 records the idempotency entry for future cache lookups)
-    // Verifies: EVS-PRD-action-dispatch/E (Stage 9 stamps canonical JSON on the entry so subsequent retries can be content-compared)
+    // Verifies: EVS-PRD-action-dispatch/E
+    // (Stage 9 stamps canonical JSON on the entry so subsequent retries can be content-compared)
     test(
       'Idempotency.required + key records entry; lookup returns entry with matching emittedEventIds',
       () async {
@@ -1117,7 +1138,8 @@ void main() {
       },
     );
 
-    // Verifies: EVS-PRD-action-dispatch/D (Stage 9→Stage 4 round-trip: first dispatch records canonical JSON; second dispatch hits cache with no mismatch)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (Stage 9→Stage 4 round-trip: first dispatch records canonical JSON; second dispatch hits cache with no mismatch)
     test('Stage 9 -> Stage 4 round-trip: recorded canonical JSON drives the '
         'next dispatch into the cache-hit branch (no mismatch)', () async {
       // Use DateTime.now() for the context (not the fixed _ctx()
@@ -1164,7 +1186,8 @@ void main() {
       expect(eventsAfter, eventsBefore);
     });
 
-    // Verifies: EVS-PRD-action-dispatch/D (Idempotency.none ignores supplied key; no entry written; future retries cannot get a false hit)
+    // Verifies: EVS-PRD-action-dispatch/D
+    // (Idempotency.none ignores supplied key; no entry written; future retries cannot get a false hit)
     test(
       'Idempotency.none + key supplied → no idempotency entry recorded',
       () async {
@@ -1187,7 +1210,8 @@ void main() {
   });
 
   // Verifies: EVS-DEV-transactional-authorize-execute/A (one storage transaction for authorize + execute + persist; policy receives the active Transaction)
-  // Verifies: EVS-PRD-scoped-permissions/H (authorize-stage policy reads and execute-stage appends share one storage transaction)
+  // Verifies: EVS-PRD-scoped-permissions/H
+  // (authorize-stage policy reads and execute-stage appends share one storage transaction)
   group('Stage 6–8 — authorize+execute share one transaction', () {
     test(
       'policy.isPermitted receives a non-null Transaction injected by the dispatcher',
@@ -1220,7 +1244,8 @@ void main() {
     );
 
     // Verifies: EVS-DEV-transactional-authorize-execute/A (each dispatch opens its own storage transaction)
-    // Verifies: EVS-PRD-scoped-permissions/H (each dispatch opens its own isolated storage transaction — transactions are not shared across dispatches)
+    // Verifies: EVS-PRD-scoped-permissions/H
+    // (each dispatch opens its own isolated storage transaction — transactions are not shared across dispatches)
     test(
       'two dispatches receive distinct Transaction instances (each dispatch opens '
       'its own backend transaction)',
@@ -1259,7 +1284,8 @@ void main() {
     );
 
     // Verifies: EVS-DEV-transactional-authorize-execute/A (both isPermitted calls in one dispatch share the same Transaction snapshot)
-    // Verifies: EVS-PRD-scoped-permissions/H (multiple policy reads within one dispatch share one storage transaction)
+    // Verifies: EVS-PRD-scoped-permissions/H
+    // (multiple policy reads within one dispatch share one storage transaction)
     test('both isPermitted calls within one dispatch (TwoPermissionAction) '
         'receive the SAME Transaction instance — proves the policy reads share one '
         'snapshot across the action\'s permission iteration', () async {
@@ -1293,7 +1319,8 @@ void main() {
     });
 
     // Verifies: EVS-DEV-transactional-authorize-execute/B (authorize-stage denial commits authorization_denied in the same dispatch transaction)
-    // Verifies: EVS-PRD-scoped-permissions/H (denial event committed atomically inside the dispatch transaction)
+    // Verifies: EVS-PRD-scoped-permissions/H
+    // (denial event committed atomically inside the dispatch transaction)
     test('authorize-stage denial commits the authorization_denied event in '
         'the dispatch tx (success path: tx is committed even though no '
         'execute-result events were appended)', () async {
@@ -1319,7 +1346,8 @@ void main() {
     });
 
     // Verifies: EVS-DEV-transactional-authorize-execute/C (execute throws → dispatch tx rolled back; execution_failed emitted in a separate append)
-    // Verifies: EVS-PRD-scoped-permissions/H (dispatch tx is rolled back on execute failure; separate append for denial event)
+    // Verifies: EVS-PRD-scoped-permissions/H
+    // (dispatch tx is rolled back on execute failure; separate append for denial event)
     test('execute-stage failure rolls the dispatch tx back, then emits the '
         'execution_failed denial in its own (post-rollback) append', () async {
       registry.register(BadExecuteAction());

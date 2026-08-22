@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-reaction-widget-contract/C — ActionState is
+// Implements: EVS-PRD-reaction-widget-contract/C
+// ActionState is
 // the sealed state machine the widget library's ActionBuilder
 // primitive exposes to caller-supplied builders for rendering
 // (Idle/Submitting/Success/Denied/Failed).

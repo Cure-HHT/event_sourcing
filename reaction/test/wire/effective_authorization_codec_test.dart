@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codec
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// round-trip codec
 //   for EffectiveAuthorization preserves all fields.
-// Verifies: EVS-PRD-permission-source/C — wire shape of
+// Verifies: EVS-PRD-permission-source/C
+// wire shape of
 //   GET /permissions/snapshot.
 
 import 'package:event_sourcing/event_sourcing.dart';

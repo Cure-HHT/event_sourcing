@@ -15,25 +15,33 @@
 //
 // See: docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md
 //
-// Implements: EVS-DEV-view-target-versions-seeding/A — seedViewTargetVersions
+// Implements: EVS-DEV-view-target-versions-seeding/A
+// seedViewTargetVersions
 //   inserts a view_target_versions row for every (viewName, interest-matched
 //   entryType) pair that has no existing row.
-// Implements: EVS-DEV-view-target-versions-seeding/B — existing rows are
+// Implements: EVS-DEV-view-target-versions-seeding/B
+// existing rows are
 //   skipped (not overwritten) by the `if (existing != null) continue` guard.
-// Implements: EVS-DEV-view-target-versions-seeding/C — newly-seeded rows
+// Implements: EVS-DEV-view-target-versions-seeding/C
+// newly-seeded rows
 //   carry def.registeredVersion as their target value.
-// Implements: EVS-DEV-view-target-versions-seeding/D — the (viewName,
-//   entryType) pairs are derived from each ProjectionSpec's interest filter
-//   via _interestEntryTypes().
-// Implements: EVS-DEV-snapshot-promotion-on-open/A — promoteViewSnapshots
+// Implements: EVS-DEV-view-target-versions-seeding/D
+// the (viewName, entryType) pairs are
+//   derived from each ProjectionSpec's interest filter via
+//   _interestEntryTypes().
+// Implements: EVS-DEV-snapshot-promotion-on-open/A
+// promoteViewSnapshots
 //   promotes every view row whose stored view_target_versions value is below
 //   the current registeredVersion of the relevant entry type.
-// Implements: EVS-DEV-snapshot-promotion-on-open/B — the promoter chain is
+// Implements: EVS-DEV-snapshot-promotion-on-open/B
+// the promoter chain is
 //   applied to view row data; original events in the log are not modified.
-// Implements: EVS-DEV-snapshot-promotion-on-open/C — exactly one audit
+// Implements: EVS-DEV-snapshot-promotion-on-open/C
+// exactly one audit
 //   callback (emitAudit) is invoked per promoted (viewName, entryType) pair;
 //   the caller wires this to a view_snapshot_promoted raw-append.
-// Implements: EVS-DEV-snapshot-promotion-on-open/D — (equivalence) the
+// Implements: EVS-DEV-snapshot-promotion-on-open/D
+// (equivalence) the
 //   promoter primitive set is restricted to shape-changers that commute with
 //   the deep-merge fold; snapshot promotion at boot is provably equivalent
 //   to event-replay-with-promotion.

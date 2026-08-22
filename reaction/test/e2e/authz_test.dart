@@ -1,7 +1,9 @@
 // reaction/test/e2e/authz_test.dart
-// Verifies: EVS-PRD-cross-process-event-transport/E (per-sub authz)
+// Verifies: EVS-PRD-cross-process-event-transport/E
+// (per-sub authz)
 // + mid-session permission-change handling (force-logout + stale_data).
-// Verifies: EVS-DEV-authz-watcher/A/B/C/D — end-to-end coverage of the
+// Verifies: EVS-DEV-authz-watcher/A/B/C/D
+// end-to-end coverage of the
 //   mid-session permission-change envelope-routing behavior the
 //   AuthorizationWatcher implements (force-logout on role_unassigned /
 //   permission_revoked; stale_data on role_assigned / permission_granted;
@@ -155,7 +157,8 @@ void main() {
     await sub.cancel();
   });
 
-  // Verifies: EVS-DEV-authz-watcher/F — a consumer-registered force-logout
+  // Verifies: EVS-DEV-authz-watcher/F
+  // a consumer-registered force-logout
   //   trigger (an account-level narrowing on a consumer aggregate, the way the
   //   portal wires `user_deactivated` on `portal_user`) closes the affected
   //   user's WS with 4003, exactly like the core role_unassigned path.

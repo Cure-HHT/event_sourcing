@@ -1,6 +1,9 @@
-// Implements: EVS-PRD-action-dispatch/A (Principal identifies the submitting party; passed through every dispatch stage)
-// Implements: EVS-PRD-action-dispatch/C (toInitiator() stamps the Principal onto every emitted event — success and denial — for the audit trail)
-// Implements: EVS-PRD-library-charter/H (Principal is the explicitly-acknowledged unaudited trust input; accepted on faith from the caller)
+// Implements: EVS-PRD-action-dispatch/A
+// (Principal identifies the submitting party; passed through every dispatch stage)
+// Implements: EVS-PRD-action-dispatch/C
+// (toInitiator() stamps the Principal onto every emitted event — success and denial — for the audit trail)
+// Implements: EVS-PRD-library-charter/H
+// (Principal is the explicitly-acknowledged unaudited trust input; accepted on faith from the caller)
 
 import 'package:event_sourcing/src/storage/initiator.dart'
     show Initiator, UserInitiator, AnonymousInitiator;

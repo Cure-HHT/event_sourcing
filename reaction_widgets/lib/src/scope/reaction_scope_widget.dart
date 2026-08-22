@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-reaction-widget-contract/A, /B
+// Implements: EVS-PRD-reaction-widget-contract/A/B
 
 import 'package:flutter/widgets.dart';
 import 'package:reaction/reaction.dart';

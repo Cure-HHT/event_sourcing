@@ -1,14 +1,19 @@
-// Verifies: EVS-PRD-cross-process-event-transport — composition smoke
+// Verifies: EVS-PRD-cross-process-event-transport
+// composition smoke
 //   test: RemoteScope produces the four Remote* impls sharing a single
 //   RemoteConnection.
-// Verifies: EVS-PRD-auth-session/G — single AuthSession is wired to the
+// Verifies: EVS-PRD-auth-session/G
+// single AuthSession is wired to the
 //   action/view/permission impls as the source of truth.
-// Verifies: EVS-PRD-reaction-scope/A — RemoteScope implements the
+// Verifies: EVS-PRD-reaction-scope/A
+// RemoteScope implements the
 //   ReactionScope interface (four interface getters + connectionStatus
 //   + connectionStatusStream + dispose).
-// Verifies: EVS-PRD-reaction-scope/D — ConnectionStatus transitions are
+// Verifies: EVS-PRD-reaction-scope/D
+// ConnectionStatus transitions are
 //   driven by the underlying RemoteConnection's WS lifecycle.
-// Verifies: EVS-PRD-reaction-scope/E — disposed-scope access throws
+// Verifies: EVS-PRD-reaction-scope/E
+// disposed-scope access throws
 //   StateError (matches LocalScope's contract, so consumer code is
 //   source-identical across Local and Remote).
 

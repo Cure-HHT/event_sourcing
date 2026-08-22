@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-auth-session/B — AuthStatus is a sealed type
+// Verifies: EVS-PRD-auth-session/B
+// AuthStatus is a sealed type
 // with exactly three variants (Authenticated, NotAuthenticated,
 // Expired).
 import 'package:event_sourcing/event_sourcing.dart';

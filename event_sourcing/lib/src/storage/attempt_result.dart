@@ -6,7 +6,8 @@
 /// SendResult. It is deliberately a string rather than an enum at this
 /// layer so that a destination's judgment on response categorization can
 /// evolve without ABI pressure on this persisted record.
-// Implements: EVS-PRD-portability/C — pure Dart value type; platform-
+// Implements: EVS-PRD-portability/C
+// pure Dart value type; platform-
 //   independent JSON serialisation.
 class AttemptResult {
   const AttemptResult({

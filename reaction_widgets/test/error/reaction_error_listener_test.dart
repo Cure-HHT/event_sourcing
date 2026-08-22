@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-reaction-widget-contract/G (error-sink sub-clause)
+// Verifies: EVS-PRD-reaction-widget-contract/G
+// (error-sink sub-clause)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/material.dart';

@@ -1,6 +1,9 @@
-// Implements: EVS-PRD-action-dispatch/B (Permission is the unit checked by the authorize stage; Action.permissions declares what is required)
-// Implements: EVS-PRD-permissions-as-events/A (Permission names are the subject of permission-grant events in the same log)
-// Implements: EVS-PRD-permissions-as-events/B (AuthorizationPolicy.isPermitted receives Permission; evaluates from event-derived projections)
+// Implements: EVS-PRD-action-dispatch/B
+// (Permission is the unit checked by the authorize stage; Action.permissions declares what is required)
+// Implements: EVS-PRD-permissions-as-events/A
+// (Permission names are the subject of permission-grant events in the same log)
+// Implements: EVS-PRD-permissions-as-events/B
+// (AuthorizationPolicy.isPermitted receives Permission; evaluates from event-derived projections)
 
 /// A named permission, by convention `<aggregate>.<verb>` (e.g.
 /// `user.invite`, `patient.enroll`). Used by `Action.permissions` to

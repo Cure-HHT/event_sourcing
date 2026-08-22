@@ -1,10 +1,13 @@
-// Implements: EVS-PRD-destinations/B (per-destination filter — runHistoricalReplay
+// Implements: EVS-PRD-destinations/B
+// (per-destination filter — runHistoricalReplay
 //   and runGapReplay both evaluate destination.filter.matches on every candidate
 //   event, using the same admission semantics as the live fillBatch path)
-// Implements: EVS-PRD-destinations/C (FIFO order — historical and gap replay
+// Implements: EVS-PRD-destinations/C
+// (FIFO order — historical and gap replay
 //   enqueue events in sequence_number order and advance fill_cursor to the last
 //   replayed event so subsequent fillBatch calls continue without gaps)
-// Implements: EVS-PRD-destinations/D (durable queue — both replay functions run
+// Implements: EVS-PRD-destinations/D
+// (durable queue — both replay functions run
 //   inside the caller-supplied Transaction so enqueue and schedule writes are atomic;
 //   concurrent record() serializes behind the transaction and sees no gaps)
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';

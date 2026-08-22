@@ -12,7 +12,8 @@
 /// per-destination judgment — default categorization is `2xx -> SendOk`,
 /// `5xx/network -> SendTransient`, `4xx -> SendPermanent`, with
 /// destination-level carve-outs possible (see design doc §8.1, §11.1).
-// Implements: EVS-PRD-portability/C — pure Dart sealed type; platform-
+// Implements: EVS-PRD-portability/C
+// pure Dart sealed type; platform-
 //   independent; no platform-specific imports.
 sealed class SendResult {
   const SendResult();

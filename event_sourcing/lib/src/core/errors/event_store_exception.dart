@@ -81,7 +81,8 @@ class ConflictException extends EventStoreException {
 }
 
 // Implements: EVS-PRD-library-charter/A
-// Implements: EVS-PRD-hash-chain-integrity/C — ChainVerificationException is
+// Implements: EVS-PRD-hash-chain-integrity/C
+// ChainVerificationException is
 //   the failure signal of the end-to-end chain-verification operation; raised
 //   on signature/hash mismatch indicating possible tampering.
 /// Exception thrown when signature verification fails.

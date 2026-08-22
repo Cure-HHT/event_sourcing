@@ -1,10 +1,13 @@
-// Verifies: EVS-PRD-destinations/C (FIFO order — drains run concurrently per
+// Verifies: EVS-PRD-destinations/C
+// (FIFO order — drains run concurrently per
 //   destination under Future.wait; within each destination the fillBatch+drain
 //   sequence preserves FIFO order; pollInbound runs after outbound drains)
-// Verifies: EVS-PRD-destinations/E (pluggable delivery — exception from one
+// Verifies: EVS-PRD-destinations/E
+// (pluggable delivery — exception from one
 //   destination's send does not cancel another destination's drain; SyncCycle
 //   swallows per-destination errors so all registered destinations are attempted)
-// Verifies: EVS-PRD-destinations/F (dynamic registration — reentrancy guard
+// Verifies: EVS-PRD-destinations/F
+// (dynamic registration — reentrancy guard
 //   prevents overlapping cycles; after a cycle completes a new call re-consults
 //   registry.all() so destinations added between cycles are included)
 import 'dart:async';

@@ -1,10 +1,13 @@
-// Verifies: EVS-DEV-postgres-backend/E — idempotency table schema:
+// Verifies: EVS-DEV-postgres-backend/E
+// idempotency table schema:
 //   PostgresIdempotencyStore reads and writes the same idempotency
 //   table provisioned by ensurePostgresSchema (Task 1) with primary
 //   key (action_name, principal_id, idempotency_key).
-// Verifies: EVS-DEV-postgres-backend/F — PostgresIdempotencyStore
+// Verifies: EVS-DEV-postgres-backend/F
+// PostgresIdempotencyStore
 //   passes the same conformance harness as InMemoryIdempotencyStore.
-// Verifies: EVS-PRD-action-dispatch/D — IdempotencyStore contract:
+// Verifies: EVS-PRD-action-dispatch/D
+// IdempotencyStore contract:
 //   lookup miss/hit, tuple-keyed separation, expiry semantics, and
 //   sweepExpired all behave identically on the Postgres impl.
 

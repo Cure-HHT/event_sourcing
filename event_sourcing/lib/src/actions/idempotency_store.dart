@@ -1,5 +1,7 @@
-// Implements: EVS-PRD-action-dispatch/D (IdempotencyStore is the pluggable cache: lookup hit → same outcome; record stores the result after successful dispatch)
-// Implements: EVS-PRD-action-dispatch/E (record persists rawInputCanonicalJson alongside the result; lookup returns it so the dispatcher can detect same-key, different-content collisions)
+// Implements: EVS-PRD-action-dispatch/D
+// (IdempotencyStore is the pluggable cache: lookup hit → same outcome; record stores the result after successful dispatch)
+// Implements: EVS-PRD-action-dispatch/E
+// (record persists rawInputCanonicalJson alongside the result; lookup returns it so the dispatcher can detect same-key, different-content collisions)
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 

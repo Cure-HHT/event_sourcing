@@ -7,10 +7,12 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 /// package-private via `MutableSecurityContextStore` — only `EventStore`
 /// writes, updates, or deletes rows so each mutation commits atomically
 /// with the event-log row that describes it.
-// Implements: EVS-PRD-event-log/A — mutations are committed atomically with
+// Implements: EVS-PRD-event-log/A
+// mutations are committed atomically with
 //   the event-log row they describe, preserving append-only semantics at the
 //   store boundary.
-// Implements: EVS-PRD-regulatory-alignment — queryAudit provides the
+// Implements: EVS-PRD-regulatory-alignment
+// queryAudit provides the
 //   retrieval path required for ALCOA+ Available; read access is scoped
 //   separately from mutation to enforce least-privilege at the interface.
 abstract class SecurityContextStore {
@@ -32,7 +34,8 @@ abstract class SecurityContextStore {
 /// Not exported at the library surface — application code must go
 /// through `EventStore.append` / `EventStore.clearSecurityContext` /
 /// `EventStore.applyRetentionPolicy`.
-// Implements: EVS-PRD-event-log/A — `writeInTxn` / `upsertInTxn` /
+// Implements: EVS-PRD-event-log/A
+// `writeInTxn` / `upsertInTxn` /
 //   `deleteInTxn` all accept a `Transaction` so the caller (EventStore) can commit
 //   security and event-log mutations atomically.
 abstract class MutableSecurityContextStore extends SecurityContextStore {

@@ -1,9 +1,11 @@
 // event_sourcing/lib/src/projections/interpreter/aggregate_fold.dart
 //
-// Implements: EVS-PRD-materializer/A — AggregateFold is the fold engine for
+// Implements: EVS-PRD-materializer/A
+// AggregateFold is the fold engine for
 //   the AggregateProjectionSpec shape, one of the two shapes the library's
 //   materializer provides.
-// Implements: EVS-PRD-materializer/B — the fold is a pure function of
+// Implements: EVS-PRD-materializer/B
+// the fold is a pure function of
 //   (prior row, event); applying the same events in the same order to the
 //   same initial state yields byte-identical results (Merge.applyDeepDelta
 //   is deterministic; metadata stamps are taken from event fields, not wall

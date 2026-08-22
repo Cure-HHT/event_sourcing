@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-reaction-widget-contract/G (error-sink sub-clause)
+// Implements: EVS-PRD-reaction-widget-contract/G
+// the error-sink sub-clause.
 
 import 'dart:async';
 

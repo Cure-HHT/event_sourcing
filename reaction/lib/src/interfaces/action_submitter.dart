@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-action-submitter/A — defines the
+// Implements: EVS-PRD-action-submitter/A
+// defines the
 // ActionSubmitter interface whose submit(ActionSubmission) returns
 // Future<DispatchResult>. Also defines TransportException for the
 // transport-error path (interface companion type, not its own PRD).

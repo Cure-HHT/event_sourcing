@@ -1,8 +1,10 @@
-// Verifies: EVS-PRD-cross-process-event-transport/H — auto-reconnect
+// Verifies: EVS-PRD-cross-process-event-transport/H
+// auto-reconnect
 //   with exponential backoff on non-auth WS drops; re-issues every
 //   active subscribe on successful reconnect; transitions to Disconnected
 //   after maxAttempts; 4001/4003 carve-outs do NOT enter the cycle.
-// Verifies: EVS-PRD-cross-process-event-transport/I — ConnectionStatus
+// Verifies: EVS-PRD-cross-process-event-transport/I
+// ConnectionStatus
 //   transitions are driven by observable WS lifecycle events (initial
 //   open success, drop, reconnect success, retry-exhausted), not by
 //   synthesized pings or polling.

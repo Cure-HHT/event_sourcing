@@ -1,6 +1,8 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — JSON codec for
+// Implements: EVS-PRD-cross-process-event-transport/A
+// JSON codec for
 //   EffectiveAuthorization wire envelopes.
-// Implements: EVS-PRD-permission-source/C — wire shape of the
+// Implements: EVS-PRD-permission-source/C
+// wire shape of the
 //   GET /permissions/snapshot response that RemotePermissionSource
 //   consumes.
 

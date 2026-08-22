@@ -1,7 +1,9 @@
-// Implements: EVS-DEV-event-store-open/A — bootstrapEventStore is the
+// Implements: EVS-DEV-event-store-open/A
+// bootstrapEventStore is the
 //   canonical production entry point that calls EventStore.open (the sole
 //   public constructor) before returning an EventStoreBundle facade.
-// Implements: EVS-DEV-event-store-open/E — the lib-version boot check and
+// Implements: EVS-DEV-event-store-open/E
+// the lib-version boot check and
 //   snapshot-promotion pass both run inside EventStore.open's single
 //   transaction; bootstrap wires this path via allowDowngrade forwarding.
 

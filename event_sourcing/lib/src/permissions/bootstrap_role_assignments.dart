@@ -1,9 +1,11 @@
 // lib/src/permissions/bootstrap_role_assignments.dart
-// Implements: EVS-PRD-permissions-as-events/A — emits role_assigned events
+// Implements: EVS-PRD-permissions-as-events/A
+// emits role_assigned events
 //   for any seed entries not yet in the log, ensuring user-role-scope
 //   assignments are recorded as first-class events alongside other state
 //   changes.
-// Implements: EVS-PRD-permissions-as-events/C — idempotent application
+// Implements: EVS-PRD-permissions-as-events/C
+// idempotent application
 //   ensures the event log alone is sufficient to reconstruct role-assignment
 //   state; re-running against an already-populated store emits nothing.
 

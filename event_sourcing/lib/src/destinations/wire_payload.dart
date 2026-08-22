@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-destinations/E — WirePayload: the byte-level output
+// Implements: EVS-PRD-destinations/E
+// WirePayload: the byte-level output
 // type produced by an app-supplied Destination.transform implementation;
 // carries the bytes, content type, and transform version that the library
 // hands off to Destination.send for transit.

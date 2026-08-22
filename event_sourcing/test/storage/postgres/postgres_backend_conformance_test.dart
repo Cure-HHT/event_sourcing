@@ -1,12 +1,15 @@
-// Verifies: EVS-DEV-postgres-backend/C — transaction<T> runs at SERIALIZABLE
+// Verifies: EVS-DEV-postgres-backend/C
+// transaction<T> runs at SERIALIZABLE
 //   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
 //   commit on return, handle invalidated after body.
 //   The conformance harness 'transaction' group covers rollback-on-throw,
 //   commit-on-return, and handle-invalidation-after-body clauses.
-// Verifies: EVS-DEV-postgres-backend/D — PostgresBackend SHALL pass the
+// Verifies: EVS-DEV-postgres-backend/D
+// PostgresBackend SHALL pass the
 // backend-agnostic conformance harness. Same suite SembastBackend passes;
 // run is gated on PG_TEST_URL.
-// Verifies: EVS-PRD-portability/D — second concrete StorageBackend impl
+// Verifies: EVS-PRD-portability/D
+// second concrete StorageBackend impl
 // passes the same contract.
 // Verifies: EVS-DEV-find-all-events-extended-filters/A, EVS-DEV-find-all-events-extended-filters/B, EVS-DEV-find-all-events-extended-filters/C
 //   — entryType + client-timestamp filters AND-compose on findAllEvents and

@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-destinations/B — SubscriptionFilter: the per-destination
+// Implements: EVS-PRD-destinations/B
+// SubscriptionFilter: the per-destination
 // event-selection predicate that determines which events are enqueued to a
 // given destination (entry_type / event_type / aggregate_type allow-lists +
 // optional escape-hatch predicate).

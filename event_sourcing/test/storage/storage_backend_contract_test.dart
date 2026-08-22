@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/D — StorageBackend interface is implementable
+// Verifies: EVS-PRD-portability/D
+// StorageBackend interface is implementable
 //   by any concrete backend. The general transaction-contract behaviors
 //   (commit, rollback, Transaction-after-body, sequential-commit) are lifted into
 //   the backend-agnostic harness in `storage_backend_conformance.dart` and

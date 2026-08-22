@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-regulatory-alignment — default retention windows and
+// Verifies: EVS-PRD-regulatory-alignment
+// default retention windows and
 //   round-trip serialization correctness for SecurityRetentionPolicy, the
 //   mechanism that satisfies ALCOA+ Enduring / §11.10(c) protection-of-records.
 import 'package:event_sourcing/src/security/security_retention_policy.dart';

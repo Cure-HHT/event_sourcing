@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/D — watchFifo is a SembastBackend-specific
+// Verifies: EVS-PRD-portability/D
+// watchFifo is a SembastBackend-specific
 //   reactive surface exposing FIFO state changes; snapshot-on-subscribe +
 //   re-emit-on-mutation contract; cross-destination isolation.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';

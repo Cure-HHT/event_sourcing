@@ -1,5 +1,7 @@
-// Verifies: EVS-PRD-action-dispatch/C (denial event factories produce correctly-shaped EventDrafts for every failure stage)
-// Verifies: EVS-PRD-action-dispatch/B (one factory per stage maps directly to the B-stage taxonomy)
+// Verifies: EVS-PRD-action-dispatch/C
+// (denial event factories produce correctly-shaped EventDrafts for every failure stage)
+// Verifies: EVS-PRD-action-dispatch/B
+// (one factory per stage maps directly to the B-stage taxonomy)
 
 import 'package:event_sourcing/src/actions/authorization_decision.dart'
     show DenyReason;

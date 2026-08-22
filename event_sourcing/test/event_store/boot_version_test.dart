@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-event-store-open/B/C/D — EventStore.open boot flow:
+// Verifies: EVS-DEV-event-store-open/B/C/D
+// EventStore.open boot flow:
 //   emits lib_version_initialized on first boot (B), emits lib_version_changed
 //   on upgrade (C), refuses to construct on downgrade throwing
 //   DowngradeRefusedError (D); also verifies no-op on same-version reboot

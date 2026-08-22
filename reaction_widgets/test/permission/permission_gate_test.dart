@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-reaction-widget-contract/G (permission-gate sub-clause)
+// Verifies: EVS-PRD-reaction-widget-contract/G
+// (permission-gate sub-clause)
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';

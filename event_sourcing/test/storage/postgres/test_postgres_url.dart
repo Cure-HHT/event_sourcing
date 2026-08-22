@@ -1,4 +1,5 @@
-// Implements: EVS-DEV-postgres-backend/D — URL-resolution helper for the
+// Verifies: EVS-DEV-postgres-backend/D
+// URL-resolution helper for the
 // conformance harness; returns PG_TEST_URL or null when unset.
 
 import 'dart:io' show Platform;

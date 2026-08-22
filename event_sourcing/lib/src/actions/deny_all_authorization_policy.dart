@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-action-dispatch/B (satisfies the AuthorizationPolicy interface contract required by the authorize stage)
+// Implements: EVS-PRD-action-dispatch/B
+// (satisfies the AuthorizationPolicy interface contract required by the authorize stage)
 // Note: DenyAllAuthorizationPolicy is a test fixture and bootstrap placeholder — not the production policy.
 // Production deployments wire TableBackedAuthorizationPolicy (EVS-PRD-permissions-as-events/B).
 

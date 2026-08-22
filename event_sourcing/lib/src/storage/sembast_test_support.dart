@@ -17,7 +17,8 @@ part of 'sembast_backend.dart';
 /// New non-test callers ARE a code smell and SHALL be reviewed against
 /// the typed surface first. The `@visibleForTesting` annotation makes
 /// the analyzer flag any non-test caller.
-// Implements: EVS-PRD-portability/D — exposes sembast internals ONLY for
+// Implements: EVS-PRD-portability/D
+// exposes sembast internals ONLY for
 //   test introspection; production code must stay behind the abstract
 //   StorageBackend surface to keep the platform abstraction intact.
 extension SembastBackendTestSupport on SembastBackend {

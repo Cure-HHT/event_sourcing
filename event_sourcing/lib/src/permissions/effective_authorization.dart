@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-permissions-as-events — effectivePermissionsFor surface
+// Implements: EVS-PRD-permissions-as-events
+// effectivePermissionsFor surface
 //   for client-side UI gating, derived from event-derived projections.
 // Implements: EVS-DEV-effective-permissions-shape/A/B/D — carries active role,
 //   role permission set, and scope assignments; EffectiveAuthorization.empty

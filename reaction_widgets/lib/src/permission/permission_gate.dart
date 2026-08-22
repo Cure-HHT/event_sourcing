@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-reaction-widget-contract/G (permission-gate sub-clause)
+// Implements: EVS-PRD-reaction-widget-contract/G
+// the permission-gate sub-clause.
 
 import 'dart:async';
 

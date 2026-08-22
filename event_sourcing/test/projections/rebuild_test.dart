@@ -1,7 +1,9 @@
-// Verifies: EVS-PRD-materializer/A — rebuildView replays the event log
+// Verifies: EVS-PRD-materializer/A
+// rebuildView replays the event log
 //   through a registered ProjectionSpec to reconstruct a view from scratch;
 //   it is a library-supplied materializer helper.
-// Verifies: EVS-PRD-materializer/B — rebuild is deterministic and idempotent;
+// Verifies: EVS-PRD-materializer/B
+// rebuild is deterministic and idempotent;
 //   tests confirm identical rows across two consecutive rebuilds on the same
 //   log, as well as cross-chunk correctness for large logs.
 //

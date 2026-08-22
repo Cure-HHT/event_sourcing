@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-auth-session/C — PrincipalAuthValidator.authenticate
+// Verifies: EVS-PRD-auth-session/C
+// PrincipalAuthValidator.authenticate
 //   interface contract (return Principal, throw AuthenticationDenied).
-// Verifies: EVS-PRD-auth-session/F — TrustingAuthValidator reference
+// Verifies: EVS-PRD-auth-session/F
+// TrustingAuthValidator reference
 //   impl: accepts non-empty credential as Principal.userId.
 
 import 'package:event_sourcing/event_sourcing.dart';

@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-action-submitter/B — LocalActionSubmitter
+// Implements: EVS-PRD-action-submitter/B
+// LocalActionSubmitter
 // delegates submit() to an in-process ActionDispatcher.dispatch.
 // Builds ActionContext from the wired-in AuthSession's active
 // Principal (per EVS-PRD-auth-session-G).

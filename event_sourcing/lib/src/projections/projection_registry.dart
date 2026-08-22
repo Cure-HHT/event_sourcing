@@ -1,7 +1,9 @@
-// Implements: EVS-PRD-materializer/A — ProjectionRegistry is the substrate
+// Implements: EVS-PRD-materializer/A
+// ProjectionRegistry is the substrate
 //   component that holds the active set of materializer rules.  It is the
 //   authoritative in-memory table of which projections the substrate runs.
-// Implements: EVS-PRD-materializer/C (partial) — the registry is sealed at
+// Implements: EVS-PRD-materializer/C
+// (partial) — the registry is sealed at
 //   EventStore.open; the closed-registry invariant is part of how the
 //   substrate enforces that the rules in effect are deterministically known
 //   for the lifetime of one store instance.

@@ -1,9 +1,11 @@
 /// Return value from `StorageBackend.appendEvent`, identifying the
 /// sequence number that was advanced and the tamper-detection hash stamped
 /// on the new event record.
-// Implements: EVS-PRD-event-log/A — carries the persisted event's identity
+// Implements: EVS-PRD-event-log/A
+// carries the persisted event's identity
 //   (sequence number + hash) back to the caller after a successful append.
-// Implements: EVS-PRD-event-log/B — sequenceNumber is the total-order position
+// Implements: EVS-PRD-event-log/B
+// sequenceNumber is the total-order position
 //   assigned to this event; callers use it to confirm correct ordering.
 class AppendResult {
   const AppendResult({required this.sequenceNumber, required this.eventHash});

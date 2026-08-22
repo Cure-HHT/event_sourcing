@@ -1,9 +1,12 @@
-// Verifies: EVS-PRD-cross-process-event-transport/A — round-trip codecs
+// Verifies: EVS-PRD-cross-process-event-transport/A
+// round-trip codecs
 //   for the WS control plane messages (auth, subscribe, unsubscribe,
 //   auth_ok, subscription_denied, stale_data, error).
-// Verifies: EVS-PRD-cross-process-event-transport/B — subscriptionId
+// Verifies: EVS-PRD-cross-process-event-transport/B
+// subscriptionId
 //   on every applicable server-to-client envelope.
-// Verifies: EVS-PRD-cross-process-event-transport/D — SubscribeMsg
+// Verifies: EVS-PRD-cross-process-event-transport/D
+// SubscribeMsg
 //   carries the client-chosen subscriptionId.
 
 import 'package:event_sourcing/event_sourcing.dart';

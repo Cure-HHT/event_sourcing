@@ -1,8 +1,10 @@
 // test/permissions/bootstrap_role_assignments_test.dart
-// Verifies: EVS-PRD-permissions-as-events/A — bootstrapRoleAssignments
+// Verifies: EVS-PRD-permissions-as-events/A
+// bootstrapRoleAssignments
 //   emits role_assigned events for each seed entry, so user-role-scope
 //   assignments are recorded as first-class events in the same log.
-// Verifies: EVS-PRD-permissions-as-events/C — idempotent re-runs emit no
+// Verifies: EVS-PRD-permissions-as-events/C
+// idempotent re-runs emit no
 //   new events; partial-overlap runs emit only the truly-missing entries;
 //   the event log alone suffices to reconstruct role-assignment state.
 

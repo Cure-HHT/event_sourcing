@@ -4,19 +4,24 @@
 //
 // Package-private; not exported from reaction.dart.
 //
-// Implements: EVS-PRD-cross-process-event-transport/C — serializes
+// Implements: EVS-PRD-cross-process-event-transport/C
+// serializes
 //   per-connection writes onto the WS sink so per-subscription ordering
 //   end-to-end matches a co-located in-process subscriber.
-// Implements: EVS-PRD-cross-process-event-transport/D — multiplexes
+// Implements: EVS-PRD-cross-process-event-transport/D
+// multiplexes
 //   multiple substrate subscriptions over one WS connection, keyed by
 //   client-chosen subscriptionId.
-// Implements: EVS-PRD-cross-process-event-transport/E — per-subscription
+// Implements: EVS-PRD-cross-process-event-transport/E
+// per-subscription
 //   authorization: view-level deny via policy.isPermitted, then row-
 //   level narrowing via effectivePermissionsFor expanded through the
 //   ViewScopeRegistry binding before opening the substrate subscribe<T>.
-// Implements: EVS-PRD-auth-session/C — invokes the supplied
+// Implements: EVS-PRD-auth-session/C
+// invokes the supplied
 //   PrincipalAuthValidator on the first WS message's credential.
-// Implements: EVS-PRD-auth-session/E — close-frame 4001 auth_rejected
+// Implements: EVS-PRD-auth-session/E
+// close-frame 4001 auth_rejected
 //   on validator failure is the wire signal RemoteAuthSession maps to
 //   AuthStatus.Expired.
 

@@ -1,9 +1,12 @@
-// Implements: EVS-PRD-action-dispatch/B (fail-safe policy denies everything
+// Implements: EVS-PRD-action-dispatch/B
+// (fail-safe policy denies everything
 //   when bootstrap fails; preserves the closed-set of authorize outcomes)
-// Implements: EVS-PRD-permissions-as-events/B (no decisions consult any
+// Implements: EVS-PRD-permissions-as-events/B
+// (no decisions consult any
 //   authority outside the log; the empty result is the only safe answer
 //   when projections are unavailable)
-// Implements: EVS-DEV-bootstrap-action-permissions/B — the
+// Implements: EVS-DEV-bootstrap-action-permissions/B
+// the
 //   FailSafeAuthorizationPolicy that PolicyFailSafe wraps: every
 //   isPermitted call denies with DenyReason.notGranted; every
 //   effectivePermissionsFor call returns EffectiveAuthorization.empty.

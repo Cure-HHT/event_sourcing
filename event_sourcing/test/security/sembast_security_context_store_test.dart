@@ -1,6 +1,8 @@
-// Verifies: EVS-PRD-event-log/A — deleteInTxn on a security-context row does
+// Verifies: EVS-PRD-event-log/A
+// deleteInTxn on a security-context row does
 //   not touch the immutable event-log store, confirming the one-way FK design.
-// Verifies: EVS-PRD-regulatory-alignment — findOlderThanInTxn and
+// Verifies: EVS-PRD-regulatory-alignment
+// findOlderThanInTxn and
 //   findUnredactedOlderThanInTxn correctly select rows for compact/purge sweeps,
 //   exercising the retention-window query paths required for ALCOA+ Enduring.
 import 'package:event_sourcing/src/security/event_security_context.dart';

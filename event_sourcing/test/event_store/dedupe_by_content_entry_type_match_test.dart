@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-event-log/A — append-only log: dedupeByContent=true
+// Verifies: EVS-PRD-event-log/A
+// append-only log: dedupeByContent=true
 //   suppresses spurious duplicate writes so each logical fact appears at most
 //   once; EVS-PRD-ingest/F — idempotent delivery: the per-entry_type scoping
 //   of dedupe ensures re-presentation of the same event within a shared

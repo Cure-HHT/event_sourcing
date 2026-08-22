@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-event-log/A — EventDraft is the caller-facing input
+// Implements: EVS-PRD-event-log/A
+// EventDraft is the caller-facing input
 //   value type for the append-only log's write path; it carries all fields
 //   required to produce a StoredEvent (aggregateId, aggregateType,
 //   entryType, eventType, data) without the substrate-stamped fields

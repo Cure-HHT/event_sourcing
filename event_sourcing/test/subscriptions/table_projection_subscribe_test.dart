@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-subscription/A/B — subscribe(AggregateMode) over a
+// Verifies: EVS-PRD-subscription/A/B
+// subscribe(AggregateMode) over a
 //   TableProjectionSpec view replays existing rows as Snapshots and delivers
 //   live Deltas, exactly as it does for AggregateProjectionSpec views.
 //

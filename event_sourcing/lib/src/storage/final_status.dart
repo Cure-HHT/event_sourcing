@@ -7,7 +7,8 @@
 /// deletes it. The sole code path that deletes a FIFO row is the
 /// `tombstoneAndRefill` trail sweep, and that path only deletes rows
 /// whose `finalStatus` is `null`.
-// Implements: EVS-PRD-portability/C — pure Dart enum; platform-independent
+// Implements: EVS-PRD-portability/C
+// pure Dart enum; platform-independent
 //   serialisation via name-based toJson/fromJson.
 enum FinalStatus {
   sent,

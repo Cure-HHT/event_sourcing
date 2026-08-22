@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-reaction-widget-contract/C, /E, /G
+// Implements: EVS-PRD-reaction-widget-contract/C/E/G
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';
@@ -137,6 +137,11 @@ class _ActionBuilderState extends State<ActionBuilder> {
     // interactive child (e.g. an action button) otherwise merges the identifier
     // away — so Playwright cannot find it. Empirically required to drive action
     // buttons / view roots through the semantics tree (CUR-1307).
+    // Implements: EVS-PRD-reaction-widget-contract/K
+    // when an automation identifier is
+    //   supplied the child is wrapped in a single non-painting Semantics
+    //   node carrying it and the current lifecycle state; absent one, no
+    //   node is introduced.
     return Semantics(
       identifier: id,
       value: _stateToken(_state),

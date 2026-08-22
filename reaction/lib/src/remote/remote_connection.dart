@@ -1,19 +1,25 @@
-// Implements: EVS-PRD-cross-process-event-transport/A — drives codec
+// Implements: EVS-PRD-cross-process-event-transport/A
+// drives codec
 //   round-trip on the wire (Update<T> envelopes decoded via UpdateCodec
 //   and routed to per-subscription StreamControllers).
-// Implements: EVS-PRD-cross-process-event-transport/B — every routed
+// Implements: EVS-PRD-cross-process-event-transport/B
+// every routed
 //   envelope carries sequence + subscriptionId end-to-end.
-// Implements: EVS-PRD-cross-process-event-transport/D — multiplexes
+// Implements: EVS-PRD-cross-process-event-transport/D
+// multiplexes
 //   multiple concurrent subscriptions over one WebSocket connection,
 //   distinguishing them by client-chosen UUID v4 subscriptionId.
-// Implements: EVS-PRD-cross-process-event-transport/F — injects the
+// Implements: EVS-PRD-cross-process-event-transport/F
+// injects the
 //   bearer credential into every HTTP POST and into the first WS auth
 //   message; httpPost adds Authorization: Bearer header when a
 //   credential is set.
-// Implements: EVS-PRD-cross-process-event-transport/H — auto-reconnect
+// Implements: EVS-PRD-cross-process-event-transport/H
+// auto-reconnect
 //   with exponential backoff on non-auth WS drops; re-authenticates and
 //   re-issues every active subscribe on success.
-// Implements: EVS-PRD-cross-process-event-transport/I — observable
+// Implements: EVS-PRD-cross-process-event-transport/I
+// observable
 //   ConnectionStatus transitions driven by WS lifecycle events
 //   (initial-open success -> Connected; non-auth close -> Reconnecting;
 //   retry-exhausted -> Disconnected).
@@ -210,7 +216,8 @@ class RemoteConnection {
     _credential = credential;
   }
 
-  // Implements: EVS-PRD-cross-process-event-transport/H — exposes the
+  // Implements: EVS-PRD-cross-process-event-transport/H
+  // exposes the
   //   same re-auth + re-issue machinery as the auto-reconnect loop to
   //   callers that need to force a reconnect on a credential context
   //   change (e.g. active-role switch) rather than waiting for a wire drop.

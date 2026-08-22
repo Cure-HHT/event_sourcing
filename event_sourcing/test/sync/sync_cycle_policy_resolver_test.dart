@@ -1,7 +1,9 @@
-// Verifies: EVS-PRD-destinations/C (FIFO order — SyncPolicy resolved once per
+// Verifies: EVS-PRD-destinations/C
+// (FIFO order — SyncPolicy resolved once per
 //   cycle is forwarded to every destination's drain call; same policy governs
 //   retry/backoff for all destinations in a single cycle)
-// Verifies: EVS-PRD-destinations/F (dynamic registration — policyResolver is
+// Verifies: EVS-PRD-destinations/F
+// (dynamic registration — policyResolver is
 //   invoked after the reentrancy guard so hot-swap policy changes are visible
 //   without restarting the cycle)
 import 'package:event_sourcing/src/destinations/destination_registry.dart';

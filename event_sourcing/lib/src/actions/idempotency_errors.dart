@@ -1,4 +1,5 @@
-// Implements: EVS-PRD-action-dispatch/D (typed error for Idempotency.required precondition failure; triggers a parse_denied denial event)
+// Implements: EVS-PRD-action-dispatch/D
+// (typed error for Idempotency.required precondition failure; triggers a parse_denied denial event)
 
 /// Thrown by the dispatcher's idempotency precondition check (Stage 4,
 /// -B) when an action declares `Idempotency.required` but the

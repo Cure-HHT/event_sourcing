@@ -1,6 +1,9 @@
-// Implements: EVS-PRD-action-dispatch/B (authorize stage outcome type: Allow falls through; Deny short-circuits to denial event)
-// Implements: EVS-PRD-action-dispatch/C (Deny carries permission + reason so dispatcher can record authorization_denied)
-// Implements: EVS-PRD-permissions-as-events/B (authorization evaluated solely from event-derived projections; this sealed type carries the decision)
+// Implements: EVS-PRD-action-dispatch/B
+// (authorize stage outcome type: Allow falls through; Deny short-circuits to denial event)
+// Implements: EVS-PRD-action-dispatch/C
+// (Deny carries permission + reason so dispatcher can record authorization_denied)
+// Implements: EVS-PRD-permissions-as-events/B
+// (authorization evaluated solely from event-derived projections; this sealed type carries the decision)
 
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:meta/meta.dart';

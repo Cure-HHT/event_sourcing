@@ -1,5 +1,6 @@
 // lib/src/permissions/role_assignment_seed.dart
-// Implements: EVS-PRD-permissions-as-events/A — declarative seed shape for
+// Implements: EVS-PRD-permissions-as-events/A
+// declarative seed shape for
 //   user-role-scope assignments (parallels PermissionSeed for grants).
 //   bootstrapRoleAssignments realises these as role_assigned events
 //   written into the event log.

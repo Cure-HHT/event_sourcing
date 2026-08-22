@@ -1,7 +1,9 @@
-// Verifies: EVS-PRD-event-log/C — Source carries hopId + identifier that
+// Verifies: EVS-PRD-event-log/C
+// Source carries hopId + identifier that
 //   together identify the authority whose events must stay ordered within an
 //   aggregate.
-// Verifies: EVS-PRD-portability/C — pure Dart value; equality and hashCode
+// Verifies: EVS-PRD-portability/C
+// pure Dart value; equality and hashCode
 //   are consistent across all Dart-supported runtimes.
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:flutter_test/flutter_test.dart';

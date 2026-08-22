@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-ingest/D — ingest verifies event integrity before
+// Verifies: EVS-PRD-ingest/D
+// ingest verifies event integrity before
 //   admitting events, rejecting any event whose lib_format_version or
 //   entry_type_version is ahead of the receiver's known versions;
 //   EVS-DEV-ingest-promotes-before-fold/A — version-ahead events cannot be

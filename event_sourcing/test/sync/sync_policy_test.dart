@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/C (FIFO order — SyncPolicy.backoffFor computes
+// Verifies: EVS-PRD-destinations/C
+// (FIFO order — SyncPolicy.backoffFor computes
 //   the exponential-backoff curve that governs when drain re-attempts the head
 //   row; the cap, jitter, and maxAttempts fields are tested against their
 //   specified defaults so the retry curve is predictable and bounded)

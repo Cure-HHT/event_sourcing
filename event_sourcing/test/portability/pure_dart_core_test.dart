@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-portability/A — the library's core SOURCE (event_sourcing/
+// Verifies: EVS-PRD-portability/A
+// the library's core SOURCE (event_sourcing/
 //   lib) is pure Dart: no Flutter or web-only imports, and the runtime
 //   `dependencies:` block names only the Dart SDK + pure-Dart packages (no
 //   `sdk: flutter`). A regression that pulled Flutter into the core source or

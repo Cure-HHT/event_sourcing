@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-cross-process-event-transport/H — RemoteScope.reconnect()
+// Verifies: EVS-PRD-cross-process-event-transport/H
+// RemoteScope.reconnect()
 //   and RemoteConnection.reconnect() manually trigger the same re-auth +
 //   re-issue path as the auto-reconnect loop, re-authenticating with the
 //   CURRENT credential and re-issuing every active subscribe.

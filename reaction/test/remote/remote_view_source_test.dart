@@ -4,7 +4,8 @@
 // load. Real coverage of the mapper round-trip lives in
 // e2e/view_test.dart.
 //
-// Verifies: EVS-PRD-view-subscriber/C — full mapper round-trip covered
+// Verifies: EVS-PRD-view-subscriber/C
+// full mapper round-trip covered
 //   in e2e/view_test.dart.
 // ignore_for_file: unused_import
 import 'package:event_sourcing/event_sourcing.dart';

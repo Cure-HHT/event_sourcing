@@ -1,4 +1,5 @@
-// Verifies: EVS-DEV-scoped-permissions-match-algorithm — the shared class
+// Verifies: EVS-DEV-scoped-permissions-match-algorithm
+// the shared class
 //   gate used by both the write-path policy and the read-path row-narrowing.
 //   Includes the regression test for the over-grant bug: a value-wildcard
 //   scope on an unrelated class must NOT apply to the target.
