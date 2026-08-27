@@ -12,6 +12,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -68,7 +69,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — duplicate', () {
+  group('EventStore.ingestBatch — duplicate', () {
     test('second ingest of identical event returns duplicate outcome and '
         'does not mutate the stored subject', () async {
       final orig = await _openStore(hopId: 'mobile-device');
@@ -91,7 +92,7 @@ void main() {
         expect(e, isNotNull);
 
         // First ingest — should be ingested.
-        final first = await dest.store.ingestEvent(e!);
+        final first = await admitOne(dest.store, e!);
         expect(first.outcome, equals(IngestOutcome.ingested));
         final hashAfterFirst = first.resultHash;
 
@@ -101,7 +102,7 @@ void main() {
         );
 
         // Second ingest of same event — should be duplicate.
-        final second = await dest.store.ingestEvent(e);
+        final second = await admitOne(dest.store, e);
         expect(second.outcome, equals(IngestOutcome.duplicate));
         // Result hash is unchanged (stored copy not mutated).
         expect(second.resultHash, equals(hashAfterFirst));
@@ -147,8 +148,8 @@ void main() {
           );
           expect(e, isNotNull);
 
-          await dest.store.ingestEvent(e!);
-          await dest.store.ingestEvent(e);
+          await admitOne(dest.store, e!);
+          await admitOne(dest.store, e);
 
           // Query the ingest-audit aggregate.
           const auditAggId = 'ingest-audit:control-server';
@@ -168,8 +169,8 @@ void main() {
       },
     );
 
-    test('duplicate_received event carries batchContext absent (null) for '
-        'ingestEvent path', () async {
+    test('duplicate_received event carries the batch context of the batch '
+        'that re-presented the event', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -188,10 +189,11 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
+        await admitOne(dest.store, e!);
+        await admitOne(dest.store, e);
 
-        // The audit event's provenance[0].batchContext must be absent/null.
+        // The audit is emitted in response to a batch, so its provenance
+        // entry records which batch provoked it.
         const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(
           auditAggId,
@@ -201,7 +203,9 @@ void main() {
         final prov = (auditEvents.first.metadata['provenance'] as List<Object?>)
             .cast<Map<String, Object?>>();
         expect(prov, hasLength(1));
-        expect(prov[0].containsKey('batch_context'), isFalse);
+        final auditBatch = prov[0]['batch_context']! as Map<String, Object?>;
+        expect(auditBatch['batch_size'], equals(1));
+        expect(auditBatch['batch_wire_format'], equals('esd/batch@1'));
       } finally {
         await orig.close();
         await dest.close();
@@ -230,10 +234,10 @@ void main() {
         expect(e, isNotNull);
 
         // 2. First ingest — lands the subject event.
-        await dest.store.ingestEvent(e!);
+        await admitOne(dest.store, e!);
 
         // 3. Second ingest of same event — emits ingest.duplicate_received.
-        await dest.store.ingestEvent(e);
+        await admitOne(dest.store, e);
 
         // 4. Query the ingest-audit aggregate for the duplicate_received event.
         const auditAggId = 'ingest-audit:control-server';
@@ -288,9 +292,9 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
-        await dest.store.ingestEvent(e);
+        await admitOne(dest.store, e!);
+        await admitOne(dest.store, e);
+        await admitOne(dest.store, e);
 
         const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(

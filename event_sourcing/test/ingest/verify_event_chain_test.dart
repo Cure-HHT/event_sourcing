@@ -8,11 +8,12 @@
 // Verifies: EVS-PRD-ingest/D
 // chain verification at the ingest boundary;
 //   verifyEventChain is the post-admission audit counterpart to the
-//   pre-admission check performed by ingestEvent
+//   pre-admission check performed by ingestBatch
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -110,7 +111,7 @@ void main() {
         expect(original, isNotNull);
 
         // 2. Ingest at destination.
-        final outcome = await dest.store.ingestEvent(original!);
+        final outcome = await admitOne(dest.store, original!);
         expect(outcome.outcome, equals(IngestOutcome.ingested));
 
         // 3. Read stored copy.
@@ -150,7 +151,7 @@ void main() {
           );
           expect(original, isNotNull);
 
-          await dest.store.ingestEvent(original!);
+          await admitOne(dest.store, original!);
 
           final stored = await dest.backend.transaction((txn) async {
             return dest.backend.findEventByIdInTxn(txn, original.eventId);
@@ -215,7 +216,7 @@ void main() {
         );
         expect(original, isNotNull);
 
-        await dest.store.ingestEvent(original!);
+        await admitOne(dest.store, original!);
 
         final stored = await dest.backend.transaction((txn) async {
           return dest.backend.findEventByIdInTxn(txn, original.eventId);

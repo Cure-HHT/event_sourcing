@@ -1069,23 +1069,6 @@ class EventStore {
   // Destination-role (ingest) write path
   // -----------------------------------------------------------------------
 
-  /// Process-local ingest. Opens its own transaction and delegates to
-  /// [_ingestOneInTxn] with `batchContext: null`.
-  ///
-  /// Accepts an [incoming] StoredEvent, verifies Chain 1, checks idempotency
-  /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
-  /// (`batch_context = null`), recomputes `event_hash`, and persists.
-  Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
-    return _runInTxnWithPublish((txn, collector) async {
-      return _ingestOneInTxn(
-        txn,
-        incoming,
-        batchContext: null,
-        collector: collector,
-      );
-    });
-  }
-
   /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@1` envelope,
   /// runs every subject event through [_ingestOneInTxn] inside a single
   /// transaction, and stamps each with a [BatchContext] referencing this
@@ -1114,24 +1097,6 @@ class EventStore {
           Map<String, Object?>.from(eventMap),
           0,
         );
-        if (storedEvent.libFormatVersion >
-            StoredEvent.currentLibFormatVersion) {
-          throw IngestLibFormatVersionAhead(
-            eventId: storedEvent.eventId,
-            wireVersion: storedEvent.libFormatVersion,
-            receiverVersion: StoredEvent.currentLibFormatVersion,
-          );
-        }
-        final def = entryTypes.byId(storedEvent.entryType);
-        if (def != null &&
-            storedEvent.entryTypeVersion > def.registeredVersion) {
-          throw IngestEntryTypeVersionAhead(
-            eventId: storedEvent.eventId,
-            entryType: storedEvent.entryType,
-            wireVersion: storedEvent.entryTypeVersion,
-            receiverVersion: def.registeredVersion,
-          );
-        }
         final batchContext = BatchContext(
           batchId: envelope.batchId,
           batchPosition: i,
@@ -1152,17 +1117,43 @@ class EventStore {
     return IngestBatchResult(batchId: envelope.batchId, events: outcomes);
   }
 
-  /// Per-event ingest logic, called from both [ingestEvent] and the
-  /// `ingestBatch` loop.
+  /// The substrate's single admission path. Every event enters the local log
+  /// through here, so the version guards below cannot be bypassed by adding a
+  /// caller.
   ///
-  /// [batchContext] is non-null when called from `ingestBatch`, null when
-  /// called from [ingestEvent].
+  /// [batchContext] records batch membership on the receiver hop. It is null
+  /// only for entries that did not arrive in a batch at all (originator
+  /// entries, and receiver-originated audit events not emitted in response to
+  /// one); every ingested event carries one.
   Future<PerEventIngestOutcome> _ingestOneInTxn(
     Transaction txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
+    // 0. Version guards. These run before chain verification and before the
+    // idempotency lookup: an event the receiver cannot interpret is refused
+    // on its shape, not admitted and then folded at a version whose meaning
+    // the receiver has no description for. lib_format_version is checked
+    // first — it governs the storage shape the rest of this method reads.
+    if (incoming.libFormatVersion > StoredEvent.currentLibFormatVersion) {
+      throw IngestLibFormatVersionAhead(
+        eventId: incoming.eventId,
+        wireVersion: incoming.libFormatVersion,
+        receiverVersion: StoredEvent.currentLibFormatVersion,
+      );
+    }
+    final incomingDef = entryTypes.byId(incoming.entryType);
+    if (incomingDef != null &&
+        incoming.entryTypeVersion > incomingDef.registeredVersion) {
+      throw IngestEntryTypeVersionAhead(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        wireVersion: incoming.entryTypeVersion,
+        receiverVersion: incomingDef.registeredVersion,
+      );
+    }
+
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
     if (!verdict.isValid) {
@@ -1368,7 +1359,7 @@ class EventStore {
       _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
-  /// verdict. Used by [ingestEvent] and [verifyEventChain].
+  /// verdict. Used by [ingestBatch] and [verifyEventChain].
   ChainVerdict _verifyChainOn(StoredEvent event) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List) {

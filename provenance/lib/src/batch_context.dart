@@ -8,9 +8,10 @@
 /// Per-event record of batch membership for events received via
 /// `EventStore.ingestBatch`.
 ///
-/// Stamped into the receiver-hop `ProvenanceEntry.batchContext` field. Null
-/// on originator entries, null on process-local `ingestEvent` entries, null
-/// on receiver-originated audit events not emitted in response to a batch.
+/// Stamped into the receiver-hop `ProvenanceEntry.batchContext` field. Every
+/// ingested event carries one, since a batch is the only way an event is
+/// admitted. Null on originator entries, and on receiver-originated audit
+/// events not emitted in response to a batch.
 ///
 /// All five fields together recover the context an auditor needs to recover
 /// a batch from stored events: the batch id groups the events, the position

@@ -8,6 +8,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Toy ProjectionSpec — AggregateProjectionSpec that folds any 'demo_note'
@@ -91,7 +92,7 @@ BatchEnvelope _buildEnvelope(
 void main() {
   group('EventStore ingest path projection interpreter', () {
     //   projection interpreter per-event with the same gates as local-append.
-    test('ingestEvent populates toy_view '
+    test('a single admitted event populates toy_view '
         'from a freshly-ingested user event', () async {
       final orig = await _openDatastore(
         hopId: 'mobile-device',
@@ -125,7 +126,7 @@ void main() {
         expect(preUser, isEmpty);
 
         // Ingest the originator's event at the receiver.
-        final outcome = await dest.datastore.eventStore.ingestEvent(original!);
+        final outcome = await admitOne(dest.datastore.eventStore, original!);
         expect(outcome.outcome, equals(IngestOutcome.ingested));
 
         // Post-ingest: receiver has one toy_view row for this aggregate.

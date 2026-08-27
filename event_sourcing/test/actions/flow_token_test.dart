@@ -34,6 +34,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import 'fixtures/test_actions.dart' show AlwaysAllowPolicy, HelloAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Helper: build a context with an authorized principal.
@@ -321,7 +322,7 @@ void main() {
       // flow_token is an identity-level field on StoredEvent and must survive.
       final second = await _openSecondStore();
       try {
-        final outcome = await second.store.ingestEvent(evt);
+        final outcome = await admitOne(second.store, evt);
         expect(outcome.outcome, IngestOutcome.ingested);
 
         final ingestedEvents = await second.backend.findAllEvents(

@@ -24,7 +24,7 @@
 //   effect of its own configuration calls (`addDestination`,
 //   `setStartDate`, `tombstoneAndRefill`). Those audit events are read
 //   off the originator's event log and re-shipped to the receiver via
-//   `EventStore.ingestEvent`. The test then asserts the receiver's
+//   `EventStore.ingestBatch`. The test then asserts the receiver's
 //   registries / FIFOs are byte-identical pre vs post ingest, and that
 //   the audit was nonetheless stored in the receiver's `event_log`.
 //
@@ -39,6 +39,7 @@ import 'dart:typed_data';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -185,11 +186,12 @@ void main() {
           ),
         );
 
-        // Ingest the bridged audit at the receiver. ingestEvent goes
+        // Ingest the bridged audit at the receiver. Ingest goes
         // through the same `_ingestOneInTxn` code path as ingestBatch,
         // so the invariant tested here covers both ingest entry points
         // (single-event and batch).
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await admitOne(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
@@ -308,7 +310,8 @@ void main() {
         );
 
         // Ingest the bridged registry-init audit on the receiver.
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await admitOne(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
@@ -453,7 +456,8 @@ void main() {
         );
 
         // Ingest at receiver.
-        final outcome = await receiver.datastore.eventStore.ingestEvent(
+        final outcome = await admitOne(
+          receiver.datastore.eventStore,
           auditEvent,
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));

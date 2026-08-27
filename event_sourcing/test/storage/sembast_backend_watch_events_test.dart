@@ -8,6 +8,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
@@ -179,7 +180,7 @@ void main() {
         // Ingest the originated event into dest. The receiver-hop event
         // routes through appendEvent under unification, so it must
         // surface on the stream.
-        await destStore.ingestEvent(origEvent!);
+        await admitOne(destStore, origEvent!);
         await Future<void>.delayed(Duration.zero);
 
         await sub.cancel();

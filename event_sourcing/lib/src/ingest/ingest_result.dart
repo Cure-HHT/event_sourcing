@@ -10,8 +10,7 @@
 //   hash of the event as stored after the receiver's provenance hop was appended,
 //   enabling callers to thread Chain 2 linkage checks
 
-/// Outcome of a single subject event's processing inside `ingestBatch` or
-/// `ingestEvent`.
+/// Outcome of a single subject event's processing inside `ingestBatch`.
 enum IngestOutcome {
   /// New event, stored with a fresh receiver provenance entry.
   ingested,

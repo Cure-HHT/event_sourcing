@@ -9,6 +9,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -84,7 +85,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — identity mismatch', () {
+  group('EventStore.ingestBatch — identity mismatch', () {
     test(
       'same event_id but different event_hash throws IngestIdentityMismatch',
       () async {
@@ -108,7 +109,7 @@ void main() {
             initiator: const UserInitiator('u1'),
           );
           expect(e1, isNotNull);
-          await dest.store.ingestEvent(e1!);
+          await admitOne(dest.store, e1!);
 
           // 2. Build a tampered version: same event_id, different event_hash.
           final tamperedMap = e1.toMap();
@@ -118,7 +119,7 @@ void main() {
 
           // 3. Re-ingest with mismatched hash must throw.
           await expectLater(
-            () => dest.store.ingestEvent(tampered),
+            () => admitOne(dest.store, tampered),
             throwsA(
               isA<IngestIdentityMismatch>()
                   .having((e) => e.eventId, 'eventId', e1.eventId)
@@ -159,7 +160,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        await dest.store.ingestEvent(e1!);
+        await admitOne(dest.store, e1!);
 
         final tamperedMap = e1.toMap();
         tamperedMap['event_hash'] = 'bad-hash-0000000000000000000000000000';
@@ -168,7 +169,7 @@ void main() {
         // Should throw.
         Object? thrown;
         try {
-          await dest.store.ingestEvent(tampered);
+          await admitOne(dest.store, tampered);
         } catch (e) {
           thrown = e;
         }

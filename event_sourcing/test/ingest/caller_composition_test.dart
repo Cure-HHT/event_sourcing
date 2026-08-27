@@ -12,6 +12,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -106,7 +107,7 @@ void main() {
             initiator: const UserInitiator('u1'),
           );
           expect(e1, isNotNull);
-          await dest.store.ingestEvent(e1!);
+          await admitOne(dest.store, e1!);
 
           // Capture the destination's local sequence counter after the
           // first ingest. Under the unified event store, this counter is
@@ -212,7 +213,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        final ingestResult = await dest.store.ingestEvent(e1!);
+        final ingestResult = await admitOne(dest.store, e1!);
 
         // 2. Build a tampered batch and trigger rejection.
         final e1TamperedMap = e1.toMap();

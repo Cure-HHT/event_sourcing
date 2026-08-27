@@ -15,6 +15,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -164,7 +165,7 @@ void main() {
 
       try {
         for (final e in origEvents) {
-          final outcome = await dest.store.ingestEvent(e);
+          final outcome = await admitOne(dest.store, e);
           expect(outcome.outcome, equals(IngestOutcome.ingested));
         }
 
@@ -184,7 +185,7 @@ void main() {
 
         try {
           for (final e in origEvents) {
-            final outcome = await dest.store.ingestEvent(e);
+            final outcome = await admitOne(dest.store, e);
             expect(outcome.outcome, equals(IngestOutcome.ingested));
           }
 
@@ -246,7 +247,7 @@ void main() {
 
       try {
         for (final e in origEvents) {
-          final outcome = await dest.store.ingestEvent(e);
+          final outcome = await admitOne(dest.store, e);
           expect(outcome.outcome, equals(IngestOutcome.ingested));
         }
 

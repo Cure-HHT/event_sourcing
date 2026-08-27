@@ -9,6 +9,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -84,7 +85,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — chain broken', () {
+  group('EventStore.ingestBatch — chain broken', () {
     test('ingesting event with tampered arrival_hash at hop 1 throws '
         'IngestChainBroken with hopIndex=1', () async {
       // Simulate a 2-hop chain:
@@ -123,7 +124,7 @@ void main() {
         expect(original, isNotNull);
 
         // 2. Intermediate ingests — stored copy has 2-entry provenance.
-        final outcome1 = await inter.store.ingestEvent(original!);
+        final outcome1 = await admitOne(inter.store, original!);
         expect(outcome1.outcome, equals(IngestOutcome.ingested));
 
         // Read the intermediate's stored copy.
@@ -152,7 +153,7 @@ void main() {
 
         // 4. Third destination must throw IngestChainBroken at hopIndex=1.
         await expectLater(
-          () => third.store.ingestEvent(tampered),
+          () => admitOne(third.store, tampered),
           throwsA(
             isA<IngestChainBroken>()
                 .having((e) => e.eventId, 'eventId', original.eventId)
@@ -218,7 +219,7 @@ void main() {
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);
 
         await expectLater(
-          () => dest.store.ingestEvent(syntheticEvent),
+          () => admitOne(dest.store, syntheticEvent),
           throwsA(
             isA<IngestChainBroken>().having((e) => e.hopIndex, 'hopIndex', 1),
           ),

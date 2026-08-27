@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-ingest/A
-// EventStore.ingestEvent exists and admits an
+// EventStore.ingestBatch exists and admits an
 //   upstream event into the local log
 // Verifies: EVS-PRD-ingest/B — upstream identity fields (eventId, aggregateId,
 //   sequenceNumber, previousEventHash) preserved verbatim after ingest
@@ -17,6 +17,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -94,7 +95,7 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
-  group('EventStore.ingestEvent — happy path', () {
+  group('EventStore.ingestBatch — single event, happy path', () {
     test('new event is stored with receiver provenance and rehashed', () async {
       final orig = await _openStore(
         hopId: 'mobile-device',
@@ -122,7 +123,7 @@ void main() {
         final h0 = original!.eventHash;
 
         // 2. Ingest at destination.
-        final outcome = await dest.store.ingestEvent(original);
+        final outcome = await admitOne(dest.store, original);
         expect(outcome.outcome, equals(IngestOutcome.ingested));
         expect(outcome.eventId, equals(original.eventId));
 
@@ -154,8 +155,14 @@ void main() {
         // 4f. ingest_sequence_number == 1.
         expect(provenance[1]['ingest_sequence_number'], equals(1));
 
-        // 4g. batch_context is null (process-local — key not emitted).
-        expect(provenance[1].containsKey('batch_context'), isFalse);
+        // 4g. batch_context records the one-event batch that carried it.
+        // Every ingested event arrives in a batch, so the receiver hop always
+        // has one to record.
+        final batchContext =
+            provenance[1]['batch_context']! as Map<String, Object?>;
+        expect(batchContext['batch_position'], equals(0));
+        expect(batchContext['batch_size'], equals(1));
+        expect(batchContext['batch_wire_format'], equals('esd/batch@1'));
 
         // 4h. stored.event_hash differs from H0 (rehashed).
         expect(stored.eventHash, isNot(equals(h0)));
@@ -172,7 +179,7 @@ void main() {
     });
 
     test(
-      'ingestEvent returns PerEventIngestOutcome with outcome=ingested',
+      'admitting one event returns PerEventIngestOutcome with outcome=ingested',
       () async {
         final orig = await _openStore(hopId: 'mobile-device');
         final dest = await _openStore(hopId: 'control-server');
@@ -188,7 +195,7 @@ void main() {
           );
           expect(original, isNotNull);
 
-          final outcome = await dest.store.ingestEvent(original!);
+          final outcome = await admitOne(dest.store, original!);
 
           expect(outcome.outcome, equals(IngestOutcome.ingested));
           expect(outcome.eventId, equals(original.eventId));
@@ -225,8 +232,8 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
 
-        final outcome1 = await dest.store.ingestEvent(e1!);
-        final outcome2 = await dest.store.ingestEvent(e2!);
+        final outcome1 = await admitOne(dest.store, e1!);
+        final outcome2 = await admitOne(dest.store, e2!);
 
         expect(outcome1.outcome, equals(IngestOutcome.ingested));
         expect(outcome2.outcome, equals(IngestOutcome.ingested));

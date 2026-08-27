@@ -1,5 +1,5 @@
 // Verifies: EVS-PRD-ingest/A
-// ingestEvent and ingestBatch admit events from
+// ingestBatch admits events from
 //   multiple independent originators into a single local log
 // Verifies: EVS-PRD-ingest/B
 // originator identity preserved per event
@@ -18,6 +18,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -193,10 +194,10 @@ void main() {
           expect(eB2, isNotNull);
 
           // Destination ingests one at a time, interleaved across originators.
-          final outA1 = await destination.store.ingestEvent(eA1!);
-          final outB1 = await destination.store.ingestEvent(eB1!);
-          final outA2 = await destination.store.ingestEvent(eA2!);
-          final outB2 = await destination.store.ingestEvent(eB2!);
+          final outA1 = await admitOne(destination.store, eA1!);
+          final outB1 = await admitOne(destination.store, eB1!);
+          final outA2 = await admitOne(destination.store, eA2!);
+          final outB2 = await admitOne(destination.store, eB2!);
 
           expect(outA1.outcome, equals(IngestOutcome.ingested));
           expect(outB1.outcome, equals(IngestOutcome.ingested));

@@ -19,6 +19,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
+import '../test_support/ingest_helpers.dart';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -333,8 +334,8 @@ void main() {
         expect(e2, isNotNull);
         expect(e3, isNotNull);
 
-        // 2. Pre-ingest e1 at destination via process-local ingestEvent.
-        await dest.store.ingestEvent(e1!);
+        // 2. Pre-ingest e1 at destination in its own one-event batch.
+        await admitOne(dest.store, e1!);
 
         // 3. Build batch [e1, e2, e3] and ingest.
         final envelope = _buildEnvelope(
@@ -420,7 +421,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        await dest.store.ingestEvent(e1!);
+        await admitOne(dest.store, e1!);
 
         // Capture destination's local sequence counter after first ingest.
         final seqBefore = await dest.backend.readSequenceCounter();

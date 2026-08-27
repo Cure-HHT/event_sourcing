@@ -10,7 +10,7 @@
 //   idempotency semantics (identical re-presentations are safe; divergent
 //   re-presentations are rejected)
 
-/// Thrown by `EventStore.ingestBatch` / `ingestEvent` / `BatchEnvelope.decode`
+/// Thrown by `EventStore.ingestBatch` / `BatchEnvelope.decode`
 /// when the input bytes cannot be parsed as a well-formed `esd/batch@1`
 /// envelope (malformed JSON, wrong shape, unsupported format version,
 /// missing required fields).
@@ -21,7 +21,7 @@ class IngestDecodeFailure implements Exception {
   String toString() => 'IngestDecodeFailure: $message';
 }
 
-/// Thrown by `ingestBatch` / `ingestEvent` when an incoming event's Chain 1
+/// Thrown by `ingestBatch` when an incoming event's Chain 1
 /// does not verify — some hop's `arrival_hash` does not match the hash the
 /// prior state would produce.
 class IngestChainBroken implements Exception {
@@ -41,7 +41,7 @@ class IngestChainBroken implements Exception {
       'expected: $expectedHash, actual: $actualHash)';
 }
 
-/// Thrown by `ingestBatch` / `ingestEvent` when an incoming event's
+/// Thrown by `ingestBatch` when an incoming event's
 /// `event_id` matches an already-stored event but the incoming wire
 /// `event_hash` differs from the stored copy's
 /// `provenance[thisHop].arrival_hash` (i.e., the two copies are NOT
