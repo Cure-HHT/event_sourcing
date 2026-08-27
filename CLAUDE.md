@@ -5,17 +5,33 @@ Guidance for Claude Code sessions working in this repo.
 ## What this repo is
 
 Reactive, append-only event-sourcing primitives + companion libs
-(`canonical_json_jcs`, `provenance`). Primarily pure Dart; two Flutter
-packages sit on top: `reaction_widgets/` (headless widget primitives —
-`InheritedWidget` scope threading, `ActionBuilder`/`ViewBuilder`
-Builder primitives, `ViewListener`, `PermissionGate`,
-`ReActionErrorListener`) and the sibling `reaction_widgets_testing/`
-(shipped `FakeReaction` + `pumpReactionWidget` widget-test doubles,
-split out so consumers' release builds don't pull `flutter_test`).
-All other packages remain pure Dart. CI therefore runs `dart test`
-on the pure-Dart packages and `flutter test` on both
-`reaction_widgets/` and `reaction_widgets_testing/`. Downstream
-consumers pin this repo by git ref.
+(`canonical_json_jcs`, `provenance`). Two Flutter packages sit on top:
+`reaction_widgets/` (headless widget primitives — `InheritedWidget`
+scope threading, `ActionBuilder`/`ViewBuilder` Builder primitives,
+`ViewListener`, `PermissionGate`, `ReActionErrorListener`) and the
+sibling `reaction_widgets_testing/` (shipped `FakeReaction` +
+`pumpReactionWidget` widget-test doubles, split out so consumers'
+release builds don't pull `flutter_test`). Downstream consumers pin
+this repo by git ref.
+
+**Runtime dependency and test toolchain differ — don't conflate them.**
+Only `reaction_widgets/` and `reaction_widgets_testing/` depend on
+Flutter at runtime. `canonical_json_jcs/`, `provenance/`,
+`event_sourcing/`, and `reaction/` declare no Flutter runtime
+dependency, so consumers of those four do not pull Flutter.
+
+Their *tests* are a different matter. `event_sourcing/` and
+`reaction/` take `flutter_test` as a dev dependency and most of their
+test files import it, so both are run with `flutter test`, not
+`dart test` — invoking `dart test` on `event_sourcing/` crashes the
+compiler's FFI transformer rather than failing cleanly, which is a
+confusing way to discover this. Only `canonical_json_jcs/` and
+`provenance/` are runnable under `dart test`.
+
+CI uses the Flutter SDK throughout: every package resolves with
+`flutter pub get` and every suite runs under `flutter test`, including
+the two pure-Dart ones. A local session needs the Flutter SDK on hand
+for anything but `canonical_json_jcs/` and `provenance/`.
 
 The substrate ships two concrete `StorageBackend` reference
 implementations — `SembastBackend` (mobile/Flutter) and
