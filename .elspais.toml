@@ -8,7 +8,7 @@
 # Companion: spec/requirements-spec.md (canonical grammar).
 
 # Schema version (do not change without consulting elspais docs)
-version = 4
+version = 5
 
 # Daemon TTL in minutes (>0 = auto-start, 0 = disabled, <0 = no timeout)
 cli_ttl = 30
