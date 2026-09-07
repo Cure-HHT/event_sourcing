@@ -30,26 +30,6 @@ class EntryTypeDefinition {
     this.isMaterialized = true,
   });
 
-  factory EntryTypeDefinition.fromJson(Map<String, Object?> json) {
-    final id = _requireString(json, 'id');
-    final registeredVersion = _requireInt(json, 'registered_version');
-    final name = _requireString(json, 'name');
-
-    final materializeRaw = json['materialize'];
-    if (materializeRaw != null && materializeRaw is! bool) {
-      throw const FormatException(
-        'EntryTypeDefinition: "materialize" must be a bool when present',
-      );
-    }
-
-    return EntryTypeDefinition(
-      id: id,
-      registeredVersion: registeredVersion,
-      name: name,
-      isMaterialized: (materializeRaw as bool?) ?? true,
-    );
-  }
-
   /// Matches `event.entry_type` for every event of this entry type.
   final String id;
 
@@ -66,13 +46,6 @@ class EntryTypeDefinition {
   /// that must land in the event log as immutable audit rows but write no
   /// view state. Defaults to `true`.
   final bool isMaterialized;
-
-  Map<String, Object?> toJson() => <String, Object?>{
-    'id': id,
-    'registered_version': registeredVersion,
-    'name': name,
-    'materialize': isMaterialized,
-  };
 
   @override
   bool operator ==(Object other) =>
@@ -91,20 +64,4 @@ class EntryTypeDefinition {
       'EntryTypeDefinition('
       'id: $id, registeredVersion: $registeredVersion, name: $name, '
       'isMaterialized: $isMaterialized)';
-}
-
-String _requireString(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value is! String) {
-    throw FormatException('EntryTypeDefinition: missing or non-string "$key"');
-  }
-  return value;
-}
-
-int _requireInt(Map<String, Object?> json, String key) {
-  final value = json[key];
-  if (value is! int) {
-    throw FormatException('EntryTypeDefinition: missing or non-int "$key"');
-  }
-  return value;
 }
