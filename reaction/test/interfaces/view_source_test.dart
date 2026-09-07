@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-view-subscriber/A/E
+// Verifies: EVS-PRD-view-subscriber/A+E
 // the library defines a
 // `ViewSource` interface whose `watch<T>(viewName, mapper, filter,
 // aggregates)` returns `Stream<Update<T>>` (A), and the `Update<T>`
@@ -58,7 +58,8 @@ void main() {
 
   group('Update<T> variant set is a stable, additive-evolution contract', () {
     test('the sealed variant set is exhaustively switchable (E)', () {
-      // EVS-PRD-view-subscriber/E: snapshot delivery MAY evolve
+      // Assertion E of the view-subscriber requirement declared above:
+      // snapshot delivery MAY evolve
       // (chunking/paging/cursor resumption) only additively. The proof is
       // that Update<T> is a sealed union whose complete variant set is
       // Snapshot/EndOfReplay/Delta/Tombstone — this switch is compiler-

@@ -5,7 +5,7 @@
 // aggregate id deterministically
 //   derived from (user_id, role, scope) via canonical JSON, so the
 //   projection's insert/remove discipline keys per-tuple uniqueness.
-// Implements: EVS-DEV-role-assignment-aggregate-id/A/B/C
+// Implements: EVS-DEV-role-assignment-aggregate-id/A+B+C
 // canonical-JSON (JCS, RFC 8785)
 //   encoding; distinct tuples yield distinct ids; safe against
 //   segment-encoding ambiguity.

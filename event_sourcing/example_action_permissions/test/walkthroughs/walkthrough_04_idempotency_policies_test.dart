@@ -2,7 +2,7 @@
 // Verifies: EVS-PRD-action-dispatch/D
 // Verifies: EVS-PRD-action-dispatch/D
 // Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-event-log/A/C
+// Verifies: EVS-PRD-event-log/A+C
 //
 //           required), and the dispatcher's behavior under each.
 

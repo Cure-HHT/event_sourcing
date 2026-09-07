@@ -12,7 +12,7 @@
 // the projection is fully
 //   reconstructable from the event log alone; replaying role_assigned /
 //   role_unassigned events reproduces the view deterministically.
-// Implements: EVS-PRD-scoped-permissions/C/D
+// Implements: EVS-PRD-scoped-permissions/C+D
 // declares the event-derived
 //   projection the policy reads from at authorize time, sealing scope
 //   evaluation inside the closed-under-events trust model.

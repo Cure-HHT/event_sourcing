@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-destinations/B/E
+// Implements: EVS-PRD-destinations/B+E
 // Destination abstract interface:
 // declares the per-destination event-selection filter (B) and the
 // app-supplied delivery implementation contract (transform + send, E).

@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-auth-session/A/G
+// Verifies: EVS-PRD-auth-session/A+G
 // server returns the validated
 //   Principal which the Remote AuthSession exposes as
 //   AuthStatus.Authenticated and downstream interfaces consult.

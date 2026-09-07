@@ -1,8 +1,8 @@
 // Verifies: EVS-PRD-permissions-as-events
 // (composition-time validation refuses cycles, dangling refs, missing columns)
-// Verifies: EVS-PRD-scoped-permissions/A/B — registers scope classes + byName lookup (A); composition refuses on duplicates,
+// Verifies: EVS-PRD-scoped-permissions/A+B — registers scope classes + byName lookup (A); composition refuses on duplicates,
 //   dangling refs, missing columns, and cycles.
-// Verifies: EVS-DEV-scope-class-registry-validation/A/B/C/D/E
+// Verifies: EVS-DEV-scope-class-registry-validation/A+B+C+D+E
 // duplicate-name
 //   refusal, dangling parentClass, projection / column resolution, cycle
 //   detection, and ancestor-chain walk.

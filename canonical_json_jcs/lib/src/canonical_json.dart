@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-canonical-json/A/B/C/D/E/F
+// Implements: EVS-PRD-canonical-json/A+B+C+D+E+F
 //
 // A — serializes to RFC 8785 JCS form (_canonicalizeValue + helpers).
 // B — deterministic byte-identical output: key-sort + number normalization

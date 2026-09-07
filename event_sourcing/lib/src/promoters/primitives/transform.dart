@@ -1,5 +1,5 @@
 // event_sourcing/lib/src/promoters/primitives/transform.dart
-// Implements: EVS-PRD-materializer/A/B
+// Implements: EVS-PRD-materializer/A+B
 // Implements: EVS-DEV-snapshot-promotion-on-open/D
 // Implements: EVS-DEV-ingest-promotes-before-fold/A
 sealed class TransformPrimitive {

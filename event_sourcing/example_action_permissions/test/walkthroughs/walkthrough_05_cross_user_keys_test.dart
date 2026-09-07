@@ -1,6 +1,6 @@
 // test/walkthroughs/walkthrough_05_cross_user_keys_test.dart
 // Verifies: EVS-PRD-action-dispatch/D
-// Verifies: EVS-PRD-event-log/A/C
+// Verifies: EVS-PRD-event-log/A+C
 //
 // so two different principals can use the same idempotency key without
 // collision.
@@ -83,9 +83,9 @@ void main() {
           idempotencyKey: sharedKey,
           userId: 'green-user-1',
         );
-        // Identical rawInput on replay — cache hit per
-        // EVS-PRD-action-dispatch/D. (Changing rawInput here would now
-        // be EVS-PRD-action-dispatch/E mismatch — exercised in the
+        // Identical rawInput on replay — cache hit per assertion D of the
+        // action-dispatch requirement declared above. (Changing rawInput
+        // here would instead be an assertion E mismatch — exercised in the
         // separate idempotency_mismatch walkthrough below.)
         final r1b = await harness.dispatch(
           actionName: 'PressRedAlarmAction',

@@ -4,7 +4,7 @@
 // Verifies: EVS-PRD-action-submitter/D
 // bearer credential on every
 //   outbound POST.
-// Verifies: EVS-PRD-cross-process-event-transport/A/F
+// Verifies: EVS-PRD-cross-process-event-transport/A+F
 // codec
 //   round-trip + bearer-credential carriage.
 

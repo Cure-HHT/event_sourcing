@@ -3,7 +3,7 @@
 //
 // Cross-impl contract test: runs the same assertions against both
 // LocalScope and RemoteScope to enforce source-identical behavior per
-// EVS-PRD-reaction-scope-E. The set of assertions here is the
+// assertion E of the requirement declared above. The set of assertions is the
 // intersection of behaviours both impls must satisfy. Per-impl
 // behaviours live in `local_scope_test.dart` / the remote suite.
 

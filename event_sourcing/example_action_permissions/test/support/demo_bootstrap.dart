@@ -1,7 +1,7 @@
-// Verifies: EVS-DEV-postgres-backend/D — backend-agnostic harness shared
-// across the demo's bootstrap, routes, and projection test surfaces. Each
-// runner takes a [DemoBackendFactory] so the same test bodies can run
-// against sembast in-memory, postgres, or any future StorageBackend.
+// Backend-agnostic harness shared across the demo's bootstrap, routes, and
+// projection test surfaces. Each runner takes a [DemoBackendFactory] so the
+// same test bodies can run against sembast in-memory, postgres, or any future
+// StorageBackend. This file declares no tests, so it carries no citation.
 
 import 'package:event_sourcing/event_sourcing.dart';
 

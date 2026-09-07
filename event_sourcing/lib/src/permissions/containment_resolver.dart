@@ -1,7 +1,7 @@
 // Implements: EVS-PRD-permissions-as-events
 // substrate-evaluated containment
 //   lookup via TableProjections; fail-closed on missing row.
-// Implements: EVS-PRD-scoped-permissions/F/G
+// Implements: EVS-PRD-scoped-permissions/F+G
 // hierarchy expansion driven by
 //   ContainmentReference projections; missing rows deny rather than fail open.
 // Implements: EVS-DEV-containment-resolver

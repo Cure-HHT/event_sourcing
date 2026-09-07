@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-reaction-widget-contract/C/E/G/K
+// Verifies: EVS-PRD-reaction-widget-contract/C+E+G+K
 
 import 'dart:async';
 

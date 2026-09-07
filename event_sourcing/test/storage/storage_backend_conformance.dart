@@ -1,24 +1,17 @@
-// Verifies: EVS-PRD-portability/D — backend-agnostic conformance harness;
-//   concrete StorageBackend implementations call this from their own test
-//   files. The harness is the canonical place where the abstract
-//   StorageBackend contract is exercised.
-// Verifies: EVS-PRD-event-log/A — append-only writes commit atomically;
-//   rolled-back txn leaves log unchanged.
-// Verifies: EVS-PRD-event-log/B — sequence counter is monotonic across
-//   transactions; nextSequenceNumber reserve-and-increment contract.
-// Verifies: EVS-PRD-event-log/C — findEventsForAggregate returns events sorted
-//   by sequence_number, isolating per-aggregate order.
-// Verifies: EVS-PRD-event-log/D — findAllEvents + findAllEventsInTxn read in
-//   order from any starting position (afterSequence + limit); findEventById
-//   reads single events; client-timestamp + originator filters.
-// Verifies: EVS-DEV-find-all-events-extended-filters/A, EVS-DEV-find-all-events-extended-filters/B, EVS-DEV-find-all-events-extended-filters/C
-//   — entry-type, client-timestamp, and originator filters on findAllEvents
-//   and findAllEventsInTxn; filters AND-compose. (Assertion D — the single
-//   shared _composeFindAllEventsFilter helper — is a SembastBackend
-//   structural property this backend-agnostic harness cannot observe; it is
-//   covered by find_all_events_shared_filter_test.dart.)
-//   NOTE: this file is not *_test.dart so this annotation does not bind
-//   in elspais; the binding lives on the two conformance entrypoints.
+// Backend-agnostic conformance harness for the abstract StorageBackend
+// contract. Concrete implementations call this from their own test
+// entrypoints; the harness is the canonical place where the contract is
+// exercised, so a second concrete backend is proven interchangeable by
+// passing exactly this suite.
+//
+// Traceability lives on the individual tests below, not on this header:
+// elspais binds a `Verifies:` comment to the `test(...)` immediately
+// beneath it, so a file- or group-level citation credits nothing.
+//
+// The extended-filter assertion covering the single shared
+// _composeFindAllEventsFilter helper is a SembastBackend structural
+// property this backend-agnostic harness cannot observe; it is covered by
+// find_all_events_shared_filter_test.dart.
 //
 // This file MUST NOT register any `main()` of its own — it exposes one
 // public function, [runStorageBackendConformanceTests], which concrete
@@ -174,7 +167,7 @@ Future<StoredEvent> _appendBuilt(
 
 // -------- Transaction subgroup --------
 //
-// Verifies: EVS-PRD-event-log/A — successful body commits all writes
+// successful body commits all writes
 //   atomically; thrown exception rolls back all writes; Transaction handle is
 //   invalidated when body returns or throws; a Transaction from one backend
 //   instance is rejected by another (defense-in-depth on the type-and-
@@ -185,6 +178,8 @@ void _registerTransactionTests(
   Future<StorageBackend?> Function() factory,
 ) {
   group('transaction', () {
+    // Verifies: EVS-PRD-event-log/A
+    // Verifies: EVS-PRD-portability/D
     test('successful body commits all writes', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -196,6 +191,7 @@ void _registerTransactionTests(
       expect(stored.map((e) => e.eventId), ['ev-1']);
     });
 
+    // Verifies: EVS-PRD-event-log/A
     test('thrown exception rolls back all writes', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -310,7 +306,7 @@ void _registerTransactionTests(
 
 // -------- Event log subgroup --------
 //
-// Verifies: EVS-PRD-event-log/A,B,C,D — append-only writes; sequence
+// append-only writes; sequence
 //   counter monotonicity (reserve-and-increment); per-aggregate order;
 //   in-order reads from any starting position; findAllEventsInTxn coherent
 //   with same-txn writes; readLatestEventHash transactional read.
@@ -319,6 +315,7 @@ void _registerEventLogTests(
   bool Function() initializedOf,
 ) {
   group('event log', () {
+    // Verifies: EVS-PRD-event-log/A
     test('two appendEvents in one transaction both land', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -333,6 +330,7 @@ void _registerEventLogTests(
       expect(stored.map((e) => e.eventId), ['ev-1', 'ev-2']);
     });
 
+    // Verifies: EVS-PRD-event-log/A
     test('thrown body rolls back both writes', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -353,6 +351,7 @@ void _registerEventLogTests(
       });
     });
 
+    // Verifies: EVS-PRD-event-log/B
     test('appendEvent advances sequence counter', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -367,6 +366,7 @@ void _registerEventLogTests(
       });
     });
 
+    // Verifies: EVS-PRD-event-log/B
     test('nextSequenceNumber is monotonic across transactions', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -381,6 +381,7 @@ void _registerEventLogTests(
       expect(seen, [1, 2, 3, 4, 5]);
     });
 
+    // Verifies: EVS-PRD-event-log/C
     test(
       'findEventsForAggregate returns events sorted by sequence_number',
       () async {
@@ -406,6 +407,7 @@ void _registerEventLogTests(
       },
     );
 
+    // Verifies: EVS-PRD-event-log/D
     test(
       'findAllEvents(afterSequence, limit) slices correctly and keeps order',
       () async {
@@ -466,6 +468,7 @@ void _registerEventLogTests(
       expect(await backend.findAllEvents(), isEmpty);
     });
 
+    // Verifies: EVS-PRD-event-log/B
     test('two nextSequenceNumber calls in one txn return '
         'current+1 and current+2 (reserve-and-increment)', () async {
       if (!initializedOf()) return;
@@ -545,6 +548,7 @@ void _registerEventLogTests(
       await expectLater(backend.readLatestEventHash(escaped), throwsStateError);
     });
 
+    // Verifies: EVS-PRD-event-log/D
     test('findAllEventsInTxn returns events ordered by sequence_number '
         'including txn-staged ones', () async {
       if (!initializedOf()) return;
@@ -581,6 +585,7 @@ void _registerEventLogTests(
       await expectLater(backend.findAllEventsInTxn(escaped), throwsStateError);
     });
 
+    // Verifies: EVS-PRD-event-log/D
     test('findAllEventsInTxn paginates via afterSequence and limit — the full '
         'log can be walked without ever holding more than `limit` events at '
         'once', () async {
@@ -625,7 +630,7 @@ void _registerEventLogTests(
 
 // -------- findAllEvents extended filters --------
 //
-// Verifies: EVS-DEV-find-all-events-extended-filters/A,B,C — entryType,
+// entryType,
 //   clientTimestampStart, clientTimestampEnd on findAllEvents and
 //   findAllEventsInTxn; filters AND-compose; existing afterSequence +
 //   limit unaffected.
@@ -634,6 +639,7 @@ void _registerFindAllEventsFilterTests(
   bool Function() initializedOf,
 ) {
   group('findAllEvents extended filters', () {
+    // Verifies: EVS-DEV-find-all-events-extended-filters/A
     test('entryType filter returns only matching events', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -669,6 +675,7 @@ void _registerFindAllEventsFilterTests(
       expect(lights.map((e) => e.sequenceNumber).toList(), <int>[2]);
     });
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/A
     test('clientTimestampStart filter is inclusive-lower-bound', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -703,6 +710,7 @@ void _registerFindAllEventsFilterTests(
       expect(later.map((e) => e.sequenceNumber).toList(), <int>[2, 3]);
     });
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/A
     test('clientTimestampEnd filter is inclusive-upper-bound', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -737,6 +745,7 @@ void _registerFindAllEventsFilterTests(
       expect(earlier.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
     });
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/C
     test('AND-composes entryType with timestamp range', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -781,6 +790,7 @@ void _registerFindAllEventsFilterTests(
       expect(filtered.map((e) => e.sequenceNumber).toList(), <int>[3]);
     });
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/C
     test('existing afterSequence + limit filters still work alongside the new '
         'ones', () async {
       if (!initializedOf()) return;
@@ -849,6 +859,7 @@ void _registerFindAllEventsFilterTests(
       expect(none, isEmpty);
     });
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/B
     test('findAllEventsInTxn honors the same filters', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -891,7 +902,7 @@ void _registerFindAllEventsFilterTests(
 
 // -------- Originator filters --------
 //
-// Verifies: EVS-DEV-find-all-events-extended-filters/C — originatorHopId and
+// originatorHopId and
 //   originatorIdentifier filters; each filters on provenance[0]; AND'd when
 //   both supplied.
 void _registerOriginatorFilterTests(
@@ -943,6 +954,7 @@ void _registerOriginatorFilterTests(
       });
     }
 
+    // Verifies: EVS-DEV-find-all-events-extended-filters/C
     test('originatorIdentifier alone — install-A returns 1 event', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -981,7 +993,7 @@ void _registerOriginatorFilterTests(
 
 // -------- Generic view storage --------
 //
-// Verifies: EVS-PRD-portability/D — generic view-storage methods are part
+// generic view-storage methods are part
 //   of the StorageBackend abstraction; round-trip, missing-key-null,
 //   delete, find with limit/offset, clearView, viewName isolation.
 void _registerViewRowTests(
@@ -989,6 +1001,7 @@ void _registerViewRowTests(
   bool Function() initializedOf,
 ) {
   group('generic view storage', () {
+    // Verifies: EVS-PRD-portability/D
     test('readViewRowInTxn on missing key returns null', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1220,7 +1233,7 @@ void _registerViewRowTests(
 
 // -------- View target versions --------
 //
-// Verifies: EVS-PRD-portability/D — view-target-version persistence is
+// view-target-version persistence is
 //   part of the StorageBackend abstraction (round-trip, null-on-unknown,
 //   readAll, clear, cross-view isolation).
 void _registerViewTargetVersionTests(
@@ -1228,6 +1241,7 @@ void _registerViewTargetVersionTests(
   bool Function() initializedOf,
 ) {
   group('view_target_versions storage', () {
+    // Verifies: EVS-PRD-portability/D
     test('round-trip read/write', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1332,7 +1346,7 @@ void _registerViewTargetVersionTests(
 
 // -------- FIFO subgroup --------
 //
-// Verifies: EVS-PRD-portability/D — FIFO persistence methods (enqueueFifo,
+// FIFO persistence methods (enqueueFifo,
 //   readFifoHead, listFifoEntries, appendAttempt, markFinal,
 //   hasFifoWedged/wedgedFifos) are part of the StorageBackend abstraction.
 //   markFinal idempotency + one-way transition rule are part of the FIFO
@@ -1345,6 +1359,7 @@ void _registerFifoTests(
   group('FIFO', () {
     // -------- enqueueFifo + validation --------
 
+    // Verifies: EVS-PRD-portability/D
     test('enqueueFifo + readFifoHead round-trip', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2047,7 +2062,7 @@ void _registerFifoTests(
 
 // -------- listFifoEntries subgroup --------
 //
-// Verifies: EVS-PRD-portability/D — listFifoEntries enumerates entries
+// listFifoEntries enumerates entries
 //   ordered by sequence_in_queue with optional afterSequenceInQueue +
 //   limit slicing; empty list on unknown destination.
 void _registerListFifoEntriesTests(
@@ -2055,6 +2070,7 @@ void _registerListFifoEntriesTests(
   bool Function() initializedOf,
 ) {
   group('listFifoEntries', () {
+    // Verifies: EVS-PRD-portability/D
     test('listFifoEntries on unknown destination returns empty list', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2131,7 +2147,7 @@ void _registerListFifoEntriesTests(
 
 // -------- Fill-cursor subgroup --------
 //
-// Verifies: EVS-PRD-portability/D — fill_cursor read/write (standalone and
+// fill_cursor read/write (standalone and
 //   transactional variants) is part of the StorageBackend abstraction;
 //   default sentinel, round-trip, rollback semantics, per-destination
 //   isolation, validation of legal range.
@@ -2140,6 +2156,7 @@ void _registerFillCursorTests(
   bool Function() initializedOf,
 ) {
   group('fill_cursor', () {
+    // Verifies: EVS-PRD-portability/D
     test('readFillCursor returns -1 when unset', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2215,13 +2232,14 @@ void _registerFillCursorTests(
 
 // -------- Backend-state subgroup --------
 //
-// Verifies: EVS-PRD-portability/D — schema_version round-trip via
+// schema_version round-trip via
 //   backend-state KV bookkeeping is part of the StorageBackend abstraction.
 void _registerBackendStateTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
   group('backend_state', () {
+    // Verifies: EVS-PRD-portability/D
     test('schema_version round-trips', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2236,7 +2254,7 @@ void _registerBackendStateTests(
 
 // -------- findEventById subgroup --------
 //
-// Verifies: EVS-PRD-event-log/D — findEventById / findEventByIdInTxn read
+// findEventById / findEventByIdInTxn read
 //   a single event from the unified log; returns null when absent; used
 //   by ingest's idempotency check.
 void _registerEventByIdTests(
@@ -2244,6 +2262,7 @@ void _registerEventByIdTests(
   bool Function() initializedOf,
 ) {
   group('findEventById', () {
+    // Verifies: EVS-PRD-event-log/D
     test('findEventById returns the stored event when present', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2290,7 +2309,7 @@ void _registerEventByIdTests(
 
 // -------- Close subgroup --------
 //
-// Verifies: EVS-PRD-portability/D — close() releases resources; subsequent
+// close() releases resources; subsequent
 //   operations on the closed backend fail. The exception type is loose
 //   (any subclass of Exception) — concrete backends raise their own
 //   storage-layer error.
@@ -2299,6 +2318,7 @@ void _registerCloseTests(
   bool Function() initializedOf,
 ) {
   group('close', () {
+    // Verifies: EVS-PRD-portability/D
     test('close() closes the underlying database', () async {
       if (!initializedOf()) return;
       final backend = backendOf();

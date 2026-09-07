@@ -8,17 +8,17 @@
 // Verifies: EVS-PRD-action-dispatch/B
 // Allow/Deny decisions surfaced to
 //   the dispatcher's authorize stage.
-// Verifies: EVS-PRD-scoped-permissions/D/F/G
+// Verifies: EVS-PRD-scoped-permissions/D+F+G
 // projection-only evaluation;
 //   union-of-assignments match across equality / wildcard / containment;
 //   fail-closed propagation through missing containment rows.
-// Verifies: EVS-DEV-scoped-permissions-match-algorithm/A/B/C/D/E/F
+// Verifies: EVS-DEV-scoped-permissions-match-algorithm/A+B+C+D+E+F
 // full
 //   match-algorithm coverage: notGranted on missing role grant; xor invariant
 //   denial; unscoped shortcut; bound / value-wildcard / total-wildcard /
 //   containment match cases; fail-closed propagation; anonymous-principal
 //   denial.
-// Verifies: EVS-DEV-effective-permissions-shape/A/B/C/D
+// Verifies: EVS-DEV-effective-permissions-shape/A+B+C+D
 // effectivePermissionsFor
 //   returns active role + permissions + scope assignments; returns
 //   EffectiveAuthorization.empty for non-user principals.

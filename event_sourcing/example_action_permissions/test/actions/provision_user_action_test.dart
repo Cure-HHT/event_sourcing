@@ -1,5 +1,5 @@
-// Verifies: EVS-PRD-action-dispatch/A/B/C
-// Verifies: EVS-PRD-permissions-as-events/A/B
+// Verifies: EVS-PRD-action-dispatch/A+B+C
+// Verifies: EVS-PRD-permissions-as-events/A+B
 // Verifies: EVS-PRD-action-dispatch/D
 import 'package:action_permissions_demo/server/actions/provision_user_action.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';

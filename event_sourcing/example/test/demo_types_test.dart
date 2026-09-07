@@ -1,7 +1,7 @@
-// Verifies: EVS-PRD-event-log/A
-// Verifies: EVS-PRD-event-log/A
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
 void main() {
   group('demoNoteType (EntryTypeDefinition contract)', () {
@@ -92,6 +92,70 @@ void main() {
           'blue_button_pressed',
         }),
       );
+    });
+  });
+
+  group('materialization routing by aggregate type', () {
+    // The demo's CQRS discriminator only means anything if the substrate
+    // actually routes on it. Append one note and one of each action-button
+    // event through a bootstrapped store, then read the notes view: the
+    // note is folded in, the button events are not.
+    // Verifies: EVS-PRD-materializer/A
+    test('only demo_note events reach the notes view', () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'demo-types-materializer.db',
+      );
+      final backend = SembastBackend(database: db);
+      final projections = ProjectionRegistry()
+        ..register(
+          const AggregateProjectionSpec(
+            viewName: 'notes',
+            interest: SubscriptionFilter(entryTypes: <String>{'demo_note'}),
+            tombstoneEventTypes: <String>{'tombstone'},
+          ),
+        );
+      final datastore = await bootstrapEventStore(
+        backend: backend,
+        source: const Source(
+          hopId: 'demo-types-test',
+          identifier: '33333333-3333-4333-8333-333333333333',
+          softwareVersion: 'test',
+        ),
+        entryTypes: allDemoEntryTypes,
+        destinations: const <Destination>[],
+        projections: projections,
+      );
+
+      await datastore.eventStore.append(
+        entryType: 'demo_note',
+        aggregateId: 'note-1',
+        aggregateType: demoAggregateTypeByEntryTypeId['demo_note']!,
+        eventType: 'finalized',
+        data: const <String, Object?>{
+          'answers': <String, Object?>{'title': 't', 'body': 'b'},
+        },
+        initiator: const UserInitiator('demo-user-1'),
+      );
+      for (final entryTypeId in <String>[
+        'red_button_pressed',
+        'green_button_pressed',
+        'blue_button_pressed',
+      ]) {
+        await datastore.eventStore.append(
+          entryType: entryTypeId,
+          aggregateId: '$entryTypeId-1',
+          aggregateType: demoAggregateTypeByEntryTypeId[entryTypeId]!,
+          eventType: 'pressed',
+          data: const <String, Object?>{},
+          initiator: const UserInitiator('demo-user-1'),
+        );
+      }
+
+      final rows = await backend.findViewRows('notes');
+      expect(rows, hasLength(1));
+      expect(rows.single['aggregateId'], 'note-1');
+
+      await backend.close();
     });
   });
 }

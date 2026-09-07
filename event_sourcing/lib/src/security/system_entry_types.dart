@@ -6,7 +6,7 @@
 // security-context and
 //   retention audit events carry timestamps (via EventStore.append), satisfying
 //   the ALCOA+ Contemporaneous obligation for substrate-emitted records.
-// Implements: EVS-DEV-event-store-open/B,C
+// Implements: EVS-DEV-event-store-open/B+C
 // kLibVersionInitializedEntryType
 //   and kLibVersionChangedEntryType are the boot-version event types emitted
 //   by EventStore.open on first boot and on version transitions respectively.
@@ -129,7 +129,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 ///   2. `SubscriptionFilter.matches` correctly gates them behind
 ///      `includeSystemEvents: true` via the `kReservedSystemEntryTypeIds`
 ///      membership check (which this list is the authoritative source for).
-// Implements: EVS-DEV-event-store-open/B,C
+// Implements: EVS-DEV-event-store-open/B+C
 // lib-version boot events
 //   registered here so byId() returns non-null and SubscriptionFilter gates
 //   them correctly, even though they are appended raw (bypassing the registry).

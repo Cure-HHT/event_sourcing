@@ -1,15 +1,8 @@
-// Verifies: EVS-DEV-postgres-backend/E
-// idempotency table schema:
-//   PostgresIdempotencyStore reads and writes the same idempotency
-//   table provisioned by ensurePostgresSchema (Task 1) with primary
-//   key (action_name, principal_id, idempotency_key).
-// Verifies: EVS-DEV-postgres-backend/F
-// PostgresIdempotencyStore
-//   passes the same conformance harness as InMemoryIdempotencyStore.
-// Verifies: EVS-PRD-action-dispatch/D
-// IdempotencyStore contract:
-//   lookup miss/hit, tuple-keyed separation, expiry semantics, and
-//   sweepExpired all behave identically on the Postgres impl.
+// PostgresIdempotencyStore runs the backend-agnostic IdempotencyStore
+// conformance harness — the same suite InMemoryIdempotencyStore passes. It
+// reads and writes the idempotency table provisioned by ensurePostgresSchema,
+// keyed by (action_name, principal_id, idempotency_key). The harness's
+// assertions are cited on its own tests rather than here.
 
 @TestOn('vm')
 library;

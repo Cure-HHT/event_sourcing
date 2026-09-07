@@ -1,11 +1,13 @@
-// Verifies: EVS-PRD-action-dispatch/D — backend-agnostic conformance
-//   harness for the IdempotencyStore contract; concrete implementations
-//   call this from their own test files. The harness is the canonical
-//   place where lookup-miss, record-then-lookup-hit, tuple separation
-//   ((action, principal, key)), expiry-on-lookup, and sweepExpired
-//   semantics are exercised.
-// Verifies: EVS-DEV-postgres-backend/F — both InMemoryIdempotencyStore
-//   and PostgresIdempotencyStore pass this harness.
+// Backend-agnostic conformance harness for the IdempotencyStore contract;
+// concrete implementations call this from their own test files. The
+// harness is the canonical place where lookup-miss, record-then-lookup-hit,
+// tuple separation ((action, principal, key)), expiry-on-lookup, and
+// sweepExpired semantics are exercised, so every concrete store is proven
+// interchangeable by passing exactly this suite.
+//
+// Traceability lives on the individual tests below, not on this header:
+// elspais binds a `Verifies:` comment to the `test(...)` immediately
+// beneath it, so a file-level citation credits nothing.
 //
 // This file MUST NOT register any `main()` of its own — it exposes one
 // public function, [runIdempotencyStoreConformanceTests], which concrete
@@ -49,6 +51,7 @@ void runIdempotencyStoreConformanceTests(
       initialized = true;
     });
 
+    // Verifies: EVS-DEV-postgres-backend/F
     // Verifies: EVS-PRD-action-dispatch/D — lookup before record returns
     //   null (no cached outcome means the dispatcher must run the
     //   action).

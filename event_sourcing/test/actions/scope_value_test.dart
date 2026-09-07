@@ -1,6 +1,6 @@
 // Verifies: EVS-PRD-permissions-as-events
 // (scope-value shape pinned by spec/scoped-permissions.md)
-// Verifies: EVS-DEV-scope-value-json/A/B/C/D/E
+// Verifies: EVS-DEV-scope-value-json/A+B+C+D+E
 // JSON shapes, complete-on-shape
 //   decoder rejecting ambiguous / malformed objects, and toJson↔fromJson
 //   round-trip equality for every variant.

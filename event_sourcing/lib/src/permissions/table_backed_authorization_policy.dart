@@ -15,7 +15,7 @@
 // Implements: EVS-PRD-action-dispatch/B
 // Allow/Deny decisions delivered to
 //   the dispatcher's authorize stage.
-// Implements: EVS-PRD-scoped-permissions/D/F/G
+// Implements: EVS-PRD-scoped-permissions/D+F+G
 // evaluates solely from
 //   event-derived projections; allows when any active-role assignment
 //   matches via equality / wildcard / containment; fails closed on missing

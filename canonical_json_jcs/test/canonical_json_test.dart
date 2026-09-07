@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-canonical-json/A/B/C/D/E/F
+// Verifies: EVS-PRD-canonical-json/A+B+C+D+E+F
 //
 // A — RFC 8785 number vectors (Appendix B), key-sort, string-escaping, and
 //     cross-platform baseline tests verify RFC 8785 conformance.

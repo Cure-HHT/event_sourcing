@@ -1,6 +1,6 @@
-// Verifies: EVS-PRD-destinations/D/F
-// Verifies: EVS-PRD-destinations/A/E
-// Verifies: EVS-PRD-library-charter/D/E
+// Verifies: EVS-PRD-destinations/D+F
+// Verifies: EVS-PRD-destinations/A+E
+// Verifies: EVS-PRD-library-charter/D+E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';

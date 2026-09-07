@@ -1,4 +1,3 @@
-// Verifies: EVS-PRD-library-charter/E
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';

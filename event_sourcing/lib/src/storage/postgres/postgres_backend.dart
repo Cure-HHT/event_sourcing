@@ -6,12 +6,12 @@
 // `PostgresBackend.open` connects
 //   and emits `CREATE TABLE IF NOT EXISTS` DDL for every table the backend
 //   uses; re-open against a provisioned database is a no-op on the schema.
-// Implements: EVS-PRD-event-log/A,B,C,D
+// Implements: EVS-PRD-event-log/A+B+C+D
 // event-log surface: append-only;
 //   stable total order via sequence counter (reserve-and-increment);
 //   per-aggregate order isolated by aggregate_id; read events in order
 //   from any starting position; findEventById/-InTxn lookups.
-// Implements: EVS-DEV-find-all-events-extended-filters/A,B,C,D — entryType,
+// Implements: EVS-DEV-find-all-events-extended-filters/A+B+C+D — entryType,
 //   clientTimestampStart, clientTimestampEnd filters AND-compose with
 //   afterSequence/limit/originator filters; both in-txn and out-of-txn
 //   variants share a single composition helper (_findAllEventsComposed).
@@ -449,7 +449,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-event-log/D
   // read all events in sequence order
   //   from any starting position (afterSequence + limit).
-  // Implements: EVS-DEV-find-all-events-extended-filters/A,C — entryType,
+  // Implements: EVS-DEV-find-all-events-extended-filters/A+C — entryType,
   //   clientTimestampStart, clientTimestampEnd filters AND-compose with
   //   afterSequence, limit, originatorHopId, originatorIdentifier.
   // Implements: EVS-DEV-find-all-events-extended-filters/D
@@ -487,7 +487,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-event-log/D
   // transactional variant; reads see
   //   writes staged in the same txn body.
-  // Implements: EVS-DEV-find-all-events-extended-filters/B,C,D
+  // Implements: EVS-DEV-find-all-events-extended-filters/B+C+D
   // same
   //   three filters with same AND-composition semantics; shared helper.
   //

@@ -1,7 +1,7 @@
 // Verifies: EVS-PRD-destinations/C
 // Verifies: EVS-PRD-destinations/E
-// Verifies: EVS-PRD-ingest/A/E
-// Verifies: EVS-PRD-provenance/B/C
+// Verifies: EVS-PRD-ingest/A+E
+// Verifies: EVS-PRD-provenance/B+C
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';

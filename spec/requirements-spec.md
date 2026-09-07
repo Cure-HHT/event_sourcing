@@ -37,7 +37,7 @@ Where:
   - `OPS` = Operational Documentation — release management, deployment of derived artifacts, secret rotation, and similar operational concerns pertaining to the library itself.
   - `DEV` = Development Specification — how the library realizes the PRDs and OPS requirements.
 - `component` is a kebab-case noun describing the requirement subject. Should be short and specific. Examples: `event-store`, `provenance-entry-schema`, `canonical-json`.
-- `assertion` is an optional single-letter label `[A-Z]` for a specific Assertion within the requirement (see "Assertions" below). Multiple assertions in one reference use `/` as separator: e.g. `EVS-DEV-event-store-open/A/B/C`.
+- `assertion` is an optional single-letter label `[A-Z]` for a specific Assertion within the requirement (see "Assertions" below). A reference may name several assertions at once, joined with `+` after the single `/`: e.g. `EVS-DEV-event-store-open/A+B+C`.
 
 Examples:
 
@@ -47,7 +47,7 @@ Examples:
 
 ### Names are stable
 
-Component names MUST be stable once a requirement is authored. Renaming a component is a **breaking change** to every reference of the requirement — assertion citations in tests (`// Verifies: EVS-DEV-event-store-open/G`), implementation annotations (`// Implements: EVS-DEV-event-store-open/A/B`), `Refines:` and `Satisfies:` metadata in other requirements, and Rationale prose. A rename therefore requires a coordinated sweep of all references at the same time as the rename itself.
+Component names MUST be stable once a requirement is authored. Renaming a component is a **breaking change** to every reference of the requirement — assertion citations in tests (`// Verifies: EVS-DEV-event-store-open/G`), implementation annotations (`// Implements: EVS-DEV-event-store-open/A+B`), `Refines:` and `Satisfies:` metadata in other requirements, and Rationale prose. A rename therefore requires a coordinated sweep of all references at the same time as the rename itself.
 
 The renaming policy is the same as for breaking changes to a published API: rare, deliberate, and called out in the commit that performs the rename. If you are tempted to rename a requirement to fix a "bad name", consider first whether a clearer Rationale or a redirect requirement (a new requirement that Refines the existing one with the better name) would serve.
 
@@ -116,7 +116,7 @@ Tests and other verification artifacts reference:
 
 - the entire requirement: `EVS-DEV-event-store-open`, or
 - a specific assertion: `EVS-DEV-event-store-open/F`, or
-- multiple assertions: `EVS-DEV-event-store-open/A/B/C`.
+- multiple assertions: `EVS-DEV-event-store-open/A+B+C`.
 
 Per-test annotation format (Dart):
 
@@ -128,7 +128,7 @@ test('appends an event with monotonic sequence', () { ... });
 Per-class implementation annotation format (Dart):
 
 ```dart
-// Implements: EVS-DEV-event-store-open/A/B/C — append + ordering invariants
+// Implements: EVS-DEV-event-store-open/A+B+C — append + ordering invariants
 class EventStore { ... }
 ```
 

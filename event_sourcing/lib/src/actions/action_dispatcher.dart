@@ -14,7 +14,7 @@
 // (single path by which consumer-initiated events enter the log)
 // Implements: EVS-PRD-library-charter/C
 // (authorization-checked dispatch; decision and state change both recorded)
-// Implements: EVS-PRD-scoped-permissions/E/H/I
+// Implements: EVS-PRD-scoped-permissions/E+H+I
 // dispatcher resolves the
 //   per-permission scope, wraps authorize+execute+persist in one storage
 //   transaction, and stamps the resolved scope onto authorization_denied

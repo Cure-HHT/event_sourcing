@@ -8,7 +8,7 @@
 # counterpart to the local confidential-terms-scan hook already configured
 # in .pre-commit-config.yaml (rev: v1.6.0).
 #
-# Implements: HHT-OPS-confidential-keywords-scrubbing/H,I
+# Implements: HHT-OPS-confidential-keywords-scrubbing/H+I
 
 name: confidential-terms-scan
 

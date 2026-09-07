@@ -240,7 +240,7 @@ class EventStore {
   /// This is the single production entry point. All required collaborators
   /// ([entryTypes], [source], [securityContexts]) must be supplied; the
   /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open/A,B,C,D,E
+  // Implements: EVS-DEV-event-store-open/A+B+C+D+E
   // sole public constructor;
   //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
   static Future<EventStore> open({
@@ -343,11 +343,13 @@ class EventStore {
   /// All three run inside a single [backend.transaction] so a mid-pass
   /// crash rolls back atomically and the next boot retries from a clean
   /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A,B
-  // refusal before any
-  //   mutation; EVS-DEV-snapshot-promotion-on-open/A,B,C — promote lagging
-  //   rows and emit view_snapshot_promoted; EVS-DEV-event-store-open/E —
-  //   all three steps run inside one storage.transaction.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B,
+  //             EVS-DEV-snapshot-promotion-on-open/A+B+C,
+  //             EVS-DEV-event-store-open/E
+  //
+  // Downgrade refusal runs before any mutation; lagging view rows are then
+  // promoted and a view_snapshot_promoted audit event emitted per pair; all
+  // three steps run inside one storage.transaction.
   static Future<void> _runBootSnapshotPromotionPass({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,

@@ -342,9 +342,8 @@ void main() {
     });
 
     // Verifies: multi-destination independence — d1 wedged, d2 drains
-    // normally. (Orchestrated via sync_cycle in Task 8; here we exercise
-    // the drain-loop half of the claim by calling drain separately per
-    // destination.)
+    // normally. (Here we exercise the drain-loop half of the claim by
+    // calling drain separately per destination.)
     test(
       'multi-destination independence: wedge on d1 does not block d2',
       () async {

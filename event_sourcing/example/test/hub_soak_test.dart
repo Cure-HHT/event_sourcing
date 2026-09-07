@@ -1,7 +1,7 @@
 // Verifies: EVS-PRD-destinations/C
-// Verifies: EVS-PRD-destinations/C/D
-// Verifies: EVS-PRD-ingest/A/F
-// Verifies: EVS-PRD-provenance/B/C
+// Verifies: EVS-PRD-destinations/C+D
+// Verifies: EVS-PRD-ingest/A+F
+// Verifies: EVS-PRD-provenance/B+C
 import 'dart:async';
 import 'dart:math';
 

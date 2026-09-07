@@ -1,6 +1,5 @@
-// Verifies: EVS-DEV-postgres-backend/D
-// URL-resolution helper for the
-// conformance harness; returns PG_TEST_URL or null when unset.
+// URL-resolution helper for the conformance harness; returns PG_TEST_URL or
+// null when unset. This file declares no tests, so it carries no citation.
 
 import 'dart:io' show Platform;
 

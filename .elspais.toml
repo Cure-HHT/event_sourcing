@@ -26,7 +26,7 @@ name = "Cure-HHT Event Sourcing Library"
 # Canonical form: EVS-{level}-{component}[/{assertion}]
 #   level     — three-letter audience tag (`prd` or `dev`)
 #   component — kebab-case noun describing the requirement subject
-#   assertion — optional A–Z label (or A/B/C... multi-assertion)
+#   assertion — optional A–Z label (or A+B+C... multi-assertion)
 #
 # Examples:
 #   EVS-PRD-event-log
@@ -42,14 +42,14 @@ short = "{level.letter}-{component}"
 [id-patterns.component]
 # `kebab-case` = lowercase kebab-case component names (e.g. `library-charter`).
 # Built-in style; the regex is fixed and unambiguous against uppercase
-# assertion labels (`/A`, `/A/B/C`).
+# assertion labels (`/A`, `/A+B+C`).
 style = "kebab-case"
 
 [id-patterns.assertions]
 label_style = "uppercase"
 max_count = 26
 separator = "/"
-multi_separator = "/"
+multi_separator = "+"
 zero_pad = false
 
 [id-patterns.associated]
@@ -118,7 +118,7 @@ directories = [
   "reaction_widgets/test",
   "reaction_widgets_testing/test",
 ]
-file_patterns = ["*_test.dart", "test_*.dart"]
+file_patterns = ["*_test.dart", "test_*.dart", "*_conformance.dart"]
 skip_files = []
 skip_dirs = []
 enabled = true

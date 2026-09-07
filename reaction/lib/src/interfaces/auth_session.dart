@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-auth-session/A/B/G
+// Implements: EVS-PRD-auth-session/A+B+G
 // defines the AuthSession
 // interface (A: current/stream/setCredential/principal), its
 // AuthStatus sealed type (B: Authenticated/NotAuthenticated/Expired),

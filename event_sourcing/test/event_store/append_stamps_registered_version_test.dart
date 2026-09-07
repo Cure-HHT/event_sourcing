@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-append-stamps-registered-version/A/C
+// Verifies: EVS-DEV-append-stamps-registered-version/A+C
 // EventStore.append
 // stamps the registry's registeredVersion on every appended event (A), and
 // the entryTypeVersion parameter does not appear on the public signature so

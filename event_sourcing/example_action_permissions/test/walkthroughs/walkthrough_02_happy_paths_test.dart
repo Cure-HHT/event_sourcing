@@ -1,7 +1,7 @@
 // test/walkthroughs/walkthrough_02_happy_paths_test.dart
-// Verifies: EVS-PRD-action-dispatch/A/C
+// Verifies: EVS-PRD-action-dispatch/A+C
 // Verifies: EVS-PRD-permissions-as-events/B
-// Verifies: EVS-PRD-event-log/A/C
+// Verifies: EVS-PRD-event-log/A+C
 //
 //
 // One test per happy-path action. Each test fires a single dispatch and

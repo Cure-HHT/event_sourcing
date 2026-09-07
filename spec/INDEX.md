@@ -13,7 +13,7 @@
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
-| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 872fc0dc |
+| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 5c082273 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 06d5104c |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |

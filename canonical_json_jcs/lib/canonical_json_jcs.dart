@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-canonical-json/A/B/C/D/E/F
+// Implements: EVS-PRD-canonical-json/A+B+C+D+E+F
 //
 // Barrel file: re-exports CanonicalJson, canonicalize, and canonicalizeBytes
 // from src/canonical_json.dart, exposing the full RFC 8785 JCS surface as

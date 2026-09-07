@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-action-dispatch/A/B/C
+// Verifies: EVS-PRD-action-dispatch/A+B+C
 // Verifies: EVS-PRD-permissions-as-events/B
 // Verifies: EVS-PRD-action-dispatch/D
 //                         enforcement by dispatcher tested at integration level),

@@ -1,5 +1,5 @@
-// Verifies: EVS-PRD-event-log/B/C
-// Verifies: EVS-PRD-destinations/C/D
+// Verifies: EVS-PRD-event-log/B+C
+// Verifies: EVS-PRD-destinations/C+D
 // Regression test for strict-order delivery: a wedged head row must block
 // trailing pending rows.
 //
