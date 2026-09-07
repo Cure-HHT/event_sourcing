@@ -84,7 +84,6 @@ void main() {
   group('materialize flag', () {
     // An entry type that does not declare otherwise is materialized;
     // reserved audit types opt out explicitly with isMaterialized: false.
-    // Verifies: EVS-PRD-materializer/D
     test('defaults to true', () {
       const def = EntryTypeDefinition(id: 'x', registeredVersion: 1, name: 'X');
       expect(def.isMaterialized, isTrue);

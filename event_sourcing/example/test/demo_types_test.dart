@@ -101,7 +101,6 @@ void main() {
     // event through a bootstrapped store, then read the notes view: the
     // note is folded in, the button events are not.
     // Verifies: EVS-PRD-materializer/A
-    // Verifies: EVS-PRD-materializer/D
     test('only demo_note events reach the notes view', () async {
       final db = await newDatabaseFactoryMemory().openDatabase(
         'demo-types-materializer.db',

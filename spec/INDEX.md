@@ -18,7 +18,7 @@
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
-| EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 86e14cfa |
+| EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 88f90336 |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization   | prd-multi-source-canonicalization.md | ccf88a3b |
 | EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | 5fa8d048 |
 | EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 0fe7afbd |
