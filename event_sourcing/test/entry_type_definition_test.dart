@@ -13,7 +13,6 @@ void main() {
       expect(def.id, 'epistaxis_event');
       expect(def.registeredVersion, 1);
       expect(def.name, 'Nosebleed');
-      expect(def.isMaterialized, isTrue);
     });
 
     group('value equality', () {
@@ -78,26 +77,6 @@ void main() {
           ),
         );
       });
-    });
-  });
-
-  group('materialize flag', () {
-    // An entry type that does not declare otherwise is materialized;
-    // reserved audit types opt out explicitly with isMaterialized: false.
-    test('defaults to true', () {
-      const def = EntryTypeDefinition(id: 'x', registeredVersion: 1, name: 'X');
-      expect(def.isMaterialized, isTrue);
-    });
-
-    test('materialize participates in equality', () {
-      const a = EntryTypeDefinition(id: 'x', registeredVersion: 1, name: 'X');
-      const b = EntryTypeDefinition(
-        id: 'x',
-        registeredVersion: 1,
-        name: 'X',
-        isMaterialized: false,
-      );
-      expect(a, isNot(b));
     });
   });
 }

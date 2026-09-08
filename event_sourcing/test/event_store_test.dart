@@ -58,10 +58,7 @@ Future<_Fixture> _setup({
 
   ProjectionRegistry? projections;
   if (registerProjection) {
-    final materializableIds = effectiveDefs
-        .where((d) => d.isMaterialized)
-        .map((d) => d.id)
-        .toSet();
+    final materializableIds = effectiveDefs.map((d) => d.id).toSet();
     if (materializableIds.isNotEmpty) {
       projections = ProjectionRegistry()
         ..register(_toyViewSpec(materializableIds));
@@ -157,7 +154,6 @@ void main() {
             id: 'non_materialized',
             registeredVersion: 1,
             name: 'Non-Mat',
-            isMaterialized: false,
           ),
         ],
         registerProjection: false,

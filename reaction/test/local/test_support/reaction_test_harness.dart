@@ -50,7 +50,6 @@ class ReactionTestHarness {
           id: 'note',
           registeredVersion: 1,
           name: 'Note',
-          isMaterialized: true,
         ),
       )
       ..register(
@@ -58,7 +57,6 @@ class ReactionTestHarness {
           id: 'greeting',
           registeredVersion: 1,
           name: 'Greeting',
-          isMaterialized: false,
         ),
       )
       // Required by PermissionSeedApplier when seeding the role-permission matrix.
@@ -67,7 +65,6 @@ class ReactionTestHarness {
           id: 'role_permission_grant',
           registeredVersion: 1,
           name: 'Role-Permission Grant',
-          isMaterialized: false,
         ),
       )
       // Required so e2e/authz_test.dart can append role_assigned /
@@ -82,7 +79,6 @@ class ReactionTestHarness {
           id: 'user_role_scope',
           registeredVersion: 1,
           name: 'User-Role-Scope Assignment',
-          isMaterialized: false,
         ),
       )
       // Required by ActionDispatcher for denial-stage audit events.
@@ -91,7 +87,6 @@ class ReactionTestHarness {
           id: 'action_denial',
           registeredVersion: 1,
           name: 'Action Denial',
-          isMaterialized: false,
         ),
       )
       // Generic account-level entry type so e2e/authz_test.dart can exercise
@@ -104,7 +99,6 @@ class ReactionTestHarness {
           id: 'account_disabled',
           registeredVersion: 1,
           name: 'Account Disabled',
-          isMaterialized: false,
         ),
       );
 

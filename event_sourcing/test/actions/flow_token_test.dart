@@ -75,7 +75,6 @@ Future<({EventStore store, SembastBackend backend})> _openSecondStore() async {
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        isMaterialized: false,
       ),
     )
     ..register(
@@ -83,7 +82,6 @@ Future<({EventStore store, SembastBackend backend})> _openSecondStore() async {
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        isMaterialized: false,
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);

@@ -1,7 +1,10 @@
 // Implements: EVS-PRD-event-log/A
 // every reserved system id corresponds to
-//   an audit event appended to the immutable log for each substrate mutation;
-//   no reserved entry type has isMaterialized:true, so they never corrupt views.
+//   an audit event appended to the immutable log for each substrate mutation.
+// Implements: EVS-PRD-event-log/F
+// membership in
+//   kReservedSystemEntryTypeIds is what a filter discriminates on, so a
+//   consumer decides per filter whether these events are admitted.
 // Implements: EVS-PRD-regulatory-alignment/A
 // security-context and
 //   retention audit events carry timestamps (via EventStore.append), satisfying
@@ -117,9 +120,13 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// lib-version boot events (initialized / changed), the raw-path
 /// `ingest-audit` event (covering `logRejectedBatch` and
 /// `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
-/// audit emitted by the boot-time snapshot-promotion pass. All have
-/// `isMaterialized: false` so they never hit any view; they exist only to
+/// audit emitted by the boot-time snapshot-promotion pass. They exist to
 /// stamp an immutable event_log row for every covered mutation.
+///
+/// Membership in this set is what `SubscriptionFilter` discriminates on: a
+/// filter that does not opt in admits none of them, and one that opts in
+/// admits them all. Nothing here makes an event unviewable — an audit view
+/// opts in and receives them.
 ///
 /// The lib-version entries (`lib_version_initialized`,
 /// `lib_version_changed`) are appended raw by `_appendLibVersionEventToBackend`
@@ -138,84 +145,70 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     id: kSecurityContextRedactedEntryType,
     registeredVersion: 1,
     name: 'Security Context Redacted',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kSecurityContextCompactedEntryType,
     registeredVersion: 1,
     name: 'Security Context Compacted',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kSecurityContextPurgedEntryType,
     registeredVersion: 1,
     name: 'Security Context Purged',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationRegisteredEntryType,
     registeredVersion: 1,
     name: 'Destination Registered',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationStartDateSetEntryType,
     registeredVersion: 1,
     name: 'Destination Start Date Set',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationEndDateSetEntryType,
     registeredVersion: 1,
     name: 'Destination End Date Set',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationDeletedEntryType,
     registeredVersion: 1,
     name: 'Destination Deleted',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kDestinationWedgeRecoveredEntryType,
     registeredVersion: 1,
     name: 'Destination Wedge Recovered',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
     registeredVersion: 1,
     name: 'Retention Policy Applied',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kEntryTypeRegistryInitializedEntryType,
     registeredVersion: 1,
     name: 'Entry Type Registry Initialized',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kLibVersionInitializedEntryType,
     registeredVersion: 1,
     name: 'Lib Version Initialized',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kLibVersionChangedEntryType,
     registeredVersion: 1,
     name: 'Lib Version Changed',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kIngestAuditEntryType,
     registeredVersion: 1,
     name: 'Ingest Audit',
-    isMaterialized: false,
   ),
   EntryTypeDefinition(
     id: kViewSnapshotPromotedEntryType,
     registeredVersion: 1,
     name: 'View Snapshot Promoted',
-    isMaterialized: false,
   ),
 ];

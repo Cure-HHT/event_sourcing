@@ -148,23 +148,16 @@ Future<BootstrapResult> bootstrap() async {
         id: 'participant',
         registeredVersion: 1,
         name: 'Participant',
-        isMaterialized: true,
       ),
     )
     ..register(
-      const EntryTypeDefinition(
-        id: 'site',
-        registeredVersion: 1,
-        name: 'Site',
-        isMaterialized: true,
-      ),
+      const EntryTypeDefinition(id: 'site', registeredVersion: 1, name: 'Site'),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'role_permission_grant',
         registeredVersion: 1,
         name: 'Role-Permission Grant',
-        isMaterialized: false,
       ),
     )
     ..register(
@@ -172,7 +165,6 @@ Future<BootstrapResult> bootstrap() async {
         id: 'user_role_scope',
         registeredVersion: 1,
         name: 'User-Role-Scope Assignment',
-        isMaterialized: false,
       ),
     )
     // ActionDispatcher emits this on denial.
@@ -181,7 +173,6 @@ Future<BootstrapResult> bootstrap() async {
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action Denial',
-        isMaterialized: false,
       ),
     );
 

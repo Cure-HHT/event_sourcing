@@ -36,15 +36,14 @@ Future<EventStore> bootstrapTestEventStore({
     registry.register(definition);
   }
 
-  // Register test-specific entry types. isMaterialized: false — these are
-  // audit records and test fixtures, not diary entries.
+  // Register test-specific entry types: audit records and test fixtures.
+  // Which views they reach is decided by each ProjectionSpec's interest.
   registry
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        isMaterialized: false,
       ),
     )
     // greeting is emitted by HelloAction and MultiEventAction.
@@ -53,7 +52,6 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        isMaterialized: false,
       ),
     );
 

@@ -15,9 +15,12 @@
 ///
 /// An `EntryTypeDefinition` is pure data (no storage, no Flutter dependency)
 /// that participates in the Event Type Registry. It identifies the entry type
-/// by `id`, binds it to a registered schema version (`registeredVersion`),
-/// and controls whether a materializer runs for events of this type
-/// (`isMaterialized`).
+/// by `id` and binds it to a registered schema version
+/// (`registeredVersion`).
+///
+/// A definition does not decide which views an entry type reaches. That is a
+/// projection's own declaration, made through its interest filter, so the
+/// same entry type can feed one view and be absent from another.
 ///
 /// JSON serialization uses snake_case keys:
 /// `id`, `registered_version`, `name`, `materialize`.
@@ -27,7 +30,6 @@ class EntryTypeDefinition {
     required this.id,
     required this.registeredVersion,
     required this.name,
-    this.isMaterialized = true,
   });
 
   /// Matches `event.entry_type` for every event of this entry type.
@@ -41,27 +43,19 @@ class EntryTypeDefinition {
   /// Display name used by operational tooling.
   final String name;
 
-  /// When `false`, no materializer runs for events of this entry type.
-  /// Used by reserved system entry types (e.g., `security_context_redacted`)
-  /// that must land in the event log as immutable audit rows but write no
-  /// view state. Defaults to `true`.
-  final bool isMaterialized;
-
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is EntryTypeDefinition &&
           id == other.id &&
           registeredVersion == other.registeredVersion &&
-          name == other.name &&
-          isMaterialized == other.isMaterialized;
+          name == other.name;
 
   @override
-  int get hashCode => Object.hash(id, registeredVersion, name, isMaterialized);
+  int get hashCode => Object.hash(id, registeredVersion, name);
 
   @override
   String toString() =>
       'EntryTypeDefinition('
-      'id: $id, registeredVersion: $registeredVersion, name: $name, '
-      'isMaterialized: $isMaterialized)';
+      'id: $id, registeredVersion: $registeredVersion, name: $name)';
 }
