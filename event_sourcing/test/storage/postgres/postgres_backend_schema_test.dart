@@ -42,6 +42,7 @@ void main() {
       await conn.close();
     });
 
+    // Verifies: EVS-DEV-postgres-backend/E
     test('open() emits CREATE TABLE for every expected table', () async {
       final backend = await PostgresBackend.open(
         url: url,

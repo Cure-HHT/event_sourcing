@@ -8,6 +8,20 @@
 // Implements: EVS-PRD-destinations/E
 // (pluggable delivery — drain delegates
 //   each attempt to Destination.send, the application-supplied transport)
+// Implements: EVS-PRD-destinations/G
+// (failure isolation — drain runs against
+//   one destination's queue, so a wedged head halts that pass and leaves every
+//   other destination's queue drainable)
+// Implements: EVS-PRD-destinations/H
+// (an error raised by the
+//   application-supplied transport is caught and categorized as SendTransient
+//   rather than propagated to the caller of the pass)
+// Implements: EVS-PRD-destinations/I
+// (a failed attempt below maxAttempts
+//   returns without markFinal, leaving the row at the head of its queue)
+// Implements: EVS-PRD-destinations/J
+// (every attempt is recorded via
+//   appendAttempt before the outcome is routed)
 import 'dart:convert';
 import 'dart:typed_data';
 
