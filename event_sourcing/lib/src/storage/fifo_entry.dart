@@ -333,18 +333,20 @@ class FifoEntry {
     envelopeMetadata,
   );
 
+  /// Renders every field `==` compares. A conformance failure on whole-value
+  /// parity between two backends reports the two entries by their `toString`,
+  /// so a field omitted here makes such a failure print two identical-looking
+  /// values. Keep this in step with [operator ==].
   @override
-  String toString() {
-    final envelopeBit = envelopeMetadata == null
-        ? ''
-        : ', envelopeMetadata: $envelopeMetadata';
-    return 'FifoEntry(entryId: $entryId, eventIds: $eventIds, '
-        'sequenceRange: (firstSeq: ${sequenceRange.firstSeq}, '
-        'lastSeq: ${sequenceRange.lastSeq}), '
-        'sequenceInQueue: $sequenceInQueue, wireFormat: $wireFormat, '
-        'finalStatus: $finalStatus, attempts: ${attempts.length}'
-        '$envelopeBit)';
-  }
+  String toString() =>
+      'FifoEntry(entryId: $entryId, eventIds: $eventIds, '
+      'sequenceRange: (firstSeq: ${sequenceRange.firstSeq}, '
+      'lastSeq: ${sequenceRange.lastSeq}), '
+      'sequenceInQueue: $sequenceInQueue, wirePayload: $wirePayload, '
+      'wireFormat: $wireFormat, transformVersion: $transformVersion, '
+      'enqueuedAt: $enqueuedAt, attempts: $attempts, '
+      'finalStatus: $finalStatus, sentAt: $sentAt, '
+      'envelopeMetadata: $envelopeMetadata)';
 }
 
 const DeepCollectionEquality _deepEquals = DeepCollectionEquality();

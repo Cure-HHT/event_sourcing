@@ -1381,6 +1381,14 @@ void _registerFifoTests(
       expect(head.attempts, isEmpty);
       expect(head.sentAt, isNull);
       expect(head.sequenceInQueue, enqueued.sequenceInQueue);
+      // Whole-value parity: the entry read back equals the one enqueueFifo
+      // returned, field for field. Sembast persists FifoEntry.toJson and
+      // Postgres maps explicit columns, so a field added to FifoEntry is
+      // carried automatically by one backend and silently dropped by the
+      // other until its column is added. Comparing values rather than
+      // hand-listed fields makes that divergence a test failure instead of
+      // something a reviewer has to notice.
+      expect(head, equals(enqueued));
     });
 
     test('enqueueFifo rejects an empty batch with ArgumentError', () async {

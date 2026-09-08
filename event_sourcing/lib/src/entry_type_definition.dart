@@ -22,6 +22,11 @@
 /// projection's own declaration, made through its interest filter, so the
 /// same entry type can feed one view and be absent from another.
 ///
+/// Definitions are not compared to one another. Whether the registry has
+/// changed between boots is answered by the bootstrap audit event, whose
+/// content hash covers the canonicalized id-to-version map — a cryptographic
+/// comparison at the level that matters, rather than a field-wise one here.
+///
 /// JSON serialization uses snake_case keys:
 /// `id`, `registered_version`, `name`, `materialize`.
 ///
@@ -42,17 +47,6 @@ class EntryTypeDefinition {
 
   /// Display name used by operational tooling.
   final String name;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is EntryTypeDefinition &&
-          id == other.id &&
-          registeredVersion == other.registeredVersion &&
-          name == other.name;
-
-  @override
-  int get hashCode => Object.hash(id, registeredVersion, name);
 
   @override
   String toString() =>
