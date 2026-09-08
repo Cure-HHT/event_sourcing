@@ -155,8 +155,6 @@ reference_patterns = []
 # result matching and benign for verification, so `[rules.hierarchy]
 # allow_structural_orphans` below suppresses it (as hht_diary already does).
 #
-# flutter is not on elspais's PATH in the dev env; run with:
-#   PATH="$HOME/flutter-sdk/flutter/bin:$PATH" elspais checks --run-tests
 # Postgres-backed packages (event_sourcing, example_action_permissions) share a
 # single DB across multiple test files; `flutter test` runs files in parallel by
 # default, so they race on schema setup. Force `--concurrency=1` for them.
