@@ -35,7 +35,7 @@
 
 | ID                                         | Title                                                        | File                                    | Hash     |
 | ------------------------------------------ | ------------------------------------------------------------ | --------------------------------------- | -------- |
-| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | 2a4348d3 |
+| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | 6e9c508c |
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |

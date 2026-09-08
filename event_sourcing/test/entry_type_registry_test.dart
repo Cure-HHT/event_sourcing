@@ -14,25 +14,25 @@ void main() {
       registry = EntryTypeRegistry();
     });
 
-    // Verifies: registered definitions round-trip through byId by the
-    // id they were registered under — the registry's primary lookup
-    // surface.
+    // Registered definitions round-trip through byId by the id they were
+    // registered under — the registry's primary lookup surface.
     test('register and byId round-trip', () {
       final definition = _defn('demo_note');
       registry.register(definition);
       expect(registry.byId('demo_note'), same(definition));
     });
 
-    // Verifies: byId returns null for unregistered ids so callers can
-    // distinguish "unknown type" from "registered" with a null check.
+    // byId returns null for unregistered ids so callers can distinguish
+    // "unknown type" from "registered" with a null check.
     test('byId returns null for unknown id', () {
       expect(registry.byId('nope'), isNull);
     });
 
-    // Verifies: duplicate id on register throws ArgumentError — silent
-    // shadowing would let an app declare two competing definitions for
-    // the same entry type and the later one would silently win. Loud
-    // failure at registration catches the config bug at boot.
+    // Silent shadowing would let an app declare two competing definitions
+    // for the same entry type, and the later one would silently win —
+    // changing the version stamped on every appended event of that type
+    // mid-run. Loud failure at registration catches the config bug at boot.
+    // Verifies: EVS-DEV-append-stamps-registered-version/D
     test('register of duplicate id throws ArgumentError', () {
       final original = _defn('demo_note');
       registry.register(original);
@@ -43,9 +43,9 @@ void main() {
       expect(registry.byId('demo_note'), same(original));
     });
 
-    // Verifies: isRegistered returns true iff a definition is present
-    // under the id. Convenience wrapper over byId != null for callers
-    // (notably EntryService.record) that only need the yes/no.
+    // isRegistered returns true iff a definition is present under the id.
+    // Convenience wrapper over byId != null for callers (notably
+    // EntryService.record) that only need the yes/no.
     test('isRegistered matches byId presence', () {
       expect(registry.isRegistered('demo_note'), isFalse);
       registry.register(_defn('demo_note'));
@@ -53,8 +53,10 @@ void main() {
       expect(registry.isRegistered('other'), isFalse);
     });
 
-    // Verifies: all() returns every registered definition in
-    // registration order.
+    // all() returns every registered definition in registration order.
+    // Ordering is incidental — the sole consumer, the bootstrap registry
+    // snapshot, is hashed over canonical JSON, which sorts keys — so this
+    // records current behaviour rather than a commitment.
     test('all() returns registered definitions in insertion order', () {
       final first = _defn('first');
       final second = _defn('second');
@@ -69,8 +71,8 @@ void main() {
       expect(registry.all(), orderedEquals([first, second, third]));
     });
 
-    // Verifies: the list returned by all() is unmodifiable so a caller
-    // cannot mutate the registry's backing store by mutating the view.
+    // The list returned by all() is unmodifiable so a caller cannot mutate
+    // the registry's backing store by mutating the view.
     test('all() returns an unmodifiable list', () {
       registry.register(_defn('x'));
       final view = registry.all();
@@ -78,7 +80,7 @@ void main() {
       expect(view.clear, throwsUnsupportedError);
     });
 
-    // Verifies: a fresh registry holds no definitions.
+    // A fresh registry holds no definitions.
     test('empty registry reports zero registrations', () {
       expect(registry.all(), isEmpty);
       expect(registry.isRegistered('any'), isFalse);
