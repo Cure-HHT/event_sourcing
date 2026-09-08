@@ -341,9 +341,10 @@ void main() {
       expect(orderedEventIds, ['e1', 'e2', 'e3']);
     });
 
-    // Verifies: multi-destination independence — d1 wedged, d2 drains
-    // normally. (Here we exercise the drain-loop half of the claim by
-    // calling drain separately per destination.)
+    // A wedged head on d1 halts d1 only; d2's queue still drains. (Here we
+    // exercise the drain-loop half of the claim by calling drain separately
+    // per destination.)
+    // Verifies: EVS-PRD-destinations/G
     test(
       'multi-destination independence: wedge on d1 does not block d2',
       () async {
@@ -448,8 +449,10 @@ void main() {
       expect(head!.finalStatus, isNull);
     });
 
-    // Verifies: drain treats a thrown exception from send() as SendTransient
-    // and continues rather than crashing the caller.
+    // An error raised by the application-supplied delivery implementation is
+    // a failed attempt: the outcome is recorded, the row stays at the head,
+    // and the failure does not reach the caller of the drain pass.
+    // Verifies: EVS-PRD-destinations/H+I+J
     test('drain treats a thrown exception as SendTransient and records an '
         'attempt', () async {
       await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
