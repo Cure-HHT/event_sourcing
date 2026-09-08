@@ -21,6 +21,8 @@ D. The library SHALL allow consumers to read events from the log in order, from 
 
 E. The library SHALL make append progress under concurrent writers: when the storage layer aborts a write because of a transient serialization or deadlock conflict, the library SHALL re-run the write to completion rather than surface the transient conflict to the caller, up to a bounded number of attempts after which the failure is surfaced.
 
+F. The library SHALL allow a consumer-supplied event filter to include or exclude the events the library itself generates.
+
 ## Rationale
 
 **Why append-only?** Audit and regulatory regimes demand that the history of state changes be reconstructable. Mutable storage breaks that reconstructability — once an event can be edited, the relationship between recorded history and reality becomes a matter of trust rather than evidence. Append-only eliminates that trust requirement at the storage layer.
@@ -35,9 +37,15 @@ E. The library SHALL make append progress under concurrent writers: when the sto
 
 **Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
 
+**Why must library-generated events be filterable?** The library records the events it generates itself — boot-version transitions, registry snapshots, retention and redaction audits — in the same log as the application's, so the audit trail is single and complete. But they are the library's own vocabulary, not the application's, and they are noise to most views. A consumer writing an ordinary view should not have to learn that vocabulary to keep them out, so a filter that does not ask for them does not receive them.
+
+The opt-in matters as much as the default. An audit or forensic view is a legitimate consumer of exactly these events, and nothing in the substrate decides on a consumer's behalf that an event is unviewable. Which role may read a materialized view is a permissions question, answered by the role/permission/scope model — not a filtering one, and not a property of the event's type.
+
 ## Changelog
 
+- 2026-09-07 | 5fd99e5f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-07 | - | - | Michael Lewis (<michael@anspar.org>) | Add F: a consumer's event filter can include or exclude library-generated events
 - 2026-08-10 | 06d5104c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e710dcce | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Event Log* | **Hash**: 06d5104c
+*End* *Event Log* | **Hash**: 5fd99e5f

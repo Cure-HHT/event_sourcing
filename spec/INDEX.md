@@ -14,7 +14,7 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 5c082273 |
-| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 06d5104c |
+| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 5fd99e5f |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
