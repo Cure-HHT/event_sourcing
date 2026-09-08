@@ -95,7 +95,6 @@ class PolicyHarness {
           id: 'role_permission_grant',
           registeredVersion: 1,
           name: 'Role-permission grant',
-          isMaterialized: false,
         ),
       )
       ..register(
@@ -103,7 +102,6 @@ class PolicyHarness {
           id: 'user_role_scope',
           registeredVersion: 1,
           name: 'User-role-scope assignment',
-          isMaterialized: false,
         ),
       )
       ..register(
@@ -111,7 +109,6 @@ class PolicyHarness {
           id: 'patient_site_assignment',
           registeredVersion: 1,
           name: 'Patient-to-site assignment',
-          isMaterialized: false,
         ),
       );
 

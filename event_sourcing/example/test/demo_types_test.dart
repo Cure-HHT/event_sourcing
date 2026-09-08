@@ -1,12 +1,13 @@
-// Verifies: EVS-PRD-event-log/A
-// Verifies: EVS-PRD-event-log/A
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart';
 
 void main() {
   group('demoNoteType (EntryTypeDefinition contract)', () {
-    // Verifies: EntryTypeDefinition schema — demo_note declares
-    //   id, registeredVersion, name.
+    // demo_note declares id, registeredVersion and name. Constructor-
+    // enforced, so this documents the demo's wiring rather than defending
+    // a substrate obligation.
     test('id is "demo_note"', () {
       expect(demoNoteType.id, 'demo_note');
     });
@@ -19,10 +20,9 @@ void main() {
   });
 
   group('action-button entry types (RED / GREEN / BLUE)', () {
-    // Verifies: EntryTypeDefinition schema + JNY-02 CQRS discriminator —
-    //   each action-button type has its own id and a non-'Note'
-    //   aggregate type stored separately in demoAggregateTypeByEntryTypeId
-    //   (EntryTypeDefinition itself carries no aggregateType field).
+    // Each action-button type has its own id, and a non-'Note' aggregate
+    // type stored separately in demoAggregateTypeByEntryTypeId
+    // (EntryTypeDefinition itself carries no aggregateType field).
     test('redButtonType.id == "red_button_pressed"', () {
       expect(redButtonType.id, 'red_button_pressed');
     });
@@ -34,10 +34,11 @@ void main() {
     });
   });
 
-  group('demoAggregateTypeByEntryTypeId (CQRS discriminator for JNY-02)', () {
-    // Verifies: JNY-02 — action-button events carry a non-'Note'
-    //   aggregate_type so the materializer skips them and the events
-    //   panel shows them with variant aggregate_type.
+  group('demoAggregateTypeByEntryTypeId (CQRS discriminator)', () {
+    // Action-button events carry a non-'Note' aggregate type, which is what
+    // gives the events panel its variant aggregate_type. That the notes view
+    // actually excludes them is defended by the materializer routing test
+    // below, not by these map lookups.
     test('demo_note maps to "Note"', () {
       expect(demoAggregateTypeByEntryTypeId['demo_note'], 'Note');
     });
@@ -92,6 +93,70 @@ void main() {
           'blue_button_pressed',
         }),
       );
+    });
+  });
+
+  group('materialization routing by aggregate type', () {
+    // The demo's CQRS discriminator only means anything if the substrate
+    // actually routes on it. Append one note and one of each action-button
+    // event through a bootstrapped store, then read the notes view: the
+    // note is folded in, the button events are not.
+    // Verifies: EVS-PRD-materializer/A
+    test('only demo_note events reach the notes view', () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'demo-types-materializer.db',
+      );
+      final backend = SembastBackend(database: db);
+      final projections = ProjectionRegistry()
+        ..register(
+          const AggregateProjectionSpec(
+            viewName: 'notes',
+            interest: SubscriptionFilter(entryTypes: <String>{'demo_note'}),
+            tombstoneEventTypes: <String>{'tombstone'},
+          ),
+        );
+      final datastore = await bootstrapEventStore(
+        backend: backend,
+        source: const Source(
+          hopId: 'demo-types-test',
+          identifier: '33333333-3333-4333-8333-333333333333',
+          softwareVersion: 'test',
+        ),
+        entryTypes: allDemoEntryTypes,
+        destinations: const <Destination>[],
+        projections: projections,
+      );
+
+      await datastore.eventStore.append(
+        entryType: 'demo_note',
+        aggregateId: 'note-1',
+        aggregateType: demoAggregateTypeByEntryTypeId['demo_note']!,
+        eventType: 'finalized',
+        data: const <String, Object?>{
+          'answers': <String, Object?>{'title': 't', 'body': 'b'},
+        },
+        initiator: const UserInitiator('demo-user-1'),
+      );
+      for (final entryTypeId in <String>[
+        'red_button_pressed',
+        'green_button_pressed',
+        'blue_button_pressed',
+      ]) {
+        await datastore.eventStore.append(
+          entryType: entryTypeId,
+          aggregateId: '$entryTypeId-1',
+          aggregateType: demoAggregateTypeByEntryTypeId[entryTypeId]!,
+          eventType: 'pressed',
+          data: const <String, Object?>{},
+          initiator: const UserInitiator('demo-user-1'),
+        );
+      }
+
+      final rows = await backend.findViewRows('notes');
+      expect(rows, hasLength(1));
+      expect(rows.single['aggregateId'], 'note-1');
+
+      await backend.close();
     });
   });
 }

@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-library-charter/H/D
+// Implements: EVS-PRD-library-charter/H+D
 /// Configuration for the event store.
 ///
 /// This class holds all configuration needed to initialize the event store,

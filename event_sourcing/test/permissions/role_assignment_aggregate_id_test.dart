@@ -3,7 +3,7 @@
 // Verifies: EVS-PRD-scoped-permissions/C
 // aggregate id deterministically
 //   derived from (user_id, role, scope) via canonical JSON.
-// Verifies: EVS-DEV-role-assignment-aggregate-id/A/B/C
+// Verifies: EVS-DEV-role-assignment-aggregate-id/A+B+C
 // canonical-JSON
 //   encoding shape; distinct tuples yield distinct ids; safe against
 //   segment-encoding ambiguity.

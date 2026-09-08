@@ -11,7 +11,7 @@
 // re-running bootstrap with the
 //   same yaml is idempotent (no new events), confirming the log alone
 //   suffices to reconstruct permission state.
-// Verifies: EVS-DEV-bootstrap-action-permissions/A/B/C/D
+// Verifies: EVS-DEV-bootstrap-action-permissions/A+B+C+D
 // full YAML-seeded
 //   bootstrap behavior: missing-grant event emission (A), PolicyFailSafe on
 //   parse/validation failure (B), PolicyReady wrapping

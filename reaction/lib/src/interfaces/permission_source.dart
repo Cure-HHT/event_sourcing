@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-permission-source/A/D
+// Implements: EVS-PRD-permission-source/A+D
 // defines the
 // PermissionSource interface (A: current synchronous getter +
 // Stream<EffectiveAuthorization?> + dispose) and the rule that the

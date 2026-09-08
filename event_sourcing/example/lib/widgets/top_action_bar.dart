@@ -23,8 +23,6 @@ const SecurityDetails _kDemoSecurityDetails = SecurityDetails(
   requestId: 'demo-req-fixed',
 );
 
-// Validated by: JNY-01 (lifecycle), JNY-02 (CQRS action events), JNY-06
-// (Rebuild view), JNY-07 (Add destination).
 class TopActionBar extends StatefulWidget {
   const TopActionBar({
     required this.datastore,

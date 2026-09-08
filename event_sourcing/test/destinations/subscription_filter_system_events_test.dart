@@ -1,4 +1,5 @@
-// Verifies: EVS-PRD-destinations/B
+// Verifies: EVS-PRD-event-log/F,
+//           EVS-PRD-destinations/B
 // exercises the system-events opt-in of
 // SubscriptionFilter: includeSystemEvents=false rejects all system entry
 // types (default, so app destinations don't accidentally admit audit events);

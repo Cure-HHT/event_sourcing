@@ -15,7 +15,7 @@
 //   guarantees that the event log alone is sufficient to reproduce the
 //   permission state; re-running bootstrap produces no new events when the
 //   log already contains all required grants.
-// Implements: EVS-DEV-bootstrap-action-permissions/A/B/C/D
+// Implements: EVS-DEV-bootstrap-action-permissions/A+B+C+D
 // the full
 //   YAML-seeded bootstrap flow: append permission_granted events for
 //   missing grants (A), return PolicyFailSafe on parse/validation failure

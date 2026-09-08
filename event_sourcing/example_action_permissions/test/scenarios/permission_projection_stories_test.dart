@@ -51,9 +51,9 @@ void main() {
   });
   tearDown(() => h.stop());
 
-  // Verifies: EVS-PRD-permissions-as-events/A/B
-  // Verifies: EVS-PRD-action-dispatch/A/C
-  // Verifies: EVS-PRD-event-log/A/C
+  // Verifies: EVS-PRD-permissions-as-events/A+B
+  // Verifies: EVS-PRD-action-dispatch/A+C
+  // Verifies: EVS-PRD-event-log/A+C
   test('B9: provisioning a new coordinator brings authorization alive from '
       'events, and the scope perimeter holds', () async {
     // Before provisioning, "nova" is unknown -> anonymous -> denied.
@@ -238,7 +238,7 @@ void main() {
   });
 
   // Verifies: EVS-PRD-action-dispatch/D
-  // Verifies: EVS-PRD-event-log/A/C
+  // Verifies: EVS-PRD-event-log/A+C
   test('B11: required-idempotency provisioning is replay-safe, projection-'
       'idempotent, and refuses a missing key', () async {
     // First provision succeeds.
@@ -288,8 +288,8 @@ void main() {
     expect(snap2.directory.where((d) => d.userId == 'sky'), isEmpty);
   });
 
-  // Verifies: EVS-PRD-action-dispatch/C/F
-  // Verifies: EVS-PRD-event-log/A/B
+  // Verifies: EVS-PRD-action-dispatch/C+F
+  // Verifies: EVS-PRD-event-log/A+B
   test('B12: every dispatch outcome — allowed and denied — is recorded in the '
       'log and attributed to its initiator', () async {
     // One success and one authorization denial by the same user.

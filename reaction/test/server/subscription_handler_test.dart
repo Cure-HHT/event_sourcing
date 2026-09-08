@@ -5,10 +5,10 @@
 // deny. Snapshot/Delta relay covered in e2e tests where the
 // full substrate is exercised.
 //
-// Verifies: EVS-PRD-cross-process-event-transport/D/E
+// Verifies: EVS-PRD-cross-process-event-transport/D+E
 // multiplex by
 //   subscriptionId and per-subscription authorization gating.
-// Verifies: EVS-PRD-auth-session/C/E
+// Verifies: EVS-PRD-auth-session/C+E
 // validator-driven auth on the
 //   first WS message; 4001 auth_rejected on AuthenticationDenied.
 

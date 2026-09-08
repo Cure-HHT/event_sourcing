@@ -13,8 +13,8 @@
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
-| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 872fc0dc |
-| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 06d5104c |
+| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 5c082273 |
+| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 5fd99e5f |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
@@ -35,7 +35,7 @@
 
 | ID                                         | Title                                                        | File                                    | Hash     |
 | ------------------------------------------ | ------------------------------------------------------------ | --------------------------------------- | -------- |
-| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | 2a4348d3 |
+| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | 6e9c508c |
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |

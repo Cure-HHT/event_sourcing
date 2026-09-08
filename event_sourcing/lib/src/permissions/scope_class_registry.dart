@@ -1,7 +1,7 @@
 // Implements: EVS-PRD-permissions-as-events
 // composition-time validation;
 //   refuses cycles, dangling parent refs, missing projection columns.
-// Implements: EVS-PRD-scoped-permissions/A/B
+// Implements: EVS-PRD-scoped-permissions/A+B
 // apps register their scope classes
 //   here; composition refuses on duplicates, dangling parent refs, missing
 //   columns, and cycles.

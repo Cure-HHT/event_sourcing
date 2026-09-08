@@ -4,7 +4,6 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
-// Validated by: JNY-04 (transient disconnect), JNY-05 (policy tuning).
 class SyncPolicyBar extends StatefulWidget {
   const SyncPolicyBar({required this.notifier, super.key});
 

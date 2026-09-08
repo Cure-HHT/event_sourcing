@@ -54,7 +54,6 @@ void main() {
           id: 'participant',
           registeredVersion: 1,
           name: 'Participant',
-          isMaterialized: true,
         ),
       )
       ..register(
@@ -62,7 +61,6 @@ void main() {
           id: 'role_permission_grant',
           registeredVersion: 1,
           name: 'Role-Permission Grant',
-          isMaterialized: false,
         ),
       )
       ..register(
@@ -70,7 +68,6 @@ void main() {
           id: 'user_role_scope',
           registeredVersion: 1,
           name: 'User-Role-Scope Assignment',
-          isMaterialized: false,
         ),
       )
       ..register(
@@ -78,7 +75,6 @@ void main() {
           id: 'action_denial',
           registeredVersion: 1,
           name: 'Action Denial',
-          isMaterialized: false,
         ),
       );
 

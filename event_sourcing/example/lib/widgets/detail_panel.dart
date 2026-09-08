@@ -6,8 +6,6 @@ import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
-// Validated by: JNY-01 (entry detail), JNY-03 (FIFO exhaustion), JNY-04
-// (retry attempts[]), JNY-05 (policy snapshot), JNY-09 (unjam / rehab).
 class DetailPanel extends StatefulWidget {
   const DetailPanel({
     required this.backend,

@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-destinations/A/D
+// Verifies: EVS-PRD-destinations/A+D
 // verifies that every destination
 // mutation audit (add, setStartDate, setEndDate, delete, tombstoneAndRefill)
 // stamps aggregateId = source.identifier so the per-install audit stream is

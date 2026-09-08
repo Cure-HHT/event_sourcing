@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-event-store-open/C/D
+// Verifies: EVS-DEV-event-store-open/C+D
 // Verifies: EVS-DEV-entry-type-downgrade-refusal
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';

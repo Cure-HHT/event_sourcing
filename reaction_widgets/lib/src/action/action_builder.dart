@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-reaction-widget-contract/C/E/G
+// Implements: EVS-PRD-reaction-widget-contract/C+E+G
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter/widgets.dart';

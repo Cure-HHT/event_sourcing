@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-destinations/A/D/F
+// Verifies: EVS-PRD-destinations/A+D+F
 // exercises the full dynamic lifecycle
 // of DestinationRegistry: dormant-seed on add (A), schedule persistence and
 // cold-restart recovery (D), and monotonic-backward setStartDate + gap-replay

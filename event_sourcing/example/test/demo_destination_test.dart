@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-destinations/A/E
+// Verifies: EVS-PRD-destinations/A+E
 // Verifies: EVS-PRD-destinations/B
 // Verifies: EVS-PRD-destinations/E
 // Verifies: EVS-PRD-destinations/E

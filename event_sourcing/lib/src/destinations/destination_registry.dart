@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-destinations/A/D/F
+// Implements: EVS-PRD-destinations/A+D+F
 // DestinationRegistry: configures
 // destinations on a deployment (A), persists schedules so state survives
 // restart (D), and supports dynamic add/deactivate/delete over the

@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-event-store-open/B/C
+// Verifies: EVS-DEV-event-store-open/B+C
 // Verifies the bootstrap-time `system.entry_type_registry_initialized`
 // audit event:
 //

@@ -1,9 +1,10 @@
 // Test fixtures: concrete Action and AuthorizationPolicy implementations used
 // across the actions test suite.
-// Verifies: EVS-PRD-action-dispatch/A
-// (concrete Action subclasses: HelloAction, BadParseAction, BadValidateAction, BadExecuteAction, OptionalKeyAction, RequiredKeyAction, TwoPermissionAction, MultiEventAction)
-// Verifies: EVS-PRD-action-dispatch/B
-// (AlwaysAllowPolicy satisfies AuthorizationPolicy interface for all-Allow path testing)
+// Concrete Action subclasses (HelloAction, BadParseAction, BadValidateAction,
+// BadExecuteAction, OptionalKeyAction, RequiredKeyAction, TwoPermissionAction,
+// MultiEventAction) and AlwaysAllowPolicy, an AuthorizationPolicy for the
+// all-Allow path. This file declares no tests, so it carries no citation —
+// the assertions belong to the tests that exercise these fixtures.
 
 import 'package:event_sourcing/event_sourcing.dart' show EventDraft;
 import 'package:event_sourcing/src/actions/action.dart';

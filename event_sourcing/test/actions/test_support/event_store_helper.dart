@@ -1,5 +1,7 @@
 // Test support: shared in-memory EventStore factory used by action dispatcher tests.
-// Verifies: EVS-PRD-action-dispatch/C (provides the EventStore into which denial and success events are recorded during dispatch tests)
+// Provides the EventStore into which denial and success events are recorded
+// during dispatch tests. This file declares no tests, so it carries no
+// citation.
 // In-memory EventStore bootstrap helper shared across actions test files.
 //
 // Uses flutter_test (not package:test) because EventStore depends on
@@ -34,15 +36,14 @@ Future<EventStore> bootstrapTestEventStore({
     registry.register(definition);
   }
 
-  // Register test-specific entry types. isMaterialized: false — these are
-  // audit records and test fixtures, not diary entries.
+  // Register test-specific entry types: audit records and test fixtures.
+  // Which views they reach is decided by each ProjectionSpec's interest.
   registry
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
         registeredVersion: 1,
         name: 'Action denial',
-        isMaterialized: false,
       ),
     )
     // greeting is emitted by HelloAction and MultiEventAction.
@@ -51,7 +52,6 @@ Future<EventStore> bootstrapTestEventStore({
         id: 'greeting',
         registeredVersion: 1,
         name: 'Greeting',
-        isMaterialized: false,
       ),
     );
 

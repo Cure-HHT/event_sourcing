@@ -1,6 +1,6 @@
 // test/demo_state_projection_test.dart
-// Verifies: EVS-PRD-permissions-as-events/B/C
-// Verifies: EVS-PRD-event-log/A/C
+// Verifies: EVS-PRD-permissions-as-events/B+C
+// Verifies: EVS-PRD-event-log/A+C
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_idempotency_store.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';

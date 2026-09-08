@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-action-dispatch/A/B/C
+// Verifies: EVS-PRD-action-dispatch/A+B+C
 // Verifies: EVS-PRD-permissions-as-events/B
 import 'package:action_permissions_demo/server/actions/edit_blue_note_action.dart';
 import 'package:event_sourcing/event_sourcing.dart';

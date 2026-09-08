@@ -1,5 +1,5 @@
 // reaction/test/e2e/view_test.dart
-// Verifies: EVS-PRD-view-subscriber/C/D, EVS-PRD-cross-process-event-transport/A-D
+// Verifies: EVS-PRD-view-subscriber/C+D, EVS-PRD-cross-process-event-transport/A+B+C+D
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';

@@ -3,11 +3,11 @@
 //
 // Package-private; not exported from reaction.dart.
 //
-// Implements: EVS-DEV-authz-watcher/A/B/C/E
-// the per-userId index the
-//   AuthorizationWatcher consults when force-closing or sending stale_data;
-//   carries the per-connection state separately from the watcher's
-//   single substrate subscription.
+// Implements: EVS-DEV-authz-watcher/E
+//
+// The per-userId index the AuthorizationWatcher consults when force-closing
+// or sending stale_data; carries the per-connection state separately from
+// the watcher's single substrate subscription.
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 

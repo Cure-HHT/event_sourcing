@@ -4,7 +4,6 @@ import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
-// Validated by: JNY-07 (Add destination with past startDate triggers replay).
 class AddDestinationDialog extends StatefulWidget {
   const AddDestinationDialog({required this.appState, super.key});
 

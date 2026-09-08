@@ -1,4 +1,4 @@
-// Verifies: EVS-PRD-library-charter/A/E
+// Verifies: EVS-PRD-library-charter/A+E
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

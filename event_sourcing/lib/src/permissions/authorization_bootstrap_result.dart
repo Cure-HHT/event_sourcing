@@ -9,7 +9,7 @@
 //   PolicyReady is always backed by the event-log projection; PolicyFailSafe
 //   denies everything rather than consulting any external authority when the
 //   event-derived projection is unavailable (with the carried errors).
-// Implements: EVS-DEV-bootstrap-action-permissions/B/C
+// Implements: EVS-DEV-bootstrap-action-permissions/B+C
 // sealed return
 //   shape: PolicyFailSafe on validation failure, PolicyReady on success.
 

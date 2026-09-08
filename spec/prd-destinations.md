@@ -23,6 +23,14 @@ E. The library SHALL accept an application-supplied delivery implementation for 
 
 F. Destinations SHALL be addable and removable dynamically over the deployment's operating lifetime.
 
+G. While delivery on one destination is failing, the library SHALL continue delivering queued events on every other destination.
+
+H. If an application-supplied delivery implementation raises an error while transiting an event, then the library SHALL treat that error as a failed delivery attempt.
+
+I. The library SHALL leave an event whose delivery attempt failed at the head of its destination's queue.
+
+J. The library SHALL record each delivery attempt made for a queued event.
+
 ## Rationale
 
 **Why a configurable filter per destination?** Different destinations care about different slices of the event log. A sponsor EDC wants only the events for participants in that sponsor's trial; a push-notification gateway wants only notification-emitting events. Pushing the entire log to every destination wastes everyone's resources and leaks data across boundaries. Filtering at the destination configuration concentrates that work in the library.
@@ -33,11 +41,17 @@ F. Destinations SHALL be addable and removable dynamically over the deployment's
 
 **Why pluggable delivery mechanisms?** Real deployments transit events over a wide range of transports — HTTPS to a clinical EDC, push notifications to mobile devices, a relay's own HTTP endpoint, a sponsor's custom protocol. Picking one transport in the library would force every consumer to either use that transport or shim around it. Treating the transport as a per-destination plug-in keeps the library transport-agnostic.
 
+**Why isolate failure between destinations?** Destinations fail independently and for unrelated reasons — a sponsor's endpoint is down for maintenance while a push gateway is healthy. Because each destination's queue preserves order, an undeliverable event at the head necessarily halts that queue; if that halt also stopped the other destinations, one unreachable recipient would silently stop delivery to every recipient. Isolation is what makes a per-destination queue a containment boundary rather than a shared point of failure.
+
+**Why treat a raised error as a failed attempt rather than a lost event?** The delivery implementation is application-supplied and therefore outside the library's control: it may throw on a DNS failure, a timeout, or its own bug. Three outcomes are possible when it does — drop the event, propagate the error to the caller of the delivery pass, or record the failure and retry. Only the third preserves the at-least-once semantics the durable queue exists to provide, so it is the one the library commits to. Recording the attempt (rather than silently retrying) is what makes a wedged head diagnosable: an operator can see how many times an event has been tried and with what outcome, which a bare retry loop does not expose.
+
 **Why dynamic registration?** A diary user signs up for a sponsored trial after the diary has been operating for some time. Adding the sponsor's destination at that point must work without restarting the deployment or invalidating its log. The same property supports linking and unlinking destinations as a participant moves between trials.
 
 ## Changelog
 
+- 2026-09-07 | 5c082273 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-07 | - | - | Michael Lewis (<michael@anspar.org>) | Add G-J: failure isolation between destinations, and failed-attempt handling for an application-supplied delivery implementation
 - 2026-08-10 | 872fc0dc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | ec656743 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Destinations* | **Hash**: 872fc0dc
+*End* *Destinations* | **Hash**: 5c082273

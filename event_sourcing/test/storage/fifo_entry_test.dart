@@ -197,8 +197,10 @@ void main() {
       expect(decoded, equals(entry));
     });
 
-    // Verifies: equality still covers the new eventIds and sequenceRange
-    // fields; two entries that differ only in eventIds are NOT equal.
+    // Equality covers eventIds and sequenceRange: two entries differing only
+    // in eventIds are NOT equal. These guard the completeness of `==`, which
+    // the backend conformance harness uses to compare a read-back entry
+    // against the one enqueueFifo returned.
     test('equality distinguishes entries differing only in eventIds', () {
       final a = makeBatch(eventIds: const ['ev-x']);
       final b = makeBatch(eventIds: const ['ev-y']);

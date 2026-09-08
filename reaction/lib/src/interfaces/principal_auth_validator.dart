@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-auth-session/C/D
+// Implements: EVS-PRD-auth-session/C+D
 // defines the
 // PrincipalAuthValidator interface (C: authenticate(String) returns
 // the Principal or throws AuthenticationDenied) and the credential-

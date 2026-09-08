@@ -1,4 +1,4 @@
-// Implements: EVS-PRD-reaction-widget-contract/C/G/I/J
+// Implements: EVS-PRD-reaction-widget-contract/C+G+I+J
 
 import 'dart:async';
 

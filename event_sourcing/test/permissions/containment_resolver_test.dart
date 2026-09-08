@@ -3,7 +3,7 @@
 // Verifies: EVS-PRD-scoped-permissions/G
 // fail-closed on missing containment
 //   rows.
-// Verifies: EVS-DEV-containment-resolver/A/B/C/D — identity on equal class,
+// Verifies: EVS-DEV-containment-resolver/A+B+C+D — identity on equal class,
 //   null on non-ancestor target, per-hop projection read, and fail-closed
 //   on empty row / missing parent column.
 

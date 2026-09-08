@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-scope-descendant-expander/A/B/C/D/E
+// Verifies: EVS-DEV-scope-descendant-expander/A+B+C+D+E
 // downward
 //   containment expansion: identity short-circuit, non-ancestor empty,
 //   per-hop inverse query, fail-closed on missing/malformed row,

@@ -1,5 +1,5 @@
 // reaction/test/e2e/action_test.dart
-// Verifies: EVS-PRD-action-submitter/C/D/E
+// Verifies: EVS-PRD-action-submitter/C+D+E
 // (round-trip with each
 // DispatchResult variant; bearer header; source-identical behavior).
 import 'package:event_sourcing/event_sourcing.dart';

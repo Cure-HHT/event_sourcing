@@ -1,8 +1,6 @@
-// Verifies: EVS-PRD-action-dispatch/D
-// IdempotencyStore contract.
-// Verifies: EVS-DEV-postgres-backend/F
-// InMemoryIdempotencyStore passes
-//   the conformance harness alongside PostgresIdempotencyStore.
+// InMemoryIdempotencyStore runs the backend-agnostic IdempotencyStore
+// conformance harness, alongside PostgresIdempotencyStore. The harness's
+// assertions are cited on its own tests rather than here.
 
 @TestOn('vm')
 library;

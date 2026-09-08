@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 
-// Design: §7.4 palette lock. Tripwire test in styles_test.dart asserts
-// every hex value. Palette is at full brightness for readability on a
-// black background, with state cues kept distinct (green = sent,
-// red = retrying, magenta = wedged, yellow = draining head / selection
-// outline, dark navy = cross-panel selection fill).
+// Demo palette, at full brightness for readability on a black background,
+// with state cues kept distinct (green = sent, red = retrying,
+// magenta = wedged, yellow = draining head / selection outline,
+// dark navy = cross-panel selection fill).
 class DemoColors {
   const DemoColors._();
 
@@ -25,8 +24,8 @@ class DemoColors {
   static const Color blue = Color(0xFF0066FF);
 }
 
-// Design: §7.4 palette lock. Body is 20px bold monospace; headers are
-// 24-28px bold monospace in accent yellow.
+// Body is 20px bold monospace; headers are 24-28px bold monospace in
+// accent yellow.
 class DemoText {
   const DemoText._();
 
@@ -49,13 +48,12 @@ class DemoText {
   );
 }
 
-// Design: §7.4 palette lock — 3px white rectangular border on every
-// framed panel and button. Rectangular by choice (no borderRadius).
+// 3px white rectangular border on every framed panel and button.
+// Rectangular by choice (no borderRadius).
 final Border demoBorder = Border.all(color: DemoColors.border, width: 3.0);
 
-// Design: §7.4 palette lock — 2px yellow rectangular outline wrapped
-// around the currently selected row so selection remains visible
-// against the darker navy selection fill.
+// 2px yellow rectangular outline wrapped around the currently selected
+// row so selection remains visible against the darker navy selection fill.
 final Border demoSelectedBorder = Border.all(
   color: DemoColors.selectedOutline,
   width: 2.0,

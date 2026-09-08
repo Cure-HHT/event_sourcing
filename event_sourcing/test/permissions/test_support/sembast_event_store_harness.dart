@@ -54,17 +54,15 @@ const List<EntryTypeDefinition> _kPermissionsEntryTypeDefinitions =
         id: kRolePermissionGrantEntryType,
         registeredVersion: 1,
         name: 'Role-permission grant',
-        // isMaterialized: false — projection is driven by the registered
-        // ProjectionSpec (rolePermissionGrantsSpec).
-        isMaterialized: false,
+        // Projection is driven by the registered ProjectionSpec
+        // (rolePermissionGrantsSpec).
       ),
       EntryTypeDefinition(
         id: kUserRoleScopeEntryType,
         registeredVersion: 1,
         name: 'User-role-scope assignment',
-        // isMaterialized: false — projection is driven by the registered
-        // ProjectionSpec (userRoleScopesSpec).
-        isMaterialized: false,
+        // Projection is driven by the registered ProjectionSpec
+        // (userRoleScopesSpec).
       ),
     ];
 

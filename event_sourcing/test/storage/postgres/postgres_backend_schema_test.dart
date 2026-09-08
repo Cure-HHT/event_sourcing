@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-postgres-backend/A/B
+// Verifies: EVS-DEV-postgres-backend/A+B
 // schema includes the JSONB view_rows table (B); PostgresBackend.open emits the
 // schema DDL (every expected CREATE TABLE) and is idempotent on re-open
 // (the second open against a provisioned database is a no-op on the
@@ -42,6 +42,7 @@ void main() {
       await conn.close();
     });
 
+    // Verifies: EVS-DEV-postgres-backend/E
     test('open() emits CREATE TABLE for every expected table', () async {
       final backend = await PostgresBackend.open(
         url: url,
