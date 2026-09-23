@@ -63,7 +63,11 @@ void main() {
       await conn.execute('DROP SCHEMA public CASCADE');
       await conn.execute('CREATE SCHEMA public');
       await conn.close();
-      backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
     });
 
     tearDown(() => backend.close());
@@ -124,8 +128,16 @@ void main() {
       await conn.execute('DROP SCHEMA public CASCADE');
       await conn.execute('CREATE SCHEMA public');
       await conn.close();
-      backendA = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
-      backendB = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      backendA = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
+      backendB = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
       storeA = await _openStore(
         backendA,
         'aaaa0001-0000-4000-8000-00000000000a',
@@ -242,7 +254,11 @@ void main() {
       await conn.execute('DROP SCHEMA public CASCADE');
       await conn.execute('CREATE SCHEMA public');
       await conn.close();
-      backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
       store = await _openStore(backend, 'aaaa0001-0000-4000-8000-00000000000b');
     });
 
@@ -334,6 +350,7 @@ void main() {
         url: url,
         sslMode: SslMode.disable,
         bootLockWait: bootLockWait,
+        provisionSchema: true,
       );
       backends.add(backend);
       return backend;

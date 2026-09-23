@@ -35,6 +35,7 @@ class _PostgresWedgeDatabase implements QueueTestDatabase {
     final backend = await PostgresBackend.open(
       url: _url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     _backends.add(backend);
     return backend;

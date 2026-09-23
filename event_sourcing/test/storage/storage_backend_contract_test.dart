@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -296,6 +297,18 @@ class _InMemoryBackend extends StorageBackend {
   @override
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
       throw UnimplementedError();
+  @override
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  ) => throw UnimplementedError();
+  @override
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeDataGenerationTxn(
+    Transaction txn,
+    GenerationRecord record,
+  ) => throw UnimplementedError();
   @override
   Stream<StoredEvent> readEventsReverseInTxn(
     Transaction txn, {

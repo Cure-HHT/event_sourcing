@@ -1,8 +1,8 @@
 // PostgresIdempotencyStore runs the backend-agnostic IdempotencyStore
 // conformance harness — the same suite InMemoryIdempotencyStore passes —
-// twice: over a pool the caller owns, and over the pool of a
+// twice: over a pool the caller owns, and through the transactions of a
 // PostgresBackend (`forBackend`). It reads and writes the idempotency table
-// provisioned by ensurePostgresSchema, keyed by (action_name,
+// PostgresBackend.provision creates, keyed by (action_name,
 // principal_id, idempotency_key). The harness's assertions are cited on
 // its own tests rather than here.
 
@@ -10,8 +10,6 @@
 library;
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
-    show ensurePostgresSchema;
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
@@ -32,10 +30,9 @@ void main() {
       endpoint,
       settings: const ConnectionSettings(sslMode: SslMode.disable),
     );
-    // First-run safety: ensurePostgresSchema is idempotent so a
-    // re-run is harmless. We invoke it inside a transaction to match
-    // PostgresBackend.open's contract (Task 1).
-    await tmp.runTx(ensurePostgresSchema);
+    // Provisioning leaves a provisioned schema untouched, so a re-run is
+    // harmless.
+    await PostgresBackend.provision(url, sslMode: SslMode.disable);
     await tmp.execute('TRUNCATE idempotency');
     await tmp.close();
 
@@ -62,6 +59,7 @@ void main() {
     final backend = await PostgresBackend.open(
       url: url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     backends.add(backend);
     final tmp = await Connection.open(
@@ -71,12 +69,11 @@ void main() {
     await tmp.execute('TRUNCATE idempotency');
     await tmp.close();
     return PostgresIdempotencyStore.forBackend(backend);
-  }, label: 'postgres, over the backend pool');
+  }, label: 'postgres, through the backend');
 
   // Verifies: EVS-DEV-postgres-backend/F
-  // a store built over the backend's pool
-  //   persists a dispatch outcome in the backend's database, and stops
-  //   serving once the backend that owns the pool is closed.
+  // a store built over the backend persists a dispatch outcome in the
+  //   backend's database, and stops serving once the backend is closed.
   test('forBackend round-trips an outcome, and fails once the backend is '
       'closed', () async {
     if (url == null) {
@@ -86,6 +83,7 @@ void main() {
     final backend = await PostgresBackend.open(
       url: url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     final store = PostgresIdempotencyStore.forBackend(backend);
     await store.record(

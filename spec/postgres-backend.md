@@ -82,8 +82,9 @@ realized through a different mechanism.
 
 ## Schema overview
 
-The Postgres schema is a small, fixed set of tables emitted at `open()`
-time via `CREATE TABLE IF NOT EXISTS`. Each table maps one-for-one to a
+The Postgres schema is a small, fixed set of tables that
+`PostgresBackend.provision` creates, as the ordered migration steps of
+`postgres_schema.dart`, in a provisioning step of its own. Each table maps one-for-one to a
 sembast store the reference impl uses today; the contents are the same
 `StoredEvent` / view-row / FIFO-entry / KV shapes the substrate already
 operates on. The tables are:
@@ -109,7 +110,9 @@ operates on. The tables are:
   maintained by `EventStore.open`'s snapshot-promotion pass.
   One row per (view, entry type); columns `view_name TEXT`,
   `entry_type TEXT`, `target_major INTEGER`, `target_minor INTEGER`,
-  keyed by `(view_name, entry_type)`.
+  and `behind BOOLEAN` (the view catch-up mark: true while the view is
+  behind the log for that entry type), keyed by
+  `(view_name, entry_type)`.
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)` with the
   queued event reference and delivery bookkeeping columns
@@ -118,8 +121,10 @@ operates on. The tables are:
   `state TEXT`).
 - **`backend_state`** — the substrate's general-purpose KV bookkeeping
   area (library-version watermark, current sequence counter, last-hash
-  cache, originator identity). Columns `key TEXT PRIMARY KEY`,
-  `value JSONB`.
+  cache, originator identity, the provisioned schema version pair, the
+  database's generation record and the records that map the generation
+  guard's lock keys back to their components). Columns
+  `key TEXT PRIMARY KEY`, `value JSONB`.
 - **`security_context`** — the persisted role/permission/scope snapshot
   the substrate maintains for closed-under-events authorization
   evaluation. Schema mirrors the sembast layout; one logical row per
@@ -171,11 +176,27 @@ store to the dedicated `backend_state` table.
   sequence_in_queue)`, not per-destination sembast stores. Adding a new
   destination is a no-op at the DDL level; sembast's lazy-store
   creation is replaced by row inserts into the shared table.
-- Schema DDL is emitted at backend `open()` time as `CREATE TABLE IF
-  NOT EXISTS` statements; sembast creates stores lazily on first write.
-  The upfront DDL makes Postgres deployments observable (a freshly-
-  opened DB has the tables present even before any events are
-  appended), which matters for ops tooling.
+- Schema DDL runs in a provisioning step (`PostgresBackend.provision`)
+  that a deployment runs once, before its instances open the database;
+  `open` runs no DDL and verifies the stored schema version and minimum
+  compatible version (EVS-DEV-postgres-backend/G, H). Sembast creates
+  stores lazily on first write. The upfront DDL makes Postgres
+  deployments observable (a freshly provisioned database has the tables
+  present even before any events are appended), which matters for ops
+  tooling.
+- Each backend holds a dedicated lock session besides its pool, on which
+  it holds the incompatible-generation guard's advisory locks
+  (EVS-DEV-postgres-backend/J, EVS-DEV-version-compatibility/F to I). The
+  lock connection must be one real server session: a direct connection
+  to the database, or a session-mode proxy that resets sessions on
+  release, never a transaction-mode pooler. `open` checks that three
+  separate statements reach one server session carrying a setting the
+  first made and that the session reaches the pool's database and schema,
+  but the check can miss a pooler that happens to hand back the same
+  server connection every time. The library sets server-side keepalives
+  and no idle-session timeout on it; a proxy between the process and the
+  database has client-side timeouts of its own, which the deployment
+  configures. The lock role must be allowed to end its own sessions.
 - JSONB payloads accept native Postgres JSON operators on the
   underlying column, but the substrate's API surface does not expose
   them; all reads go through the abstract `StorageBackend` methods.

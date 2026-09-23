@@ -26,7 +26,8 @@
 // Implements: EVS-DEV-event-store-open/E
 // the whole boot runs in one
 //   bootTransaction, refusals first, then the library-version event,
-//   seeding, promotion, re-derivation and the boot record (_runBoot).
+//   seeding, promotion, re-derivation, the generation record and the boot
+//   record (_runBoot).
 // Implements: EVS-DEV-event-store-open/F
 // the database identity is minted
 //   or adopted at the first open, recorded in lib_version_initialized, and
@@ -88,6 +89,7 @@ import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -178,6 +180,7 @@ class EntryTypeVersionDowngradeError extends Error {
     required this.entryType,
     required this.fromVersion,
     required this.toVersion,
+    this.recordedByOpen = false,
   });
 
   /// The entry type whose registered major is below its stored major.
@@ -189,11 +192,18 @@ class EntryTypeVersionDowngradeError extends Error {
   /// The version this build registers for [entryType].
   final EntryTypeVersion toVersion;
 
+  /// True when the higher major comes from the database's generation
+  /// record (an earlier open registered it) rather than from a stored view
+  /// target; [fromVersion] then carries that major with minor 0.
+  final bool recordedByOpen;
+
   @override
   String toString() =>
       'EntryTypeVersionDowngradeError: entry type "$entryType" was '
-      'previously folded at version $fromVersion (stored in '
-      'view_target_versions), but this build registers version $toVersion. '
+      '${recordedByOpen ? 'registered at major ${fromVersion.major} by an '
+                'earlier open of the database (its generation record)' : 'previously folded at version $fromVersion (stored in '
+                'view_target_versions)'}, '
+      'but this build registers version $toVersion. '
       'A build whose registered major (${toVersion.major}) is below the '
       'stored major (${fromVersion.major}) is refused. Run a build that '
       'registers major ${fromVersion.major} or higher for "$entryType".';
@@ -214,6 +224,7 @@ class EventStore {
     required this.source,
     required this.securityContexts,
     required this.databaseId,
+    required GenerationRegistration registration,
     this.syncCycleTrigger,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
@@ -225,6 +236,7 @@ class EventStore {
          entryTypes: entryTypes,
        ),
        _promoters = promoters ?? PromoterRegistry(),
+       _registration = registration,
        _clock = clock,
        _uuid = uuid ?? const Uuid();
 
@@ -239,6 +251,10 @@ class EventStore {
   /// first open, recorded in its `lib_version_initialized` event, and the
   /// same for every event store over the database, whatever its [source].
   final String databaseId;
+
+  /// This store's registration with the backend's incompatible-generation
+  /// guard, released by [close].
+  final GenerationRegistration _registration;
 
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
   /// supplied directly on the constructor). Used by `rebuildView` to apply
@@ -260,8 +276,21 @@ class EventStore {
   /// [securityContexts]) must be supplied; the returned store is fully
   /// configured and ready for use.
   ///
-  /// The boot runs in one storage transaction. It first decides, before
-  /// writing anything, whether this build may open the database:
+  /// Before anything is written, the build registers its data generation
+  /// (its data-format major and each registered entry type's major) with
+  /// the backend's incompatible-generation guard: while another live
+  /// instance on the database holds a conflicting generation -- another
+  /// data-format major, or another major of an entry type both register --
+  /// the open throws [IncompatibleGenerationException]. On Postgres the
+  /// guard covers every process on the database, on the web every tab of
+  /// the origin (a page without Web Locks throws
+  /// [GenerationGuardConfigurationException]); a Sembast database outside
+  /// the browser is used by one process. The registration lasts until
+  /// [close], and a failed open releases it.
+  ///
+  /// The boot then runs in one storage transaction, under the guard's
+  /// exclusive boot lock. It first decides, before writing anything,
+  /// whether this build may open the database:
   ///
   /// - The database identity stored beside the log must equal the one the
   ///   database's first `lib_version_initialized` event records; a missing
@@ -269,11 +298,13 @@ class EventStore {
   ///   database written by a build that recorded no identity or no data
   ///   format, or whose stored shapes predate this data format, throws
   ///   [DatabaseResetRequiredError]: it must be reset.
-  /// - The data-format major recorded by the latest library-version event
-  ///   must equal this build's ([LibVersion.dataFormat]); another major
-  ///   throws [DataFormatIncompatibleError].
+  /// - The data-format major recorded by the latest library-version event,
+  ///   and by the database's generation record, must equal this build's
+  ///   ([LibVersion.dataFormat]); another major throws
+  ///   [DataFormatIncompatibleError].
   /// - No registered entry type's major may be below the major stored for
-  ///   it in `view_target_versions`; a lower one throws
+  ///   it in `view_target_versions`, or recorded for it in the generation
+  ///   record by an earlier boot; a lower one throws
   ///   [EntryTypeVersionDowngradeError].
   ///
   /// Only the library-version events this database appended itself count;
@@ -285,8 +316,8 @@ class EventStore {
   /// recorded last, older ones included; the target versions of newly
   /// registered view and entry-type pairs; the promotion of views whose
   /// stored targets lag the registered versions; the re-derivation of views
-  /// that are behind the log; and a boot record. A refused boot writes
-  /// nothing.
+  /// that are behind the log; the generation record, merged with this
+  /// build's generation; and a boot record. A refused boot writes nothing.
   ///
   /// Deployment. Builds with the same data-format major and the same
   /// entry-type majors share a database in any mix -- a canary beside the
@@ -315,7 +346,10 @@ class EventStore {
   /// than abort it. The wait lasts for the whole boot: its reads of the
   /// library-version events and the stored view targets, its checks, and
   /// any seeding, promotion and re-derivation it performs, the last two
-  /// proportional to the events and rows of the views they rewrite.
+  /// proportional to the events and rows of the views they rewrite. A
+  /// release that promotes a large view, or adds a view over a long log,
+  /// pauses the serving revision's appends for as long; measure the boot on
+  /// a copy of production data before such a rollout.
   // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
   // the sole production constructor; the whole boot, refusals first, runs
   //   in one storage transaction (see _runBoot).
@@ -332,7 +366,7 @@ class EventStore {
   }) async {
     final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    final databaseId = await _runBoot(
+    final (:databaseId, :registration) = await _guardedBoot(
       storage: storage,
       entryTypes: entryTypes,
       projections: effectiveProjections,
@@ -345,6 +379,7 @@ class EventStore {
       source: source,
       securityContexts: securityContexts,
       databaseId: databaseId,
+      registration: registration,
       projections: effectiveProjections,
       promoters: effectivePromoters,
       syncCycleTrigger: syncCycleTrigger,
@@ -356,9 +391,10 @@ class EventStore {
   /// Opens an [EventStore] for a test: the boot of [open], refusals
   /// included, without its library-version event.
   ///
-  /// It refuses what [open] refuses (the database identity, the data
-  /// format, an entry-type downgrade), and otherwise seeds, promotes and
-  /// re-derives views and writes the boot record as [open] does. It
+  /// It runs the incompatible-generation guard and refuses what [open]
+  /// refuses (the database identity, the data format, an entry-type
+  /// downgrade), and otherwise seeds, promotes and re-derives views and
+  /// writes the generation and boot records as [open] does. It
   /// appends no `lib_version_initialized` or `lib_version_changed` event,
   /// so sequence numbers stay predictable, and at a first open it mints the
   /// database identity without a log record; a later [open] adopts that
@@ -382,7 +418,7 @@ class EventStore {
   }) async {
     final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    final databaseId = await _runBoot(
+    final (:databaseId, :registration) = await _guardedBoot(
       storage: storage,
       entryTypes: entryTypes,
       projections: effectiveProjections,
@@ -395,6 +431,7 @@ class EventStore {
       source: source,
       securityContexts: securityContexts,
       databaseId: databaseId,
+      registration: registration,
       projections: effectiveProjections,
       promoters: effectivePromoters,
       syncCycleTrigger: syncCycleTrigger,
@@ -403,17 +440,71 @@ class EventStore {
     );
   }
 
+  /// The build this process runs as: the compiled [LibVersion] constants,
+  /// or the declaration a test installed.
+  static ({String version, DataFormatVersion dataFormat}) _build() =>
+      DeliveryTestHooks.current?.buildDeclaration ??
+      (version: LibVersion.version, dataFormat: LibVersion.dataFormat);
+
+  /// The generation guard around the boot of [open] and [openForTest]:
+  /// registers this build's generation with the backend's guard (refusing a
+  /// conflicting live instance before any write), runs the boot transaction
+  /// under the boot lock the registration holds, completes the boot (the
+  /// registration joins the backend's active set and the boot lock is
+  /// released). Any failure after the registration releases it before the
+  /// error surfaces.
+  // Implements: EVS-DEV-version-compatibility/F+G
+  // register before any write; the boot transaction runs under the boot
+  //   lock; a failed open releases its registration.
+  static Future<({String databaseId, GenerationRegistration registration})>
+  _guardedBoot({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required ProjectionRegistry projections,
+    required PromoterRegistry promoters,
+    required bool recordVersion,
+  }) async {
+    final build = _build();
+    final descriptor = GenerationDescriptor(
+      packageVersion: build.version,
+      dataFormat: build.dataFormat,
+      entryTypes: <String, EntryTypeVersion>{
+        for (final definition in entryTypes.all())
+          definition.id: definition.registeredVersion,
+      },
+    );
+    final registration = await storage.registerGeneration(descriptor);
+    try {
+      final databaseId = await _runBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: projections,
+        promoters: promoters,
+        recordVersion: recordVersion,
+        descriptor: descriptor,
+        registration: registration,
+      );
+      await registration.completeBoot();
+      return (databaseId: databaseId, registration: registration);
+    } catch (_) {
+      await registration.release();
+      rethrow;
+    }
+  }
+
   /// The boot of [open] (with [recordVersion]) and of [openForTest]
   /// (without), in one `bootTransaction` of [storage]. Returns the database
   /// identity.
   ///
   /// Every refusal is decided before the first write: the stored shapes,
-  /// the database identity, the data format and the entry-type majors.
-  /// Then, in order: the library-version event (when [recordVersion] and
-  /// one is due), view-target seeding, snapshot promotion (each promoted
-  /// pair audited by a `view_snapshot_promoted` event), the re-derivation of
-  /// views behind the log, and the boot record. The whole body may run more
-  /// than once (a serialization retry, or a browser database re-running it
+  /// the database identity, the data format (in the log, then in the
+  /// generation record) and the entry-type majors (in the stored view
+  /// targets, then in the generation record). Then, in order: the
+  /// library-version event (when [recordVersion] and one is due),
+  /// view-target seeding, snapshot promotion (each promoted pair audited by
+  /// a `view_snapshot_promoted` event), the re-derivation of views behind
+  /// the log, the merged generation record and [registration]'s own
+  /// records, and the boot record. The whole body may run more than once (a serialization retry, or a browser database re-running it
   /// after another tab committed); each run decides again from what it
   /// reads.
   // Implements: EVS-DEV-event-store-open/B+C+D+E+F
@@ -429,17 +520,20 @@ class EventStore {
   // Implements: EVS-DEV-version-compatibility/L
   // views behind the log for an entry type in their interest are
   //   re-derived in the boot transaction.
+  // Implements: EVS-DEV-version-compatibility/I
+  // the generation record refuses, before any write, a build it does not
+  //   admit, and every accepted boot merges its generation into it.
   static Future<String> _runBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required ProjectionRegistry projections,
     required PromoterRegistry promoters,
     required bool recordVersion,
+    required GenerationDescriptor descriptor,
+    required GenerationRegistration registration,
   }) {
     final hooks = DeliveryTestHooks.current;
-    final build =
-        hooks?.buildDeclaration ??
-        (version: LibVersion.version, dataFormat: LibVersion.dataFormat);
+    final build = _build();
     return storage.bootTransaction<String>((txn) async {
       _observeBootBodyRun(hooks);
 
@@ -486,12 +580,39 @@ class EventStore {
           );
         }
       }
+      final record = await storage.readDataGenerationTxn(txn);
+      if (record != null && record.dataFormatMajor != build.dataFormat.major) {
+        final recordedFormat = latest?.dataFormat;
+        throw DataFormatIncompatibleError(
+          recordedPackageVersion: latest?.packageVersion ?? '(unrecorded)',
+          recordedDataFormat:
+              recordedFormat != null &&
+                  recordedFormat.major == record.dataFormatMajor
+              ? recordedFormat
+              : DataFormatVersion(record.dataFormatMajor, 0),
+          packageVersion: build.version,
+          dataFormat: build.dataFormat,
+        );
+      }
       await verifyNoEntryTypeDowngrade(
         txn: txn,
         backend: storage,
         projections: projections,
         entryTypes: entryTypes,
       );
+      if (record != null) {
+        for (final entry in descriptor.entryTypes.entries) {
+          final recordedMajor = record.entryTypeMajors[entry.key];
+          if (recordedMajor != null && recordedMajor > entry.value.major) {
+            throw EntryTypeVersionDowngradeError(
+              entryType: entry.key,
+              fromVersion: EntryTypeVersion(recordedMajor, 0),
+              toVersion: entry.value,
+              recordedByOpen: true,
+            );
+          }
+        }
+      }
 
       // -------- Write.
       final String databaseId;
@@ -578,6 +699,13 @@ class EventStore {
         entryTypes: entryTypes,
         seeded: seeded,
       );
+      final merged = record == null
+          ? GenerationRecord.of(descriptor)
+          : record.merge(descriptor);
+      if (merged != record) {
+        await storage.writeDataGenerationTxn(txn, merged);
+      }
+      await registration.recordInTxn(txn);
       // An accepted boot always writes, so a browser database checks this
       // transaction against other tabs' commits and re-runs it on fresh data
       // when one committed first.
@@ -628,9 +756,14 @@ class EventStore {
 
   /// Close the backend and subscription engine, releasing all resources.
   /// Not safe to call concurrently with in-flight work.
+  ///
+  /// The generation registration is released last, once the store and the
+  /// backend have stopped writing, so no write of this store runs after a
+  /// conflicting build could register.
   Future<void> close() async {
     await _subs.close();
     await backend.close();
+    await _registration.release();
   }
 
   /// Run [body] inside a single `backend.transaction`, collecting every

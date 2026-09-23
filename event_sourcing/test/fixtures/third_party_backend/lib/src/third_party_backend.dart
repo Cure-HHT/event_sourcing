@@ -272,6 +272,24 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  ) async => const _SingleProcessRegistration();
+
+  @internal
+  @override
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeDataGenerationTxn(
+    Transaction txn,
+    GenerationRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
   Stream<StoredEvent> readEventsReverseInTxn(
     Transaction txn, {
     Set<String>? eventTypes,
@@ -395,4 +413,24 @@ class ThirdPartyBackend extends StorageBackend {
 
   @override
   Future<void> close() => throw UnimplementedError();
+}
+
+/// The registration of a backend used by one process: it holds nothing. A
+/// backend several processes share implements the generation guard
+/// instead.
+final class _SingleProcessRegistration extends GenerationRegistration {
+  const _SingleProcessRegistration();
+
+  @override
+  bool get isLost => false;
+
+  @internal
+  @override
+  Future<void> recordInTxn(Transaction txn) async {}
+
+  @override
+  Future<void> completeBoot() async {}
+
+  @override
+  Future<void> release() async {}
 }

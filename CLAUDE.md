@@ -245,19 +245,48 @@ The currently-trusted inputs are:
   `event_sourcing/lib/src/storage/postgres/`). Both pass the same
   backend-agnostic conformance harness. Alternative backends
   (IndexedDB, etc.) are app-supplied; each is the trusted persistence
-  layer for that deployment. Precondition (`EVS-PRD-destinations/L`):
+  layer for that deployment. A backend that several processes or tabs
+  share is also trusted to run the incompatible-generation guard (the
+  live registration, the serialized boots, and on Postgres the
+  per-transaction fence): one that does not lets builds of different
+  majors write one database side by side, and nothing checks that it
+  guards. Precondition (`EVS-PRD-destinations/L`):
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
   positions, schedules, replay requests, wedge records, the registry
-  check record, the database identity and the view catch-up marks, and
-  the security context it stores beside each event) changes only
-  through the library's operations. Every
+  check record, the database identity, the generation records and the
+  view catch-up marks, and the security context it stores beside each
+  event) changes only through the library's operations. Every
   `StorageBackend` member that writes is `@internal`, which the
   analyzer enforces but nothing enforces at run time: the consumer
   holds the backend (and, on Sembast, the database it opened), and a
   backend in another package keeps the guard only by marking its own
   overrides `@internal`.
+- **Deployment-supplied Postgres lock-session path.** The connection a
+  `PostgresBackend` holds its generation locks on (`lockUrl`, or the
+  pool's URL) is trusted to be one server session reaching the pool's
+  server, database and schema (a direct connection or a session-mode
+  proxy that resets sessions, never a transaction-mode pooler), to carry
+  the keepalives the library sets, and to let the lock role end its own
+  sessions. The library checks what it can when the backend opens and
+  when it replaces a lost lock session (one server session, the same
+  database and schema, and a lock the pool takes visible to the lock
+  session, so the same server) and documents the rest
+  (`EVS-DEV-postgres-backend/J`). An unaudited boundary with no
+  pluggable interface.
+- **The browser's lock manager (Web Locks).** On the web the
+  incompatible-generation guard runs on `navigator.locks`, trusted to
+  grant a lock name exclusively or shared as requested, to report held
+  locks when queried, and to release every lock of a closed or
+  discarded page (`EVS-DEV-version-compatibility/H`). An unaudited
+  boundary with no pluggable interface; a page without it is refused.
+- **One opener of a Sembast database file outside the browser.** On io
+  a `SembastBackend` registers nothing with the generation guard: the
+  database file is trusted to be opened by one isolate of one process
+  (a second process, or a second isolate such as a mobile background
+  isolate, sees no lock of the first) (`EVS-DEV-version-compatibility/H`).
+  An unaudited deployment assumption with no pluggable interface.
 - **`Destination` outbound transport and delivery configuration.**
   Per-destination delivery transport (HTTP, WebSocket, file, etc.)
   supplied by the app at composition time. Trusted for transport-layer
@@ -283,7 +312,8 @@ The currently-trusted inputs are:
   substrate does not authenticate which user the caller claims to be
   (`Principal.userId`), nor the `initiator` recorded on appended
   events. The calling application is trusted to supply correct
-  identity. The fourth bullet below is the wire-side closure of this
+  identity. The consumer-supplied wire-authentication bullet below is the
+  wire-side closure of this
   gap for cross-process deployments (the `reaction` package composes
   a consumer-supplied validator into its shelf pipeline); in-process
   deployments still bear the userId-on-faith trust input. Full

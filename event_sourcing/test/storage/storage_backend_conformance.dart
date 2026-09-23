@@ -3124,11 +3124,19 @@ void _registerBackendStateTests(
     test('schema_version round-trips', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      expect(await backend.readSchemaVersion(), 0); // never written
+      // A provisioned Postgres schema starts at its provisioned version; a
+      // Sembast database at 0 (never written).
+      final before = await backend.readSchemaVersion();
       await backend.transaction((txn) async {
-        await backend.writeSchemaVersion(txn, 7);
+        await backend.writeSchemaVersion(txn, before + 7);
       });
-      expect(await backend.readSchemaVersion(), 7);
+      expect(await backend.readSchemaVersion(), before + 7);
+      // Put back the provisioned version, which on Postgres gates every
+      // later transaction together with the stored minimum.
+      await backend.transaction((txn) async {
+        await backend.writeSchemaVersion(txn, before);
+      });
+      expect(await backend.readSchemaVersion(), before);
     });
 
     // Verifies: EVS-DEV-event-store-open/F
@@ -3234,6 +3242,82 @@ void _registerBackendStateTests(
         expect(await backend.transaction(backend.readBootCheckTxn), check);
       },
     );
+
+    // Verifies: EVS-DEV-version-compatibility/I
+    // the generation record round-trips through the contract: written,
+    //   merged and overwritten, and a write in a transaction that does not
+    //   commit leaves the committed record.
+    test('the generation record: write, merge, rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.transaction(backend.readDataGenerationTxn), isNull);
+      final first = GenerationRecord(
+        dataFormatMajor: 2,
+        entryTypeMajors: const <String, int>{'a': 1},
+      );
+      await backend.transaction(
+        (txn) => backend.writeDataGenerationTxn(txn, first),
+      );
+      expect(await backend.transaction(backend.readDataGenerationTxn), first);
+      final merged = first.merge(
+        GenerationDescriptor(
+          packageVersion: '0.5.0',
+          dataFormat: const DataFormatVersion(2, 0),
+          entryTypes: const <String, EntryTypeVersion>{
+            'a': EntryTypeVersion(2, 0),
+            'b': EntryTypeVersion(1, 3),
+          },
+        ),
+      );
+      await backend.transaction(
+        (txn) => backend.writeDataGenerationTxn(txn, merged),
+      );
+      expect(
+        await backend.transaction(backend.readDataGenerationTxn),
+        GenerationRecord(
+          dataFormatMajor: 2,
+          entryTypeMajors: const <String, int>{'a': 2, 'b': 1},
+        ),
+      );
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeDataGenerationTxn(
+            txn,
+            GenerationRecord(
+              dataFormatMajor: 3,
+              entryTypeMajors: const <String, int>{},
+            ),
+          );
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await backend.transaction(backend.readDataGenerationTxn), merged);
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/F
+    // a registration completes its boot and is released, after which the
+    //   same generation registers again.
+    test('a generation registers, completes its boot, is released, and '
+        'registers again', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final descriptor = GenerationDescriptor(
+        packageVersion: '0.5.0',
+        dataFormat: const DataFormatVersion(2, 0),
+        entryTypes: const <String, EntryTypeVersion>{
+          'a': EntryTypeVersion(1, 0),
+        },
+      );
+      final first = await backend.registerGeneration(descriptor);
+      expect(first.isLost, isFalse);
+      await first.completeBoot();
+      await first.release();
+      await first.release();
+      final second = await backend.registerGeneration(descriptor);
+      await second.completeBoot();
+      await second.release();
+    });
 
     // Verifies: EVS-DEV-event-store-open/E
     // the boot reads the log inside its transaction: the reverse read sees

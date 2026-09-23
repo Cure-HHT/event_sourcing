@@ -22,6 +22,13 @@ abstract class VersionTestDatabase {
   /// The security-context store an event store over [backend] uses.
   MutableSecurityContextStore securityFor(StorageBackend backend);
 
+  /// Stops the instance [store] belongs to, as a stop-then-start deployment
+  /// stops the old revision before the new one opens: on Postgres, where
+  /// each instance holds its own connections and generation locks, it
+  /// closes the store; on Sembast, where the scenarios share one database
+  /// handle and a registration holds nothing, it does nothing.
+  Future<void> stop(EventStore store);
+
   /// Closes every backend this database opened.
   Future<void> close();
 }
@@ -545,6 +552,9 @@ void runVersionCompatibilityScenarios(
         );
         await _appendNote(v10, 'agg-r', <String, Object?>{'a': 3});
         await _appendNote(v10, 'agg-s', <String, Object?>{'a': 4});
+        // The major bump is deployed stop-then-start.
+        await db!.stop(v11);
+        await db!.stop(v10);
 
         final v20 = await _openStore(
           db!,
@@ -976,6 +986,8 @@ void runVersionCompatibilityScenarios(
         await _appendNote(current, 'agg-1', <String, Object?>{'a': 1});
         final eventsBefore = await current.backend.findAllEvents();
         final counterBefore = await current.backend.readSequenceCounter();
+        await db!.stop(current);
+        final reader = await db!.openBackend();
 
         await expectLater(
           _openStore(db!, registered: const EntryTypeVersion(1, 5)),
@@ -999,12 +1011,14 @@ void runVersionCompatibilityScenarios(
                 ),
           ),
         );
-        expect(await _storedTarget(current), const EntryTypeVersion(2, 0));
         expect(
-          (await current.backend.findAllEvents()).length,
-          eventsBefore.length,
+          await reader.transaction(
+            (txn) => reader.readViewTargetVersionInTxn(txn, _kView, _kType),
+          ),
+          const EntryTypeVersion(2, 0),
         );
-        expect(await current.backend.readSequenceCounter(), counterBefore);
+        expect((await reader.findAllEvents()).length, eventsBefore.length);
+        expect(await reader.readSequenceCounter(), counterBefore);
       });
 
       // Verifies: EVS-DEV-entry-type-downgrade-refusal/A

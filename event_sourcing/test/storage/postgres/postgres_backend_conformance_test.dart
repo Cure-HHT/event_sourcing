@@ -28,7 +28,11 @@ void main() {
       await tmp.execute('DROP SCHEMA public CASCADE');
       await tmp.execute('CREATE SCHEMA public');
       await tmp.close();
-      return PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      return PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
     },
     backendLabel: 'postgres',
     securityStoreOf: (backend) =>

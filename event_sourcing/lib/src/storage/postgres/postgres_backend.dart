@@ -2,10 +2,10 @@
 // second concrete StorageBackend impl
 //   alongside SembastBackend; selectable per deployment with no caller
 //   changes (the contract is Dart-pure).
-// Implements: EVS-DEV-postgres-backend/A
-// `PostgresBackend.open` connects
-//   and emits `CREATE TABLE IF NOT EXISTS` DDL for every table the backend
-//   uses; re-open against a provisioned database is a no-op on the schema.
+// Implements: EVS-DEV-postgres-backend/G+H
+// `PostgresBackend.provision` creates
+//   and migrates the schema; `PostgresBackend.open` runs no DDL and verifies
+//   the provisioned schema.
 // Implements: EVS-PRD-event-log/A+B+C+D
 // event-log surface: append-only;
 //   stable total order via sequence counter (reserve-and-increment);
@@ -49,7 +49,11 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_generation_guard.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
@@ -57,6 +61,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:postgres/postgres.dart';
@@ -144,10 +149,18 @@ class TransactionRetryExhaustedException implements Exception {
 
 /// Concrete Postgres-backed implementation of [StorageBackend].
 class PostgresBackend extends StorageBackend {
-  PostgresBackend._(this._pool, {required Duration bootLockWait})
-    : _bootLockWait = bootLockWait;
+  PostgresBackend._(
+    this._pool, {
+    required Duration bootLockWait,
+    required PostgresGenerationGuard guard,
+  }) : _bootLockWait = bootLockWait,
+       _guard = guard;
 
   final Pool<void> _pool;
+
+  /// The incompatible-generation guard: the lock session, the active set
+  /// of registered generations, and the transaction fence.
+  final PostgresGenerationGuard _guard;
 
   /// How long [bootTransaction] keeps re-running a boot that a concurrent
   /// commit aborted before it gives up.
@@ -161,54 +174,277 @@ class PostgresBackend extends StorageBackend {
   //   conformance harness' close subgroup.
   bool _closed = false;
 
-  /// Open against [url] using the supplied [sslMode]. Connects, emits
-  /// the schema DDL (idempotent on re-open), and returns a ready
-  /// backend. Callers MUST call [close] to release the connection
-  /// pool.
+  /// Opens a backend over the database at [url] and returns it ready for
+  /// use. Callers MUST call [close] to release its connections.
   ///
   /// Example: `postgres://user:pass@host:5432/db`.
   ///
-  /// The default `SslMode.require` matches Cloud SQL's default
-  /// "Require SSL" posture, so a managed-Postgres deployment Just
-  /// Works without code changes. Local development against an
-  /// unencrypted Postgres (e.g., the docker-compose Postgres in
-  /// `example_action_permissions/`) should pass `SslMode.disable`.
-  /// Production deployments against a managed Postgres over the
-  /// public internet should consider `SslMode.verifyFull` to validate
-  /// the server certificate.
-  // Implements: EVS-DEV-postgres-backend/A
-  // connects and emits the schema
-  //   DDL on every open; idempotent on re-open against a provisioned db.
+  /// `open` performs no DDL. It verifies the schema version pair stored in
+  /// the database and refuses, with [PostgresSchemaIncompatibleException]
+  /// naming [provision], a database with no provisioned schema, one whose
+  /// schema version is below [postgresSchemaVersion], or one whose minimum
+  /// compatible schema version is above it. A newer schema whose minimum
+  /// this build meets opens, so a serving revision keeps opening while a
+  /// canary has provisioned ahead of it. [provisionSchema] provisions first
+  /// (for development and tests); a deployment runs [provision] once, as a
+  /// separate step, before its instances open the database.
   ///
-  /// The schema statements run in their own transaction on every open.
-  /// Each `CREATE INDEX IF NOT EXISTS` locks its table in `SHARE` mode
-  /// even when the index exists, and the `idempotency` column statement
-  /// locks that table exclusively, so an open waits for the appends in
-  /// flight on another instance and holds new ones back until it commits;
-  /// it can also end in a deadlock failure against another instance's
-  /// transactions, which this method does not retry. They also run before
-  /// `EventStore.open` refuses a database an earlier data format wrote, so
-  /// opening such a database may create a table or index it lacks before
-  /// the boot refuses it.
+  /// Besides its connection pool, the backend opens one dedicated
+  /// connection for its lifetime, the lock session, on which it holds the
+  /// incompatible-generation guard's locks. It connects to [lockUrl] when
+  /// given, and to [url] otherwise. The lock connection must be one real
+  /// server session: a direct connection to the database, or a session-mode
+  /// proxy that resets sessions on release; a transaction-mode pooler is not
+  /// supported for it (the pool's connections may go through one). `open`
+  /// checks this: it sets a random session setting and reads it back, with
+  /// the server process id, in three separate statements; it compares the
+  /// database and schema the lock session reaches with the pool's; and it
+  /// checks that the lock session sees an advisory lock a pool connection
+  /// takes, so both reach one Postgres server (not another instance or a
+  /// standby with a database of the same name). A mismatch closes both and
+  /// throws [LockSessionConfigurationException]; a replacement lock session
+  /// is checked the same way.
+  /// The check can miss a pooler that hands back the same server connection
+  /// every time, so the requirement stands on its own. The lock session
+  /// sets the server's TCP keepalives and no idle-session timeout; a proxy
+  /// between the process and the database has client-side timeouts of its
+  /// own, which the deployment configures. The lock role must be allowed to
+  /// end its own sessions (as the role that owns them is), because a lock
+  /// session the library declares lost is ended from its replacement while
+  /// it still holds a library lock.
   ///
-  /// [bootLockWait] bounds only how long `EventStore.open`'s boot
-  /// transaction keeps re-running after a serialization or deadlock
-  /// failure: a failure once it has passed since the first run started
-  /// throws [TransactionRetryExhaustedException]. It bounds neither the
-  /// boot's wait for its table lock nor the boot's run time (see
-  /// [bootTransaction]).
+  /// [lockQueryTimeout] bounds every statement on the lock session and its
+  /// connect. Every [lockHeartbeat] the backend probes the idle lock
+  /// session; a failed or timed-out probe, or any failed operation on it,
+  /// declares it lost: the backend closes it, opens a replacement, ends the
+  /// old server session while it still holds a library lock, and registers
+  /// its open event stores' generations again before anything else is
+  /// acquired. While it is not registered, every transaction still checks
+  /// the database's generation record; if a conflicting build booted
+  /// meanwhile, the backend is fenced ([generationStatus]).
+  ///
+  /// [bootLockWait] bounds each wait of `EventStore.open` on this backend:
+  /// its wait for another open on the same backend to finish its boot; its
+  /// wait for the boot lock, which another instance's boot or a
+  /// provisioning holds; its boot transaction's wait for the table lock
+  /// that holds appends back; and the boot transaction's re-runs after a
+  /// serialization or deadlock failure. It must exceed the longest boot the
+  /// deployment expects: a boot that promotes a large view holds the boot
+  /// lock, and every instance's appends, for its whole duration.
+  ///
+  /// The default [sslMode], `SslMode.require`, matches a managed Postgres's
+  /// default "require SSL" posture. Local development against an
+  /// unencrypted Postgres passes `SslMode.disable`; a deployment reaching a
+  /// managed Postgres over the public internet should consider
+  /// `SslMode.verifyFull`.
+  // Implements: EVS-DEV-postgres-backend/H
+  // open performs no DDL and verifies the stored schema pair, refusing,
+  //   with a message naming provisioning, a schema this build does not
+  //   support.
+  // Implements: EVS-DEV-postgres-backend/J
+  // open opens and checks the dedicated lock session and starts its probe.
   static Future<PostgresBackend> open({
     required String url,
+    String? lockUrl,
     SslMode sslMode = SslMode.require,
+    Duration lockQueryTimeout = const Duration(seconds: 5),
+    Duration lockHeartbeat = const Duration(seconds: 5),
     Duration bootLockWait = const Duration(seconds: 60),
+    bool provisionSchema = false,
   }) async {
+    if (provisionSchema) {
+      await provision(
+        url,
+        lockUrl: lockUrl,
+        sslMode: sslMode,
+        bootLockWait: bootLockWait,
+        lockQueryTimeout: lockQueryTimeout,
+      );
+    }
+    final schemaVersion = effectivePostgresMigrations().last.toVersion;
     final endpoint = endpointFromUrl(url);
+    final lockEndpoint = lockUrl == null ? endpoint : endpointFromUrl(lockUrl);
     final pool = Pool<void>.withEndpoints([
       endpoint,
     ], settings: PoolSettings(maxConnectionCount: 4, sslMode: sslMode));
-    final backend = PostgresBackend._(pool, bootLockWait: bootLockWait);
-    await pool.runTx(ensurePostgresSchema);
-    return backend;
+    PostgresLockSession? session;
+    try {
+      final scope = await PostgresScope.read(pool);
+      session = await PostgresLockSession.open(
+        endpoint: lockEndpoint,
+        sslMode: sslMode,
+        queryTimeout: lockQueryTimeout,
+        expectedScope: scope,
+      );
+      await verifyLockSessionServer(pool, session);
+      refuseUnsupportedSchema(await readStoredSchemaPair(pool), schemaVersion);
+      final guard = PostgresGenerationGuard(
+        lockEndpoint: lockEndpoint,
+        sslMode: sslMode,
+        lockQueryTimeout: lockQueryTimeout,
+        lockHeartbeat: lockHeartbeat,
+        bootLockWait: bootLockWait,
+        scope: scope,
+        schemaVersion: schemaVersion,
+        pool: pool,
+        session: session,
+      )..start();
+      return PostgresBackend._(pool, bootLockWait: bootLockWait, guard: guard);
+    } catch (_) {
+      await session?.close();
+      await pool.close();
+      rethrow;
+    }
+  }
+
+  /// Brings the schema of the database at [url] to this build's
+  /// [postgresSchemaVersion]: reads the stored schema version (none is 0)
+  /// and, in one transaction, applies every migration step above it in
+  /// order, then records the resulting schema version and minimum
+  /// compatible schema version. A database already at this build's version,
+  /// or above it, is left untouched: provisioning never lowers the stored
+  /// pair.
+  ///
+  /// The deployment creates the schema (the first schema on the connecting
+  /// role's search path) and its grants; `provision` creates the tables,
+  /// and refuses with [PostgresSchemaIncompatibleException] when the
+  /// connection reaches no schema, or when the schema already holds library
+  /// tables but records no schema version (tables provisioning did not
+  /// create, whose shape it cannot vouch for; the schema must be reset).
+  ///
+  /// Provisioning takes the same exclusive boot lock as `EventStore.open`,
+  /// on a lock session opened and checked as [open] checks its own (so
+  /// [lockUrl] carries the same requirement), and holds it for its whole
+  /// run: provisionings and booting instances of one database run one at a
+  /// time, and a second provisioning finds the schema at its version and
+  /// writes nothing. It refuses, writing nothing, with
+  /// [IncompatibleGenerationException] when a live instance on the database
+  /// requires a schema version below the minimum it would record, so a
+  /// canary's provisioning never locks out the serving revision.
+  ///
+  /// The schema version pair versions the backend's DDL, not the data it
+  /// stores: a data-format minor that adds DDL adds a migration step that
+  /// raises the schema version and keeps the minimum; a data-format major is
+  /// provisioned only after every instance of the old major has stopped,
+  /// which the incompatible-generation guard enforces.
+  // Implements: EVS-DEV-postgres-backend/G
+  // provisioning applies every migration step above the stored version in
+  //   one transaction, records the resulting pair, leaves a database at or
+  //   above the build's version untouched, and runs under the boot lock.
+  // Implements: EVS-DEV-postgres-backend/I
+  // provisioning refuses, writing nothing, a minimum a live instance does
+  //   not meet.
+  // Implements: EVS-DEV-version-compatibility/G
+  // provisioning takes the boot lock the booting instances take.
+  static Future<void> provision(
+    String url, {
+    String? lockUrl,
+    SslMode sslMode = SslMode.require,
+    Duration bootLockWait = const Duration(seconds: 60),
+    Duration lockQueryTimeout = const Duration(seconds: 5),
+  }) async {
+    final hooks = DeliveryTestHooks.current;
+    final migrations = effectivePostgresMigrations();
+    final target = migrations.last;
+    final endpoint = endpointFromUrl(url);
+    final connection = await Connection.open(
+      endpoint,
+      settings: ConnectionSettings(sslMode: sslMode),
+    );
+    PostgresLockSession? session;
+    try {
+      final scope = await PostgresScope.read(connection);
+      if (scope.schema == null) {
+        throw PostgresSchemaIncompatibleException(
+          reason:
+              'the connection reaches no schema (current_schema() is null): '
+              "the deployment creates the schema on the role's search path, "
+              'and its grants, before provisioning creates the tables',
+          storedSchemaVersion: null,
+          storedMinCompatibleSchemaVersion: null,
+          buildSchemaVersion: target.toVersion,
+        );
+      }
+      final lock = session = await PostgresLockSession.open(
+        endpoint: lockUrl == null ? endpoint : endpointFromUrl(lockUrl),
+        sslMode: sslMode,
+        queryTimeout: lockQueryTimeout,
+        expectedScope: scope,
+      );
+      await verifyLockSessionServer(connection, lock);
+      final bootKey = await lock.run(
+        (c) => takePostgresBootLock(c, scope, bootLockWait),
+      );
+      try {
+        await connection.runTx<void>((tx) async {
+          final stored = await readStoredSchemaPair(tx);
+          final storedVersion = stored.version ?? 0;
+          if (storedVersion >= target.toVersion) return;
+          if (stored.version == null) {
+            final existing = <String>[
+              for (final table in postgresLibraryTables)
+                if ((await tx.execute(
+                      Sql.named('SELECT to_regclass(@t) IS NOT NULL'),
+                      parameters: <String, Object?>{'t': table},
+                    )).first[0] ==
+                    true)
+                  table,
+            ];
+            if (existing.isNotEmpty) {
+              throw PostgresSchemaIncompatibleException(
+                reason:
+                    'the schema holds library tables '
+                    '(${existing.join(', ')}) but records no '
+                    'schema version, so provisioning did not create them and '
+                    'cannot vouch for their shape; reset the schema (drop '
+                    'those tables) and provision it',
+                storedSchemaVersion: null,
+                storedMinCompatibleSchemaVersion: null,
+                buildSchemaVersion: target.toVersion,
+              );
+            }
+          }
+          final blocking = <String>{
+            for (final live in await readLiveComponents(tx, scope))
+              if (live.kind == 'schema' &&
+                  live.value < target.minCompatibleVersion)
+                generationComponent(kind: 'schema', id: '', value: live.value),
+          };
+          if (blocking.isNotEmpty) {
+            throw IncompatibleGenerationException(
+              conflictingComponents: blocking.toList()..sort(),
+              descriptor: null,
+            );
+          }
+          for (final step in migrations) {
+            if (step.toVersion <= storedVersion) continue;
+            for (final statement in step.ddl) {
+              await tx.execute(statement);
+            }
+          }
+          if (hooks?.failProvisioningBeforeVersionWrite?.call() ?? false) {
+            throw const InjectedFailure('failProvisioningBeforeVersionWrite');
+          }
+          for (final (key, value) in <(String, int)>[
+            (schemaVersionKey, target.toVersion),
+            (minCompatibleSchemaVersionKey, target.minCompatibleVersion),
+          ]) {
+            await tx.execute(
+              Sql.named(
+                'INSERT INTO backend_state (key, value) VALUES (@k, @v:jsonb) '
+                'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+              ),
+              parameters: <String, Object?>{'k': key, 'v': value},
+            );
+          }
+        });
+      } finally {
+        await lock.run((c) => releasePostgresBootLock(c, bootKey));
+      }
+    } finally {
+      await session?.close();
+      await connection.close();
+    }
   }
 
   @visibleForTesting
@@ -245,8 +481,66 @@ class PostgresBackend extends StorageBackend {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    await _guard.close();
     await _pool.close();
   }
+
+  /// The state of this backend's generation registrations: `registered`
+  /// while every open event store's generation is held on the lock
+  /// session, `lost` while a lost lock session is being replaced, and
+  /// `fenced` once the database no longer admits a generation this backend
+  /// serves (a conflicting build booted, or an incompatible schema was
+  /// provisioned, while it was not registered). A fenced backend commits no
+  /// transaction; the instance must be stopped.
+  GenerationStatus get generationStatus => _guard.status;
+
+  /// The lock session's server process id and the settings it runs with,
+  /// read on the lock session itself.
+  @visibleForTesting
+  Future<({int pid, Map<String, String> settings})> lockSessionForTest() =>
+      _guard.runOnSession((c) async {
+        final settings = <String, String>{};
+        for (final name in <String>[
+          'idle_session_timeout',
+          'tcp_keepalives_idle',
+          'tcp_keepalives_interval',
+          'tcp_keepalives_count',
+        ]) {
+          final r = await c.execute('SHOW $name');
+          settings[name] = r.first[0]! as String;
+        }
+        final pid = await c.execute('SELECT pg_backend_pid()');
+        return (pid: pid.first[0]! as int, settings: settings);
+      });
+
+  // -------- Data generation --------
+
+  // Implements: EVS-DEV-version-compatibility/F+G+H
+  // the Postgres protocol on the lock session: boot lock, schema re-check,
+  //   inspection of the live components, refusal of a conflict, one shared
+  //   lock per component.
+  @override
+  @internal
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  ) {
+    _checkOpen();
+    return _guard.register(descriptor);
+  }
+
+  @override
+  @internal
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, dataGenerationKey);
+    return value == null ? null : GenerationRecord.fromJson(value);
+  }
+
+  @override
+  @internal
+  Future<void> writeDataGenerationTxn(
+    Transaction txn,
+    GenerationRecord record,
+  ) => _writeStateTxn(txn, dataGenerationKey, record.toJson());
 
   /// Throws [PostgresBackendClosedException] when [close] has already
   /// run. Called at the top of every public I/O method so the caller
@@ -297,6 +591,19 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/C
   // Transaction handle invalidated after
   //   body returns or throws.
+  // Implements: EVS-DEV-version-compatibility/I
+  // every transaction reads the generation record and the schema pair
+  //   before its first write and refuses when they no longer admit this
+  //   backend's generations.
+  /// Runs [body] in one `SERIALIZABLE` transaction, re-running it after a
+  /// serialization or deadlock failure (see the contract).
+  ///
+  /// The transaction's first statement is the fence: it reads the
+  /// database's generation record and stored schema pair, and throws
+  /// [GenerationFencedException], committing nothing, when the record no
+  /// longer admits a generation an event store open on this backend
+  /// registered, when the schema is one this build does not support, or
+  /// when the backend is fenced ([generationStatus]).
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     _checkOpen();
@@ -306,6 +613,7 @@ class PostgresBackend extends StorageBackend {
           (tx) async {
             final wrapper = PostgresTxn(tx);
             try {
+              await _guard.fence(tx);
               return await body(wrapper);
             } finally {
               wrapper.invalidate();
@@ -352,24 +660,26 @@ class PostgresBackend extends StorageBackend {
   /// committed fails once with a serialization failure afterwards, which
   /// its own retry absorbs. So the appends of a revision serving the same
   /// database, and every other write to `backend_state` (the drainer's fill
-  /// cursor among them), pause for the boot's whole duration: its reads of
-  /// the log's library-version events, its checks, and any seeding,
-  /// promotion and re-derivation it performs. Two boots on one database
-  /// run one after the other.
+  /// cursor among them), pause for the boot transaction's whole duration:
+  /// its reads of the log's library-version events, its checks, and any
+  /// seeding and promotion it performs. Boots on one database already run
+  /// one after the other under the generation guard's boot lock.
   ///
-  /// The boot can still fail with a serialization or deadlock failure on a
-  /// table it does not lock. It is then re-run, with a jittered 5 to 50 ms
-  /// backoff, as long as the `bootLockWait` given to [open] has not passed
-  /// since the first run started; a failure after that throws
-  /// [TransactionRetryExhaustedException]. `bootLockWait` bounds only this
-  /// re-running: neither the wait for the table lock (behind a long
-  /// transaction such as another instance's boot) nor the run time of the
-  /// body is bounded, and a body that runs longer than `bootLockWait` gets
-  /// one run.
+  /// `bootLockWait`, given to [open], bounds the waits: the table lock is
+  /// requested with a lock timeout of what remains of `bootLockWait` since
+  /// the first run started, and a lock not granted in that time throws
+  /// [GenerationGuardConfigurationException]. The boot can still fail with
+  /// a serialization or deadlock failure on a table it does not lock. It is
+  /// then re-run, with a jittered 5 to 50 ms backoff, as long as
+  /// `bootLockWait` has not passed since the first run started; a failure
+  /// after that throws [TransactionRetryExhaustedException]. The run time of
+  /// the body itself is not bounded, and a body that runs longer than
+  /// `bootLockWait` gets one run.
   ///
   /// Before the body runs, a database whose tables carry an earlier data
   /// format's single integer version columns is refused with
-  /// [DatabaseResetRequiredError].
+  /// [DatabaseResetRequiredError], and the transaction fence runs (see
+  /// [transaction]).
   // Implements: EVS-DEV-event-store-open/E
   // the boot transaction's first statement locks the table holding the
   //   sequence counter, so a serving revision's appends queue behind the
@@ -386,10 +696,27 @@ class PostgresBackend extends StorageBackend {
           (tx) async {
             final wrapper = PostgresTxn(tx);
             try {
+              final remaining = giveUpAt
+                  .difference(DateTime.now())
+                  .inMilliseconds;
               await tx.execute(
-                'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
+                "SET LOCAL lock_timeout = '${remaining < 1 ? 1 : remaining}ms'",
               );
+              try {
+                await tx.execute(
+                  'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
+                );
+              } on ServerException catch (e) {
+                if (e.code != '55P03') rethrow;
+                throw GenerationGuardConfigurationException(
+                  'the boot waited longer than $_bootLockWait for the lock '
+                  'that holds appends back; a transaction writing '
+                  'backend_state held it for that long',
+                );
+              }
+              await tx.execute('SET LOCAL lock_timeout = 0');
               await _refuseEarlierFormatColumns(tx);
+              await _guard.fence(tx);
               return await body(wrapper);
             } finally {
               wrapper.invalidate();

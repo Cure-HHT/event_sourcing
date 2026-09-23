@@ -1,6 +1,10 @@
 # Local-dev Postgres for the event_sourcing demo and Postgres conformance
 # tests. Bring up with `docker compose up -d --wait` so the next command
 # sees a healthy container; the healthcheck below allows ~40s to ready.
+# Provision the demo's schema before serving it:
+#   dart run bin/server.dart --backend=postgres \
+#     --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+#     --postgres-ssl-mode=disable --provision
 services:
   postgres:
     image: postgres:16

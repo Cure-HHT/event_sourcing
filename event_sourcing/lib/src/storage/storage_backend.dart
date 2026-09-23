@@ -7,6 +7,7 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -60,9 +61,9 @@ import 'package:meta/meta.dart' show internal;
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
 /// requests, wedge records, the registry check record, the database
-/// identity and the view catch-up marks, and the security context it
-/// stores beside each event) changes only through the library's
-/// operations. The internal marking is an analyzer guard,
+/// identity, the generation records and the view catch-up marks, and the
+/// security context it stores beside each event) changes only through the
+/// library's operations. The internal marking is an analyzer guard,
 /// not a barrier: the consumer holds the backend (and, on Sembast, the
 /// database it opened), and a direct write is invisible to the library.
 // Implements: EVS-PRD-destinations/K
@@ -536,9 +537,14 @@ abstract class StorageBackend {
   /// the backend has never been written to.
   Future<int> readSchemaVersion();
 
-  /// Write [version] into `backend_state` inside [txn]. Used by the schema
-  /// migration path at boot; typical production flow writes the version once
-  /// and leaves it alone until a migration.
+  /// Write [version] into `backend_state` inside [txn].
+  ///
+  /// The library itself never calls it: on Postgres,
+  /// `PostgresBackend.provision` records the schema version together with
+  /// the minimum compatible version, and that pair gates `open`, the
+  /// generation guard and every transaction, so a write here changes what
+  /// they decide; on Sembast the value is kept and read back, and nothing
+  /// else reads it. The member exists for the contract harness.
   @internal
   Future<void> writeSchemaVersion(Transaction txn, int version);
 
@@ -751,6 +757,40 @@ abstract class StorageBackend {
   /// storage trust boundary.
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body);
+
+  // -------- Data generation --------
+
+  /// Register [descriptor] with the backend's incompatible-generation
+  /// guard, before `EventStore.open`'s boot transaction.
+  ///
+  /// A backend shared by several processes or tabs implements the guard:
+  /// it takes an exclusive boot lock for the database, inspects the
+  /// generations its live instances hold, and throws
+  /// [IncompatibleGenerationException] (releasing the boot lock, writing
+  /// nothing) when one conflicts with [descriptor]; otherwise it registers
+  /// [descriptor]'s components and returns while still holding the boot
+  /// lock, which [GenerationRegistration.completeBoot] releases once the
+  /// boot transaction committed. A backend used by one process returns a
+  /// registration that holds nothing.
+  // Implements: EVS-DEV-version-compatibility/F+G+H
+  // the live guard runs before any write of the open; the boot transaction
+  //   runs under the boot lock the registration holds.
+  @internal
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  );
+
+  /// Read the database's generation record inside [txn], or null when no
+  /// boot has recorded one.
+  ///
+  /// Persisted under `backend_state` key `data_generation`.
+  @internal
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn);
+
+  /// Write [record] as the database's generation record inside [txn],
+  /// replacing the previous one.
+  @internal
+  Future<void> writeDataGenerationTxn(Transaction txn, GenerationRecord record);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
   /// or `null` when no such row exists (either the FIFO store was never

@@ -35,6 +35,13 @@ abstract class BootTestDatabase {
   /// is opened.
   Future<void> writeEarlierFormatShape();
 
+  /// Stops the instance [store] belongs to, as a stop-then-start deployment
+  /// stops the old revision before the new one opens: on Postgres, where
+  /// each instance holds its own connections and generation locks, it
+  /// closes the store; on Sembast, where the scenarios share one database
+  /// handle and a registration holds nothing, it does nothing.
+  Future<void> stop(EventStore store);
+
   /// Closes every backend this database opened.
   Future<void> close();
 }
@@ -224,6 +231,9 @@ class _MemoryPeerDatabase implements BootTestDatabase {
 
   @override
   Future<void> writeEarlierFormatShape() => throw UnimplementedError();
+
+  @override
+  Future<void> stop(EventStore store) async {}
 
   @override
   Future<void> close() async => _db?.close();
@@ -733,6 +743,8 @@ void runBootScenarios(
           noteVersion: const EntryTypeVersion(2, 0),
         );
         await _appendNote(newer, 'n1');
+        // A build of another entry-type major is deployed stop-then-start.
+        await db!.stop(newer);
         final backend = await db!.openBackend();
         final before = await _Snapshot.of(backend);
         await expectLater(

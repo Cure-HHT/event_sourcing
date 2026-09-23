@@ -12,8 +12,8 @@
 // Implements: EVS-DEV-postgres-backend/D
 // fills the second SecurityContext
 //   sidecar implementation needed for the Postgres backend to support
-//   the substrate's full action-dispatch path. The `security_context`
-//   DDL is emitted by `ensurePostgresSchema` alongside the events table.
+//   the substrate's full action-dispatch path. `PostgresBackend.provision`
+//   creates the `security_context` table with the rest of the schema.
 
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';

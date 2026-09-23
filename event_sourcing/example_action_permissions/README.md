@@ -188,6 +188,25 @@ directory (`--data-dir`, by default `~/.local/share/action_permissions_demo`):
 delete it to reset a database an earlier build wrote, or run with
 `--ephemeral`.
 
+Provision the schema once, before the first server starts (and again
+after upgrading to a build with a newer schema): `--provision` creates or
+migrates the tables and exits without serving. A server never changes the
+schema itself, and one started against a database that was never
+provisioned exits naming `--provision`. Provisioning refuses a database
+whose tables an earlier build created without provisioning them; reset it
+as above (`docker compose down -v`) and provision again.
+
+```text
+dart run bin/server.dart \
+  --backend=postgres \
+  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-ssl-mode=disable \
+  --provision
+```
+
+(`dart run tool/provision.dart --postgres-url=... --postgres-ssl-mode=disable`
+does the same.)
+
 Then start the demo server pointed at it:
 
 ```text
@@ -200,10 +219,18 @@ dart run bin/server.dart \
   --users-yaml=tool/users.yaml
 ```
 
-For production deployments against a managed Postgres (Cloud SQL, RDS,
-etc.), omit `--postgres-ssl-mode` to use the secure-by-default `require`
-setting, or pass `--postgres-ssl-mode=verifyFull` for full certificate
-validation.
+For production deployments against a managed Postgres, omit
+`--postgres-ssl-mode` to use the secure-by-default `require` setting, or
+pass `--postgres-ssl-mode=verifyFull` for full certificate validation.
+
+Each server holds the library's generation locks on one dedicated lock
+connection. It opens it to `--postgres-lock-url` when given, and to
+`--postgres-url` otherwise; it must be a real server session -- a direct
+connection or a session-mode proxy, never a transaction-mode pooler. Several
+servers may share the database. A server whose build is of another
+data-format major, or registers another major of an entry type, than a
+server already running exits with the guard's message: such a build is
+deployed stop-then-start.
 
 The integration test under `test/postgres_integration_test.dart` is the
 canonical end-to-end check: it boots the demo server in-process against

@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart';
 
@@ -26,17 +27,27 @@ final Object _zoneKey = Object();
 /// named points between transactions ([beforeRegistryTransaction],
 /// [insideTransform], [afterFillReads]). The boot of `EventStore.open` has
 /// an observing seam ([onBootBodyRun]) and a failure injection after its
-/// library-version append ([afterBootVersionEvent]). One seam is an input
-/// substitution: [buildDeclaration] replaces the package and data-format
-/// versions the boot decides with and records, so that one test process can
-/// play two builds of the library against one database; it changes what
-/// the boot decides, as a build of those versions would. Apart from
-/// [buildDeclaration], under which an open succeeds or fails as the
-/// declared build's would, none can make an operation succeed that would
-/// otherwise fail; an exception thrown by an
-/// observing seam ([onLog], [onRegistryBodyRun], [onBootBodyRun]) is
-/// reported and does not reach the library code that called it, and none
-/// receives a database handle or a transaction.
+/// library-version append ([afterBootVersionEvent]). The
+/// incompatible-generation guard and the Postgres lock session have seams
+/// that delay ([insideBootLock]), replace the timer that drives the lock
+/// session's probe ([timerFactory]), make an operation fail
+/// ([failGenerationRegistration], [failNextLockHeartbeat],
+/// [stallLockHeartbeatPastQueryTimeout], [failOldSessionTermination],
+/// [failLostSessionClose], [failProvisioningBeforeVersionWrite],
+/// [webLocksUnavailable]), or make the lock session's check fail the way a
+/// transaction-mode pooler would ([splitLockSessionStatements]). Two seams
+/// are input substitutions: [buildDeclaration] replaces the package and
+/// data-format versions the boot decides with and records, and
+/// [schemaDeclaration] replaces the Postgres migration list (and so the
+/// schema version and its minimum) of the backends and provisionings
+/// started in the zone, so that one test process can play two builds of
+/// the library against one database; each changes what the checks decide,
+/// as a build of those versions would. Apart from those two, under which an
+/// open or a provisioning succeeds or fails as the declared build's would,
+/// none can make an operation succeed that would otherwise fail; an
+/// exception thrown by an observing seam ([onLog], [onRegistryBodyRun],
+/// [onBootBodyRun]) is reported and does not reach the library code that
+/// called it, and none receives a database handle or a transaction.
 @internal
 @immutable
 class DeliveryTestHooks {
@@ -55,6 +66,17 @@ class DeliveryTestHooks {
     this.onBootBodyRun,
     this.afterBootVersionEvent,
     this.buildDeclaration,
+    this.insideBootLock,
+    this.splitLockSessionStatements = false,
+    this.failGenerationRegistration,
+    this.failNextLockHeartbeat,
+    this.stallLockHeartbeatPastQueryTimeout,
+    this.failOldSessionTermination,
+    this.failLostSessionClose,
+    this.timerFactory,
+    this.failProvisioningBeforeVersionWrite,
+    this.webLocksUnavailable = false,
+    this.schemaDeclaration,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -133,6 +155,65 @@ class DeliveryTestHooks {
   /// library-version event it appends, in place of the compiled
   /// `LibVersion.version` and `LibVersion.dataFormat`.
   final ({String version, DataFormatVersion dataFormat})? buildDeclaration;
+
+  /// Awaited while the incompatible-generation guard holds a database's
+  /// exclusive boot lock, after it inspected the live generations and
+  /// before it registers its own; on Postgres it runs inside the lock
+  /// session's operation, so no probe runs meanwhile.
+  final Future<void> Function()? insideBootLock;
+
+  /// When true, the Postgres lock session's check sends its statements
+  /// alternately over the lock connection and a second connection the
+  /// library opens for the purpose, as a transaction-mode pooler would
+  /// route them, so the check fails.
+  final bool splitLockSessionStatements;
+
+  /// Consulted by the Postgres guard after it took the first shared lock of
+  /// a registration. Returning true makes the registration throw
+  /// [InjectedFailure] there.
+  final bool Function()? failGenerationRegistration;
+
+  /// Consulted by each probe of the Postgres lock session. Returning true
+  /// makes the probe fail as a failed statement would, so the session is
+  /// declared lost.
+  final bool Function()? failNextLockHeartbeat;
+
+  /// Consulted by each probe of the Postgres lock session. Returning true
+  /// makes the probe a statement that runs one second longer than the lock
+  /// session's query timeout, so the driver cancels it on a live session.
+  final bool Function()? stallLockHeartbeatPastQueryTimeout;
+
+  /// Consulted when the Postgres backend ends the server session of a lost
+  /// lock session that still holds a library lock. Returning true makes the
+  /// library treat the termination as refused.
+  final bool Function()? failOldSessionTermination;
+
+  /// Consulted when the Postgres backend closes a lock session it declared
+  /// lost. Returning true makes the library treat the close as failed: the
+  /// connection is set aside unclosed (and closed when the backend closes),
+  /// so its server session stays alive until the library ends it.
+  final bool Function()? failLostSessionClose;
+
+  /// Creates the periodic timers of the Postgres lock session's probe, in
+  /// place of `Timer.periodic`.
+  final Timer Function(Duration period, void Function(Timer timer) callback)?
+  timerFactory;
+
+  /// Consulted by `PostgresBackend.provision` after the DDL of its
+  /// migration steps and before it writes the schema version pair.
+  /// Returning true makes the provisioning throw [InjectedFailure] there,
+  /// so its transaction rolls back.
+  final bool Function()? failProvisioningBeforeVersionWrite;
+
+  /// When true, the browser lock-manager wrapper behaves as if the page had
+  /// no `navigator.locks`.
+  final bool webLocksUnavailable;
+
+  /// Input substitution: the Postgres migration list, in place of the
+  /// compiled one, for the backends opened and the provisionings run in
+  /// the zone; its last step gives the schema version and the minimum
+  /// compatible schema version they require and record.
+  final List<PostgresMigrationStep>? schemaDeclaration;
 
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.

@@ -25,6 +25,7 @@ dependencies:
   meta: ^1.16.0
 
 dev_dependencies:
+  crypto: ^3.0.7
   flutter_test:
     sdk: flutter
   test: ^1.25.15

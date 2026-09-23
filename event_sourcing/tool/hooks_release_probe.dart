@@ -1,13 +1,18 @@
 // Release probe for the library's test seams.
 //
-// Installs every test seam, each recording that it fired and each failure
-// injection set to fail, and substitutes another build's versions for the
-// boot, then opens the event store, runs a registry operation and two
+// Installs every test seam an in-memory Sembast database on io reaches,
+// each recording that it fired and each failure injection set to fail, and
+// substitutes another build's versions for the boot, then opens the event
+// store, runs a registry operation and two
 // delivery passes (one destination delivers, one refuses and wedges) over an
 // in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
 // or a `dart compile exe` executable) it must print an empty list of fired
 // seams and a completed delivery, and exit 0. Run with assertions enabled
-// the same body reports the seams that fired, and the process exits 1.
+// the same body reports the seams that fired, and the process exits 1. The
+// seams only a Postgres backend or a browser reaches (the generation
+// guard's lock session, provisioning, Web Locks) are read through the same
+// `DeliveryTestHooks.current` gate this probe exercises, which is null
+// without assertions for every seam alike.
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';

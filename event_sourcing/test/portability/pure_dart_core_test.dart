@@ -6,6 +6,13 @@
 //   its runtime deps would break the VM/server target; this guard fails closed
 //   on the first offender.
 //
+//   One file is exempt: lib/src/storage/web_locks.dart, the library's wrapper
+//   of the browser's lock manager (the incompatible-generation guard on the
+//   web). It is reached only through a conditional import taken when
+//   dart.library.js_interop exists, with a pure-Dart counterpart
+//   (web_locks_stub.dart) on every other runtime, so the core still loads on
+//   the VM; any other web-only import under lib/ fails the guard.
+//
 //   Scope note: the package's pubspec still pins `environment.flutter` because
 //   its TEST toolchain uses `flutter_test`. That is a dev/test-tooling
 //   dependency, not a core runtime one, so it is deliberately out of scope for
@@ -18,8 +25,36 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+/// The one web-only file under lib/, reached through a conditional import.
+const _sanctionedWebFile = 'lib/src/storage/web_locks.dart';
+
 void main() {
   group('portability/A — pure-Dart core', () {
+    test('the sanctioned web file is reached only through a conditional '
+        'import', () {
+      final importers = <String>[];
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        final text = entity.readAsStringSync();
+        final directives = RegExp(
+          r"import\s+'[^']*'(\s+if\s*\([^)]*\)\s*'[^']*')*\s*;",
+        ).allMatches(text).map((m) => m[0]!);
+        for (final directive in directives) {
+          if (!directive.contains('web_locks.dart')) continue;
+          importers.add(entity.path);
+          expect(
+            RegExp(
+              r'if\s*\(dart\.library\.js_interop\)\s*'
+              r"'package:event_sourcing/src/storage/web_locks\.dart'",
+            ).hasMatch(directive),
+            isTrue,
+            reason: '${entity.path} must reach web_locks.dart conditionally',
+          );
+        }
+      }
+      expect(importers, isNotEmpty);
+    });
+
     test('no Flutter or web-only imports anywhere under lib/', () {
       final forbidden = RegExp(
         r'''import\s+['"](?:package:flutter/|package:flutter_test/|dart:ui|dart:html|dart:js)''',
@@ -27,6 +62,7 @@ void main() {
       final offenders = <String>[];
       for (final entity in Directory('lib').listSync(recursive: true)) {
         if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        if (entity.path == _sanctionedWebFile) continue;
         for (final line in entity.readAsLinesSync()) {
           if (forbidden.hasMatch(line)) {
             offenders.add('${entity.path}: ${line.trim()}');

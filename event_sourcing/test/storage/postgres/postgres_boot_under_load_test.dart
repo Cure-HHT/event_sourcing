@@ -101,6 +101,7 @@ void main() {
     final backendA = await PostgresBackend.open(
       url: url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     backends.add(backendA);
     final a = await _open(backendA, const EntryTypeVersion(1, 0));
@@ -150,6 +151,7 @@ void main() {
     final backendN = await PostgresBackend.open(
       url: url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     backends.add(backendN);
     var bootRuns = 0;
@@ -214,6 +216,7 @@ void main() {
       url: url,
       sslMode: SslMode.disable,
       bootLockWait: const Duration(seconds: 10),
+      provisionSchema: true,
     );
     backends.add(backend);
 

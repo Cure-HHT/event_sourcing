@@ -413,17 +413,59 @@ final db = await databaseFactoryMemory.openDatabase('demo');
 final backend = SembastBackend(database: db);
 ```
 
-Or, for server-side:
+Or, for server-side, provision the schema once per deployment (a step
+of its own, before any instance starts), then open:
 
 ```dart
+await PostgresBackend.provision(
+  'postgres://evs:evs@localhost:5432/evs_demo',
+  sslMode: SslMode.disable,
+);
+
 final backend = await PostgresBackend.open(
   url: 'postgres://evs:evs@localhost:5432/evs_demo',
   sslMode: SslMode.disable,
 );
 ```
 
-The backend is trusted for persistence, atomicity, and durability.
-Everything else is derived from the events it holds.
+`open` runs no DDL: it verifies the provisioned schema version and
+refuses, naming `provision`, a database that was never provisioned or
+whose schema this build does not support. A schema a newer build
+provisioned ahead of it still opens when the newer build kept the
+minimum compatible version, so a serving revision keeps restarting while
+a canary runs. Provisioning takes the same boot lock as the instances'
+boots, and refuses to raise the minimum above what a live instance needs.
+The deployment creates the schema itself (the first schema on the role's
+search path) and its grants; `provision` creates the tables.
+
+Each `PostgresBackend` also holds one dedicated connection for its
+lifetime, the lock session, to `lockUrl` when given and to `url`
+otherwise. The library keeps its generation locks there, so it must be one
+real server session: a direct connection to the database, or a
+session-mode proxy that resets sessions on release -- never a
+transaction-mode pooler (the pool's own connections may go through one).
+`open` checks this, and that the lock session reaches the pool's server,
+database and schema, and throws `LockSessionConfigurationException` on a
+mismatch; the check can miss a pooler that happens to return the same
+server connection each time. The library sets server-side TCP keepalives
+and no idle-session timeout on the lock session; a proxy between the
+process and the database has client-side timeouts of its own to
+configure. The lock role must be allowed to end its own sessions (as the
+role that owns them is): when the library declares a lock session lost, it
+ends the old server session before registering again.
+
+Several server processes may share one database. Each registers its build's
+data generation -- its data-format major and each registered entry type's
+major -- when its event store opens, and an open is refused
+(`IncompatibleGenerationException`, nothing written) while a live instance
+of a conflicting build holds a different major; builds that differ only in
+minors, or in which entry types they register, run side by side.
+
+The backend is trusted for persistence, atomicity, and durability, and a
+backend shared by several processes or tabs for running the generation
+guard; the lock-session path above, the browser's lock manager on the web,
+and one opener of a Sembast database file outside the browser are trusted
+too. Everything else is derived from the events the backend holds.
 
 > **Note on Postgres + subscriptions.** Both backends pass the same
 > conformance harness for storage, transactions, and view
@@ -996,15 +1038,32 @@ substrate will not silently re-interpret an event under an older major.
 A build registering an older minor of the same major opens: minor steps
 only add fields with defaults, so it reads rows a newer minor promoted.
 
-On Postgres the boot's first statement locks the table holding the
-sequence counter, which every append writes, so the appends of a
-revision serving the same database wait for the boot to commit rather
-than abort it. That wait lasts for the whole boot: its reads of the
-library-version events and the stored view targets, its checks, and any
-promotion or re-derivation it performs. A release that promotes or
-re-derives a large view pauses the serving revision's appends for that
-long. Opening a `PostgresBackend` also runs the schema statements, which
-lock tables of their own for a moment.
+The same boot also checks the database's generation record: the
+highest data generation any committed boot registered. A build of another
+data-format major, or one registering a lower major of an entry type than
+an earlier boot did -- whether or not a view names that entry type -- is
+refused before anything is written. While the build runs, a live instance
+of a conflicting build cannot open the database at all (see "Open a
+storage backend").
+
+On Postgres the boot transaction's first statement locks the table
+holding the sequence counter, which every append writes, so the appends
+of a revision serving the same database wait for the boot to commit
+rather than abort it. That wait lasts for the whole boot transaction: its
+reads of the library-version events and the stored view targets, its
+checks, and any promotion and re-derivation it performs. A release whose
+minor bump promotes a large view, or that adds a view over events already
+in the log, pauses the serving revision's appends for as long as the
+promotion or the re-derivation takes, in proportion to the rows promoted
+or the events re-derived -- measure it on a copy of production data and
+roll such a release out when that pause is acceptable. On the web the
+boot holds back the other tabs' writes to the database the same way.
+`bootLockWait` (default 60 s; on the web the `SembastBackend`
+constructor's) bounds each wait of a boot: for the boot lock another boot
+or a provisioning holds, and for the lock that holds the writes back. It
+must exceed the longest boot the deployment expects, since a boot holds
+the boot lock for its whole duration and another instance's open fails
+once its wait runs out.
 
 Deploying. Builds with the same data-format major and the same
 entry-type majors share a database in any mix: a no-traffic canary
@@ -1013,7 +1072,9 @@ to the previous release. A build of another data-format major, or one
 that raises an entry-type major, is deployed stop-then-start: every
 instance of the old revision stops before the first instance of the new
 one opens the database, and the old revision's next open is refused
-afterwards. Recovery after such a deployment is a restore from a backup
+afterwards. The generation guard enforces that order: the new revision's
+open is refused while an instance of the old one is still connected.
+Recovery after such a deployment is a restore from a backup
 taken before the switch, or a roll-forward. Evolve compatibly where you
 can: add an optional field as a minor step, and make a real reshape a
 new entry type that you append instead of the old one.

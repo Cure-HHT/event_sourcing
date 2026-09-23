@@ -54,7 +54,11 @@ void main() {
     // Opened one after the other, so the schema DDL runs once.
     for (var i = 0; i < 2; i++) {
       backends.add(
-        await PostgresBackend.open(url: url, sslMode: SslMode.disable),
+        await PostgresBackend.open(
+          url: url,
+          sslMode: SslMode.disable,
+          provisionSchema: true,
+        ),
       );
     }
   });

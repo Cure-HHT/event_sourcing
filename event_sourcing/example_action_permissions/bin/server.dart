@@ -2,7 +2,8 @@
 // IMPLEMENTS REQUIREMENTS:
 //   EVS-DEV-postgres-backend/D — exercises the PostgresBackend +
 //     PostgresIdempotencyStore end-to-end when run with
-//     `--backend=postgres`. Sembast remains the default.
+//     `--backend=postgres`. Sembast remains the default. `--provision`
+//     provisions the Postgres schema and exits; serving never runs DDL.
 
 import 'dart:io';
 
@@ -31,6 +32,22 @@ Future<void> main(List<String> args) async {
       help:
           'Postgres URL (required when --backend=postgres). '
           'Example: postgres://evs:evs@localhost:5432/evs_demo',
+    )
+    ..addOption(
+      'postgres-lock-url',
+      help:
+          'Postgres URL of the lock connection (optional; defaults to '
+          '--postgres-url). It must be one server session: a direct '
+          'connection or a session-mode proxy, never a transaction-mode '
+          'pooler.',
+    )
+    ..addFlag(
+      'provision',
+      defaultsTo: false,
+      help:
+          'Provision the Postgres schema (create or migrate the tables) '
+          'and exit without serving. Run once per deployment, before the '
+          'servers start. Requires --backend=postgres.',
     )
     ..addOption(
       'postgres-ssl-mode',
@@ -104,6 +121,30 @@ Future<void> main(List<String> args) async {
     exitCode = 64; // EX_USAGE
     return;
   }
+  final postgresLockUrl = parsed['postgres-lock-url'] as String?;
+  if (parsed['provision'] as bool) {
+    if (backendKind != 'postgres') {
+      stderr.writeln('error: --provision requires --backend=postgres');
+      exitCode = 64; // EX_USAGE
+      return;
+    }
+    try {
+      await PostgresBackend.provision(
+        postgresUrl!,
+        lockUrl: postgresLockUrl,
+        sslMode: postgresSslMode,
+      );
+    } on Object catch (e) {
+      if (!_isRefusal(e)) rethrow;
+      stderr.writeln('error: provisioning refused: $e');
+      exitCode = 1;
+      return;
+    }
+    stdout.writeln(
+      'provisioned the Postgres schema at version $postgresSchemaVersion',
+    );
+    return;
+  }
 
   // For sembast we need a data directory for the optional persistent
   // file; for postgres the file system layout is irrelevant but we still
@@ -133,10 +174,26 @@ Future<void> main(List<String> args) async {
   final String backendDescription;
 
   if (backendKind == 'postgres') {
-    final pg = await PostgresBackend.open(
-      url: postgresUrl!,
-      sslMode: postgresSslMode,
-    );
+    final PostgresBackend pg;
+    try {
+      pg = await PostgresBackend.open(
+        url: postgresUrl!,
+        lockUrl: postgresLockUrl,
+        sslMode: postgresSslMode,
+      );
+    } on PostgresSchemaIncompatibleException catch (e) {
+      stderr.writeln(
+        'error: $e\n'
+        'Provision the database first: dart run bin/server.dart '
+        '--backend=postgres --postgres-url=<url> --provision',
+      );
+      exitCode = 1;
+      return;
+    } on LockSessionConfigurationException catch (e) {
+      stderr.writeln('error: $e');
+      exitCode = 1;
+      return;
+    }
     backend = pg;
     idempotencyStore = PostgresIdempotencyStore.forBackend(pg);
     backendDescription = 'postgres ($postgresUrl, ssl=${postgresSslMode.name})';
@@ -150,13 +207,25 @@ Future<void> main(List<String> args) async {
     backendDescription = 'sembast ($dbPath, ephemeral=$ephemeral)';
   }
 
-  final components = await bootstrapDemoServer(
-    backend: backend,
-    idempotencyStore: idempotencyStore,
-    permissionsYaml: permissionsYaml,
-    usersYaml: usersYaml,
-    installIdentifier: installId,
-  );
+  final DemoServerComponents components;
+  try {
+    components = await bootstrapDemoServer(
+      backend: backend,
+      idempotencyStore: idempotencyStore,
+      permissionsYaml: permissionsYaml,
+      usersYaml: usersYaml,
+      installIdentifier: installId,
+    );
+  } on Object catch (e) {
+    // The library refused to open the database: a server of another major
+    // is running against it (a major bump is deployed stop-then-start), the
+    // database records a newer generation, or it must be reset.
+    if (!_isRefusal(e)) rethrow;
+    stderr.writeln('error: the event store refused to open: $e');
+    await backend.close();
+    exitCode = 1;
+    return;
+  }
 
   if (components.policyErrors.isNotEmpty) {
     stderr.writeln(
@@ -226,3 +295,16 @@ String _newInstallId() {
       .padLeft(16, '0');
   return '00000000-0000-4000-8000-${r.substring(r.length - 12).padLeft(12, '0')}';
 }
+
+/// True for the refusals with which provisioning and `EventStore.open`
+/// decline a database; the server reports them and exits non-zero.
+bool _isRefusal(Object e) =>
+    e is IncompatibleGenerationException ||
+    e is GenerationGuardConfigurationException ||
+    e is GenerationFencedException ||
+    e is PostgresSchemaIncompatibleException ||
+    e is LockSessionConfigurationException ||
+    e is DataFormatIncompatibleError ||
+    e is EntryTypeVersionDowngradeError ||
+    e is DatabaseResetRequiredError ||
+    e is DatabaseIdentityMismatchError;

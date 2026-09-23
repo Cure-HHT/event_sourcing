@@ -6,5 +6,7 @@
 export 'package:postgres/postgres.dart' show SslMode;
 
 export 'postgres_backend.dart';
+export 'postgres_exceptions.dart';
 export 'postgres_idempotency_store.dart' show PostgresIdempotencyStore;
-export 'postgres_schema.dart' show postgresBackendSchemaVersion;
+export 'postgres_schema.dart'
+    show postgresMinCompatibleSchemaVersion, postgresSchemaVersion;

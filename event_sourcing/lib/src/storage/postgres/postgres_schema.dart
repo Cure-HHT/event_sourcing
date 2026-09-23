@@ -1,59 +1,75 @@
-// Implements: EVS-DEV-postgres-backend/A
-// idempotent CREATE TABLE IF NOT
-// EXISTS DDL for every table the PostgresBackend reads or writes. Running
-// this against an already-provisioned database is a no-op on the schema.
+// Implements: EVS-DEV-postgres-backend/G
+// the ordered migration list whose steps provisioning applies; this build
+//   ships one step, version 1, holding the whole DDL.
 
+import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart';
 
-/// The schema version this build of the postgres backend emits. Bumped
-/// when backwards-incompatible DDL changes ship; subsequent boots check
-/// this against the value stored in `backend_state` (Task 10).
-const int postgresBackendSchemaVersion = 1;
+/// The Postgres schema version this build requires and provisions: the
+/// last migration step's `toVersion`.
+///
+/// The schema version versions the backend's DDL, not the data it stores
+/// (the data format, `LibVersion.dataFormat`, versions that). A data-format
+/// minor that adds DDL adds a migration step that raises the schema version
+/// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
+/// provisioned only after every instance of the old major has stopped,
+/// which the incompatible-generation guard enforces.
+const int postgresSchemaVersion = 1;
 
-/// Emit `CREATE TABLE IF NOT EXISTS` for every table the backend uses.
-///
-/// Each statement is its own private `const` String at the bottom of
-/// this file (one DDL per constant) so they stay greppable; the body of
-/// this function is just a sequence of `await session.execute(_xxx)`
-/// calls. Idempotent: running this against an already-provisioned
-/// database raises no errors.
-///
-/// Accepts a [Session] (rather than a [Connection] or [TxSession])
-/// because both raw sessions returned by `Pool.run` and the
-/// transactional sessions returned by `Pool.runTx` satisfy this
-/// interface. `PostgresBackend.open` invokes this inside `runTx` so
-/// the schema emission is atomic.
+/// The minimum compatible schema version this build records when it
+/// provisions: the last migration step's `minCompatibleVersion`. A build
+/// whose [postgresSchemaVersion] is below the minimum stored in a database
+/// refuses to open it.
+const int postgresMinCompatibleSchemaVersion = 1;
+
+/// The ordered migration steps of this build. Step `n` brings a schema at
+/// the previous step's version to its `toVersion`.
 @internal
-Future<void> ensurePostgresSchema(Session session) async {
-  await session.execute(_eventsTable);
-  // No explicit index on event_id: the UNIQUE constraint above creates a
-  // B-tree index automatically; a second non-unique index would be redundant.
-  await session.execute(_eventsAggregateIdx);
-  await session.execute(_eventsClientTsIdx);
-  // The boot reads the library-version events inside the transaction that
-  // holds every append back; this index keeps that read proportional to
-  // the number of those events, not to the length of the log.
-  await session.execute(_eventsTypeSeqIdx);
+const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
+  PostgresMigrationStep(
+    toVersion: 1,
+    minCompatibleVersion: 1,
+    ddl: <String>[
+      _eventsTable,
+      // No explicit index on event_id: the UNIQUE constraint creates one.
+      _eventsAggregateIdx,
+      _eventsClientTsIdx,
+      // The boot reads the library-version events inside the transaction
+      // that holds every append back; this index keeps that read
+      // proportional to the number of those events, not to the length of
+      // the log.
+      _eventsTypeSeqIdx,
+      _viewRowsTable,
+      _viewTargetVersionsTable,
+      _fifoEntriesTable,
+      _fifoEntriesHeadIdx,
+      _backendStateTable,
+      _securityContextTable,
+      _idempotencyTable,
+    ],
+  ),
+];
 
-  await session.execute(_viewRowsTable);
-  await session.execute(_viewTargetVersionsTable);
+/// The tables the library creates. A schema that holds any of them but
+/// records no schema version was not created by provisioning, and
+/// provisioning refuses to certify it.
+@internal
+const List<String> postgresLibraryTables = <String>[
+  'events',
+  'view_rows',
+  'view_target_versions',
+  'fifo_entries',
+  'backend_state',
+  'security_context',
+  'idempotency',
+];
 
-  await session.execute(_fifoEntriesTable);
-  await session.execute(_fifoEntriesHeadIdx);
-
-  await session.execute(_backendStateTable);
-  await session.execute(_securityContextTable);
-  await session.execute(_idempotencyTable);
-  // `raw_input_canonical_json` is declared in the CREATE TABLE above, but
-  // CREATE TABLE is a no-op on a pre-existing table, so an older database
-  // may lack the column. `PostgresIdempotencyStore.lookup` SELECTs it;
-  // a missing COLUMN would raise "column does not exist" rather than
-  // returning null (null covers a missing VALUE, not a missing COLUMN).
-  // ADD COLUMN IF NOT EXISTS is a metadata-only, idempotent operation, so
-  // run it unconditionally on every boot.
-  await session.execute(_idempotencyAddRawInputColumn);
-}
+/// The migration steps in effect: [postgresMigrations], or the list a test
+/// installed through the `schemaDeclaration` test seam.
+@internal
+List<PostgresMigrationStep> effectivePostgresMigrations() =>
+    DeliveryTestHooks.current?.schemaDeclaration ?? postgresMigrations;
 
 // --- Events ---------------------------------------------------------------
 
@@ -179,9 +195,7 @@ CREATE TABLE IF NOT EXISTS security_context (
 // (EVS-PRD-action-dispatch/E). A NULL VALUE in this column means no
 // canonical form was captured; the dispatcher treats null as
 // "no mismatch detection available" and returns the cache hit as-is,
-// never raising a false `idempotency_mismatch`. (Note: that null-value
-// fallback does NOT cover a missing COLUMN; the idempotent ALTER in
-// `ensurePostgresSchema` guarantees the column itself exists.)
+// never raising a false `idempotency_mismatch`.
 const String _idempotencyTable = '''
 CREATE TABLE IF NOT EXISTS idempotency (
   action_name               TEXT         NOT NULL,
@@ -194,14 +208,4 @@ CREATE TABLE IF NOT EXISTS idempotency (
   raw_input_canonical_json  TEXT,
   PRIMARY KEY (action_name, principal_id, idempotency_key)
 )
-''';
-
-// Idempotent migration: the CREATE TABLE above is a no-op on a pre-existing
-// table, so the `raw_input_canonical_json` column may be absent on databases
-// provisioned before it was added. ADD COLUMN IF NOT EXISTS backfills the
-// column (nullable add = metadata-only) so `lookup`'s SELECT of it never
-// hits "column does not exist".
-const String _idempotencyAddRawInputColumn = '''
-ALTER TABLE idempotency
-  ADD COLUMN IF NOT EXISTS raw_input_canonical_json TEXT
 ''';

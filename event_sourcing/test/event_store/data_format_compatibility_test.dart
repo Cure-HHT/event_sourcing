@@ -59,6 +59,9 @@ class _SembastBootDatabase implements BootTestDatabase {
   }
 
   @override
+  Future<void> stop(EventStore store) async {}
+
+  @override
   Future<void> close() => _db.close();
 }
 

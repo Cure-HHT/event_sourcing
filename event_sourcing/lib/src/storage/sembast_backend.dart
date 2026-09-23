@@ -13,11 +13,14 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/web_locks_stub.dart'
+    if (dart.library.js_interop) 'package:event_sourcing/src/storage/web_locks.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
@@ -70,9 +73,24 @@ class SembastBackend extends StorageBackend {
   /// a database via `package:sembast/sembast_memory.dart`'s
   /// `newDatabaseFactoryMemory()` and passing it to this constructor, as
   /// the conformance test suite does.
-  SembastBackend({required Database database}) : _db = database;
+  ///
+  /// [bootLockWait] applies on the web, where every tab of the origin that
+  /// opens the database takes the same exclusive boot lock: it bounds how
+  /// long `EventStore.open` waits for another tab's boot, after which the
+  /// open throws [GenerationGuardConfigurationException]. It must exceed
+  /// the longest boot the deployment expects, since a boot that promotes a
+  /// large view or re-derives a view over a long log holds the boot lock
+  /// for its whole duration. Outside the browser it has no effect.
+  SembastBackend({
+    required Database database,
+    Duration bootLockWait = const Duration(seconds: 60),
+  }) : _db = database,
+       _bootLockWait = bootLockWait;
 
   final Database _db;
+
+  /// See the constructor's `bootLockWait`.
+  final Duration _bootLockWait;
 
   static const _sequenceKey = 'sequence_counter';
   static const _schemaVersionKey = 'schema_version';
@@ -137,14 +155,36 @@ class SembastBackend extends StorageBackend {
 
   // -------- transaction --------
 
-  /// Runs the boot body through [transaction]. The transactions of one
+  /// Runs the boot body as one transaction. The transactions of one
   /// Sembast database run one at a time in a process, so an append cannot
-  /// abort the boot; on a browser database shared by several tabs, a tab
-  /// whose commit another tab preceded re-runs the body on fresh data.
+  /// abort the boot. On the web several tabs share the database, and a tab
+  /// whose commit another tab preceded re-runs its body on fresh data; the
+  /// boot therefore holds the database's write lock exclusively, which
+  /// every tab's transactions take shared, so the other tabs' writes wait
+  /// for the boot to commit instead of making it re-run without end. The
+  /// wait for that lock is bounded by the constructor's `bootLockWait`.
   @override
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
-      transaction(body);
+      runHoldingBrowserWriteLock(
+        _database().path,
+        exclusive: true,
+        timeout: _bootLockWait,
+        body: () async {
+          _bootHoldsWriteLock = true;
+          try {
+            return await transaction(body);
+          } finally {
+            _bootHoldsWriteLock = false;
+          }
+        },
+      );
+
+  /// True while a boot holds this backend's write lock exclusively. The
+  /// boot's own transaction then runs without asking for the lock again,
+  /// and so does any other transaction on this backend, which the
+  /// database runs one at a time with the boot's.
+  bool _bootHoldsWriteLock = false;
 
   // Implements: EVS-PRD-subscription/E
   // Post-commit notifications are queued on the
@@ -154,7 +194,16 @@ class SembastBackend extends StorageBackend {
   //   run that committed (the last one) has its queue fired. A body that
   //   throws commits nothing and fires nothing.
   @override
-  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) =>
+      _bootHoldsWriteLock
+      ? _transaction(body)
+      : runHoldingBrowserWriteLock(
+          _database().path,
+          exclusive: false,
+          body: () => _transaction(body),
+        );
+
+  Future<T> _transaction<T>(Future<T> Function(Transaction txn) body) async {
     final db = _database();
     late _SembastTxn committedRun;
     final result = await db.transaction((sembastTxn) async {
@@ -875,6 +924,52 @@ class SembastBackend extends StorageBackend {
         .get(t._sembastTxn);
     if (value == null) return null;
     return RegistryCheck.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  // -------- Data generation --------
+
+  static const _dataGenerationKey = 'data_generation';
+
+  /// On the web every `SembastBackend` registers with the browser's lock
+  /// manager, under the name of its database (the IndexedDB name, unique
+  /// per origin); the public sembast `Database` API cannot tell an
+  /// IndexedDB database from an in-memory one, so an in-memory database on
+  /// the web is guarded by its name too. Elsewhere a Sembast database is
+  /// used by one process and the registration holds nothing.
+  // Implements: EVS-DEV-version-compatibility/H
+  // Web Locks on the web; nothing on io, where the database is used by one
+  //   process.
+  @override
+  @internal
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  ) => registerBrowserGeneration(
+    path: _database().path,
+    descriptor: descriptor,
+    bootLockWait: _bootLockWait,
+  );
+
+  @override
+  @internal
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_dataGenerationKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return GenerationRecord.fromJson(value);
+  }
+
+  @override
+  @internal
+  Future<void> writeDataGenerationTxn(
+    Transaction txn,
+    GenerationRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_dataGenerationKey)
+        .put(t._sembastTxn, record.toJson());
   }
 
   // -------- Database identity and boot record --------

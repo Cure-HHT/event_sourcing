@@ -232,15 +232,38 @@ same conformance harness:
 - **`SembastBackend`** — client-side (file / IndexedDB), for mobile and
   desktop.
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
-  a `view_rows(view_name, row_key, row_data, …)` table.
+  a `view_rows(view_name, row_key, row_data, …)` table. The schema is
+  provisioned once per deployment with `PostgresBackend.provision` (or
+  `open(provisionSchema: true)` in development); `open` performs no DDL
+  and refuses a schema its build does not support.
+
+Builds that share one database register their data generation (the
+data-format major and each entry type's major) with an
+incompatible-generation guard before `EventStore.open` writes anything:
+a build of another major is refused while an instance of the other build
+is live, and a database records the highest generation that booted on it,
+so an older build is refused afterwards. On Postgres the guard holds
+advisory locks on a dedicated lock session per backend; on the web it holds
+Web Locks; a Sembast database outside the browser is used by one process.
+A backend several processes or tabs share is trusted to run this guard;
+the two reference backends do. Three inputs of the guard are trusted
+without a pluggable interface: the Postgres lock-session path (`lockUrl`,
+or the pool's URL), trusted to be one server session reaching the pool's
+server, database and schema -- a direct connection or a session-mode
+proxy, never a transaction-mode pooler -- with keepalives and a role that
+may end its own sessions, which the backend checks where it can when it
+opens; the browser's lock manager, trusted to grant, report and release
+locks as the Web Locks API specifies; and, outside the browser, a Sembast
+database file opened by one isolate of one process.
 
 The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
 requests, wedge records, the registry check record, the database
-identity and the view catch-up marks, and the security context it stores
-beside each event) changes only through the library's operations. Every
+identity, the generation records and the view catch-up marks, and the
+security context it stores beside each event) changes only through the
+library's operations. Every
 `StorageBackend` member that writes is `@internal`; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
 `close`, and delivers through `SyncCycle` and `DestinationRegistry`. The

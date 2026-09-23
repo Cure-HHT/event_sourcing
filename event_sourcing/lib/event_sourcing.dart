@@ -331,13 +331,22 @@ export 'src/security/system_entry_types.dart'
 
 // Storage layer — StorageBackend contract, the SembastBackend +
 // PostgresBackend concrete implementations, and the value types that
-// flow through the contract. `ensurePostgresSchema` is intentionally
-// library-private: only `PostgresBackend.open` calls it.
+// flow through the contract. The Postgres migration list is
+// library-private: only `PostgresBackend.provision` applies it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/boot_check.dart' show BootCheck;
 export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
+export 'src/storage/generation.dart'
+    show
+        GenerationDescriptor,
+        GenerationFencedException,
+        GenerationGuardConfigurationException,
+        GenerationRecord,
+        GenerationRegistration,
+        GenerationStatus,
+        IncompatibleGenerationException;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
 export 'src/storage/postgres/postgres.dart';

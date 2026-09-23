@@ -1,15 +1,18 @@
 // Verifies: EVS-DEV-destination-drain-lock/F
 //
 // The test seams have no effect without assertions: the probe in
-// `tool/hooks_release_probe.dart` installs every seam (the observers, the
-// awaited interleaving seams and the failure injections), then runs a
+// `tool/hooks_release_probe.dart` installs every seam an in-memory Sembast
+// database on io reaches (the observers, the awaited interleaving seams and
+// the failure injections), then runs a
 // registry operation and two delivery passes, after an open under another
 // build's substituted versions. Run without assertions
 // (`dart run --no-enable-asserts`, and as a `dart compile exe` executable)
 // no seam fires, the passes deliver, the send's outcome commits and the
 // initialization records the compiled versions; run in-process under
 // `flutter test` (assertions on) every seam fires and the initialization
-// records the substituted versions.
+// records the substituted versions. The seams only a Postgres backend or a
+// browser reaches are read through the same `DeliveryTestHooks.current`
+// gate, which the probe shows is closed without assertions.
 @Timeout(Duration(minutes: 5))
 library;
 

@@ -149,6 +149,17 @@ const _seamKinds = <String, String>{
   'insideTransform': 'interleave',
   'afterFillReads': 'interleave',
   'buildDeclaration': 'input substitution',
+  'insideBootLock': 'interleave',
+  'splitLockSessionStatements': 'failure injection',
+  'failGenerationRegistration': 'failure injection',
+  'failNextLockHeartbeat': 'failure injection',
+  'stallLockHeartbeatPastQueryTimeout': 'failure injection',
+  'failOldSessionTermination': 'failure injection',
+  'failLostSessionClose': 'failure injection',
+  'timerFactory': 'timer replacement',
+  'failProvisioningBeforeVersionWrite': 'failure injection',
+  'webLocksUnavailable': 'failure injection',
+  'schemaDeclaration': 'input substitution',
 };
 
 const _seamKindNames = <String>{
@@ -156,6 +167,7 @@ const _seamKindNames = <String>{
   'failure injection',
   'interleave',
   'input substitution',
+  'timer replacement',
 };
 
 /// The problems with [kinds] as the classification of [hooks]'s fields:
@@ -231,11 +243,16 @@ const _mustBeInternal = <String, String>{
       'reaches the event store the drainer runs its outcome transactions in',
   'DestinationRegistry.wedgeHeadInTxn':
       'wedges a queue head and appends a reserved wedge event',
+  'GenerationRegistration.recordInTxn':
+      "writes the generation's records in the boot transaction",
+  'UnguardedGenerationRegistration.recordInTxn':
+      "writes the generation's records in the boot transaction",
 };
 
 /// Raw-handle members; each must be internal.
 const _sanctionedRawHandles = <String>{
   'PostgresBackend.pool',
+  'PostgresLockSession.connection',
   'PostgresTxn.session',
   'SembastBackend.unwrapSembastTxn',
   'SembastBackendTestSupport.databaseForTesting',
@@ -246,6 +263,12 @@ const _sanctionedRawHandles = <String>{
 const _concreteOperations = <String, String>{
   'PostgresBackend.open': 'static opener; the consumer owns the backend',
   'PostgresBackend.endpointFromUrl': 'pure URL parse; changes nothing',
+  'PostgresBackend.provision':
+      "static provisioner: brings the schema to the build's version under "
+      'the boot lock, before any instance opens the database',
+  'PostgresBackend.generationStatus': "reads the generation guard's state",
+  'PostgresBackend.lockSessionForTest':
+      "visible for testing: reads the lock session's settings",
 };
 
 /// Public members of unexported types, and unexported top-level functions,
@@ -492,6 +515,14 @@ Future<void> writeQueueItemsTxn() async {}
 Future<void> seedViewTargetVersions() async {}
 Future<void> promoteViewSnapshots() async {}
 Future<void> catchUpViews() async {}
+
+abstract class GenerationRegistration {
+  Future<void> recordInTxn(Object txn);
+}
+
+class UnguardedGenerationRegistration {
+  Future<void> recordInTxn(Object txn) async {}
+}
 ''';
 
 const _fixtureUnexportedWriter = '''

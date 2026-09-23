@@ -23,6 +23,9 @@ class _SembastVersionDatabase implements VersionTestDatabase {
       SembastSecurityContextStore(backend: backend as SembastBackend);
 
   @override
+  Future<void> stop(EventStore store) async {}
+
+  @override
   Future<void> close() => _db.close();
 }
 

@@ -60,7 +60,7 @@ jobs:
   postgres:
     name: Postgres conformance + integration
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -75,8 +75,24 @@ jobs:
           --health-interval 2s
           --health-timeout 2s
           --health-retries 30
+      # A second server whose database and schema have the same names, for
+      # the check that a lock session reaches the pool's server.
+      postgres_other:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
     env:
       PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -125,6 +141,15 @@ jobs:
       - name: Boot under a serving revision's load on Postgres
         run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
         working-directory: event_sourcing
+      - name: Boot pause beside a serving revision on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_pause_test.dart
+        working-directory: event_sourcing
+      - name: Schema provisioning on Postgres
+        run: flutter test test/storage/postgres/postgres_provisioning_test.dart
+        working-directory: event_sourcing
+      - name: Incompatible-generation guard and lock session on Postgres
+        run: flutter test test/storage/postgres/postgres_generation_guard_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions
@@ -136,4 +161,7 @@ jobs:
         working-directory: event_sourcing/example_action_permissions
       - name: action_permissions_demo Postgres integration
         run: flutter test test/postgres_integration_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server provisioning on Postgres
+        run: flutter test test/server_provision_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

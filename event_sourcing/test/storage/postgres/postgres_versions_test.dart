@@ -26,6 +26,7 @@ class _PostgresVersionDatabase implements VersionTestDatabase {
     final backend = await PostgresBackend.open(
       url: _url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     _backends.add(backend);
     return backend;
@@ -34,6 +35,9 @@ class _PostgresVersionDatabase implements VersionTestDatabase {
   @override
   MutableSecurityContextStore securityFor(StorageBackend backend) =>
       PostgresSecurityContextStore(backend: backend as PostgresBackend);
+
+  @override
+  Future<void> stop(EventStore store) => store.close();
 
   @override
   Future<void> close() async {
@@ -145,6 +149,7 @@ void main() {
       final backend = await PostgresBackend.open(
         url: url!,
         sslMode: SslMode.disable,
+        provisionSchema: true,
       );
       backends.add(backend);
       return backend;
@@ -243,6 +248,7 @@ void main() {
       final backend = await PostgresBackend.open(
         url: url,
         sslMode: SslMode.disable,
+        provisionSchema: true,
       );
       await backend.close();
       final conn = await _connect(url);

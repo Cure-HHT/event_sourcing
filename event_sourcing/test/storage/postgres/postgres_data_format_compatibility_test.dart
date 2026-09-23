@@ -10,6 +10,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
 import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart'
+    show postgresMigrations;
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
@@ -43,6 +45,7 @@ class PostgresBootDatabase implements BootTestDatabase {
     final backend = await PostgresBackend.open(
       url: _url,
       sslMode: SslMode.disable,
+      provisionSchema: true,
     );
     _backends.add(backend);
     return backend;
@@ -108,10 +111,25 @@ class PostgresBootDatabase implements BootTestDatabase {
           PRIMARY KEY (view_name, entry_type)
         )
       ''');
+      // The rest of the schema, recorded as provisioned: provisioning
+      // refuses a schema whose library tables carry no schema version, so
+      // this plays one whose version record claims the current schema while
+      // its version columns keep the earlier shape, which the open refuses.
+      for (final statement in postgresMigrations.last.ddl) {
+        await conn.execute(statement);
+      }
+      await conn.execute(
+        'INSERT INTO backend_state (key, value) VALUES '
+        "('schema_version', '1'), ('min_compatible_schema_version', '1') "
+        'ON CONFLICT (key) DO NOTHING',
+      );
     } finally {
       await conn.close();
     }
   }
+
+  @override
+  Future<void> stop(EventStore store) => store.close();
 
   @override
   Future<void> close() async {
