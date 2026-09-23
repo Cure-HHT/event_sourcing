@@ -550,7 +550,11 @@ final eventStore = datastore.eventStore;
 ```
 
 Every event type your app appends must have its `entryType` registered
-here — missing entries fail at append time, not boot. The
+here — missing entries fail at append time, not boot. The library's own
+reserved system entry types, and its default destination-wedges view, are
+registered by the open itself; list only your application's types (an id
+the library reserves is refused unless it is the library's own
+definition). The
 `registeredVersion` -- a major and a minor number -- is what gets
 stamped on every event of that type; raising it later signals a schema
 change (a minor to add a field with a default, a major to rename or drop
@@ -1079,6 +1083,21 @@ taken before the switch, or a roll-forward. Evolve compatibly where you
 can: add an optional field as a minor step, and make a real reshape a
 new entry type that you append instead of the old one.
 
+Never forward a database's own events back to it. Every destination audit
+event (a registration, a date change, a recovery, a deletion, a wedge)
+records the identity of the database that appended it, and a receiver
+refuses an ingested destination audit that names its own database but that
+it does not hold (`IngestReservedEventRefused` with reason
+`namesReceiverDatabase`); an own event it still holds is refused as
+`IngestIdentityMismatch`. So a peer's destination that carries the
+receiver's own events back to it wedges whether or not the receiver's
+database was ever restored from a backup; a restore only changes which of
+the two refusals the peer sees. The fix is that destination's filter:
+leave out the events that originated at the receiver (for example with a
+filter predicate on the event's first provenance entry), then recover the
+wedged head with `tombstoneAndRefill`, which rebuilds the destination's
+pending items under the new filter and loses nothing.
+
 ### Schema evolution: entry types and promoters
 
 When you need to evolve an event shape — rename a field, add a default,
@@ -1201,6 +1220,26 @@ design:
   A break produces a `ChainVerdict` recording exactly where the chain
   diverged from what was expected; the local install can refuse the
   batch and emit an audit event explaining the refusal.
+- Reserved system events (the library's own audits, such as a destination
+  wedge) are appended only by the library: `append` and `appendInTxn`
+  refuse their entry types. Ingest admits a peer's reserved event only in
+  the aggregate type and event types the library appends it with (fixed
+  within a data-format major), and a destination audit only with a
+  destination identifier and the appending database's identity, each a
+  non-empty string without `|`; anything else is refused, with the whole
+  batch, as `IngestReservedEventRefused` naming the reason. A destination
+  whose transport ingests into another store should treat that refusal as
+  permanent, as it treats the version refusals.
+- Every store folds the library's default destination-wedges view
+  (`defaultDestinationWedgesSpec`, view `default_destination_wedges`): one
+  row per wedged destination, keyed `<database identity>|<destination>`,
+  inserted by a wedge event and removed by the recovery or deletion that
+  ends it. It is a convention over the log, not a read of the queues: rows
+  whose `database_id` field is the store's own `databaseId` name the same
+  wedged heads as `backend.wedgedFifos()` (read each in its own
+  transaction, the two can differ for the moment between them), and rows
+  for other databases come from wedge events a peer forwarded, as that peer
+  asserts them. Tell local rows from peer rows by that field.
 
 Activating that machinery — canonicalization rules: per-aggregate-type
 rules saying who is the canonical authority for that aggregate, who can

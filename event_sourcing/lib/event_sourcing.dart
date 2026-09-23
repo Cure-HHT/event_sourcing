@@ -153,6 +153,8 @@ export 'src/core/errors/sync_exception.dart';
 // exported.
 export 'src/destinations/batch_envelope_metadata.dart'
     show BatchEnvelopeMetadata;
+export 'src/destinations/default_destination_wedges_spec.dart'
+    show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_registry.dart' show DestinationRegistry;
 export 'src/destinations/destination_schedule.dart'
@@ -188,7 +190,9 @@ export 'src/ingest/ingest_errors.dart'
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
         IngestEntryTypeVersionUnpromotable,
-        IngestIdentityMismatch;
+        IngestIdentityMismatch,
+        IngestReservedEventRefused,
+        ReservedEventRefusal;
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
@@ -300,12 +304,18 @@ export 'src/security/sembast_security_context_store.dart'
     show SembastSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
-        // Security-context lifecycle audits.
+        // Security-context lifecycle audits: entry types, their aggregate
+        // type and the per-kind event types they are appended under.
+        kSecurityContextAuditAggregateType,
         kSecurityContextCompactedEntryType,
+        kSecurityContextCompactedEventType,
         kSecurityContextPurgedEntryType,
+        kSecurityContextPurgedEventType,
         kSecurityContextRedactedEntryType,
-        // Destination-mutation audits: entry types and the per-kind event
-        // types they are appended under.
+        kSecurityContextRedactedEventType,
+        // Destination-mutation audits: entry types, their aggregate type and
+        // the per-kind event types they are appended under.
+        kDestinationAuditAggregateType,
         kDestinationDeletedEntryType,
         kDestinationDeletedEventType,
         kDestinationEndDateSetEntryType,

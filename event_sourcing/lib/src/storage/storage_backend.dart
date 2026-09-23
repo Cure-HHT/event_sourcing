@@ -63,9 +63,11 @@ import 'package:meta/meta.dart' show internal;
 /// requests, wedge records, the registry check record, the database
 /// identity, the generation records and the view catch-up marks, and the
 /// security context it stores beside each event) changes only through the
-/// library's operations. The internal marking is an analyzer guard,
-/// not a barrier: the consumer holds the backend (and, on Sembast, the
-/// database it opened), and a direct write is invisible to the library.
+/// library's operations, and reserved system events are appended only by
+/// the library's own operations. The internal marking, here and on the
+/// event store's reserved append operations, is an analyzer guard, not a
+/// barrier: the consumer holds the backend (and, on Sembast, the database
+/// it opened), and a direct write is invisible to the library.
 // Implements: EVS-PRD-destinations/K
 // every member that writes a queue, a view,
 //   the persisted delivery state, the event sequence or the schema version
@@ -526,9 +528,19 @@ abstract class StorageBackend {
   );
 
   /// True iff any registered destination's FIFO head is `wedged`.
+  ///
+  /// A read of this database's queues themselves. The library's default
+  /// destination-wedges view (`defaultDestinationWedgesSpec`) is a
+  /// convention folded from the log: its rows for this database name the
+  /// same wedged heads, and it also holds rows for other databases whose
+  /// wedge events a peer forwarded, which no read of the local queues shows.
   Future<bool> hasFifoWedged();
 
   /// Summarize every destination whose head row is wedged.
+  ///
+  /// A read of this database's queues themselves, as [hasFifoWedged] is;
+  /// the default destination-wedges view's rows whose `database_id` is this
+  /// database's identity name the same (destination, item) pairs.
   Future<List<WedgedFifoSummary>> wedgedFifos();
 
   // -------- Backend state (KV bookkeeping) --------

@@ -266,6 +266,7 @@ class _DemoPaneState extends State<DemoPane> {
       Expanded(
         child: DetailPanel(
           backend: widget.backend,
+          databaseId: widget.datastore.eventStore.databaseId,
           appState: widget.appState,
           policyNotifier: widget.policyNotifier,
         ),

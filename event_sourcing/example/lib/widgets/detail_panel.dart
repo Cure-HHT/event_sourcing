@@ -9,12 +9,18 @@ import 'package:flutter/material.dart';
 class DetailPanel extends StatefulWidget {
   const DetailPanel({
     required this.backend,
+    required this.databaseId,
     required this.appState,
     required this.policyNotifier,
     super.key,
   });
 
   final SembastBackend backend;
+
+  /// The pane's database identity (`EventStore.databaseId`): rows of the
+  /// default destination-wedges view whose `database_id` is this identity
+  /// are this pane's own wedges; every other row is a peer's.
+  final String databaseId;
   final AppState appState;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
@@ -55,7 +61,29 @@ class _DetailPanelState extends State<DetailPanel> {
     try {
       final events = await widget.backend.findAllEvents(limit: 100000);
       final anyWedged = await widget.backend.hasFifoWedged();
+      // The pane's own queues, read directly.
       final wedged = await widget.backend.wedgedFifos();
+      // The library's default destination-wedges view, folded from the
+      // wedge, recovery and deletion events in the log. Its local rows name
+      // the same wedged heads as wedgedFifos() (each read is its own
+      // snapshot, so the two can differ while the drainer runs between
+      // them); its peer rows come from wedge events another pane forwarded,
+      // which no read of this pane's queues shows.
+      final viewRows = await widget.backend.findViewRows(
+        defaultDestinationWedgesSpec.viewName,
+      );
+      final local = <String>[];
+      final peers = <String>[];
+      for (final row in viewRows) {
+        final id = row['id'] as String? ?? '?';
+        final cause = row['cause'] as String? ?? '?';
+        final origin = row['database_id'] as String? ?? '?';
+        if (origin == widget.databaseId) {
+          local.add('$id ($cause)');
+        } else {
+          peers.add('$id ($cause) from database ${_short(origin)}');
+        }
+      }
       final aggCount = events.map((e) => e.aggregateId).toSet().length;
       final text = <String>[
         'events:     ${events.length}',
@@ -63,6 +91,8 @@ class _DetailPanelState extends State<DetailPanel> {
         'any wedged: $anyWedged',
         if (wedged.isNotEmpty)
           'wedged dst: ${wedged.map((s) => s.destinationId).join(", ")}',
+        'wedges view (this database): ${_listOrNone(local)}',
+        'wedges view (peers):         ${_listOrNone(peers)}',
       ].join('\n');
       if (!mounted) return;
       setState(() => _summary = text);
@@ -70,6 +100,12 @@ class _DetailPanelState extends State<DetailPanel> {
       // Non-fatal.
     }
   }
+
+  static String _listOrNone(List<String> items) =>
+      items.isEmpty ? 'none' : items.join(', ');
+
+  /// The first eight characters of a database identity, for display.
+  static String _short(String id) => id.length <= 8 ? id : id.substring(0, 8);
 
   @override
   Widget build(BuildContext context) {

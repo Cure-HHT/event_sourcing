@@ -25,6 +25,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
+import 'queue_test_support.dart' show wedgeHeadForTest;
+import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'wedge-scenarios');
 const String _noteType = 'wedge_note';
@@ -86,7 +88,16 @@ Future<List<StoredEvent>> _destinationAudits(
 /// Asserts [destinationId]'s wedge record equals the open wedge the log
 /// records: the latest wedge event this install appended for it, unless a
 /// recovery or a deletion followed; and that the item it names is wedged.
+/// Then asserts the view-queue invariant ([expectWedgesViewMatchesQueue]).
 Future<void> expectWedgeRecordMatchesLog(
+  EventStore store,
+  String destinationId,
+) async {
+  await _expectWedgeRecordMatchesLog(store, destinationId);
+  await expectWedgesViewMatchesQueue(store);
+}
+
+Future<void> _expectWedgeRecordMatchesLog(
   EventStore store,
   String destinationId,
 ) async {
@@ -308,7 +319,7 @@ void runDrainWedgeScenarios(
         expect(event.data.keys.toSet(), declaredWedgeEventKeys);
         expect(event.data, <String, Object?>{
           'id': 'x',
-          'database_id': null,
+          'database_id': w.store.databaseId,
           'row_id': head.entryId,
           'event_ids': head.eventIds,
           'first_seq': head.sequenceRange.firstSeq,
@@ -1323,35 +1334,43 @@ void runDrainWedgeScenarios(
         },
       );
 
-      // Verifies: EVS-DEV-destination-drain/I
-      // a registry over an event store that
-      //   does not register the reserved destination audit entry types is
-      //   refused, since its drainer could not append a wedge event.
-      test('a registry over a store without the destination audit types is '
-          'refused', () async {
-        if (!available) return;
-        final entryTypes = EntryTypeRegistry();
-        for (final d in kSystemEntryTypes) {
-          if (d.id != kDestinationWedgedEntryType) entryTypes.register(d);
-        }
-        final backend = await w.db.openBackend();
-        final store = await EventStore.openForTest(
-          storage: backend,
-          entryTypes: entryTypes,
-          source: _source,
-          securityContexts: w.db.securityFor(backend),
-        );
-        expect(
-          () => DestinationRegistry(eventStore: store),
-          throwsA(
-            isA<StateError>().having(
-              (e) => e.message,
-              'message',
-              contains(kDestinationWedgedEntryType),
+      // Verifies: EVS-DEV-destination-drain/M
+      // an event store opened over a registry that lacks the wedge entry
+      //   type registers it, so a registry over the store can wedge a head.
+      test(
+        'a store opened without the wedge entry type registers it',
+        () async {
+          if (!available) return;
+          final entryTypes = EntryTypeRegistry();
+          for (final d in kSystemEntryTypes) {
+            if (d.id != kDestinationWedgedEntryType) entryTypes.register(d);
+          }
+          final backend = await w.db.openBackend();
+          final store = await EventStore.openForTest(
+            storage: backend,
+            entryTypes: entryTypes,
+            source: _source,
+            securityContexts: w.db.securityFor(backend),
+          );
+          expect(
+            identical(
+              store.entryTypes.byId(kDestinationWedgedEntryType),
+              kSystemEntryTypes.firstWhere(
+                (d) => d.id == kDestinationWedgedEntryType,
+              ),
             ),
-          ),
-        );
-      });
+            isTrue,
+          );
+          final registry = DestinationRegistry(eventStore: store);
+          final d = FakeDestination(id: 'x');
+          await w.activate(d, on: registry);
+          await w.note('x-n0');
+          await w.fillAll(d, on: backend);
+          await wedgeHeadForTest(registry, 'x');
+          expect(await w.wedgeEvents(destinationId: 'x'), hasLength(1));
+          await expectWedgeRecordMatchesLog(store, 'x');
+        },
+      );
     });
 
     // ------------------------------------------------------------------

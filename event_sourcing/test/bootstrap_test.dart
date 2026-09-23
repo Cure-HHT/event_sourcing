@@ -53,7 +53,7 @@ void main() {
       expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
     });
 
-    test('auto-registers 3 reserved system entry types BEFORE '
+    test('registers the reserved system entry types beside the '
         'caller-supplied list', () async {
       final backend = await _openBackend();
       final ds = await bootstrapEventStore(

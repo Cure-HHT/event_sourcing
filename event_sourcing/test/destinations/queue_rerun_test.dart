@@ -15,6 +15,7 @@ import '../test_support/drain_wedge_conformance.dart'
 import '../test_support/fake_destination.dart';
 import '../test_support/queue_test_support.dart';
 import '../test_support/rerunning_sembast_backend.dart';
+import '../test_support/wedges_view_invariant.dart';
 
 const _init = AutomationInitiator(service: 'rerun');
 const _source = Source(
@@ -142,6 +143,40 @@ void main() {
     expect(check?.outcome, 'refused_unknown_destination');
   });
 
+  // Verifies: EVS-DEV-destination-drain/U
+  // the refusal of an invalid destination identifier is decided in each
+  //   run, the committed run writes the one check record, and the operation
+  //   throws once after the commit.
+  // Verifies: EVS-DEV-destination-drain/K
+  // registration refuses a destination identifier containing `|` under
+  //   re-runs, with nothing written but the check record.
+  test(
+    'an identifier refusal is thrown once, after the committed run',
+    () async {
+      final runs = <String>[];
+      final before = await backend.findAllEvents();
+      await expectLater(
+        runWithDeliveryTestHooks(
+          DeliveryTestHooks(onRegistryBodyRun: runs.add),
+          () => registry.addDestination(
+            FakeDestination(id: 'a|b'),
+            initiator: _init,
+          ),
+        ),
+        throwsArgumentError,
+      );
+      expect(runs, hasLength(2));
+      final check = await backend.transaction(backend.readRegistryCheckTxn);
+      expect(check?.op, 'addDestination');
+      expect(check?.outcome, 'refused_invalid_identifier');
+      expect(
+        (await backend.findAllEvents()).map((e) => e.eventId),
+        before.map((e) => e.eventId),
+      );
+      expect(registry.byId('a|b'), isNull);
+    },
+  );
+
   // Verifies: EVS-PRD-event-log/G
   // the fill enqueues each item once, the
   //   drain records one attempt, and recovery and deletion each append one
@@ -172,6 +207,7 @@ void main() {
     final wedged = (await backend.readFifoHead('x'))!;
     expect(wedged.finalStatus, FinalStatus.wedged);
     expect(wedged.attempts, hasLength(1));
+    await expectWedgesViewMatchesQueue(store);
 
     final result = await registry.tombstoneAndRefill(
       'x',
@@ -180,6 +216,7 @@ void main() {
     );
     expect(result.deletedTrailCount, 1);
     expect(await audits(kDestinationWedgeRecoveredEntryType), hasLength(1));
+    await expectWedgesViewMatchesQueue(store);
 
     await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
     await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
@@ -189,6 +226,7 @@ void main() {
     expect(deleted, hasLength(1));
     expect(deleted.single.data['deleted_pending_count'], 1);
     expect(deleted.single.data['tombstoned_row_id'], isNotNull);
+    await expectWedgesViewMatchesQueue(store);
   });
 
   Future<WedgeRecord?> wedgeRecord(String destId) =>
@@ -241,6 +279,7 @@ void main() {
     expect(head.finalStatus, FinalStatus.wedged);
     expect(head.attempts, hasLength(1));
     await expectWedgeRecordMatchesLog(store, 'x');
+    await expectWedgesViewMatchesQueue(store);
   });
 
   // Verifies: EVS-PRD-event-log/G
@@ -267,5 +306,6 @@ void main() {
     expect(head.attempts, hasLength(1));
     expect(d.sent, hasLength(1));
     await expectWedgeRecordMatchesLog(store, 'x');
+    await expectWedgesViewMatchesQueue(store);
   });
 }

@@ -121,6 +121,27 @@ void main() {
       );
       expect(result, isA<SendPermanent>());
     });
+
+    for (final reason in ReservedEventRefusal.values) {
+      test(
+        'IngestReservedEventRefused (${reason.name}) -> SendPermanent',
+        () async {
+          final stub = _ThrowingEventStore(
+            IngestReservedEventRefused(
+              eventId: 'e-1',
+              entryType: kDestinationWedgedEntryType,
+              reason: reason,
+            ),
+          );
+          final bridge = DownstreamBridge(stub);
+          final result = await bridge.deliver(
+            _wirePayload(Uint8List.fromList(<int>[1])),
+          );
+          expect(result, isA<SendPermanent>());
+          expect((result as SendPermanent).error, contains(reason.name));
+        },
+      );
+    }
   });
 }
 

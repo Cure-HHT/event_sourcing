@@ -13,7 +13,7 @@
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
-| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 91187d27 |
+| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | d1b16a7b |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | f8de0379 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |
@@ -39,7 +39,7 @@
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
-| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 1feab6f7 |
+| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 393cd9e2 |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 66b0a2e5 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | ee97c1d7 |

@@ -3,7 +3,8 @@
 // The precondition of the storage trust boundary is stated where an
 // adopter meets the boundary: the `StorageBackend` dartdoc, the README's
 // storage section and the CLAUDE.md `StorageBackend` trust entry. Each
-// occurrence names every kind of persisted state it covers.
+// occurrence names every kind of persisted state it covers, and that
+// reserved system events are appended only by the library's own operations.
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,12 @@ import 'package:path/path.dart' as p;
 
 /// The clause every statement of the precondition carries.
 const _clause = "changes only through the library's operations";
+
+/// The clause on reserved system events every statement carries, in the
+/// same paragraph as [_clause].
+const _reservedClause =
+    "reserved system events are appended only by the library's own "
+    'operations';
 
 /// Each kind of persisted state the precondition names: the phrase every
 /// statement of it must contain, mapped to what the phrase names. A change
@@ -55,9 +62,10 @@ String? preconditionProblem(
       for (final entry in kinds.entries)
         if (!para.contains(entry.key)) entry.value,
     ];
-    if (missing.isEmpty) return null;
+    if (missing.isEmpty && para.contains(_reservedClause)) return null;
   }
-  return 'the precondition does not name every kind of persisted state';
+  return 'the precondition does not name every kind of persisted state and '
+      'the reserved system events';
 }
 
 String _between(String text, String start, String end) {
@@ -153,6 +161,34 @@ void main() {
           },
         ),
         isNotNull,
+      );
+    });
+
+    test('a precondition that omits the reserved system events', () {
+      expect(
+        preconditionProblem(
+          'Its persisted state (destination queues, the views it '
+          'materializes, the records it keeps beside them, such as fill '
+          'positions, schedules, replay requests, wedge records, the '
+          'registry check record, the database identity, the generation '
+          'records and the view catch-up marks, and the security context it '
+          "stores beside each event) changes only through the library's "
+          'operations.',
+        ),
+        isNotNull,
+      );
+      expect(
+        preconditionProblem(
+          'Its persisted state (destination queues, the views it '
+          'materializes, the records it keeps beside them, such as fill '
+          'positions, schedules, replay requests, wedge records, the '
+          'registry check record, the database identity, the generation '
+          'records and the view catch-up marks, and the security context it '
+          "stores beside each event) changes only through the library's "
+          'operations, and reserved system events are appended only by '
+          "the library's own operations.",
+        ),
+        isNull,
       );
     });
 

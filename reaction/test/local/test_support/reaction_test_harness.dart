@@ -6,7 +6,8 @@
 //
 // Wires up:
 //   - An in-memory SembastBackend via sembast_memory.
-//   - An EntryTypeRegistry with kSystemEntryTypes + 'note' + 'greeting'.
+//   - An EntryTypeRegistry with 'note' + 'greeting' (EventStore.open adds
+//     the library's reserved system entry types).
 //   - A ProjectionRegistry with rolePermissionGrantsSpec + 'notes_today'
 //     AggregateProjectionSpec.
 //   - A SembastSecurityContextStore.
@@ -40,11 +41,8 @@ class ReactionTestHarness {
     final backend = SembastBackend(database: db);
 
     // --- Entry types ---
-    final entryTypes = EntryTypeRegistry();
-    for (final definition in kSystemEntryTypes) {
-      entryTypes.register(definition);
-    }
-    entryTypes
+    // EventStore.open registers the library's reserved system entry types.
+    final entryTypes = EntryTypeRegistry()
       ..register(
         const EntryTypeDefinition(
           id: 'note',

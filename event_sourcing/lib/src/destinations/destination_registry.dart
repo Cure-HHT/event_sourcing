@@ -100,38 +100,10 @@ class DestinationRegistry {
   /// delivery cycle that drains its destinations read and write the store's
   /// backend, and append their audit events through the store. The
   /// registry does not open the database; the caller retains ownership of
-  /// the backend's lifecycle.
-  ///
-  /// Throws [StateError] when the store's entry-type registry lacks any of
-  /// the reserved destination audit entry types (`kSystemEntryTypes`
-  /// registers them all): without them the registry's operations could not
-  /// record their audits, and the drainer could not wedge a queue head, so
-  /// a refused item would stay pending with no operator recovery possible.
+  /// the backend's lifecycle. `EventStore.open` registers the reserved
+  /// destination audit entry types the registry and the drainer append.
   DestinationRegistry({required EventStore eventStore})
-    : _eventStore = eventStore {
-    final missing = <String>[
-      for (final id in _destinationAuditEntryTypes)
-        if (!eventStore.entryTypes.isRegistered(id)) id,
-    ];
-    if (missing.isNotEmpty) {
-      throw StateError(
-        'DestinationRegistry: the event store does not register the '
-        'reserved destination audit entry types ${missing.join(', ')}; '
-        'register kSystemEntryTypes with the store.',
-      );
-    }
-  }
-
-  /// Every destination audit entry type the registry and the drainer
-  /// append.
-  static const List<String> _destinationAuditEntryTypes = <String>[
-    kDestinationRegisteredEntryType,
-    kDestinationStartDateSetEntryType,
-    kDestinationEndDateSetEntryType,
-    kDestinationDeletedEntryType,
-    kDestinationWedgeRecoveredEntryType,
-    kDestinationWedgedEntryType,
-  ];
+    : _eventStore = eventStore;
 
   /// Backend holding the destinations' schedules and queues: the event
   /// store's backend.
@@ -239,7 +211,9 @@ class DestinationRegistry {
   /// of that event.
   ///
   /// Throws `ArgumentError`, with nothing written but the registry check
-  /// record, when this registry already holds [destination]'s id under the
+  /// record, when [destination]'s id is empty or contains `|` (the default
+  /// destination-wedges view joins the database identity and the id with
+  /// `|`), or when this registry already holds [destination]'s id under the
   /// registration the database still has, or is registering that id in
   /// another call that has not finished. When the database no longer has
   /// that registration (the destination was deleted, and perhaps registered
@@ -269,6 +243,24 @@ class DestinationRegistry {
         txn,
         collector,
       ) async {
+        // Implements: EVS-DEV-destination-drain/K
+        // destination identifiers are non-empty and exclude '|'.
+        if (id.isEmpty || id.contains('|')) {
+          return _decideWithoutChange<String>(
+            txn,
+            op: 'addDestination',
+            destinationId: id,
+            check: 'refused_invalid_identifier',
+            outcome: _Refused<String>(
+              ArgumentError.value(
+                id,
+                'destination.id',
+                'a destination identifier must be non-empty and must not '
+                    "contain '|'",
+              ),
+            ),
+          );
+        }
         final persisted = await backend.readScheduleTxn(txn, id);
         final local = _destinations[id];
         if (!reserved ||
@@ -604,6 +596,9 @@ class DestinationRegistry {
       await backend.deleteScheduleTxn(txn, id);
       await backend.clearReplayRequestTxn(txn, id);
       await backend.clearWedgeRecordTxn(txn, id);
+      // Implements: EVS-PRD-destinations/T
+      // a deletion appends a deletion event naming the wedged item it retires,
+      //   if any.
       await _emitDestinationAuditInTxn(
         txn,
         collector,
@@ -710,6 +705,9 @@ class DestinationRegistry {
     final rewoundTo = lowest - 1;
     await backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
     await backend.clearWedgeRecordTxn(txn, destinationId);
+    // Implements: EVS-PRD-destinations/T
+    // an operator recovery of a wedged queue appends a recovery event in the
+    //   transaction that retires the wedged head.
     await _emitDestinationAuditInTxn(
       txn,
       collector,
@@ -824,7 +822,7 @@ class DestinationRegistry {
       eventType: kDestinationWedgedEventType,
       data: <String, Object?>{
         'id': destinationId,
-        'database_id': null,
+        // `database_id` is added by the audit emitter.
         'row_id': rowId,
         'event_ids': List<String>.of(head.eventIds),
         'first_seq': head.sequenceRange.firstSeq,
@@ -876,16 +874,20 @@ class DestinationRegistry {
   /// the per-kind event type paired with [entryType] (for example
   /// [kDestinationDeletedEventType]), so a declarative filter or projection
   /// tells the kinds apart by event type. The destination identity lives in
-  /// `data['id']`. Every destination mutation a single install emits
-  /// therefore lands in a single per-install hash-chained system
-  /// aggregate. Emission uses no flow token, metadata, security,
-  /// checkpoint, or change reason. dedupeByContent is left off because
-  /// each destination mutation records a distinct timeline entry.
+  /// `data['id']`, and the identity of the database that appends the event
+  /// (`EventStore.databaseId`) in `data['database_id']`, which the emitter
+  /// adds. Every destination mutation a single install emits therefore lands
+  /// in a single per-install hash-chained system aggregate. Emission uses no
+  /// flow token, metadata, security, checkpoint, or change reason.
+  /// dedupeByContent is left off because each destination mutation records
+  /// a distinct timeline entry.
   ///
   /// `entry_type_version` is stamped by the substrate from the registry's
-  /// `registeredVersion` for [entryType]; if [entryType] is not registered,
-  /// `appendInTxn`'s `_validateAppendInputs` raises an `ArgumentError`
-  /// inside the surrounding transaction (rolling back any prior writes).
+  /// `registeredVersion` for [entryType]; `EventStore.open` registers every
+  /// destination audit entry type.
+  // Implements: EVS-DEV-destination-drain/K
+  // every destination audit event the library appends carries the identity
+  //   of the database that appends it.
   Future<StoredEvent> _emitDestinationAuditInTxn(
     Transaction txn,
     PublishCollector collector, {
@@ -894,21 +896,15 @@ class DestinationRegistry {
     required Map<String, Object?> data,
     required Initiator initiator,
   }) async {
-    final event = await _eventStore.appendInTxn(
+    final event = await _eventStore.appendReservedInTxn(
       txn,
-      collector: collector,
+      collector,
       entryType: entryType,
       aggregateId: _eventStore.source.identifier,
       aggregateType: kDestinationAuditAggregateType,
       eventType: eventType,
-      data: data,
+      data: <String, Object?>{...data, 'database_id': _eventStore.databaseId},
       initiator: initiator,
-      flowToken: null,
-      metadata: null,
-      security: null,
-      checkpointReason: null,
-      changeReason: null,
-      dedupeByContent: false,
     );
     // dedupeByContent is off, so the append always stores an event.
     return event!;

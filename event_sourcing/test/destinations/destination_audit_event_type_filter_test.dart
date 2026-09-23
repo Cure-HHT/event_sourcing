@@ -6,8 +6,6 @@
 //   event type and aggregate type is still rejected by the empty
 //   entry-type allow-list.
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kDestinationAuditAggregateType;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 

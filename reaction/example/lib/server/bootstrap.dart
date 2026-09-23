@@ -83,11 +83,8 @@ Future<BootstrapResult> bootstrap() async {
   final backend = SembastBackend(database: db);
 
   // --- Entry types ---
-  final entryTypes = EntryTypeRegistry();
-  for (final definition in kSystemEntryTypes) {
-    entryTypes.register(definition);
-  }
-  entryTypes
+  // EventStore.open registers the library's reserved system entry types.
+  final entryTypes = EntryTypeRegistry()
     ..register(
       const EntryTypeDefinition(
         id: 'note',

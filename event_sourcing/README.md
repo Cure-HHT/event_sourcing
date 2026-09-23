@@ -263,8 +263,10 @@ records it keeps beside them, such as fill positions, schedules, replay
 requests, wedge records, the registry check record, the database
 identity, the generation records and the view catch-up marks, and the
 security context it stores beside each event) changes only through the
-library's operations. Every
-`StorageBackend` member that writes is `@internal`; a consumer uses the reads, `transaction` (for its own reads;
+library's operations, and reserved system events are appended only by the
+library's own operations. The event store's reserved append operations are
+`@internal`, and so is every
+`StorageBackend` member that writes; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
 `close`, and delivers through `SyncCycle` and `DestinationRegistry`. The
 marking is an analyzer guard, not a run-time barrier (see
@@ -308,7 +310,14 @@ deployment — see the guide's "Advanced" chapter for detail:
   decides backoff and its attempt budget, at least one, decides when an
   item wedges) and the `clock` given to `SyncCycle` (fill computes its
   window from it; its readings are not recorded). The wedge event makes
-  each wedge decision auditable from the log.
+  each wedge decision auditable from the log. Every store folds the
+  library's default destination-wedges view (`default_destination_wedges`,
+  registered by `EventStore.open`): one row per wedged destination, keyed
+  by the appending database's identity and the destination, removed by
+  the recovery or deletion that ends the wedge. Only the library appends
+  reserved system events such as these: `append` and `appendInTxn` refuse
+  them, and ingest refuses one in a shape the library does not append
+  (`IngestReservedEventRefused`).
 - **Cross-installation ingest** — a `Destination` is the outbound
   transport; the inbound ingest path verifies the hash chain against
   what's stored, extends the provenance chain, and admits events into the

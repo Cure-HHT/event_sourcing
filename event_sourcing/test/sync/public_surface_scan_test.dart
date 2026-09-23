@@ -243,6 +243,9 @@ const _mustBeInternal = <String, String>{
       'reaches the event store the drainer runs its outcome transactions in',
   'DestinationRegistry.wedgeHeadInTxn':
       'wedges a queue head and appends a reserved wedge event',
+  'EventStore.appendReserved': 'appends a reserved system event',
+  'EventStore.appendReservedInTxn':
+      'appends a reserved system event in a transaction',
   'GenerationRegistration.recordInTxn':
       "writes the generation's records in the boot transaction",
   'UnguardedGenerationRegistration.recordInTxn':
@@ -477,6 +480,11 @@ extension SembastBackendTestSupport on SembastBackend {
 class DestinationRegistry {
   Object get eventStore => Object();
   Future<void> wedgeHeadInTxn() async {}
+}
+
+class EventStore {
+  Future<void> appendReserved() async {}
+  Future<void> appendReservedInTxn() async {}
 }
 
 class AggregateFold {

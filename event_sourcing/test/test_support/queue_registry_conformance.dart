@@ -23,6 +23,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fake_destination.dart';
 import 'fifo_entry_helpers.dart';
 import 'queue_test_support.dart';
+import 'wedges_view_invariant.dart';
 
 /// One test database for the scenarios.
 abstract class QueueTestDatabase {
@@ -99,6 +100,7 @@ class _World {
 
   StorageBackend get backend => a.backend;
   DestinationRegistry get registry => a.registry;
+  EventStore get store => a.store;
 
   Future<_Process> openProcess() async {
     final backend = await db.openBackend();
@@ -268,6 +270,9 @@ void runQueueRegistryScenarios(
 
     tearDown(() async {
       if (!available) return;
+      // Every scenario ends with the default destination-wedges view in
+      // agreement with the queue.
+      await expectWedgesViewMatchesQueue(w.store);
       await w.db.close();
     });
 
@@ -381,6 +386,7 @@ void runQueueRegistryScenarios(
           head.entryId,
           initiator: _init,
         );
+        await expectWedgesViewMatchesQueue(w.store);
         expect(result.deletedTrailCount, 1);
         expect(result.rewoundTo, early.sequenceNumber - 1);
         final audit = (await w.audits(
@@ -410,6 +416,7 @@ void runQueueRegistryScenarios(
           (await w.backend.readFifoHead('r'))!.entryId,
           initiator: _init,
         );
+        await expectWedgesViewMatchesQueue(w.store);
         // The drainer now registers the destination with a narrower filter.
         final narrow = FakeDestination(
           id: 'r',
@@ -508,6 +515,7 @@ void runQueueRegistryScenarios(
           (await w.backend.readFifoHead('r'))!.entryId,
           initiator: _init,
         );
+        await expectWedgesViewMatchesQueue(w.store);
         await w.fillAll(d);
         // sent-1 lies above the rewind point, so it is enqueued again; the
         // sent item is kept.
@@ -555,6 +563,7 @@ void runQueueRegistryScenarios(
           headId,
           initiator: _init,
         );
+        await expectWedgesViewMatchesQueue(w.store);
         expect(result.deletedTrailCount, 2);
         expect(await w.wedgeRecord('r'), isNull);
         final rows = await w.backend.listFifoEntries('r');
@@ -596,6 +605,7 @@ void runQueueRegistryScenarios(
           (await w.backend.readFifoHead('r'))!.entryId,
           initiator: _init,
         );
+        await expectWedgesViewMatchesQueue(w.store);
         expect(await w.request('r'), isNotNull);
         await w.fillAll(d);
         final pending = await w.pendingNotes('r');
@@ -685,6 +695,7 @@ void runQueueRegistryScenarios(
         );
 
         await w.registry.deleteDestination('x', initiator: _init);
+        await expectWedgesViewMatchesQueue(w.store);
 
         final rows = await w.backend.listFifoEntries('x');
         expect(await w.items('x'), [
@@ -714,6 +725,7 @@ void runQueueRegistryScenarios(
         final d = FakeDestination(id: 'x', allowHardDelete: true);
         await w.registry.addDestination(d, initiator: _init);
         await w.registry.deleteDestination('x', initiator: _init);
+        await expectWedgesViewMatchesQueue(w.store);
         expect(await w.backend.readSchedule('x'), isNull);
         final audit = (await w.audits(kDestinationDeletedEntryType)).single;
         expect(audit.data['tombstoned_row_id'], isNull);
@@ -733,6 +745,7 @@ void runQueueRegistryScenarios(
         await w.fillAll(d);
         await wedgeHeadForTest(w.registry, 'x');
         await w.registry.deleteDestination('x', initiator: _init);
+        await expectWedgesViewMatchesQueue(w.store);
         final retained = await w.backend.listFifoEntries('x');
 
         final again = FakeDestination(
@@ -777,6 +790,7 @@ void runQueueRegistryScenarios(
         await drain(d, registry: w.registry);
         expect(await w.eventsIn('x', status: FinalStatus.sent), ['delivered']);
         await w.registry.deleteDestination('x', initiator: _init);
+        await expectWedgesViewMatchesQueue(w.store);
         final again = FakeDestination(id: 'x', allowHardDelete: true);
         await w.registry.addDestination(again, initiator: _init);
         await w.registry.setStartDate(
@@ -899,7 +913,9 @@ void runQueueRegistryScenarios(
             head.entryId,
             initiator: _init,
           );
+          await expectWedgesViewMatchesQueue(w.store);
           await w.registry.deleteDestination('x', initiator: _init);
+          await expectWedgesViewMatchesQueue(w.store);
           const eventTypeOf = <String, String>{
             kDestinationRegisteredEntryType: kDestinationRegisteredEventType,
             kDestinationStartDateSetEntryType:
@@ -1134,6 +1150,7 @@ void runQueueRegistryScenarios(
         );
 
         await w.registry.deleteDestination('x', initiator: _init);
+        await expectWedgesViewMatchesQueue(w.store);
         expect(w.registry.byId('x'), isNull);
         await w.registry.addDestination(
           FakeDestination(id: 'x'),
@@ -1539,6 +1556,7 @@ void runQueueRegistryScenarios(
               if (fired) return;
               fired = true;
               await w.registry.deleteDestination('x', initiator: _init);
+              await expectWedgesViewMatchesQueue(w.store);
             },
           ),
           () => w.fill(d),

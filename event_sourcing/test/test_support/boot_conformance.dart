@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import 'lib_version_seed.dart';
+import 'wedges_view_invariant.dart' show expectReservedShapes;
 
 /// One database the boot scenarios open several backends over, as several
 /// builds or instances of the library would.
@@ -765,6 +766,10 @@ void runBootScenarios(
       });
 
       // Verifies: EVS-DEV-event-store-open/E
+      // Verifies: EVS-DEV-destination-drain/L
+      // the library-version change and the snapshot-promotion audit the boot
+      //   appends carry the aggregate type and an event type the library
+      //   declares for their entry types.
       test('a boot that fails after its library-version event writes '
           'nothing; a clean reopen appends exactly one change and '
           'promotes', () async {
@@ -807,6 +812,7 @@ void runBootScenarios(
           lessThan(all.indexWhere((e) => e.eventId == audits.single.eventId)),
           reason: 'the version change precedes the promotion it causes',
         );
+        await expectReservedShapes(newer);
       });
     });
   });

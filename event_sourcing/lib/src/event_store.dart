@@ -67,6 +67,7 @@ import 'dart:typed_data';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
@@ -276,6 +277,18 @@ class EventStore {
   /// [securityContexts]) must be supplied; the returned store is fully
   /// configured and ready for use.
   ///
+  /// The open first registers, in [entryTypes] and [projections], every
+  /// reserved system entry type ([kSystemEntryTypes]) and the library's
+  /// default destination-wedges view ([defaultDestinationWedgesSpec]) they
+  /// lack, then seals [projections]; the reserved types are therefore part
+  /// of the build's data generation. A registry that already holds a
+  /// reserved entry-type id, or a spec under the default view's name, is
+  /// accepted only when it holds the library's own object (the exported
+  /// definition or spec, which an earlier open with the same registries
+  /// also leaves there); any other definition, or a sealed [projections]
+  /// that lacks the view, throws [ArgumentError] naming the reserved id or
+  /// view, before either registry changes and before anything is written.
+  ///
   /// Before anything is written, the build registers its data generation
   /// (its data-format major and each registered entry type's major) with
   /// the backend's incompatible-generation guard: while another live
@@ -364,7 +377,9 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
   }) async {
-    final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
+    final effectiveProjections = projections ?? ProjectionRegistry();
+    _registerLibraryDefinitions(entryTypes, effectiveProjections);
+    effectiveProjections.seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
     final (:databaseId, :registration) = await _guardedBoot(
       storage: storage,
@@ -391,10 +406,13 @@ class EventStore {
   /// Opens an [EventStore] for a test: the boot of [open], refusals
   /// included, without its library-version event.
   ///
-  /// It runs the incompatible-generation guard and refuses what [open]
-  /// refuses (the database identity, the data format, an entry-type
-  /// downgrade), and otherwise seeds, promotes and re-derives views and
-  /// writes the generation and boot records as [open] does. It
+  /// It registers the reserved system entry types and the default
+  /// destination-wedges view as [open] does, runs the incompatible-generation
+  /// guard and refuses what [open] refuses (a reserved id or the view's name
+  /// under a definition other than the library's, a sealed projection
+  /// registry without the view, the database identity, the data format, an
+  /// entry-type downgrade), and otherwise seeds, promotes and re-derives
+  /// views and writes the generation and boot records as [open] does. It
   /// appends no `lib_version_initialized` or `lib_version_changed` event,
   /// so sequence numbers stay predictable, and at a first open it mints the
   /// database identity without a log record; a later [open] adopts that
@@ -416,7 +434,9 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
   }) async {
-    final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
+    final effectiveProjections = projections ?? ProjectionRegistry();
+    _registerLibraryDefinitions(entryTypes, effectiveProjections);
+    effectiveProjections.seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
     final (:databaseId, :registration) = await _guardedBoot(
       storage: storage,
@@ -438,6 +458,70 @@ class EventStore {
       clock: clock,
       uuid: uuid,
     );
+  }
+
+  /// Registers, in the caller's registries, every reserved system entry
+  /// type ([kSystemEntryTypes]) and the default destination-wedges view
+  /// ([defaultDestinationWedgesSpec]) they lack, before the registries are
+  /// sealed and the boot reads them.
+  ///
+  /// A registry that already holds a reserved entry-type id, or a spec under
+  /// the default view's name, is accepted only when it holds the library's
+  /// own object (the exported definition or spec, which is also what an
+  /// earlier open with the same registries left there); anything else, or a
+  /// sealed projection registry that lacks the view, throws [ArgumentError]
+  /// naming the reserved id or view before either registry changes and
+  /// before anything is written.
+  // Implements: EVS-DEV-destination-drain/M
+  // opening an event store registers the reserved system entry types and the
+  //   default destination-wedges view, accepting only the library's own
+  //   definitions already present.
+  static void _registerLibraryDefinitions(
+    EntryTypeRegistry entryTypes,
+    ProjectionRegistry projections,
+  ) {
+    for (final definition in kSystemEntryTypes) {
+      final held = entryTypes.byId(definition.id);
+      if (held != null && !identical(held, definition)) {
+        throw ArgumentError.value(
+          definition.id,
+          'entryTypes',
+          'entryType id "${definition.id}" is reserved for system events; '
+              "the registry holds a definition other than the library's "
+              "(kSystemEntryTypes). Register the library's own definition "
+              'or none: EventStore.open registers it.',
+        );
+      }
+    }
+    final viewName = defaultDestinationWedgesSpec.viewName;
+    final heldSpec = projections.lookup(viewName);
+    if (heldSpec != null &&
+        !identical(heldSpec, defaultDestinationWedgesSpec)) {
+      throw ArgumentError.value(
+        viewName,
+        'projections',
+        "view \"$viewName\" is reserved for the library's default "
+            'destination-wedges view; the registry holds another spec under '
+            'that name. Register defaultDestinationWedgesSpec or none: '
+            'EventStore.open registers it.',
+      );
+    }
+    if (heldSpec == null && projections.isSealed) {
+      throw ArgumentError.value(
+        viewName,
+        'projections',
+        "the projection registry is sealed and lacks the library's default "
+            'destination-wedges view "$viewName", which EventStore.open '
+            'registers; pass the registry unsealed, or register '
+            'defaultDestinationWedgesSpec before sealing it.',
+      );
+    }
+    for (final definition in kSystemEntryTypes) {
+      if (entryTypes.byId(definition.id) == null) {
+        entryTypes.register(definition);
+      }
+    }
+    if (heldSpec == null) projections.register(defaultDestinationWedgesSpec);
   }
 
   /// The build this process runs as: the compiled [LibVersion] constants,
@@ -978,7 +1062,11 @@ class EventStore {
 
   /// Append a new event. Returns the persisted `StoredEvent`, or `null`
   /// when `dedupeByContent` is true and the content matches the
-  /// aggregate's most recent event.
+  /// aggregate's most recent event of [entryType].
+  ///
+  /// Throws [ArgumentError], appending nothing, when [entryType] is a
+  /// reserved system entry type ([kReservedSystemEntryTypeIds]): only the
+  /// library appends reserved system events.
   ///
   /// The library stamps `entry_type_version` with the registered major and
   /// minor (`EntryTypeDefinition.registeredVersion` for [entryType]) and
@@ -1004,6 +1092,7 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
+    _refuseReservedEntryType(entryType);
     // appendInTxn runs the projection interpreter and threads row-changes
     // through the collector; _runInTxnWithPublish fires both events and
     // row changes to subscribers after the transaction commits.
@@ -1011,7 +1100,7 @@ class EventStore {
       txn,
       collector,
     ) async {
-      return appendInTxn(
+      return _appendInTxn(
         txn,
         collector: collector,
         entryType: entryType,
@@ -1032,6 +1121,150 @@ class EventStore {
     if (event == null) return null;
     unawaited(syncCycleTrigger?.call());
     return event;
+  }
+
+  /// Throws [ArgumentError] when [entryType] is a reserved system entry
+  /// type: the public append operations never append one.
+  // Implements: EVS-DEV-destination-drain/L
+  // the event store's public append operations refuse reserved system entry
+  //   types.
+  static void _refuseReservedEntryType(String entryType) {
+    if (kReservedSystemEntryTypeIds.contains(entryType)) {
+      throw ArgumentError.value(
+        entryType,
+        'entryType',
+        'is a reserved system entry type; only the library appends reserved '
+            'system events',
+      );
+    }
+  }
+
+  /// Throws [ArgumentError] unless [entryType] is a reserved system entry
+  /// type appended in a shape the library declares for it and, for a
+  /// destination audit, with data ingest admits
+  /// ([isWellFormedDestinationAuditData]).
+  // Implements: EVS-DEV-destination-drain/K
+  // every destination audit event the library appends carries a destination
+  //   identifier and the appending database's identity, each non-empty and
+  //   without '|'.
+  static void _checkReservedAppend({
+    required String entryType,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+  }) {
+    checkReservedEventShape(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+    );
+    if (kDestinationAuditEntryTypes.contains(entryType) &&
+        !isWellFormedDestinationAuditData(data)) {
+      throw ArgumentError.value(
+        data,
+        'data',
+        'a destination audit event carries a destination identifier (id) '
+            'and a database identity (database_id), each a non-empty string '
+            "without '|'",
+      );
+    }
+  }
+
+  /// Append a reserved system event in its own transaction: the library's
+  /// counterpart of [append] for the entry types [append] refuses.
+  ///
+  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
+  /// reserved system entry type, when [aggregateType] and [eventType] are
+  /// not a shape the library declares for [entryType], or when a destination
+  /// audit's [data] lacks a destination identifier or a database identity
+  /// that ingest admits. Otherwise behaves as [append]: stamps the registered version, dedupes by content when
+  /// [dedupeByContent] is true (returning null), publishes after the commit
+  /// and triggers the sync cycle.
+  @internal
+  Future<StoredEvent?> appendReserved({
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    bool dedupeByContent = false,
+  }) async {
+    _checkReservedAppend(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+    );
+    final event = await _runInTxnWithPublish<StoredEvent?>(
+      (txn, collector) => _appendInTxn(
+        txn,
+        collector: collector,
+        entryType: entryType,
+        aggregateId: aggregateId,
+        aggregateType: aggregateType,
+        eventType: eventType,
+        data: data,
+        initiator: initiator,
+        flowToken: null,
+        metadata: null,
+        security: null,
+        checkpointReason: null,
+        changeReason: null,
+        dedupeByContent: dedupeByContent,
+      ),
+    );
+    if (event == null) return null;
+    unawaited(syncCycleTrigger?.call());
+    return event;
+  }
+
+  /// Append a reserved system event inside the transaction of a
+  /// [runTransaction] body: the library's counterpart of [appendInTxn] for
+  /// the entry types [appendInTxn] refuses.
+  ///
+  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
+  /// reserved system entry type, when [aggregateType] and [eventType] are
+  /// not a shape the library declares for [entryType], or when a destination
+  /// audit's [data] lacks a destination identifier or a database identity
+  /// that ingest admits; and [StateError] as
+  /// [appendInTxn] does for a collector of another run. Returns null only
+  /// when [dedupeByContent] is true and the content matches the latest event
+  /// of [entryType] in the aggregate.
+  @internal
+  Future<StoredEvent?> appendReservedInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    bool dedupeByContent = false,
+  }) {
+    _checkReservedAppend(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+    );
+    return _appendInTxn(
+      txn,
+      collector: collector,
+      entryType: entryType,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+      initiator: initiator,
+      flowToken: null,
+      metadata: null,
+      security: null,
+      checkpointReason: null,
+      changeReason: null,
+      dedupeByContent: dedupeByContent,
+    );
   }
 
   /// True iff [event] was originated locally on this `EventStore`'s
@@ -1073,21 +1306,15 @@ class EventStore {
       // the redaction subject moves into `data.subject_event_id` so callers
       // can query "all redactions of event X" by filtering on entry_type
       // AND data.subject_event_id.
-      await appendInTxn(
+      await appendReservedInTxn(
         txn,
-        collector: collector,
+        collector,
         entryType: kSecurityContextRedactedEntryType,
         aggregateId: source.identifier,
-        aggregateType: 'security_context',
-        eventType: 'finalized',
+        aggregateType: kSecurityContextAuditAggregateType,
+        eventType: kSecurityContextRedactedEventType,
         data: <String, Object?>{'subject_event_id': eventId, 'reason': reason},
         initiator: redactedBy,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: false,
       );
     });
     unawaited(syncCycleTrigger?.call());
@@ -1131,57 +1358,45 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        await appendInTxn(
+        await appendReservedInTxn(
           txn,
-          collector: collector,
+          collector,
           entryType: kSecurityContextCompactedEntryType,
           aggregateId: source.identifier,
-          aggregateType: 'security_context',
-          eventType: 'finalized',
+          aggregateType: kSecurityContextAuditAggregateType,
+          eventType: kSecurityContextCompactedEventType,
           data: <String, Object?>{
             'count': compactCandidates.length,
             'cutoff': compactCutoff.toIso8601String(),
             'policy': p.toJson(),
           },
           initiator: sweepBy,
-          flowToken: null,
-          metadata: null,
-          security: null,
-          checkpointReason: null,
-          changeReason: null,
-          dedupeByContent: false,
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        await appendInTxn(
+        await appendReservedInTxn(
           txn,
-          collector: collector,
+          collector,
           entryType: kSecurityContextPurgedEntryType,
           aggregateId: source.identifier,
-          aggregateType: 'security_context',
-          eventType: 'finalized',
+          aggregateType: kSecurityContextAuditAggregateType,
+          eventType: kSecurityContextPurgedEventType,
           data: <String, Object?>{
             'count': purgeCandidates.length,
             'cutoff': purgeCutoff.toIso8601String(),
           },
           initiator: sweepBy,
-          flowToken: null,
-          metadata: null,
-          security: null,
-          checkpointReason: null,
-          changeReason: null,
-          dedupeByContent: false,
         );
       }
       // Always emit the policy-applied audit event, even when both sweeps
       // were empty, so operators have a continuous retention timeline.
-      await appendInTxn(
+      await appendReservedInTxn(
         txn,
-        collector: collector,
+        collector,
         entryType: kRetentionPolicyAppliedEntryType,
         aggregateId: source.identifier,
-        aggregateType: 'system_retention',
-        eventType: 'finalized',
+        aggregateType: kRetentionAuditAggregateType,
+        eventType: kRetentionPolicyAppliedEventType,
         data: <String, Object?>{
           'policy_full_retention_seconds': p.fullRetention.inSeconds,
           'policy_truncated_retention_seconds': p.truncatedRetention.inSeconds,
@@ -1191,12 +1406,6 @@ class EventStore {
           'cutoff_purge': purgeCutoff.toUtc().toIso8601String(),
         },
         initiator: sweepBy,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: false,
       );
       return RetentionResult(
         compactedCount: compactCandidates.length,
@@ -1245,15 +1454,55 @@ class EventStore {
   /// fires that AFTER the transaction commits.
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
-  /// so direct callers do not need to pre-validate.
+  /// so direct callers do not need to pre-validate. Throws [ArgumentError],
+  /// appending nothing, when [entryType] is a reserved system entry type
+  /// ([kReservedSystemEntryTypeIds]): only the library appends reserved
+  /// system events.
   ///
   /// Runs the projection interpreter inside the same transaction as the
   /// append, so all matching `ProjectionSpec`s materialize views before
   /// commit. Any spec throw rolls back the entire append.
+  Future<StoredEvent?> appendInTxn(
+    Transaction txn, {
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    required String? flowToken,
+    required Map<String, Object?>? metadata,
+    required SecurityDetails? security,
+    required String? checkpointReason,
+    required String? changeReason,
+    required bool dedupeByContent,
+    required PublishCollector collector,
+  }) async {
+    _refuseReservedEntryType(entryType);
+    return _appendInTxn(
+      txn,
+      entryType: entryType,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+      initiator: initiator,
+      flowToken: flowToken,
+      metadata: metadata,
+      security: security,
+      checkpointReason: checkpointReason,
+      changeReason: changeReason,
+      dedupeByContent: dedupeByContent,
+      collector: collector,
+    );
+  }
+
+  /// The append every append operation shares, reserved and user entry
+  /// types alike.
   // Implements: EVS-PRD-destinations/K
   // an append publishes only through the
   //   collector of the transaction run that commits it.
-  Future<StoredEvent?> appendInTxn(
+  Future<StoredEvent?> _appendInTxn(
     Transaction txn, {
     required String entryType,
     required String aggregateId,
@@ -1432,7 +1681,9 @@ class EventStore {
   ///
   /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
   /// or entry-type version ([IngestDataFormatIncompatible],
-  /// [IngestEntryTypeVersionAhead]), verifies Chain 1, checks idempotency
+  /// [IngestEntryTypeVersionAhead]) and a reserved system event the library
+  /// does not append ([IngestReservedEventRefused]), verifies Chain 1, checks
+  /// idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
@@ -1450,7 +1701,8 @@ class EventStore {
   /// runs every subject event through [_ingestOneInTxn] inside a single
   /// transaction, and stamps each with a [BatchContext] referencing this
   /// batch. Throws [IngestDecodeFailure] for any unsupported [wireFormat] or
-  /// malformed bytes; throws [IngestIdentityMismatch] (rolling back the whole
+  /// malformed bytes; throws the refusal of any event, [ingestEvent]'s
+  /// refusals included, rolling back the whole batch; throws [IngestIdentityMismatch] (rolling back the whole
   /// batch) if any subject has a hash conflict with an already-stored event.
   ///
   /// See design spec §2.5.
@@ -1568,6 +1820,10 @@ class EventStore {
       }
     }
 
+    // 0b. Reserved system events: only shapes the library appends, before
+    //     any read or write.
+    _refuseUndeclaredReservedEvent(incoming);
+
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
     if (!verdict.isValid) {
@@ -1609,6 +1865,21 @@ class EventStore {
           storedArrivalHash: storedArrivalHash ?? '(null)',
         );
       }
+    }
+
+    // 2b. A destination audit naming this database that this database does
+    //     not hold is not one it appended and still has.
+    // Implements: EVS-DEV-destination-drain/L
+    // ingest refuses, before any write, a reserved destination audit event
+    //   that names the receiver's own database and that the receiver does not
+    //   already hold.
+    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
+        incoming.data['database_id'] == databaseId) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.namesReceiverDatabase,
+      );
     }
 
     // 3. New event — reserve a fresh local sequence_number, capture the
@@ -1662,6 +1933,39 @@ class EventStore {
       outcome: IngestOutcome.ingested,
       resultHash: updatedEvent.eventHash,
     );
+  }
+
+  /// Throws [IngestReservedEventRefused] when [incoming] is of a reserved
+  /// system entry type and is not in a shape the library appends: its
+  /// aggregate type and event type must be declared for its entry type
+  /// ([ReservedEventRefusal.shapeMismatch]), and a destination audit event
+  /// must carry a destination identifier and a database identity, each a
+  /// non-empty string without `|` ([ReservedEventRefusal.malformed]). Reads
+  /// and writes nothing.
+  // Implements: EVS-DEV-destination-drain/L
+  // ingest refuses, with a named reason and before any write, an event of a
+  //   reserved entry type whose aggregate type or event type is not one the
+  //   library declares for that entry type, and an event of a reserved
+  //   destination audit entry type whose destination identifier or database
+  //   identity is missing, empty, not a string, or contains '|'.
+  static void _refuseUndeclaredReservedEvent(StoredEvent incoming) {
+    final shape = kReservedEventShapes[incoming.entryType];
+    if (shape == null) return;
+    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.shapeMismatch,
+      );
+    }
+    if (!kDestinationAuditEntryTypes.contains(incoming.entryType)) return;
+    if (!isWellFormedDestinationAuditData(incoming.data)) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.malformed,
+      );
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1951,12 +2255,12 @@ class EventStore {
         txn,
         backend,
         aggregateId: 'ingest-audit:${source.hopId}',
-        aggregateType: 'ingest-audit',
-        entryType: 'ingest-audit',
+        aggregateType: kIngestAuditAggregateType,
+        entryType: kIngestAuditEntryType,
         entryTypeVersion: entryTypes
             .byId(kIngestAuditEntryType)!
             .registeredVersion,
-        eventType: 'ingest.batch_rejected',
+        eventType: kIngestBatchRejectedEventType,
         data: <String, Object?>{
           'wire_bytes': base64Encode(bytes),
           'wire_format': wireFormat,
@@ -2003,12 +2307,12 @@ class EventStore {
       txn,
       backend,
       aggregateId: 'ingest-audit:${source.hopId}',
-      aggregateType: 'ingest-audit',
-      entryType: 'ingest-audit',
+      aggregateType: kIngestAuditAggregateType,
+      entryType: kIngestAuditEntryType,
       entryTypeVersion: entryTypes
           .byId(kIngestAuditEntryType)!
           .registeredVersion,
-      eventType: 'ingest.duplicate_received',
+      eventType: kIngestDuplicateReceivedEventType,
       data: <String, Object?>{
         'subject_event_id': subjectEventId,
         'subject_event_hash_on_record': subjectEventHashOnRecord,
@@ -2061,6 +2365,15 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required Uuid uuid,
   PublishCollector? collector,
 }) async {
+  // Every caller passes a shape it takes from the declared-shape constants,
+  // so this check never fires on the library's own paths; it keeps a future
+  // raw emitter from writing an undeclared shape. The emitted shapes are
+  // checked on each backend by the reserved-shape assertions over the log.
+  checkReservedEventShape(
+    entryType: entryType,
+    aggregateType: aggregateType,
+    eventType: eventType,
+  );
   final eventId = uuid.v4();
   final recordMap = <String, Object?>{
     'event_id': eventId,
@@ -2121,8 +2434,8 @@ Future<void> _appendLibVersionEventInTxn(
   await _appendRawInternalEventInTxn(
     txn,
     backend,
-    aggregateId: '_lib',
-    aggregateType: '_lib',
+    aggregateId: kLibAggregateType,
+    aggregateType: kLibAggregateType,
     entryType: eventType,
     entryTypeVersion: const EntryTypeVersion(1, 0),
     eventType: eventType,
@@ -2172,13 +2485,13 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
   await _appendRawInternalEventInTxn(
     txn,
     backend,
-    aggregateId: '_lib',
-    aggregateType: '_lib',
+    aggregateId: kLibAggregateType,
+    aggregateType: kLibAggregateType,
     entryType: kViewSnapshotPromotedEntryType,
     entryTypeVersion: entryTypes
         .byId(kViewSnapshotPromotedEntryType)!
         .registeredVersion,
-    eventType: 'finalized',
+    eventType: kViewSnapshotPromotedEventType,
     data: <String, Object?>{
       'viewName': viewName,
       'entryType': entryType,

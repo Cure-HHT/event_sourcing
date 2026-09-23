@@ -16,6 +16,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///   registered one needs a registry upgrade, and a lower version its
 ///   promoter steps do not lead from needs a registered step; a retry
 ///   cannot succeed until an operator changes a build)
+/// - [IngestReservedEventRefused] → [SendPermanent] (a reserved system event
+///   the library does not append, or a destination audit naming the
+///   receiver's own database that it does not hold, is refused again on
+///   every retry; the destination wedges with a recorded cause)
 /// - any other thrown exception → [SendTransient] (treat unknowns as
 ///   recoverable so drain retries on the next tick)
 class DownstreamBridge {
@@ -37,6 +41,8 @@ class DownstreamBridge {
     } on IngestEntryTypeVersionAhead catch (e) {
       return SendPermanent(error: e.toString());
     } on IngestEntryTypeVersionUnpromotable catch (e) {
+      return SendPermanent(error: e.toString());
+    } on IngestReservedEventRefused catch (e) {
       return SendPermanent(error: e.toString());
     } catch (e) {
       return SendTransient(error: e.toString());

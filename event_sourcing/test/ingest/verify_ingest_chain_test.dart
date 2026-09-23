@@ -48,27 +48,6 @@ Future<_Fixture> _openStore({
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
       ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Purged',
-      ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final store = await EventStore.openForTest(
@@ -98,27 +77,6 @@ Future<List<StoredEvent>> _originate(int count) async {
         id: 'epistaxis_event',
         registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'SC Purged',
       ),
     );
   final secCtx = SembastSecurityContextStore(backend: backend);

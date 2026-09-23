@@ -15,6 +15,7 @@
 //   by EventStore.open on first boot and on version transitions respectively.
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/versions.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Reserved id for the per-event security-context redaction audit event.
 const String kSecurityContextRedactedEntryType = 'security_context_redacted';
@@ -24,6 +25,21 @@ const String kSecurityContextCompactedEntryType = 'security_context_compacted';
 
 /// Reserved id for the bulk-delete (retention purge) audit event.
 const String kSecurityContextPurgedEntryType = 'security_context_purged';
+
+/// Aggregate type of every security-context audit event.
+const String kSecurityContextAuditAggregateType = 'security_context';
+
+/// Event type of the security-context redaction audit
+/// ([kSecurityContextRedactedEntryType]).
+const String kSecurityContextRedactedEventType = 'security_context_redacted';
+
+/// Event type of the retention compact audit
+/// ([kSecurityContextCompactedEntryType]).
+const String kSecurityContextCompactedEventType = 'security_context_compacted';
+
+/// Event type of the retention purge audit
+/// ([kSecurityContextPurgedEntryType]).
+const String kSecurityContextPurgedEventType = 'security_context_purged';
 
 /// Reserved id for the destination-registration audit event.
 const String kDestinationRegisteredEntryType = 'system.destination_registered';
@@ -83,10 +99,34 @@ const String kDestinationWedgeRecoveredEventType =
 /// Event type of the wedge event ([kDestinationWedgedEntryType]).
 const String kDestinationWedgedEventType = 'destination_wedged';
 
+/// Every destination audit entry type: the registry's configuration and
+/// recovery audits and the drainer's wedge event. Each carries the
+/// destination identifier in `data['id']` and the appending database's
+/// identity in `data['database_id']`.
+@internal
+const List<String> kDestinationAuditEntryTypes = <String>[
+  kDestinationRegisteredEntryType,
+  kDestinationStartDateSetEntryType,
+  kDestinationEndDateSetEntryType,
+  kDestinationDeletedEntryType,
+  kDestinationWedgeRecoveredEntryType,
+  kDestinationWedgedEntryType,
+];
+
 /// Reserved id for the retention-policy-applied audit event emitted by
 /// `EventStore.applyRetentionPolicy` once per sweep.
 const String kRetentionPolicyAppliedEntryType =
     'system.retention_policy_applied';
+
+/// Aggregate type of the retention-policy-applied audit
+/// ([kRetentionPolicyAppliedEntryType]).
+@internal
+const String kRetentionAuditAggregateType = 'system_retention';
+
+/// Event type of the retention-policy-applied audit
+/// ([kRetentionPolicyAppliedEntryType]).
+@internal
+const String kRetentionPolicyAppliedEventType = 'finalized';
 
 /// Reserved id for the bootstrap audit event recording the
 /// `EntryTypeRegistry`'s id->registered_version map. Emitted once per
@@ -95,6 +135,21 @@ const String kRetentionPolicyAppliedEntryType =
 /// version reboot no-ops while a schema bump emits a new event.
 const String kEntryTypeRegistryInitializedEntryType =
     'system.entry_type_registry_initialized';
+
+/// Aggregate type of the registry-initialized audit
+/// ([kEntryTypeRegistryInitializedEntryType]).
+@internal
+const String kRegistryAuditAggregateType = 'system_registry';
+
+/// Event type of the registry-initialized audit
+/// ([kEntryTypeRegistryInitializedEntryType]).
+@internal
+const String kEntryTypeRegistryInitializedEventType = 'finalized';
+
+/// Aggregate type (and aggregate id) of the library-version events and the
+/// view-snapshot-promotion audit, which the boot appends.
+@internal
+const String kLibAggregateType = '_lib';
 
 /// Reserved id for the substrate-level lib-version-initialized event.
 /// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open`, through
@@ -123,14 +178,33 @@ const String kLibVersionChangedEntryType = 'lib_version_changed';
 /// `registeredVersion` from the registry instead of hardcoding.
 const String kIngestAuditEntryType = 'ingest-audit';
 
+/// Aggregate type of the ingest audits ([kIngestAuditEntryType]).
+@internal
+const String kIngestAuditAggregateType = 'ingest-audit';
+
+/// Event type of the ingest audit recording a rejected batch.
+@internal
+const String kIngestBatchRejectedEventType = 'ingest.batch_rejected';
+
+/// Event type of the ingest audit recording a duplicate received.
+@internal
+const String kIngestDuplicateReceivedEventType = 'ingest.duplicate_received';
+
 /// Reserved id for the boot-time view-snapshot-promotion audit event
 /// emitted by the snapshot-promotion pass.
 const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
 
-/// Reserved set of ids. `bootstrapEventStore` auto-registers
-/// these BEFORE iterating the caller-supplied entry-type list. A
-/// caller-supplied id colliding with one of these throws `ArgumentError`
-/// with an explicit "reserved" message (-D revised).
+/// Event type of the view-snapshot-promotion audit
+/// ([kViewSnapshotPromotedEntryType]).
+@internal
+const String kViewSnapshotPromotedEventType = 'finalized';
+
+/// Reserved set of ids. `EventStore.open` registers every definition of
+/// [kSystemEntryTypes] the caller's registry lacks, and refuses
+/// (`ArgumentError` with an explicit "reserved" message) a caller registry
+/// that holds one of these ids under any definition but the library's own.
+/// The event store's public append operations refuse every one of them:
+/// only the library appends reserved system events.
 ///
 /// Also includes the substrate-internal lib-version boot events
 /// (`lib_version_initialized`, `lib_version_changed`) so that
@@ -261,3 +335,151 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     name: 'View Snapshot Promoted',
   ),
 ];
+
+/// The one aggregate type and the event types the library appends a
+/// reserved system entry type with.
+@internal
+class ReservedEventShape {
+  const ReservedEventShape(this.aggregateType, this.eventTypes);
+
+  /// The aggregate type of every event of the entry type.
+  final String aggregateType;
+
+  /// The event types the library appends the entry type with.
+  final Set<String> eventTypes;
+
+  /// Whether an event with [aggregateType] and [eventType] has this shape.
+  bool admits(String aggregateType, String eventType) =>
+      aggregateType == this.aggregateType && eventTypes.contains(eventType);
+}
+
+// Implements: EVS-DEV-destination-drain/L
+// the library declares the aggregate type and event types of every
+//   reserved entry type, changing them only with a data-format major step;
+//   every library emitter appends in a declared shape, and ingest refuses a
+//   reserved event in any other shape.
+/// The declared shape of every reserved system entry type, keyed by entry
+/// type id: the library appends each reserved entry type only with its
+/// aggregate type and one of its event types, and no two reserved entry
+/// types share an (aggregate type, event type) pair.
+///
+/// A declared shape is fixed within a data-format major
+/// (`DataFormatVersion`): a build refuses at ingest a reserved event outside
+/// the shapes it declares, so adding an event type to an entry here, or
+/// changing its aggregate type, is a data-format major step. A new kind of
+/// reserved event is a new reserved entry type.
+@internal
+const Map<String, ReservedEventShape> kReservedEventShapes =
+    <String, ReservedEventShape>{
+      kSecurityContextRedactedEntryType: ReservedEventShape(
+        kSecurityContextAuditAggregateType,
+        <String>{kSecurityContextRedactedEventType},
+      ),
+      kSecurityContextCompactedEntryType: ReservedEventShape(
+        kSecurityContextAuditAggregateType,
+        <String>{kSecurityContextCompactedEventType},
+      ),
+      kSecurityContextPurgedEntryType: ReservedEventShape(
+        kSecurityContextAuditAggregateType,
+        <String>{kSecurityContextPurgedEventType},
+      ),
+      kDestinationRegisteredEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationRegisteredEventType},
+      ),
+      kDestinationStartDateSetEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationStartDateSetEventType},
+      ),
+      kDestinationEndDateSetEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationEndDateSetEventType},
+      ),
+      kDestinationDeletedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationDeletedEventType},
+      ),
+      kDestinationWedgeRecoveredEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationWedgeRecoveredEventType},
+      ),
+      kDestinationWedgedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationWedgedEventType},
+      ),
+      kRetentionPolicyAppliedEntryType: ReservedEventShape(
+        kRetentionAuditAggregateType,
+        <String>{kRetentionPolicyAppliedEventType},
+      ),
+      kEntryTypeRegistryInitializedEntryType: ReservedEventShape(
+        kRegistryAuditAggregateType,
+        <String>{kEntryTypeRegistryInitializedEventType},
+      ),
+      // The library-version events carry their entry-type id as their
+      // event type.
+      kLibVersionInitializedEntryType: ReservedEventShape(
+        kLibAggregateType,
+        <String>{kLibVersionInitializedEntryType},
+      ),
+      kLibVersionChangedEntryType: ReservedEventShape(
+        kLibAggregateType,
+        <String>{kLibVersionChangedEntryType},
+      ),
+      kIngestAuditEntryType: ReservedEventShape(
+        kIngestAuditAggregateType,
+        <String>{
+          kIngestBatchRejectedEventType,
+          kIngestDuplicateReceivedEventType,
+        },
+      ),
+      kViewSnapshotPromotedEntryType: ReservedEventShape(
+        kLibAggregateType,
+        <String>{kViewSnapshotPromotedEventType},
+      ),
+    };
+
+/// Whether [data] has the shape the library appends every destination
+/// audit event with: a destination identifier (`id`) and a database
+/// identity (`database_id`), each a non-empty string without `|`. The
+/// library's reserved appends and ingest apply this one predicate, so the
+/// library never appends a destination audit that a receiver refuses.
+@internal
+bool isWellFormedDestinationAuditData(Map<String, Object?> data) {
+  final id = data['id'];
+  final databaseId = data['database_id'];
+  return id is String &&
+      id.isNotEmpty &&
+      !id.contains('|') &&
+      databaseId is String &&
+      databaseId.isNotEmpty &&
+      !databaseId.contains('|');
+}
+
+/// Throws [ArgumentError] unless [entryType] is a reserved system entry type
+/// and [aggregateType] and [eventType] are a shape the library declares for
+/// it in [kReservedEventShapes]. Every library emitter of a reserved event
+/// passes through this check before it writes.
+@internal
+void checkReservedEventShape({
+  required String entryType,
+  required String aggregateType,
+  required String eventType,
+}) {
+  final shape = kReservedEventShapes[entryType];
+  if (shape == null) {
+    throw ArgumentError.value(
+      entryType,
+      'entryType',
+      'is not a reserved system entry type',
+    );
+  }
+  if (!shape.admits(aggregateType, eventType)) {
+    throw ArgumentError.value(
+      '$aggregateType/$eventType',
+      'aggregateType/eventType',
+      'the library declares entry type $entryType only with aggregate type '
+          '${shape.aggregateType} and event types '
+          '${(shape.eventTypes.toList()..sort()).join(', ')}',
+    );
+  }
+}

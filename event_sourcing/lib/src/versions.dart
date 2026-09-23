@@ -93,7 +93,12 @@ final class EntryTypeVersion implements Comparable<EntryTypeVersion> {
 /// correctly -- a new reserved entry type, a new optional field in a
 /// reserved event or in a persisted record whose absence keeps the old
 /// behaviour, a new persisted record, or additive schema changes. Anything
-/// else is a major bump.
+/// else is a major bump. The aggregate type and event types the library
+/// declares for each reserved entry type are fixed within a major: a build
+/// refuses at ingest a reserved event outside the shapes it declares, so
+/// adding an event type to a reserved entry type, or changing its aggregate
+/// type, is a major bump, and a new kind of reserved event is a new
+/// reserved entry type.
 ///
 /// Serialised as `{'major': M, 'minor': m}` in event records and the batch
 /// wire format, and written `M.m` by [toString].

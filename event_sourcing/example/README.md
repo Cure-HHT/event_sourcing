@@ -367,10 +367,33 @@ Secondary's head row flips through `draining` to `wedged` after one
 permanent rejection, the two later rows queue behind it as `pending`
 (Secondary's drain has halted), Primary processes the same three
 batches to `sent` normally, and `wedgedFifos()` returns one summary
-naming Secondary only. To recover, click the wedged row, then
+naming Secondary only. The detail panel's summary (nothing selected)
+shows both reads of the wedge: `wedged dst` is `wedgedFifos()`, a read
+of the pane's own queues, and `wedges view (this database)` lists the
+rows of the library's default destination-wedges view
+(`default_destination_wedges`) whose `database_id` is the pane's own
+database identity, folded from the `destination_wedged` event; the two
+name the same destinations. Each is read as its own snapshot, one after
+the other, so while the drainer runs they can differ until the next
+refresh. To recover, click the wedged row, then
 **Tombstone & Refill** in the detail panel — Secondary's wedged row
-flips to `tombstoned`, the trail of pending rows is swept, and fresh
-rows enqueue and drain on the next tick.
+flips to `tombstoned`, the trail of pending rows is swept, fresh rows
+enqueue and drain on the next tick, and the recovery event removes the
+view's row.
+
+### A peer's wedge in the hub
+
+To see how the default destination-wedges view differs from
+`wedgedFifos()`: in the mobile pane, flip Primary to `rejecting` and
+click Red. Mobile's Primary wedges, and NativeAudit forwards mobile's
+system events, the `destination_wedged` event among them, to the hub.
+The hub's detail panel then lists the wedge under `wedges view (peers)`,
+labelled with mobile's database identity, while its `any wedged` reads
+false and `wedges view (this database)` reads none: the hub's own Primary
+queue is not wedged. The view is folded from the log, so it holds the wedges a
+peer forwarded; `wedgedFifos()` reads only the pane's own queues. A peer
+row shows what the forwarding pane asserts, and it is removed only when
+that pane forwards the recovery or deletion that ends the wedge.
 
 ### Transient disconnect and recovery
 
@@ -380,7 +403,8 @@ events), and watch for ~10 seconds. Observe Primary's head row shows
 `retrying` with `attempts[]` accumulating; Secondary continues to
 deliver its copies of the same events. Flip Primary back to `ok`.
 Observe the queued rows drain in order at Primary's send latency;
-`wedgedFifos()` stayed empty throughout.
+`wedgedFifos()`, and the default destination-wedges view with it, stayed
+empty throughout.
 
 ### Sync policy tuning
 

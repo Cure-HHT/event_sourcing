@@ -257,9 +257,11 @@ The currently-trusted inputs are:
   positions, schedules, replay requests, wedge records, the registry
   check record, the database identity, the generation records and the
   view catch-up marks, and the security context it stores beside each
-  event) changes only through the library's operations. Every
-  `StorageBackend` member that writes is `@internal`, which the
-  analyzer enforces but nothing enforces at run time: the consumer
+  event) changes only through the library's operations, and reserved
+  system events are appended only by the library's own operations.
+  Every `StorageBackend` member that writes, and the event store's
+  reserved append operations, are `@internal`, which the analyzer
+  enforces but nothing enforces at run time: the consumer
   holds the backend (and, on Sembast, the database it opened), and a
   backend in another package keeps the guard only by marking its own
   overrides `@internal`.

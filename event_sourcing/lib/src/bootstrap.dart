@@ -74,9 +74,13 @@ class EventStoreBundle {
 /// `Destination`s, the security-context store, and the `EventStore`. Returns
 /// an `EventStoreBundle` facade the rest of the app reads through.
 ///
-/// Reserved system entry types (security-context audit events) are
-/// auto-registered BEFORE the caller-supplied list. Id collision with a
-/// reserved id throws `ArgumentError` with a "reserved" message.
+/// [entryTypes] lists the application's own entry types. `EventStore.open`
+/// registers the reserved system entry types ([kSystemEntryTypes]) and the
+/// default destination-wedges view beside them; a definition in
+/// [entryTypes] under a reserved id throws `ArgumentError` with a
+/// "reserved" message unless it is the library's own definition, and so
+/// does a spec in [projections] under the default view's name unless it is
+/// the library's own spec.
 ///
 /// Destinations are registered sequentially, preserving fail-fast on id
 /// collision.
@@ -99,17 +103,7 @@ Future<EventStoreBundle> bootstrapEventStore({
   EventStoreSyncCycleTrigger? syncCycleTrigger,
 }) async {
   final typeRegistry = EntryTypeRegistry();
-  for (final definition in kSystemEntryTypes) {
-    typeRegistry.register(definition);
-  }
   for (final definition in entryTypes) {
-    if (kReservedSystemEntryTypeIds.contains(definition.id)) {
-      throw ArgumentError.value(
-        definition.id,
-        'definition.id',
-        'entryType id "${definition.id}" is reserved for system events',
-      );
-    }
     typeRegistry.register(definition);
   }
 
@@ -160,11 +154,11 @@ Future<EventStoreBundle> bootstrapEventStore({
   for (final definition in typeRegistry.all()) {
     registryStateMap[definition.id] = definition.registeredVersion.toString();
   }
-  await eventStore.append(
+  await eventStore.appendReserved(
     entryType: kEntryTypeRegistryInitializedEntryType,
     aggregateId: source.identifier,
-    aggregateType: 'system_registry',
-    eventType: 'finalized',
+    aggregateType: kRegistryAuditAggregateType,
+    eventType: kEntryTypeRegistryInitializedEventType,
     data: <String, Object?>{'registry': registryStateMap},
     initiator: bootstrapInitiator,
     dedupeByContent: true,
