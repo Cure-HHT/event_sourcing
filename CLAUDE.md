@@ -244,19 +244,34 @@ The currently-trusted inputs are:
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
-  positions, schedules, replay requests and the registry check record,
-  and the security context it stores beside each event) changes only through the library's operations. Every
+  positions, schedules, replay requests, wedge records and the registry
+  check record, and the security context it stores beside each event)
+  changes only through the library's operations. Every
   `StorageBackend` member that writes is `@internal`, which the
   analyzer enforces but nothing enforces at run time: the consumer
   holds the backend (and, on Sembast, the database it opened), and a
   backend in another package keeps the guard only by marking its own
   overrides `@internal`.
-- **`Destination` outbound transport.** Per-destination delivery
-  transport (HTTP, WebSocket, file, etc.) supplied by the app at
-  composition time. Trusted for transport-layer correctness and
-  for honouring the FIFO queue's delivery semantics. The substrate
-  does not verify that the transport delivered the event to its
-  remote endpoint correctly; only that the FIFO queue advanced.
+- **`Destination` outbound transport and delivery configuration.**
+  Per-destination delivery transport (HTTP, WebSocket, file, etc.)
+  supplied by the app at composition time. Trusted for transport-layer
+  correctness and for honouring the FIFO queue's delivery semantics.
+  The substrate does not verify that the transport delivered the event
+  to its remote endpoint correctly; only that the FIFO queue advanced.
+  The delivery configuration the app supplies with it is trusted on
+  faith too: the `Destination`'s filter (a `SubscriptionFilter`
+  predicate closure included) and transform (they decide which events
+  are enqueued and what each queue item carries), its send outcomes (a
+  permanent failure wedges the queue head), the `SyncPolicy` given to
+  `SyncCycle` statically or through `policyResolver` (its retry curve
+  decides backoff, its attempt budget decides when an item wedges; the
+  library refuses a budget below one), and the `clock` given to
+  `SyncCycle` (fill computes its window's upper bound from it, so it
+  decides which events are enqueued). Each wedge appends a wedge event
+  recording the outcome category, the numeric status and the budget in
+  effect (`EVS-PRD-destinations/P`-`R`), so every wedge decision is
+  auditable from the log; the clock's readings are not recorded, so its
+  influence on the fill window is an unaudited input.
 - **Caller-supplied `Principal.userId` on action submissions and
   event metadata.** Identity is still accepted on faith — the
   substrate does not authenticate which user the caller claims to be

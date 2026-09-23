@@ -433,7 +433,7 @@ void main() {
         );
 
         // Recovery requires a wedged head.
-        await wedgeHeadForTest(originator.backend, 'orig-dest');
+        await wedgeHeadForTest(originator.datastore.destinations, 'orig-dest');
 
         // Trigger originator's wedge recovery — emits a real
         // `system.destination_wedge_recovered` audit naming
@@ -541,6 +541,102 @@ void main() {
           reason:
               'bridged wedge-recovery audit MUST be stored in the '
               'receiver event_log (-F admission)',
+        );
+      } finally {
+        await originator.close();
+        await receiver.close();
+      }
+    });
+
+    // Verifies: EVS-PRD-destinations/L
+    // the wedge record and the queue are
+    //   the receiver's own persisted state: ingesting a peer's wedge event
+    //   that names a destination id the receiver also drains leaves the
+    //   receiver's wedge record absent and its head pending.
+    // Verifies: EVS-DEV-destination-drain/D
+    // only the receiver's own drainer
+    //   wedges its head; a bridged wedge event wedges nothing.
+    test('ingesting system.destination_wedged does NOT wedge the receiver '
+        'or write its wedge record', () async {
+      const init = AutomationInitiator(service: 'test');
+      final originator = await _bootstrapDatastore(
+        hopId: 'mobile-device',
+        identifier: 'install-mobile',
+        entryTypes: const <EntryTypeDefinition>[_demoNoteDef],
+        destinations: <Destination>[_NoopDestination(id: 'shared-dest')],
+      );
+      final receiver = await _bootstrapDatastore(
+        hopId: 'control-server',
+        identifier: 'install-control',
+        entryTypes: const <EntryTypeDefinition>[_demoNoteDef],
+        destinations: <Destination>[_NoopDestination(id: 'shared-dest')],
+      );
+      try {
+        Future<void> queueOne(_Fixture f, String install) async {
+          await f.datastore.destinations.setStartDate(
+            'shared-dest',
+            DateTime.utc(2020, 1, 1),
+            initiator: init,
+          );
+          await f.datastore.eventStore.append(
+            entryType: 'demo_note',
+            aggregateId: 'agg-$install',
+            aggregateType: 'note',
+            eventType: 'finalized',
+            data: const <String, Object?>{
+              'answers': <String, Object?>{'k': 'v'},
+            },
+            initiator: const UserInitiator('u'),
+          );
+          await fillWithScheduleForTest(
+            f.datastore.destinations.byId('shared-dest')!,
+            backend: f.backend,
+            schedule: await f.datastore.destinations.scheduleOf('shared-dest'),
+            source: Source(
+              hopId: 'hop',
+              identifier: install,
+              softwareVersion: 'pkg@1.0.0',
+            ),
+            clock: () => DateTime.now().toUtc().add(const Duration(days: 1)),
+          );
+        }
+
+        await queueOne(originator, 'install-mobile');
+        await queueOne(receiver, 'install-control');
+        await wedgeHeadForTest(
+          originator.datastore.destinations,
+          'shared-dest',
+        );
+        final wedgeEvent = (await originator.backend.findAllEvents(
+          entryType: kDestinationWedgedEntryType,
+        )).single;
+        expect(wedgeEvent.data['id'], 'shared-dest');
+
+        final headBefore = (await receiver.backend.readFifoHead(
+          'shared-dest',
+        ))!;
+        expect(headBefore.finalStatus, isNull);
+
+        final outcome = await receiver.datastore.eventStore.ingestEvent(
+          wedgeEvent,
+        );
+        expect(outcome.outcome, equals(IngestOutcome.ingested));
+
+        final record = await receiver.backend.transaction(
+          (txn) => receiver.backend.readWedgeRecordTxn(txn, 'shared-dest'),
+        );
+        expect(record, isNull, reason: 'no wedge record on the receiver');
+        final headAfter = (await receiver.backend.readFifoHead('shared-dest'))!;
+        expect(headAfter.entryId, headBefore.entryId);
+        expect(headAfter.finalStatus, isNull, reason: 'the head stays pending');
+        expect(headAfter.attempts, isEmpty);
+        expect(await receiver.backend.wedgedFifos(), isEmpty);
+        expect(
+          await receiver.backend.findAllEvents(
+            entryType: kDestinationWedgedEntryType,
+          ),
+          hasLength(1),
+          reason: 'the bridged wedge event is stored in the receiver log',
         );
       } finally {
         await originator.close();

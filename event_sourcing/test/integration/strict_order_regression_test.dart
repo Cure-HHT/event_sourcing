@@ -182,10 +182,7 @@ void main() {
       // and does not pre-enqueue anything: we want every FIFO row on
       // `secondary` to be produced by the fillBatch path under test.
       final deps = await buildAuditedRegistryDeps(backend);
-      final registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      final registry = DestinationRegistry(eventStore: deps.eventStore);
       await registry.addDestination(destination, initiator: _testInit);
       await registry.setStartDate(
         destination.id,
@@ -238,7 +235,7 @@ void main() {
       // Act: drain once. The contract under test: drain ships e1
       // (SendOk), wedges e2 (SendPermanent), and halts — leaving e3
       // pending.
-      await drain(destination, backend: backend, clock: () => fillClock);
+      await drain(destination, registry: registry, clock: () => fillClock);
 
       // Assert: exactly two send calls — e1 (SendOk) and e2 (wedged
       // attempt). e3 was NOT attempted.
@@ -312,7 +309,7 @@ void main() {
           clock: () => fillClock,
         );
       }
-      await drain(destination, backend: backend, clock: () => fillClock);
+      await drain(destination, registry: registry, clock: () => fillClock);
 
       // Assert: the destination now has e1, e2, e3 delivered in
       // sequence order — fresh delivery through post-fix drain, not

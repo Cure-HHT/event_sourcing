@@ -101,10 +101,7 @@ void main() {
       dbCounter += 1;
       backend = await _openBackend('historical-replay-$dbCounter.db');
       final deps = await buildAuditedRegistryDeps(backend);
-      registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {

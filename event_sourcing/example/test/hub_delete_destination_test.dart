@@ -54,7 +54,6 @@ Future<_Hub> _mkHub(String name) async {
     AppState(registry: datastore.destinations, policyNotifier: policy),
     destination,
     SyncCycle(
-      backend: backend,
       registry: datastore.destinations,
       policyResolver: () => policy.value,
     ),

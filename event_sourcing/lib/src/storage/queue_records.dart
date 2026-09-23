@@ -7,6 +7,11 @@
 //   (lowest event it removed, for the recovery rewind), a queue's retirement
 //   on deletion, a pending replay request, and the database-wide registry
 //   check record.
+// Implements: EVS-DEV-destination-drain/I
+// the wedge record the drainer writes
+//   beside the wedge event it appends: the wedged item, the event and the
+//   cause, for the destination's open wedge.
+import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 
 /// What a trail sweep removed from a destination's queue: the number of
 /// pending items it deleted and the lowest event sequence number any of them
@@ -200,4 +205,112 @@ class RegistryCheck {
   String toString() =>
       'RegistryCheck(op: $op, destinationId: $destinationId, '
       'outcome: $outcome, at: $at)';
+}
+
+/// A destination's open wedge: the record the drainer writes, in the
+/// transaction that wedges the queue head, beside the wedge event it
+/// appends. An operator recovery and a deletion remove it in the
+/// transaction that ends the wedge, so it exists exactly while the log
+/// holds a wedge event for the destination that no recovery or deletion
+/// followed.
+///
+/// Persisted under `backend_state` key `wedge_<destinationId>`.
+class WedgeRecord {
+  const WedgeRecord({
+    required this.rowId,
+    required this.wedgeEventId,
+    required this.cause,
+    this.haltPurpose,
+    this.drainerEpoch,
+    this.configurationFingerprint,
+  });
+
+  /// Decode from the persisted JSON form.
+  factory WedgeRecord.fromJson(Map<String, Object?> json) {
+    String field(String name) {
+      final value = json[name];
+      if (value is! String) {
+        throw FormatException('WedgeRecord: missing or non-string "$name"');
+      }
+      return value;
+    }
+
+    final haltPurpose = json['halt_purpose'];
+    if (haltPurpose != null && haltPurpose is! String) {
+      throw const FormatException('WedgeRecord: non-string "halt_purpose"');
+    }
+    final epoch = json['drainer_epoch'];
+    if (epoch != null && epoch is! int) {
+      throw const FormatException('WedgeRecord: non-integer "drainer_epoch"');
+    }
+    final fingerprint = json['configuration_fingerprint'];
+    if (fingerprint != null && fingerprint is! String) {
+      throw const FormatException(
+        'WedgeRecord: non-string "configuration_fingerprint"',
+      );
+    }
+    return WedgeRecord(
+      rowId: field('row_id'),
+      wedgeEventId: field('wedge_event_id'),
+      cause: WedgeCause.fromWire(field('cause')),
+      haltPurpose: haltPurpose as String?,
+      drainerEpoch: epoch as int?,
+      configurationFingerprint: fingerprint as String?,
+    );
+  }
+
+  /// `entry_id` of the wedged queue item.
+  final String rowId;
+
+  /// `event_id` of the wedge event appended with the wedge.
+  final String wedgeEventId;
+
+  /// Why the drainer wedged the item.
+  final WedgeCause cause;
+
+  /// Reserved field; the drainer writes it as null.
+  final String? haltPurpose;
+
+  /// Reserved field; the drainer writes it as null.
+  final int? drainerEpoch;
+
+  /// Reserved field; the drainer writes it as null.
+  final String? configurationFingerprint;
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'row_id': rowId,
+    'wedge_event_id': wedgeEventId,
+    'cause': cause.wire,
+    'halt_purpose': haltPurpose,
+    'drainer_epoch': drainerEpoch,
+    'configuration_fingerprint': configurationFingerprint,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is WedgeRecord &&
+      other.rowId == rowId &&
+      other.wedgeEventId == wedgeEventId &&
+      other.cause == cause &&
+      other.haltPurpose == haltPurpose &&
+      other.drainerEpoch == drainerEpoch &&
+      other.configurationFingerprint == configurationFingerprint;
+
+  @override
+  int get hashCode => Object.hash(
+    rowId,
+    wedgeEventId,
+    cause,
+    haltPurpose,
+    drainerEpoch,
+    configurationFingerprint,
+  );
+
+  @override
+  String toString() =>
+      'WedgeRecord(rowId: $rowId, wedgeEventId: $wedgeEventId, '
+      'cause: ${cause.wire}, haltPurpose: $haltPurpose, '
+      'drainerEpoch: $drainerEpoch, '
+      'configurationFingerprint: $configurationFingerprint)';
 }

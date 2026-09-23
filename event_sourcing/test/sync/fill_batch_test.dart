@@ -596,7 +596,6 @@ void main() {
       // registry's pre-mutation invariants without re-running fillBatch.
       final deps = await buildAuditedRegistryDeps(backend);
       final wedgeRecoveryRegistry = DestinationRegistry(
-        backend: backend,
         eventStore: deps.eventStore,
       );
       await wedgeRecoveryRegistry.addDestination(dest, initiator: _testInit);

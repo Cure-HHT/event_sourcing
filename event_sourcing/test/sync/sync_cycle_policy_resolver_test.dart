@@ -32,10 +32,7 @@ _bootstrap() async {
     'sync-cycle-resolver-${DateTime.now().microsecondsSinceEpoch}.db',
   );
   final deps = await buildAuditedRegistryDeps(backend);
-  final registry = DestinationRegistry(
-    backend: backend,
-    eventStore: deps.eventStore,
-  );
+  final registry = DestinationRegistry(eventStore: deps.eventStore);
   return (backend: backend, registry: registry);
 }
 
@@ -63,7 +60,6 @@ void main() {
       final ctx = await _bootstrap();
       var calls = 0;
       final cycle = SyncCycle(
-        backend: ctx.backend,
         registry: ctx.registry,
         policyResolver: () {
           calls += 1;
@@ -102,7 +98,6 @@ void main() {
 
         var calls = 0;
         final cycle = SyncCycle(
-          backend: ctx.backend,
           registry: ctx.registry,
           clock: () => DateTime.utc(2026, 4, 22, 10),
           policyResolver: () {
@@ -131,7 +126,6 @@ void main() {
     test('resolver returning null falls back to SyncPolicy.defaults', () async {
       final ctx = await _bootstrap();
       final cycle = SyncCycle(
-        backend: ctx.backend,
         registry: ctx.registry,
         policyResolver: () => null,
       );
@@ -150,7 +144,6 @@ void main() {
         final ctx = await _bootstrap();
         expect(
           () => SyncCycle(
-            backend: ctx.backend,
             registry: ctx.registry,
             policy: SyncPolicy.defaults,
             policyResolver: () => SyncPolicy.defaults,
@@ -168,7 +161,6 @@ void main() {
       final ctx = await _bootstrap();
       var first = true;
       final cycle = SyncCycle(
-        backend: ctx.backend,
         registry: ctx.registry,
         policyResolver: () {
           if (first) {
@@ -193,7 +185,7 @@ void main() {
       'SyncCycle with neither policy nor resolver still works (defaults)',
       () async {
         final ctx = await _bootstrap();
-        final cycle = SyncCycle(backend: ctx.backend, registry: ctx.registry);
+        final cycle = SyncCycle(registry: ctx.registry);
         await cycle();
         await ctx.backend.close();
       },
@@ -206,7 +198,6 @@ void main() {
       () async {
         final ctx = await _bootstrap();
         final cycle = SyncCycle(
-          backend: ctx.backend,
           registry: ctx.registry,
           policy: SyncPolicy.defaults,
         );

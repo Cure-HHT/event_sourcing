@@ -17,8 +17,19 @@
 // Implements: EVS-DEV-destination-drain/H
 // every destination audit the registry
 //   appends carries the event type of its kind.
+// Implements: EVS-PRD-destinations/P+Q+R
+// wedgeHeadInTxn marks the head wedged,
+//   appends the wedge event recording the cause and writes the wedge record in
+//   the caller's transaction; the event carries structured fields only, never
+//   text from an attempt's outcome.
+// Implements: EVS-DEV-destination-drain/D+I
+// the wedge event is appended only for
+//   the pending head the drainer wedges (read and checked inside the
+//   transaction), with exactly the declared data keys; recovery and deletion
+//   remove the wedge record in the transaction that ends the wedge.
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
@@ -29,6 +40,12 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:meta/meta.dart' show internal;
+
+/// Initiator of the wedge events the drainer appends.
+const Initiator _drainInitiator = AutomationInitiator(
+  service: 'event_sourcing.drain',
+);
 
 /// Outcome of one run of a registry operation's transaction body: a result
 /// to return, or a refusal to throw after the transaction commits.
@@ -59,7 +76,9 @@ class _Local {
 /// The registry holds the [Destination] objects this process registers
 /// (their filter, transform and transport are code) and runs the operations
 /// that change a destination's persisted state: registration, start and end
-/// dates, operator recovery, deletion. Those operations act on the persisted
+/// dates, operator recovery, deletion. The delivery cycle's drainer wedges a
+/// queue head through it as well, so the wedge event is appended through the
+/// registry's event store. Those operations act on the persisted
 /// schedule, not on this process's in-memory destinations, so any process
 /// can run them for any destination the database knows; the delivery cycle
 /// fills and drains only the destinations its own registry holds.
@@ -77,20 +96,56 @@ class _Local {
 /// window records a replay request that the delivery cycle's next fill
 /// performs, under the destination registered in the process that drains.
 class DestinationRegistry {
-  /// Construct a registry bound to [backend] for storage persistence and
-  /// [eventStore] for in-transaction audit emission. The registry does
-  /// not open the database — the caller retains ownership of the
-  /// backend's lifecycle.
-  DestinationRegistry({required this.backend, required EventStore eventStore})
-    : _eventStore = eventStore;
+  /// Construct a registry over [eventStore]: its operations and the
+  /// delivery cycle that drains its destinations read and write the store's
+  /// backend, and append their audit events through the store. The
+  /// registry does not open the database; the caller retains ownership of
+  /// the backend's lifecycle.
+  ///
+  /// Throws [StateError] when the store's entry-type registry lacks any of
+  /// the reserved destination audit entry types (`kSystemEntryTypes`
+  /// registers them all): without them the registry's operations could not
+  /// record their audits, and the drainer could not wedge a queue head, so
+  /// a refused item would stay pending with no operator recovery possible.
+  DestinationRegistry({required EventStore eventStore})
+    : _eventStore = eventStore {
+    final missing = <String>[
+      for (final id in _destinationAuditEntryTypes)
+        if (!eventStore.entryTypes.isRegistered(id)) id,
+    ];
+    if (missing.isNotEmpty) {
+      throw StateError(
+        'DestinationRegistry: the event store does not register the '
+        'reserved destination audit entry types ${missing.join(', ')}; '
+        'register kSystemEntryTypes with the store.',
+      );
+    }
+  }
 
-  /// Backend holding the destinations' schedules and queues.
-  final StorageBackend backend;
+  /// Every destination audit entry type the registry and the drainer
+  /// append.
+  static const List<String> _destinationAuditEntryTypes = <String>[
+    kDestinationRegisteredEntryType,
+    kDestinationStartDateSetEntryType,
+    kDestinationEndDateSetEntryType,
+    kDestinationDeletedEntryType,
+    kDestinationWedgeRecoveredEntryType,
+    kDestinationWedgedEntryType,
+  ];
+
+  /// Backend holding the destinations' schedules and queues: the event
+  /// store's backend.
+  StorageBackend get backend => _eventStore.backend;
 
   /// Event store used to stamp config-change audit events inside the
   /// same transaction as the underlying mutation. The store's own
   /// `Source` is reused for every audit emission.
   final EventStore _eventStore;
+
+  /// The event store this registry appends through. The delivery cycle's
+  /// drainer runs its outcome transactions in it.
+  @internal
+  EventStore get eventStore => _eventStore;
 
   final Map<String, _Local> _destinations = <String, _Local>{};
 
@@ -264,7 +319,7 @@ class DestinationRegistry {
             allowHardDelete: allowHardDelete,
           ),
         );
-        _injectAfterLastWrite(kDestinationRegisteredEntryType);
+        _consultAuditAppendSeam(kDestinationRegisteredEntryType);
         return _Done<String>(registration);
       });
       _destinations[id] = _Local(destination, registrationId);
@@ -406,7 +461,7 @@ class DestinationRegistry {
       },
       initiator: initiator,
     );
-    _injectAfterLastWrite(kDestinationStartDateSetEntryType);
+    _consultAuditAppendSeam(kDestinationStartDateSetEntryType);
     return const _Done<void>(null);
   });
 
@@ -472,7 +527,7 @@ class DestinationRegistry {
       },
       initiator: initiator,
     );
-    _injectAfterLastWrite(kDestinationEndDateSetEntryType);
+    _consultAuditAppendSeam(kDestinationEndDateSetEntryType);
     return _Done<SetEndDateResult>(result);
   });
 
@@ -494,8 +549,8 @@ class DestinationRegistry {
   /// empty queue and a wedged head are accepted.
   ///
   /// The deletion tombstones a wedged head, deletes the pending items behind
-  /// it, removes the destination's schedule, fill position and replay
-  /// request, and keeps every item that was delivered, wedged or recovered
+  /// it, removes the destination's schedule, fill position, replay request
+  /// and wedge record, and keeps every item that was delivered, wedged or recovered
   /// (the delivery record) and the queue's sequence counter. A
   /// `system.destination_deleted` audit event records the tombstoned item,
   /// the number of pending items deleted and the opt-in it acted on. This
@@ -548,6 +603,7 @@ class DestinationRegistry {
       final retirement = await backend.retireQueueTxn(txn, id);
       await backend.deleteScheduleTxn(txn, id);
       await backend.clearReplayRequestTxn(txn, id);
+      await backend.clearWedgeRecordTxn(txn, id);
       await _emitDestinationAuditInTxn(
         txn,
         collector,
@@ -561,14 +617,15 @@ class DestinationRegistry {
         },
         initiator: initiator,
       );
-      _injectAfterLastWrite(kDestinationDeletedEntryType);
+      _consultAuditAppendSeam(kDestinationDeletedEntryType);
       return const _Done<void>(null);
     });
     _destinations.remove(id);
   }
 
   /// Operator recovery of a wedged queue: tombstone the wedged head, delete
-  /// the pending items behind it, rewind `fill_cursor`, and append a
+  /// the pending items behind it, rewind `fill_cursor`, remove the
+  /// destination's wedge record, and append a
   /// `system.destination_wedge_recovered` audit event — all in one
   /// transaction that first reads the head.
   ///
@@ -652,6 +709,7 @@ class DestinationRegistry {
         : targetFirstSeq;
     final rewoundTo = lowest - 1;
     await backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
+    await backend.clearWedgeRecordTxn(txn, destinationId);
     await _emitDestinationAuditInTxn(
       txn,
       collector,
@@ -667,7 +725,7 @@ class DestinationRegistry {
       },
       initiator: initiator,
     );
-    _injectAfterLastWrite(kDestinationWedgeRecoveredEntryType);
+    _consultAuditAppendSeam(kDestinationWedgeRecoveredEntryType);
     return _Done<TombstoneAndRefillResult>(
       TombstoneAndRefillResult(
         rowId: fifoRowId,
@@ -677,9 +735,134 @@ class DestinationRegistry {
     );
   });
 
-  /// Consults the `failRegistryAuditAppend` test seam after an operation's
-  /// last write, inside its transaction.
-  void _injectAfterLastWrite(String entryType) {
+  /// Wedge [destinationId]'s pending queue head [rowId] inside [txn]: mark
+  /// it `wedged`, append the wedge event, and write the destination's wedge
+  /// record. Returns the wedge event. Called only by the delivery cycle's
+  /// drainer, in the transaction that decides the wedge.
+  ///
+  /// Reads the head and the wedge record inside [txn] and throws
+  /// [StateError], writing nothing, when the queue has no head, when
+  /// [rowId] is not the head, when the head is not pending, when a wedge
+  /// record exists (a pending head means no wedge is open), or when the
+  /// head's recorded attempts do not support [cause]: a
+  /// [WedgeCause.permanentRefusal] needs a last attempt that reported a
+  /// permanent failure, and a [WedgeCause.retryBudgetExhausted] an attempt
+  /// count at or above [maxAttempts]. Throws [ArgumentError] when
+  /// [maxAttempts] is below one.
+  ///
+  /// The event's attempt fields (`attempt_count`, `last_outcome`,
+  /// `http_status`) are read from the item's attempts as they stand in
+  /// [txn], the final attempt included when the caller recorded it earlier
+  /// in [txn]. `max_attempts` is [maxAttempts], the retry budget in effect.
+  /// No text from an attempt's outcome enters the event.
+  @internal
+  Future<StoredEvent> wedgeHeadInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String destinationId,
+    required String rowId,
+    required WedgeCause cause,
+    required int maxAttempts,
+  }) async {
+    _observeBodyRun('wedgeHeadInTxn');
+    if (maxAttempts < 1) {
+      throw ArgumentError.value(
+        maxAttempts,
+        'maxAttempts',
+        'the retry budget must be at least one attempt',
+      );
+    }
+    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    if (head == null || head.entryId != rowId) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): the item is not the queue '
+        'head; the head is ${head?.entryId}.',
+      );
+    }
+    if (head.finalStatus != null) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): the head is '
+        '${head.finalStatus!.toJson()}, not pending.',
+      );
+    }
+    final open = await backend.readWedgeRecordTxn(txn, destinationId);
+    if (open != null) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): the head is pending but a '
+        'wedge record names item ${open.rowId}; a pending head means no '
+        'wedge is open.',
+      );
+    }
+    final attempts = head.attempts;
+    final last = attempts.isEmpty ? null : attempts.last;
+    if (cause == WedgeCause.permanentRefusal && last?.outcome != 'permanent') {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
+        'the last recorded attempt reported ${last?.outcome ?? 'nothing'}.',
+      );
+    }
+    if (cause == WedgeCause.retryBudgetExhausted &&
+        attempts.length < maxAttempts) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
+        'the item records ${attempts.length} attempts, below the budget '
+        '$maxAttempts.',
+      );
+    }
+    await backend.setFinalStatusTxn(
+      txn,
+      destinationId,
+      rowId,
+      FinalStatus.wedged,
+    );
+    // The append is where an injected wedge-event failure takes effect.
+    _consultAuditAppendSeam(kDestinationWedgedEntryType);
+    final wedgeEvent = await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationWedgedEntryType,
+      eventType: kDestinationWedgedEventType,
+      data: <String, Object?>{
+        'id': destinationId,
+        'database_id': null,
+        'row_id': rowId,
+        'event_ids': List<String>.of(head.eventIds),
+        'first_seq': head.sequenceRange.firstSeq,
+        'last_seq': head.sequenceRange.lastSeq,
+        'sequence_in_queue': head.sequenceInQueue,
+        'cause': cause.wire,
+        'attempt_count': attempts.length,
+        'max_attempts': maxAttempts,
+        'last_outcome': last?.outcome,
+        'http_status': last?.outcome == 'transient' ? last?.httpStatus : null,
+        'wire_format': head.wireFormat,
+        'transform_version': head.transformVersion,
+        'halt_request_event_id': null,
+        'halt_requested_by': null,
+        'halt_purpose': null,
+        'drainer_epoch': null,
+        'configuration_fingerprint': null,
+        'configuration': null,
+      },
+      initiator: _drainInitiator,
+    );
+    await backend.writeWedgeRecordTxn(
+      txn,
+      destinationId,
+      WedgeRecord(rowId: rowId, wedgeEventId: wedgeEvent.eventId, cause: cause),
+    );
+    if (DeliveryTestHooks.current?.afterWedgeHeadInTxn?.call(destinationId) ??
+        false) {
+      throw InjectedFailure('after the wedge of $destinationId');
+    }
+    return wedgeEvent;
+  }
+
+  /// Consults the `failRegistryAuditAppend` test seam for an audit of
+  /// [entryType], inside the transaction that appends it: after a registry
+  /// operation's last write, and for the drainer's wedge in place of the
+  /// wedge event's append (after the `wedged` status write).
+  void _consultAuditAppendSeam(String entryType) {
     if (DeliveryTestHooks.current?.failRegistryAuditAppend?.call(entryType) ??
         false) {
       throw InjectedFailure('registry audit append of $entryType');

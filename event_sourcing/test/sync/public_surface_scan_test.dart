@@ -105,11 +105,12 @@ const _functionTyped = <String, String>{
       "Destination trust entry; a subscription's filter decides only what "
       'its subscriber sees',
   'SyncCycle.new(clock)':
-      'known unenumerated input: delivery configuration; fill computes its '
-      'window from it',
+      'delivery configuration under the Destination trust entry; fill '
+      'computes its window from it',
   'SyncCycle.new(policyResolver)':
-      'known unenumerated input: delivery configuration; decides the retry '
-      'policy per cycle',
+      'delivery configuration under the Destination trust entry; decides the '
+      'retry policy per cycle, and each wedge event records the budget in '
+      'effect',
   'TableBackedAuthorizationPolicy.new(transactionProvider)':
       'known unenumerated input: opens the transaction the authorization '
       'policy reads in',
@@ -168,6 +169,10 @@ const _mustBeInternal = <String, String>{
       'publishes view changes to live subscribers',
   'PostgresBackend.pool': 'raw connection pool',
   'SembastBackendTestSupport.databaseForTesting': 'raw database handle',
+  'DestinationRegistry.eventStore':
+      'reaches the event store the drainer runs its outcome transactions in',
+  'DestinationRegistry.wedgeHeadInTxn':
+      'wedges a queue head and appends a reserved wedge event',
 };
 
 /// Raw-handle members; each must be internal.
@@ -382,6 +387,11 @@ class PostgresBackend {
 
 extension SembastBackendTestSupport on SembastBackend {
   Object get databaseForTesting => Object();
+}
+
+class DestinationRegistry {
+  Object get eventStore => Object();
+  Future<void> wedgeHeadInTxn() async {}
 }
 
 class AggregateFold {

@@ -30,7 +30,7 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
     ),
     securityContexts: securityContexts,
   );
-  return DestinationRegistry(backend: backend, eventStore: eventStore);
+  return DestinationRegistry(eventStore: eventStore);
 }
 
 Future<AppState> _mkState(String path) async {

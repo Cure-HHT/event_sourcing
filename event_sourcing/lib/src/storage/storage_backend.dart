@@ -58,7 +58,8 @@ import 'package:meta/meta.dart' show internal;
 /// its views and its security-context records hold only while its
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
-/// requests and the registry check record, and the security context it stores beside each event) changes only through
+/// requests, wedge records and the registry check record, and the security
+/// context it stores beside each event) changes only through
 /// the library's operations. The internal marking is an analyzer guard,
 /// not a barrier: the consumer holds the backend (and, on Sembast, the
 /// database it opened), and a direct write is invisible to the library.
@@ -622,6 +623,34 @@ abstract class StorageBackend {
   /// when none is pending.
   @internal
   Future<void> clearReplayRequestTxn(Transaction txn, String destinationId);
+
+  // -------- Wedge records --------
+
+  /// Read [destinationId]'s wedge record inside [txn], or null when the
+  /// destination has no open wedge.
+  ///
+  /// Persisted under `backend_state` key `wedge_<destinationId>`.
+  @internal
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [record] as [destinationId]'s wedge record inside [txn],
+  /// replacing any earlier one. Only the drainer writes one, in the
+  /// transaction that wedges the queue head.
+  @internal
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  );
+
+  /// Delete [destinationId]'s wedge record inside [txn]. No-op when none
+  /// exists. An operator recovery and a deletion delete it in the
+  /// transaction that ends the wedge.
+  @internal
+  Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId);
 
   // -------- Registry check record --------
 

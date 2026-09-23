@@ -11,6 +11,7 @@
 import 'dart:convert';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
@@ -25,6 +26,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/registry_with_audit.dart';
 
 /// Fixture — a fresh in-memory SembastBackend per test.
 Future<SembastBackend> _openBackend(String path) async {
@@ -57,11 +59,14 @@ Future<String> _enqueueRow(
 void main() {
   group('drain()', () {
     late SembastBackend backend;
+    late DestinationRegistry registry;
     var dbCounter = 0;
 
     setUp(() async {
       dbCounter += 1;
       backend = await _openBackend('drain-$dbCounter.db');
+      final deps = await buildAuditedRegistryDeps(backend);
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -70,7 +75,7 @@ void main() {
 
     test('empty FIFO returns without calling send', () async {
       final dest = FakeDestination();
-      await drain(dest, backend: backend);
+      await drain(dest, registry: registry);
       expect(dest.sent, isEmpty);
     });
 
@@ -78,7 +83,7 @@ void main() {
       await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
       final dest = FakeDestination(script: [const SendOk()]);
 
-      await drain(dest, backend: backend);
+      await drain(dest, registry: registry);
 
       expect(dest.sent, hasLength(1));
       // After the head is marked sent, readFifoHead returns null.
@@ -95,7 +100,7 @@ void main() {
         script: [const SendOk(), const SendOk(), const SendOk()],
       );
 
-      await drain(dest, backend: backend);
+      await drain(dest, registry: registry);
       expect(dest.sent, hasLength(3));
       expect(await backend.readFifoHead('fake'), isNull);
     });
@@ -119,7 +124,7 @@ void main() {
       // mismatch rather than an exhausted-script StateError.
       final dest = FakeDestination(script: [const SendOk()]);
 
-      await drain(dest, backend: backend);
+      await drain(dest, registry: registry);
 
       expect(dest.sent, isEmpty);
       // The wedged row remains wedged, unchanged.
@@ -151,7 +156,7 @@ void main() {
         script: [const SendPermanent(error: 'schema-skew')],
       );
 
-      await drain(dest, backend: backend);
+      await drain(dest, registry: registry);
       // Exactly one send call — e1. e2 (trail) was NOT attempted.
       expect(dest.sent, hasLength(1));
 
@@ -193,7 +198,6 @@ void main() {
         maxBackoff: Duration.zero,
         jitterFraction: 0.0,
         maxAttempts: 1,
-        periodicInterval: Duration(minutes: 15),
       );
       final dest = FakeDestination(
         script: [const SendTransient(error: 'HTTP 503', httpStatus: 503)],
@@ -201,7 +205,7 @@ void main() {
 
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
         policy: oneAttemptPolicy,
       );
@@ -231,7 +235,7 @@ void main() {
       );
 
       // First drain: uses scripted "now" = firstAttemptAt.
-      await drain(dest, backend: backend, clock: () => firstAttemptAt);
+      await drain(dest, registry: registry, clock: () => firstAttemptAt);
       expect(dest.sent, hasLength(1));
       // Entry is still pending with one attempt.
       final head = await backend.readFifoHead('fake');
@@ -243,7 +247,7 @@ void main() {
       // is 60s from the last attempt; 1s after is well inside the window.
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => firstAttemptAt.add(const Duration(seconds: 1)),
       );
       expect(dest.sent, hasLength(1)); // no new send call
@@ -264,10 +268,10 @@ void main() {
         ],
       );
 
-      await drain(dest, backend: backend, clock: () => firstAttemptAt);
+      await drain(dest, registry: registry, clock: () => firstAttemptAt);
       expect(dest.sent, hasLength(1));
 
-      await drain(dest, backend: backend, clock: () => afterBackoff);
+      await drain(dest, registry: registry, clock: () => afterBackoff);
       expect(dest.sent, hasLength(2));
       expect(await backend.readFifoHead('fake'), isNull); // sent
     });
@@ -292,7 +296,7 @@ void main() {
 
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
 
@@ -323,7 +327,7 @@ void main() {
 
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
       // Three send calls, in the order e1, e2, e3. The WirePayload
@@ -362,8 +366,8 @@ void main() {
         );
         final d2 = FakeDestination(id: 'd2', script: [const SendOk()]);
 
-        await drain(d1, backend: backend, clock: () => clockTime);
-        await drain(d2, backend: backend, clock: () => clockTime);
+        await drain(d1, registry: registry, clock: () => clockTime);
+        await drain(d2, registry: registry, clock: () => clockTime);
 
         expect(d1.sent, hasLength(1));
         expect(d2.sent, hasLength(1));
@@ -396,7 +400,6 @@ void main() {
         maxBackoff: Duration(hours: 2),
         jitterFraction: 0.1,
         maxAttempts: 3, // smaller cap than defaults.maxAttempts (20)
-        periodicInterval: Duration(minutes: 15),
       );
       // Pre-load attempts: smallPolicy.maxAttempts - 1 transient records.
       for (var i = 0; i < smallPolicy.maxAttempts - 1; i++) {
@@ -415,7 +418,7 @@ void main() {
 
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => longAfter,
         policy: smallPolicy,
       );
@@ -452,7 +455,7 @@ void main() {
         script: [const SendTransient(error: 'HTTP 503', httpStatus: 503)],
       );
 
-      await drain(dest, backend: backend, clock: () => longAfter);
+      await drain(dest, registry: registry, clock: () => longAfter);
       expect(dest.sent, hasLength(1));
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
@@ -470,7 +473,7 @@ void main() {
 
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
 
@@ -528,7 +531,6 @@ void main() {
         maxBackoff: Duration.zero,
         jitterFraction: 0.0,
         maxAttempts: 5, // well above 2 — keeps the row pending across both
-        periodicInterval: Duration(minutes: 15),
       );
       final dest = FakeDestination(
         script: [
@@ -538,7 +540,7 @@ void main() {
       );
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 25, 13),
         policy: oneAttemptCapPolicy,
       );
@@ -556,7 +558,7 @@ void main() {
       // the row. Capture bytes again and assert byte-for-byte equality.
       await drain(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 25, 14),
         policy: oneAttemptCapPolicy,
       );
@@ -618,7 +620,7 @@ void main() {
       await eventStore.record(record.key).delete(db);
 
       final dest = FakeDestination(script: [const SendOk()]);
-      expect(() => drain(dest, backend: backend), throwsA(isA<StateError>()));
+      expect(() => drain(dest, registry: registry), throwsA(isA<StateError>()));
     });
   });
 }

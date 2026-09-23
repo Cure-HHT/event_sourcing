@@ -2784,8 +2784,8 @@ void _registerFillCursorTests(
 
 // -------- Records kept beside a queue --------
 //
-// The schedule, the replay request and the registry check record round-trip
-// through the contract reads, in the same transaction and a later one, and
+// The schedule, the replay request, the registry check record and the wedge
+// record round-trip through the contract reads, in the same transaction and a later one, and
 // roll back with their transaction.
 void _registerQueueRecordTests(
   StorageBackend Function() backendOf,
@@ -2915,6 +2915,72 @@ void _registerQueueRecordTests(
         throwsStateError,
       );
       expect(await read(), b);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/I
+    // the wedge record written with a wedge
+    //   round-trips every field, is overwritten, rolls back with its
+    //   transaction, is kept per destination and is cleared.
+    test('wedge record write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const first = WedgeRecord(
+        rowId: 'row-1',
+        wedgeEventId: 'event-1',
+        cause: WedgeCause.permanentRefusal,
+      );
+      const second = WedgeRecord(
+        rowId: 'row-2',
+        wedgeEventId: 'event-2',
+        cause: WedgeCause.operatorHalt,
+        haltPurpose: 'reconfigure',
+        drainerEpoch: 7,
+        configurationFingerprint: 'fp-2',
+      );
+      Future<WedgeRecord?> read(String dest) =>
+          backend.transaction((txn) => backend.readWedgeRecordTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeWedgeRecordTxn(txn, 'dest', first);
+        return backend.readWedgeRecordTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeWedgeRecordTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeWedgeRecordTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.clearWedgeRecordTxn(txn, 'dest');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearWedgeRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      // Clearing an absent record is a no-op.
+      await backend.transaction(
+        (txn) => backend.clearWedgeRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
     });
   });
 }

@@ -117,10 +117,7 @@ _seedFifo(
   int trailCount = 0,
 }) async {
   final deps = await buildAuditedRegistryDeps(backend);
-  final registry = DestinationRegistry(
-    backend: backend,
-    eventStore: deps.eventStore,
-  );
+  final registry = DestinationRegistry(eventStore: deps.eventStore);
   final destination = FakeDestination(id: 'tombstone-dest');
   await registry.addDestination(destination, initiator: _testInit);
   await registry.setStartDate(
@@ -501,10 +498,7 @@ void main() {
     //    tombstoned row's entryId.
     test('next fillBatch re-promotes target events AND trail events', () async {
       final deps = await buildAuditedRegistryDeps(backend);
-      final registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      final registry = DestinationRegistry(eventStore: deps.eventStore);
       final destination = FakeDestination(id: 'dst-f', batchCapacity: 3);
       // Register + set startDate. The activation's replay request is
       // performed by the first fill, which runs only after the recovery, so

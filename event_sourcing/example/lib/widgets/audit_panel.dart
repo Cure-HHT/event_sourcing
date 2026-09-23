@@ -59,10 +59,15 @@ class _AuditPanelState extends State<AuditPanel> {
     super.dispose();
   }
 
+  /// Counts refreshes started, so a query that completes after a later one
+  /// does not replace the later, fresher page.
+  int _refreshes = 0;
+
   Future<void> _refresh() async {
+    final refresh = ++_refreshes;
     try {
       final page = await widget.backend.queryAudit(flowToken: _flowTokenFilter);
-      if (!mounted) return;
+      if (!mounted || refresh != _refreshes) return;
       setState(() {
         _page = page;
       });

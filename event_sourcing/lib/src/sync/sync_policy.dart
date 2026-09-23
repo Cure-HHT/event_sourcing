@@ -5,20 +5,24 @@
 //   while preserving strict-FIFO ordering within each drain pass)
 import 'dart:math';
 
-/// Retry-curve and timing settings for the per-destination FIFO drain.
+/// Consumer-supplied delivery configuration for the per-destination queue
+/// drain: the retry curve (backoff between attempts) and the attempt budget
+/// (`maxAttempts`, the number of attempts after which an undelivered queue
+/// item wedges).
 ///
-/// `SyncPolicy` is a value class: all fields are `final`, the constructor is
-/// `const`, and [SyncPolicy.defaults] is a `static const` instance whose
-/// field values equal the  constants (60s initial backoff, 5.0
-/// multiplier, 2h cap, ±10% jitter, 20-attempt lifetime cap, 15-minute
-/// foreground cadence).
+/// The application passes a policy to `SyncCycle` statically (`policy:`) or
+/// resolves one per cycle (`policyResolver:`), so it may tune the curve and
+/// the budget at run time; with neither, the drain uses
+/// [SyncPolicy.defaults]. The library trusts the policy it is given: the
+/// curve decides when the drain retries, and the budget decides when an
+/// item whose attempts keep failing wedges. The budget in effect at each
+/// wedge is recorded in the wedge event (`max_attempts`), so every wedge
+/// decision is auditable from the log. A budget lowered below an item's
+/// recorded attempt count wedges that item at the next pass, without a
+/// further send.
 ///
-/// Tests that need a different schedule construct their own `const
-/// SyncPolicy(...)` and pass it into `drain()` or `SyncCycle`. Production
-/// code passes `null` (or omits the parameter); the drain loop falls back
-/// to `SyncPolicy.defaults`. Curve changes in production still require a
-/// spec amendment and a coordinated app release — the injectability is a
-/// test-affordance only, not a runtime tuning knob.
+/// `SyncPolicy` is a value class: all fields are `final` and the
+/// constructor is `const`.
 ///
 /// Curve shape: `initialBackoff * backoffMultiplier^attemptCount`, capped
 /// at `maxBackoff`, shaken by `±jitterFraction` multiplicative jitter to
@@ -30,8 +34,7 @@ class SyncPolicy {
     required this.maxBackoff,
     required this.jitterFraction,
     required this.maxAttempts,
-    required this.periodicInterval,
-  });
+  }) : assert(maxAttempts >= 1, 'the retry budget must be at least one');
 
   /// First retry backoff.
   final Duration initialBackoff;
@@ -45,23 +48,21 @@ class SyncPolicy {
   /// Fraction of the base backoff applied as uniform ±jitter.
   final double jitterFraction;
 
-  /// Per-entry lifetime attempt cap.
+  /// The attempt budget: the number of recorded attempts after which an
+  /// undelivered queue item wedges. At least one: `SyncCycle` refuses a
+  /// policy with a lower budget (a static policy with an [ArgumentError], a
+  /// resolved one by logging and skipping the cycle), so every item is sent
+  /// at least once before its budget can wedge it.
   final int maxAttempts;
 
-  /// Foreground sync-cycle cadence.
-  final Duration periodicInterval;
-
-  /// The production policy: 60s / 5.0 / 2h / 0.1 / 20 / 15min, matching
-  /// its constants exactly. Call sites that do not inject a
-  /// custom policy resolve to this instance.
-  // whose field values equal the  constants.
+  /// The default policy: 60 s initial backoff, multiplier 5.0, 2 h cap,
+  /// ±10% jitter, 20 attempts. A cycle given no policy uses it.
   static const SyncPolicy defaults = SyncPolicy(
     initialBackoff: Duration(seconds: 60),
     backoffMultiplier: 5.0,
     maxBackoff: Duration(hours: 2),
     jitterFraction: 0.1,
     maxAttempts: 20,
-    periodicInterval: Duration(minutes: 15),
   );
 
   /// Returns the backoff for the [attemptCount]-th attempt (0-based).

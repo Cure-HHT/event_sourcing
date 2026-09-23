@@ -10,6 +10,8 @@ import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/drain_wedge_conformance.dart'
+    show expectWedgeRecordMatchesLog;
 import '../test_support/fake_destination.dart';
 import '../test_support/queue_test_support.dart';
 import '../test_support/rerunning_sembast_backend.dart';
@@ -49,7 +51,7 @@ void main() {
       securityContexts: SembastSecurityContextStore(backend: backend),
       clock: () => DateTime.utc(2026, 3, 1),
     );
-    registry = DestinationRegistry(backend: backend, eventStore: store);
+    registry = DestinationRegistry(eventStore: store);
     backend.rerunEnabled = true;
   });
 
@@ -165,7 +167,7 @@ void main() {
         id: 'x',
         script: <SendResult>[const SendPermanent(error: 'no')],
       ),
-      backend: backend,
+      registry: registry,
     );
     final wedged = (await backend.readFifoHead('x'))!;
     expect(wedged.finalStatus, FinalStatus.wedged);
@@ -181,11 +183,89 @@ void main() {
 
     await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
     await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
-    await wedgeHeadForTest(backend, 'x');
+    await wedgeHeadForTest(registry, 'x');
     await registry.deleteDestination('x', initiator: _init);
     final deleted = await audits(kDestinationDeletedEntryType);
     expect(deleted, hasLength(1));
     expect(deleted.single.data['deleted_pending_count'], 1);
     expect(deleted.single.data['tombstoned_row_id'], isNotNull);
+  });
+
+  Future<WedgeRecord?> wedgeRecord(String destId) =>
+      backend.transaction((txn) => backend.readWedgeRecordTxn(txn, destId));
+
+  Future<FakeDestination> queued(String id) async {
+    final d = FakeDestination(
+      id: id,
+      script: <SendResult>[const SendPermanent(error: 'no')],
+    );
+    await registry.addDestination(d, initiator: _init);
+    await registry.setStartDate(id, DateTime.utc(2026, 1, 1), initiator: _init);
+    await note('$id-n1');
+    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    return d;
+  }
+
+  // Verifies: EVS-PRD-event-log/G
+  // a wedge whose transaction body runs
+  //   twice appends, records and publishes only the committed run's wedge
+  //   event.
+  // Verifies: EVS-PRD-destinations/P
+  // the committed run's attempt, wedged
+  //   status, event and record are present once each.
+  test('a wedge under re-runs records the committed run', () async {
+    final d = await queued('x');
+    final published = <StoredEvent>[];
+    final sub = store
+        .subscribe<StoredEvent>(
+          const SubscriptionFilter(
+            entryTypes: <String>{},
+            includeSystemEvents: true,
+            eventTypes: <String>{kDestinationWedgedEventType},
+          ),
+          const Events(),
+        )
+        .listen((u) {
+          if (u is Delta<StoredEvent>) published.add(u.value);
+        });
+    final runsBefore = backend.bodyRuns;
+    await drain(d, registry: registry);
+    await pumpEventQueue();
+    await sub.cancel();
+    expect(backend.bodyRuns - runsBefore, greaterThanOrEqualTo(2));
+    final events = await audits(kDestinationWedgedEntryType);
+    expect(events, hasLength(1));
+    expect(published.map((e) => e.eventId), [events.single.eventId]);
+    expect((await wedgeRecord('x'))?.wedgeEventId, events.single.eventId);
+    final head = (await backend.readFifoHead('x'))!;
+    expect(head.finalStatus, FinalStatus.wedged);
+    expect(head.attempts, hasLength(1));
+    await expectWedgeRecordMatchesLog(store, 'x');
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // the wedge the next pass derives from the
+  //   recorded attempts appends and records only the committed run's event.
+  // Verifies: EVS-DEV-destination-drain/J
+  // the derived wedge adds no attempt.
+  test('a derived wedge under re-runs records the committed run', () async {
+    final d = await queued('x');
+    backend.rerunEnabled = false;
+    await runWithDeliveryTestHooks(
+      DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
+      () => drain(d, registry: registry),
+    );
+    expect((await backend.readFifoHead('x'))!.finalStatus, isNull);
+    await expectWedgeRecordMatchesLog(store, 'x');
+    backend.rerunEnabled = true;
+    await drain(d, registry: registry);
+    final events = await audits(kDestinationWedgedEntryType);
+    expect(events, hasLength(1));
+    expect((await wedgeRecord('x'))?.wedgeEventId, events.single.eventId);
+    final head = (await backend.readFifoHead('x'))!;
+    expect(head.finalStatus, FinalStatus.wedged);
+    expect(head.attempts, hasLength(1));
+    expect(d.sent, hasLength(1));
+    await expectWedgeRecordMatchesLog(store, 'x');
   });
 }

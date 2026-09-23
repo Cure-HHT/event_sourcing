@@ -57,10 +57,7 @@ void main() {
       counter += 1;
       backend = await _openBackend('atomicity-$counter.db');
       final deps = await buildAuditedRegistryDeps(backend);
-      registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -140,7 +137,7 @@ void main() {
         eventId: 'evt-2',
         sequenceNumber: 2,
       );
-      await wedgeHeadForTest(backend, 'purgeable');
+      await wedgeHeadForTest(registry, 'purgeable');
       final before = await _state(backend, 'purgeable');
 
       await expectLater(

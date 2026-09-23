@@ -204,7 +204,7 @@ void main() {
         sequenceNumber: 1,
       );
       // Recovery requires a wedged head.
-      await wedgeHeadForTest(backend, 'wedged');
+      await wedgeHeadForTest(ds.destinations, 'wedged');
       await ds.destinations.tombstoneAndRefill(
         'wedged',
         head.entryId,

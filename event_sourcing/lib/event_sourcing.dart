@@ -154,6 +154,7 @@ export 'src/destinations/destination_schedule.dart'
     show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
 export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
+export 'src/destinations/wedge_cause.dart' show WedgeCause;
 export 'src/destinations/wire_payload.dart' show WirePayload;
 
 // Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
@@ -304,6 +305,8 @@ export 'src/security/system_entry_types.dart'
         kDestinationStartDateSetEventType,
         kDestinationWedgeRecoveredEntryType,
         kDestinationWedgeRecoveredEventType,
+        kDestinationWedgedEntryType,
+        kDestinationWedgedEventType,
         // Retention sweep audit.
         kRetentionPolicyAppliedEntryType,
         // Bootstrap registry-initialized audit.
@@ -327,7 +330,12 @@ export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
 export 'src/storage/postgres/postgres.dart';
 export 'src/storage/queue_records.dart'
-    show QueueRetirement, RegistryCheck, ReplayRequest, TrailSweepResult;
+    show
+        QueueRetirement,
+        RegistryCheck,
+        ReplayRequest,
+        TrailSweepResult,
+        WedgeRecord;
 export 'src/storage/sembast_backend.dart' show SembastBackend;
 export 'src/storage/send_result.dart'
     show SendResult, SendOk, SendTransient, SendPermanent;

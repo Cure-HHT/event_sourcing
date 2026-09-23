@@ -217,6 +217,26 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
   Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>
       throw UnimplementedError();
 

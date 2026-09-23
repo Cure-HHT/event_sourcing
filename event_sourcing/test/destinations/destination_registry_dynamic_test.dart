@@ -37,10 +37,7 @@ void main() {
       dbCounter += 1;
       backend = await _openBackend('registry-dynamic-$dbCounter.db');
       final deps = await buildAuditedRegistryDeps(backend);
-      registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -322,7 +319,7 @@ void main() {
         wireFormat: 'fake-v1',
         transformVersion: 'fake-v1',
       );
-      await wedgeHeadForTest(backend, 'purgeable');
+      await wedgeHeadForTest(registry, 'purgeable');
       expect(await backend.readSchedule('purgeable'), isNotNull);
 
       await registry.deleteDestination('purgeable', initiator: _testInit);
@@ -384,7 +381,6 @@ void main() {
       // same backend, re-run bootstrap's addDestination call.
       final restartedDeps = await buildAuditedRegistryDeps(backend);
       final restarted = DestinationRegistry(
-        backend: backend,
         eventStore: restartedDeps.eventStore,
       );
       await restarted.addDestination(

@@ -32,6 +32,7 @@ const _expected = <String, Set<String>>{
   'calls_unwrap_sembast_txn_internal.dart': _internalUse,
   'calls_publish_collector_internal.dart': _internalUse,
   'calls_drain_internal.dart': _internalUse,
+  'calls_wedge_head_in_txn_internal.dart': _internalUse,
   'calls_fill_batch_internal.dart': _internalUse,
   'calls_historical_replay_internal.dart': _internalUse,
   'calls_test_hooks_internal.dart': _internalUse,
@@ -57,6 +58,8 @@ const _minimumInternalUses = <String, int>{
   // collector.add and collector.addRowChanges.
   'calls_publish_collector_internal.dart': 2,
   'calls_drain_internal.dart': 1,
+  // DestinationRegistry.eventStore and DestinationRegistry.wedgeHeadInTxn.
+  'calls_wedge_head_in_txn_internal.dart': 2,
   'calls_fill_batch_internal.dart': 1,
   // buildHistoricalReplayRows and writeQueueItemsTxn.
   'calls_historical_replay_internal.dart': 2,

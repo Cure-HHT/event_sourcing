@@ -758,6 +758,49 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
+  // -------- Wedge records --------
+
+  static String _wedgeRecordKey(String destinationId) => 'wedge_$destinationId';
+
+  @override
+  @internal
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return WedgeRecord.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .put(t._sembastTxn, record.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
   // -------- Registry check record --------
 
   static const _registryCheckKey = 'registry_check';

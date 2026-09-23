@@ -139,10 +139,7 @@ Future<EventStoreBundle> bootstrapEventStore({
     allowDowngrade: allowDowngrade,
   );
 
-  final destinationRegistry = DestinationRegistry(
-    backend: backend,
-    eventStore: eventStore,
-  );
+  final destinationRegistry = DestinationRegistry(eventStore: eventStore);
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
   // Emit an event recording the registry's full id->registered_version map

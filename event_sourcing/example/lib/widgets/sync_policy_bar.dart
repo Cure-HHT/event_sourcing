@@ -45,7 +45,6 @@ class _SyncPolicyBarState extends State<SyncPolicyBar> {
       maxBackoff: maxBackoff ?? p.maxBackoff,
       jitterFraction: jitterFraction ?? p.jitterFraction,
       maxAttempts: maxAttempts ?? p.maxAttempts,
-      periodicInterval: p.periodicInterval,
     );
   }
 

@@ -113,6 +113,9 @@ jobs:
       - name: Destination queue registry scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_queue_registry_test.dart
         working-directory: event_sourcing
+      - name: Drain wedge event scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_drain_wedge_event_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

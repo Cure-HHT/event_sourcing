@@ -34,6 +34,8 @@ void _expectInert(ProcessResult result) {
   expect(outcome['end_date_set_events'], 1, reason: '${result.stdout}');
   // The fill and outcome failure injections were ignored.
   expect(outcome['sent_items'], 1, reason: '${result.stdout}');
+  // The wedge failure injection was ignored: the refusal wedged.
+  expect(outcome['wedge_events'], 1, reason: '${result.stdout}');
   expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
 }
 
@@ -119,8 +121,15 @@ void main() {
           startsWith('insideTransform'),
           startsWith('failFillTransaction'),
           startsWith('failOutcomeTransaction'),
+          startsWith('afterWedgeHeadInTxn probe_refusing'),
+          startsWith('afterWedgeTransaction probe_refusing'),
+          contains('recorded alone'),
         ]),
       );
+      // The first wedge rolled back and its attempt was recorded alone; the
+      // second pass wedged the head from that record, and the failure
+      // injected after its commit did not undo it.
+      expect(outcome.wedgeEvents, 1);
       // The injected outcome failure rolled the send's outcome back.
       expect(outcome.sentItems, 0);
       expect(outcome.passed, isFalse);

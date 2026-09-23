@@ -282,15 +282,17 @@ Each destination panel exposes live-tunable knobs (sliders /
 dropdowns):
 
 - **Connection** — `ok` (succeed after `sendLatency`), `broken`
-  (return `SendTransient`), `rejecting` (return `SendPermanent`).
+  (return `SendTransient`), `rejecting` (return `SendPermanent`). A
+  rejection wedges the queue head, and the drain appends a
+  `destination_wedged` event with the wedge, shown in the EVENTS panel.
 - **Send latency** — wall-clock delay before `SendOk`.
 - **Batch size** — upper bound on `canAddToBatch` length.
 - **Accumulate** — `maxAccumulateTime` hold for single-event batches.
 
 The `SyncPolicyBar` above the columns exposes per-pane `SyncPolicy`
 knobs (`initialBackoff`, `backoffMultiplier`, `maxBackoff`,
-`jitterFraction`, `maxAttempts`, `periodicInterval`) that flow into
-the drain loop on each tick.
+`jitterFraction`, `maxAttempts`) that flow into the drain loop on each
+tick.
 
 ---
 

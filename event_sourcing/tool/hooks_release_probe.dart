@@ -2,7 +2,8 @@
 //
 // Installs every test seam, each recording that it fired and each failure
 // injection set to fail, then runs a registry operation and two delivery
-// passes over an in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
+// passes (one destination delivers, one refuses and wedges) over an
+// in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
 // or a `dart compile exe` executable) it must print an empty list of fired
 // seams and a completed delivery, and exit 0. Run with assertions enabled
 // the same body reports the seams that fired, and the process exits 1.
@@ -24,6 +25,7 @@ class ProbeOutcome {
     required this.endDateSetEvents,
     required this.sequenceAdvance,
     required this.sentItems,
+    required this.wedgeEvents,
   });
 
   /// Seams that fired, in order.
@@ -50,9 +52,17 @@ class ProbeOutcome {
   /// The healthy destination's queue items marked sent after the passes.
   final int sentItems;
 
-  /// True when no seam fired, the passes delivered the one event and its
-  /// outcome committed.
-  bool get passed => firedSeams.isEmpty && delivered == 1 && sentItems == 1;
+  /// Wedge events in the log after the passes (the refusing destination
+  /// wedges once when no injection takes effect).
+  final int wedgeEvents;
+
+  /// True when no seam fired, the passes delivered the one event, its
+  /// outcome committed, and the refusing destination's wedge committed.
+  bool get passed =>
+      firedSeams.isEmpty &&
+      delivered == 1 &&
+      sentItems == 1 &&
+      wedgeEvents == 1;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'fired_seams': firedSeams,
@@ -62,15 +72,20 @@ class ProbeOutcome {
     'end_date_set_events': endDateSetEvents,
     'sequence_advance': sequenceAdvance,
     'sent_items': sentItems,
+    'wedge_events': wedgeEvents,
     'passed': passed,
   };
 }
 
 class _ProbeDestination extends Destination {
-  _ProbeDestination(this.id, {this.failTransform = false});
+  _ProbeDestination(this.id, {this.failTransform = false, this.refuse = false});
 
   @override
   final String id;
+
+  /// When true, `send` reports a permanent failure, so the drain wedges the
+  /// head.
+  final bool refuse;
 
   /// When true, `transform` throws, so the delivery cycle logs a fill
   /// failure for this destination.
@@ -107,7 +122,9 @@ class _ProbeDestination extends Destination {
   @override
   Future<SendResult> send(WirePayload payload) async {
     sends += 1;
-    return const SendOk();
+    return refuse
+        ? const SendPermanent(error: 'probe refusal')
+        : const SendOk();
   }
 }
 
@@ -118,6 +135,7 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
   final backend = SembastBackend(database: db);
   final healthy = _ProbeDestination('probe_healthy');
   final broken = _ProbeDestination('probe_broken', failTransform: true);
+  final refusing = _ProbeDestination('probe_refusing', refuse: true);
   final bundle = await bootstrapEventStore(
     backend: backend,
     source: const Source(
@@ -132,11 +150,11 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
         name: 'Probe event',
       ),
     ],
-    destinations: <Destination>[healthy, broken],
+    destinations: <Destination>[healthy, broken, refusing],
   );
   const initiator = AutomationInitiator(service: 'hooks-release-probe');
   final start = DateTime.utc(2000);
-  for (final d in <Destination>[healthy, broken]) {
+  for (final d in <Destination>[healthy, broken, refusing]) {
     await bundle.destinations.setStartDate(d.id, start, initiator: initiator);
   }
   await bundle.eventStore.append(
@@ -150,21 +168,35 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
 
   final fired = <String>[];
   var fillFailures = 0;
+  var wedgeFailures = 0;
   final hooks = DeliveryTestHooks(
     onLog: (record) => fired.add('onLog ${record.name}: ${record.message}'),
+    // Fails every registry operation's audit, but not the wedge event's
+    // append, so the wedge reaches afterWedgeHeadInTxn.
     failRegistryAuditAppend: (entryType) {
       fired.add('failRegistryAuditAppend $entryType');
+      return entryType != kDestinationWedgedEntryType;
+    },
+    // The first pass's wedge fails inside its transaction, so the refusal
+    // is recorded alone; the second pass wedges the head from that record,
+    // and that wedge commits but reports failure.
+    afterWedgeHeadInTxn: (destinationId) {
+      fired.add('afterWedgeHeadInTxn $destinationId');
+      return wedgeFailures++ == 0;
+    },
+    afterWedgeTransaction: (destinationId) {
+      fired.add('afterWedgeTransaction $destinationId');
       return true;
     },
     // The first fill's transaction fails; the second pass fills, sends and
-    // then fails the send's outcome transaction.
+    // then fails the delivery's outcome transaction.
     failFillTransaction: (destinationId) {
       fired.add('failFillTransaction $destinationId');
       return fillFailures++ == 0;
     },
     failOutcomeTransaction: (destinationId, outcome) {
       fired.add('failOutcomeTransaction $destinationId $outcome');
-      return true;
+      return outcome == 'ok';
     },
     beforeRegistryTransaction: (op) async {
       fired.add('beforeRegistryTransaction $op');
@@ -203,7 +235,6 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
       entryType: 'system.destination_end_date_set',
     )).length;
     final cycle = SyncCycle(
-      backend: backend,
       registry: bundle.destinations,
       source: bundle.eventStore.source,
     );
@@ -213,6 +244,9 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
   final sentItems = (await backend.listFifoEntries(
     healthy.id,
   )).where((e) => e.finalStatus == FinalStatus.sent).length;
+  final wedgeEvents = (await backend.findAllEvents(
+    entryType: kDestinationWedgedEntryType,
+  )).length;
   await backend.close();
   return ProbeOutcome(
     firedSeams: fired,
@@ -222,6 +256,7 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     endDateSetEvents: endDateSetEvents,
     sequenceAdvance: sequenceAdvance,
     sentItems: sentItems,
+    wedgeEvents: wedgeEvents,
   );
 }
 

@@ -27,7 +27,6 @@ class _Pane {
     required this.source,
     required this.policyNotifier,
   }) : cycle = SyncCycle(
-         backend: backend,
          registry: datastore.destinations,
          source: source,
          policyResolver: () => policyNotifier.value,

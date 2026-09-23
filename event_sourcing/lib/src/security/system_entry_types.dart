@@ -45,6 +45,10 @@ const String kDestinationDeletedEntryType = 'system.destination_deleted';
 const String kDestinationWedgeRecoveredEntryType =
     'system.destination_wedge_recovered';
 
+/// Reserved id for the wedge event the drainer appends in the transaction
+/// that marks a destination's queue head wedged.
+const String kDestinationWedgedEntryType = 'system.destination_wedged';
+
 // Implements: EVS-DEV-destination-drain/H
 // each kind of destination audit event carries
 //   an event type distinct from every other kind's, so a declarative filter
@@ -75,6 +79,9 @@ const String kDestinationDeletedEventType = 'destination_deleted';
 /// ([kDestinationWedgeRecoveredEntryType]).
 const String kDestinationWedgeRecoveredEventType =
     'destination_wedge_recovered';
+
+/// Event type of the wedge event ([kDestinationWedgedEntryType]).
+const String kDestinationWedgedEventType = 'destination_wedged';
 
 /// Reserved id for the retention-policy-applied audit event emitted by
 /// `EventStore.applyRetentionPolicy` once per sweep.
@@ -136,6 +143,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kDestinationEndDateSetEntryType,
   kDestinationDeletedEntryType,
   kDestinationWedgeRecoveredEntryType,
+  kDestinationWedgedEntryType,
   kRetentionPolicyAppliedEntryType,
   kEntryTypeRegistryInitializedEntryType,
   kLibVersionInitializedEntryType,
@@ -147,7 +155,8 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// The reserved system entry-type definitions covering security-
 /// context lifecycle events (redacted / compacted / purged), config-
 /// change audit events (destination registration / start_date / end_date /
-/// deletion / wedge recovery, plus retention-policy-applied per-sweep),
+/// deletion / wedge recovery, plus retention-policy-applied per-sweep), the
+/// drainer's destination wedge event,
 /// the bootstrap registry-initialized audit, the substrate-internal
 /// lib-version boot events (initialized / changed), the raw-path
 /// `ingest-audit` event (covering `logRejectedBatch` and
@@ -212,6 +221,11 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     id: kDestinationWedgeRecoveredEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedge Recovered',
+  ),
+  EntryTypeDefinition(
+    id: kDestinationWedgedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Wedged',
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,

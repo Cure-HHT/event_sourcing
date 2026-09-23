@@ -160,7 +160,6 @@ Future<_PaneRuntime> _bootstrapPane({
   // still running; the policy is resolved once per pass. The native
   // destinations stamp their batch envelopes with the pane's Source.
   final syncCycle = SyncCycle(
-    backend: backend,
     registry: datastore.destinations,
     source: source,
     policyResolver: () => policyNotifier.value,

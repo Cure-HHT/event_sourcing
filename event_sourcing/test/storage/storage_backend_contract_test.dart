@@ -261,6 +261,20 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> clearReplayRequestTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
   @override
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
   Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>
       throw UnimplementedError();
   @override

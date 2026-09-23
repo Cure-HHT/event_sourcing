@@ -146,8 +146,7 @@ class _DetailPanelState extends State<DetailPanel> {
       '  backoffMultiplier: ${policy.backoffMultiplier}\n'
       '  maxBackoff:        ${policy.maxBackoff.inSeconds}s\n'
       '  jitterFraction:    ${policy.jitterFraction}\n'
-      '  maxAttempts:       ${policy.maxAttempts}\n'
-      '  periodicInterval:  ${policy.periodicInterval.inSeconds}s',
+      '  maxAttempts:       ${policy.maxAttempts}',
       style: DemoText.body,
     );
   }

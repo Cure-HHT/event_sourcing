@@ -2,6 +2,7 @@
 // registration does, and wedge a queue head the way the drainer does. This
 // file declares no tests, so it carries no citation.
 import 'package:event_sourcing/src/destinations/destination.dart';
+import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -34,18 +35,20 @@ Future<DestinationSchedule> persistScheduleForTest(
   return persisted;
 }
 
-/// Wedge [destinationId]'s pending head the supported way: one drain pass
-/// whose delivery reports a permanent failure. Returns the wedged item's
-/// `entry_id`. Throws when the head is not pending.
+/// Wedge [destinationId]'s pending head the supported way: one drain pass,
+/// through [registry], whose delivery reports a permanent failure (so the
+/// wedge event and the wedge record are written with the wedge). Returns
+/// the wedged item's `entry_id`. Throws when the head is not pending.
 ///
 /// The pass runs at [at] (default far in the future), so a backoff left by
 /// earlier attempts does not hold the send.
 Future<String> wedgeHeadForTest(
-  StorageBackend backend,
+  DestinationRegistry registry,
   String destinationId, {
   String error = 'refused by the test receiver',
   DateTime? at,
 }) async {
+  final backend = registry.backend;
   final head = await backend.readFifoHead(destinationId);
   if (head == null || head.finalStatus != null) {
     throw StateError(
@@ -58,7 +61,7 @@ Future<String> wedgeHeadForTest(
       id: destinationId,
       script: <SendResult>[SendPermanent(error: error)],
     ),
-    backend: backend,
+    registry: registry,
     clock: () => at ?? DateTime.utc(2100),
   );
   final after = await backend.readFifoRow(destinationId, head.entryId);

@@ -23,6 +23,7 @@ const stateKinds = <String, String>{
   'fill positions': 'fill positions',
   'schedules': 'schedules',
   'replay requests': 'replay requests',
+  'wedge records': 'wedge records',
   'registry check record': 'the registry check record',
   'security context': 'the security context stored beside each event',
 };

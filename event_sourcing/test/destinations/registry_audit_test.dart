@@ -217,7 +217,7 @@ void main() {
         sequenceNumber: 1,
       );
       // Recovery requires a wedged head.
-      await wedgeHeadForTest(backend, 'wedged');
+      await wedgeHeadForTest(ds.destinations, 'wedged');
       final result = await ds.destinations.tombstoneAndRefill(
         'wedged',
         head.entryId,
@@ -272,7 +272,8 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
-      await wedgeHeadForTest(backend, 'wedged');
+      // The drainer wedges the head, appending the wedge event.
+      await wedgeHeadForTest(ds.destinations, 'wedged');
       await ds.destinations.tombstoneAndRefill(
         'wedged',
         head.entryId,
@@ -321,6 +322,7 @@ void main() {
         kDestinationEndDateSetEventType,
         kDestinationDeletedEventType,
         kDestinationWedgeRecoveredEventType,
+        kDestinationWedgedEventType,
       });
     });
 

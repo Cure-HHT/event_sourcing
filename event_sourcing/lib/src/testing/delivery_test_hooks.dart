@@ -18,7 +18,9 @@ final Object _zoneKey = Object();
 /// transaction body ([onRegistryBodyRun]); make a destination-registry
 /// operation fail after it appends its audit event
 /// ([failRegistryAuditAppend]), a drain outcome's transaction fail after
-/// its writes ([failOutcomeTransaction]) or a fill's transaction fail after
+/// its writes ([failOutcomeTransaction]), the drainer's wedge fail inside
+/// its transaction ([afterWedgeHeadInTxn]) or report failure after it
+/// committed ([afterWedgeTransaction]), or a fill's transaction fail after
 /// its writes ([failFillTransaction]); and run interleaving operations at
 /// named points between transactions ([beforeRegistryTransaction],
 /// [insideTransform], [afterFillReads]). None can make an operation succeed
@@ -34,6 +36,8 @@ class DeliveryTestHooks {
     this.onLog,
     this.failRegistryAuditAppend,
     this.failOutcomeTransaction,
+    this.afterWedgeHeadInTxn,
+    this.afterWedgeTransaction,
     this.failFillTransaction,
     this.beforeRegistryTransaction,
     this.onRegistryBodyRun,
@@ -50,6 +54,11 @@ class DeliveryTestHooks {
   /// registration the schedule it writes), inside the operation's
   /// transaction. Returning true makes the operation throw [InjectedFailure]
   /// there, so the transaction rolls back.
+  ///
+  /// For the drainer's wedge (`entryType` is the wedge event's entry type)
+  /// it is consulted in place of the wedge event's append, after the
+  /// `wedged` status write: returning true makes the append fail, so the
+  /// transaction rolls back the status write with it.
   final bool Function(String entryType)? failRegistryAuditAppend;
 
   /// Consulted inside a drain outcome's transaction after its writes (the
@@ -58,6 +67,18 @@ class DeliveryTestHooks {
   /// transaction throw [InjectedFailure], so it rolls back.
   final bool Function(String destinationId, String outcome)?
   failOutcomeTransaction;
+
+  /// Consulted inside the transaction that wedges a destination's queue
+  /// head, after its writes (the `wedged` status, the wedge event and the
+  /// wedge record). Returning true makes the transaction throw
+  /// [InjectedFailure], so it rolls back.
+  final bool Function(String destinationId)? afterWedgeHeadInTxn;
+
+  /// Consulted after a transaction that wedges a destination's queue head
+  /// committed. Returning true makes the drain see [InjectedFailure] as
+  /// that transaction's failure, although it committed: the point where a
+  /// lost commit acknowledgement would surface.
+  final bool Function(String destinationId)? afterWedgeTransaction;
 
   /// Consulted inside a fill's compare-and-set transaction after its writes
   /// (the queue items, the fill position and the cleared replay request it
@@ -71,8 +92,10 @@ class DeliveryTestHooks {
   final Future<void> Function(String op)? beforeRegistryTransaction;
 
   /// Observes each run of a destination-registry operation's transaction
-  /// body, at its start. A backend may run a body more than once. An
-  /// exception it throws is reported and does not reach the operation.
+  /// body, at its start, and each run of the drainer's wedge (`op` is
+  /// `wedgeHeadInTxn`) at the start of the registry's part of the wedge
+  /// transaction. A backend may run a body more than once. An exception it
+  /// throws is reported and does not reach the operation.
   final void Function(String op)? onRegistryBodyRun;
 
   /// Awaited while the fill runs a destination's transform, which always

@@ -238,7 +238,8 @@ The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
-requests and the registry check record, and the security context it stores beside each event) changes only through
+requests, wedge records and the registry check record, and the security
+context it stores beside each event) changes only through
 the library's operations. Every `StorageBackend` member that writes is
 `@internal`; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
@@ -268,6 +269,21 @@ deployment — see the guide's "Advanced" chapter for detail:
 - **Library version in the log** — first boot appends
   `lib_version_initialized`; upgrades append `lib_version_changed`;
   downgrades are refused unless explicitly opted in.
+- **Delivery** — each `Destination` delivers its queue in order, and a
+  queue head the drain cannot deliver (a permanent refusal, or an
+  exhausted attempt budget) wedges, halting that destination until an
+  operator recovers it. The drain appends a `system.destination_wedged`
+  event in the transaction that marks the head wedged, recording the
+  cause, the attempt count, the budget in effect and the outcome category
+  and numeric status of the last attempt; the attempts' error text stays
+  on the queue item. The delivery configuration the application supplies
+  is trusted on faith: the `Destination`'s filter (a predicate closure
+  included) and transform, its send outcomes, the `SyncPolicy` given to
+  `SyncCycle` (statically or through `policyResolver`; its retry curve
+  decides backoff and its attempt budget, at least one, decides when an
+  item wedges) and the `clock` given to `SyncCycle` (fill computes its
+  window from it; its readings are not recorded). The wedge event makes
+  each wedge decision auditable from the log.
 - **Cross-installation ingest** — a `Destination` is the outbound
   transport; the inbound ingest path verifies the hash chain against
   what's stored, extends the provenance chain, and admits events into the

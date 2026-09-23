@@ -29,6 +29,7 @@ const _eventTypeOf = <String, String>{
   kDestinationEndDateSetEntryType: kDestinationEndDateSetEventType,
   kDestinationDeletedEntryType: kDestinationDeletedEventType,
   kDestinationWedgeRecoveredEntryType: kDestinationWedgeRecoveredEventType,
+  kDestinationWedgedEntryType: kDestinationWedgedEventType,
 };
 
 void main() {
@@ -78,7 +79,7 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
-      await wedgeHeadForTest(backend, 'd');
+      await wedgeHeadForTest(ds.destinations, 'd');
       await ds.destinations.tombstoneAndRefill(
         'd',
         head.entryId,

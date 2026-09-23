@@ -66,10 +66,7 @@ void main() {
       dbCounter += 1;
       backend = await _openBackend('sync-cycle-$dbCounter.db');
       final deps = await buildAuditedRegistryDeps(backend);
-      registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -96,7 +93,6 @@ void main() {
       await _enqueueOne(backend, 'fast', 'e1');
 
       final sync = SyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 10),
       );
@@ -124,7 +120,6 @@ void main() {
       await _enqueueOne(backend, 'fake', 'e1');
 
       final sync = _OrderRecordingSyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 10),
         order: order,
@@ -147,7 +142,6 @@ void main() {
       await _enqueueOne(backend, 'fake', 'e1');
 
       final sync = SyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 10),
       );
@@ -179,7 +173,6 @@ void main() {
       await _enqueueOne(backend, 'fake', 'e1');
 
       final sync = SyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 10),
       );
@@ -205,7 +198,6 @@ void main() {
       await _enqueueOne(backend, 'healthy', 'e1');
 
       final sync = SyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 10),
       );
@@ -249,11 +241,9 @@ void main() {
         maxBackoff: Duration(hours: 2),
         jitterFraction: 0.1,
         maxAttempts: 2,
-        periodicInterval: Duration(minutes: 15),
       );
 
       final sync = SyncCycle(
-        backend: backend,
         registry: registry,
         clock: () => DateTime.utc(2027, 1, 1),
         policy: tinyPolicy,
@@ -272,7 +262,7 @@ void main() {
     // Defensive: when no destinations are registered, the cycle is a
     // near-no-op (just invokes pollInbound).
     test('empty registry: cycle runs pollInbound and exits', () async {
-      final sync = SyncCycle(backend: backend, registry: registry);
+      final sync = SyncCycle(registry: registry);
       await sync.call(); // no throw, no error
     });
   });
@@ -298,7 +288,6 @@ class _RecordingDestination extends FakeDestination {
 /// happens before inbound-poll.
 class _OrderRecordingSyncCycle extends SyncCycle {
   _OrderRecordingSyncCycle({
-    required super.backend,
     required super.registry,
     required this.order,
     super.clock,

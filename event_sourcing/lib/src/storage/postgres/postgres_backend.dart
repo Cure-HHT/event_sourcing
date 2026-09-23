@@ -1494,6 +1494,31 @@ class PostgresBackend extends StorageBackend {
   Future<void> clearReplayRequestTxn(Transaction txn, String destinationId) =>
       _deleteStateTxn(txn, 'replay_request_$destinationId');
 
+  // -------- Wedge records --------
+
+  @override
+  @internal
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'wedge_$destinationId');
+    return value == null ? null : WedgeRecord.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  ) => _writeStateTxn(txn, 'wedge_$destinationId', record.toJson());
+
+  @override
+  @internal
+  Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
+      _deleteStateTxn(txn, 'wedge_$destinationId');
+
   // -------- Registry check record --------
 
   @override

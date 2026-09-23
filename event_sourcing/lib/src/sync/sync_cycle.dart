@@ -9,11 +9,14 @@
 // (dynamic registration — registry.all() is
 //   called per cycle so destinations added or removed since the last cycle are
 //   reflected in the current run without restart)
+// Implements: EVS-DEV-destination-drain/J
+// (the cycle refuses a retry budget below
+//   one: a static policy when the cycle is built, a resolved one by filling
+//   and draining nothing in that cycle)
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/source.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:event_sourcing/src/sync/fill_batch.dart';
@@ -23,10 +26,16 @@ import 'package:event_sourcing/src/sync/sync_policy.dart';
 ///
 /// One `SyncCycle` instance lives for the process lifetime. Its [call]
 /// method is the single entry point that every trigger — app-lifecycle
-/// resume, the 15-minute foreground timer, connectivity-restored event,
+/// resume, an application-owned foreground timer, connectivity-restored event,
 /// post-`record()` fire-and-forget, FCM message receipt — routes into.
 /// Centralizing on one entry point is how the reentrancy guard works:
 /// concurrent triggers race into [call] but only one drives the cycle.
+///
+/// The retry policy is given statically (`policy:`) or resolved at the
+/// start of each cycle (`policyResolver:`). Its attempt budget must be at
+/// least one: a static policy below one is refused with an
+/// [ArgumentError], and a cycle whose resolved policy is below one logs
+/// the refusal and fills and drains nothing.
 ///
 /// Per-destination work in one cycle is fillBatch → drain. fillBatch
 /// promotes events appended since the last cycle from the event log into
@@ -40,14 +49,12 @@ class SyncCycle {
   // SyncPolicy Function()? policyResolver invoked once per call() for
   // hot-swap scenarios. The two are mutually exclusive (D).
   SyncCycle({
-    required StorageBackend backend,
     required DestinationRegistry registry,
     Source? source,
     Clock? clock,
     SyncPolicy? policy,
     SyncPolicy? Function()? policyResolver,
-  }) : _backend = backend,
-       _registry = registry,
+  }) : _registry = registry,
        _source = source,
        _clock = clock,
        _policy = policy,
@@ -57,9 +64,12 @@ class SyncCycle {
         'SyncCycle: supply at most one of policy / policyResolver',
       );
     }
+    if (policy != null) checkRetryBudget(policy);
   }
 
-  final StorageBackend _backend;
+  /// The registry whose destinations the cycle fills and drains. Fill and
+  /// drain both act on the backend of the registry's event store, so they
+  /// can never operate on two different backends.
   final DestinationRegistry _registry;
 
   /// Source identity for fillBatch. Required when any registered
@@ -112,6 +122,19 @@ class SyncCycle {
         final cyclePolicy = _policyResolver != null
             ? _policyResolver()
             : _policy;
+        if (cyclePolicy != null && cyclePolicy.maxAttempts < 1) {
+          // A resolved budget below one is refused: the cycle fills and
+          // drains nothing under it. call() is triggered after appends and
+          // must not throw, so the refusal is logged.
+          libraryLog(
+            'sync_cycle',
+            'the policy resolver returned a retry budget of '
+                '${cyclePolicy.maxAttempts}; a budget must be at least one '
+                'attempt, so this cycle fills and drains nothing',
+            level: LibraryLogLevel.severe,
+          );
+          break;
+        }
 
         final destinations = _registry.all();
         // A thrown exception from one destination's fill or drain does
@@ -145,7 +168,7 @@ class SyncCycle {
     try {
       await fillBatch(
         destination,
-        backend: _backend,
+        backend: _registry.backend,
         source: _source,
         clock: _clock,
         flushHeld: flushHeld,
@@ -171,7 +194,7 @@ class SyncCycle {
     try {
       await drain(
         destination,
-        backend: _backend,
+        registry: _registry,
         clock: _clock,
         policy: cyclePolicy,
       );
@@ -179,10 +202,14 @@ class SyncCycle {
       // Per the contract, one destination's failure does not cancel
       // another's drain. We swallow here so Future.wait does not abort.
       // A send's own failure never reaches here: drain records it as the
-      // attempt's outcome. An exception that escapes drain means an
-      // outcome transaction did not commit, so no attempt was recorded:
-      // the head stays pending and is sent again by a later cycle. The
-      // log line below is the only record of that failure.
+      // attempt's outcome, and a wedge that reports failure is followed by
+      // a transaction that reads the head again and records the attempt
+      // alone when the wedge did not commit. An exception that escapes
+      // drain means an outcome transaction reported failure, so whether it
+      // committed is not known here: the next pass reads the head again
+      // (a wedged head ends the pass; a pending head's recorded attempts
+      // decide its status) before any send. The log line below is the
+      // only record of the failure.
       libraryLog(
         'sync_cycle',
         'drain failed for destination ${destination.id}',

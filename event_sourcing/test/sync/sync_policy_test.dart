@@ -29,10 +29,6 @@ void main() {
     test('defaults.maxAttempts == 20', () {
       expect(SyncPolicy.defaults.maxAttempts, 20);
     });
-
-    test('defaults.periodicInterval == Duration(minutes: 15)', () {
-      expect(SyncPolicy.defaults.periodicInterval, const Duration(minutes: 15));
-    });
   });
 
   group('SyncPolicy is a value class', () {
@@ -44,14 +40,12 @@ void main() {
         maxBackoff: Duration(minutes: 30),
         jitterFraction: 0.2,
         maxAttempts: 7,
-        periodicInterval: Duration(minutes: 5),
       );
       expect(custom.initialBackoff, const Duration(seconds: 10));
       expect(custom.backoffMultiplier, 2.0);
       expect(custom.maxBackoff, const Duration(minutes: 30));
       expect(custom.jitterFraction, 0.2);
       expect(custom.maxAttempts, 7);
-      expect(custom.periodicInterval, const Duration(minutes: 5));
     });
 
     test('SyncPolicy.defaults is a static const instance', () {
@@ -61,13 +55,12 @@ void main() {
       expect(identical(SyncPolicy.defaults, ref), isTrue);
     });
 
-    test('defaults field values equal the  constants', () {
+    test('defaults field values', () {
       expect(SyncPolicy.defaults.initialBackoff, const Duration(seconds: 60));
       expect(SyncPolicy.defaults.backoffMultiplier, 5.0);
       expect(SyncPolicy.defaults.maxBackoff, const Duration(hours: 2));
       expect(SyncPolicy.defaults.jitterFraction, 0.1);
       expect(SyncPolicy.defaults.maxAttempts, 20);
-      expect(SyncPolicy.defaults.periodicInterval, const Duration(minutes: 15));
     });
   });
 
@@ -189,7 +182,6 @@ void main() {
         maxBackoff: Duration(seconds: 10),
         jitterFraction: 0.0, // disable jitter for a deterministic check
         maxAttempts: 5,
-        periodicInterval: Duration(minutes: 1),
       );
       expect(fast.backoffFor(0), const Duration(seconds: 1));
       expect(fast.backoffFor(1), const Duration(seconds: 2));
@@ -198,6 +190,25 @@ void main() {
       // Capped:
       expect(fast.backoffFor(4), const Duration(seconds: 10));
       expect(fast.backoffFor(10), const Duration(seconds: 10));
+    });
+
+    // Verifies: EVS-DEV-destination-drain/J
+    // with assertions enabled, a policy
+    //   whose budget is below one fails when it is built (a build without
+    //   assertions is refused by the delivery cycle instead).
+    test('a budget below one fails the constructor assertion', () {
+      for (final n in <int>[0, -1]) {
+        expect(
+          () => SyncPolicy(
+            initialBackoff: Duration.zero,
+            backoffMultiplier: 1.0,
+            maxBackoff: Duration.zero,
+            jitterFraction: 0.0,
+            maxAttempts: n,
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+      }
     });
   });
 }
