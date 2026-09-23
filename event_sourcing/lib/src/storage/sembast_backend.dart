@@ -739,6 +739,35 @@ class SembastBackend extends StorageBackend {
     );
   }
 
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      _listSchedules(_database());
+
+  @override
+  @internal
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(Transaction txn) =>
+      _listSchedules(_requireValidTxn(txn)._sembastTxn);
+
+  Future<Map<String, DestinationSchedule>> _listSchedules(
+    DatabaseClient client,
+  ) async {
+    const prefix = 'schedule_';
+    final records = await _backendStateStore.find(
+      client,
+      finder: Finder(
+        filter: Filter.custom(
+          (record) => (record.key! as String).startsWith(prefix),
+        ),
+      ),
+    );
+    return <String, DestinationSchedule>{
+      for (final record in records)
+        record.key.substring(prefix.length): DestinationSchedule.fromJson(
+          Map<String, Object?>.from(record.value! as Map),
+        ),
+    };
+  }
+
   /// Persist [schedule] inside [txn] so the write participates in the
   /// surrounding transaction's atomicity.
   @override
@@ -896,6 +925,91 @@ class SembastBackend extends StorageBackend {
     final t = _requireValidTxn(txn);
     await _backendStateStore
         .record(_wedgeRecordKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Halt requests --------
+
+  static String _haltRequestKey(String destinationId) =>
+      'halt_request_$destinationId';
+
+  @override
+  @internal
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return HaltRequest.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .put(t._sembastTxn, request.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Send fences --------
+
+  static String _sendFenceKey(String destinationId) =>
+      'send_fence_$destinationId';
+
+  @override
+  @internal
+  Future<SendFence?> readSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_sendFenceKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return SendFence.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_sendFenceKey(destinationId))
+        .put(t._sembastTxn, fence.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_sendFenceKey(destinationId))
         .delete(t._sembastTxn);
   }
 

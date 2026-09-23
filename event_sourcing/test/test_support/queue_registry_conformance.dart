@@ -220,6 +220,12 @@ class _World {
     'cursor': await backend.readFillCursor(destId),
     'request': (await request(destId))?.toJson(),
     'wedge_record': (await wedgeRecord(destId))?.toJson(),
+    'halt': (await backend.transaction(
+      (txn) => backend.readHaltRequestTxn(txn, destId),
+    ))?.toJson(),
+    'fence': (await backend.transaction(
+      (txn) => backend.readSendFenceTxn(txn, destId),
+    ))?.toJson(),
     'events': <String>[
       for (final e in await backend.findAllEvents()) e.eventId,
     ],
@@ -656,9 +662,9 @@ void runQueueRegistryScenarios(
       //   wedged or recovered item and records what it removed.
       // Verifies: EVS-DEV-destination-drain/A
       // the wedged head is tombstoned, the
-      //   pending items deleted, the cursor, schedule, replay request and
-      //   wedge record removed, and the only per-destination record left is
-      //   the sequence_in_queue counter.
+      //   pending items deleted, the cursor, schedule, replay request, wedge
+      //   record, halt request and send fence removed, and the only
+      //   per-destination record left is the sequence_in_queue counter.
       test('retains sent items, tombstones the wedged head, removes pending '
           'items and every per-destination record but the counter', () async {
         if (!available) return;
@@ -682,6 +688,21 @@ void runQueueRegistryScenarios(
         );
         expect(await w.request('x'), isNotNull);
         final headId = await wedgeHeadForTest(w.registry, 'x');
+        // A wedge consumes any open halt request, so the library never
+        // leaves one beside a wedged head; it is written directly here so
+        // that every per-destination record is present at the deletion.
+        await w.backend.transaction(
+          (txn) => w.backend.writeHaltRequestTxn(
+            txn,
+            'x',
+            HaltRequest(
+              requestEventId: 'written-directly',
+              requestedAt: DateTime.utc(2026, 5, 1),
+              purpose: HaltPurpose.pause,
+              requestedBy: _init.toJson(),
+            ),
+          ),
+        );
         final keysBefore = await w.db.backendStateKeys();
         expect(
           keysBefore.where((k) => k.endsWith('_x')).toSet(),
@@ -690,6 +711,8 @@ void runQueueRegistryScenarios(
             'schedule_x',
             'replay_request_x',
             'wedge_x',
+            'halt_request_x',
+            'send_fence_x',
             'fifo_seq_counter_x',
           ]),
         );
@@ -715,6 +738,7 @@ void runQueueRegistryScenarios(
         expect(audit.data['tombstoned_row_id'], headId);
         expect(audit.data['deleted_pending_count'], 2);
         expect(audit.data['allow_hard_delete'], isTrue);
+        expect(audit.data['closed_halt_request_event_id'], 'written-directly');
         expect(w.registry.byId('x'), isNull);
       });
 
@@ -907,6 +931,12 @@ void runQueueRegistryScenarios(
             eventId: 'evt-1',
             sequenceNumber: 1,
           );
+          await w.registry.requestHalt(
+            'x',
+            initiator: _init,
+            purpose: HaltPurpose.pause,
+          );
+          await w.registry.cancelHalt('x', initiator: _init);
           await wedgeHeadForTest(w.registry, 'x');
           await w.registry.tombstoneAndRefill(
             'x',
@@ -925,6 +955,10 @@ void runQueueRegistryScenarios(
             kDestinationWedgeRecoveredEntryType:
                 kDestinationWedgeRecoveredEventType,
             kDestinationWedgedEntryType: kDestinationWedgedEventType,
+            kDestinationHaltRequestedEntryType:
+                kDestinationHaltRequestedEventType,
+            kDestinationHaltCancelledEntryType:
+                kDestinationHaltCancelledEventType,
           };
           for (final kind in eventTypeOf.entries) {
             final audits = await w.audits(kind.key);

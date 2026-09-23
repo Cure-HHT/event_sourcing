@@ -16,20 +16,23 @@ final Object _zoneKey = Object();
 ///
 /// Library code reads the installed seams only through [current], which
 /// returns null unless assertions are enabled. The seams observe the
-/// library's log lines ([onLog]) and each run of a registry operation's
-/// transaction body ([onRegistryBodyRun]); make a destination-registry
+/// library's log lines ([onLog]), each run of a registry operation's
+/// transaction body ([onRegistryBodyRun]) and each run of the drainer's
+/// pre-send fence body ([onFenceBodyRun]); make a destination-registry
 /// operation fail after it appends its audit event
 /// ([failRegistryAuditAppend]), a drain outcome's transaction fail after
 /// its writes ([failOutcomeTransaction]), the drainer's wedge fail inside
 /// its transaction ([afterWedgeHeadInTxn]) or report failure after it
-/// committed ([afterWedgeTransaction]), or a fill's transaction fail after
-/// its writes ([failFillTransaction]); and run interleaving operations at
-/// named points between transactions ([beforeRegistryTransaction],
-/// [insideTransform], [afterFillReads]). The boot of `EventStore.open` has
-/// an observing seam ([onBootBodyRun]) and a failure injection after its
-/// library-version append ([afterBootVersionEvent]). The
-/// incompatible-generation guard and the Postgres lock session have seams
-/// that delay ([insideBootLock]), replace the timer that drives the lock
+/// committed ([afterWedgeTransaction]), a fill's transaction fail after
+/// its writes ([failFillTransaction]), or a delivery-cycle pass's read of
+/// the persisted schedules fail ([failListSchedules]); and run
+/// interleaving operations at named points between transactions
+/// ([beforeRegistryTransaction], [insideTransform], [afterFillReads],
+/// [afterHaltLoopTopRead], [beforeSendFence]). The boot of
+/// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
+/// injection after its library-version append ([afterBootVersionEvent]).
+/// The incompatible-generation guard and the Postgres lock session have
+/// seams that delay ([insideBootLock]), replace the timer that drives the lock
 /// session's probe ([timerFactory]), make an operation fail
 /// ([failGenerationRegistration], [failNextLockHeartbeat],
 /// [stallLockHeartbeatPastQueryTimeout], [failOldSessionTermination],
@@ -46,8 +49,9 @@ final Object _zoneKey = Object();
 /// open or a provisioning succeeds or fails as the declared build's would,
 /// none can make an operation succeed that would otherwise fail; an
 /// exception thrown by an observing seam ([onLog], [onRegistryBodyRun],
-/// [onBootBodyRun]) is reported and does not reach the library code that
-/// called it, and none receives a database handle or a transaction.
+/// [onBootBodyRun], [onFenceBodyRun]) is reported and does not reach the
+/// library code that called it, and none receives a database handle or a
+/// transaction.
 @internal
 @immutable
 class DeliveryTestHooks {
@@ -59,10 +63,14 @@ class DeliveryTestHooks {
     this.afterWedgeHeadInTxn,
     this.afterWedgeTransaction,
     this.failFillTransaction,
+    this.failListSchedules,
     this.beforeRegistryTransaction,
     this.onRegistryBodyRun,
     this.insideTransform,
     this.afterFillReads,
+    this.afterHaltLoopTopRead,
+    this.beforeSendFence,
+    this.onFenceBodyRun,
     this.onBootBodyRun,
     this.afterBootVersionEvent,
     this.buildDeclaration,
@@ -120,6 +128,11 @@ class DeliveryTestHooks {
   /// [InjectedFailure], so it rolls back.
   final bool Function(String destinationId)? failFillTransaction;
 
+  /// Consulted when a delivery-cycle pass reads the persisted destination
+  /// schedules, before the read. Returning true makes the read throw
+  /// [InjectedFailure].
+  final bool Function()? failListSchedules;
+
   /// Awaited before a destination-registry operation opens its transaction.
   /// `op` names the operation (for example `tombstoneAndRefill`). Runs
   /// between transactions, so it may run other library operations.
@@ -139,6 +152,21 @@ class DeliveryTestHooks {
   /// Awaited after the fill's reads and before its compare-and-set
   /// transaction.
   final Future<void> Function(String destinationId)? afterFillReads;
+
+  /// Awaited after the drainer's non-transactional read of a destination's
+  /// halt request at the top of each iteration of its loop, before the
+  /// transaction that honours an open request and before the pre-send
+  /// fence.
+  final Future<void> Function(String destinationId)? afterHaltLoopTopRead;
+
+  /// Awaited after the drainer built a send's payload and before the
+  /// pre-send fence transaction opens.
+  final Future<void> Function(String destinationId)? beforeSendFence;
+
+  /// Observes each run of the drainer's pre-send fence transaction body, at
+  /// its start. A backend may run a body more than once. An exception it
+  /// throws is reported and does not reach the drainer.
+  final void Function(String destinationId)? onFenceBodyRun;
 
   /// Observes each run of `EventStore.open`'s boot transaction body, at its
   /// start. A backend may run the body more than once. An exception it

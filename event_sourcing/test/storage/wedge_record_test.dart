@@ -43,7 +43,7 @@ void main() {
         rowId: 'r',
         wedgeEventId: 'e',
         cause: WedgeCause.operatorHalt,
-        haltPurpose: 'pause',
+        haltPurpose: HaltPurpose.pause,
         drainerEpoch: 3,
         configurationFingerprint: 'fp',
       );
@@ -58,6 +58,7 @@ void main() {
         'drainer_epoch': null,
         'configuration_fingerprint': null,
       });
+      expect(full.toJson()['halt_purpose'], 'pause');
       expect(minimal == full, isFalse);
     });
 
@@ -72,6 +73,7 @@ void main() {
         {...valid, 'wedge_event_id': 1},
         {...valid, 'cause': 'unknown'},
         {...valid, 'halt_purpose': 2},
+        {...valid, 'halt_purpose': 'unknown'},
         {...valid, 'drainer_epoch': '3'},
         {...valid, 'configuration_fingerprint': 4},
       ]) {

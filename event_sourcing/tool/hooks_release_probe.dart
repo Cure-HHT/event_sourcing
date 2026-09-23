@@ -245,6 +245,19 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     afterFillReads: (destinationId) async {
       fired.add('afterFillReads $destinationId');
     },
+    afterHaltLoopTopRead: (destinationId) async {
+      fired.add('afterHaltLoopTopRead $destinationId');
+    },
+    beforeSendFence: (destinationId) async {
+      fired.add('beforeSendFence $destinationId');
+    },
+    onFenceBodyRun: (destinationId) =>
+        fired.add('onFenceBodyRun $destinationId'),
+    // Observed only: every pass reads the persisted schedules.
+    failListSchedules: () {
+      fired.add('failListSchedules');
+      return false;
+    },
   );
   late final String? storedEndDate;
   late final String? registryEndDate;

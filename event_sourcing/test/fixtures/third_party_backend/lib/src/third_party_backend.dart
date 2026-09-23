@@ -188,6 +188,15 @@ class ThirdPartyBackend extends StorageBackend {
     String destinationId,
   ) => throw UnimplementedError();
 
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(Transaction txn) =>
+      throw UnimplementedError();
+
   @internal
   @override
   Future<QueueRetirement> retireQueueTxn(
@@ -233,6 +242,44 @@ class ThirdPartyBackend extends StorageBackend {
   @internal
   @override
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearHaltRequestTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<SendFence?> readSendFenceTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
 
   @internal

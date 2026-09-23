@@ -87,7 +87,8 @@ Future<List<StoredEvent>> _destinationAudits(
 
 /// Asserts [destinationId]'s wedge record equals the open wedge the log
 /// records: the latest wedge event this install appended for it, unless a
-/// recovery or a deletion followed; and that the item it names is wedged.
+/// recovery or a deletion followed, with the purpose of the halt request it
+/// consumed; and that the item it names is wedged.
 /// Then asserts the view-queue invariant ([expectWedgesViewMatchesQueue]).
 Future<void> expectWedgeRecordMatchesLog(
   EventStore store,
@@ -125,6 +126,9 @@ Future<void> _expectWedgeRecordMatchesLog(
       rowId: open.data['row_id'] as String,
       wedgeEventId: open.eventId,
       cause: WedgeCause.fromWire(open.data['cause'] as String),
+      haltPurpose: open.data['halt_purpose'] == null
+          ? null
+          : HaltPurpose.fromWire(open.data['halt_purpose']! as String),
     ),
     reason: 'the record names the open wedge',
   );
@@ -1203,6 +1207,9 @@ void runDrainWedgeScenarios(
       // wedgeHeadInTxn refuses a wedged
       //   head, an item that is not the head and a queue with no head, and
       //   writes nothing.
+      // Verifies: EVS-DEV-destination-drain/N
+      // an operator-halt wedge with no open halt request is refused, and
+      //   writes nothing.
       test('wedgeHeadInTxn refuses anything but the pending head', () async {
         if (!available) return;
         final d = FakeDestination(
@@ -1215,7 +1222,7 @@ void runDrainWedgeScenarios(
           String destId,
           String rowId, {
           WedgeCause cause = WedgeCause.permanentRefusal,
-          int maxAttempts = 3,
+          int? maxAttempts = 3,
           Matcher error = const TypeMatcher<StateError>(),
         }) async {
           final before = await w.snapshot(destId);
@@ -1264,6 +1271,25 @@ void runDrainWedgeScenarios(
           head.entryId,
           cause: WedgeCause.retryBudgetExhausted,
           maxAttempts: 0,
+          error: isA<ArgumentError>(),
+        );
+        // An operator halt needs an open halt request the log holds.
+        await refused(
+          'x',
+          head.entryId,
+          cause: WedgeCause.operatorHalt,
+          error: isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('no halt request'),
+          ),
+        );
+        // Only an operator halt may record no retry budget.
+        await refused(
+          'x',
+          head.entryId,
+          cause: WedgeCause.retryBudgetExhausted,
+          maxAttempts: null,
           error: isA<ArgumentError>(),
         );
         await drain(d, registry: w.registry);

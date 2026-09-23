@@ -260,12 +260,12 @@ The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
-requests, wedge records, the registry check record, the database
-identity, the generation records and the view catch-up marks, and the
-security context it stores beside each event) changes only through the
-library's operations, and reserved system events are appended only by the
-library's own operations. The event store's reserved append operations are
-`@internal`, and so is every
+requests, wedge records, halt requests, send fences, the registry check
+record, the database identity, the generation records and the view
+catch-up marks, and the security context it stores beside each event)
+changes only through the library's operations, and reserved system events
+are appended only by the library's own operations. The event store's
+reserved append operations are `@internal`, and so is every
 `StorageBackend` member that writes; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
 `close`, and delivers through `SyncCycle` and `DestinationRegistry`. The
@@ -303,9 +303,16 @@ deployment — see the guide's "Advanced" chapter for detail:
   event in the transaction that marks the head wedged, recording the
   cause, the attempt count, the budget in effect and the outcome category
   and numeric status of the last attempt; the attempts' error text stays
-  on the queue item. The delivery configuration the application supplies
-  is trusted on faith: the `Destination`'s filter (a predicate closure
-  included) and transform, its send outcomes, the `SyncPolicy` given to
+  on the queue item. An operator stops delivery on a healthy destination
+  with `DestinationRegistry.requestHalt`: the drainer honours the request
+  by wedging the head itself before its next send (cause `operator_halt`),
+  and `tombstoneAndRefill` then rebuilds the pending items; any wedge
+  consumes an open request, and `cancelHalt` withdraws one. A delivery
+  cycle fills and sends only the destinations its registry holds, reports
+  the others in `SyncCycle.unserved`, and still honours halt requests on
+  them. The delivery configuration the application supplies is trusted
+  on faith: the `Destination`'s filter (a predicate closure included) and
+  transform, its send outcomes, the `SyncPolicy` given to
   `SyncCycle` (statically or through `policyResolver`; its retry curve
   decides backoff and its attempt budget, at least one, decides when an
   item wedges) and the `clock` given to `SyncCycle` (fill computes its

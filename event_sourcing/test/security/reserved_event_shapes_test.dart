@@ -30,6 +30,21 @@ const String _noteType = 'shape_note';
 /// edited. A new kind of reserved event is a new reserved entry type (a
 /// data-format minor step), recorded by adding its entry; a changed shape
 /// is recorded under the next data-format major.
+/// The values of the enumerated fields of reserved events, by data-format
+/// major: a value added, removed or renamed is a data-format major step, so
+/// the entry for the running major changes only when that major is new.
+const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
+    <int, Map<String, List<String>>>{
+      2: <String, List<String>>{
+        'cause': <String>[
+          'operator_halt',
+          'permanent_refusal',
+          'retry_budget_exhausted',
+        ],
+        'purpose': <String>['pause', 'reconfigure'],
+      },
+    };
+
 const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
     <int, Map<String, List<Object>>>{
       2: <String, List<Object>>{
@@ -68,6 +83,14 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
         'system.destination_wedged': <Object>[
           'system_destination',
           <String>['destination_wedged'],
+        ],
+        'system.destination_halt_requested': <Object>[
+          'system_destination',
+          <String>['destination_halt_requested'],
+        ],
+        'system.destination_halt_cancelled': <Object>[
+          'system_destination',
+          <String>['destination_halt_cancelled'],
         ],
         'system.retention_policy_applied': <Object>[
           'system_retention',
@@ -160,6 +183,8 @@ void main() {
         kDestinationWedgeRecoveredEntryType:
             kDestinationWedgeRecoveredEventType,
         kDestinationWedgedEntryType: kDestinationWedgedEventType,
+        kDestinationHaltRequestedEntryType: kDestinationHaltRequestedEventType,
+        kDestinationHaltCancelledEntryType: kDestinationHaltCancelledEventType,
       };
       expect(kDestinationAuditEntryTypes.toSet(), byKind.keys.toSet());
       expect(kDestinationAuditEntryTypes.toSet(), <String>{
@@ -188,6 +213,22 @@ void main() {
             entry.value.aggregateType,
             entry.value.eventTypes.toList()..sort(),
           ],
+      }, recorded);
+    });
+
+    test('enumerated field values are fixed within a data-format major', () {
+      final recorded =
+          _enumeratedValuesByDataFormatMajor[LibVersion.dataFormat.major];
+      expect(
+        recorded,
+        isNotNull,
+        reason:
+            'record the enumerated field values of data-format major '
+            '${LibVersion.dataFormat.major}',
+      );
+      expect(<String, List<String>>{
+        'cause': <String>[for (final c in WedgeCause.values) c.wire]..sort(),
+        'purpose': <String>[for (final p in HaltPurpose.values) p.wire]..sort(),
       }, recorded);
     });
 

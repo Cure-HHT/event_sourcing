@@ -66,9 +66,11 @@ const _minimumInternalUses = <String, int>{
   'calls_unwrap_sembast_txn_internal.dart': 1,
   // collector.add and collector.addRowChanges.
   'calls_publish_collector_internal.dart': 2,
-  'calls_drain_internal.dart': 1,
-  // DestinationRegistry.eventStore and DestinationRegistry.wedgeHeadInTxn.
-  'calls_wedge_head_in_txn_internal.dart': 2,
+  // drain and honourHaltById.
+  'calls_drain_internal.dart': 2,
+  // DestinationRegistry.eventStore, DestinationRegistry.wedgeHeadInTxn and
+  // DestinationRegistry.honourHaltInTxn.
+  'calls_wedge_head_in_txn_internal.dart': 3,
   // EventStore.appendReserved and EventStore.appendReservedInTxn.
   'calls_append_reserved_internal.dart': 2,
   'calls_fill_batch_internal.dart': 1,

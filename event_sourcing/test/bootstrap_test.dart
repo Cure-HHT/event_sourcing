@@ -103,8 +103,8 @@ void main() {
         destinations: dests,
       );
 
-      // 2 caller-supplied + 15 system = 17 total
-      expect(ds.entryTypes.all(), hasLength(17));
+      // 2 caller-supplied + 17 system = 19 total
+      expect(ds.entryTypes.all(), hasLength(19));
       expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
       expect(ds.entryTypes.isRegistered('red_button'), isTrue);
       expect(ds.destinations.all(), hasLength(2));

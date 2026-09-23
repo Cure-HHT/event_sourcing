@@ -272,6 +272,13 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
+      // An operator requests a halt and cancels it.
+      await ds.destinations.requestHalt(
+        'wedged',
+        initiator: _user,
+        purpose: HaltPurpose.pause,
+      );
+      await ds.destinations.cancelHalt('wedged', initiator: _user);
       // The drainer wedges the head, appending the wedge event.
       await wedgeHeadForTest(ds.destinations, 'wedged');
       await ds.destinations.tombstoneAndRefill(
@@ -323,6 +330,8 @@ void main() {
         kDestinationDeletedEventType,
         kDestinationWedgeRecoveredEventType,
         kDestinationWedgedEventType,
+        kDestinationHaltRequestedEventType,
+        kDestinationHaltCancelledEventType,
       });
     });
 

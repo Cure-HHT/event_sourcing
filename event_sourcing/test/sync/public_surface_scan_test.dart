@@ -39,6 +39,7 @@ const _reads = <String, String>{
   'findEventById': 'reads one event',
   'findEventByIdInTxn': 'reads one event in a txn',
   'readSchedule': 'reads a destination schedule',
+  'listSchedules': 'reads every persisted destination schedule',
   'readEventsReverse': 'reads the event log newest first',
   'queryAudit': 'reads the security-context audit',
 };
@@ -144,10 +145,14 @@ const _seamKinds = <String, String>{
   'afterWedgeHeadInTxn': 'failure injection',
   'afterWedgeTransaction': 'failure injection',
   'failFillTransaction': 'failure injection',
+  'failListSchedules': 'failure injection',
   'afterBootVersionEvent': 'failure injection',
   'beforeRegistryTransaction': 'interleave',
   'insideTransform': 'interleave',
   'afterFillReads': 'interleave',
+  'afterHaltLoopTopRead': 'interleave',
+  'beforeSendFence': 'interleave',
+  'onFenceBodyRun': 'observe',
   'buildDeclaration': 'input substitution',
   'insideBootLock': 'interleave',
   'splitLockSessionStatements': 'failure injection',
@@ -194,6 +199,8 @@ List<String> seamKindRule(ClassElement hooks, Map<String, String> kinds) {
 /// that must be internal.
 const _mustBeInternal = <String, String>{
   'drain': 'drains a queue outside the delivery cycle',
+  'honourHaltById':
+      'wedges a queue head for a halt request outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
   'writeQueueItemsTxn': 'enqueues queue items outside the fill',
   'seedViewTargetVersions': 'writes view target versions',
@@ -243,6 +250,8 @@ const _mustBeInternal = <String, String>{
       'reaches the event store the drainer runs its outcome transactions in',
   'DestinationRegistry.wedgeHeadInTxn':
       'wedges a queue head and appends a reserved wedge event',
+  'DestinationRegistry.honourHaltInTxn':
+      'wedges a queue head for a halt request, or removes the stored request',
   'EventStore.appendReserved': 'appends a reserved system event',
   'EventStore.appendReservedInTxn':
       'appends a reserved system event in a transaction',
@@ -480,6 +489,7 @@ extension SembastBackendTestSupport on SembastBackend {
 class DestinationRegistry {
   Object get eventStore => Object();
   Future<void> wedgeHeadInTxn() async {}
+  Future<void> honourHaltInTxn() async {}
 }
 
 class EventStore {
@@ -518,6 +528,7 @@ class PostgresSecurityContextStore {
 }
 
 Future<void> drain() async {}
+Future<void> honourHaltById() async {}
 Future<void> fillBatch() async {}
 Future<void> writeQueueItemsTxn() async {}
 Future<void> seedViewTargetVersions() async {}

@@ -65,6 +65,16 @@ const String kDestinationWedgeRecoveredEntryType =
 /// that marks a destination's queue head wedged.
 const String kDestinationWedgedEntryType = 'system.destination_wedged';
 
+/// Reserved id for the event recording an operator's request that the
+/// drainer halt a destination's delivery (`DestinationRegistry.requestHalt`).
+const String kDestinationHaltRequestedEntryType =
+    'system.destination_halt_requested';
+
+/// Reserved id for the event recording an operator's cancellation of an
+/// open halt request (`DestinationRegistry.cancelHalt`).
+const String kDestinationHaltCancelledEntryType =
+    'system.destination_halt_cancelled';
+
 // Implements: EVS-DEV-destination-drain/H
 // each kind of destination audit event carries
 //   an event type distinct from every other kind's, so a declarative filter
@@ -99,8 +109,15 @@ const String kDestinationWedgeRecoveredEventType =
 /// Event type of the wedge event ([kDestinationWedgedEntryType]).
 const String kDestinationWedgedEventType = 'destination_wedged';
 
-/// Every destination audit entry type: the registry's configuration and
-/// recovery audits and the drainer's wedge event. Each carries the
+/// Event type of the halt request ([kDestinationHaltRequestedEntryType]).
+const String kDestinationHaltRequestedEventType = 'destination_halt_requested';
+
+/// Event type of the halt cancellation
+/// ([kDestinationHaltCancelledEntryType]).
+const String kDestinationHaltCancelledEventType = 'destination_halt_cancelled';
+
+/// Every destination audit entry type: the registry's configuration,
+/// recovery and halt audits and the drainer's wedge event. Each carries the
 /// destination identifier in `data['id']` and the appending database's
 /// identity in `data['database_id']`.
 @internal
@@ -111,6 +128,8 @@ const List<String> kDestinationAuditEntryTypes = <String>[
   kDestinationDeletedEntryType,
   kDestinationWedgeRecoveredEntryType,
   kDestinationWedgedEntryType,
+  kDestinationHaltRequestedEntryType,
+  kDestinationHaltCancelledEntryType,
 ];
 
 /// Reserved id for the retention-policy-applied audit event emitted by
@@ -221,6 +240,8 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kDestinationDeletedEntryType,
   kDestinationWedgeRecoveredEntryType,
   kDestinationWedgedEntryType,
+  kDestinationHaltRequestedEntryType,
+  kDestinationHaltCancelledEntryType,
   kRetentionPolicyAppliedEntryType,
   kEntryTypeRegistryInitializedEntryType,
   kLibVersionInitializedEntryType,
@@ -232,8 +253,9 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// The reserved system entry-type definitions covering security-
 /// context lifecycle events (redacted / compacted / purged), config-
 /// change audit events (destination registration / start_date / end_date /
-/// deletion / wedge recovery, plus retention-policy-applied per-sweep), the
-/// drainer's destination wedge event,
+/// deletion / wedge recovery / halt request / halt cancellation, plus
+/// retention-policy-applied per-sweep), the drainer's destination wedge
+/// event,
 /// the bootstrap registry-initialized audit, the substrate-internal
 /// lib-version boot events (initialized / changed), the raw-path
 /// `ingest-audit` event (covering `logRejectedBatch` and
@@ -303,6 +325,16 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     id: kDestinationWedgedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedged',
+  ),
+  EntryTypeDefinition(
+    id: kDestinationHaltRequestedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Halt Requested',
+  ),
+  EntryTypeDefinition(
+    id: kDestinationHaltCancelledEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Halt Cancelled',
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
@@ -406,6 +438,14 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
       kDestinationWedgedEntryType: ReservedEventShape(
         kDestinationAuditAggregateType,
         <String>{kDestinationWedgedEventType},
+      ),
+      kDestinationHaltRequestedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationHaltRequestedEventType},
+      ),
+      kDestinationHaltCancelledEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationHaltCancelledEventType},
       ),
       kRetentionPolicyAppliedEntryType: ReservedEventShape(
         kRetentionAuditAggregateType,

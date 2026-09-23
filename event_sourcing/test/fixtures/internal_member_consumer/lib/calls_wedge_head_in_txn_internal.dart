@@ -16,3 +16,15 @@ Future<void> wedgeDirectly(DestinationRegistry registry, EventStore store) =>
         maxAttempts: 1,
       );
     });
+
+/// Honours a halt request directly through the registry.
+Future<void> honourDirectly(DestinationRegistry registry, EventStore store) =>
+    store.runTransaction((txn, collector) async {
+      await registry.honourHaltInTxn(
+        txn,
+        collector,
+        destinationId: 'dest',
+        requestEventId: 'request',
+        maxAttempts: 1,
+      );
+    });

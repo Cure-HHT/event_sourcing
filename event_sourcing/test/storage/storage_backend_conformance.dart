@@ -3055,7 +3055,7 @@ void _registerQueueRecordTests(
         rowId: 'row-2',
         wedgeEventId: 'event-2',
         cause: WedgeCause.operatorHalt,
-        haltPurpose: 'reconfigure',
+        haltPurpose: HaltPurpose.reconfigure,
         drainerEpoch: 7,
         configurationFingerprint: 'fp-2',
       );
@@ -3103,6 +3103,175 @@ void _registerQueueRecordTests(
         (txn) => backend.clearWedgeRecordTxn(txn, 'dest'),
       );
       expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/N
+    // the halt request round-trips every
+    //   field, is overwritten, rolls back with its transaction, is kept per
+    //   destination and is cleared.
+    test('halt request write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = HaltRequest(
+        requestEventId: 'request-1',
+        requestedAt: DateTime.utc(2026, 4, 1, 2, 3, 4, 5),
+        purpose: HaltPurpose.pause,
+        requestedBy: const UserInitiator('operator').toJson(),
+      );
+      final second = HaltRequest(
+        requestEventId: 'request-2',
+        requestedAt: DateTime.utc(2026, 4, 2),
+        purpose: HaltPurpose.reconfigure,
+        requestedBy: const AutomationInitiator(
+          service: 'ops',
+          triggeringEventId: 'e-1',
+        ).toJson(),
+      );
+      Future<HaltRequest?> read(String dest) =>
+          backend.transaction((txn) => backend.readHaltRequestTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeHaltRequestTxn(txn, 'dest', first);
+        return backend.readHaltRequestTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeHaltRequestTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeHaltRequestTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.clearHaltRequestTxn(txn, 'dest');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearHaltRequestTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearHaltRequestTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/N
+    // the send fence round-trips, is
+    //   overwritten, rolls back with its transaction, is kept per destination
+    //   and is cleared.
+    test('send fence write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 0,
+        at: DateTime.utc(2026, 4, 1, 2, 3, 4, 5),
+      );
+      final second = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 1,
+        at: DateTime.utc(2026, 4, 1, 3),
+      );
+      Future<SendFence?> read(String dest) =>
+          backend.transaction((txn) => backend.readSendFenceTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeSendFenceTxn(txn, 'dest', first);
+        return backend.readSendFenceTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeSendFenceTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeSendFenceTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearSendFenceTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearSendFenceTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/T
+    // every persisted schedule is listed by
+    //   destination id, inside and outside a transaction; a deleted schedule
+    //   leaves the listing, a rolled-back write never enters it, and a key
+    //   that merely contains the schedule prefix is not listed.
+    test('listSchedules after schedule writes and a deletion', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.listSchedules(), isEmpty);
+      DestinationSchedule schedule(String id) => DestinationSchedule(
+        startDate: DateTime.utc(2026, 1, 1),
+        registrationId: 'reg-$id',
+      );
+      await backend.transaction((txn) async {
+        for (final id in <String>['a', 'b_c', 'schedule_d']) {
+          await backend.writeScheduleTxn(txn, id, schedule(id));
+        }
+        await backend.writeFillCursorTxn(txn, 'a', 3);
+        await backend.writeReplayRequestTxn(
+          txn,
+          'a',
+          const ReplayRequest(firstActivation: true),
+        );
+      });
+      final expected = <String, DestinationSchedule>{
+        'a': schedule('a'),
+        'b_c': schedule('b_c'),
+        'schedule_d': schedule('schedule_d'),
+      };
+      expect(await backend.listSchedules(), expected);
+      expect(await backend.transaction(backend.listSchedulesTxn), expected);
+      final inTxn = await backend.transaction((txn) async {
+        await backend.deleteScheduleTxn(txn, 'b_c');
+        return backend.listSchedulesTxn(txn);
+      });
+      expect(inTxn.keys.toSet(), <String>{'a', 'schedule_d'});
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeScheduleTxn(txn, 'e', schedule('e'));
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect((await backend.listSchedules()).keys.toSet(), <String>{
+        'a',
+        'schedule_d',
+      });
     });
   });
 }

@@ -159,6 +159,7 @@ export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_registry.dart' show DestinationRegistry;
 export 'src/destinations/destination_schedule.dart'
     show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
+export 'src/destinations/halt_purpose.dart' show HaltPurpose;
 export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
 export 'src/destinations/wedge_cause.dart' show WedgeCause;
@@ -320,6 +321,10 @@ export 'src/security/system_entry_types.dart'
         kDestinationDeletedEventType,
         kDestinationEndDateSetEntryType,
         kDestinationEndDateSetEventType,
+        kDestinationHaltCancelledEntryType,
+        kDestinationHaltCancelledEventType,
+        kDestinationHaltRequestedEntryType,
+        kDestinationHaltRequestedEventType,
         kDestinationRegisteredEntryType,
         kDestinationRegisteredEventType,
         kDestinationStartDateSetEntryType,
@@ -362,9 +367,11 @@ export 'src/storage/initiator.dart'
 export 'src/storage/postgres/postgres.dart';
 export 'src/storage/queue_records.dart'
     show
+        HaltRequest,
         QueueRetirement,
         RegistryCheck,
         ReplayRequest,
+        SendFence,
         TrailSweepResult,
         WedgeRecord;
 export 'src/storage/sembast_backend.dart' show SembastBackend;
@@ -396,7 +403,7 @@ export 'src/subscriptions/update.dart'
 // Sync — the delivery cycle, its clock and its policy. The cycle is the
 // only entry point that fills and drains destination queues.
 export 'src/sync/clock.dart' show Clock;
-export 'src/sync/sync_cycle.dart' show SyncCycle;
+export 'src/sync/sync_cycle.dart' show SyncCycle, UnservedReason;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
 
 // Versions — entry-type versions and the library's data-format version.

@@ -483,6 +483,12 @@ void runDestinationWedgesViewScenarios(
             source: _source,
             clock: _fillNow,
           );
+          await r.registry.requestHalt(
+            'k',
+            initiator: _init,
+            purpose: HaltPurpose.pause,
+          );
+          await r.registry.cancelHalt('k', initiator: _init);
           await wedgeHeadForTest(r.registry, 'k');
           await r.registry.deleteDestination('k', initiator: _init);
           final audits = <StoredEvent>[
@@ -1134,7 +1140,8 @@ void runDestinationWedgesViewScenarios(
 
       // Verifies: EVS-DEV-destination-drain/L
       // every reserved event the library's emitters append (the library
-      //   version, the registry audit, destination audits, the wedge event,
+      //   version, the registry audit, destination audits, the halt request
+      //   and cancellation, the wedge event,
       //   the redaction, compaction, purge and retention audits, and the
       //   ingest audits) carries the aggregate type and an event type the
       //   library declares for its entry type; each security-context audit
@@ -1154,7 +1161,14 @@ void runDestinationWedgesViewScenarios(
         final store = bundle.eventStore;
         final s = _Store(store.backend, store, bundle.destinations);
         final d = FakeDestination(id: 'e', allowHardDelete: true);
-        final row = await s.wedge(d);
+        await s.queued(d);
+        await s.registry.requestHalt(
+          'e',
+          initiator: _init,
+          purpose: HaltPurpose.pause,
+        );
+        await s.registry.cancelHalt('e', initiator: _init);
+        final row = await wedgeHeadForTest(s.registry, 'e');
         await s.registry.setEndDate('e', DateTime.utc(2100), initiator: _init);
         await s.registry.tombstoneAndRefill('e', row, initiator: _init);
         await s.registry.deleteDestination('e', initiator: _init);

@@ -31,6 +31,8 @@ const stateKinds = <String, String>{
   'schedules': 'schedules',
   'replay requests': 'replay requests',
   'wedge records': 'wedge records',
+  'halt requests': 'halt requests',
+  'send fences': 'send fences',
   'registry check record': 'the registry check record',
   'database identity': 'the database identity',
   'generation records': 'the generation records',
@@ -157,7 +159,7 @@ void main() {
           "changes only through the library's operations.",
           kinds: const <String, String>{
             ...stateKinds,
-            'halt requests': 'open halt requests',
+            'refill guards': 'refill guards',
           },
         ),
         isNotNull,
@@ -169,9 +171,10 @@ void main() {
         preconditionProblem(
           'Its persisted state (destination queues, the views it '
           'materializes, the records it keeps beside them, such as fill '
-          'positions, schedules, replay requests, wedge records, the '
-          'registry check record, the database identity, the generation '
-          'records and the view catch-up marks, and the security context it '
+          'positions, schedules, replay requests, wedge records, halt '
+          'requests, send fences, the registry check record, the database '
+          'identity, the generation records and the view catch-up marks, '
+          'and the security context it '
           "stores beside each event) changes only through the library's "
           'operations.',
         ),
@@ -181,9 +184,10 @@ void main() {
         preconditionProblem(
           'Its persisted state (destination queues, the views it '
           'materializes, the records it keeps beside them, such as fill '
-          'positions, schedules, replay requests, wedge records, the '
-          'registry check record, the database identity, the generation '
-          'records and the view catch-up marks, and the security context it '
+          'positions, schedules, replay requests, wedge records, halt '
+          'requests, send fences, the registry check record, the database '
+          'identity, the generation records and the view catch-up marks, '
+          'and the security context it '
           "stores beside each event) changes only through the library's "
           'operations, and reserved system events are appended only by '
           "the library's own operations.",

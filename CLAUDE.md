@@ -254,11 +254,12 @@ The currently-trusted inputs are:
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
-  positions, schedules, replay requests, wedge records, the registry
-  check record, the database identity, the generation records and the
-  view catch-up marks, and the security context it stores beside each
-  event) changes only through the library's operations, and reserved
-  system events are appended only by the library's own operations.
+  positions, schedules, replay requests, wedge records, halt requests,
+  send fences, the registry check record, the database identity, the
+  generation records and the view catch-up marks, and the security
+  context it stores beside each event) changes only through the
+  library's operations, and reserved system events are appended only
+  by the library's own operations.
   Every `StorageBackend` member that writes, and the event store's
   reserved append operations, are `@internal`, which the analyzer
   enforces but nothing enforces at run time: the consumer

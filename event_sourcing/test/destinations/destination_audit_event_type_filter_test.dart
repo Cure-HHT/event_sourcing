@@ -28,6 +28,8 @@ const _eventTypeOf = <String, String>{
   kDestinationDeletedEntryType: kDestinationDeletedEventType,
   kDestinationWedgeRecoveredEntryType: kDestinationWedgeRecoveredEventType,
   kDestinationWedgedEntryType: kDestinationWedgedEventType,
+  kDestinationHaltRequestedEntryType: kDestinationHaltRequestedEventType,
+  kDestinationHaltCancelledEntryType: kDestinationHaltCancelledEventType,
 };
 
 void main() {
@@ -77,6 +79,12 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
+      await ds.destinations.requestHalt(
+        'd',
+        initiator: _automation,
+        purpose: HaltPurpose.pause,
+      );
+      await ds.destinations.cancelHalt('d', initiator: _automation);
       await wedgeHeadForTest(ds.destinations, 'd');
       await ds.destinations.tombstoneAndRefill(
         'd',

@@ -244,6 +244,12 @@ class _InMemoryBackend extends StorageBackend {
     String destinationId,
   ) => throw UnimplementedError();
   @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      throw UnimplementedError();
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
   Future<QueueRetirement> retireQueueTxn(
     Transaction txn,
     String destinationId,
@@ -275,6 +281,32 @@ class _InMemoryBackend extends StorageBackend {
   ) => throw UnimplementedError();
   @override
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearHaltRequestTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<SendFence?> readSendFenceTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
   @override
   Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>

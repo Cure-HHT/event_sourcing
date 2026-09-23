@@ -2045,6 +2045,56 @@ class PostgresBackend extends StorageBackend {
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
       _deleteStateTxn(txn, 'wedge_$destinationId');
 
+  // -------- Halt requests --------
+
+  @override
+  @internal
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'halt_request_$destinationId');
+    return value == null ? null : HaltRequest.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) => _writeStateTxn(txn, 'halt_request_$destinationId', request.toJson());
+
+  @override
+  @internal
+  Future<void> clearHaltRequestTxn(Transaction txn, String destinationId) =>
+      _deleteStateTxn(txn, 'halt_request_$destinationId');
+
+  // -------- Send fences --------
+
+  @override
+  @internal
+  Future<SendFence?> readSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'send_fence_$destinationId');
+    return value == null ? null : SendFence.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  ) => _writeStateTxn(txn, 'send_fence_$destinationId', fence.toJson());
+
+  @override
+  @internal
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId) =>
+      _deleteStateTxn(txn, 'send_fence_$destinationId');
+
   // -------- Registry check record --------
 
   @override
@@ -2246,6 +2296,35 @@ class PostgresBackend extends StorageBackend {
         ? null
         : DestinationSchedule.fromJson(_asJsonMap(value));
   }
+
+  // Every schedule row: the keys that start with 'schedule_' (compared with
+  // left(), since '_' is a LIKE wildcard).
+  static const String _listSchedulesSql =
+      'SELECT key, value FROM backend_state '
+      "WHERE left(key, 9) = 'schedule_' ORDER BY key";
+
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() async {
+    _checkOpen();
+    final result = await _pool.execute(_listSchedulesSql);
+    return _schedulesFrom(result);
+  }
+
+  @override
+  @internal
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(
+    Transaction txn,
+  ) async {
+    final session = _asPgTxn(txn).session;
+    return _schedulesFrom(await session.execute(_listSchedulesSql));
+  }
+
+  static Map<String, DestinationSchedule> _schedulesFrom(Result rows) =>
+      <String, DestinationSchedule>{
+        for (final row in rows)
+          (row[0]! as String).substring('schedule_'.length):
+              DestinationSchedule.fromJson(_asJsonMap(row[1])),
+      };
 
   // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.
   @override

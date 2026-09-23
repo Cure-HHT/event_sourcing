@@ -13,6 +13,8 @@ import 'package:flutter_test/flutter_test.dart';
 import '../test_support/drain_wedge_conformance.dart'
     show expectWedgeRecordMatchesLog;
 import '../test_support/fake_destination.dart';
+import '../test_support/operator_halt_conformance.dart'
+    show expectHaltLogInvariant, expectHaltRequestMatchesLog;
 import '../test_support/queue_test_support.dart';
 import '../test_support/rerunning_sembast_backend.dart';
 import '../test_support/wedges_view_invariant.dart';
@@ -307,5 +309,93 @@ void main() {
     expect(d.sent, hasLength(1));
     await expectWedgeRecordMatchesLog(store, 'x');
     await expectWedgesViewMatchesQueue(store);
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // a halt request and its cancellation, each run twice, append one event
+  //   each and return the committed run's request identifier.
+  // Verifies: EVS-DEV-destination-drain/N
+  // the stored request is written and cleared in the committed run of the
+  //   transaction whose event opens or closes it.
+  test('requestHalt and cancelHalt under re-runs', () async {
+    await queued('x');
+    final runs = <String>[];
+    final id = await runWithDeliveryTestHooks(
+      DeliveryTestHooks(onRegistryBodyRun: runs.add),
+      () => registry.requestHalt(
+        'x',
+        initiator: _init,
+        purpose: HaltPurpose.pause,
+      ),
+    );
+    expect(runs, <String>['requestHalt', 'requestHalt']);
+    final requested = await audits(kDestinationHaltRequestedEntryType);
+    expect(requested.map((e) => e.eventId), <String>[id]);
+    await expectHaltRequestMatchesLog(store, <String>['x']);
+    runs.clear();
+    await runWithDeliveryTestHooks(
+      DeliveryTestHooks(onRegistryBodyRun: runs.add),
+      () => registry.cancelHalt('x', initiator: _init),
+    );
+    expect(runs, <String>['cancelHalt', 'cancelHalt']);
+    final cancelled = await audits(kDestinationHaltCancelledEntryType);
+    expect(cancelled, hasLength(1));
+    expect(cancelled.single.data['halt_request_event_id'], id);
+    await expectHaltRequestMatchesLog(store, <String>['x']);
+    await expectHaltLogInvariant(store);
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // a halt honour whose transaction body runs twice appends one wedge event
+  //   citing the request, and consumes the request once.
+  // Verifies: EVS-DEV-destination-drain/O
+  // the wedge record keeps the consumed request's purpose.
+  test('a halt honour under re-runs records the committed run', () async {
+    final d = await queued('x');
+    final id = await registry.requestHalt(
+      'x',
+      initiator: _init,
+      purpose: HaltPurpose.reconfigure,
+    );
+    final runsBefore = backend.bodyRuns;
+    await drain(d, registry: registry);
+    expect(backend.bodyRuns - runsBefore, greaterThanOrEqualTo(2));
+    expect(d.sent, isEmpty);
+    final events = await audits(kDestinationWedgedEntryType);
+    expect(events, hasLength(1));
+    expect(events.single.data['halt_request_event_id'], id);
+    expect(events.single.data['cause'], 'operator_halt');
+    expect((await wedgeRecord('x'))?.haltPurpose, HaltPurpose.reconfigure);
+    await expectHaltRequestMatchesLog(store, <String>['x']);
+    await expectHaltLogInvariant(store);
+    await expectWedgeRecordMatchesLog(store, 'x');
+  });
+
+  // Verifies: EVS-DEV-destination-drain/N
+  // the pre-send fence body runs twice, and the send fence the committed
+  //   run wrote names the entry and its attempt count; one send follows.
+  test('the pre-send fence under re-runs', () async {
+    final d = FakeDestination(id: 'x', script: <SendResult>[const SendOk()]);
+    await registry.addDestination(d, initiator: _init);
+    await registry.setStartDate(
+      'x',
+      DateTime.utc(2026, 1, 1),
+      initiator: _init,
+    );
+    await note('x-n1');
+    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    final head = (await backend.readFifoHead('x'))!;
+    final fenceRuns = <String>[];
+    await runWithDeliveryTestHooks(
+      DeliveryTestHooks(onFenceBodyRun: fenceRuns.add),
+      () => drain(d, registry: registry),
+    );
+    expect(fenceRuns, <String>['x', 'x']);
+    expect(d.sent, hasLength(1));
+    final fence = await backend.transaction(
+      (txn) => backend.readSendFenceTxn(txn, 'x'),
+    );
+    expect(fence?.entryId, head.entryId);
+    expect(fence?.attemptCount, 0);
   });
 }

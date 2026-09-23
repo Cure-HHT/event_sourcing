@@ -60,14 +60,15 @@ import 'package:meta/meta.dart' show internal;
 /// its views and its security-context records hold only while its
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
-/// requests, wedge records, the registry check record, the database
-/// identity, the generation records and the view catch-up marks, and the
-/// security context it stores beside each event) changes only through the
-/// library's operations, and reserved system events are appended only by
-/// the library's own operations. The internal marking, here and on the
-/// event store's reserved append operations, is an analyzer guard, not a
-/// barrier: the consumer holds the backend (and, on Sembast, the database
-/// it opened), and a direct write is invisible to the library.
+/// requests, wedge records, halt requests, send fences, the registry check
+/// record, the database identity, the generation records and the view
+/// catch-up marks, and the security context it stores beside each event)
+/// changes only through the library's operations, and reserved system
+/// events are appended only by the library's own operations. The internal
+/// marking, here and on the event store's reserved append operations, is an
+/// analyzer guard, not a barrier: the consumer holds the backend (and, on
+/// Sembast, the database it opened), and a direct write is invisible to the
+/// library.
 // Implements: EVS-PRD-destinations/K
 // every member that writes a queue, a view,
 //   the persisted delivery state, the event sequence or the schema version
@@ -624,6 +625,15 @@ abstract class StorageBackend {
     String destinationId,
   );
 
+  /// Every persisted `DestinationSchedule`, keyed by destination id: the
+  /// destinations the database knows, whichever process registered them.
+  /// Non-transactional.
+  Future<Map<String, DestinationSchedule>> listSchedules();
+
+  /// [listSchedules] inside [txn].
+  @internal
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(Transaction txn);
+
   /// Persist [schedule] for [destinationId] inside [txn], so a schedule
   /// write commits or rolls back with the registry operation's other
   /// writes and its audit event. Only the destination registry writes a
@@ -711,6 +721,59 @@ abstract class StorageBackend {
   /// transaction that ends the wedge.
   @internal
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId);
+
+  // -------- Halt requests --------
+
+  /// Read [destinationId]'s open halt request inside [txn], or null when
+  /// none is open.
+  ///
+  /// Persisted under `backend_state` key `halt_request_<destinationId>`.
+  @internal
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [request] as [destinationId]'s open halt request inside [txn],
+  /// replacing any earlier one. Only the destination registry writes one,
+  /// in the transaction that appends the request event.
+  @internal
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  );
+
+  /// Delete [destinationId]'s halt request inside [txn]. No-op when none is
+  /// open. The transaction that closes the request (a cancellation, a wedge
+  /// or a deletion) deletes it.
+  @internal
+  Future<void> clearHaltRequestTxn(Transaction txn, String destinationId);
+
+  // -------- Send fences --------
+
+  /// Read [destinationId]'s send fence inside [txn]: the last send the
+  /// drainer started, or null when it started none since the destination
+  /// was registered.
+  ///
+  /// Persisted under `backend_state` key `send_fence_<destinationId>`.
+  @internal
+  Future<SendFence?> readSendFenceTxn(Transaction txn, String destinationId);
+
+  /// Write [fence] as [destinationId]'s send fence inside [txn], replacing
+  /// the previous one. Only the drainer writes one, in the transaction
+  /// immediately before a send.
+  @internal
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  );
+
+  /// Delete [destinationId]'s send fence inside [txn]. No-op when none
+  /// exists. A deletion deletes it.
+  @internal
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId);
 
   // -------- Registry check record --------
 

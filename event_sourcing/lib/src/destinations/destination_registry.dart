@@ -27,8 +27,23 @@
 //   the pending head the drainer wedges (read and checked inside the
 //   transaction), with exactly the declared data keys; recovery and deletion
 //   remove the wedge record in the transaction that ends the wedge.
+// Implements: EVS-PRD-destinations/U
+// requestHalt records an operator's halt
+//   request, which the drainer honours by wedging the queue head through
+//   honourHaltInTxn.
+// Implements: EVS-DEV-destination-drain/N+O+P+Q+R+T
+// the halt request is written and
+//   cleared in the transaction of the event that opens or closes it; the
+//   transaction that honours it verifies the request event in the log; every
+//   wedge consumes the open request and records it; a request is refused for
+//   an unknown destination, while one is open, or while the head is wedged,
+//   and a cancellation with none open; deletion closes the open request and
+//   names it; the halt operations act on persisted state from any registry.
+import 'dart:async';
+
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/destinations/halt_purpose.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/logging.dart';
@@ -42,10 +57,37 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
 
-/// Initiator of the wedge events the drainer appends.
-const Initiator _drainInitiator = AutomationInitiator(
-  service: 'event_sourcing.drain',
-);
+/// Service name of the initiator of the wedge events the drainer appends.
+const String _drainService = 'event_sourcing.drain';
+
+/// Initiator of the wedge events the drainer appends for a permanent refusal
+/// or an exhausted retry budget.
+const Initiator _drainInitiator = AutomationInitiator(service: _drainService);
+
+/// What the transaction that honours a halt request did.
+@internal
+enum HaltHonour {
+  /// The request was open and verified; the queue head is wedged with cause
+  /// operator halt.
+  honoured,
+
+  /// The request the drainer read is no longer the open one, or the queue
+  /// has no pending head; nothing was written.
+  changed,
+
+  /// The stored request cites no halt request event of this destination and
+  /// database in the log; the stored request was removed and nothing was
+  /// wedged.
+  unverified,
+}
+
+/// An open halt request whose request event the log holds.
+class _VerifiedHalt {
+  const _VerifiedHalt(this.request, this.event, this.purpose);
+  final HaltRequest request;
+  final StoredEvent event;
+  final HaltPurpose purpose;
+}
 
 /// Outcome of one run of a registry operation's transaction body: a result
 /// to return, or a refusal to throw after the transaction commits.
@@ -76,9 +118,10 @@ class _Local {
 /// The registry holds the [Destination] objects this process registers
 /// (their filter, transform and transport are code) and runs the operations
 /// that change a destination's persisted state: registration, start and end
-/// dates, operator recovery, deletion. The delivery cycle's drainer wedges a
-/// queue head through it as well, so the wedge event is appended through the
-/// registry's event store. Those operations act on the persisted
+/// dates, halt requests and their cancellation, operator recovery, deletion.
+/// The delivery cycle's drainer wedges a queue head through it as well (for a
+/// failed delivery, or to honour a halt request), so the wedge event is
+/// appended through the registry's event store. Those operations act on the persisted
 /// schedule, not on this process's in-memory destinations, so any process
 /// can run them for any destination the database knows; the delivery cycle
 /// fills and drains only the destinations its own registry holds.
@@ -125,12 +168,15 @@ class DestinationRegistry {
   final Set<String> _registering = <String>{};
 
   /// Runs one registry operation's transaction and throws its refusal after
-  /// the commit.
+  /// the commit. For an outcome that commits, [onCommitted] updates this
+  /// registry's own state before the delivery cycle is woken, so the woken
+  /// pass sees the registry as the operation left it.
   Future<T> _run<T>(
     String op,
     Future<_Outcome<T>> Function(Transaction txn, PublishCollector collector)
-    body,
-  ) async {
+    body, {
+    void Function(T value)? onCommitted,
+  }) async {
     final before = DeliveryTestHooks.current?.beforeRegistryTransaction;
     if (before != null) await before(op);
     final outcome = await _eventStore.runTransaction((txn, collector) async {
@@ -139,6 +185,9 @@ class DestinationRegistry {
     });
     switch (outcome) {
       case _Done<T>(:final value):
+        onCommitted?.call(value);
+        // The drainer acts on what the operation committed at its next pass.
+        unawaited(_eventStore.syncCycleTrigger?.call());
         return value;
       case _Refused<T>(:final error):
         throw error;
@@ -239,82 +288,84 @@ class DestinationRegistry {
     // this registry cannot both decide it is not yet registered.
     final reserved = _registering.add(id);
     try {
-      final registrationId = await _run<String>('addDestination', (
-        txn,
-        collector,
-      ) async {
-        // Implements: EVS-DEV-destination-drain/K
-        // destination identifiers are non-empty and exclude '|'.
-        if (id.isEmpty || id.contains('|')) {
-          return _decideWithoutChange<String>(
-            txn,
-            op: 'addDestination',
-            destinationId: id,
-            check: 'refused_invalid_identifier',
-            outcome: _Refused<String>(
-              ArgumentError.value(
-                id,
-                'destination.id',
-                'a destination identifier must be non-empty and must not '
-                    "contain '|'",
+      await _run<String>(
+        'addDestination',
+        (txn, collector) async {
+          // Implements: EVS-DEV-destination-drain/K
+          // destination identifiers are non-empty and exclude '|'.
+          if (id.isEmpty || id.contains('|')) {
+            return _decideWithoutChange<String>(
+              txn,
+              op: 'addDestination',
+              destinationId: id,
+              check: 'refused_invalid_identifier',
+              outcome: _Refused<String>(
+                ArgumentError.value(
+                  id,
+                  'destination.id',
+                  'a destination identifier must be non-empty and must not '
+                      "contain '|'",
+                ),
               ),
+            );
+          }
+          final persisted = await backend.readScheduleTxn(txn, id);
+          final local = _destinations[id];
+          if (!reserved ||
+              (local != null &&
+                  persisted != null &&
+                  persisted.registrationId == local.registrationId)) {
+            return _decideWithoutChange<String>(
+              txn,
+              op: 'addDestination',
+              destinationId: id,
+              check: 'refused_already_registered',
+              outcome: _Refused<String>(
+                ArgumentError.value(
+                  id,
+                  'destination.id',
+                  'destination id $id is already registered',
+                ),
+              ),
+            );
+          }
+          final event = await _emitDestinationAuditInTxn(
+            txn,
+            collector,
+            entryType: kDestinationRegisteredEntryType,
+            eventType: kDestinationRegisteredEventType,
+            data: <String, Object?>{
+              'id': id,
+              'wire_format': wireFormat,
+              'allow_hard_delete': allowHardDelete,
+              'serializes_natively': serializesNatively,
+              'filter_entry_types': filterEntryTypes,
+              'filter_event_types': filterEventTypes,
+              // Predicates are not serializable; null is recorded so that
+              // downstream key-based queries find the key present-but-null
+              // rather than absent.
+              'filter_predicate_description': null,
+            },
+            initiator: initiator,
+          );
+          final registration = persisted?.registrationId ?? event.eventId;
+          await backend.writeScheduleTxn(
+            txn,
+            id,
+            DestinationSchedule(
+              startDate: persisted?.startDate,
+              endDate: persisted?.endDate,
+              registrationId: registration,
+              allowHardDelete: allowHardDelete,
             ),
           );
-        }
-        final persisted = await backend.readScheduleTxn(txn, id);
-        final local = _destinations[id];
-        if (!reserved ||
-            (local != null &&
-                persisted != null &&
-                persisted.registrationId == local.registrationId)) {
-          return _decideWithoutChange<String>(
-            txn,
-            op: 'addDestination',
-            destinationId: id,
-            check: 'refused_already_registered',
-            outcome: _Refused<String>(
-              ArgumentError.value(
-                id,
-                'destination.id',
-                'destination id $id is already registered',
-              ),
-            ),
-          );
-        }
-        final event = await _emitDestinationAuditInTxn(
-          txn,
-          collector,
-          entryType: kDestinationRegisteredEntryType,
-          eventType: kDestinationRegisteredEventType,
-          data: <String, Object?>{
-            'id': id,
-            'wire_format': wireFormat,
-            'allow_hard_delete': allowHardDelete,
-            'serializes_natively': serializesNatively,
-            'filter_entry_types': filterEntryTypes,
-            'filter_event_types': filterEventTypes,
-            // Predicates are not serializable; null is recorded so that
-            // downstream key-based queries find the key present-but-null
-            // rather than absent.
-            'filter_predicate_description': null,
-          },
-          initiator: initiator,
-        );
-        final registration = persisted?.registrationId ?? event.eventId;
-        await backend.writeScheduleTxn(
-          txn,
-          id,
-          DestinationSchedule(
-            startDate: persisted?.startDate,
-            endDate: persisted?.endDate,
-            registrationId: registration,
-            allowHardDelete: allowHardDelete,
-          ),
-        );
-        _consultAuditAppendSeam(kDestinationRegisteredEntryType);
-        return _Done<String>(registration);
-      });
-      _destinations[id] = _Local(destination, registrationId);
+          _consultAuditAppendSeam(kDestinationRegisteredEntryType);
+          return _Done<String>(registration);
+        },
+        onCommitted: (registrationId) {
+          _destinations[id] = _Local(destination, registrationId);
+        },
+      );
     } finally {
       if (reserved) _registering.remove(id);
     }
@@ -537,16 +588,20 @@ class DestinationRegistry {
   /// unless the persisted hard-delete opt-in in effect is true, and while the
   /// queue head is pending: a pending head may be in delivery in the process
   /// that drains, and deleting it would lose the record of a delivery the
-  /// receiver may have accepted. Wait for the head to wedge, then delete. An
-  /// empty queue and a wedged head are accepted.
+  /// receiver may have accepted. Request a halt ([requestHalt]), wait for the
+  /// drainer to wedge the head, then delete; the refusal message says
+  /// whether a halt request is already open and not yet honoured. An empty
+  /// queue and a wedged head are accepted.
   ///
   /// The deletion tombstones a wedged head, deletes the pending items behind
-  /// it, removes the destination's schedule, fill position, replay request
-  /// and wedge record, and keeps every item that was delivered, wedged or recovered
-  /// (the delivery record) and the queue's sequence counter. A
-  /// `system.destination_deleted` audit event records the tombstoned item,
-  /// the number of pending items deleted and the opt-in it acted on. This
-  /// registry forgets the destination after the commit.
+  /// it, removes the destination's schedule, fill position, replay request,
+  /// wedge record, halt request and send fence, and keeps every item that
+  /// was delivered, wedged or recovered (the delivery record) and the queue's
+  /// sequence counter. A `system.destination_deleted` audit event records
+  /// the tombstoned item, the number of pending items deleted, the opt-in it
+  /// acted on and the halt request it closed (`closed_halt_request_event_id`,
+  /// null when none was open). This registry forgets the destination after
+  /// the commit.
   ///
   /// A destination registered again under the same id starts a new
   /// registration; its refill may send again events that this
@@ -577,17 +632,30 @@ class DestinationRegistry {
         );
       }
       final head = await backend.readFifoHeadTxn(txn, id);
+      final halt = await backend.readHaltRequestTxn(txn, id);
       if (head != null && head.finalStatus == null) {
         return _decideWithoutChange<void>(
           txn,
           op: op,
           destinationId: id,
-          check: 'refused_pending_head',
+          check: halt == null
+              ? 'refused_pending_head'
+              : 'refused_halt_not_honoured',
           outcome: _Refused<void>(
             StateError(
-              'DestinationRegistry.deleteDestination($id): the queue head '
-              '${head.entryId} is pending and may be in delivery; deletion '
-              'requires an empty queue or a wedged head.',
+              halt == null
+                  ? 'DestinationRegistry.deleteDestination($id): the queue '
+                        'head ${head.entryId} is pending and may be in '
+                        'delivery; deletion requires an empty queue or a '
+                        'wedged head. Request a halt (requestHalt) and wait '
+                        'for the drainer to wedge the head, then delete.'
+                  : 'DestinationRegistry.deleteDestination($id): a halt is '
+                        'requested (request ${halt.requestEventId}) and not '
+                        'yet honoured; the queue head ${head.entryId} is '
+                        'pending and may be in delivery. Wait for the drainer '
+                        'to wedge the head (watch the default '
+                        'destination-wedges view or wedgedFifos), then '
+                        'delete.',
             ),
           ),
         );
@@ -596,6 +664,8 @@ class DestinationRegistry {
       await backend.deleteScheduleTxn(txn, id);
       await backend.clearReplayRequestTxn(txn, id);
       await backend.clearWedgeRecordTxn(txn, id);
+      await backend.clearHaltRequestTxn(txn, id);
+      await backend.clearSendFenceTxn(txn, id);
       // Implements: EVS-PRD-destinations/T
       // a deletion appends a deletion event naming the wedged item it retires,
       //   if any.
@@ -609,13 +679,13 @@ class DestinationRegistry {
           'tombstoned_row_id': retirement.tombstonedRowId,
           'deleted_pending_count': retirement.deletedPendingCount,
           'allow_hard_delete': schedule.allowHardDelete,
+          'closed_halt_request_event_id': halt?.requestEventId,
         },
         initiator: initiator,
       );
       _consultAuditAppendSeam(kDestinationDeletedEntryType);
       return const _Done<void>(null);
-    });
-    _destinations.remove(id);
+    }, onCommitted: (_) => _destinations.remove(id));
   }
 
   /// Operator recovery of a wedged queue: tombstone the wedged head, delete
@@ -629,7 +699,28 @@ class DestinationRegistry {
   ///   [destinationId], or when [fifoRowId] is not the queue's current head
   ///   (absent, `sent`, `tombstoned`, or behind the head);
   /// - `StateError` when the head is pending: recovery requires a wedged
-  ///   head.
+  ///   head. The message says whether a halt request is open and not yet
+  ///   honoured (wait for the drainer to wedge the head), or none is (request
+  ///   a halt first).
+  ///
+  /// Rebuilding a healthy queue, for example after changing a destination's
+  /// transform or filter, is a halt followed by this recovery, in this
+  /// order:
+  ///
+  /// 1. [requestHalt]; its purpose says whether the new configuration is
+  ///    already deployed ([HaltPurpose.pause]) or not yet
+  ///    ([HaltPurpose.reconfigure]).
+  /// 2. Wait for the drainer to wedge the head (the default
+  ///    destination-wedges view shows the wedge, with cause operator halt).
+  /// 3. For [HaltPurpose.reconfigure], deploy the new configuration so that
+  ///    the process that drains registers it (restart the drainer; in a
+  ///    multi-instance deployment, finish the rollout).
+  /// 4. [tombstoneAndRefill], from any process.
+  ///
+  /// A [HaltPurpose.reconfigure] request that a permanent refusal or an
+  /// exhausted budget consumed follows the same order: the wedge record
+  /// keeps the purpose of the request its wedge consumed, whatever the
+  /// wedge's cause.
   ///
   /// The fill position is rewound below the lowest event carried by any
   /// item the recovery removes — the head and every swept item, including
@@ -672,15 +763,27 @@ class DestinationRegistry {
       );
     }
     if (head.finalStatus != FinalStatus.wedged) {
+      final halt = await backend.readHaltRequestTxn(txn, destinationId);
       return _decideWithoutChange<TombstoneAndRefillResult>(
         txn,
         op: op,
         destinationId: destinationId,
-        check: 'refused_pending_head',
+        check: halt == null
+            ? 'refused_pending_head'
+            : 'refused_halt_not_honoured',
         outcome: _Refused<TombstoneAndRefillResult>(
           StateError(
-            'tombstoneAndRefill($destinationId, $fifoRowId): recovery '
-            'requires a wedged head; the head is pending.',
+            halt == null
+                ? 'tombstoneAndRefill($destinationId, $fifoRowId): recovery '
+                      'requires a wedged head; the head is pending. To '
+                      'rebuild a healthy queue, request a halt (requestHalt) '
+                      'first, wait for the drainer to wedge the head, then '
+                      'recover.'
+                : 'tombstoneAndRefill($destinationId, $fifoRowId): a halt is '
+                      'requested (request ${halt.requestEventId}) and not yet '
+                      'honoured; the head is pending. Wait for the drainer to '
+                      'wedge the head (watch the default destination-wedges '
+                      'view or wedgedFifos), then recover.',
           ),
         ),
       );
@@ -733,37 +836,279 @@ class DestinationRegistry {
     );
   });
 
+  /// Request that the drainer halt delivery on destination [destinationId],
+  /// and return the identifier of the request event.
+  ///
+  /// The drainer honours the request at the top of its next iteration for
+  /// the destination, before any further send, by wedging the queue head
+  /// itself with cause [WedgeCause.operatorHalt]; a send already in flight
+  /// completes first, and its outcome is recorded. Only the drainer wedges a
+  /// head, so a wedged head is never in delivery.
+  ///
+  /// Inside one transaction: reads the persisted schedule, the open request
+  /// and the queue head; appends a `system.destination_halt_requested` event
+  /// recording the destination, the database identity and [purpose]; and
+  /// writes the destination's halt request naming that event. The request is
+  /// accepted on an empty queue, and stays open until a head exists and the
+  /// drainer wedges it, or until [cancelHalt] or a deletion closes it. Any
+  /// wedge consumes the open request, whatever its cause, and records it.
+  ///
+  /// Refused, with nothing written but the registry check record:
+  /// - `ArgumentError` when the database holds no schedule for
+  ///   [destinationId];
+  /// - `StateError` while a request is open for the destination, or while
+  ///   its queue head is wedged (the halt is already in effect).
+  ///
+  /// The operation acts on persisted state: the calling process need not
+  /// register the destination, and the process that drains honours the
+  /// request whether or not it registers the destination.
+  ///
+  /// [purpose] records why delivery is halted and decides the order of a
+  /// rebuild (see [tombstoneAndRefill]): [HaltPurpose.reconfigure] when a new
+  /// delivery configuration for the destination is still to be deployed,
+  /// [HaltPurpose.pause] when it is already deployed or when delivery is
+  /// only to stop.
+  Future<String> requestHalt(
+    String destinationId, {
+    required Initiator initiator,
+    required HaltPurpose purpose,
+  }) => _run<String>('requestHalt', (txn, collector) async {
+    const op = 'requestHalt';
+    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    if (schedule == null) return _refuseUnknown<String>(txn, op, destinationId);
+    final open = await backend.readHaltRequestTxn(txn, destinationId);
+    if (open != null) {
+      return _decideWithoutChange<String>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_halt_open',
+        outcome: _Refused<String>(
+          StateError(
+            'DestinationRegistry.requestHalt($destinationId): a halt request '
+            '(${open.requestEventId}) is already open; cancel it '
+            '(cancelHalt) or wait for the drainer to honour it.',
+          ),
+        ),
+      );
+    }
+    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    if (head?.finalStatus == FinalStatus.wedged) {
+      return _decideWithoutChange<String>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_wedged_head',
+        outcome: _Refused<String>(
+          StateError(
+            'DestinationRegistry.requestHalt($destinationId): the queue head '
+            '${head!.entryId} is wedged; delivery is already halted.',
+          ),
+        ),
+      );
+    }
+    final event = await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationHaltRequestedEntryType,
+      eventType: kDestinationHaltRequestedEventType,
+      data: <String, Object?>{'id': destinationId, 'purpose': purpose.wire},
+      initiator: initiator,
+    );
+    await backend.writeHaltRequestTxn(
+      txn,
+      destinationId,
+      HaltRequest(
+        requestEventId: event.eventId,
+        requestedAt: event.clientTimestamp,
+        purpose: purpose,
+        requestedBy: event.initiator.toJson(),
+      ),
+    );
+    _consultAuditAppendSeam(kDestinationHaltRequestedEntryType);
+    return _Done<String>(event.eventId);
+  });
+
+  /// Cancel destination [destinationId]'s open halt request.
+  ///
+  /// Inside one transaction: reads the persisted schedule and the open
+  /// request, removes the request, and appends a
+  /// `system.destination_halt_cancelled` event naming the request event it
+  /// closes (`halt_request_event_id`). Once the drainer has honoured a
+  /// request, the wedge has closed it and a cancellation is refused; the
+  /// wedge is recovered with [tombstoneAndRefill].
+  ///
+  /// Refused, with nothing written but the registry check record:
+  /// `ArgumentError` when the database holds no schedule for
+  /// [destinationId]; `StateError` when no request is open.
+  ///
+  /// The operation acts on persisted state: the calling process need not
+  /// register the destination.
+  Future<void> cancelHalt(
+    String destinationId, {
+    required Initiator initiator,
+  }) => _run<void>('cancelHalt', (txn, collector) async {
+    const op = 'cancelHalt';
+    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    if (schedule == null) return _refuseUnknown<void>(txn, op, destinationId);
+    final open = await backend.readHaltRequestTxn(txn, destinationId);
+    if (open == null) {
+      return _decideWithoutChange<void>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_no_halt_open',
+        outcome: _Refused<void>(
+          StateError(
+            'DestinationRegistry.cancelHalt($destinationId): no halt request '
+            'is open.',
+          ),
+        ),
+      );
+    }
+    await backend.clearHaltRequestTxn(txn, destinationId);
+    await _emitDestinationAuditInTxn(
+      txn,
+      collector,
+      entryType: kDestinationHaltCancelledEntryType,
+      eventType: kDestinationHaltCancelledEventType,
+      data: <String, Object?>{
+        'id': destinationId,
+        'halt_request_event_id': open.requestEventId,
+      },
+      initiator: initiator,
+    );
+    _consultAuditAppendSeam(kDestinationHaltCancelledEntryType);
+    return const _Done<void>(null);
+  });
+
+  /// Honour destination [destinationId]'s open halt request inside [txn].
+  /// Called only by the delivery cycle's drainer, in the transaction that
+  /// honours the request [requestEventId] it read before.
+  ///
+  /// Reads the stored request and the queue head inside [txn]:
+  /// - when the stored request is not [requestEventId] (cancelled or
+  ///   replaced since the drainer read it), or the queue has no pending head,
+  ///   writes nothing and returns [HaltHonour.changed];
+  /// - when the log holds no `system.destination_halt_requested` event with
+  ///   that identifier naming this destination and this database, removes
+  ///   the stored request, wedges nothing and returns
+  ///   [HaltHonour.unverified]: the log is authoritative;
+  /// - otherwise wedges the head with cause [WedgeCause.operatorHalt]
+  ///   through [wedgeHeadInTxn], which consumes the request, and returns
+  ///   [HaltHonour.honoured]. [maxAttempts] is the retry budget in effect,
+  ///   or null when the draining process does not register the destination.
+  @internal
+  Future<HaltHonour> honourHaltInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String destinationId,
+    required String requestEventId,
+    required int? maxAttempts,
+  }) async {
+    final request = await backend.readHaltRequestTxn(txn, destinationId);
+    if (request == null || request.requestEventId != requestEventId) {
+      return HaltHonour.changed;
+    }
+    final verified = await _verifiedHaltTxn(txn, destinationId, request);
+    if (verified == null) {
+      await backend.clearHaltRequestTxn(txn, destinationId);
+      return HaltHonour.unverified;
+    }
+    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    if (head == null || head.finalStatus != null) return HaltHonour.changed;
+    await wedgeHeadInTxn(
+      txn,
+      collector,
+      destinationId: destinationId,
+      rowId: head.entryId,
+      cause: WedgeCause.operatorHalt,
+      maxAttempts: maxAttempts,
+    );
+    return HaltHonour.honoured;
+  }
+
+  /// [request] with its request event, when the log holds a
+  /// `system.destination_halt_requested` event with its identifier that
+  /// names [destinationId] and this registry's database and records a known
+  /// purpose; null otherwise.
+  Future<_VerifiedHalt?> _verifiedHaltTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) async {
+    final event = await backend.findEventByIdInTxn(txn, request.requestEventId);
+    if (event == null ||
+        event.entryType != kDestinationHaltRequestedEntryType ||
+        event.data['id'] != destinationId ||
+        event.data['database_id'] != _eventStore.databaseId) {
+      return null;
+    }
+    final purpose = event.data['purpose'];
+    if (purpose is! String) return null;
+    try {
+      return _VerifiedHalt(request, event, HaltPurpose.fromWire(purpose));
+    } on FormatException {
+      return null;
+    }
+  }
+
   /// Wedge [destinationId]'s pending queue head [rowId] inside [txn]: mark
-  /// it `wedged`, append the wedge event, and write the destination's wedge
-  /// record. Returns the wedge event. Called only by the delivery cycle's
+  /// it `wedged`, consume the destination's open halt request, append the
+  /// wedge event, and write the destination's wedge record. Returns the
+  /// wedge event, and the identifier an unverifiable stored halt request
+  /// cited when the wedge removed one (null otherwise), for the caller to
+  /// log once the transaction commits. Called only by the delivery cycle's
   /// drainer, in the transaction that decides the wedge.
   ///
-  /// Reads the head and the wedge record inside [txn] and throws
-  /// [StateError], writing nothing, when the queue has no head, when
+  /// Reads the head, the wedge record and the halt request inside [txn] and
+  /// throws [StateError], writing nothing, when the queue has no head, when
   /// [rowId] is not the head, when the head is not pending, when a wedge
   /// record exists (a pending head means no wedge is open), or when the
-  /// head's recorded attempts do not support [cause]: a
-  /// [WedgeCause.permanentRefusal] needs a last attempt that reported a
-  /// permanent failure, and a [WedgeCause.retryBudgetExhausted] an attempt
-  /// count at or above [maxAttempts]. Throws [ArgumentError] when
-  /// [maxAttempts] is below one.
+  /// evidence does not support [cause]: a [WedgeCause.permanentRefusal]
+  /// needs a last attempt that reported a permanent failure, a
+  /// [WedgeCause.retryBudgetExhausted] an attempt count at or above
+  /// [maxAttempts], and a [WedgeCause.operatorHalt] an open halt request
+  /// whose request event the log holds for this destination and database,
+  /// on a head whose last attempt did not report a permanent failure (that
+  /// head is wedged for the refusal). Throws [ArgumentError] when
+  /// [maxAttempts] is below one, or null for
+  /// [WedgeCause.retryBudgetExhausted].
   ///
-  /// The event's attempt fields (`attempt_count`, `last_outcome`,
-  /// `http_status`) are read from the item's attempts as they stand in
-  /// [txn], the final attempt included when the caller recorded it earlier
-  /// in [txn]. `max_attempts` is [maxAttempts], the retry budget in effect.
-  /// No text from an attempt's outcome enters the event.
+  /// A wedge of any cause consumes the open halt request: it removes the
+  /// stored request and records `halt_request_event_id`,
+  /// `halt_requested_by` (the request event's initiator) and `halt_purpose`
+  /// from the request event. A stored request whose event the log does not
+  /// hold is removed and not recorded.
+  ///
+  /// For a permanent refusal or an exhausted budget the event's attempt
+  /// fields (`attempt_count`, `last_outcome`, `http_status`) are read from
+  /// the item's attempts as they stand in [txn], the final attempt included
+  /// when the caller recorded it earlier in [txn]; an operator halt records
+  /// them as null. `max_attempts` is [maxAttempts], the retry budget in
+  /// effect, null when the draining process does not register the
+  /// destination (no budget is in effect for it there). No text from an attempt's outcome
+  /// enters the event. The wedge event of an operator halt names the request
+  /// event as its initiator's triggering event.
   @internal
-  Future<StoredEvent> wedgeHeadInTxn(
+  Future<({StoredEvent wedgeEvent, String? discardedHaltRequestEventId})>
+  wedgeHeadInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String destinationId,
     required String rowId,
     required WedgeCause cause,
-    required int maxAttempts,
+    required int? maxAttempts,
   }) async {
     _observeBodyRun('wedgeHeadInTxn');
-    if (maxAttempts < 1) {
+    if (maxAttempts == null && cause == WedgeCause.retryBudgetExhausted) {
+      throw ArgumentError.value(
+        maxAttempts,
+        'maxAttempts',
+        'a wedge of cause ${cause.wire} needs the retry budget in effect',
+      );
+    }
+    if (maxAttempts != null && maxAttempts < 1) {
       throw ArgumentError.value(
         maxAttempts,
         'maxAttempts',
@@ -800,11 +1145,28 @@ class DestinationRegistry {
       );
     }
     if (cause == WedgeCause.retryBudgetExhausted &&
-        attempts.length < maxAttempts) {
+        attempts.length < maxAttempts!) {
       throw StateError(
         'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
         'the item records ${attempts.length} attempts, below the budget '
         '$maxAttempts.',
+      );
+    }
+    if (cause == WedgeCause.operatorHalt && last?.outcome == 'permanent') {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
+        'the last recorded attempt reported a permanent failure; the head '
+        'is wedged for that refusal.',
+      );
+    }
+    final stored = await backend.readHaltRequestTxn(txn, destinationId);
+    final halt = stored == null
+        ? null
+        : await _verifiedHaltTxn(txn, destinationId, stored);
+    if (cause == WedgeCause.operatorHalt && halt == null) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but no '
+        'halt request the log holds is open for the destination.',
       );
     }
     await backend.setFinalStatusTxn(
@@ -813,6 +1175,13 @@ class DestinationRegistry {
       rowId,
       FinalStatus.wedged,
     );
+    // Implements: EVS-DEV-destination-drain/O
+    // a wedge of any cause consumes the open halt request and records its
+    //   identifier, requester and purpose.
+    if (stored != null) {
+      await backend.clearHaltRequestTxn(txn, destinationId);
+    }
+    final halted = cause == WedgeCause.operatorHalt;
     // The append is where an injected wedge-event failure takes effect.
     _consultAuditAppendSeam(kDestinationWedgedEntryType);
     final wedgeEvent = await _emitDestinationAuditInTxn(
@@ -829,31 +1198,48 @@ class DestinationRegistry {
         'last_seq': head.sequenceRange.lastSeq,
         'sequence_in_queue': head.sequenceInQueue,
         'cause': cause.wire,
-        'attempt_count': attempts.length,
+        'attempt_count': halted ? null : attempts.length,
         'max_attempts': maxAttempts,
-        'last_outcome': last?.outcome,
-        'http_status': last?.outcome == 'transient' ? last?.httpStatus : null,
+        'last_outcome': halted ? null : last?.outcome,
+        'http_status': !halted && last?.outcome == 'transient'
+            ? last?.httpStatus
+            : null,
         'wire_format': head.wireFormat,
         'transform_version': head.transformVersion,
-        'halt_request_event_id': null,
-        'halt_requested_by': null,
-        'halt_purpose': null,
+        'halt_request_event_id': halt?.event.eventId,
+        'halt_requested_by': halt?.event.initiator.toJson(),
+        'halt_purpose': halt?.purpose.wire,
         'drainer_epoch': null,
         'configuration_fingerprint': null,
         'configuration': null,
       },
-      initiator: _drainInitiator,
+      initiator: halted
+          ? AutomationInitiator(
+              service: _drainService,
+              triggeringEventId: halt!.event.eventId,
+            )
+          : _drainInitiator,
     );
     await backend.writeWedgeRecordTxn(
       txn,
       destinationId,
-      WedgeRecord(rowId: rowId, wedgeEventId: wedgeEvent.eventId, cause: cause),
+      WedgeRecord(
+        rowId: rowId,
+        wedgeEventId: wedgeEvent.eventId,
+        cause: cause,
+        haltPurpose: halt?.purpose,
+      ),
     );
     if (DeliveryTestHooks.current?.afterWedgeHeadInTxn?.call(destinationId) ??
         false) {
       throw InjectedFailure('after the wedge of $destinationId');
     }
-    return wedgeEvent;
+    return (
+      wedgeEvent: wedgeEvent,
+      discardedHaltRequestEventId: stored != null && halt == null
+          ? stored.requestEventId
+          : null,
+    );
   }
 
   /// Consults the `failRegistryAuditAppend` test seam for an audit of

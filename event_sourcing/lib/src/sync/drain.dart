@@ -38,9 +38,19 @@
 // Implements: EVS-DEV-destination-drain/J
 // (an attempt that wedges commits with the
 //   wedge, or alone when that transaction does not commit; each pass first
-//   gives the head the status its recorded attempts and the budget in effect
-//   call for, before any backoff check or send; a budget below one is
-//   refused)
+//   gives the head the status its recorded attempts call for (an exhausted
+//   budget only where a budget is in effect), before any halt honour,
+//   backoff check or send; a budget below one is refused)
+// Implements: EVS-PRD-destinations/U
+// (the drainer honours an operator's halt
+//   request by wedging the queue head; a request committed before a send's
+//   pre-send fence stops that send)
+// Implements: EVS-DEV-destination-drain/N
+// (the halt is honoured after the status
+//   derivation and before the backoff check, in a transaction that re-reads
+//   and verifies the request; immediately before each send a fence
+//   transaction that writes finds no open request and the head unchanged
+//   since the payload was built, and no send starts otherwise)
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -53,6 +63,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
@@ -83,16 +94,29 @@ import 'package:meta/meta.dart' show internal;
 ///    budget in effect wedges it with cause
 ///    [WedgeCause.retryBudgetExhausted] (covering a budget lowered since
 ///    the attempts were recorded). The wedge commits in its own
-///    transaction, without a send.
-/// 3. Backoff.
-/// 4. Build the payload (every read of the item's events happens here).
-/// 5. Send, then commit the outcome.
+///    transaction, without a send, and ends the pass.
+/// 3. Honour an open halt request: a read outside any transaction decides
+///    whether to try, and the honouring transaction re-reads the request
+///    and the head, verifies the request event in the log, and wedges the
+///    head with cause [WedgeCause.operatorHalt], which ends the pass. A
+///    request cancelled or replaced since the read changes nothing and the
+///    iteration starts again; a stored request whose event the log does not
+///    hold is removed, logged, and delivery continues.
+/// 4. Backoff.
+/// 5. Build the payload (every read of the item's events happens here).
+/// 6. Pre-send fence: one transaction re-reads the halt request and the
+///    head and writes the send fence record. It proceeds only when no
+///    request is open and the head is the same item, still pending, with
+///    the attempt count the payload was built from; otherwise it writes
+///    nothing and the iteration starts again (an open request is then
+///    honoured at step 3).
+/// 7. Send, then commit the outcome.
 ///
 /// On [SendOk] the head is marked `sent` and the loop advances. On
 /// [SendPermanent], or a [SendTransient] whose attempt reaches the budget,
 /// one event-store transaction records the attempt, marks the head wedged,
-/// appends the wedge event and writes the destination's wedge record
-/// (`DestinationRegistry.wedgeHeadInTxn`). When that transaction reports
+/// consumes any open halt request, appends the wedge event and writes the
+/// destination's wedge record (`DestinationRegistry.wedgeHeadInTxn`). When that transaction reports
 /// failure, the failure is logged and a second transaction reads the head
 /// again: a pending head (the wedge rolled back) gets the attempt alone,
 /// and step 2 of a later pass wedges it before any further send; a head
@@ -126,43 +150,34 @@ Future<void> drain(
     if (head.finalStatus == FinalStatus.wedged) return;
     // head.finalStatus is null from here on: a drain candidate.
 
-    // (2) Status derivation from the recorded attempts. The transaction
-    // reads the head again and decides again before it wedges: with one
-    // drainer the head cannot change between the two reads, so the second
-    // decision is defence in depth.
+    // (2) Status derivation from the recorded attempts.
     if (_derivedCause(head, effective.maxAttempts) != null) {
-      try {
-        await registry.eventStore.runTransaction((txn, collector) async {
-          final current = await backend.readFifoHeadTxn(txn, destinationId);
-          if (current == null || current.finalStatus != null) return;
-          final cause = _derivedCause(current, effective.maxAttempts);
-          if (cause == null) return;
-          await registry.wedgeHeadInTxn(
-            txn,
-            collector,
-            destinationId: destinationId,
-            rowId: current.entryId,
-            cause: cause,
-            maxAttempts: effective.maxAttempts,
-          );
-        });
-        _injectAfterWedgeTransaction(destinationId);
-      } on Object catch (e, st) {
-        // Whether the transaction committed is not known here; the next
-        // pass reads the head again before any send.
-        libraryLog(
-          'drain',
-          'wedging the head of $destinationId from its recorded attempts '
-              'reported failure; the pass ends',
-          level: LibraryLogLevel.severe,
-          error: e,
-          stackTrace: st,
-        );
-      }
+      await _wedgeFromAttempts(
+        registry,
+        destinationId: destinationId,
+        maxAttempts: effective.maxAttempts,
+      );
       return;
     }
 
-    // (3) Backoff: only the last attempt's timestamp matters; a head never
+    // (3) Halt honour. The read outside any transaction only decides
+    // whether to try; the honouring transaction decides.
+    final requested = await backend.transaction(
+      (txn) => backend.readHaltRequestTxn(txn, destinationId),
+    );
+    await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
+    if (requested != null) {
+      final honour = await _honourHalt(
+        registry,
+        destinationId: destinationId,
+        requestEventId: requested.requestEventId,
+        maxAttempts: effective.maxAttempts,
+      );
+      if (honour == null || honour == HaltHonour.honoured) return;
+      continue;
+    }
+
+    // (4) Backoff: only the last attempt's timestamp matters; a head never
     // attempted is sent at once.
     if (head.attempts.isNotEmpty) {
       final backoff = effective.backoffFor(head.attempts.length);
@@ -170,7 +185,7 @@ Future<void> drain(
       if (now().isBefore(nextAllowed)) return;
     }
 
-    // (4) Build the payload. Native `esd/batch@2` rows reconstruct bytes
+    // (5) Build the payload. Native `esd/batch@2` rows reconstruct bytes
     // from `envelopeMetadata` + `eventIds`-resolved events through
     // `BatchEnvelope.encode`, which JCS-canonicalizes the envelope so the
     // result is byte-identical across retries. Third-party rows (any other
@@ -204,7 +219,35 @@ Future<void> drain(
       );
     }
 
-    // (5) Send. A thrown error is categorized as SendTransient: both mean
+    // (6) Pre-send fence. No await sits between its commit and the send.
+    await DeliveryTestHooks.current?.beforeSendFence?.call(destinationId);
+    final fenceAt = now();
+    final proceed = await backend.transaction((txn) async {
+      _observeFenceBodyRun(destinationId);
+      if (await backend.readHaltRequestTxn(txn, destinationId) != null) {
+        return false;
+      }
+      final current = await backend.readFifoHeadTxn(txn, destinationId);
+      if (current == null ||
+          current.entryId != head.entryId ||
+          current.finalStatus != null ||
+          current.attempts.length != head.attempts.length) {
+        return false;
+      }
+      await backend.writeSendFenceTxn(
+        txn,
+        destinationId,
+        SendFence(
+          entryId: head.entryId,
+          attemptCount: head.attempts.length,
+          at: fenceAt,
+        ),
+      );
+      return true;
+    });
+    if (!proceed) continue;
+
+    // (7) Send. A thrown error is categorized as SendTransient: both mean
     // "try again later". Its full diagnostic is recorded in the item's
     // attempts only.
     SendResult result;
@@ -229,14 +272,17 @@ Future<void> drain(
       // The attempt, the wedged status, the wedge event and the wedge
       // record commit together.
       try {
-        await registry.eventStore.runTransaction((txn, collector) async {
+        final discarded = await registry.eventStore.runTransaction((
+          txn,
+          collector,
+        ) async {
           await backend.appendAttemptTxn(
             txn,
             destinationId,
             head.entryId,
             attempt,
           );
-          await registry.wedgeHeadInTxn(
+          final wedged = await registry.wedgeHeadInTxn(
             txn,
             collector,
             destinationId: destinationId,
@@ -245,7 +291,9 @@ Future<void> drain(
             maxAttempts: effective.maxAttempts,
           );
           _injectOutcomeFailure(destinationId, attempt.outcome);
+          return wedged.discardedHaltRequestEventId;
         });
+        _logDiscardedHaltRequest(destinationId, discarded);
         _injectAfterWedgeTransaction(destinationId);
       } on Object catch (e, st) {
         // Logged first, so the failure is on record whatever the fallback
@@ -311,13 +359,180 @@ Future<void> drain(
   }
 }
 
+/// Honour the open halt request of [destinationId] for a destination the
+/// draining process does not register, with no send: the status
+/// derivation of step 2 of [drain] that needs no retry budget, then step 3.
+/// A head whose last attempt reported a permanent failure is wedged with
+/// cause [WedgeCause.permanentRefusal], a wedge that consumes the request;
+/// otherwise the request is honoured with cause [WedgeCause.operatorHalt].
+/// The wedge event takes the wire format and transform version from the
+/// queue item and records `max_attempts` as null, since no retry budget is
+/// in effect for the destination in this process. Returns without writing
+/// when the queue has no pending head or no request is open.
+@internal
+Future<void> honourHaltById(
+  String destinationId, {
+  required DestinationRegistry registry,
+}) async {
+  final backend = registry.backend;
+  final head = await backend.readFifoHead(destinationId);
+  if (head == null || head.finalStatus != null) return;
+  final requested = await backend.transaction(
+    (txn) => backend.readHaltRequestTxn(txn, destinationId),
+  );
+  await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
+  if (requested == null) return;
+  if (_derivedCause(head, null) != null) {
+    await _wedgeFromAttempts(
+      registry,
+      destinationId: destinationId,
+      maxAttempts: null,
+    );
+    return;
+  }
+  await _honourHalt(
+    registry,
+    destinationId: destinationId,
+    requestEventId: requested.requestEventId,
+    maxAttempts: null,
+  );
+}
+
+/// Runs the transaction that honours [requestEventId] for [destinationId]
+/// and logs what needs logging. Returns what it did, or null when the
+/// transaction reported failure (logged; whether it committed is not known,
+/// and the next pass reads the head again before any send).
+Future<HaltHonour?> _honourHalt(
+  DestinationRegistry registry, {
+  required String destinationId,
+  required String requestEventId,
+  required int? maxAttempts,
+}) async {
+  final HaltHonour honour;
+  try {
+    honour = await registry.eventStore.runTransaction(
+      (txn, collector) => registry.honourHaltInTxn(
+        txn,
+        collector,
+        destinationId: destinationId,
+        requestEventId: requestEventId,
+        maxAttempts: maxAttempts,
+      ),
+    );
+    if (honour == HaltHonour.honoured) {
+      _injectAfterWedgeTransaction(destinationId);
+    }
+  } on Object catch (e, st) {
+    libraryLog(
+      'drain',
+      'honouring the halt request $requestEventId of $destinationId reported '
+          'failure; the pass ends',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+    return null;
+  }
+  if (honour == HaltHonour.unverified) {
+    libraryLog(
+      'drain',
+      'the stored halt request of $destinationId cites $requestEventId, '
+          'which is no halt request of this destination and database in the '
+          'log; the stored request is removed, nothing is wedged, and '
+          'delivery continues',
+      level: LibraryLogLevel.severe,
+    );
+  }
+  return honour;
+}
+
+/// Logs, after the wedge of [destinationId] committed, the unverifiable
+/// stored halt request that wedge removed without recording it, if any.
+void _logDiscardedHaltRequest(String destinationId, String? requestEventId) {
+  if (requestEventId == null) return;
+  libraryLog(
+    'drain',
+    'the stored halt request of $destinationId cited $requestEventId, which '
+        'is no halt request of this destination and database in the log; the '
+        'wedge removed it and does not record it',
+    level: LibraryLogLevel.severe,
+  );
+}
+
+/// Reports a run of the pre-send fence body to the `onFenceBodyRun` test
+/// seam; an exception the seam throws is logged and does not reach the
+/// drainer.
+void _observeFenceBodyRun(String destinationId) {
+  final seam = DeliveryTestHooks.current?.onFenceBodyRun;
+  if (seam == null) return;
+  try {
+    seam(destinationId);
+  } on Object catch (e, st) {
+    libraryLog(
+      'drain',
+      'the onFenceBodyRun test seam threw',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+  }
+}
+
+/// Wedges [destinationId]'s pending head for the cause its recorded
+/// attempts call for under [maxAttempts] (null: no budget in effect, so
+/// only a permanent refusal), in its own transaction, without a send. The
+/// transaction reads the head again and decides again before it wedges:
+/// with one drainer the head cannot change between the two reads, so the
+/// second decision is defence in depth. A failure is logged; whether the
+/// transaction committed is not known, and the next pass reads the head
+/// again before any send.
+Future<void> _wedgeFromAttempts(
+  DestinationRegistry registry, {
+  required String destinationId,
+  required int? maxAttempts,
+}) async {
+  final backend = registry.backend;
+  try {
+    final discarded = await registry.eventStore.runTransaction((
+      txn,
+      collector,
+    ) async {
+      final current = await backend.readFifoHeadTxn(txn, destinationId);
+      if (current == null || current.finalStatus != null) return null;
+      final cause = _derivedCause(current, maxAttempts);
+      if (cause == null) return null;
+      final wedged = await registry.wedgeHeadInTxn(
+        txn,
+        collector,
+        destinationId: destinationId,
+        rowId: current.entryId,
+        cause: cause,
+        maxAttempts: maxAttempts,
+      );
+      return wedged.discardedHaltRequestEventId;
+    });
+    _logDiscardedHaltRequest(destinationId, discarded);
+    _injectAfterWedgeTransaction(destinationId);
+  } on Object catch (e, st) {
+    libraryLog(
+      'drain',
+      'wedging the head of $destinationId from its recorded attempts '
+          'reported failure; the pass ends',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+  }
+}
+
 /// The cause for which [head]'s recorded attempts call for a wedge under
-/// [maxAttempts], or null when they leave it pending.
-WedgeCause? _derivedCause(FifoEntry head, int maxAttempts) {
+/// [maxAttempts], or null when they leave it pending. With no budget in
+/// effect ([maxAttempts] null) only a permanent refusal is derived.
+WedgeCause? _derivedCause(FifoEntry head, int? maxAttempts) {
   if (head.attempts.isNotEmpty && head.attempts.last.outcome == 'permanent') {
     return WedgeCause.permanentRefusal;
   }
-  if (head.attempts.length >= maxAttempts) {
+  if (maxAttempts != null && head.attempts.length >= maxAttempts) {
     return WedgeCause.retryBudgetExhausted;
   }
   return null;
