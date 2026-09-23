@@ -2,7 +2,6 @@
 // Verifies: EVS-PRD-destinations/C+D
 // Verifies: EVS-PRD-ingest/A+F
 // Verifies: EVS-PRD-provenance/B+C
-import 'dart:async';
 import 'dart:math';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -26,11 +25,8 @@ class _Pane {
     required this.backend,
     required this.source,
     required this.policyNotifier,
-  }) : cycle = SyncCycle(
-         registry: datastore.destinations,
-         source: source,
-         policyResolver: () => policyNotifier.value,
-       );
+    required this.cycle,
+  });
 
   final EventStoreBundle datastore;
   final SembastBackend backend;
@@ -38,9 +34,11 @@ class _Pane {
   final ValueNotifier<SyncPolicy> policyNotifier;
 
   /// The pane's delivery cycle: fills every destination's queue from the
-  /// log and drains it, with the pane's live policy.
+  /// log and drains it, with the pane's live policy, at least once a second
+  /// and whenever an append wakes it.
   final SyncCycle cycle;
 
+  /// Runs a pass, or waits for the passes in flight and one more.
   Future<void> tick() => cycle();
 }
 
@@ -119,11 +117,18 @@ Future<_Pane> _mkPane({
     }
   }
 
+  final cycle = await SyncCycle.start(
+    registry: datastore.destinations,
+    policyResolver: () => policyNotifier.value,
+    cadence: const Duration(seconds: 1),
+  );
+  addTearDown(cycle.close);
   return _Pane(
     datastore: datastore,
     backend: backend,
     source: source,
     policyNotifier: policyNotifier,
+    cycle: cycle,
   );
 }
 
@@ -209,19 +214,11 @@ void main() {
         hubSecondary.sendLatency.value = Duration.zero;
         // hub.Native has no bridge and default sendLatency=0 already
 
-        // ---- Tick loops --------------------------------------------------
-        // Each pane's periodic timer fires its SyncCycle. The cycle's own
-        // reentrancy guard drops a trigger that arrives while a pass is
-        // running, so timer passes and the flush passes below never
-        // overlap on one pane.
-        final mobileTick = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) => mobile.tick(),
-        );
-        final hubTick = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) => hub.tick(),
-        );
+        // ---- Delivery ----------------------------------------------------
+        // Each pane's delivery cycle runs a pass at least once a second
+        // (its cadence) and whenever an append on its store wakes it; a
+        // trigger that arrives during a pass makes it run one more, so
+        // passes never overlap on one pane.
 
         // ---- 60-second click loop ----------------------------------------
         final rng = Random(42);
@@ -247,20 +244,9 @@ void main() {
         }
         final clickElapsed = DateTime.now().difference(clickStart);
 
-        // ---- Cancel tick timers ------------------------------------------
-        // cancel() stops future firings. A pass already running finishes;
-        // the flush passes below wait for it, because a trigger that
-        // arrives mid-pass is dropped by the cycle's reentrancy guard.
-        mobileTick.cancel();
-        hubTick.cancel();
-
         // ---- Flush sequence: 8 alternating passes ------------------------
-        Future<void> flush(_Pane pane) async {
-          while (pane.cycle.isInFlight) {
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
-          await pane.tick();
-        }
+        // A tick waits for any pass in flight and runs one more after it.
+        Future<void> flush(_Pane pane) => pane.tick();
 
         for (var i = 0; i < 8; i++) {
           await flush(mobile);

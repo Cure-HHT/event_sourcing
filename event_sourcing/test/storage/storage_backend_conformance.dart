@@ -26,9 +26,12 @@
 // Postgres harness with no `PG_TEST_URL`), the test marks itself skipped.
 // `tearDown` calls `backend.close()` inside try/catch so a skipped-test
 // teardown does not raise.
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/fifo_entry_helpers.dart';
@@ -50,11 +53,16 @@ import '../test_support/fifo_entry_helpers.dart';
 /// [securityStoreOf] returns the security-context store that stores beside
 /// the events of the backend it is given; the suite uses it to write the
 /// context `queryAudit` joins.
+///
+/// [reopen] opens another backend over the database of a closed backend
+/// of [factory]'s, checking along the way whatever the backend's exclusion
+/// primitive is (the drain-lock case "close releases the drain lock").
 void runStorageBackendConformanceTests(
   Future<StorageBackend?> Function() factory, {
   required String backendLabel,
   required MutableSecurityContextStore Function(StorageBackend backend)
   securityStoreOf,
+  required Future<StorageBackend> Function(StorageBackend closed) reopen,
 }) {
   group('StorageBackend conformance ($backendLabel)', () {
     late StorageBackend backend;
@@ -93,6 +101,7 @@ void runStorageBackendConformanceTests(
     _registerQueueRecordTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
+    _registerDrainLockTests(() => backend, () => initialized, reopen);
     _registerEventVersionColumnTests(
       () => backend,
       () => initialized,
@@ -3576,6 +3585,261 @@ void _registerBackendStateTests(
 // findEventById / findEventByIdInTxn read
 //   a single event from the unified log; returns null when absent; used
 //   by ingest's idempotency check.
+void _registerDrainLockTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  Future<StorageBackend> Function(StorageBackend closed) reopen,
+) {
+  group('drain lock and drain records', () {
+    Future<String> identity(StorageBackend backend) =>
+        backend.transaction(backend.readOrCreateDatabaseIdTxn);
+    Future<int?> epoch(StorageBackend backend) =>
+        backend.transaction(backend.readDrainEpochTxn);
+
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // one live drain lock per database through a backend: a second try
+    //   while the first is live is refused and raises no epoch; a release
+    //   frees it, and every acquisition raises the stored epoch.
+    test('one holder at a time; every acquisition raises the epoch', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      expect(await epoch(backend), isNull);
+      final first = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(first.epoch, await epoch(backend));
+      await expectLater(
+        backend.tryAcquireDrainLock(databaseId: id),
+        throwsA(isA<DrainLockUnavailableException>()),
+      );
+      expect(await epoch(backend), first.epoch, reason: 'no epoch raised');
+      await first.release();
+      final second = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(second.epoch, greaterThan(first.epoch));
+      expect(await epoch(backend), second.epoch);
+      await second.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/B
+    // the check a queue-changing transaction runs passes while the lock is
+    //   held and current, and refuses once it is released, whatever the
+    //   stored epoch; a release is never reported as a loss.
+    test(
+      'assertHeldInTxn refuses after a release; a release is no loss',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final id = await identity(backend);
+        final lock = await backend.tryAcquireDrainLock(databaseId: id);
+        await backend.transaction(lock.assertHeldInTxn);
+        await lock.assertHeld();
+        var lost = false;
+        unawaited(lock.lost.then((_) => lost = true));
+        await lock.release();
+        expect(lock.isReleased, isTrue);
+        await expectLater(
+          backend.transaction(lock.assertHeldInTxn),
+          throwsA(
+            isA<DrainLockLostException>().having(
+              (e) => e.reason,
+              'reason',
+              DrainLockLossReason.released,
+            ),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(lost, isFalse);
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a request stands by while the lock is held and is granted once it is
+    //   released, without another call.
+    test('a request is granted once the holder releases', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final holder = await backend.tryAcquireDrainLock(databaseId: id);
+      final request = backend.requestDrainLock(
+        databaseId: id,
+        retryInterval: const Duration(milliseconds: 50),
+      );
+      DrainLock? granted;
+      unawaited(request.granted.then((l) => granted = l));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(granted, isNull, reason: 'held elsewhere');
+      await holder.release();
+      final lock = await request.granted.timeout(const Duration(seconds: 10));
+      expect(lock, isNotNull);
+      expect(lock!.epoch, greaterThan(holder.epoch));
+      await lock.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a request cancelled before its grant completes with null, and a later
+    //   acquisition succeeds at once.
+    test('a request cancelled before its grant leaves the lock free', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final holder = await backend.tryAcquireDrainLock(databaseId: id);
+      final request = backend.requestDrainLock(
+        databaseId: id,
+        retryInterval: const Duration(milliseconds: 50),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await request.cancel();
+      expect(await request.granted, isNull);
+      await holder.release();
+      final later = await backend.tryAcquireDrainLock(databaseId: id);
+      await later.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a grant that races the cancellation is released before the request
+    //   completes with null: the lock is free afterwards.
+    test('a grant that races a cancellation is released', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      late DrainLockRequest request;
+      Future<void>? cancelled;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          beforeGrantDelivered: () async {
+            cancelled = request.cancel();
+          },
+        ),
+        () async {
+          request = backend.requestDrainLock(
+            databaseId: id,
+            retryInterval: const Duration(milliseconds: 50),
+          );
+          expect(await request.granted, isNull);
+          await cancelled;
+        },
+      );
+      final later = await backend.tryAcquireDrainLock(databaseId: id);
+      await later.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // closing the backend releases the drain lock granted through it: the
+    //   exclusion primitive is free, so another backend over the database
+    //   takes the lock at once, with a higher epoch; the closed backend
+    //   grants no drain lock.
+    test('close releases the drain lock', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final lock = await backend.tryAcquireDrainLock(databaseId: id);
+      await backend.close();
+      expect(lock.isReleased, isTrue);
+      await expectLater(
+        backend.tryAcquireDrainLock(databaseId: id),
+        throwsA(isA<DrainLockBackendClosedException>()),
+      );
+      final other = await reopen(backend);
+      try {
+        final next = await other.tryAcquireDrainLock(databaseId: id);
+        expect(next.epoch, greaterThan(lock.epoch));
+        await next.release();
+      } finally {
+        await other.close();
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/T
+    // the drainer's declaration, its heartbeat and a refill guard
+    //   round-trip through the contract: read in the writing and a later
+    //   transaction, overwritten, left as they were by a write that does not
+    //   commit, and (the guard) cleared.
+    test('drain records: write, overwrite, rollback, clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final at = DateTime.utc(2026, 9, 1);
+      final d1 = DrainerDeclaration(
+        epoch: 1,
+        configurationVersion: 'v1',
+        configurations: const <String, Map<String, Object?>>{
+          'x': <String, Object?>{'id': 'x'},
+        },
+        fingerprints: const <String, String>{'x': 'f1'},
+        unserved: const <String, UnservedReason>{
+          'y': UnservedReason.notRegisteredHere,
+        },
+        declaredAt: at,
+      );
+      final d2 = DrainerDeclaration(
+        epoch: 2,
+        configurationVersion: null,
+        configurations: const <String, Map<String, Object?>>{},
+        fingerprints: const <String, String>{},
+        unserved: const <String, UnservedReason>{
+          'x': UnservedReason.refillAwaitsChangedConfiguration,
+        },
+        declaredAt: at,
+      );
+      final h1 = DrainHeartbeat(epoch: 1, pass: 1, at: at);
+      final h2 = DrainHeartbeat(epoch: 1, pass: 2, at: at);
+      const g1 = RefillGuard(
+        fingerprint: 'f1',
+        recoveryEventId: 'r1',
+        refillThrough: 7,
+      );
+      const g2 = RefillGuard(
+        fingerprint: 'f2',
+        recoveryEventId: 'r2',
+        refillThrough: 9,
+      );
+      Future<(DrainerDeclaration?, DrainHeartbeat?, RefillGuard?)> read() =>
+          backend.transaction(
+            (txn) async => (
+              await backend.readDrainerDeclarationTxn(txn),
+              await backend.readDrainHeartbeatTxn(txn),
+              await backend.readRefillGuardTxn(txn, 'x'),
+            ),
+          );
+      expect(await read(), (null, null, null));
+      final inTxn = await backend.transaction((txn) async {
+        await backend.writeDrainerDeclarationTxn(txn, d1);
+        await backend.writeDrainHeartbeatTxn(txn, h1);
+        await backend.writeRefillGuardTxn(txn, 'x', g1);
+        return (
+          await backend.readDrainerDeclarationTxn(txn),
+          await backend.readDrainHeartbeatTxn(txn),
+          await backend.readRefillGuardTxn(txn, 'x'),
+        );
+      });
+      expect(inTxn, (d1, h1, g1));
+      expect(await read(), (d1, h1, g1));
+      await backend.transaction((txn) async {
+        await backend.writeDrainerDeclarationTxn(txn, d2);
+        await backend.writeDrainHeartbeatTxn(txn, h2);
+        await backend.writeRefillGuardTxn(txn, 'x', g2);
+      });
+      expect(await read(), (d2, h2, g2));
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeDrainerDeclarationTxn(txn, d1);
+          await backend.writeDrainHeartbeatTxn(txn, h1);
+          await backend.clearRefillGuardTxn(txn, 'x');
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), (d2, h2, g2));
+      await backend.transaction((txn) => backend.clearRefillGuardTxn(txn, 'x'));
+      expect((await read()).$3, isNull);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readRefillGuardTxn(txn, 'other'),
+        ),
+        isNull,
+      );
+    });
+  });
+}
+
 void _registerEventByIdTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,

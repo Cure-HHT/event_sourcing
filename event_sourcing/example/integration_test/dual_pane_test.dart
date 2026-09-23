@@ -1,7 +1,5 @@
 // IMPLEMENTS REQUIREMENTS:
 
-import 'dart:async';
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app.dart';
 import 'package:event_sourcing_demo/app_state.dart';
@@ -25,11 +23,7 @@ class _PaneHandle {
     required this.appState,
     required this.policyNotifier,
     required this.source,
-  }) : cycle = SyncCycle(
-         registry: datastore.destinations,
-         source: source,
-         policyResolver: () => policyNotifier.value,
-       );
+  });
 
   final EventStoreBundle datastore;
   final SembastBackend backend;
@@ -37,11 +31,10 @@ class _PaneHandle {
   final ValueNotifier<SyncPolicy> policyNotifier;
   final Source source;
 
-  /// The pane's delivery cycle: fills every destination's queue from the
-  /// log and drains it, with the pane's live policy.
-  final SyncCycle cycle;
-
-  Future<void> tick() => cycle();
+  /// Runs a pass of the pane's delivery cycle, which fills every
+  /// destination's queue from the log and drains it, with the pane's live
+  /// policy.
+  Future<void> tick() => appState.cycle!();
 }
 
 Future<_PaneHandle> _mkPane({
@@ -117,10 +110,14 @@ Future<_PaneHandle> _mkPane({
     }
   }
 
+  // A one-hour cadence: the test runs every pass it asserts on itself.
   final appState = AppState(
     registry: datastore.destinations,
     policyNotifier: policyNotifier,
+    cadence: const Duration(hours: 1),
   );
+  await appState.startDelivery();
+  addTearDown(appState.stopDelivery);
 
   return _PaneHandle(
     datastore: datastore,
@@ -153,18 +150,12 @@ Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
     bridge: bridge,
   );
 
-  // Dummy tick timer: DemoPane only uses the tickController inside
-  // resetAll(), which our tests never invoke. The field is non-nullable, so
-  // we supply a no-op timer that fires once far in the future.
-  final dummyTick = Timer(const Duration(days: 365), () {});
-
   final app = DualDemoApp(
     top: DemoPaneConfig(
       datastore: mobile.datastore,
       backend: mobile.backend,
       appState: mobile.appState,
       dbPath: 'mobile-$testId.db',
-      tickController: dummyTick,
       paneLabel: 'MOBILE',
       policyNotifier: mobile.policyNotifier,
     ),
@@ -173,7 +164,6 @@ Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
       backend: hub.backend,
       appState: hub.appState,
       dbPath: 'hub-$testId.db',
-      tickController: dummyTick,
       paneLabel: 'HUB',
       policyNotifier: hub.policyNotifier,
     ),

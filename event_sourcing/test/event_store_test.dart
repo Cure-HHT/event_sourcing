@@ -75,11 +75,11 @@ Future<_Fixture> _setup({
     ),
     securityContexts: securityContexts,
     projections: projections,
-    syncCycleTrigger: () async {
-      syncCalls.add(DateTime.now());
-    },
     clock: now == null ? null : () => now,
   );
+  eventStore.deliveryTrigger = () async {
+    syncCalls.add(DateTime.now());
+  };
   return _Fixture(
     eventStore: eventStore,
     backend: backend,

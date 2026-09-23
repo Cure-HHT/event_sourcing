@@ -20,5 +20,7 @@ names, frozen semantics).
 - `permissions.md` — permission-model extensions.
 - `projections.md` — projection/materializer primitives; views that
   catch up with the log whatever their interest.
-- `sync.md` — sync/destination layer: inbound tombstone propagation.
+- `sync.md` — sync/destination layer: inbound tombstone propagation,
+  detecting undeclared delivery-configuration changes, a drain lock
+  across the tabs of a browser origin.
 - `authentication.md` — substrate-level authentication closure.

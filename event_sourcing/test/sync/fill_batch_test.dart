@@ -679,30 +679,5 @@ void main() {
       );
       expect(await backend.readFillCursor('native'), 2);
     });
-
-    // A native destination without a `source:` parameter throws
-    // ArgumentError. The native branch needs Source to stamp envelope
-    // identity; the absence is a caller-bug surfaced loudly rather than
-    // a silent partial enqueue.
-    test('native destination without source: throws '
-        'ArgumentError', () async {
-      final clientTs = DateTime.utc(2026, 4, 22, 10);
-      await _appendEvent(backend, eventId: 'e1', clientTimestamp: clientTs);
-
-      final dest = NativeDestination(id: 'native');
-      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await expectLater(
-        fillWithScheduleForTest(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        ),
-        throwsArgumentError,
-      );
-      // No FIFO row was written, no cursor advance.
-      expect(await backend.readFifoHead('native'), isNull);
-      expect(await backend.readFillCursor('native'), -1);
-    });
   });
 }

@@ -39,6 +39,7 @@ const _expected = <String, Set<String>>{
   'calls_wedge_head_in_txn_internal.dart': _internalUse,
   'calls_append_reserved_internal.dart': _internalUse,
   'calls_fill_batch_internal.dart': _internalUse,
+  'calls_drain_lock_internal.dart': _internalUse,
   'calls_historical_replay_internal.dart': _internalUse,
   'calls_test_hooks_internal.dart': _internalUse,
   'calls_set_view_target_version_internal.dart': _internalUse,
@@ -74,6 +75,9 @@ const _minimumInternalUses = <String, int>{
   // EventStore.appendReserved and EventStore.appendReservedInTxn.
   'calls_append_reserved_internal.dart': 2,
   'calls_fill_batch_internal.dart': 1,
+  // tryAcquireDrainLock, requestDrainLock, writeRefillGuardTxn, the trigger
+  // slot's setter and PostgresBackend.whenRegistered.
+  'calls_drain_lock_internal.dart': 5,
   // buildHistoricalReplayRows and writeQueueItemsTxn.
   'calls_historical_replay_internal.dart': 2,
   // runWithDeliveryTestHooks and the DeliveryTestHooks constructor.

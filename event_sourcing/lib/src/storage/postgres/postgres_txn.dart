@@ -18,6 +18,13 @@ class PostgresTxn extends Transaction {
   final TxSession _session;
   bool _valid = true;
 
+  /// Set when the body issued a write to the `backend_state` table (the
+  /// sequence counter of every append among them), so a re-run after a
+  /// serialization failure knows whether it must wait behind that table's
+  /// writers.
+  @internal
+  bool wroteBackendState = false;
+
   /// The underlying postgres session. Throws [StateError] when accessed
   /// outside the `transaction()` body that produced this handle.
   @internal

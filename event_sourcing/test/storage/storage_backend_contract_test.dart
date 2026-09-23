@@ -19,6 +19,8 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
@@ -333,6 +335,48 @@ class _InMemoryBackend extends StorageBackend {
   Future<GenerationRegistration> registerGeneration(
     GenerationDescriptor descriptor,
   ) => throw UnimplementedError();
+  @override
+  Object drainExclusionKey(String databaseId) => throw UnimplementedError();
+  @override
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId}) =>
+      throw UnimplementedError();
+  @override
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  }) => throw UnimplementedError();
+  @override
+  Future<int?> readDrainEpochTxn(Transaction txn) => throw UnimplementedError();
+  @override
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  ) => throw UnimplementedError();
+  @override
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  ) => throw UnimplementedError();
+  @override
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearRefillGuardTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
   @override
   Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) =>
       throw UnimplementedError();

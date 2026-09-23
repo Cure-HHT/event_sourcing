@@ -35,7 +35,6 @@ class _PaneRuntime {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tick,
     required this.policyNotifier,
   });
 
@@ -43,20 +42,20 @@ class _PaneRuntime {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tick;
   final ValueNotifier<SyncPolicy> policyNotifier;
 }
 
-/// Bootstraps one datastore with its own destinations and starts a
-/// 1-second sync tick. The optional [bridge] is wired into the Native
+/// Bootstraps one datastore with its own destinations and starts its
+/// delivery cycle. The optional [bridge] is wired into the Native
 /// destination's `send()` so mobile's outgoing wire stream lands in
 /// hub's `EventStore.ingestBatch`. The hub pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
 /// simulator.
 ///
-/// The tick fires the pane's `SyncCycle`, which fills every destination's
-/// queue from the log and drains it with the live policy from the pane's
-/// policyNotifier.
+/// The pane's `SyncCycle` fills every destination's queue from the log and
+/// drains it with the live policy from the pane's policyNotifier. Every
+/// append and every committed registry operation wakes it, and it runs a
+/// pass at least once a second.
 Future<_PaneRuntime> _bootstrapPane({
   required String dbPath,
   required Source source,
@@ -163,28 +162,18 @@ Future<_PaneRuntime> _bootstrapPane({
     policyNotifier: policyNotifier,
   );
 
-  // The cycle's reentrancy guard drops a tick that fires while a pass is
-  // still running; the policy is resolved once per pass. The native
-  // destinations stamp their batch envelopes with the pane's Source.
-  final syncCycle = SyncCycle(
-    registry: datastore.destinations,
-    source: source,
-    policyResolver: () => policyNotifier.value,
-  );
-  final tick = Timer.periodic(const Duration(seconds: 1), (_) async {
-    try {
-      await syncCycle();
-    } catch (e, s) {
-      stderr.writeln('[demo:${source.hopId}] sync tick error: $e\n$s');
-    }
-  });
+  try {
+    await appState.startDelivery();
+  } on Object {
+    await backend.close();
+    rethrow;
+  }
 
   return _PaneRuntime(
     datastore: datastore,
     backend: backend,
     appState: appState,
     dbPath: dbPath,
-    tick: tick,
     policyNotifier: policyNotifier,
   );
 }
@@ -247,7 +236,7 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
   } on Object catch (e) {
     if (!needsDatabaseReset(e)) rethrow;
     if (hub != null) {
-      hub.tick.cancel();
+      await hub.appState.stopDelivery();
       await hub.backend.close();
     }
     stderr.writeln('[demo] $e');
@@ -262,7 +251,6 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
       backend: mobile.backend,
       appState: mobile.appState,
       dbPath: mobile.dbPath,
-      tickController: mobile.tick,
       policyNotifier: mobile.policyNotifier,
       paneLabel: 'MOBILE',
     ),
@@ -271,7 +259,6 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
       backend: hub.backend,
       appState: hub.appState,
       dbPath: hub.dbPath,
-      tickController: hub.tick,
       policyNotifier: hub.policyNotifier,
       paneLabel: 'HUB',
     ),

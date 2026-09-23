@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -19,7 +18,6 @@ class DemoPaneConfig {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tickController,
     required this.policyNotifier,
     required this.paneLabel,
   });
@@ -28,7 +26,6 @@ class DemoPaneConfig {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
   final String paneLabel;
 }
@@ -114,7 +111,6 @@ class _DualDemoAppState extends State<DualDemoApp> {
       backend: cfg.backend,
       appState: cfg.appState,
       dbPath: cfg.dbPath,
-      tickController: cfg.tickController,
       policyNotifier: cfg.policyNotifier,
       paneLabel: cfg.paneLabel,
     );

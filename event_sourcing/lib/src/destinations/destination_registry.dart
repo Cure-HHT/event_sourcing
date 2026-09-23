@@ -48,6 +48,7 @@ import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
@@ -187,7 +188,7 @@ class DestinationRegistry {
       case _Done<T>(:final value):
         onCommitted?.call(value);
         // The drainer acts on what the operation committed at its next pass.
-        unawaited(_eventStore.syncCycleTrigger?.call());
+        _eventStore.wakeDeliveryCycle();
         return value;
       case _Refused<T>(:final error):
         throw error;
@@ -370,6 +371,11 @@ class DestinationRegistry {
       if (reserved) _registering.remove(id);
     }
   }
+
+  /// The registration [id] is registered under in this registry, or null
+  /// when this registry does not register it.
+  @internal
+  String? localRegistrationId(String id) => _destinations[id]?.registrationId;
 
   /// All destinations registered in this registry, in registration order.
   /// Returned list is unmodifiable so callers cannot mutate the registry by
@@ -666,6 +672,7 @@ class DestinationRegistry {
       await backend.clearWedgeRecordTxn(txn, id);
       await backend.clearHaltRequestTxn(txn, id);
       await backend.clearSendFenceTxn(txn, id);
+      await backend.clearRefillGuardTxn(txn, id);
       // Implements: EVS-PRD-destinations/T
       // a deletion appends a deletion event naming the wedged item it retires,
       //   if any.
@@ -721,6 +728,35 @@ class DestinationRegistry {
   /// exhausted budget consumed follows the same order: the wedge record
   /// keeps the purpose of the request its wedge consumed, whatever the
   /// wedge's cause.
+  ///
+  /// The order is checked for a head whose wedge consumed a
+  /// [HaltPurpose.reconfigure] request: the recovery is refused
+  /// (`StateError`, nothing written but the registry check record) while
+  /// the drainer that holds the drain lock has not declared its
+  /// configuration since the lock changed hands (retry after its next
+  /// pass), does not serve the destination, or still declares for it the
+  /// configuration recorded when the halt was honoured
+  /// (`declaredConfiguration`, compared by its fingerprint). An accepted
+  /// recovery leaves a refill guard naming that recorded configuration:
+  /// until a drainer that declares another configuration has refilled the
+  /// destination, which removes the guard, a drainer that declares the
+  /// recorded one does not fill it (for example an instance of the old
+  /// revision that takes the lock during a rollout). The guard stays until
+  /// that fill has refilled the whole rewound range (its fill position
+  /// reaches the position the recovery rewound from), so a takeover part
+  /// way through the refill does not mix items built under the two
+  /// configurations. When the guard stays
+  /// in place (a rollout rolled back, so every instance declares the halted
+  /// configuration again), restart the drainer with a changed
+  /// `configurationVersion`, so its fill proceeds and removes the guard, or
+  /// delete the destination. `DestinationRegistry.readDeliveryStatus` shows
+  /// the guard. A wedge with no halt purpose, or purpose
+  /// [HaltPurpose.pause], is recoverable at any time.
+  ///
+  /// The recovery event records the drain epoch, the configuration the
+  /// lock holder declares for the destination and its fingerprint (null
+  /// when it declares none), and the fingerprint of the refill guard it
+  /// set (null when it set none).
   ///
   /// The fill position is rewound below the lowest event carried by any
   /// item the recovery removes — the head and every swept item, including
@@ -788,8 +824,67 @@ class DestinationRegistry {
         ),
       );
     }
+    // Implements: EVS-DEV-destination-drain/F
+    // recovery of a reconfigure halt is refused while the drain-lock holder
+    //   declares the configuration recorded when the halt was honoured, or
+    //   has declared none since the lock changed hands; an accepted one
+    //   leaves a refill guard, recorded in the recovery event.
+    final wedge = await backend.readWedgeRecordTxn(txn, destinationId);
+    final epoch = await backend.readDrainEpochTxn(txn);
+    final stored = await backend.readDrainerDeclarationTxn(txn);
+    final holder = stored != null && stored.epoch == epoch ? stored : null;
+    final holderFingerprint = holder?.fingerprints[destinationId];
+    final holderConfiguration = holder?.configurations[destinationId];
+    String? guardFingerprint;
+    if (wedge?.haltPurpose == HaltPurpose.reconfigure) {
+      final recorded = wedge!.configurationFingerprint;
+      final refusal = holder == null
+          ? (
+              'refused_no_declaration_since_lock_changed',
+              'no drainer has declared its configuration since the lock '
+                  'changed hands; retry after its next pass.',
+            )
+          : holderFingerprint == null
+          ? (
+              'refused_not_served',
+              'no drainer serves this destination: the process that drains '
+                  'does not register it. Register the new configuration in '
+                  'the draining process, or delete the destination.',
+            )
+          : holderFingerprint == recorded
+          ? (
+              'refused_configuration_unchanged',
+              'the drainer still declares the configuration in effect when '
+                  'the halt was honoured. If the new configuration is not '
+                  'deployed yet, deploy it first, and pass a new '
+                  'configurationVersion to SyncCycle.start when the change is '
+                  "not visible in the destination's declared fields. If the "
+                  'new configuration was already deployed before the halt, '
+                  'restart the drainer with a changed configurationVersion to '
+                  'recover this halt; for a later rebuild under an '
+                  'already-deployed configuration, request the halt with '
+                  'purpose pause.',
+            )
+          : null;
+      if (refusal != null) {
+        return _decideWithoutChange<TombstoneAndRefillResult>(
+          txn,
+          op: op,
+          destinationId: destinationId,
+          check: refusal.$1,
+          outcome: _Refused<TombstoneAndRefillResult>(
+            StateError(
+              'tombstoneAndRefill($destinationId, $fifoRowId): the head was '
+              'wedged for a reconfigure halt, and ${refusal.$2}',
+            ),
+          ),
+        );
+      }
+      guardFingerprint = recorded;
+    }
     final targetFirstSeq = head.sequenceRange.firstSeq;
     final targetLastSeq = head.sequenceRange.lastSeq;
+    final cursorBefore = await backend.readFillCursorTxn(txn, destinationId);
     await backend.setFinalStatusTxn(
       txn,
       destinationId,
@@ -811,7 +906,7 @@ class DestinationRegistry {
     // Implements: EVS-PRD-destinations/T
     // an operator recovery of a wedged queue appends a recovery event in the
     //   transaction that retires the wedged head.
-    await _emitDestinationAuditInTxn(
+    final recovery = await _emitDestinationAuditInTxn(
       txn,
       collector,
       entryType: kDestinationWedgeRecoveredEntryType,
@@ -823,9 +918,24 @@ class DestinationRegistry {
         'target_event_id_range_last_seq': targetLastSeq,
         'deleted_trail_count': sweep.deletedCount,
         'rewound_to': rewoundTo,
+        'drainer_epoch': epoch,
+        'drainer_configuration_fingerprint': holderFingerprint,
+        'drainer_configuration': holderConfiguration,
+        'refill_guard_fingerprint': guardFingerprint,
       },
       initiator: initiator,
     );
+    if (guardFingerprint != null) {
+      await backend.writeRefillGuardTxn(
+        txn,
+        destinationId,
+        RefillGuard(
+          fingerprint: guardFingerprint,
+          recoveryEventId: recovery.eventId,
+          refillThrough: cursorBefore,
+        ),
+      );
+    }
     _consultAuditAppendSeam(kDestinationWedgeRecoveredEntryType);
     return _Done<TombstoneAndRefillResult>(
       TombstoneAndRefillResult(
@@ -835,6 +945,54 @@ class DestinationRegistry {
       ),
     );
   });
+
+  /// Read the persisted delivery status of this registry's database: the
+  /// current drainer's declaration (its drain epoch, the configuration it
+  /// declares for each destination it serves, and the destinations it does
+  /// not serve, as of its latest pass) and its latest heartbeat, and for
+  /// each persisted destination its schedule, open halt request, wedge
+  /// record, refill guard and unserved reason. All of it is read in one
+  /// transaction, from persisted state only, so any process can read it,
+  /// including one that does not drain and registers nothing.
+  ///
+  /// `drainer` is null when no drainer has declared since the current drain
+  /// epoch began (the lock changed hands and the new holder has not
+  /// completed a pass start yet), and then no destination carries an
+  /// unserved reason. `heartbeat` is the latest pass start's record
+  /// whatever its epoch: compare its `epoch` with `drainer`'s to tell
+  /// whether it belongs to the current drainer. The default destination-wedges view
+  /// covers wedges only: a destination that is unserved or held by a refill
+  /// guard is not wedged, and appears here, not in the view. On a browser
+  /// database shared by several tabs the read reflects this tab's latest
+  /// known revision of the database.
+  // Implements: EVS-DEV-destination-drain/T
+  // the persisted delivery status: each destination's schedule, open halt
+  //   request, wedge record, refill guard and unserved reason, and the
+  //   current drainer's declaration, read from any process.
+  Future<DeliveryStatus> readDeliveryStatus() =>
+      backend.transaction((txn) async {
+        final epoch = await backend.readDrainEpochTxn(txn);
+        final stored = await backend.readDrainerDeclarationTxn(txn);
+        final drainer = stored != null && stored.epoch == epoch ? stored : null;
+        final heartbeat = await backend.readDrainHeartbeatTxn(txn);
+        final schedules = await backend.listSchedulesTxn(txn);
+        final destinations = <String, DestinationDeliveryStatus>{};
+        for (final entry in schedules.entries) {
+          final id = entry.key;
+          destinations[id] = DestinationDeliveryStatus(
+            schedule: entry.value,
+            openHaltRequest: await backend.readHaltRequestTxn(txn, id),
+            wedge: await backend.readWedgeRecordTxn(txn, id),
+            refillGuard: await backend.readRefillGuardTxn(txn, id),
+            unserved: drainer?.unserved[id],
+          );
+        }
+        return DeliveryStatus(
+          drainer: drainer,
+          heartbeat: heartbeat,
+          destinations: destinations,
+        );
+      });
 
   /// Request that the drainer halt delivery on destination [destinationId],
   /// and return the identifier of the request event.
@@ -998,6 +1156,8 @@ class DestinationRegistry {
   ///   through [wedgeHeadInTxn], which consumes the request, and returns
   ///   [HaltHonour.honoured]. [maxAttempts] is the retry budget in effect,
   ///   or null when the draining process does not register the destination.
+  ///   [drainerEpoch], [configuration] and [configurationFingerprint] are
+  ///   recorded as [wedgeHeadInTxn] records them.
   @internal
   Future<HaltHonour> honourHaltInTxn(
     Transaction txn,
@@ -1005,6 +1165,9 @@ class DestinationRegistry {
     required String destinationId,
     required String requestEventId,
     required int? maxAttempts,
+    required int drainerEpoch,
+    required Map<String, Object?>? configuration,
+    required String? configurationFingerprint,
   }) async {
     final request = await backend.readHaltRequestTxn(txn, destinationId);
     if (request == null || request.requestEventId != requestEventId) {
@@ -1024,6 +1187,9 @@ class DestinationRegistry {
       rowId: head.entryId,
       cause: WedgeCause.operatorHalt,
       maxAttempts: maxAttempts,
+      drainerEpoch: drainerEpoch,
+      configuration: configuration,
+      configurationFingerprint: configurationFingerprint,
     );
     return HaltHonour.honoured;
   }
@@ -1090,6 +1256,14 @@ class DestinationRegistry {
   /// destination (no budget is in effect for it there). No text from an attempt's outcome
   /// enters the event. The wedge event of an operator halt names the request
   /// event as its initiator's triggering event.
+  ///
+  /// [drainerEpoch] is the drain epoch of the lock the drainer holds, and
+  /// [configuration] and [configurationFingerprint] the configuration the
+  /// drainer declares for the destination and its fingerprint (null when the
+  /// draining process does not register the destination); the event records
+  /// them as `drainer_epoch`, `configuration` and
+  /// `configuration_fingerprint`, and the wedge record keeps the epoch and
+  /// the fingerprint.
   @internal
   Future<({StoredEvent wedgeEvent, String? discardedHaltRequestEventId})>
   wedgeHeadInTxn(
@@ -1099,6 +1273,9 @@ class DestinationRegistry {
     required String rowId,
     required WedgeCause cause,
     required int? maxAttempts,
+    required int drainerEpoch,
+    required Map<String, Object?>? configuration,
+    required String? configurationFingerprint,
   }) async {
     _observeBodyRun('wedgeHeadInTxn');
     if (maxAttempts == null && cause == WedgeCause.retryBudgetExhausted) {
@@ -1209,9 +1386,9 @@ class DestinationRegistry {
         'halt_request_event_id': halt?.event.eventId,
         'halt_requested_by': halt?.event.initiator.toJson(),
         'halt_purpose': halt?.purpose.wire,
-        'drainer_epoch': null,
-        'configuration_fingerprint': null,
-        'configuration': null,
+        'drainer_epoch': drainerEpoch,
+        'configuration_fingerprint': configurationFingerprint,
+        'configuration': configuration,
       },
       initiator: halted
           ? AutomationInitiator(
@@ -1228,6 +1405,8 @@ class DestinationRegistry {
         wedgeEventId: wedgeEvent.eventId,
         cause: cause,
         haltPurpose: halt?.purpose,
+        drainerEpoch: drainerEpoch,
+        configurationFingerprint: configurationFingerprint,
       ),
     );
     if (DeliveryTestHooks.current?.afterWedgeHeadInTxn?.call(destinationId) ??

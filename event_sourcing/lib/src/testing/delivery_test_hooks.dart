@@ -28,12 +28,22 @@ final Object _zoneKey = Object();
 /// the persisted schedules fail ([failListSchedules]); and run
 /// interleaving operations at named points between transactions
 /// ([beforeRegistryTransaction], [insideTransform], [afterFillReads],
-/// [afterHaltLoopTopRead], [beforeSendFence]). The boot of
+/// [afterHaltLoopTopRead], [beforeSendFence], [afterSendBeforeOutcome],
+/// [afterCommitBeforePublish], [beforeGrantDelivered]). The delivery cycle
+/// and its drain lock have seams that observe ([onInboundPoll]), hold an
+/// epoch raise or a queue-changing transaction while a test interleaves
+/// another party ([afterLockAcquireBeforeEpochBump],
+/// [insideEpochBumpBeforeCommit], [beforeQueueWrites]), and make an
+/// acquisition or a heartbeat fail ([failLockAcquisition],
+/// [failAfterExclusionObtained], [failDrainLockVerification],
+/// [failEpochBumpWithSerializationFailure], [stallEpochBumpPastQueryTimeout],
+/// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]). The boot of
 /// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
 /// injection after its library-version append ([afterBootVersionEvent]).
 /// The incompatible-generation guard and the Postgres lock session have
-/// seams that delay ([insideBootLock]), replace the timer that drives the lock
-/// session's probe ([timerFactory]), make an operation fail
+/// seams that delay ([insideBootLock]), replace the timers of the lock
+/// session's probe, the delivery cycle's cadence and heartbeat and a
+/// drain-lock request's retry ([timerFactory]), make an operation fail
 /// ([failGenerationRegistration], [failNextLockHeartbeat],
 /// [stallLockHeartbeatPastQueryTimeout], [failOldSessionTermination],
 /// [failLostSessionClose], [failProvisioningBeforeVersionWrite],
@@ -85,6 +95,20 @@ class DeliveryTestHooks {
     this.failProvisioningBeforeVersionWrite,
     this.webLocksUnavailable = false,
     this.schemaDeclaration,
+    this.failLockAcquisition,
+    this.failAfterExclusionObtained,
+    this.beforeGrantDelivered,
+    this.onInboundPoll,
+    this.afterLockAcquireBeforeEpochBump,
+    this.insideEpochBumpBeforeCommit,
+    this.beforeQueueWrites,
+    this.afterSendBeforeOutcome,
+    this.failDrainLockVerification,
+    this.failEpochBumpWithSerializationFailure,
+    this.stallEpochBumpPastQueryTimeout,
+    this.holdDrainKeyOutsideLibrary,
+    this.failNextHeartbeat,
+    this.afterCommitBeforePublish,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -222,8 +246,10 @@ class DeliveryTestHooks {
   /// so its server session stays alive until the library ends it.
   final bool Function()? failLostSessionClose;
 
-  /// Creates the periodic timers of the Postgres lock session's probe, in
-  /// place of `Timer.periodic`.
+  /// Creates the timers of the Postgres lock session's probe, of the
+  /// delivery cycle's cadence and heartbeat, and of a drain-lock request's
+  /// retry, in place of `Timer.periodic` (a one-shot timer is a periodic
+  /// one cancelled at its first tick).
   final Timer Function(Duration period, void Function(Timer timer) callback)?
   timerFactory;
 
@@ -242,6 +268,84 @@ class DeliveryTestHooks {
   /// the zone; its last step gives the schema version and the minimum
   /// compatible schema version they require and record.
   final List<PostgresMigrationStep>? schemaDeclaration;
+
+  /// Consulted at the start of every drain-lock acquisition, before the
+  /// backend obtains its exclusion primitive. Returning true makes the
+  /// acquisition throw [InjectedFailure] there, as an unreachable database
+  /// would.
+  final bool Function()? failLockAcquisition;
+
+  /// Consulted by a drain-lock acquisition on a backend over one database
+  /// handle after it obtained its exclusion primitive, inside the
+  /// transaction that raises the drain epoch, after its write. Returning
+  /// true makes the acquisition throw [InjectedFailure] there, so the epoch
+  /// is not raised and the primitive is given up.
+  final bool Function()? failAfterExclusionObtained;
+
+  /// Awaited by a drain-lock request after an acquisition succeeded and
+  /// before the request delivers the lock, so a test can cancel the request
+  /// in between.
+  final Future<void> Function()? beforeGrantDelivered;
+
+  /// Observes each run of the delivery cycle's inbound poll, after every
+  /// destination of the pass was drained. An exception it throws is
+  /// reported and does not reach the cycle.
+  final void Function()? onInboundPoll;
+
+  /// Awaited by a Postgres drain-lock acquisition after it took the drain
+  /// key on the lock session and before the transaction that raises the
+  /// drain epoch. Runs between the acquisition's statements, on no
+  /// transaction.
+  final Future<void> Function()? afterLockAcquireBeforeEpochBump;
+
+  /// Awaited by a Postgres drain-lock acquisition inside the transaction
+  /// that raises the drain epoch, after its write and before its commit.
+  /// It may only await a test-side signal.
+  final Future<void> Function()? insideEpochBumpBeforeCommit;
+
+  /// Awaited inside each queue-changing transaction of the drainer, after
+  /// the drain-lock check and before the transaction's writes. It may only
+  /// await a test-side signal.
+  final Future<void> Function(String destinationId)? beforeQueueWrites;
+
+  /// Awaited by the drainer after a send returned and before the
+  /// transaction that records its outcome opens.
+  final Future<void> Function(String destinationId)? afterSendBeforeOutcome;
+
+  /// Consulted by a Postgres drain-lock acquisition in place of the
+  /// verification, through the pool, that the lock session holds the drain
+  /// key. Returning true makes the verification report a mismatch, so the
+  /// acquisition gives the key up and throws
+  /// `DrainLockConfigurationException`.
+  final bool Function()? failDrainLockVerification;
+
+  /// Consulted by a Postgres drain-lock acquisition inside the transaction
+  /// that raises the drain epoch, after its write. Returning true makes the
+  /// library raise a serialization failure (SQLSTATE 40001) from the server
+  /// there, so the transaction rolls back.
+  final bool Function()? failEpochBumpWithSerializationFailure;
+
+  /// Consulted by a Postgres drain-lock acquisition inside the transaction
+  /// that raises the drain epoch, after its write. Returning true makes the
+  /// library run a statement on the lock session that lasts one second
+  /// longer than the lock session's query timeout, so the driver cancels it
+  /// on a live session.
+  final bool Function()? stallEpochBumpPastQueryTimeout;
+
+  /// Consulted by a Postgres drain-lock acquisition before it checks
+  /// whether the lock session already holds the drain key. Returning true
+  /// makes the library take the drain key on the lock session without
+  /// creating a drain lock, as something other than the library would.
+  final bool Function()? holdDrainKeyOutsideLibrary;
+
+  /// Consulted by each drain-lock heartbeat. Returning true makes the
+  /// heartbeat fail, so the lock is reported lost.
+  final bool Function()? failNextHeartbeat;
+
+  /// Awaited by the event store after a transaction that appended events
+  /// committed and before it publishes them, as a continuation that resumes
+  /// late would wait.
+  final Future<void> Function()? afterCommitBeforePublish;
 
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.

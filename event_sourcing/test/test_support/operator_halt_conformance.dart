@@ -18,8 +18,6 @@ import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -28,6 +26,7 @@ import 'drain_wedge_conformance.dart'
     show budget, declaredWedgeEventKeys, expectWedgeRecordMatchesLog;
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
+import 'queue_test_support.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'halt-scenarios');
@@ -208,7 +207,7 @@ class _World {
     for (var i = 0; i < 20; i++) {
       final before = (await b.listFifoEntries(d.id)).length;
       final cursorBefore = await b.readFillCursor(d.id);
-      await fillBatch(d, backend: b, source: _source, clock: _fillNow);
+      await fillForTest(d, backend: b, source: _source, clock: _fillNow);
       final after = (await b.listFifoEntries(d.id)).length;
       if (after == before && await b.readFillCursor(d.id) == cursorBefore) {
         return;
@@ -218,6 +217,10 @@ class _World {
 
   Future<List<StoredEvent>> events(String entryType) =>
       backend.findAllEvents(entryType: entryType);
+
+  /// The drain epoch the database stores.
+  Future<int?> drainEpoch() =>
+      backend.transaction((txn) => backend.readDrainEpochTxn(txn));
 
   Future<List<StoredEvent>> wedgeEvents() =>
       events(kDestinationWedgedEntryType);
@@ -248,9 +251,14 @@ class _World {
     'events': <String>[
       for (final e in await backend.findAllEvents()) e.eventId,
     ],
+    'refill_guard': (await backend.transaction(
+      (txn) => backend.readRefillGuardTxn(txn, destId),
+    ))?.toJson(),
+    // The drain lock's records change with every acquisition the harness
+    // or a delivery cycle makes, not with a registry operation.
     'state_keys': <String>[
       for (final k in await db.backendStateKeys())
-        if (k != 'registry_check') k,
+        if (k != 'registry_check' && !drainLockRecordKeys.contains(k)) k,
     ]..sort(),
   };
 
@@ -275,7 +283,7 @@ void runOperatorHaltScenarios(
   group('operator halt scenarios ($label)', () {
     late _World w;
     var available = false;
-    final cycles = <SyncCycle>[];
+    final cycles = <TestCycle>[];
 
     setUp(() async {
       final db = await databaseFactory();
@@ -315,13 +323,8 @@ void runOperatorHaltScenarios(
       purpose: purpose,
     );
 
-    SyncCycle cycleOver(DestinationRegistry registry, {SyncPolicy? policy}) {
-      final cycle = SyncCycle(
-        registry: registry,
-        source: _source,
-        clock: _fillNow,
-        policy: policy,
-      );
+    TestCycle cycleOver(DestinationRegistry registry, {SyncPolicy? policy}) {
+      final cycle = TestCycle(registry, clock: _fillNow, policy: policy);
       cycles.add(cycle);
       return cycle;
     }
@@ -346,7 +349,7 @@ void runOperatorHaltScenarios(
         final head = await queued(d);
         final request = await requestHalt('x');
         await w.agree(<String>['x']);
-        await drain(d, registry: w.registry, policy: budget(7));
+        await drainForTest(d, registry: w.registry, policy: budget(7));
         expect(d.sent, isEmpty, reason: 'no send');
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
@@ -374,6 +377,7 @@ void runOperatorHaltScenarios(
             wedgeEventId: wedge.eventId,
             cause: WedgeCause.operatorHalt,
             haltPurpose: HaltPurpose.pause,
+            drainerEpoch: await w.drainEpoch(),
           ),
         );
         await w.agree(<String>['x']);
@@ -391,7 +395,7 @@ void runOperatorHaltScenarios(
           'x',
           purpose: HaltPurpose.reconfigure,
         );
-        await drain(d, registry: w.registry, policy: budget(7));
+        await drainForTest(d, registry: w.registry, policy: budget(7));
         final event = (await w.wedgeEvents()).single;
         expect(event.data.keys.toSet(), declaredWedgeEventKeys);
         expect(event.data, <String, Object?>{
@@ -412,7 +416,7 @@ void runOperatorHaltScenarios(
           'halt_request_event_id': request,
           'halt_requested_by': _operator.toJson(),
           'halt_purpose': 'reconfigure',
-          'drainer_epoch': null,
+          'drainer_epoch': await w.drainEpoch(),
           'configuration_fingerprint': null,
           'configuration': null,
         });
@@ -436,10 +440,10 @@ void runOperatorHaltScenarios(
           jitterFraction: 0.0,
           maxAttempts: 5,
         );
-        await drain(d, registry: w.registry, policy: slow);
+        await drainForTest(d, registry: w.registry, policy: slow);
         expect(d.sent, hasLength(1));
         await requestHalt('x');
-        await drain(d, registry: w.registry, policy: slow);
+        await drainForTest(d, registry: w.registry, policy: slow);
         expect(d.sent, hasLength(1), reason: 'the backoff is not waited out');
         final wedge = (await w.wedgeEvents()).single;
         expect(wedge.data['cause'], 'operator_halt');
@@ -473,7 +477,7 @@ void runOperatorHaltScenarios(
                 await requestHalt('x', on: other);
               },
             ),
-            () => drain(d, registry: w.registry, policy: budget(3)),
+            () => drainForTest(d, registry: w.registry, policy: budget(3)),
           );
           expect(fired, isTrue);
           expect(d.sent, isEmpty);
@@ -501,7 +505,7 @@ void runOperatorHaltScenarios(
               await requestHalt('x');
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(fired, isTrue);
         expect(d.sent, isEmpty);
@@ -536,7 +540,7 @@ void runOperatorHaltScenarios(
               );
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(fired, isTrue);
         expect(d.sent, isEmpty);
@@ -575,7 +579,7 @@ void runOperatorHaltScenarios(
               );
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(fired, isTrue);
         expect(d.sent, hasLength(1), reason: 'only the second item is sent');
@@ -621,7 +625,7 @@ void runOperatorHaltScenarios(
               );
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(fired, isTrue);
         expect(d.sent, isEmpty);
@@ -662,7 +666,7 @@ void runOperatorHaltScenarios(
               );
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(5)),
+          () => drainForTest(d, registry: w.registry, policy: budget(5)),
         );
         expect(fired, isTrue);
         expect(d.sent, hasLength(1), reason: 'one send, after the re-read');
@@ -703,7 +707,7 @@ void runOperatorHaltScenarios(
               }
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(refusal, isA<StateError>());
         expect(d.sent, hasLength(1));
@@ -723,7 +727,7 @@ void runOperatorHaltScenarios(
           script: <SendResult>[const SendTransient(error: 'busy')],
         );
         final head = await queued(d, notes: 2);
-        await drain(d, registry: w.registry, policy: budget(5));
+        await drainForTest(d, registry: w.registry, policy: budget(5));
         final first = await w.fence('x');
         expect(first?.entryId, head.entryId);
         expect(first?.attemptCount, 0);
@@ -736,7 +740,7 @@ void runOperatorHaltScenarios(
               await requestHalt('x');
             },
           ),
-          () => drain(
+          () => drainForTest(
             d,
             registry: w.registry,
             policy: budget(5),
@@ -765,7 +769,7 @@ void runOperatorHaltScenarios(
           blockBeforeSend: () => gate.future,
         );
         final head = await queued(d, notes: 2);
-        final pass = drain(d, registry: w.registry, policy: budget(3));
+        final pass = drainForTest(d, registry: w.registry, policy: budget(3));
         while (d.sent.isEmpty) {
           await Future<void>.delayed(const Duration(milliseconds: 1));
         }
@@ -796,7 +800,7 @@ void runOperatorHaltScenarios(
           blockBeforeSend: () => gate.future,
         );
         final head = await queued(d);
-        final pass = drain(d, registry: w.registry, policy: budget(3));
+        final pass = drainForTest(d, registry: w.registry, policy: budget(3));
         while (d.sent.isEmpty) {
           await Future<void>.delayed(const Duration(milliseconds: 1));
         }
@@ -817,7 +821,7 @@ void runOperatorHaltScenarios(
         );
         d.enqueueScript(const SendOk());
         await w.fillAll(d);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect(
           (await w.backend.listFifoEntries('x')).last.finalStatus,
           FinalStatus.sent,
@@ -840,13 +844,13 @@ void runOperatorHaltScenarios(
         final head = await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, isNull);
         expect(row.attempts.single.outcome, 'permanent');
         final request = await requestHalt('x');
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect(d.sent, hasLength(1), reason: 'no further send');
         final wedge = (await w.wedgeEvents()).single;
         expect(wedge.data['cause'], 'permanent_refusal');
@@ -867,7 +871,7 @@ void runOperatorHaltScenarios(
         final head = await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         await requestHalt('x');
         final before = await w.snapshot('x');
@@ -881,6 +885,9 @@ void runOperatorHaltScenarios(
                 rowId: head.entryId,
                 cause: WedgeCause.operatorHalt,
                 maxAttempts: budgetInEffect,
+                drainerEpoch: 1,
+                configuration: null,
+                configurationFingerprint: null,
               ),
             ),
             throwsA(
@@ -912,10 +919,10 @@ void runOperatorHaltScenarios(
           blockBeforeSend: () => block ? gate.future : Future<void>.value(),
         );
         await queued(d);
-        await drain(d, registry: w.registry, policy: budget(3));
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         block = true;
-        final pass = drain(d, registry: w.registry, policy: budget(3));
+        final pass = drainForTest(d, registry: w.registry, policy: budget(3));
         while (d.sent.length < 3) {
           await Future<void>.delayed(const Duration(milliseconds: 1));
         }
@@ -954,13 +961,12 @@ void runOperatorHaltScenarios(
         );
         await queued(d);
         for (var i = 0; i < 3; i++) {
-          await drain(d, registry: w.registry, policy: budget(5));
+          await drainForTest(d, registry: w.registry, policy: budget(5));
         }
         final request = await requestHalt('x');
         var resolved = budget(2);
-        final cycle = SyncCycle(
-          registry: w.registry,
-          source: _source,
+        final cycle = TestCycle(
+          w.registry,
           clock: _fillNow,
           policyResolver: () => resolved,
         );
@@ -994,7 +1000,7 @@ void runOperatorHaltScenarios(
               r2 = await requestHalt('x');
             },
           ),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(fired, isTrue);
         expect(d.sent, isEmpty);
@@ -1035,7 +1041,7 @@ void runOperatorHaltScenarios(
         final log = <LibraryLogRecord>[];
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(onLog: log.add),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(await w.wedgeEvents(), isEmpty, reason: label);
         expect(await w.halt('x'), isNull, reason: 'the record is cleared');
@@ -1117,14 +1123,14 @@ void runOperatorHaltScenarios(
         ];
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(onLog: log.add, afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(await w.wedgeEvents(), isEmpty);
         expect(cited(), isEmpty, reason: 'the wedge rolled back');
         expect((await w.halt('x'))?.requestEventId, 'no-such-event');
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(onLog: log.add),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         final wedge = (await w.wedgeEvents()).single;
         expect(wedge.data['cause'], 'permanent_refusal');
@@ -1210,10 +1216,10 @@ void runOperatorHaltScenarios(
             ),
           source: _source,
           securityContexts: w.db.securityFor(backend),
-          syncCycleTrigger: () async {
-            wakes += 1;
-          },
         );
+        store.deliveryTrigger = () async {
+          wakes += 1;
+        };
         final registry = DestinationRegistry(eventStore: store);
         Future<void> wakesOnce(
           String op,
@@ -1271,14 +1277,19 @@ void runOperatorHaltScenarios(
           data: <String, Object?>{'id': 'n1'},
           initiator: _init,
         );
-        await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+        await fillForTest(
+          d,
+          backend: backend,
+          source: _source,
+          clock: _fillNow,
+        );
         final head = (await backend.readFifoHead('x'))!;
         await registry.requestHalt(
           'x',
           initiator: _operator,
           purpose: HaltPurpose.pause,
         );
-        await drain(d, registry: registry, policy: budget(3));
+        await drainForTest(d, registry: registry, policy: budget(3));
         expect(
           (await backend.readFifoHead('x'))?.finalStatus,
           FinalStatus.wedged,
@@ -1437,7 +1448,7 @@ void runOperatorHaltScenarios(
           script: <SendResult>[const SendPermanent(error: 'no')],
         );
         await queued(d);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         await refused(
           () => requestHalt('x'),
           throws: isA<StateError>(),
@@ -1516,7 +1527,7 @@ void runOperatorHaltScenarios(
         );
         expect(await w.snapshot('x'), before);
         expect((await w.check())?.outcome, 'refused_halt_not_honoured');
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         await w.registry.tombstoneAndRefill(
           'x',
           head.entryId,
@@ -1588,7 +1599,7 @@ void runOperatorHaltScenarios(
         );
         expect(await w.snapshot('x'), before);
         expect((await w.check())?.outcome, 'refused_halt_not_honoured');
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         await w.registry.deleteDestination('x', initiator: _operator);
         await w.agree(<String>['x']);
       });
@@ -1615,7 +1626,7 @@ void runOperatorHaltScenarios(
         await w.activate(d);
         await w.note('x-after');
         await w.fillAll(d);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect(d.sent, hasLength(1));
         expect(await w.wedgeEvents(), isEmpty);
         await w.agree(<String>['x']);
@@ -1635,7 +1646,7 @@ void runOperatorHaltScenarios(
         );
         final head = await queued(d);
         await requestHalt('x');
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         await w.registry.deleteDestination('x', initiator: _operator);
         final deleted = (await w.events(kDestinationDeletedEntryType)).single;
         expect(deleted.data['tombstoned_row_id'], head.entryId);
@@ -1738,7 +1749,7 @@ void runOperatorHaltScenarios(
         // attempt is recorded alone and the head stays pending.
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(remote, registry: other, policy: budget(3)),
+          () => drainForTest(remote, registry: other, policy: budget(3)),
         );
         final row = (await w.backend.readFifoRow('remote', head.entryId))!;
         expect(row.finalStatus, isNull);
@@ -1806,37 +1817,47 @@ void runOperatorHaltScenarios(
       //   unserved nor logged as such.
       test('a woken pass sees the registry the operation left', () async {
         if (!available) return;
-        late SyncCycle cycle;
         final backend = await w.db.openBackend();
         final store = await EventStore.openForTest(
           storage: backend,
           entryTypes: EntryTypeRegistry(),
           source: _source,
           securityContexts: w.db.securityFor(backend),
-          syncCycleTrigger: () => cycle(),
         );
         final registry = DestinationRegistry(eventStore: store);
-        cycle = SyncCycle(registry: registry, source: _source, clock: _fillNow);
-        Future<void> settle() async {
-          await pumpEventQueue();
-          while (cycle.isInFlight) {
-            await Future<void>.delayed(const Duration(milliseconds: 1));
-          }
-        }
-
+        var passes = 0;
         final log = <LibraryLogRecord>[];
         await runWithDeliveryTestHooks(
-          DeliveryTestHooks(onLog: log.add),
+          DeliveryTestHooks(onLog: log.add, onInboundPoll: () => passes += 1),
           () async {
-            await registry.addDestination(
-              FakeDestination(id: 'x', allowHardDelete: true),
-              initiator: _init,
+            final cycle = await SyncCycle.start(
+              registry: registry,
+              clock: _fillNow,
+              cadence: const Duration(hours: 1),
             );
-            await settle();
-            expect(cycle.unserved, isEmpty, reason: 'after the registration');
-            await registry.deleteDestination('x', initiator: _operator);
-            await settle();
-            expect(cycle.unserved, isEmpty, reason: 'after the deletion');
+            try {
+              // Waits for the pass the operation's trigger started.
+              Future<void> settle(int before) async {
+                while (passes == before) {
+                  await Future<void>.delayed(const Duration(milliseconds: 1));
+                }
+                await pumpEventQueue();
+              }
+
+              var before = passes;
+              await registry.addDestination(
+                FakeDestination(id: 'x', allowHardDelete: true),
+                initiator: _init,
+              );
+              await settle(before);
+              expect(cycle.unserved, isEmpty, reason: 'after the registration');
+              before = passes;
+              await registry.deleteDestination('x', initiator: _operator);
+              await settle(before);
+              expect(cycle.unserved, isEmpty, reason: 'after the deletion');
+            } finally {
+              await cycle.close();
+            }
           },
         );
         expect(
@@ -1977,12 +1998,12 @@ void runOperatorHaltScenarios(
         final before = await w.snapshot('x');
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry, policy: budget(3)),
+          () => drainForTest(d, registry: w.registry, policy: budget(3)),
         );
         expect(await w.snapshot('x'), before);
         expect(d.sent, isEmpty);
         await w.agree(<String>['x']);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect((await w.wedgeEvents()).single.data['cause'], 'operator_halt');
         await w.agree(<String>['x']);
       });
@@ -2004,7 +2025,7 @@ void runOperatorHaltScenarios(
           ],
         );
         await queued(d, notes: 4);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         await w.backend.transaction(
           (txn) => w.backend.writeHaltRequestTxn(
             txn,

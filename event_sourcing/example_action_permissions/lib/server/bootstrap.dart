@@ -17,6 +17,7 @@ class DemoServerComponents {
   const DemoServerComponents({
     required this.dispatcher,
     required this.eventStore,
+    required this.destinations,
     required this.directory,
     required this.policy,
     required this.idempotencyStore,
@@ -25,6 +26,12 @@ class DemoServerComponents {
 
   final ActionDispatcher dispatcher;
   final EventStore eventStore;
+
+  /// The destination registry of the server's database. The server starts
+  /// its delivery cycle over it; at most one delivery cycle drains a
+  /// database, and a server whose cycle cannot take the drain lock stands
+  /// by until it can.
+  final DestinationRegistry destinations;
   final UserDirectory directory;
   final AuthorizationPolicy policy;
 
@@ -203,6 +210,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
   return DemoServerComponents(
     dispatcher: dispatcher,
     eventStore: eventStore,
+    destinations: datastore.destinations,
     directory: directory,
     policy: policyBootstrap.policy,
     idempotencyStore: idempotencyStore,

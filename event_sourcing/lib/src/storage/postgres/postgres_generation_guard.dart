@@ -340,6 +340,8 @@ final class PostgresGenerationGuard {
   PostgresSessionIdentity? _oldIdentity;
   final List<Connection> _setAside = <Connection>[];
   Completer<void> _sessionLost = Completer<void>();
+  final Completer<void> _fenced = Completer<void>();
+  Completer<void> _registeredAgain = Completer<void>();
 
   /// The state of the backend's registrations.
   GenerationStatus get status => _status;
@@ -354,6 +356,42 @@ final class PostgresGenerationGuard {
 
   /// Completes when the current lock session is declared lost.
   Future<void> get sessionLost => _sessionLost.future;
+
+  /// Completes when the backend is fenced.
+  Future<void> get fenced => _fenced.future;
+
+  /// The current lock session. While a lost session is being replaced it is
+  /// the lost one.
+  PostgresLockSession get currentSession => _session;
+
+  /// Completes once every generation is registered on a live lock session:
+  /// at once while the status is registered, and otherwise when a
+  /// replacement session becomes current. Completes with
+  /// [GenerationFencedException] when the backend is fenced, never
+  /// successfully after that.
+  Future<void> whenRegistered() {
+    if (_status == GenerationStatus.fenced) {
+      return Future<void>.error(
+        GenerationFencedException(_fenceReason ?? 'the backend is fenced'),
+      );
+    }
+    if (_status == GenerationStatus.registered && !_session.isLost) {
+      return Future<void>.value();
+    }
+    if (_registeredAgain.isCompleted) _registeredAgain = Completer<void>();
+    return _registeredAgain.future;
+  }
+
+  /// Probes [session] as the heartbeat does, through its one-operation
+  /// queue: a failure or a timeout declares it lost and is rethrown.
+  Future<void> probeSession(PostgresLockSession session) async {
+    try {
+      await session.run((c) => c.execute('SELECT 1'));
+    } on Object catch (e) {
+      session.declareLost(e);
+      rethrow;
+    }
+  }
 
   /// Runs [op] on the current lock session. While a lost session is being
   /// replaced the current session is the lost one, and [op] fails: a
@@ -817,6 +855,7 @@ final class PostgresGenerationGuard {
       }
       _sessionLost = Completer<void>();
       _status = GenerationStatus.registered;
+      if (!_registeredAgain.isCompleted) _registeredAgain.complete();
       libraryLog(
         'generation_guard',
         'the lock session is replaced (pid ${next.identity.pid}) and every '
@@ -895,6 +934,12 @@ final class PostgresGenerationGuard {
     if (_status == GenerationStatus.fenced) return;
     _status = GenerationStatus.fenced;
     _fenceReason = reason;
+    if (!_fenced.isCompleted) _fenced.complete();
+    if (!_registeredAgain.isCompleted) {
+      _registeredAgain.completeError(GenerationFencedException(reason));
+      // Nobody may be waiting; the error is delivered to whoever is.
+      unawaited(_registeredAgain.future.then((_) {}, onError: (Object _) {}));
+    }
     libraryLog(
       'generation_guard',
       'the backend is fenced: $reason; every transaction is refused, every '
@@ -973,7 +1018,9 @@ final class PostgresGenerationRegistration extends GenerationRegistration {
   @override
   @internal
   Future<void> recordInTxn(Transaction txn) async {
-    final session = (txn as PostgresTxn).session;
+    final pgTxn = txn as PostgresTxn;
+    final session = pgTxn.session;
+    pgTxn.wroteBackendState = true;
     for (final c in _components) {
       final hex = c.key.toUnsigned(64).toRadixString(16).padLeft(16, '0');
       await session.execute(

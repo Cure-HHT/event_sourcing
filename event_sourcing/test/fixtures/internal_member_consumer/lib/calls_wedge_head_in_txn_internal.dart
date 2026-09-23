@@ -14,6 +14,9 @@ Future<void> wedgeDirectly(DestinationRegistry registry, EventStore store) =>
         rowId: 'row',
         cause: WedgeCause.permanentRefusal,
         maxAttempts: 1,
+        drainerEpoch: 1,
+        configuration: null,
+        configurationFingerprint: null,
       );
     });
 
@@ -26,5 +29,8 @@ Future<void> honourDirectly(DestinationRegistry registry, EventStore store) =>
         destinationId: 'dest',
         requestEventId: 'request',
         maxAttempts: 1,
+        drainerEpoch: 1,
+        configuration: null,
+        configurationFingerprint: null,
       );
     });

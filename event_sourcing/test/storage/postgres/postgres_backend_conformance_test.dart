@@ -34,6 +34,7 @@ void main() {
         provisionSchema: true,
       );
     },
+    reopen: (_) => PostgresBackend.open(url: url!, sslMode: SslMode.disable),
     backendLabel: 'postgres',
     securityStoreOf: (backend) =>
         PostgresSecurityContextStore(backend: backend as PostgresBackend),

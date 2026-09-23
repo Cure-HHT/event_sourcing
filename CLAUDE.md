@@ -250,16 +250,26 @@ The currently-trusted inputs are:
   live registration, the serialized boots, and on Postgres the
   per-transaction fence): one that does not lets builds of different
   majors write one database side by side, and nothing checks that it
-  guards. Precondition (`EVS-PRD-destinations/L`):
+  guards. Every backend is also trusted to exclude drainers through its
+  drain lock (`EVS-DEV-destination-drain-lock/A`): on Postgres a session
+  advisory lock on the lock session below, on Sembast outside the
+  browser an isolate-local registry per open database handle; one that
+  admits two drainers of a database lets both send and record outcomes.
+  In the browser a Sembast database grants no drain lock (the tabs of an
+  origin are not excluded from one another), so a delivery cycle there
+  refuses to start. Precondition
+  (`EVS-PRD-destinations/L`):
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
   positions, schedules, replay requests, wedge records, halt requests,
-  send fences, the registry check record, the database identity, the
-  generation records and the view catch-up marks, and the security
-  context it stores beside each event) changes only through the
-  library's operations, and reserved system events are appended only
-  by the library's own operations.
+  send fences, refill guards, the registry check record, the database
+  identity, the generation records, the view catch-up marks, the fencing
+  epoch and the declared configuration, and the security context it
+  stores beside each event) changes only through the library's
+  operations, and reserved system events are appended only by the
+  library's own operations. At most one drainer per database: the
+  requirement is `EVS-PRD-destinations/V`.
   Every `StorageBackend` member that writes, and the event store's
   reserved append operations, are `@internal`, which the analyzer
   enforces but nothing enforces at run time: the consumer
@@ -267,8 +277,8 @@ The currently-trusted inputs are:
   backend in another package keeps the guard only by marking its own
   overrides `@internal`.
 - **Deployment-supplied Postgres lock-session path.** The connection a
-  `PostgresBackend` holds its generation locks on (`lockUrl`, or the
-  pool's URL) is trusted to be one server session reaching the pool's
+  `PostgresBackend` holds its generation locks and the drain lock on
+  (`lockUrl`, or the pool's URL) is trusted to be one server session reaching the pool's
   server, database and schema (a direct connection or a session-mode
   proxy that resets sessions, never a transaction-mode pooler), to carry
   the keepalives the library sets, and to let the lock role end its own
@@ -309,7 +319,18 @@ The currently-trusted inputs are:
   recording the outcome category, the numeric status and the budget in
   effect (`EVS-PRD-destinations/P`-`R`), so every wedge decision is
   auditable from the log; the clock's readings are not recorded, so its
-  influence on the fill window is an unaudited input.
+  influence on the fill window is an unaudited input. Queue items are
+  built by the configuration the drain-lock holder declares
+  (`declaredConfiguration`); `destination_registered` records the
+  registering process's configuration, not the one in effect, and the
+  processes sharing a database are expected to declare identical
+  configurations. The wedge and recovery events record the declared
+  configuration in effect and its fingerprint. The `configurationVersion`
+  given to `SyncCycle.start` is trusted on faith as well: it decides
+  whether a recovery of a reconfigure halt is accepted and whether a fill
+  under a refill guard writes; the log records its value, but the library
+  cannot check that it changes when code it cannot read (a transform, a
+  predicate, a batching rule) changes (`spec/roadmap/sync.md`).
 - **Caller-supplied `Principal.userId` on action submissions and
   event metadata.** Identity is still accepted on faith — the
   substrate does not authenticate which user the caller claims to be

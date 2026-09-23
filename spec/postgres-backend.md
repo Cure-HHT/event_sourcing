@@ -123,7 +123,10 @@ operates on. The tables are:
   area (library-version watermark, current sequence counter, last-hash
   cache, originator identity, the provisioned schema version pair, the
   database's generation record and the records that map the generation
-  guard's lock keys back to their components). Columns
+  guard's lock keys back to their components, the drain epoch
+  (`drain_epoch`), the drainer's declaration (`drainer_declaration`) and
+  heartbeat (`drain_heartbeat`), and each destination's refill guard
+  (`refill_guard_<destination>`)). Columns
   `key TEXT PRIMARY KEY`, `value JSONB`.
 - **`security_context`** — the persisted role/permission/scope snapshot
   the substrate maintains for closed-under-events authorization
@@ -148,6 +151,16 @@ orientation; the DDL file is the source of truth.
   `nextSequenceNumber` calls serialize as expected. The substrate is
   single-writer-per-source by design; this just prevents accidental
   concurrent writers from silently corrupting the chain.
+- A transaction that wrote `backend_state` (every append does, through
+  the sequence counter) and lost a serialization race is re-run after
+  `LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE`, taken before
+  its snapshot, so the re-run waits for the writes it lost to and cannot
+  lose the same race again. The runtime role therefore needs a privilege
+  that `SHARE ROW EXCLUSIVE` requires on `backend_state` (it writes the
+  table anyway: `INSERT`, `UPDATE` and `DELETE`). A re-run of a
+  transaction that wrote nothing to `backend_state` takes no lock, so a
+  read-only role needs only `SELECT`. While the lock is held every other
+  write to `backend_state`, and so every append, waits.
 
 ## What's the same as sembast
 
@@ -197,6 +210,16 @@ store to the dedicated `backend_state` table.
   and no idle-session timeout on it; a proxy between the process and the
   database has client-side timeouts of its own, which the deployment
   configures. The lock role must be allowed to end its own sessions.
+- The drain lock lives on the same lock session: a session advisory lock
+  whose key derives from the database, the schema and the database
+  identity (EVS-DEV-destination-drain-lock/A). Every acquisition raises
+  `drain_epoch` in a transaction on the lock session after confirming the
+  key and the identity, then checks through the pool that the lock
+  session holds the key; every queue-changing transaction of the drainer
+  reads `drain_epoch` under a share lock as its first step
+  (EVS-DEV-destination-drain-lock/B). When the lock session is declared
+  lost, its replacement ends the old server session if it still holds
+  the drain key, as for the generation locks.
 - JSONB payloads accept native Postgres JSON operators on the
   underlying column, but the substrate's API surface does not expose
   them; all reads go through the abstract `StorageBackend` methods.

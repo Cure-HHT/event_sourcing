@@ -13,6 +13,7 @@
 // guard's lock session, provisioning, Web Locks) are read through the same
 // `DeliveryTestHooks.current` gate this probe exercises, which is null
 // without assertions for every seam alike.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -258,6 +259,29 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
       fired.add('failListSchedules');
       return false;
     },
+    // Observed only: the cycle takes the drain lock, so its passes run.
+    failLockAcquisition: () {
+      fired.add('failLockAcquisition');
+      return false;
+    },
+    failAfterExclusionObtained: () {
+      fired.add('failAfterExclusionObtained');
+      return false;
+    },
+    onInboundPoll: () => fired.add('onInboundPoll'),
+    beforeQueueWrites: (destinationId) async {
+      fired.add('beforeQueueWrites $destinationId');
+    },
+    afterSendBeforeOutcome: (destinationId) async {
+      fired.add('afterSendBeforeOutcome $destinationId');
+    },
+    timerFactory: (period, callback) {
+      fired.add('timerFactory');
+      return Timer.periodic(period, callback);
+    },
+    afterCommitBeforePublish: () async {
+      fired.add('afterCommitBeforePublish');
+    },
   );
   late final String? storedEndDate;
   late final String? registryEndDate;
@@ -284,12 +308,13 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     endDateSetEvents = (await backend.findAllEvents(
       entryType: 'system.destination_end_date_set',
     )).length;
-    final cycle = SyncCycle(
+    final cycle = await SyncCycle.start(
       registry: bundle.destinations,
-      source: bundle.eventStore.source,
+      cadence: const Duration(hours: 1),
     );
     await cycle();
     await cycle();
+    await cycle.close();
   });
   final sentItems = (await backend.listFifoEntries(
     healthy.id,

@@ -235,7 +235,10 @@ same conformance harness:
   a `view_rows(view_name, row_key, row_data, …)` table. The schema is
   provisioned once per deployment with `PostgresBackend.provision` (or
   `open(provisionSchema: true)` in development); `open` performs no DDL
-  and refuses a schema its build does not support.
+  and refuses a schema its build does not support. Several processes may
+  share one database: one delivery cycle drains it, holding the drain lock
+  on the backend's lock session, and the others stand by
+  (`EVS-PRD-destinations/V`).
 
 Builds that share one database register their data generation (the
 data-format major and each entry type's major) with an
@@ -246,7 +249,12 @@ so an older build is refused afterwards. On Postgres the guard holds
 advisory locks on a dedicated lock session per backend; on the web it holds
 Web Locks; a Sembast database outside the browser is used by one process.
 A backend several processes or tabs share is trusted to run this guard;
-the two reference backends do. Three inputs of the guard are trusted
+the two reference backends do. Every backend is also trusted to exclude
+drainers through its drain lock: on Postgres an advisory lock on the lock
+session, on Sembast outside the browser one holder per open database
+handle in an isolate. In the browser a Sembast database grants no drain
+lock, since the tabs of an origin would not exclude one another, so a
+delivery cycle there refuses to start. Three inputs of the guard are trusted
 without a pluggable interface: the Postgres lock-session path (`lockUrl`,
 or the pool's URL), trusted to be one server session reaching the pool's
 server, database and schema -- a direct connection or a session-mode
@@ -260,11 +268,12 @@ The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
-requests, wedge records, halt requests, send fences, the registry check
-record, the database identity, the generation records and the view
-catch-up marks, and the security context it stores beside each event)
-changes only through the library's operations, and reserved system events
-are appended only by the library's own operations. The event store's
+requests, wedge records, halt requests, send fences, refill guards, the
+registry check record, the database identity, the generation records, the
+view catch-up marks, the fencing epoch and the declared configuration, and
+the security context it stores beside each event) changes only through the
+library's operations, and reserved system events are appended only by the
+library's own operations. The event store's
 reserved append operations are `@internal`, and so is every
 `StorageBackend` member that writes; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
@@ -310,13 +319,23 @@ deployment — see the guide's "Advanced" chapter for detail:
   consumes an open request, and `cancelHalt` withdraws one. A delivery
   cycle fills and sends only the destinations its registry holds, reports
   the others in `SyncCycle.unserved`, and still honours halt requests on
-  them. The delivery configuration the application supplies is trusted
+  them. `SyncCycle.start` starts the cycle of a database and `close`
+  stops it; at most one cycle drains a database, and a cycle that cannot
+  take the drain lock stands by and takes over when it is released. Each
+  pass records the configuration the drainer declares for each destination
+  (`declaredConfiguration`, fingerprinted by `configurationFingerprint`),
+  so a recovery of a `reconfigure` halt is accepted only once a changed
+  configuration is in effect; `DestinationRegistry.readDeliveryStatus`
+  reads the drainer's declaration and heartbeat and each destination's
+  halt request, wedge, refill guard and unserved reason from any process. The delivery configuration the application supplies is trusted
   on faith: the `Destination`'s filter (a predicate closure included) and
   transform, its send outcomes, the `SyncPolicy` given to
   `SyncCycle` (statically or through `policyResolver`; its retry curve
   decides backoff and its attempt budget, at least one, decides when an
-  item wedges) and the `clock` given to `SyncCycle` (fill computes its
-  window from it; its readings are not recorded). The wedge event makes
+  item wedges), the `clock` given to `SyncCycle` (fill computes its
+  window from it; its readings are not recorded) and the
+  `configurationVersion` (changed whenever code the library cannot read
+  changes; the log records it but cannot check it). The wedge event makes
   each wedge decision auditable from the log. Every store folds the
   library's default destination-wedges view (`default_destination_wedges`,
   registered by `EventStore.open`): one row per wedged destination, keyed

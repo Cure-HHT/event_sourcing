@@ -2,6 +2,11 @@
 // demo bootstrap runs against
 //   PostgresBackend, satisfying the conformance harness alongside the
 //   sembast flavor in bootstrap_test.dart.
+// Verifies: EVS-PRD-destinations/V
+// two server instances booted the way the demo server boots share one
+//   database: each starts a delivery cycle over its registry, one drains
+//   and the other stands by; once the draining instance closes its cycle,
+//   another instance's cycle drains.
 //
 // Gated on PG_TEST_URL. Drops + recreates the `public` schema in the
 // per-test factory so each call returns a deterministic empty database
@@ -12,10 +17,13 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:postgres/postgres.dart';
+
+import 'package:action_permissions_demo/server/bootstrap.dart';
 
 import 'bootstrap_test.dart' show runBootstrapTests;
 import 'support/demo_bootstrap.dart';
@@ -61,4 +69,55 @@ void main() {
   }
 
   runBootstrapTests(factory, label: 'postgres');
+
+  test('two server instances: one drains, the other stands by', () async {
+    final first = await factory();
+    final a = await _boot(
+      first.backend,
+      'aaaa0001-0000-4000-8000-0000000000a1',
+    );
+    final cycleA = await SyncCycle.start(
+      registry: a.destinations,
+      cadence: const Duration(milliseconds: 200),
+    );
+    try {
+      expect(cycleA.state, SyncCycleState.running);
+      expect(await Isolate.run(() => _otherInstanceCycleState(url)), 'standby');
+      await cycleA.close();
+      expect(await Isolate.run(() => _otherInstanceCycleState(url)), 'running');
+    } finally {
+      await cycleA.close();
+    }
+  });
+}
+
+Future<DemoServerComponents> _boot(
+  StorageBackend backend,
+  String installIdentifier,
+) => bootstrapDemoServer(
+  backend: backend,
+  idempotencyStore: PostgresIdempotencyStore.forBackend(
+    backend as PostgresBackend,
+  ),
+  permissionsYaml: validPermissionsYaml,
+  usersYaml: validUsersYaml,
+  installIdentifier: installIdentifier,
+);
+
+/// Boots a second server instance on [url] the way the demo server boots,
+/// starts its delivery cycle, and returns the cycle's state.
+Future<String> _otherInstanceCycleState(String url) async {
+  final backend = await PostgresBackend.open(
+    url: url,
+    sslMode: SslMode.disable,
+  );
+  final b = await _boot(backend, 'aaaa0001-0000-4000-8000-0000000000b1');
+  final cycle = await SyncCycle.start(
+    registry: b.destinations,
+    cadence: const Duration(milliseconds: 200),
+  );
+  final state = cycle.state.name;
+  await cycle.close();
+  await b.eventStore.close();
+  return state;
 }

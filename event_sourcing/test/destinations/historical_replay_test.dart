@@ -11,7 +11,6 @@ import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
@@ -134,7 +133,7 @@ void main() {
       );
       // The operation enqueues nothing itself; the next fill replays.
       expect(await _readAllFifoRows(backend, 'x'), isEmpty);
-      await fillBatch(dest, backend: backend, source: _source);
+      await fillForTest(dest, backend: backend, source: _source);
 
       // batchCapacity = 2 → rows of 2, 2, 1 for 5 events.
       final rows = await _readAllFifoRows(backend, 'x');
@@ -176,7 +175,7 @@ void main() {
         DateTime.now().add(const Duration(days: 1)),
         initiator: _testInit,
       );
-      await fillBatch(dest, backend: backend, source: _source);
+      await fillForTest(dest, backend: backend, source: _source);
 
       expect(await backend.readFifoHead('x'), isNull);
       // fill_cursor untouched — replay did not run.
@@ -218,7 +217,7 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
-      await fillBatch(dest, backend: backend, source: _source);
+      await fillForTest(dest, backend: backend, source: _source);
 
       // Replay must land a FIFO row with exactly the 3 seeded events,
       // and advance fill_cursor past them.
@@ -330,7 +329,7 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
-      await fillBatch(native, backend: backend, source: _source);
+      await fillForTest(native, backend: backend, source: _source);
 
       final rows = await _readAllFifoRows(backend, 'native');
       expect(rows, hasLength(1));
@@ -394,7 +393,7 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
-      await fillBatch(auditMirror, backend: backend, source: _source);
+      await fillForTest(auditMirror, backend: backend, source: _source);
 
       final rows = await _readAllFifoRows(backend, 'audit_mirror');
       expect(

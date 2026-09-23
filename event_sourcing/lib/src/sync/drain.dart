@@ -22,7 +22,8 @@
 //   queue)
 // Implements: EVS-PRD-destinations/J
 // (every attempt is recorded, in the
-//   transaction that commits the outcome it produced)
+//   transaction that commits the outcome it produced, or not at all when
+//   that transaction does not commit)
 // Implements: EVS-DEV-destination-drain/C
 // (the attempt and the status it
 //   produces commit in one transaction, or the attempt alone when the wedge
@@ -61,14 +62,43 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
+
+/// The configuration the drainer declares for a destination, and its
+/// fingerprint, recorded in the wedge events the drainer appends for it.
+@internal
+final class DrainerConfiguration {
+  const DrainerConfiguration({
+    required this.configuration,
+    required this.fingerprint,
+  });
+
+  /// The declared configuration map (`declaredConfiguration`).
+  final Map<String, Object?> configuration;
+
+  /// Its fingerprint (`configurationFingerprint`).
+  final String fingerprint;
+}
+
+/// The first step of every queue-changing transaction of the drainer:
+/// checks [lock] inside [txn], then runs the `beforeQueueWrites` test seam.
+Future<void> _lockCheck(
+  DrainLock lock,
+  Transaction txn,
+  String destinationId,
+) async {
+  await lock.assertHeldInTxn(txn);
+  await DeliveryTestHooks.current?.beforeQueueWrites?.call(destinationId);
+}
 
 /// Drain the head of [destination]'s queue, in the backend of [registry]'s
 /// event store: derive the head's status from its recorded attempts, check
@@ -128,12 +158,26 @@ import 'package:meta/meta.dart' show internal;
 /// falls back to [SyncPolicy.defaults]. Its `maxAttempts` is the budget in
 /// effect, recorded in every wedge event. A budget below one is refused
 /// with an [ArgumentError] before anything is read or sent.
+///
+/// Every transaction that changes the queue (a wedge, a halt honour, the
+/// pre-send fence, each outcome) checks [lock] first and commits nothing
+/// when the drainer no longer holds it: the [DrainLockLostException]
+/// propagates to the caller, and no send starts after it. [declared] is the
+/// configuration the drainer declares for the destination, recorded with
+/// [lock]'s epoch in the wedge events it appends. [stopRequested], when it
+/// returns true at the top of an iteration or once the pre-send fence has
+/// committed, ends the drain before any further halt honour or send (the
+/// delivery cycle is closing, or detected the loss of its lock); an outcome
+/// already being recorded still commits.
 @internal
 Future<void> drain(
   Destination destination, {
   required DestinationRegistry registry,
+  required DrainLock lock,
   Clock? clock,
   SyncPolicy? policy,
+  DrainerConfiguration? declared,
+  bool Function()? stopRequested,
 }) async {
   final backend = registry.backend;
   final now = clock ?? () => DateTime.now().toUtc();
@@ -141,6 +185,7 @@ Future<void> drain(
   checkRetryBudget(effective);
   final destinationId = destination.id;
   while (true) {
+    if (stopRequested?.call() ?? false) return;
     // (1) Read the head. A wedged head halts the drain; recovery is
     // tombstoneAndRefill. readFifoHead returns the wedged row (rather than
     // skipping it) so UI surfaces can observe the wedge via that entry
@@ -154,8 +199,10 @@ Future<void> drain(
     if (_derivedCause(head, effective.maxAttempts) != null) {
       await _wedgeFromAttempts(
         registry,
+        lock,
         destinationId: destinationId,
         maxAttempts: effective.maxAttempts,
+        declared: declared,
       );
       return;
     }
@@ -169,9 +216,11 @@ Future<void> drain(
     if (requested != null) {
       final honour = await _honourHalt(
         registry,
+        lock,
         destinationId: destinationId,
         requestEventId: requested.requestEventId,
         maxAttempts: effective.maxAttempts,
+        declared: declared,
       );
       if (honour == null || honour == HaltHonour.honoured) return;
       continue;
@@ -224,6 +273,7 @@ Future<void> drain(
     final fenceAt = now();
     final proceed = await backend.transaction((txn) async {
       _observeFenceBodyRun(destinationId);
+      await _lockCheck(lock, txn, destinationId);
       if (await backend.readHaltRequestTxn(txn, destinationId) != null) {
         return false;
       }
@@ -246,6 +296,9 @@ Future<void> drain(
       return true;
     });
     if (!proceed) continue;
+    // A loss or close detected while the fence ran starts no send; nothing
+    // is awaited between this check and the send.
+    if (stopRequested?.call() ?? false) return;
 
     // (7) Send. A thrown error is categorized as SendTransient: both mean
     // "try again later". Its full diagnostic is recorded in the item's
@@ -256,6 +309,9 @@ Future<void> drain(
     } catch (error, stack) {
       result = SendTransient(error: 'uncaught exception: $error\n$stack');
     }
+    await DeliveryTestHooks.current?.afterSendBeforeOutcome?.call(
+      destinationId,
+    );
 
     final attempt = _attemptFromResult(result, now());
     // head.attempts.length is the count before this attempt.
@@ -276,6 +332,7 @@ Future<void> drain(
           txn,
           collector,
         ) async {
+          await _lockCheck(lock, txn, destinationId);
           await backend.appendAttemptTxn(
             txn,
             destinationId,
@@ -289,17 +346,25 @@ Future<void> drain(
             rowId: head.entryId,
             cause: cause,
             maxAttempts: effective.maxAttempts,
+            drainerEpoch: lock.epoch,
+            configuration: declared?.configuration,
+            configurationFingerprint: declared?.fingerprint,
           );
           _injectOutcomeFailure(destinationId, attempt.outcome);
           return wedged.discardedHaltRequestEventId;
         });
         _logDiscardedHaltRequest(destinationId, discarded);
         _injectAfterWedgeTransaction(destinationId);
+      } on DrainLockLostException {
+        // The check is the transaction's first step: nothing committed,
+        // and a drainer that lost the lock records nothing more.
+        rethrow;
       } on Object catch (e, st) {
         // Logged first, so the failure is on record whatever the fallback
         // does. A transaction that reports failure may still have
         // committed (a connection lost during the commit, or a failure
-        // after it), so the fallback reads the head before it writes.
+        // after it), so the fallback reads the head before it writes, and
+        // before its lock check.
         libraryLog(
           'drain',
           'the transaction wedging the head of $destinationId reported '
@@ -316,6 +381,7 @@ Future<void> drain(
             final record = await backend.readWedgeRecordTxn(txn, destinationId);
             if (record?.rowId == head.entryId) return false;
           }
+          await _lockCheck(lock, txn, destinationId);
           // Anything but the pending head is refused by the storage layer.
           await backend.appendAttemptTxn(
             txn,
@@ -344,6 +410,7 @@ Future<void> drain(
     // next pass).
     final sent = result is SendOk;
     await backend.transaction((txn) async {
+      await _lockCheck(lock, txn, destinationId);
       await backend.appendAttemptTxn(txn, destinationId, head.entryId, attempt);
       if (sent) {
         await backend.setFinalStatusTxn(
@@ -369,10 +436,13 @@ Future<void> drain(
 /// queue item and records `max_attempts` as null, since no retry budget is
 /// in effect for the destination in this process. Returns without writing
 /// when the queue has no pending head or no request is open.
+///
+/// Its transactions check [lock] first, as the drain's do.
 @internal
 Future<void> honourHaltById(
   String destinationId, {
   required DestinationRegistry registry,
+  required DrainLock lock,
 }) async {
   final backend = registry.backend;
   final head = await backend.readFifoHead(destinationId);
@@ -385,16 +455,20 @@ Future<void> honourHaltById(
   if (_derivedCause(head, null) != null) {
     await _wedgeFromAttempts(
       registry,
+      lock,
       destinationId: destinationId,
       maxAttempts: null,
+      declared: null,
     );
     return;
   }
   await _honourHalt(
     registry,
+    lock,
     destinationId: destinationId,
     requestEventId: requested.requestEventId,
     maxAttempts: null,
+    declared: null,
   );
 }
 
@@ -403,25 +477,33 @@ Future<void> honourHaltById(
 /// transaction reported failure (logged; whether it committed is not known,
 /// and the next pass reads the head again before any send).
 Future<HaltHonour?> _honourHalt(
-  DestinationRegistry registry, {
+  DestinationRegistry registry,
+  DrainLock lock, {
   required String destinationId,
   required String requestEventId,
   required int? maxAttempts,
+  required DrainerConfiguration? declared,
 }) async {
   final HaltHonour honour;
   try {
-    honour = await registry.eventStore.runTransaction(
-      (txn, collector) => registry.honourHaltInTxn(
+    honour = await registry.eventStore.runTransaction((txn, collector) async {
+      await _lockCheck(lock, txn, destinationId);
+      return registry.honourHaltInTxn(
         txn,
         collector,
         destinationId: destinationId,
         requestEventId: requestEventId,
         maxAttempts: maxAttempts,
-      ),
-    );
+        drainerEpoch: lock.epoch,
+        configuration: declared?.configuration,
+        configurationFingerprint: declared?.fingerprint,
+      );
+    });
     if (honour == HaltHonour.honoured) {
       _injectAfterWedgeTransaction(destinationId);
     }
+  } on DrainLockLostException {
+    rethrow;
   } on Object catch (e, st) {
     libraryLog(
       'drain',
@@ -487,9 +569,11 @@ void _observeFenceBodyRun(String destinationId) {
 /// transaction committed is not known, and the next pass reads the head
 /// again before any send.
 Future<void> _wedgeFromAttempts(
-  DestinationRegistry registry, {
+  DestinationRegistry registry,
+  DrainLock lock, {
   required String destinationId,
   required int? maxAttempts,
+  required DrainerConfiguration? declared,
 }) async {
   final backend = registry.backend;
   try {
@@ -497,6 +581,7 @@ Future<void> _wedgeFromAttempts(
       txn,
       collector,
     ) async {
+      await _lockCheck(lock, txn, destinationId);
       final current = await backend.readFifoHeadTxn(txn, destinationId);
       if (current == null || current.finalStatus != null) return null;
       final cause = _derivedCause(current, maxAttempts);
@@ -508,11 +593,16 @@ Future<void> _wedgeFromAttempts(
         rowId: current.entryId,
         cause: cause,
         maxAttempts: maxAttempts,
+        drainerEpoch: lock.epoch,
+        configuration: declared?.configuration,
+        configurationFingerprint: declared?.fingerprint,
       );
       return wedged.discardedHaltRequestEventId;
     });
     _logDiscardedHaltRequest(destinationId, discarded);
     _injectAfterWedgeTransaction(destinationId);
+  } on DrainLockLostException {
+    rethrow;
   } on Object catch (e, st) {
     libraryLog(
       'drain',

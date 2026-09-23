@@ -325,6 +325,70 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Object drainExclusionKey(String databaseId) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId}) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int?> readDrainEpochTxn(Transaction txn) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearRefillGuardTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
   Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) =>
       throw UnimplementedError();
 

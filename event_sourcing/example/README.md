@@ -59,9 +59,10 @@ at hop 1. Materializer rows appear on hub as ingest commits, not
 on a separate code path.
 
 The single MaterialApp hosts the two panes split by a draggable
-horizontal divider. Each pane runs its own 1-second sync tick that
-fires the pane's `SyncCycle`: one pass fills every destination's queue
-from the log and drains it.
+horizontal divider. Each pane starts its own delivery cycle
+(`SyncCycle.start`, over its own database, with a 1-second cadence): a
+pass fills every destination's queue from the log and drains it, and
+every append and registry operation on the pane wakes it at once.
 
 ---
 

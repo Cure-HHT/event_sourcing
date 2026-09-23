@@ -25,7 +25,7 @@ E. The library SHALL publish the events, view changes and queue changes of a com
 
 **Why filtered subscriptions rather than firehose?** A consumer typically cares about a small slice of the log — events for a specific aggregate, events of a specific type, events from a specific source. Pushing the whole log to every consumer wastes their CPU, network, and memory; filtering at the substrate concentrates that work in the library where it can be optimized once.
 
-**Why order-preserving delivery?** State derivation depends on per-aggregate event order. A consumer that receives events out of order would have to resort them itself, which is both extra complexity and a place where consumer bugs can corrupt state. The library guarantees order at delivery so the consumer can fold incrementally.
+**Why order-preserving delivery?** State derivation depends on per-aggregate event order. A consumer that receives events out of order would have to resort them itself, which is both extra complexity and a place where consumer bugs can corrupt state. The library guarantees order at delivery so the consumer can fold incrementally. Within one event store the library publishes the events of a committed transaction only once no transaction of that store that appended a lower sequence number is still in flight: the store's transactions commit in the order of the sequence numbers they append, since each append advances the one sequence counter, but the continuations that publish them can resume in any order, so publication waits behind a lower in-flight first sequence. A transaction that appended and then failed, or whose run was discarded and re-run, releases its place, so it holds back no later publication. The converse follows: a transaction body that waits for the live delivery of an event a later transaction of the same store appends waits for its own transaction to end, which it never does; a body does not wait on the live delivery of later appends.
 
 **Why at-least-once rather than exactly-once?** Exactly-once delivery requires either consumer-side acknowledgement protocols that complicate the API, or end-to-end transactionality that is impractical across reconnects and across tiers. At-least-once with hash-addressable events is operationally simpler: the consumer's deduplication is a one-line check against the event's hash, and loss — which is unrecoverable — is ruled out.
 
@@ -35,6 +35,8 @@ E. The library SHALL publish the events, view changes and queue changes of a com
 
 ## Changelog
 
+- 2026-09-23 | 026033a7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of C: publication of a committed transaction waits behind a lower in-flight first sequence of the same store; a failed or re-run transaction releases its place
 - 2026-09-23 | 026033a7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add E: publish only a committed transaction's changes, once, after its commit
 - 2026-08-10 | 57530d86 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

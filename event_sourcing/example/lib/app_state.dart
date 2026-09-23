@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:flutter/foundation.dart';
@@ -11,10 +13,53 @@ import 'package:flutter/foundation.dart';
 /// the widget tasks read through. Per-panel selection highlighting and
 /// the DETAIL column both resolve through these getters.
 class AppState extends ChangeNotifier {
-  AppState({required this.registry, required this.policyNotifier});
+  AppState({
+    required this.registry,
+    required this.policyNotifier,
+    this.cadence = const Duration(seconds: 1),
+  });
 
   final DestinationRegistry registry;
   final ValueNotifier<SyncPolicy> policyNotifier;
+
+  /// How often the pane's delivery cycle runs a pass when nothing wakes it
+  /// sooner. An append, and every registry operation that commits, wake it
+  /// at once.
+  final Duration cadence;
+
+  SyncCycle? _cycle;
+
+  /// The pane's delivery cycle, once [startDelivery] started it.
+  SyncCycle? get cycle => _cycle;
+
+  /// Starts the pane's delivery cycle over [registry]: it fills every
+  /// destination's queue from the log and drains it with the policy the
+  /// policy bar selects, resolved once per pass. At most one delivery cycle
+  /// drains a database; the two panes use two databases, so each runs one.
+  Future<SyncCycle> startDelivery() async {
+    final running = _cycle;
+    if (running != null) return running;
+    final cycle = await SyncCycle.start(
+      registry: registry,
+      cadence: cadence,
+      policyResolver: () => policyNotifier.value,
+    );
+    _cycle = cycle;
+    return cycle;
+  }
+
+  /// Closes the pane's delivery cycle, if one is started.
+  Future<void> stopDelivery() async {
+    final cycle = _cycle;
+    _cycle = null;
+    await cycle?.close();
+  }
+
+  @override
+  void dispose() {
+    unawaited(stopDelivery());
+    super.dispose();
+  }
 
   String? _selectedAggregateId;
   String? _selectedEventId;

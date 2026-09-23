@@ -18,14 +18,13 @@ import 'dart:math' show Random;
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
-import 'queue_test_support.dart' show wedgeHeadForTest;
+import 'queue_test_support.dart'
+    show TestCycle, drainForTest, fillForTest, wedgeHeadForTest;
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'wedge-scenarios');
@@ -129,9 +128,24 @@ Future<void> _expectWedgeRecordMatchesLog(
       haltPurpose: open.data['halt_purpose'] == null
           ? null
           : HaltPurpose.fromWire(open.data['halt_purpose']! as String),
+      drainerEpoch: open.data['drainer_epoch'] as int?,
+      configurationFingerprint:
+          open.data['configuration_fingerprint'] as String?,
     ),
     reason: 'the record names the open wedge',
   );
+  // The recorded configuration hashes to the fingerprint recorded beside it.
+  final configuration = open.data['configuration'];
+  if (configuration != null) {
+    expect(
+      configurationFingerprint(Map<String, Object?>.from(configuration as Map)),
+      open.data['configuration_fingerprint'],
+      reason: 'the recorded configuration hashes to its fingerprint',
+    );
+  } else {
+    expect(open.data['configuration_fingerprint'], isNull);
+  }
+  expect(open.data['drainer_epoch'], isA<int>());
   final row = await backend.readFifoRow(destinationId, record!.rowId);
   expect(row?.finalStatus, FinalStatus.wedged);
 }
@@ -215,13 +229,17 @@ class _World {
     for (var i = 0; i < 20; i++) {
       final before = (await b.listFifoEntries(d.id)).length;
       final cursorBefore = await b.readFillCursor(d.id);
-      await fillBatch(d, backend: b, source: _source, clock: _fillNow);
+      await fillForTest(d, backend: b, source: _source, clock: _fillNow);
       final after = (await b.listFifoEntries(d.id)).length;
       if (after == before && await b.readFillCursor(d.id) == cursorBefore) {
         return;
       }
     }
   }
+
+  /// The drain epoch the database stores.
+  Future<int?> drainEpoch() =>
+      backend.transaction((txn) => backend.readDrainEpochTxn(txn));
 
   Future<List<StoredEvent>> wedgeEvents({String? destinationId}) async =>
       <StoredEvent>[
@@ -315,7 +333,7 @@ void runDrainWedgeScenarios(
           script: <SendResult>[const SendPermanent(error: 'refused')],
         );
         final head = await queued(d);
-        await drain(d, registry: w.registry, policy: budget(7));
+        await drainForTest(d, registry: w.registry, policy: budget(7));
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
         expect(row.attempts.single.outcome, 'permanent');
@@ -339,7 +357,7 @@ void runDrainWedgeScenarios(
           'halt_request_event_id': null,
           'halt_requested_by': null,
           'halt_purpose': null,
-          'drainer_epoch': null,
+          'drainer_epoch': await w.drainEpoch(),
           'configuration_fingerprint': null,
           'configuration': null,
         });
@@ -371,7 +389,7 @@ void runDrainWedgeScenarios(
         );
         final head = await queued(d);
         for (var i = 0; i < 3; i++) {
-          await drain(d, registry: w.registry, policy: budget(3));
+          await drainForTest(d, registry: w.registry, policy: budget(3));
           await expectWedgeRecordMatchesLog(w.store, 'x');
         }
         expect(d.sent, hasLength(3));
@@ -399,7 +417,7 @@ void runDrainWedgeScenarios(
           script: <SendResult>[const SendTransient(error: 'busy')],
         );
         await queued(d);
-        await drain(d, registry: w.registry, policy: budget(1));
+        await drainForTest(d, registry: w.registry, policy: budget(1));
         final event = (await w.wedgeEvents()).single;
         expect(event.data['cause'], 'retry_budget_exhausted');
         expect(event.data['http_status'], isNull);
@@ -460,7 +478,7 @@ void runDrainWedgeScenarios(
         final log = <LibraryLogRecord>[];
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(onLog: log.add, afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         await expectFallbackEndState(head, log);
       });
@@ -491,7 +509,7 @@ void runDrainWedgeScenarios(
               return false;
             },
           ),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         expect(consulted, <String>[kDestinationWedgedEntryType]);
         await expectFallbackEndState(head, log);
@@ -515,7 +533,7 @@ void runDrainWedgeScenarios(
               return false;
             },
           ),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         expect(consulted, <String>['x']);
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
@@ -528,6 +546,7 @@ void runDrainWedgeScenarios(
             rowId: head.entryId,
             wedgeEventId: event.eventId,
             cause: WedgeCause.permanentRefusal,
+            drainerEpoch: await w.drainEpoch(),
           ),
         );
         await expectChainIntact(w.backend);
@@ -556,7 +575,7 @@ void runDrainWedgeScenarios(
             onLog: log.add,
             afterWedgeTransaction: (id) => true,
           ),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
@@ -572,7 +591,7 @@ void runDrainWedgeScenarios(
         expect(drainLog.first.message, contains('reported failure'));
         expect(drainLog.first.error, isA<InjectedFailure>());
         expect(drainLog.last.message, contains('committed before'));
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         expect(d.sent, hasLength(1), reason: 'the wedged head is not resent');
       });
 
@@ -596,7 +615,7 @@ void runDrainWedgeScenarios(
               afterWedgeHeadInTxn: (id) => true,
               failOutcomeTransaction: (id, outcome) => true,
             ),
-            () => drain(d, registry: w.registry),
+            () => drainForTest(d, registry: w.registry),
           );
         } on Object catch (e) {
           escaped = e;
@@ -652,11 +671,11 @@ void runDrainWedgeScenarios(
         );
         final head = await queued(d);
         for (var i = 0; i < 3; i++) {
-          await drain(d, registry: w.registry, policy: budget(5));
+          await drainForTest(d, registry: w.registry, policy: budget(5));
         }
         expect(d.sent, hasLength(3));
         expect(await w.wedgeEvents(), isEmpty);
-        await drain(d, registry: w.registry, policy: budget(2));
+        await drainForTest(d, registry: w.registry, policy: budget(2));
         expect(d.sent, hasLength(3), reason: 'no send at the lowered budget');
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
@@ -682,10 +701,10 @@ void runDrainWedgeScenarios(
         final head = await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         expect((await w.backend.readFifoHead('x'))!.finalStatus, isNull);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         expect(d.sent, hasLength(1));
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
@@ -710,17 +729,17 @@ void runDrainWedgeScenarios(
           ],
         );
         await queued(d);
-        await drain(d, registry: w.registry, policy: budget(2));
+        await drainForTest(d, registry: w.registry, policy: budget(2));
         await expectWedgeRecordMatchesLog(w.store, 'x');
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry, policy: budget(2)),
+          () => drainForTest(d, registry: w.registry, policy: budget(2)),
         );
         await expectWedgeRecordMatchesLog(w.store, 'x');
         final pending = (await w.backend.readFifoHead('x'))!;
         expect(pending.finalStatus, isNull);
         expect(pending.attempts, hasLength(2));
-        await drain(d, registry: w.registry, policy: budget(2));
+        await drainForTest(d, registry: w.registry, policy: budget(2));
         expect(d.sent, hasLength(2));
         final event = (await w.wedgeEvents()).single;
         expect(event.data['cause'], 'retry_budget_exhausted');
@@ -740,7 +759,7 @@ void runDrainWedgeScenarios(
         await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         var tries = 0;
         final log = <LibraryLogRecord>[];
@@ -752,7 +771,7 @@ void runDrainWedgeScenarios(
               return true;
             },
           ),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         expect(tries, 1);
         expect(d.sent, hasLength(1));
@@ -779,7 +798,7 @@ void runDrainWedgeScenarios(
         await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         final log = <LibraryLogRecord>[];
         await runWithDeliveryTestHooks(
@@ -787,7 +806,7 @@ void runDrainWedgeScenarios(
             onLog: log.add,
             afterWedgeTransaction: (id) => true,
           ),
-          () => drain(d, registry: w.registry),
+          () => drainForTest(d, registry: w.registry),
         );
         expect(
           log.where((r) => r.message.contains('recorded attempts')),
@@ -797,7 +816,7 @@ void runDrainWedgeScenarios(
           (await w.backend.readFifoHead('x'))!.finalStatus,
           FinalStatus.wedged,
         );
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         expect(d.sent, hasLength(1));
         expect(await w.wedgeEvents(), hasLength(1));
         await expectWedgeRecordMatchesLog(w.store, 'x');
@@ -822,8 +841,8 @@ void runDrainWedgeScenarios(
         );
         await w.activate(x);
         await w.activate(y);
-        final cycle = SyncCycle(
-          registry: w.registry,
+        final cycle = TestCycle(
+          w.registry,
           clock: _fillNow,
           policy: budget(20),
         );
@@ -868,7 +887,7 @@ void runDrainWedgeScenarios(
         final head = await queued(d);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-          () => SyncCycle(registry: w.registry, clock: _fillNow).call(),
+          () => TestCycle(w.registry, clock: _fillNow).call(),
         );
         expect(d.sent, hasLength(1));
         await expectWedgeRecordMatchesLog(w.store, 'x');
@@ -879,7 +898,7 @@ void runDrainWedgeScenarios(
         w.a = await w.openProcess();
         final restarted = FakeDestination(id: 'x');
         await w.registry.addDestination(restarted, initiator: _init);
-        await SyncCycle(registry: w.registry, clock: _fillNow).call();
+        await TestCycle(w.registry, clock: _fillNow).call();
         expect(restarted.sent, isEmpty, reason: 'no send after the restart');
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.finalStatus, FinalStatus.wedged);
@@ -909,8 +928,8 @@ void runDrainWedgeScenarios(
           );
           final head = await queued(d);
           var current = budget(5);
-          final cycle = SyncCycle(
-            registry: w.registry,
+          final cycle = TestCycle(
+            w.registry,
             clock: _fillNow,
             policyResolver: () => current,
           );
@@ -942,7 +961,7 @@ void runDrainWedgeScenarios(
         'the budget a cycle records: static, default, resolved to none',
         () async {
           if (!available) return;
-          Future<int?> wedgeBudget(String id, SyncCycle Function() make) async {
+          Future<int?> wedgeBudget(String id, TestCycle Function() make) async {
             final d = FakeDestination(
               id: id,
               script: <SendResult>[const SendPermanent(error: 'no')],
@@ -959,26 +978,22 @@ void runDrainWedgeScenarios(
           expect(
             await wedgeBudget(
               'static',
-              () => SyncCycle(
-                registry: w.registry,
-                clock: _fillNow,
-                policy: budget(4),
-              ),
+              () => TestCycle(w.registry, clock: _fillNow, policy: budget(4)),
             ),
             4,
           );
           expect(
             await wedgeBudget(
               'none',
-              () => SyncCycle(registry: w.registry, clock: _fillNow),
+              () => TestCycle(w.registry, clock: _fillNow),
             ),
             SyncPolicy.defaults.maxAttempts,
           );
           expect(
             await wedgeBudget(
               'resolved-none',
-              () => SyncCycle(
-                registry: w.registry,
+              () => TestCycle(
+                w.registry,
                 clock: _fillNow,
                 policyResolver: () => null,
               ),
@@ -995,7 +1010,7 @@ void runDrainWedgeScenarios(
         if (!available) return;
         for (final n in <int>[0, -1]) {
           expect(
-            () => SyncCycle(registry: w.registry, policy: UncheckedPolicy(n)),
+            SyncCycle.start(registry: w.registry, policy: UncheckedPolicy(n)),
             throwsA(isA<ArgumentError>()),
           );
         }
@@ -1020,8 +1035,8 @@ void runDrainWedgeScenarios(
           final log = <LibraryLogRecord>[];
           await runWithDeliveryTestHooks(
             DeliveryTestHooks(onLog: log.add),
-            SyncCycle(
-              registry: w.registry,
+            TestCycle(
+              w.registry,
               clock: _fillNow,
               policyResolver: () => UncheckedPolicy(n),
             ).call,
@@ -1049,7 +1064,7 @@ void runDrainWedgeScenarios(
         await queued(d);
         final before = await w.snapshot('x');
         await expectLater(
-          drain(d, registry: w.registry, policy: UncheckedPolicy(0)),
+          drainForTest(d, registry: w.registry, policy: UncheckedPolicy(0)),
           throwsA(isA<ArgumentError>()),
         );
         expect(d.sent, isEmpty);
@@ -1073,7 +1088,7 @@ void runDrainWedgeScenarios(
           script: <SendResult>[const SendPermanent(error: echoed)],
         );
         final head = await queued(d);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         final event = (await w.wedgeEvents()).single;
         final encoded = jsonEncode(event.toMap());
         expect(encoded, isNot(contains('s3cr3t-value')));
@@ -1094,7 +1109,7 @@ void runDrainWedgeScenarios(
         await w.note('n0');
         await w.fillAll(d);
         final head = (await w.backend.readFifoHead('x'))!;
-        await drain(d, registry: w.registry, policy: budget(1));
+        await drainForTest(d, registry: w.registry, policy: budget(1));
         final event = (await w.wedgeEvents()).single;
         expect(event.data['cause'], 'retry_budget_exhausted');
         final encoded = jsonEncode(event.toMap());
@@ -1136,7 +1151,7 @@ void runDrainWedgeScenarios(
       }
       await w.note('n0');
       await w.fillAll(x);
-      await drain(x, registry: w.registry);
+      await drainForTest(x, registry: w.registry);
       final wedge = (await w.wedgeEvents()).single;
       await w.fillAll(withSystem);
       await w.fillAll(withoutSystem);
@@ -1171,9 +1186,9 @@ void runDrainWedgeScenarios(
           ],
         );
         await queued(d);
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect((await w.backend.readFifoHead('x'))!.attempts, hasLength(1));
-        await drain(d, registry: w.registry, policy: budget(3));
+        await drainForTest(d, registry: w.registry, policy: budget(3));
         expect(await w.backend.readFifoHead('x'), isNull);
         expect(await w.wedgeEvents(), isEmpty);
         expect(await w.wedgeRecord('x'), isNull);
@@ -1193,11 +1208,11 @@ void runDrainWedgeScenarios(
           ],
         );
         await queued(d, notes: 2);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         await expectWedgeRecordMatchesLog(w.store, 'x');
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         await expectWedgeRecordMatchesLog(w.store, 'x');
-        await SyncCycle(registry: w.registry, clock: _fillNow).call();
+        await TestCycle(w.registry, clock: _fillNow).call();
         expect(d.sent, hasLength(1));
         expect(await w.wedgeEvents(), hasLength(1));
         await expectWedgeRecordMatchesLog(w.store, 'x');
@@ -1235,6 +1250,9 @@ void runDrainWedgeScenarios(
                 rowId: rowId,
                 cause: cause,
                 maxAttempts: maxAttempts,
+                drainerEpoch: 1,
+                configuration: null,
+                configurationFingerprint: null,
               ),
             ),
             throwsA(error),
@@ -1292,7 +1310,7 @@ void runDrainWedgeScenarios(
           maxAttempts: null,
           error: isA<ArgumentError>(),
         );
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         await expectWedgeRecordMatchesLog(w.store, 'x');
         // The wedged head is refused by the pending check itself, before
         // the status write would refuse a repeated status.
@@ -1325,7 +1343,7 @@ void runDrainWedgeScenarios(
           // A recorded refusal on the pending head, as the fallback leaves.
           await runWithDeliveryTestHooks(
             DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-            () => drain(d, registry: w.registry),
+            () => drainForTest(d, registry: w.registry),
           );
           const stale = WedgeRecord(
             rowId: 'stale-row',
@@ -1345,6 +1363,9 @@ void runDrainWedgeScenarios(
                 rowId: head.entryId,
                 cause: WedgeCause.permanentRefusal,
                 maxAttempts: 3,
+                drainerEpoch: 1,
+                configuration: null,
+                configurationFingerprint: null,
               ),
             ),
             throwsA(
@@ -1460,7 +1481,7 @@ void runDrainWedgeScenarios(
               if (op == 'wedgeHeadInTxn') wedgeRuns.add(op);
             },
           ),
-          SyncCycle(registry: w.registry, clock: _fillNow).call,
+          TestCycle(w.registry, clock: _fillNow).call,
         );
         await pumpEventQueue();
       } finally {
@@ -1514,14 +1535,14 @@ void runDrainWedgeScenarios(
         ],
       );
       final head = await queued(d);
-      await drain(d, registry: w.registry);
+      await drainForTest(d, registry: w.registry);
       expect(await w.wedgeRecord('x'), isNotNull);
       await expectWedgeRecordMatchesLog(w.store, 'x');
       await w.registry.tombstoneAndRefill('x', head.entryId, initiator: _init);
       expect(await w.wedgeRecord('x'), isNull);
       await expectWedgeRecordMatchesLog(w.store, 'x');
       await w.fillAll(d);
-      await drain(d, registry: w.registry);
+      await drainForTest(d, registry: w.registry);
       expect(await w.wedgeRecord('x'), isNotNull);
       await expectWedgeRecordMatchesLog(w.store, 'x');
       await w.registry.deleteDestination('x', initiator: _init);

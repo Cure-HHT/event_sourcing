@@ -5,8 +5,6 @@
 // sembast_web after another tab commits first), what the operation returns,
 // records and appends reflects only the committed run.
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -195,11 +193,11 @@ void main() {
     );
     await note('n1');
     await note('n2');
-    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
     final rows = await backend.listFifoEntries('x');
     expect(rows, hasLength(2));
 
-    await drain(
+    await drainForTest(
       FakeDestination(
         id: 'x',
         script: <SendResult>[const SendPermanent(error: 'no')],
@@ -220,8 +218,8 @@ void main() {
     expect(await audits(kDestinationWedgeRecoveredEntryType), hasLength(1));
     await expectWedgesViewMatchesQueue(store);
 
-    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
-    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
+    await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
     await wedgeHeadForTest(registry, 'x');
     await registry.deleteDestination('x', initiator: _init);
     final deleted = await audits(kDestinationDeletedEntryType);
@@ -242,7 +240,7 @@ void main() {
     await registry.addDestination(d, initiator: _init);
     await registry.setStartDate(id, DateTime.utc(2026, 1, 1), initiator: _init);
     await note('$id-n1');
-    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
     return d;
   }
 
@@ -269,7 +267,7 @@ void main() {
           if (u is Delta<StoredEvent>) published.add(u.value);
         });
     final runsBefore = backend.bodyRuns;
-    await drain(d, registry: registry);
+    await drainForTest(d, registry: registry);
     await pumpEventQueue();
     await sub.cancel();
     expect(backend.bodyRuns - runsBefore, greaterThanOrEqualTo(2));
@@ -294,12 +292,12 @@ void main() {
     backend.rerunEnabled = false;
     await runWithDeliveryTestHooks(
       DeliveryTestHooks(afterWedgeHeadInTxn: (id) => true),
-      () => drain(d, registry: registry),
+      () => drainForTest(d, registry: registry),
     );
     expect((await backend.readFifoHead('x'))!.finalStatus, isNull);
     await expectWedgeRecordMatchesLog(store, 'x');
     backend.rerunEnabled = true;
-    await drain(d, registry: registry);
+    await drainForTest(d, registry: registry);
     final events = await audits(kDestinationWedgedEntryType);
     expect(events, hasLength(1));
     expect((await wedgeRecord('x'))?.wedgeEventId, events.single.eventId);
@@ -358,7 +356,7 @@ void main() {
       purpose: HaltPurpose.reconfigure,
     );
     final runsBefore = backend.bodyRuns;
-    await drain(d, registry: registry);
+    await drainForTest(d, registry: registry);
     expect(backend.bodyRuns - runsBefore, greaterThanOrEqualTo(2));
     expect(d.sent, isEmpty);
     final events = await audits(kDestinationWedgedEntryType);
@@ -383,12 +381,12 @@ void main() {
       initiator: _init,
     );
     await note('x-n1');
-    await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+    await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
     final head = (await backend.readFifoHead('x'))!;
     final fenceRuns = <String>[];
     await runWithDeliveryTestHooks(
       DeliveryTestHooks(onFenceBodyRun: fenceRuns.add),
-      () => drain(d, registry: registry),
+      () => drainForTest(d, registry: registry),
     );
     expect(fenceRuns, <String>['x', 'x']);
     expect(d.sent, hasLength(1));
@@ -397,5 +395,93 @@ void main() {
     );
     expect(fence?.entryId, head.entryId);
     expect(fence?.attemptCount, 0);
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // an acquisition raises the drain epoch once, and the lock records the
+  //   committed run's value.
+  // Verifies: EVS-DEV-destination-drain-lock/A
+  // every acquisition raises the stored epoch.
+  test('a drain-lock acquisition raises the epoch once', () async {
+    final lock = await backend.tryAcquireDrainLock(
+      databaseId: store.databaseId,
+    );
+    expect(lock.epoch, 1);
+    expect(await backend.transaction(backend.readDrainEpochTxn), 1);
+    await lock.release();
+    final again = await backend.tryAcquireDrainLock(
+      databaseId: store.databaseId,
+    );
+    expect(again.epoch, 2);
+    await again.release();
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // the pass start records the committed run's heartbeat and declaration.
+  // Verifies: EVS-DEV-destination-drain-lock/E
+  // each pass writes one heartbeat record, numbered by pass.
+  test("the pass start records the committed run's heartbeat", () async {
+    await registry.addDestination(FakeDestination(id: 'x'), initiator: _init);
+    final cycle = await SyncCycle.start(
+      registry: registry,
+      cadence: const Duration(hours: 1),
+    );
+    addTearDown(cycle.close);
+    store.deliveryTrigger = null;
+    await cycle();
+    await cycle();
+    final heartbeat = await backend.transaction(backend.readDrainHeartbeatTxn);
+    expect(heartbeat?.pass, 2);
+    final declaration = await backend.transaction(
+      backend.readDrainerDeclarationTxn,
+    );
+    expect(declaration?.fingerprints.keys, <String>['x']);
+  });
+
+  // Verifies: EVS-PRD-event-log/G
+  // an accepted recovery of a reconfigure halt appends one recovery event,
+  //   and the refill guard it writes names that event.
+  // Verifies: EVS-DEV-destination-drain/F
+  // the recovery writes its refill guard in the committed run only.
+  test("a reconfigure recovery's guard names the committed event", () async {
+    await registry.addDestination(FakeDestination(id: 'x'), initiator: _init);
+    await registry.setStartDate(
+      'x',
+      DateTime.utc(2026, 1, 1),
+      initiator: _init,
+    );
+    await registry.requestHalt(
+      'x',
+      initiator: _init,
+      purpose: HaltPurpose.reconfigure,
+    );
+    await note('n1');
+    final first = await SyncCycle.start(
+      registry: registry,
+      clock: _fillNow,
+      cadence: const Duration(hours: 1),
+      configurationVersion: 'v1',
+    );
+    store.deliveryTrigger = null;
+    await first();
+    await first.close();
+    final head = (await backend.readFifoHead('x'))!;
+    expect(head.finalStatus, FinalStatus.wedged);
+    final second = await SyncCycle.start(
+      registry: registry,
+      clock: _fillNow,
+      cadence: const Duration(hours: 1),
+      configurationVersion: 'v2',
+    );
+    addTearDown(second.close);
+    store.deliveryTrigger = null;
+    await second();
+    await registry.tombstoneAndRefill('x', head.entryId, initiator: _init);
+    final recovered = await audits(kDestinationWedgeRecoveredEntryType);
+    expect(recovered, hasLength(1));
+    final guard = await backend.transaction(
+      (t) => backend.readRefillGuardTxn(t, 'x'),
+    );
+    expect(guard?.recoveryEventId, recovered.single.eventId);
   });
 }

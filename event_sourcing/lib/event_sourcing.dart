@@ -174,11 +174,7 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 // appendWithSecurity call.
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
-    show
-        EntryTypeVersionDowngradeError,
-        EventStore,
-        EventStoreSyncCycleTrigger,
-        RetentionResult;
+    show EntryTypeVersionDowngradeError, EventStore, RetentionResult;
 
 // Ingest types — error types, result types, and chain verdict.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
@@ -351,6 +347,23 @@ export 'src/security/system_entry_types.dart'
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/boot_check.dart' show BootCheck;
+export 'src/storage/drain_lock.dart'
+    show
+        DrainLock,
+        DrainLockBackendClosedException,
+        DrainLockConfigurationException,
+        DrainLockLossReason,
+        DrainLockLostException,
+        DrainLockRequest,
+        DrainLockUnavailableException;
+export 'src/storage/drain_records.dart'
+    show
+        DeliveryStatus,
+        DestinationDeliveryStatus,
+        DrainHeartbeat,
+        DrainerDeclaration,
+        RefillGuard,
+        UnservedReason;
 export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/generation.dart'
@@ -403,7 +416,9 @@ export 'src/subscriptions/update.dart'
 // Sync — the delivery cycle, its clock and its policy. The cycle is the
 // only entry point that fills and drains destination queues.
 export 'src/sync/clock.dart' show Clock;
-export 'src/sync/sync_cycle.dart' show SyncCycle, UnservedReason;
+export 'src/sync/declared_configuration.dart'
+    show configurationFingerprint, declaredConfiguration;
+export 'src/sync/sync_cycle.dart' show SyncCycle, SyncCycleState;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
 
 // Versions — entry-type versions and the library's data-format version.

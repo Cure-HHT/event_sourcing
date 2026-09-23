@@ -19,11 +19,8 @@ class _Pane {
     required this.backend,
     required this.source,
     required this.policyNotifier,
-  }) : cycle = SyncCycle(
-         registry: datastore.destinations,
-         source: source,
-         policyResolver: () => policyNotifier.value,
-       );
+    required this.cycle,
+  });
 
   final EventStoreBundle datastore;
   final SembastBackend backend;
@@ -117,11 +114,19 @@ Future<_Pane> _mkPane({
     }
   }
 
+  // A one-hour cadence: the test runs every pass it asserts on itself.
+  final cycle = await SyncCycle.start(
+    registry: datastore.destinations,
+    policyResolver: () => policyNotifier.value,
+    cadence: const Duration(hours: 1),
+  );
+  addTearDown(cycle.close);
   return _Pane(
     datastore: datastore,
     backend: backend,
     source: source,
     policyNotifier: policyNotifier,
+    cycle: cycle,
   );
 }
 

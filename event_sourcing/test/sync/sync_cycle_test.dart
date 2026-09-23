@@ -7,9 +7,11 @@
 //   destination's send does not cancel another destination's drain; SyncCycle
 //   swallows per-destination errors so all registered destinations are attempted)
 // Verifies: EVS-PRD-destinations/F
-// (dynamic registration — reentrancy guard
-//   prevents overlapping cycles; after a cycle completes a new call re-consults
-//   registry.all() so destinations added between cycles are included)
+// (dynamic registration — after a pass completes a new call re-consults
+//   registry.all() so destinations added between passes are included)
+// Verifies: EVS-DEV-destination-drain-lock/E
+// (a trigger that arrives during a pass makes the cycle run one more pass
+//   instead of running a second pass beside it)
 import 'dart:async';
 
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
@@ -19,8 +21,10 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -69,7 +73,24 @@ void main() {
       registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
+    final started = <SyncCycle>[];
+
+    Future<SyncCycle> start({Clock? clock, SyncPolicy? policy}) async {
+      final cycle = await SyncCycle.start(
+        registry: registry,
+        clock: clock,
+        policy: policy,
+        cadence: const Duration(hours: 1),
+      );
+      started.add(cycle);
+      return cycle;
+    }
+
     tearDown(() async {
+      for (final cycle in started) {
+        await cycle.close();
+      }
+      started.clear();
       await backend.close();
     });
 
@@ -92,10 +113,7 @@ void main() {
       await _enqueueOne(backend, 'slow', 'e1');
       await _enqueueOne(backend, 'fast', 'e1');
 
-      final sync = SyncCycle(
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 22, 10),
-      );
+      final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       final cycleFuture = sync.call();
 
       // Give the scheduler a few microtasks so the fast drain completes.
@@ -111,7 +129,7 @@ void main() {
       expect(slow.returned, hasLength(1));
     });
 
-    // Observed via a subclass that records the order of events.
+    // Observed through the inbound-poll seam.
     test('pollInbound runs after outbound drains complete', () async {
       final order = <String>[];
       final dest = _RecordingDestination(order, id: 'fake');
@@ -119,18 +137,20 @@ void main() {
 
       await _enqueueOne(backend, 'fake', 'e1');
 
-      final sync = _OrderRecordingSyncCycle(
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 22, 10),
-        order: order,
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(onInboundPoll: () => order.add('inbound-poll')),
+        () async {
+          final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
+          await sync.call();
+        },
       );
-      await sync.call();
       expect(order, ['drain-send', 'inbound-poll']);
     });
 
-    // When a cycle is in flight (a destination is awaiting a completer),
-    // a second call returns immediately with no new side effects.
-    test('reentrant call returns immediately without new drain', () async {
+    // When a pass is in flight (a destination is awaiting a completer), a
+    // second call starts nothing beside it: the running call runs one more
+    // pass, and the second call completes when that pass is done.
+    test('a reentrant call runs one more pass and waits for it', () async {
       final gate = Completer<void>();
       final dest = FakeDestination(
         id: 'fake',
@@ -141,24 +161,28 @@ void main() {
 
       await _enqueueOne(backend, 'fake', 'e1');
 
-      final sync = SyncCycle(
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 22, 10),
-      );
+      final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       final first = sync.call();
       // Give the first call enough microtasks to reach `send` and block
       // on the gate.
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(sync.isInFlight, isTrue);
+      expect(sync.state, SyncCycleState.running);
       expect(dest.sent, hasLength(1));
 
-      // Reentrant call — returns immediately, no new drain work.
-      await sync.call();
+      // Reentrant call: starts no drain work beside the running pass, and
+      // completes only once the pass it requested has run.
+      var secondDone = false;
+      final second = sync.call().then((_) => secondDone = true);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
       expect(dest.sent, hasLength(1));
+      expect(secondDone, isFalse);
 
       gate.complete();
       await first;
-      expect(sync.isInFlight, isFalse);
+      await second;
+      // The rerun found nothing more to send.
+      expect(dest.sent, hasLength(1));
+      expect(await backend.readFifoHead('fake'), isNull);
     });
 
     // After the first cycle completes, a subsequent call drains
@@ -172,10 +196,7 @@ void main() {
 
       await _enqueueOne(backend, 'fake', 'e1');
 
-      final sync = SyncCycle(
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 22, 10),
-      );
+      final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       await sync.call();
       expect(dest.sent, hasLength(1));
 
@@ -197,10 +218,7 @@ void main() {
       await _enqueueOne(backend, 'boomed', 'e1');
       await _enqueueOne(backend, 'healthy', 'e1');
 
-      final sync = SyncCycle(
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 22, 10),
-      );
+      final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       await sync.call();
 
       // Both got a send call.
@@ -243,8 +261,7 @@ void main() {
         maxAttempts: 2,
       );
 
-      final sync = SyncCycle(
-        registry: registry,
+      final sync = await start(
         clock: () => DateTime.utc(2027, 1, 1),
         policy: tinyPolicy,
       );
@@ -262,7 +279,7 @@ void main() {
     // Defensive: when no destinations are registered, the cycle is a
     // near-no-op (just invokes pollInbound).
     test('empty registry: cycle runs pollInbound and exits', () async {
-      final sync = SyncCycle(registry: registry);
+      final sync = await start();
       await sync.call(); // no throw, no error
     });
   });
@@ -280,25 +297,6 @@ class _RecordingDestination extends FakeDestination {
   Future<SendResult> send(WirePayload payload) async {
     _order.add('drain-send');
     return super.send(payload);
-  }
-}
-
-/// Subclass that records "inbound-poll" in [order] inside
-/// [pollInbound], so the ordering test can assert outbound-drain
-/// happens before inbound-poll.
-class _OrderRecordingSyncCycle extends SyncCycle {
-  _OrderRecordingSyncCycle({
-    required super.registry,
-    required this.order,
-    super.clock,
-  });
-
-  final List<String> order;
-
-  @override
-  Future<void> pollInbound() async {
-    order.add('inbound-poll');
-    return super.pollInbound();
   }
 }
 

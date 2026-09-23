@@ -409,6 +409,10 @@ class ActionDispatcher {
           }
         }
       });
+      // Implements: EVS-DEV-destination-drain-lock/D
+      // the committed dispatch wakes the delivery cycle; the wake never
+      //   raises into the dispatch.
+      events.wakeDeliveryCycle();
     } on Object catch (err) {
       // Transaction was rolled back by the backend. Distinguish:
       //   - execute() threw  → emit execution_failed denial (we captured

@@ -10,7 +10,6 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -468,7 +467,7 @@ void main() {
         initiator: _testInit,
       );
       expect(await backend.listFifoEntries('gap'), isEmpty);
-      await fillBatch(dest, backend: backend);
+      await fillForTest(dest, backend: backend);
 
       var fifo = await backend.listFifoEntries('gap');
       var fifoIds = fifo.expand((r) => r.eventIds).toList();
@@ -487,7 +486,7 @@ void main() {
         DateTime.utc(2026, 4, 1),
         initiator: _testInit,
       );
-      await fillBatch(dest, backend: backend);
+      await fillForTest(dest, backend: backend);
 
       fifo = await backend.listFifoEntries('gap');
       fifoIds = fifo.expand((r) => r.eventIds).toList();

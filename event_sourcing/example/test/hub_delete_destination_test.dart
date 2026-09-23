@@ -15,12 +15,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 class _Hub {
-  _Hub(this.backend, this.datastore, this.state, this.destination, this.cycle);
+  _Hub(this.backend, this.datastore, this.state, this.destination);
   final SembastBackend backend;
   final EventStoreBundle datastore;
   final AppState state;
   final DemoDestination destination;
-  final SyncCycle cycle;
+
+  /// Runs a pass of the hub's delivery cycle.
+  Future<void> cycle() => state.cycle!();
 }
 
 Future<_Hub> _mkHub(String name) async {
@@ -48,16 +50,14 @@ Future<_Hub> _mkHub(String name) async {
     initiator: const AutomationInitiator(service: 'test'),
   );
   final policy = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
-  return _Hub(
-    backend,
-    datastore,
-    AppState(registry: datastore.destinations, policyNotifier: policy),
-    destination,
-    SyncCycle(
-      registry: datastore.destinations,
-      policyResolver: () => policy.value,
-    ),
+  // A one-hour cadence: the test runs every pass it asserts on itself.
+  final state = AppState(
+    registry: datastore.destinations,
+    policyNotifier: policy,
+    cadence: const Duration(hours: 1),
   );
+  await state.startDelivery();
+  return _Hub(backend, datastore, state, destination);
 }
 
 Future<void> _note(_Hub hub, String id) => hub.datastore.eventStore.append(
@@ -74,6 +74,7 @@ Future<void> _note(_Hub hub, String id) => hub.datastore.eventStore.append(
 void main() {
   test('delete is refused while the head is pending', () async {
     final hub = await _mkHub('hub-delete-refused.db');
+    addTearDown(hub.state.stopDelivery);
     // Nothing can be delivered: the head stays pending.
     hub.destination.connection.value = Connection.broken;
     await _note(hub, 'n1');
@@ -152,6 +153,9 @@ void main() {
     expect(find.text('Secondary (deleted)'), findsOneWidget);
     expect(find.textContaining('sent'), findsOneWidget);
     expect(find.textContaining('tombstoned'), findsOneWidget);
-    await tester.runAsync(() => hub.backend.close());
+    await tester.runAsync(() async {
+      await hub.state.stopDelivery();
+      await hub.backend.close();
+    });
   });
 }

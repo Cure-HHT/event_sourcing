@@ -156,6 +156,18 @@ jobs:
       - name: Incompatible-generation guard and lock session on Postgres
         run: flutter test test/storage/postgres/postgres_generation_guard_test.dart
         working-directory: event_sourcing
+      - name: Delivery cycle and drain lock scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_delivery_cycle_test.dart
+        working-directory: event_sourcing
+      - name: Reconfigure halt and refill guard scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_reconfigure_test.dart
+        working-directory: event_sourcing
+      - name: Concurrent appends from several instances on Postgres
+        run: flutter test test/storage/postgres/postgres_concurrent_appends_test.dart
+        working-directory: event_sourcing
+      - name: Drain lock across processes on Postgres
+        run: flutter test test/storage/postgres/postgres_drain_lock_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

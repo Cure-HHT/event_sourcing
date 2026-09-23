@@ -47,10 +47,13 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_drain_lock.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_generation_guard.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
@@ -191,7 +194,20 @@ class PostgresBackend extends StorageBackend {
   ///
   /// Besides its connection pool, the backend opens one dedicated
   /// connection for its lifetime, the lock session, on which it holds the
-  /// incompatible-generation guard's locks. It connects to [lockUrl] when
+  /// incompatible-generation guard's locks and, while a delivery cycle over
+  /// one of its event stores drains, the drain lock of the database: at
+  /// most one process drains a database, and a delivery cycle in any other
+  /// process stands by (`SyncCycle.start`). The deployment requirements this
+  /// sets: a process that starts a delivery cycle needs CPU while it has no
+  /// requests to serve (the cycle's cadence and heartbeat are timers in
+  /// that process), and a deployment keeps at least one such process
+  /// running at all times; a process that receives no traffic (a canary)
+  /// either does not start a delivery cycle, or accepts that it may become
+  /// the drainer and fill under its own declared configuration; revisions
+  /// with the same data-format major and the same entry-type majors share
+  /// the database in any mix, while a major step is deployed
+  /// stop-then-start, and the incompatible-generation guard refuses an
+  /// overlap. It connects to [lockUrl] when
   /// given, and to [url] otherwise. The lock connection must be one real
   /// server session: a direct connection to the database, or a session-mode
   /// proxy that resets sessions on release; a transaction-mode pooler is not
@@ -470,9 +486,10 @@ class PostgresBackend extends StorageBackend {
   @internal
   Pool<void> get pool => _pool;
 
-  /// Close the underlying connection pool. Idempotent: a second call is
-  /// a no-op. After close, every public I/O method on this instance
-  /// throws [PostgresBackendClosedException].
+  /// Close the underlying connection pool and the lock session, after
+  /// releasing a drain lock granted through this backend. Idempotent: a
+  /// second call is a no-op. After close, every public I/O method on this
+  /// instance throws [PostgresBackendClosedException].
   // Implements: EVS-DEV-postgres-backend/D
   // close is idempotent and
   //   subsequent I/O surfaces a typed Exception (not the underlying
@@ -481,6 +498,9 @@ class PostgresBackend extends StorageBackend {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    _closedSignal.complete();
+    final lock = _liveDrainLock;
+    if (lock != null) await lock.release();
     await _guard.close();
     await _pool.close();
   }
@@ -604,19 +624,45 @@ class PostgresBackend extends StorageBackend {
   /// longer admits a generation an event store open on this backend
   /// registered, when the schema is one this build does not support, or
   /// when the backend is fenced ([generationStatus]).
+  ///
+  /// A re-run of a body whose earlier run wrote the `backend_state` table
+  /// first locks that table in `SHARE ROW EXCLUSIVE` mode, before the fence
+  /// takes the transaction's snapshot. Every append updates the sequence
+  /// counter row in that table, so an append whose first run lost a race to
+  /// another instance's append waits, in its re-run, for every write to the
+  /// table in flight to commit, and then takes a snapshot that includes
+  /// them: the re-run cannot lose the same race again, however steadily
+  /// other instances append. While the re-run holds the lock, every other
+  /// transaction's write to `backend_state` (so every append on the
+  /// database) waits for it to end, so a body must not wait on anything
+  /// outside the database. A re-run of a body that wrote nothing to the
+  /// table takes no lock, so a role without write privilege on it can run
+  /// read-only transactions. The lock is the one `EventStore.open`'s boot
+  /// takes first, so the two cannot deadlock.
+  // Implements: EVS-PRD-event-log/E
+  // a transaction that lost a serialization race is re-run behind the
+  //   writes it lost to, so concurrent appends from several instances do
+  //   not exhaust the retry bound.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     _checkOpen();
+    var wroteState = false;
     for (var attempt = 1; ; attempt++) {
       try {
         return await _pool.runTx<T>(
           (tx) async {
             final wrapper = PostgresTxn(tx);
             try {
+              if (wroteState) {
+                await tx.execute(
+                  'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
+                );
+              }
               await _guard.fence(tx);
               return await body(wrapper);
             } finally {
               wrapper.invalidate();
+              if (wrapper.wroteBackendState) wroteState = true;
             }
           },
           settings: TransactionSettings(
@@ -1054,6 +1100,7 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<int> nextSequenceNumber(Transaction txn) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -1565,6 +1612,7 @@ class PostgresBackend extends StorageBackend {
     // RETURNING. The counter is NEVER reset — even when rows are
     // deleted by trail sweep, the vacated slot is not reused.
     final counterKey = _fifoSeqCounterKey(destinationId);
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -1985,6 +2033,7 @@ class PostgresBackend extends StorageBackend {
       '''),
       parameters: {'dest': destinationId},
     );
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': 'fill_cursor_$destinationId'},
@@ -2044,6 +2093,147 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
       _deleteStateTxn(txn, 'wedge_$destinationId');
+
+  // -------- Drain lock and drain records --------
+
+  /// The drain lock granted through this backend and not yet released, and
+  /// whether an acquisition is in progress.
+  PostgresDrainLock? _liveDrainLock;
+  bool _acquiringDrainLock = false;
+
+  /// Completed by [close]; ends a drain-lock request that waits for the
+  /// lock session.
+  final Completer<void> _closedSignal = Completer<void>();
+
+  /// The database, the schema and [databaseId]: the drain key's inputs.
+  @override
+  @internal
+  Object drainExclusionKey(String databaseId) =>
+      ('postgres', _guard.scope.database, _guard.scope.schema, databaseId);
+
+  // Implements: EVS-DEV-destination-drain-lock/A+C
+  // one drain lock per backend at a time; the lock is taken on the verified
+  //   lock session.
+  @override
+  @internal
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId}) async {
+    if (_closed) throw const DrainLockBackendClosedException();
+    if (_liveDrainLock != null || _acquiringDrainLock) {
+      throw const DrainLockUnavailableException(
+        'a drain lock granted through this backend is live',
+      );
+    }
+    _acquiringDrainLock = true;
+    try {
+      final lock = await acquirePostgresDrainLock(
+        guard: _guard,
+        pool: _pool,
+        databaseId: databaseId,
+        runTransaction: (body) => transaction<void>(body),
+      );
+      _liveDrainLock = lock;
+      lock.onReleased = () {
+        if (identical(_liveDrainLock, lock)) _liveDrainLock = null;
+      };
+      return lock;
+    } finally {
+      _acquiringDrainLock = false;
+    }
+  }
+
+  /// The request asks for the drain lock only while every generation of
+  /// this backend is registered on a live lock session: after a loss, once
+  /// the replacement session has ended the old server session and
+  /// registered again. It ends with [GenerationFencedException] when the
+  /// backend is fenced, and with [DrainLockBackendClosedException] once the
+  /// backend is closed.
+  @override
+  @internal
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  }) => RetryingDrainLockRequest(
+    attempt: () => tryAcquireDrainLock(databaseId: databaseId),
+    retryInterval: retryInterval,
+    ready: () => _closed
+        ? Future<void>.error(const DrainLockBackendClosedException())
+        : Future.any(<Future<void>>[
+            _guard.whenRegistered(),
+            _closedSignal.future.then<void>(
+              (_) => throw const DrainLockBackendClosedException(),
+            ),
+          ]),
+  );
+
+  /// Completes when the current lock session is declared lost.
+  @internal
+  Future<void> get sessionLost => _guard.sessionLost;
+
+  /// Completes once every generation of this backend is registered on a
+  /// live lock session (at once while it is); completes with
+  /// [GenerationFencedException] when the backend is fenced.
+  @internal
+  Future<void> whenRegistered() => _guard.whenRegistered();
+
+  @override
+  @internal
+  Future<int?> readDrainEpochTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, drainEpochKey);
+    return (value as num?)?.toInt();
+  }
+
+  @override
+  @internal
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, 'drainer_declaration');
+    return value == null
+        ? null
+        : DrainerDeclaration.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  ) => _writeStateTxn(txn, 'drainer_declaration', declaration.toJson());
+
+  @override
+  @internal
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, 'drain_heartbeat');
+    return value == null ? null : DrainHeartbeat.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  ) => _writeStateTxn(txn, 'drain_heartbeat', heartbeat.toJson());
+
+  @override
+  @internal
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'refill_guard_$destinationId');
+    return value == null ? null : RefillGuard.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  ) => _writeStateTxn(txn, 'refill_guard_$destinationId', guard.toJson());
+
+  @override
+  @internal
+  Future<void> clearRefillGuardTxn(Transaction txn, String destinationId) =>
+      _deleteStateTxn(txn, 'refill_guard_$destinationId');
 
   // -------- Halt requests --------
 
@@ -2129,6 +2319,7 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<String> readOrCreateDatabaseIdTxn(Transaction txn) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2175,6 +2366,7 @@ class PostgresBackend extends StorageBackend {
     Map<String, Object?> value,
   ) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2187,6 +2379,7 @@ class PostgresBackend extends StorageBackend {
 
   Future<void> _deleteStateTxn(Transaction txn, String key) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': key},
@@ -2216,6 +2409,7 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2261,6 +2455,7 @@ class PostgresBackend extends StorageBackend {
   ) async {
     _validateFillCursorValue(sequenceNumber);
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2335,6 +2530,7 @@ class PostgresBackend extends StorageBackend {
     DestinationSchedule schedule,
   ) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2350,6 +2546,7 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final session = _asPgTxn(txn).session;
+    _asPgTxn(txn).wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': 'schedule_$destinationId'},

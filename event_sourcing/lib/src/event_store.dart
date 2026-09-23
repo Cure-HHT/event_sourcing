@@ -62,6 +62,7 @@
 //   major and a minor, for diagnostic logging.
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -106,8 +107,8 @@ import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
 
-/// Fire-and-forget trigger into `SyncCycle.call()`.
-typedef EventStoreSyncCycleTrigger = Future<void> Function();
+/// The delivery cycle's trigger, held in an event store's trigger slot.
+typedef _DeliveryTrigger = Future<void> Function();
 
 /// Accumulates the [StoredEvent]s and [AggregateFoldChange]s that
 /// [EventStore.appendInTxn] produces inside one run of a transaction body,
@@ -125,9 +126,10 @@ typedef EventStoreSyncCycleTrigger = Future<void> Function();
 /// argument of a [EventStore.runTransaction] body and passes it to
 /// [EventStore.appendInTxn].
 class PublishCollector {
-  PublishCollector._(this._transaction);
+  PublishCollector._(this._transaction, this._onFirstEvent);
 
   final Transaction _transaction;
+  final void Function(int sequenceNumber) _onFirstEvent;
   bool _open = true;
   final List<StoredEvent> _events = <StoredEvent>[];
   final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
@@ -135,6 +137,7 @@ class PublishCollector {
   @internal
   void add(StoredEvent event) {
     _checkOpen();
+    if (_events.isEmpty) _onFirstEvent(event.sequenceNumber);
     _events.add(event);
   }
 
@@ -157,6 +160,14 @@ class PublishCollector {
 
   List<AggregateFoldChange> get rowChanges =>
       List<AggregateFoldChange>.unmodifiable(_rowChanges);
+}
+
+/// A committed transaction's publication, waiting for its turn in sequence
+/// order.
+final class _Publication {
+  _Publication(this.publish);
+
+  final void Function() publish;
 }
 
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
@@ -226,7 +237,6 @@ class EventStore {
     required this.securityContexts,
     required this.databaseId,
     required GenerationRegistration registration,
-    this.syncCycleTrigger,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
@@ -245,7 +255,44 @@ class EventStore {
   final EntryTypeRegistry entryTypes;
   final Source source;
   final MutableSecurityContextStore securityContexts;
-  final EventStoreSyncCycleTrigger? syncCycleTrigger;
+
+  /// The trigger slot: the trigger of the one started, not yet closed
+  /// delivery cycle over this store, or null.
+  _DeliveryTrigger? _deliveryTrigger;
+
+  /// The trigger of the delivery cycle that holds this store's trigger
+  /// slot, or null. Only `SyncCycle` sets it: when it starts, and back to
+  /// null when it closes.
+  @internal
+  Future<void> Function()? get deliveryTrigger => _deliveryTrigger;
+
+  @internal
+  set deliveryTrigger(Future<void> Function()? trigger) =>
+      _deliveryTrigger = trigger;
+
+  /// Wakes the delivery cycle that holds the trigger slot, if any, without
+  /// waiting for it. Nothing it raises reaches the caller: a trigger that
+  /// throws, synchronously or through its future, is logged.
+  // Implements: EVS-DEV-destination-drain-lock/D
+  // a delivery-cycle trigger never raises into the operation that fires it.
+  @internal
+  void wakeDeliveryCycle() {
+    final trigger = _deliveryTrigger;
+    if (trigger == null) return;
+    void report(Object e, StackTrace st) => libraryLog(
+      'event_store',
+      'the delivery cycle trigger failed',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+    try {
+      unawaited(trigger().then((_) {}, onError: report));
+    } on Object catch (e, st) {
+      report(e, st);
+    }
+  }
+
   final ProjectionInterpreter _interpreter;
 
   /// The database identity: a random identifier minted at the database's
@@ -373,7 +420,6 @@ class EventStore {
     required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
-    EventStoreSyncCycleTrigger? syncCycleTrigger,
     Clock? clock,
     Uuid? uuid,
   }) async {
@@ -397,7 +443,6 @@ class EventStore {
       registration: registration,
       projections: effectiveProjections,
       promoters: effectivePromoters,
-      syncCycleTrigger: syncCycleTrigger,
       clock: clock,
       uuid: uuid,
     );
@@ -430,7 +475,6 @@ class EventStore {
     required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
-    EventStoreSyncCycleTrigger? syncCycleTrigger,
     Clock? clock,
     Uuid? uuid,
   }) async {
@@ -454,7 +498,6 @@ class EventStore {
       registration: registration,
       projections: effectiveProjections,
       promoters: effectivePromoters,
-      syncCycleTrigger: syncCycleTrigger,
       clock: clock,
       uuid: uuid,
     );
@@ -861,8 +904,26 @@ class EventStore {
   /// collector this method hands [body], and refuses an append inside a
   /// plain `backend.transaction`.
   ///
-  /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
-  /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
+  /// Does not wake the delivery cycle: the library's operations that call
+  /// it (action dispatch, the destination registry's operations) wake the
+  /// cycle themselves after it returns. Events a consumer appends through it
+  /// reach the drainer at its next pass, at the latest one cadence later; a
+  /// consumer that wants them delivered sooner calls its started
+  /// `SyncCycle` after this returns.
+  ///
+  /// On Postgres a run that wrote the table holding the sequence counter
+  /// (every run that appended) and lost a serialization race is re-run
+  /// holding a lock on that table, which holds back every other write to it,
+  /// and so every append to the database, until the re-run ends. [body]
+  /// therefore does not wait on anything outside the database (a network
+  /// call, a timer, another transaction of this store's database).
+  ///
+  /// A live subscriber receives this store's events in log order, so the
+  /// events of a transaction are published only once every transaction of
+  /// this store that appended before it has committed or failed. [body]
+  /// therefore does not wait for the live delivery of an event that a later
+  /// transaction of this store appends: that delivery waits for [body]'s
+  /// transaction to end.
   ///
   /// The backend may run [body] more than once before one run commits (see
   /// `StorageBackend.transaction`). Each run receives its own
@@ -877,6 +938,46 @@ class EventStore {
     return _runInTxnWithPublish(body);
   }
 
+  /// The first sequence number each transaction of this store has appended
+  /// in its current run, while it has not committed or failed: the
+  /// publication of a committed transaction waits while one with a lower
+  /// first sequence number is still in flight.
+  final SplayTreeMap<int, int> _inFlightFirstSequences =
+      SplayTreeMap<int, int>();
+
+  /// Committed transactions waiting to publish, by first sequence number.
+  final SplayTreeMap<int, _Publication> _awaitingPublication =
+      SplayTreeMap<int, _Publication>();
+
+  void _holdSequence(int sequenceNumber) => _inFlightFirstSequences.update(
+    sequenceNumber,
+    (count) => count + 1,
+    ifAbsent: () => 1,
+  );
+
+  void _releaseSequence(int sequenceNumber) {
+    final count = _inFlightFirstSequences[sequenceNumber];
+    if (count == null) return;
+    if (count <= 1) {
+      _inFlightFirstSequences.remove(sequenceNumber);
+    } else {
+      _inFlightFirstSequences[sequenceNumber] = count - 1;
+    }
+  }
+
+  /// Publishes, in sequence order, every committed transaction that no
+  /// in-flight transaction with a lower first sequence number precedes.
+  void _publishInOrder() {
+    while (_awaitingPublication.isNotEmpty) {
+      final next = _awaitingPublication.firstKey()!;
+      final lowestInFlight = _inFlightFirstSequences.isEmpty
+          ? null
+          : _inFlightFirstSequences.firstKey();
+      if (lowestInFlight != null && lowestInFlight < next) return;
+      _awaitingPublication.remove(next)!.publish();
+    }
+  }
+
   /// Internal helper: wraps a `backend.transaction` call with a
   /// [PublishCollector] and publishes all collected events and row changes
   /// after commit.
@@ -886,34 +987,81 @@ class EventStore {
   //   it after another tab commits first). Each run gets a fresh collector, and
   //   only the collector of the run that committed (the last one) publishes.
   //   Runs that overlap break that contract and are refused.
+  // Implements: EVS-PRD-subscription/C
+  // Transactions of one store commit in the order of the sequence numbers
+  //   they append (each append advances the one sequence counter), but their
+  //   continuations can resume in any order. A committed transaction's
+  //   events are therefore published only once no transaction of this store
+  //   that appended a lower sequence number is still in flight, so live
+  //   subscribers receive the store's events in log order.
   Future<T> _runInTxnWithPublish<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
     late PublishCollector collector;
     var runInProgress = false;
-    final result = await backend.transaction<T>((txn) async {
-      if (runInProgress) {
-        throw StateError(
-          'StorageBackend.transaction started a run of the body while an '
-          'earlier run was still in progress; runs must be sequential.',
-        );
-      }
-      runInProgress = true;
-      final runCollector = PublishCollector._(txn);
-      collector = runCollector;
-      try {
-        return await body(txn, runCollector);
-      } finally {
-        runCollector._open = false;
-        runInProgress = false;
-      }
-    });
-    for (final event in collector.events) {
-      _subs.publishEvent(event);
+    int? heldSequence;
+    void releaseHeld() {
+      final held = heldSequence;
+      if (held == null) return;
+      heldSequence = null;
+      _releaseSequence(held);
     }
-    for (final change in collector.rowChanges) {
-      _subs.publishRowChange(change);
+
+    final T result;
+    try {
+      result = await backend.transaction<T>((txn) async {
+        if (runInProgress) {
+          throw StateError(
+            'StorageBackend.transaction started a run of the body while an '
+            'earlier run was still in progress; runs must be sequential.',
+          );
+        }
+        runInProgress = true;
+        // A new run replaces whatever an earlier, discarded run appended.
+        releaseHeld();
+        _publishInOrder();
+        final runCollector = PublishCollector._(txn, (sequenceNumber) {
+          heldSequence = sequenceNumber;
+          _holdSequence(sequenceNumber);
+        });
+        collector = runCollector;
+        try {
+          return await body(txn, runCollector);
+        } finally {
+          runCollector._open = false;
+          runInProgress = false;
+        }
+      });
+    } catch (_) {
+      releaseHeld();
+      _publishInOrder();
+      rethrow;
     }
+    if (heldSequence != null) {
+      await DeliveryTestHooks.current?.afterCommitBeforePublish?.call();
+    }
+    final events = collector.events;
+    final rowChanges = collector.rowChanges;
+    void publish() {
+      for (final event in events) {
+        _subs.publishEvent(event);
+      }
+      for (final change in rowChanges) {
+        _subs.publishRowChange(change);
+      }
+    }
+
+    final first = heldSequence;
+    releaseHeld();
+    if (first == null) {
+      publish();
+      _publishInOrder();
+      return result;
+    }
+    // Not awaited: a caller whose body waits on another transaction of this
+    // store must not wait on its own publication too.
+    _awaitingPublication[first] = _Publication(publish);
+    _publishInOrder();
     return result;
   }
 
@@ -1119,7 +1267,7 @@ class EventStore {
     });
 
     if (event == null) return null;
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
     return event;
   }
 
@@ -1215,7 +1363,7 @@ class EventStore {
       ),
     );
     if (event == null) return null;
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
     return event;
   }
 
@@ -1317,7 +1465,7 @@ class EventStore {
         initiator: redactedBy,
       );
     });
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
   }
 
   /// Apply [policy] (or [SecurityRetentionPolicy.defaults]) to the
@@ -1412,7 +1560,7 @@ class EventStore {
         purgedCount: purgeCandidates.length,
       );
     });
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
     return result;
   }
 
@@ -1450,8 +1598,8 @@ class EventStore {
   /// transaction would either publish an event its transaction rolled back
   /// or commit an event no subscriber sees.
   ///
-  /// Skips `unawaited(syncCycleTrigger?.call())` — the public [append]
-  /// fires that AFTER the transaction commits.
+  /// Does not wake the delivery cycle; the public [append] wakes it after
+  /// the transaction commits.
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate. Throws [ArgumentError],

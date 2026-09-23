@@ -36,7 +36,6 @@ class DemoAppRoot extends StatefulWidget {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tickController,
     super.key,
   });
 
@@ -44,7 +43,6 @@ class DemoAppRoot extends StatefulWidget {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tickController;
 
   @override
   State<DemoAppRoot> createState() => _DemoAppRootState();
@@ -83,7 +81,6 @@ class _DemoAppRootState extends State<DemoAppRoot> {
               backend: widget.backend,
               appState: widget.appState,
               dbPath: widget.dbPath,
-              tickController: widget.tickController,
               policyNotifier: _policyNotifier,
               paneLabel: 'Demo',
             ),
@@ -104,7 +101,6 @@ class DemoPane extends StatefulWidget {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tickController,
     required this.policyNotifier,
     required this.paneLabel,
     super.key,
@@ -114,7 +110,6 @@ class DemoPane extends StatefulWidget {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
   /// Short identifier shown in the header strip (e.g. "MOBILE", "HUB").
@@ -286,7 +281,7 @@ class _DemoPaneState extends State<DemoPane> {
   }
 
   Future<void> resetAll() async {
-    widget.tickController.cancel();
+    await widget.appState.stopDelivery();
     await widget.backend.close();
     final file = File(widget.dbPath);
     if (file.existsSync()) {

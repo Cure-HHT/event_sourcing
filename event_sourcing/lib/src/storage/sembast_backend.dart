@@ -11,10 +11,13 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/isolate_drain_lock.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -139,14 +142,18 @@ class SembastBackend extends StorageBackend {
       StreamController<String>.broadcast();
 
   /// Close the underlying sembast database AND the reactive broadcast
-  /// controllers used by [watchEvents] / [watchFifo] / [watchView]. After
-  /// close, further calls to those reactive methods SHALL throw
-  /// `StateError`. Active subscribers receive `done`.
+  /// controllers used by [watchEvents] / [watchFifo] / [watchView], after
+  /// releasing a drain lock granted through this backend. After close,
+  /// further calls to those reactive methods SHALL throw `StateError`.
+  /// Active subscribers receive `done`.
   ///
   /// Not safe to call concurrently with an in-flight [transaction]. The
   /// caller is responsible for awaiting outstanding work before closing.
   @override
   Future<void> close() async {
+    _closed = true;
+    await _drainLock?.release();
+    _drainLock = null;
     await _eventsController.close();
     await _fifoChangesController.close();
     await _viewChangesController.close();
@@ -1084,6 +1091,158 @@ class SembastBackend extends StorageBackend {
     await _backendStateStore
         .record(_dataGenerationKey)
         .put(t._sembastTxn, record.toJson());
+  }
+
+  // -------- Drain lock and drain records --------
+
+  static const _drainEpochKey = 'drain_epoch';
+  static const _drainerDeclarationKey = 'drainer_declaration';
+  static const _drainHeartbeatKey = 'drain_heartbeat';
+  static String _refillGuardKey(String destinationId) =>
+      'refill_guard_$destinationId';
+
+  /// The wrapped `Database` object: the drain lock excludes drainers per
+  /// open database handle in this isolate.
+  @override
+  @internal
+  Object drainExclusionKey(String databaseId) => _db;
+
+  // Implements: EVS-DEV-destination-drain-lock/A
+  // Sembast: an isolate-local registry keyed by the identity of the wrapped
+  //   database handle; every acquisition raises the drain epoch.
+  @override
+  @internal
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId}) async {
+    if (_closed) throw const DrainLockBackendClosedException();
+    refuseBrowserDrainLock();
+    final lock = await acquireIsolateDrainLock(
+      backend: this,
+      handle: _db,
+      bumpEpoch: (insideBump) => transaction((txn) async {
+        final t = _requireValidTxn(txn);
+        final record = _backendStateStore.record(_drainEpochKey);
+        final current = await record.get(t._sembastTxn);
+        final next = (current is int ? current : 0) + 1;
+        await record.put(t._sembastTxn, next);
+        insideBump();
+        return next;
+      }),
+    );
+    _drainLock = lock;
+    return lock;
+  }
+
+  /// The drain lock last granted through this backend; [close] releases
+  /// it.
+  DrainLock? _drainLock;
+
+  /// Set by [close]: the backend grants no drain lock afterwards.
+  bool _closed = false;
+
+  @override
+  @internal
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  }) => RetryingDrainLockRequest(
+    attempt: () => tryAcquireDrainLock(databaseId: databaseId),
+    retryInterval: retryInterval,
+    wake: () => isolateDrainLockReleased(_db),
+  );
+
+  @override
+  @internal
+  Future<int?> readDrainEpochTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainEpochKey)
+        .get(t._sembastTxn);
+    return value as int?;
+  }
+
+  @override
+  @internal
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainerDeclarationKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DrainerDeclaration.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_drainerDeclarationKey)
+        .put(t._sembastTxn, declaration.toJson());
+  }
+
+  @override
+  @internal
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainHeartbeatKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DrainHeartbeat.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_drainHeartbeatKey)
+        .put(t._sembastTxn, heartbeat.toJson());
+  }
+
+  @override
+  @internal
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return RefillGuard.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .put(t._sembastTxn, guard.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .delete(t._sembastTxn);
   }
 
   // -------- Database identity and boot record --------

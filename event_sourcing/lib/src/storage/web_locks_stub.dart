@@ -32,3 +32,8 @@ Future<T> runHoldingBrowserWriteLock<T>(
   required Future<T> Function() body,
   Duration? timeout,
 }) => body();
+
+/// Outside the browser a Sembast database grants its drain lock through the
+/// isolate registry: nothing is refused.
+@internal
+void refuseBrowserDrainLock() {}

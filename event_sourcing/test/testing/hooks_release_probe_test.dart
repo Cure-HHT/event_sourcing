@@ -149,6 +149,13 @@ void main() {
           contains('recorded alone'),
           equals('onBootBodyRun'),
           equals('afterBootVersionEvent'),
+          equals('failLockAcquisition'),
+          equals('failAfterExclusionObtained'),
+          equals('onInboundPoll'),
+          startsWith('beforeQueueWrites'),
+          startsWith('afterSendBeforeOutcome'),
+          equals('timerFactory'),
+          equals('afterCommitBeforePublish'),
         ]),
       );
       // The substituted build declaration decided the boot and is what the

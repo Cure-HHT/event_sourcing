@@ -657,6 +657,34 @@ void main() {
         expect(result, isA<DispatchSuccess<Object?>>());
       },
     );
+
+    // Verifies: EVS-DEV-destination-drain-lock/D
+    // a committed dispatch wakes the delivery cycle that holds the event
+    //   store's trigger slot, and a trigger that throws does not reach the
+    //   dispatch.
+    test('a committed dispatch wakes the delivery cycle', () async {
+      final allowDispatcher = ActionDispatcher(
+        registry: registry,
+        authorization: const AlwaysAllowPolicy(),
+        events: eventStore,
+        idempotency: idempotency,
+      );
+      var wakes = 0;
+      eventStore.deliveryTrigger = () async {
+        wakes += 1;
+        throw StateError('the cycle failed');
+      };
+      final result = await allowDispatcher.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
+      expect(wakes, 1);
+      eventStore.deliveryTrigger = null;
+    });
   });
 
   group('Stage 6 — authorize scope resolution', () {

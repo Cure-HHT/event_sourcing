@@ -15,8 +15,6 @@ import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -144,7 +142,7 @@ class _World {
   }
 
   Future<void> fill(Destination d, {StorageBackend? on}) =>
-      fillBatch(d, backend: on ?? backend, source: _source, clock: _fillNow);
+      fillForTest(d, backend: on ?? backend, source: _source, clock: _fillNow);
 
   /// Run fills until one enqueues nothing new (at most [max] passes).
   Future<void> fillAll(
@@ -229,9 +227,14 @@ class _World {
     'events': <String>[
       for (final e in await backend.findAllEvents()) e.eventId,
     ],
+    'refill_guard': (await backend.transaction(
+      (txn) => backend.readRefillGuardTxn(txn, destId),
+    ))?.toJson(),
+    // The drain lock's records change with every acquisition the harness
+    // or a delivery cycle makes, not with a registry operation.
     'state_keys': <String>[
       for (final k in await db.backendStateKeys())
-        if (k != 'registry_check') k,
+        if (k != 'registry_check' && !drainLockRecordKeys.contains(k)) k,
     ]..sort(),
   };
 
@@ -502,7 +505,7 @@ void runQueueRegistryScenarios(
         await activate(d, start: DateTime.utc(2026, 2, 1));
         await w.fillAll(d);
         // Deliver sent-1; mid stays pending at the head.
-        await drain(
+        await drainForTest(
           FakeDestination(id: 'r', script: <SendResult>[const SendOk()]),
           registry: w.registry,
         );
@@ -663,8 +666,8 @@ void runQueueRegistryScenarios(
       // Verifies: EVS-DEV-destination-drain/A
       // the wedged head is tombstoned, the
       //   pending items deleted, the cursor, schedule, replay request, wedge
-      //   record, halt request and send fence removed, and the only
-      //   per-destination record left is the sequence_in_queue counter.
+      //   record, halt request, send fence and refill guard removed, and the
+      //   only per-destination record left is the sequence_in_queue counter.
       test('retains sent items, tombstones the wedged head, removes pending '
           'items and every per-destination record but the counter', () async {
         if (!available) return;
@@ -675,7 +678,7 @@ void runQueueRegistryScenarios(
         await w.note('p1');
         await w.note('p2');
         await w.fillAll(d);
-        await drain(
+        await drainForTest(
           FakeDestination(id: 'x', script: <SendResult>[const SendOk()]),
           registry: w.registry,
         );
@@ -703,6 +706,19 @@ void runQueueRegistryScenarios(
             ),
           ),
         );
+        // A refill guard exists only after a recovery, which leaves no
+        // wedged head; it is written directly here for the same reason.
+        await w.backend.transaction(
+          (txn) => w.backend.writeRefillGuardTxn(
+            txn,
+            'x',
+            const RefillGuard(
+              fingerprint: 'written-directly',
+              recoveryEventId: 'written-directly',
+              refillThrough: 0,
+            ),
+          ),
+        );
         final keysBefore = await w.db.backendStateKeys();
         expect(
           keysBefore.where((k) => k.endsWith('_x')).toSet(),
@@ -713,6 +729,7 @@ void runQueueRegistryScenarios(
             'wedge_x',
             'halt_request_x',
             'send_fence_x',
+            'refill_guard_x',
             'fifo_seq_counter_x',
           ]),
         );
@@ -784,7 +801,7 @@ void runQueueRegistryScenarios(
           initiator: _init,
         );
         await w.note('new', at: DateTime.utc(2026, 6, 2));
-        final cycle = SyncCycle(registry: w.registry, clock: _fillNow);
+        final cycle = TestCycle(w.registry, clock: _fillNow);
         await cycle();
         final rows = await w.backend.listFifoEntries('x');
         final fresh = rows.skip(retained.length).toList();
@@ -811,7 +828,7 @@ void runQueueRegistryScenarios(
         await activate(d);
         await w.note('delivered');
         await w.fillAll(d);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         expect(await w.eventsIn('x', status: FinalStatus.sent), ['delivered']);
         await w.registry.deleteDestination('x', initiator: _init);
         await expectWedgesViewMatchesQueue(w.store);
@@ -842,7 +859,7 @@ void runQueueRegistryScenarios(
         await w.note('h1');
         await w.note('p1');
         await w.fillAll(d);
-        await drain(
+        await drainForTest(
           FakeDestination(id: 'x', script: <SendResult>[const SendOk()]),
           registry: w.registry,
         );
@@ -891,7 +908,7 @@ void runQueueRegistryScenarios(
         await w.note('n1');
         await w.fillAll(d);
         final head = (await w.backend.readFifoHead('x'))!;
-        final draining = drain(d, registry: w.registry);
+        final draining = drainForTest(d, registry: w.registry);
         await entered.future;
         await expectLater(
           w.registry.deleteDestination('x', initiator: _init),
@@ -1165,7 +1182,7 @@ void runQueueRegistryScenarios(
           initiator: _init,
         );
         await w.note('after', at: DateTime.utc(2026, 6, 2));
-        await SyncCycle(registry: w.registry, clock: _fillNow)();
+        await TestCycle(w.registry, clock: _fillNow)();
         expect(await w.eventsIn('x', status: FinalStatus.sent), ['after']);
 
         final before = await w.snapshot('x');
@@ -1501,7 +1518,7 @@ void runQueueRegistryScenarios(
         await activate(d);
         await w.note('n1');
         await w.fillAll(d);
-        await drain(
+        await drainForTest(
           FakeDestination(id: 'x', script: <SendResult>[const SendOk()]),
           registry: w.registry,
         );
@@ -1897,14 +1914,14 @@ void runQueueRegistryScenarios(
         await expectLater(
           runWithDeliveryTestHooks(
             DeliveryTestHooks(failOutcomeTransaction: (id, outcome) => true),
-            () => drain(d, registry: w.registry),
+            () => drainForTest(d, registry: w.registry),
           ),
           throwsA(isA<InjectedFailure>()),
         );
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.attempts, isEmpty);
         expect(row.finalStatus, isNull);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         final sent = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(sent.finalStatus, FinalStatus.sent);
         expect(sent.attempts.single.outcome, 'ok');
@@ -1929,14 +1946,14 @@ void runQueueRegistryScenarios(
         await expectLater(
           runWithDeliveryTestHooks(
             DeliveryTestHooks(failOutcomeTransaction: (id, outcome) => true),
-            () => drain(d, registry: w.registry),
+            () => drainForTest(d, registry: w.registry),
           ),
           throwsA(isA<InjectedFailure>()),
         );
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.attempts, isEmpty);
         expect(row.finalStatus, isNull);
-        await drain(d, registry: w.registry);
+        await drainForTest(d, registry: w.registry);
         final wedged = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(wedged.finalStatus, FinalStatus.wedged);
         expect(wedged.attempts.single.outcome, 'permanent');
@@ -1971,14 +1988,14 @@ void runQueueRegistryScenarios(
         await expectLater(
           runWithDeliveryTestHooks(
             DeliveryTestHooks(failOutcomeTransaction: (id, outcome) => true),
-            () => drain(d, registry: w.registry, policy: twoAttempts),
+            () => drainForTest(d, registry: w.registry, policy: twoAttempts),
           ),
           throwsA(isA<InjectedFailure>()),
         );
         final failed = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(failed.attempts, isEmpty);
         expect(failed.finalStatus, isNull);
-        await drain(d, registry: w.registry, policy: twoAttempts);
+        await drainForTest(d, registry: w.registry, policy: twoAttempts);
         final row = (await w.backend.readFifoRow('x', head.entryId))!;
         expect(row.attempts.single.outcome, 'transient');
         expect(row.finalStatus, isNull);
@@ -2003,18 +2020,18 @@ void runQueueRegistryScenarios(
           await w.note('n1');
           await w.fillAll(d);
           final head = (await w.backend.readFifoHead('x'))!;
-          await drain(d, registry: w.registry, policy: twoAttempts);
+          await drainForTest(d, registry: w.registry, policy: twoAttempts);
           await expectLater(
             runWithDeliveryTestHooks(
               DeliveryTestHooks(failOutcomeTransaction: (id, outcome) => true),
-              () => drain(d, registry: w.registry, policy: twoAttempts),
+              () => drainForTest(d, registry: w.registry, policy: twoAttempts),
             ),
             throwsA(isA<InjectedFailure>()),
           );
           final failed = (await w.backend.readFifoRow('x', head.entryId))!;
           expect(failed.attempts, hasLength(1));
           expect(failed.finalStatus, isNull);
-          await drain(d, registry: w.registry, policy: twoAttempts);
+          await drainForTest(d, registry: w.registry, policy: twoAttempts);
           final row = (await w.backend.readFifoRow('x', head.entryId))!;
           expect(row.attempts, hasLength(2));
           expect(row.attempts.last.outcome, 'transient');

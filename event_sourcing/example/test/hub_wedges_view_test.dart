@@ -47,6 +47,8 @@ void main() {
     late EventStoreBundle mobile;
     late SembastBackend hubBackend;
     late AppState hubState;
+    late SyncCycle mobileCycle;
+    late SyncCycle hubCycle;
     final policy = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
     await tester.runAsync(() async {
       hub = await _pane(
@@ -101,23 +103,21 @@ void main() {
         },
         initiator: const UserInitiator('demo-user-1'),
       );
-      final mobileCycle = SyncCycle(
+      // One-hour cadences: the test runs every pass it asserts on itself.
+      mobileCycle = await SyncCycle.start(
         registry: mobile.destinations,
-        source: const Source(
-          hopId: 'mobile-device',
-          identifier: '22222222-2222-4222-8222-222222222222',
-          softwareVersion: 'test',
-        ),
         policyResolver: () => policy.value,
+        cadence: const Duration(hours: 1),
       );
       // The first pass wedges the mobile Primary; a later pass forwards
       // the wedge event through NativeAudit to the hub.
       for (var i = 0; i < 5; i++) {
         await mobileCycle();
       }
-      final hubCycle = SyncCycle(
+      hubCycle = await SyncCycle.start(
         registry: hub.destinations,
         policyResolver: () => policy.value,
+        cadence: const Duration(hours: 1),
       );
       await hubCycle();
     });
@@ -178,6 +178,8 @@ void main() {
       reason: "the hub's Primary queue is unaffected",
     );
     await tester.runAsync(() async {
+      await mobileCycle.close();
+      await hubCycle.close();
       await mobile.eventStore.close();
       await hub.eventStore.close();
     });

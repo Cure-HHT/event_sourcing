@@ -10,6 +10,13 @@
 // transaction<T> runs at SERIALIZABLE
 //   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
 //   commit on return, handle invalidated after body.
+// Verifies: EVS-PRD-event-log/E
+// a re-run of a body whose earlier run wrote the table holding the sequence
+//   counter waits behind that table's writers (it holds the table lock); a
+//   re-run of a body that wrote nothing there takes no such lock.
+// Verifies: EVS-PRD-subscription/C
+// a transaction re-run after appending publishes its event once, and a
+//   later commit on the same store is published after it, not held back.
 // Verifies: EVS-PRD-subscription/E
 // when the backend re-runs a transaction
 //   body after a serialization conflict raised after the body appended, live
@@ -35,6 +42,7 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
@@ -238,8 +246,98 @@ void main() {
           reason: 'exactly one delivery, of the committed run',
         );
         expect(delivered.single.sequenceNumber, committed.sequenceNumber);
+
+        // A later commit on the same store is not held back by the re-run
+        // transaction's publication.
+        final laterSeen = Completer<String>();
+        final sub2 = storeA
+            .subscribe<StoredEvent>(const SubscriptionFilter(), const Events())
+            .listen((u) {
+              if (u is Delta<StoredEvent> &&
+                  u.value.aggregateId == 'later' &&
+                  !laterSeen.isCompleted) {
+                laterSeen.complete(u.value.eventId);
+              }
+            });
+        final later = await storeA.append(
+          entryType: 'test_event',
+          aggregateId: 'later',
+          aggregateType: 'Test',
+          eventType: 'created',
+          data: const <String, Object?>{'k': 'v'},
+          initiator: const UserInitiator('u1'),
+        );
+        expect(
+          await laterSeen.future.timeout(const Duration(seconds: 5)),
+          later!.eventId,
+        );
+        await sub2.cancel();
       },
     );
+
+    /// Whether this transaction holds the table lock a re-run takes.
+    Future<bool> holdsStateTableLock(Transaction txn) async {
+      final rows = await (txn as PostgresTxn).session.execute(
+        'SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation '
+        "WHERE c.relname = 'backend_state' AND l.pid = pg_backend_pid() "
+        "AND l.mode = 'ShareRowExclusiveLock' AND l.granted",
+      );
+      return (rows.first[0]! as int) > 0;
+    }
+
+    /// Runs [body] on backendA with a first run that loses a race on a
+    /// shared view row to a contender on backendB; returns, per run, whether
+    /// it held the table lock.
+    Future<List<bool>> rerunOnce(
+      Future<void> Function(Transaction txn) body,
+    ) async {
+      await backendA.transaction(
+        (txn) => backendA.upsertViewRowInTxn(txn, _contentionView, 'y', {
+          'writer': 'setup',
+        }),
+      );
+      final locks = <bool>[];
+      final firstRunWrote = Completer<void>();
+      final contenderCommitted = Completer<void>();
+      final run = backendA.transaction((txn) async {
+        locks.add(await holdsStateTableLock(txn));
+        await body(txn);
+        if (locks.length == 1) {
+          firstRunWrote.complete();
+          await contenderCommitted.future;
+        }
+        await backendA.upsertViewRowInTxn(txn, _contentionView, 'y', {
+          'writer': 'a',
+        });
+      });
+      await firstRunWrote.future;
+      await backendB.transaction(
+        (txn) => backendB.upsertViewRowInTxn(txn, _contentionView, 'y', {
+          'writer': 'contender',
+        }),
+      );
+      contenderCommitted.complete();
+      await run;
+      return locks;
+    }
+
+    test('a re-run takes the table lock only when its earlier run wrote the '
+        "sequence counter's table", () async {
+      expect(
+        await rerunOnce((txn) async {
+          await backendA.nextSequenceNumber(txn);
+        }),
+        <bool>[false, true],
+        reason: 'a body that wrote backend_state re-runs behind its writers',
+      );
+      expect(
+        await rerunOnce((txn) async {
+          await backendA.readFillCursorTxn(txn, 'nobody');
+        }),
+        <bool>[false, false],
+        reason: 'a body that wrote nothing there takes no table lock',
+      );
+    });
   });
 
   group('EventStore collector binding across two transactions', () {

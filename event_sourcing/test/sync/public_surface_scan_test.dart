@@ -74,16 +74,16 @@ const _functionTyped = <String, String>{
   'EventStore.open(clock)':
       'stamps the client timestamp the log records as event data; decides '
       'nothing the library derives',
-  'EventStore.open(syncCycleTrigger)':
-      'wakes the delivery cycle after a commit; decides nothing',
   'EventStore.openForTest(clock)':
       'stamps the client timestamp the log records as event data',
-  'EventStore.openForTest(syncCycleTrigger)':
-      'wakes the delivery cycle after a commit; decides nothing',
   'EventStore.runTransaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
-  'EventStore.syncCycleTrigger (field)':
-      'read-only view of the trigger the store fires after a commit',
+  'EventStore.deliveryTrigger (getter)':
+      "internal: the trigger slot, which only the delivery cycle's start and "
+      'close set; the trigger wakes the cycle and decides nothing',
+  'EventStore.deliveryTrigger=(trigger)':
+      "internal: the trigger slot, which only the delivery cycle's start and "
+      'close set; the trigger wakes the cycle and decides nothing',
   'PostgresBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
   'PostgresBackend.transaction(body)':
@@ -113,10 +113,10 @@ const _functionTyped = <String, String>{
       "a destination's filter is delivery configuration under the "
       "Destination trust entry; a subscription's filter decides only what "
       'its subscriber sees',
-  'SyncCycle.new(clock)':
+  'SyncCycle.start(clock)':
       'delivery configuration under the Destination trust entry; fill '
       'computes its window from it',
-  'SyncCycle.new(policyResolver)':
+  'SyncCycle.start(policyResolver)':
       'delivery configuration under the Destination trust entry; decides the '
       'retry policy per cycle, and each wedge event records the budget in '
       'effect',
@@ -126,8 +126,6 @@ const _functionTyped = <String, String>{
   'TableBackedAuthorizationPolicy.transactionProvider (field)':
       'known unenumerated input: opens the transaction the authorization '
       'policy reads in',
-  'bootstrapEventStore(syncCycleTrigger)':
-      'wakes the delivery cycle after a commit; decides nothing',
 };
 
 /// Every test seam on `DeliveryTestHooks`, by kind. An observing seam sees
@@ -165,6 +163,20 @@ const _seamKinds = <String, String>{
   'failProvisioningBeforeVersionWrite': 'failure injection',
   'webLocksUnavailable': 'failure injection',
   'schemaDeclaration': 'input substitution',
+  'failLockAcquisition': 'failure injection',
+  'failAfterExclusionObtained': 'failure injection',
+  'beforeGrantDelivered': 'interleave',
+  'onInboundPoll': 'observe',
+  'afterLockAcquireBeforeEpochBump': 'interleave',
+  'insideEpochBumpBeforeCommit': 'interleave',
+  'beforeQueueWrites': 'interleave',
+  'afterSendBeforeOutcome': 'interleave',
+  'failDrainLockVerification': 'failure injection',
+  'failEpochBumpWithSerializationFailure': 'failure injection',
+  'stallEpochBumpPastQueryTimeout': 'failure injection',
+  'holdDrainKeyOutsideLibrary': 'failure injection',
+  'failNextHeartbeat': 'failure injection',
+  'afterCommitBeforePublish': 'interleave',
 };
 
 const _seamKindNames = <String>{
@@ -175,9 +187,30 @@ const _seamKindNames = <String>{
   'timer replacement',
 };
 
+/// Words a seam's name must not contain: a seam may observe, delay, fail or
+/// substitute, never let a check pass. `beforeGrantDelivered` names the
+/// point a lock grant is handed over, where a cancellation may interleave.
+const _forbiddenSeamWords = <String>['bypass', 'skip', 'grant', 'allow'];
+const _sanctionedSeamNames = <String>{'beforeGrantDelivered'};
+
+/// Types a seam's signature must not mention: no seam receives a database
+/// handle, a session, a transaction or an executor.
+const _receivesHandle =
+    'receives a database handle, a session, a transaction or an executor';
+
+const _forbiddenSeamTypes = <String>[
+  'Connection',
+  'Session',
+  'Transaction',
+  'Database',
+  'Executor',
+  'Pool',
+];
+
 /// The problems with [kinds] as the classification of [hooks]'s fields:
-/// a field it does not list, a listed name that is no field, or an
-/// unknown kind.
+/// a field it does not list, a listed name that is no field, an unknown
+/// kind, a name that promises to let a check pass, or a signature that
+/// hands a seam a database handle, a session, a transaction or an executor.
 List<String> seamKindRule(ClassElement hooks, Map<String, String> kinds) {
   final fields = <String>{
     for (final field in hooks.fields)
@@ -192,6 +225,21 @@ List<String> seamKindRule(ClassElement hooks, Map<String, String> kinds) {
     for (final entry in kinds.entries)
       if (!_seamKindNames.contains(entry.value))
         '${entry.key}: unknown seam kind "${entry.value}"',
+    for (final field in hooks.fields)
+      if (!field.isStatic &&
+          !field.isOriginGetterSetter &&
+          field.name != null &&
+          !_sanctionedSeamNames.contains(field.name) &&
+          _forbiddenSeamWords.any((w) => field.name!.toLowerCase().contains(w)))
+        'DeliveryTestHooks.${field.name} is named as a way past a check',
+    for (final field in hooks.fields)
+      if (!field.isStatic &&
+          !field.isOriginGetterSetter &&
+          field.name != null &&
+          _forbiddenSeamTypes.any(
+            (t) => field.type.getDisplayString().contains(t),
+          ))
+        'DeliveryTestHooks.${field.name} $_receivesHandle',
   ];
 }
 
@@ -253,6 +301,12 @@ const _mustBeInternal = <String, String>{
   'DestinationRegistry.honourHaltInTxn':
       'wedges a queue head for a halt request, or removes the stored request',
   'EventStore.appendReserved': 'appends a reserved system event',
+  'EventStore.deliveryTrigger':
+      "sets or reads the delivery cycle's trigger slot",
+  'EventStore.wakeDeliveryCycle': 'fires the delivery cycle outside an append',
+  'PostgresBackend.sessionLost': "observes the lock session's loss",
+  'PostgresBackend.whenRegistered':
+      'waits for the lock session to be registered again',
   'EventStore.appendReservedInTxn':
       'appends a reserved system event in a transaction',
   'GenerationRegistration.recordInTxn':
@@ -336,6 +390,8 @@ const _topLevelOperations = <String, String>{
       'appends the role-assignment seed through the event store',
   'classifyStorageException': 'pure function; changes nothing',
   'computeRoleAssignmentAggregateId': 'pure function; changes nothing',
+  'configurationFingerprint': 'pure function; changes nothing',
+  'declaredConfiguration': 'pure function; changes nothing',
   'denialAuthorizationDenied': 'builds an event draft; changes nothing',
   'denialExecutionFailed': 'builds an event draft; changes nothing',
   'denialIdempotencyMismatch': 'builds an event draft; changes nothing',
@@ -480,6 +536,8 @@ class PublishCollector {
 
 class PostgresBackend {
   Object get pool => Object();
+  Future<void> get sessionLost async {}
+  Future<void> whenRegistered() async {}
 }
 
 extension SembastBackendTestSupport on SembastBackend {
@@ -495,6 +553,9 @@ class DestinationRegistry {
 class EventStore {
   Future<void> appendReserved() async {}
   Future<void> appendReservedInTxn() async {}
+  Object? get deliveryTrigger => null;
+  set deliveryTrigger(Object? trigger) {}
+  void wakeDeliveryCycle() {}
 }
 
 class AggregateFold {
@@ -541,6 +602,25 @@ abstract class GenerationRegistration {
 
 class UnguardedGenerationRegistration {
   Future<void> recordInTxn(Object txn) async {}
+}
+''';
+
+const _fixtureUnsafeHooks = '''
+import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:sembast/sembast.dart' show Database;
+
+class DeliveryTestHooks {
+  const DeliveryTestHooks({
+    this.bypassFence,
+    this.allowSecondCycle,
+    this.onLockTxn,
+    this.withDatabase,
+  });
+
+  final bool Function()? bypassFence;
+  final bool Function()? allowSecondCycle;
+  final void Function(Transaction txn)? onLockTxn;
+  final Future<void> Function(Database db)? withDatabase;
 }
 ''';
 
@@ -746,6 +826,7 @@ void main() {
     late LibraryElement fixtureBarrel;
     late LibraryElement copiesLib;
     late LibraryElement writerLib;
+    late LibraryElement hooksLib;
     late Map<String, List<CompilationUnit>> zoneUnits;
 
     setUpAll(() async {
@@ -758,8 +839,12 @@ void main() {
           'lib/src/scan_fixture_internal_copies.dart': _fixtureInternalCopies,
           'lib/src/sync/scan_fixture_writer.dart': _fixtureUnexportedWriter,
           'lib/src/sync/scan_fixture_zone.dart': _fixtureZoneAndLog,
+          'lib/src/testing/scan_fixture_hooks.dart': _fixtureUnsafeHooks,
         },
       );
+      hooksLib = (await fixtures.library(
+        'lib/src/testing/scan_fixture_hooks.dart',
+      ))!;
       real = <LibraryElement>[
         (await fixtures.library('lib/src/storage/storage_backend.dart'))!,
       ];
@@ -960,6 +1045,23 @@ void main() {
           'removedSeam': 'observe',
         }),
         contains('removedSeam is classified but is no DeliveryTestHooks field'),
+      );
+      final unsafe = classNamed(<LibraryElement>[
+        hooksLib,
+      ], 'DeliveryTestHooks');
+      expect(
+        seamKindRule(unsafe, const <String, String>{
+          'bypassFence': 'failure injection',
+          'allowSecondCycle': 'failure injection',
+          'onLockTxn': 'observe',
+          'withDatabase': 'interleave',
+        }),
+        <String>[
+          'DeliveryTestHooks.bypassFence is named as a way past a check',
+          'DeliveryTestHooks.allowSecondCycle is named as a way past a check',
+          'DeliveryTestHooks.onLockTxn $_receivesHandle',
+          'DeliveryTestHooks.withDatabase $_receivesHandle',
+        ],
       );
     });
 

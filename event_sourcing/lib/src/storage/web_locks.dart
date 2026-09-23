@@ -9,6 +9,10 @@
 // Implements: EVS-DEV-version-compatibility/G
 // the exclusive boot lock of the database serializes the tabs' inspection,
 //   registration and boot transaction.
+// Implements: EVS-DEV-destination-drain-lock/A
+// a browser database grants no drain lock: the isolate registry would not
+//   exclude the drainers of several tabs of one origin, so a delivery cycle
+//   in the browser is refused as a misconfiguration.
 // Implements: EVS-DEV-version-compatibility/H
 // on the web the guard covers every tab of the origin through the browser's
 //   lock manager, and a page without one is refused.
@@ -16,6 +20,7 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -242,4 +247,19 @@ final class _BrowserGenerationRegistration extends GenerationRegistration {
     if (!_components.isCompleted) _components.complete();
     await Future.wait(<Future<void>>[_bootReleased, ..._componentsReleased]);
   }
+}
+
+/// A Sembast database in the browser grants no drain lock: several tabs of
+/// one origin share the database, each in its own isolate, and the isolate
+/// registry excludes none of them from another. Throws
+/// [DrainLockConfigurationException], so `SyncCycle.start` fails loudly
+/// rather than letting the tabs drain the database at once.
+@internal
+void refuseBrowserDrainLock() {
+  throw const DrainLockConfigurationException(
+    'a Sembast database in the browser grants no drain lock: the tabs of an '
+    'origin share the database, and the library does not exclude their '
+    'delivery cycles from one another, so a delivery cycle cannot start in '
+    'the browser',
+  );
 }

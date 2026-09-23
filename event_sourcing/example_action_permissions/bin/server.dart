@@ -245,6 +245,19 @@ Future<void> main(List<String> args) async {
     ),
   );
 
+  // The delivery cycle of the server's database. Several server processes
+  // may share one Postgres database: one drains, and the others stand by
+  // and take over when it stops.
+  final SyncCycle cycle;
+  try {
+    cycle = await SyncCycle.start(registry: components.destinations);
+  } on DrainLockConfigurationException catch (e) {
+    stderr.writeln('error: the delivery cycle cannot start: $e');
+    await components.eventStore.close();
+    exitCode = 1;
+    return;
+  }
+
   final server = await shelf_io.serve(routes.handler, 'localhost', port);
   stdout.writeln(
     'demo server listening on http://${server.address.host}:${server.port}',
@@ -252,6 +265,24 @@ Future<void> main(List<String> args) async {
   stdout.writeln('  backend: $backendDescription');
   stdout.writeln('  data dir: ${dataDir.path}');
   stdout.writeln('  install id: $installId');
+  stdout.writeln('  delivery cycle: ${cycle.state.name}');
+
+  // On SIGINT or SIGTERM: stop serving, close the delivery cycle (it
+  // releases the drain lock, so a standby process takes over), then close
+  // the event store and its backend.
+  var shuttingDown = false;
+  Future<void> shutdown(ProcessSignal signal) async {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    stdout.writeln('demo server stopping ($signal)');
+    await server.close();
+    await cycle.close(timeout: const Duration(seconds: 10));
+    await components.eventStore.close();
+    exit(0);
+  }
+
+  ProcessSignal.sigint.watch().listen(shutdown);
+  if (!Platform.isWindows) ProcessSignal.sigterm.watch().listen(shutdown);
 }
 
 Directory _resolveDataDir(String? overridePath) {

@@ -21,7 +21,6 @@ import 'dart:typed_data';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart'
     show SembastBackendTestSupport;
-import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -235,7 +234,11 @@ void main() {
       // Act: drain once. The contract under test: drain ships e1
       // (SendOk), wedges e2 (SendPermanent), and halts — leaving e3
       // pending.
-      await drain(destination, registry: registry, clock: () => fillClock);
+      await drainForTest(
+        destination,
+        registry: registry,
+        clock: () => fillClock,
+      );
 
       // Assert: exactly two send calls — e1 (SendOk) and e2 (wedged
       // attempt). e3 was NOT attempted.
@@ -309,7 +312,11 @@ void main() {
           clock: () => fillClock,
         );
       }
-      await drain(destination, registry: registry, clock: () => fillClock);
+      await drainForTest(
+        destination,
+        registry: registry,
+        clock: () => fillClock,
+      );
 
       // Assert: the destination now has e1, e2, e3 delivered in
       // sequence order — fresh delivery through post-fix drain, not

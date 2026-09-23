@@ -10,8 +10,9 @@
 // Implements: EVS-DEV-destination-drain/I
 // the wedge record the drainer writes
 //   beside the wedge event it appends: the wedged item, the event and the
-//   cause, for the destination's open wedge, and the purpose of the halt
-//   request the wedge consumed.
+//   cause, for the destination's open wedge, the purpose of the halt
+//   request the wedge consumed, the drain epoch of the wedging drainer and
+//   the fingerprint of the configuration it declared.
 // Implements: EVS-DEV-destination-drain/N
 // the halt request the registry writes and
 //   clears in the transaction of the event that opens or closes it, and the
@@ -282,10 +283,12 @@ class WedgeRecord {
   /// the wedge.
   final HaltPurpose? haltPurpose;
 
-  /// Reserved field; the drainer writes it as null.
+  /// The drain epoch of the lock the wedging drainer held.
   final int? drainerEpoch;
 
-  /// Reserved field; the drainer writes it as null.
+  /// The fingerprint of the configuration the wedging drainer declared for
+  /// the destination, or null when the draining process did not register
+  /// it.
   final String? configurationFingerprint;
 
   /// Persisted JSON form.

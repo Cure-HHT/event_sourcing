@@ -33,10 +33,13 @@ const stateKinds = <String, String>{
   'wedge records': 'wedge records',
   'halt requests': 'halt requests',
   'send fences': 'send fences',
+  'refill guards': 'refill guards',
   'registry check record': 'the registry check record',
   'database identity': 'the database identity',
   'generation records': 'the generation records',
   'catch-up marks': 'the view catch-up marks',
+  'fencing epoch': 'the fencing epoch',
+  'declared configuration': 'the declared configuration',
   'security context': 'the security context stored beside each event',
 };
 
@@ -159,7 +162,7 @@ void main() {
           "changes only through the library's operations.",
           kinds: const <String, String>{
             ...stateKinds,
-            'refill guards': 'refill guards',
+            'retention tallies': 'retention tallies',
           },
         ),
         isNotNull,
@@ -185,9 +188,10 @@ void main() {
           'Its persisted state (destination queues, the views it '
           'materializes, the records it keeps beside them, such as fill '
           'positions, schedules, replay requests, wedge records, halt '
-          'requests, send fences, the registry check record, the database '
-          'identity, the generation records and the view catch-up marks, '
-          'and the security context it '
+          'requests, send fences, refill guards, the registry check record, '
+          'the database identity, the generation records, the view catch-up '
+          'marks, the fencing epoch and the declared configuration, and the '
+          'security context it '
           "stores beside each event) changes only through the library's "
           'operations, and reserved system events are appended only by '
           "the library's own operations.",

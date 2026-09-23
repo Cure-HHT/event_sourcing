@@ -19,7 +19,6 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
         kDestinationAuditEntryTypes,
         kIngestAuditEntryType,
         kReservedEventShapes;
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -84,7 +83,7 @@ class _Store {
     for (var i = 0; i < 20; i++) {
       final head = await backend.readFifoHead(d.id);
       if (head != null && head.finalStatus == null) return;
-      await fillBatch(d, backend: backend, source: _source, clock: _fillNow);
+      await fillForTest(d, backend: backend, source: _source, clock: _fillNow);
     }
     throw StateError('queued(${d.id}): no pending head after the fill');
   }
@@ -341,7 +340,7 @@ void runDestinationWedgesViewScenarios(
         expect(await wedgesViewRows(r.backend), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
 
-        await fillBatch(
+        await fillForTest(
           d,
           backend: r.backend,
           source: _source,
@@ -477,7 +476,7 @@ void runDestinationWedgesViewScenarios(
             initiator: _init,
           );
           await r.registry.tombstoneAndRefill('k', row, initiator: _init);
-          await fillBatch(
+          await fillForTest(
             d,
             backend: r.backend,
             source: _source,

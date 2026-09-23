@@ -83,7 +83,9 @@ class EventStoreBundle {
 /// the library's own spec.
 ///
 /// Destinations are registered sequentially, preserving fail-fast on id
-/// collision.
+/// collision. Delivery starts when the application starts a `SyncCycle`
+/// over the bundle's destination registry; appends through the bundle's
+/// event store then wake it.
 ///
 /// The boot of [EventStore.open] runs as it documents: a build opens a
 /// database written by a build of the same data-format major, older ones
@@ -100,7 +102,6 @@ Future<EventStoreBundle> bootstrapEventStore({
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
   ProjectionRegistry? projections,
-  EventStoreSyncCycleTrigger? syncCycleTrigger,
 }) async {
   final typeRegistry = EntryTypeRegistry();
   for (final definition in entryTypes) {
@@ -133,7 +134,6 @@ Future<EventStoreBundle> bootstrapEventStore({
     source: source,
     securityContexts: securityContexts,
     projections: projections,
-    syncCycleTrigger: syncCycleTrigger,
   );
 
   final destinationRegistry = DestinationRegistry(eventStore: eventStore);

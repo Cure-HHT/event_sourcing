@@ -5,6 +5,8 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
@@ -60,9 +62,10 @@ import 'package:meta/meta.dart' show internal;
 /// its views and its security-context records hold only while its
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
-/// requests, wedge records, halt requests, send fences, the registry check
-/// record, the database identity, the generation records and the view
-/// catch-up marks, and the security context it stores beside each event)
+/// requests, wedge records, halt requests, send fences, refill guards, the
+/// registry check record, the database identity, the generation records,
+/// the view catch-up marks, the fencing epoch and the declared
+/// configuration, and the security context it stores beside each event)
 /// changes only through the library's operations, and reserved system
 /// events are appended only by the library's own operations. The internal
 /// marking, here and on the event store's reserved append operations, is an
@@ -866,6 +869,104 @@ abstract class StorageBackend {
   /// replacing the previous one.
   @internal
   Future<void> writeDataGenerationTxn(Transaction txn, GenerationRecord record);
+
+  // -------- Drain lock and drain records --------
+
+  /// The value on which the backend excludes drainers for the database
+  /// whose identity is [databaseId]: two backends in one isolate that
+  /// report equal values drain the same database. A backend shared by
+  /// several processes reports the scope of its drain lock (on Postgres,
+  /// the database, the schema and [databaseId]); a backend over one open
+  /// database handle reports that handle.
+  @internal
+  Object drainExclusionKey(String databaseId);
+
+  /// Acquire the drain lock of the database whose identity is [databaseId],
+  /// or throw [DrainLockUnavailableException] when another holder has it
+  /// (another process, tab or delivery cycle, or a live lock granted through
+  /// this backend).
+  ///
+  /// An acquisition raises the database's drain epoch
+  /// ([readDrainEpochTxn]) in a transaction and returns a lock that records
+  /// the value it stored. When any step after the backend obtained its
+  /// exclusion primitive fails, the backend gives the primitive up before
+  /// the error surfaces, so the next attempt can obtain it. Throws
+  /// [DrainLockConfigurationException] when the lock cannot be verified with
+  /// the backend's configuration. A backend that verifies the database
+  /// identity checks [databaseId] against the stored one.
+  @internal
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId});
+
+  /// Request the drain lock of the database whose identity is
+  /// [databaseId]: the request's `granted` completes with the lock once an
+  /// acquisition succeeds, retrying every [retryInterval] (and, where the
+  /// backend can tell, as soon as the lock is released).
+  @internal
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  });
+
+  /// Read the database's drain epoch inside [txn], or null before the first
+  /// acquisition.
+  ///
+  /// Persisted under `backend_state` key `drain_epoch`.
+  @internal
+  Future<int?> readDrainEpochTxn(Transaction txn);
+
+  /// Read the current drainer's declaration inside [txn], or null when no
+  /// drainer has written one.
+  ///
+  /// Persisted under `backend_state` key `drainer_declaration`.
+  @internal
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn);
+
+  /// Write [declaration] as the drainer's declaration inside [txn],
+  /// replacing the previous one.
+  @internal
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  );
+
+  /// Read the drainer's heartbeat inside [txn], or null when no pass has
+  /// started.
+  ///
+  /// Persisted under `backend_state` key `drain_heartbeat`.
+  @internal
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn);
+
+  /// Write [heartbeat] as the drainer's heartbeat inside [txn], replacing
+  /// the previous one.
+  @internal
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  );
+
+  /// Read [destinationId]'s refill guard inside [txn], or null when none is
+  /// set.
+  ///
+  /// Persisted under `backend_state` key `refill_guard_<destinationId>`.
+  @internal
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [guard] as [destinationId]'s refill guard inside [txn],
+  /// replacing the previous one.
+  @internal
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  );
+
+  /// Delete [destinationId]'s refill guard inside [txn]. No-op when none
+  /// exists.
+  @internal
+  Future<void> clearRefillGuardTxn(Transaction txn, String destinationId);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
   /// or `null` when no such row exists (either the FIFO store was never

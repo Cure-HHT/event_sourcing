@@ -19,10 +19,21 @@
 // (fill compare-and-set: the fill writes
 //   queue items, the fill position or a cleared replay request only when,
 //   inside its transaction, the persisted schedule, head status, fill
-//   position and replay request equal those its batch was computed from;
-//   the transform and every walk of the log run outside that transaction)
+//   position, replay request and refill guard equal those its batch was
+//   computed from; the transform and every walk of the log run outside that
+//   transaction)
+// Implements: EVS-DEV-destination-drain/F
+// (a refill guard holds the fill of a
+//   drainer that declares the guarded configuration; a fill under any other
+//   configuration removes the guard in its compare-and-set transaction)
+// Implements: EVS-DEV-destination-drain-lock/B
+// (every transaction of the fill checks
+//   the drain lock first and commits nothing when the drainer no longer
+//   holds it)
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/source.dart';
@@ -49,12 +60,14 @@ class _FillState {
     required this.headStatus,
     required this.cursor,
     required this.request,
+    required this.refillGuard,
   });
 
   final DestinationSchedule? schedule;
   final FinalStatus? headStatus;
   final int cursor;
   final ReplayRequest? request;
+  final RefillGuard? refillGuard;
 
   bool get headWedged => headStatus == FinalStatus.wedged;
 
@@ -67,11 +80,13 @@ class _FillState {
     final head = await backend.readFifoHeadTxn(txn, destinationId);
     final cursor = await backend.readFillCursorTxn(txn, destinationId);
     final request = await backend.readReplayRequestTxn(txn, destinationId);
+    final refillGuard = await backend.readRefillGuardTxn(txn, destinationId);
     return _FillState(
       schedule: schedule,
       headStatus: head?.finalStatus,
       cursor: cursor,
       request: request,
+      refillGuard: refillGuard,
     );
   }
 
@@ -86,27 +101,42 @@ class _FillState {
       other.schedule == schedule &&
       other.headStatus == headStatus &&
       other.cursor == cursor &&
-      other.request == request;
+      other.request == request &&
+      other.refillGuard == refillGuard;
 
   @override
-  int get hashCode => Object.hash(schedule, headStatus, cursor, request);
+  int get hashCode =>
+      Object.hash(schedule, headStatus, cursor, request, refillGuard);
 }
 
 /// Runs [write] inside one transaction only when the persisted state still
 /// equals [computedFrom]; otherwise writes nothing. Returns whether it
-/// wrote.
+/// wrote. The transaction checks [lock] first. When [computedFrom] carries
+/// a refill guard, the fill proceeds only because it declares another
+/// configuration, and the same transaction removes the guard once the fill
+/// position it leaves ([cursorAfter], the position [computedFrom] read when
+/// the write leaves it unchanged) reaches the guard's `refillThrough`.
 Future<bool> _compareAndSet(
   StorageBackend backend,
+  DrainLock lock,
   String destinationId,
   _FillState computedFrom,
-  Future<void> Function(Transaction txn) write,
-) async {
+  Future<void> Function(Transaction txn) write, {
+  int? cursorAfter,
+}) async {
   final seam = DeliveryTestHooks.current?.afterFillReads;
   if (seam != null) await seam(destinationId);
   return backend.transaction((txn) async {
+    await lock.assertHeldInTxn(txn);
+    await DeliveryTestHooks.current?.beforeQueueWrites?.call(destinationId);
     final now = await _FillState.readTxn(backend, txn, destinationId);
     if (now != computedFrom) return false;
     await write(txn);
+    final guard = computedFrom.refillGuard;
+    if (guard != null &&
+        (cursorAfter ?? computedFrom.cursor) >= guard.refillThrough) {
+      await backend.clearRefillGuardTxn(txn, destinationId);
+    }
     if (DeliveryTestHooks.current?.failFillTransaction?.call(destinationId) ??
         false) {
       throw InjectedFailure('fill transaction of $destinationId');
@@ -149,19 +179,42 @@ Future<bool> _compareAndSet(
 /// 7. Otherwise assemble a greedy batch through `canAddToBatch`. A lone
 ///    event younger than `maxAccumulateTime` is held (nothing written)
 ///    unless [flushHeld] is set.
-/// 8. Build the item (a native destination gets a library-built envelope
-///    from [source]; any other destination's `transform` runs) and commit
-///    it with the position advanced to the batch's last event.
+/// 8. Build the item (a native destination gets a library-built envelope;
+///    any other destination's `transform` runs) and commit it with the
+///    position advanced to the batch's last event.
 ///
-/// [source] is required when `destination.serializesNatively` is true.
-/// [clock] defaults to `() => DateTime.now().toUtc()`.
+/// A refill guard (left by an accepted recovery of a reconfigure halt) that
+/// names [declaredFingerprint], the fingerprint of the configuration the
+/// drainer declares for the destination, holds the fill: it writes nothing.
+/// Under any other fingerprint the fill proceeds, and the guard is removed
+/// in the compare-and-set transaction that advances the fill position to
+/// the guard's `refillThrough` (the position the recovery rewound from), so
+/// a drainer declaring the guarded configuration that takes the lock part
+/// way through the refill does not continue it. When nothing is left to
+/// fill, a transaction of its own removes the guard.
+///
+/// With [registrationId] (the registration the draining process holds the
+/// destination under), a persisted schedule of another registration (the
+/// destination was deleted and registered again elsewhere) holds the fill:
+/// it writes nothing. The compare-and-set re-reads the schedule, so a
+/// registration that changes while the fill builds its items commits
+/// nothing either.
+///
+/// Every transaction of the fill checks [lock] first and commits nothing
+/// when the drainer no longer holds it. A native destination's envelope
+/// carries [source], the source identity of the event store whose
+/// [backend] the fill writes. [clock] defaults to
+/// `() => DateTime.now().toUtc()`.
 @internal
 Future<void> fillBatch(
   Destination destination, {
   required StorageBackend backend,
-  Source? source,
+  required Source source,
+  required DrainLock lock,
   Clock? clock,
   bool flushHeld = false,
+  String? declaredFingerprint,
+  String? registrationId,
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
   final id = destination.id;
@@ -173,11 +226,18 @@ Future<void> fillBatch(
   for (;;) {
     state = await _FillState.read(backend, id);
     if (state.schedule == null || state.headWedged) return;
+    if (registrationId != null &&
+        state.schedule!.registrationId != registrationId) {
+      return;
+    }
+    final guard = state.refillGuard;
+    if (guard != null && guard.fingerprint == declaredFingerprint) return;
     final request = state.request;
     if (request == null) break;
     final performed = await _performReplayRequest(
       destination,
       backend,
+      lock,
       state,
       request,
       source: source,
@@ -194,7 +254,14 @@ Future<void> fillBatch(
   if (startDate.isAfter(upper)) return;
 
   final candidates = await backend.findAllEvents(afterSequence: state.cursor);
-  if (candidates.isEmpty) return;
+  if (candidates.isEmpty) {
+    // Nothing is left to refill: the guard goes in a transaction of its
+    // own.
+    if (state.refillGuard != null) {
+      await _compareAndSet(backend, lock, id, state, (_) async {});
+    }
+    return;
+  }
 
   // Permanent rejections (filter, startDate-lower) are decided and let the
   // position pass them; a deferred event (past the upper bound, which a
@@ -222,9 +289,9 @@ Future<void> fillBatch(
   if (inWindow.isEmpty) {
     if (lastDecidedSeq == null) return;
     final advanceTo = lastDecidedSeq;
-    await _compareAndSet(backend, id, state, (txn) async {
+    await _compareAndSet(backend, lock, id, state, (txn) async {
       await backend.writeFillCursorTxn(txn, id, advanceTo);
-    });
+    }, cursorAfter: advanceTo);
     return;
   }
 
@@ -253,10 +320,10 @@ Future<void> fillBatch(
     source: source,
     now: now,
   );
-  await _compareAndSet(backend, id, state, (txn) async {
+  await _compareAndSet(backend, lock, id, state, (txn) async {
     await writeQueueItemsTxn(txn, backend, id, <BuiltQueueItem>[item]);
     await backend.writeFillCursorTxn(txn, id, batch.last.sequenceNumber);
-  });
+  }, cursorAfter: batch.last.sequenceNumber);
 }
 
 /// Perform [request] under the compare-and-set: build its items outside any
@@ -265,9 +332,10 @@ Future<void> fillBatch(
 Future<bool> _performReplayRequest(
   Destination destination,
   StorageBackend backend,
+  DrainLock lock,
   _FillState state,
   ReplayRequest request, {
-  required Source? source,
+  required Source source,
   required DateTime now,
 }) async {
   final id = destination.id;
@@ -310,11 +378,11 @@ Future<bool> _performReplayRequest(
     advanceTo = build.cursor;
   }
   final cursor = advanceTo;
-  return _compareAndSet(backend, id, state, (txn) async {
+  return _compareAndSet(backend, lock, id, state, (txn) async {
     await writeQueueItemsTxn(txn, backend, id, items);
     if (cursor != null) await backend.writeFillCursorTxn(txn, id, cursor);
     await backend.clearReplayRequestTxn(txn, id);
-  });
+  }, cursorAfter: cursor);
 }
 
 /// The events whose sequence number is at or below [cursor] and that [keep]

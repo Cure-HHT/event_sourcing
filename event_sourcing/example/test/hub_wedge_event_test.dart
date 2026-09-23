@@ -51,14 +51,13 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
       final policy = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
+      // A one-hour cadence: the test runs every pass it asserts on itself.
       state = AppState(
         registry: datastore.destinations,
         policyNotifier: policy,
+        cadence: const Duration(hours: 1),
       );
-      cycle = SyncCycle(
-        registry: datastore.destinations,
-        policyResolver: () => policy.value,
-      );
+      cycle = await state.startDelivery();
     });
 
     await tester.runAsync(
@@ -116,6 +115,9 @@ void main() {
     expect(wedges.single.data['row_id'], head!.entryId);
     expect(wedges.single.data['cause'], 'permanent_refusal');
     expect(wedgeRow, findsOneWidget);
-    await tester.runAsync(() => backend.close());
+    await tester.runAsync(() async {
+      await state.stopDelivery();
+      await backend.close();
+    });
   });
 }

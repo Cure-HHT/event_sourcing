@@ -57,8 +57,8 @@ I. Provisioning SHALL refuse, writing nothing, when a live instance
    registered on the database requires a schema version below the minimum
    compatible version the provisioning would record.
 
-J. `PostgresBackend` SHALL hold its generation locks on one dedicated lock
-   session, verified at open, and again for every replacement, to be a
+J. `PostgresBackend` SHALL hold its generation locks and the drain lock
+   on one dedicated lock session, verified at open, and again for every replacement, to be a
    single server session reaching the pool's server, database and schema,
    configured with keepalives, no idle-session timeout and bounded connect
    and query timeouts, and used by one library operation at a time; when
@@ -156,9 +156,11 @@ be allowed to end its own sessions, which the role that owns them is.
 
 ## Changelog
 
+- 2026-09-23 | 1f8d49d6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | J: the drain lock is held on the lock session beside the generation locks
 - 2026-09-23 | 546da053 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Retire A; add G-J: provisioning is a separate, serialized step; open verifies the provisioned schema; provisioning keeps a live instance's schema version supported; the dedicated lock session, checked to reach the pool's server
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 546da053
+*End* *Postgres backend reference impl* | **Hash**: 1f8d49d6

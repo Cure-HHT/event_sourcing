@@ -59,8 +59,9 @@ void main() {
     test('resolver called exactly once per call()', () async {
       final ctx = await _bootstrap();
       var calls = 0;
-      final cycle = SyncCycle(
+      final cycle = await SyncCycle.start(
         registry: ctx.registry,
+        cadence: const Duration(hours: 1),
         policyResolver: () {
           calls += 1;
           return SyncPolicy.defaults;
@@ -70,6 +71,7 @@ void main() {
       expect(calls, 1);
       await cycle();
       expect(calls, 2);
+      await cycle.close();
       await ctx.backend.close();
     });
 
@@ -97,8 +99,9 @@ void main() {
         await _enqueueOne(ctx.backend, 'c', 'e1');
 
         var calls = 0;
-        final cycle = SyncCycle(
+        final cycle = await SyncCycle.start(
           registry: ctx.registry,
+          cadence: const Duration(hours: 1),
           clock: () => DateTime.utc(2026, 4, 22, 10),
           policyResolver: () {
             calls += 1;
@@ -116,6 +119,7 @@ void main() {
         // SyncPolicy was reused across every destination's drain call.
         expect(calls, 1);
 
+        await cycle.close();
         await ctx.backend.close();
       },
     );
@@ -125,12 +129,14 @@ void main() {
     // assert that cycle() does not throw when the resolver returns null.
     test('resolver returning null falls back to SyncPolicy.defaults', () async {
       final ctx = await _bootstrap();
-      final cycle = SyncCycle(
+      final cycle = await SyncCycle.start(
         registry: ctx.registry,
+        cadence: const Duration(hours: 1),
         policyResolver: () => null,
       );
       // No exception expected.
       await cycle();
+      await cycle.close();
       await ctx.backend.close();
     });
   });
@@ -142,8 +148,8 @@ void main() {
       'constructing with both policy and policyResolver throws ArgumentError',
       () async {
         final ctx = await _bootstrap();
-        expect(
-          () => SyncCycle(
+        await expectLater(
+          SyncCycle.start(
             registry: ctx.registry,
             policy: SyncPolicy.defaults,
             policyResolver: () => SyncPolicy.defaults,
@@ -154,14 +160,49 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-destination-drain/F
+    // the configuration version the log records with every wedge and
+    //   recovery is a bounded identifier: an empty, over-long or free-text
+    //   value is refused before anything starts, and an identifier of the
+    //   maximum length is accepted.
+    test(
+      'a configuration version that is not an identifier is refused',
+      () async {
+        final ctx = await _bootstrap();
+        for (final bad in <String>[
+          '',
+          'x' * (SyncCycle.maxConfigurationVersionLength + 1),
+          'build 7',
+          'line\nbreak',
+          'secret=abc',
+        ]) {
+          await expectLater(
+            SyncCycle.start(registry: ctx.registry, configurationVersion: bad),
+            throwsArgumentError,
+            reason: bad,
+          );
+        }
+        final cycle = await SyncCycle.start(
+          registry: ctx.registry,
+          cadence: const Duration(hours: 1),
+          configurationVersion:
+              'a' * (SyncCycle.maxConfigurationVersionLength - 12) +
+              '1.2+b:c@d/e_',
+        );
+        await cycle.close();
+        await ctx.backend.close();
+      },
+    );
+
     // When the resolver throws, the cycle aborts (exception propagates),
     // the reentrancy guard is cleared via try/finally, and a subsequent
     // trigger may invoke call() again.
     test('resolver throws → cycle aborts; reentrancy guard cleared', () async {
       final ctx = await _bootstrap();
       var first = true;
-      final cycle = SyncCycle(
+      final cycle = await SyncCycle.start(
         registry: ctx.registry,
+        cadence: const Duration(hours: 1),
         policyResolver: () {
           if (first) {
             first = false;
@@ -171,9 +212,10 @@ void main() {
         },
       );
       await expectLater(cycle(), throwsStateError);
-      // Guard was released by the finally block — this call must succeed.
-      expect(cycle.isInFlight, isFalse);
+      // The failed call left the cycle running; this call must succeed.
+      expect(cycle.state, SyncCycleState.running);
       await cycle();
+      await cycle.close();
       await ctx.backend.close();
     });
   });
@@ -185,8 +227,12 @@ void main() {
       'SyncCycle with neither policy nor resolver still works (defaults)',
       () async {
         final ctx = await _bootstrap();
-        final cycle = SyncCycle(registry: ctx.registry);
+        final cycle = await SyncCycle.start(
+          registry: ctx.registry,
+          cadence: const Duration(hours: 1),
+        );
         await cycle();
+        await cycle.close();
         await ctx.backend.close();
       },
     );
@@ -197,11 +243,13 @@ void main() {
       'SyncCycle with explicit policy: still uses it (today behavior)',
       () async {
         final ctx = await _bootstrap();
-        final cycle = SyncCycle(
+        final cycle = await SyncCycle.start(
           registry: ctx.registry,
+          cadence: const Duration(hours: 1),
           policy: SyncPolicy.defaults,
         );
         await cycle();
+        await cycle.close();
         await ctx.backend.close();
       },
     );
