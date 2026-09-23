@@ -9,21 +9,29 @@
 //   accept a starting sequence position for replay from any offset.
 // Implements: EVS-DEV-event-store-open/A
 // EventStore.open is the sole
-//   public constructor; EventStore._ is private and library-internal only.
+//   production constructor; EventStore._ is private and library-internal
+//   only; EventStore.openForTest is visible for testing only.
 // Implements: EVS-DEV-event-store-open/B
-// open emits lib_version_initialized
-//   on first boot via _runBootVersionCheck.
+// open appends lib_version_initialized
+//   when the database holds no locally appended library-version event
+//   (_runBoot).
 // Implements: EVS-DEV-event-store-open/C
-// open emits lib_version_changed
-//   on version upgrade via _runBootVersionCheck.
+// open appends lib_version_changed
+//   when its package version or data format differs from the latest locally
+//   recorded one, older ones included (_runBoot).
 // Implements: EVS-DEV-event-store-open/D
-// open throws DowngradeRefusedError
-//   on lib-version downgrade (unless allowDowngrade: true) via
-//   _runBootVersionCheck.
+// every library-version event records
+//   the package version and data format; a different recorded data-format
+//   major throws DataFormatIncompatibleError before any write (_runBoot).
 // Implements: EVS-DEV-event-store-open/E
-// both the version check and the
-//   snapshot-promotion pass run inside single backend.transaction calls in
-//   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
+// the whole boot runs in one
+//   bootTransaction, refusals first, then the library-version event,
+//   seeding, promotion, re-derivation and the boot record (_runBoot).
+// Implements: EVS-DEV-event-store-open/F
+// the database identity is minted
+//   or adopted at the first open, recorded in lib_version_initialized, and
+//   checked at every later open; a database an earlier data format wrote
+//   is refused as one to reset before any write (_runBoot).
 // Implements: EVS-DEV-append-stamps-registered-version/A
 // append looks up
 //   entryTypes.byId(entryType).registeredVersion and stamps its major and
@@ -38,15 +46,15 @@
 // every append path stamps LibVersion.dataFormat as the event's
 //   lib_format_version.
 // Implements: EVS-DEV-snapshot-promotion-on-open
-// _runBootSnapshotPromotionPass
-//   promotes lagging view rows and emits view_snapshot_promoted audit events.
+// _runBoot promotes lagging view rows
+//   and emits view_snapshot_promoted audit events.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A
 // EntryTypeVersionDowngradeError
 //   is thrown from open when a registered major is below the major of the
 //   highest stored target version.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/B
 // verifyNoEntryTypeDowngrade
-//   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
+//   runs in _runBoot before any write of the boot transaction.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C
 // EntryTypeVersionDowngradeError
 //   carries the entryType id and the stored and registered versions, each a
@@ -63,8 +71,10 @@ import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
@@ -76,6 +86,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/source.dart';
@@ -86,8 +97,9 @@ import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:event_sourcing/src/versions.dart';
-import 'package:meta/meta.dart' show internal;
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
 
@@ -155,26 +167,6 @@ class RetentionResult {
   final int purgedCount;
 }
 
-/// Thrown by [EventStore.open] when the event log was last processed by a
-/// newer version of the library than the current build, indicating that
-/// downgrading would risk data corruption.
-///
-/// Pass `allowDowngrade: true` to [EventStore.open] to bypass this check
-/// during development. **Do not use in production.**
-class DowngradeRefusedError extends Error {
-  DowngradeRefusedError(this.recordedVersion, this.currentVersion);
-
-  final String recordedVersion;
-  final String currentVersion;
-
-  @override
-  String toString() =>
-      'DowngradeRefusedError: log was processed by lib version '
-      '$recordedVersion which is newer than this build ($currentVersion). '
-      'Pass EventStore.open(allowDowngrade: true) to override '
-      '(development use only).';
-}
-
 /// Thrown by [EventStore.open] when a registered entry type's major is
 /// below the major of the highest target version stored for that entry type
 /// in `view_target_versions`: the views hold rows folded under a newer
@@ -221,6 +213,7 @@ class EventStore {
     required this.entryTypes,
     required this.source,
     required this.securityContexts,
+    required this.databaseId,
     this.syncCycleTrigger,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
@@ -242,6 +235,11 @@ class EventStore {
   final EventStoreSyncCycleTrigger? syncCycleTrigger;
   final ProjectionInterpreter _interpreter;
 
+  /// The database identity: a random identifier minted at the database's
+  /// first open, recorded in its `lib_version_initialized` event, and the
+  /// same for every event store over the database, whatever its [source].
+  final String databaseId;
+
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
   /// supplied directly on the constructor). Used by `rebuildView` to apply
   /// promoter chains during replay.
@@ -257,23 +255,70 @@ class EventStore {
   final Uuid _uuid;
   final SubscriptionEngine _subs = SubscriptionEngine();
 
-  /// Opens an [EventStore] against [storage] and performs the lib-version
-  /// boot check:
+  /// Opens an [EventStore] against [storage]: the single production entry
+  /// point. All required collaborators ([entryTypes], [source],
+  /// [securityContexts]) must be supplied; the returned store is fully
+  /// configured and ready for use.
   ///
-  /// - **First boot** (no version event in the log): appends a
-  ///   `lib_version_initialized` event recording [LibVersion.version].
-  /// - **Same version**: no-op — the log already records this version.
-  /// - **Upgrade** (recorded version < current): appends a
-  ///   `lib_version_changed` event recording the transition.
-  /// - **Downgrade** (recorded version > current): throws
-  ///   [DowngradeRefusedError] unless [allowDowngrade] is `true`.
+  /// The boot runs in one storage transaction. It first decides, before
+  /// writing anything, whether this build may open the database:
   ///
-  /// This is the single production entry point. All required collaborators
-  /// ([entryTypes], [source], [securityContexts]) must be supplied; the
-  /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open/A+B+C+D+E
-  // sole public constructor;
-  //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
+  /// - The database identity stored beside the log must equal the one the
+  ///   database's first `lib_version_initialized` event records; a missing
+  ///   or different identity throws [DatabaseIdentityMismatchError]. A
+  ///   database written by a build that recorded no identity or no data
+  ///   format, or whose stored shapes predate this data format, throws
+  ///   [DatabaseResetRequiredError]: it must be reset.
+  /// - The data-format major recorded by the latest library-version event
+  ///   must equal this build's ([LibVersion.dataFormat]); another major
+  ///   throws [DataFormatIncompatibleError].
+  /// - No registered entry type's major may be below the major stored for
+  ///   it in `view_target_versions`; a lower one throws
+  ///   [EntryTypeVersionDowngradeError].
+  ///
+  /// Only the library-version events this database appended itself count;
+  /// a peer's library-version events it ingested are never read as its
+  /// own. When the boot accepts, it writes, in this order: a
+  /// `lib_version_initialized` event at the first open (minting the
+  /// database identity, [databaseId]), or a `lib_version_changed` event
+  /// when this build's package version or data format differs from the one
+  /// recorded last, older ones included; the target versions of newly
+  /// registered view and entry-type pairs; the promotion of views whose
+  /// stored targets lag the registered versions; the re-derivation of views
+  /// that are behind the log; and a boot record. A refused boot writes
+  /// nothing.
+  ///
+  /// Deployment. Builds with the same data-format major and the same
+  /// entry-type majors share a database in any mix -- a canary beside the
+  /// serving revision, several instances, a restart, a rollback to the
+  /// previous release -- and every open by a different version is recorded
+  /// in the log. A view, or an entry type in a view's interest, that only
+  /// some of those builds register misses the events the others store
+  /// until a build that registers it opens the database again: that open
+  /// re-derives it (or `rebuildView` does). That catch-up follows the entry
+  /// types a view's interest names; a view whose interest names none (one
+  /// that selects by aggregate type), or whose interest differs between the
+  /// builds only outside its entry types, is not caught up: run
+  /// `rebuildView` for it once no build lacking it, or holding the narrower
+  /// interest, still serves the database. A build of another data-format
+  /// major, or one that raises an entry-type major, is deployed
+  /// stop-then-start: every instance of the old revision stops before the
+  /// first instance of the new one opens the database, and the old
+  /// revision's next open is refused afterwards. Recovery after such a
+  /// deployment is a restore from a backup taken before the switch, or a
+  /// roll-forward. Evolve compatibly where possible: add an optional field
+  /// as a minor step, and make a real reshape a new entry type.
+  ///
+  /// On a backend whose transactions contend with concurrent appends, the
+  /// boot first locks what every append writes, so the appends of a
+  /// revision serving the same database wait for the boot to commit rather
+  /// than abort it. The wait lasts for the whole boot: its reads of the
+  /// library-version events and the stored view targets, its checks, and
+  /// any seeding, promotion and re-derivation it performs, the last two
+  /// proportional to the events and rows of the views they rewrite.
+  // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
+  // the sole production constructor; the whole boot, refusals first, runs
+  //   in one storage transaction (see _runBoot).
   static Future<EventStore> open({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -284,22 +329,22 @@ class EventStore {
     EventStoreSyncCycleTrigger? syncCycleTrigger,
     Clock? clock,
     Uuid? uuid,
-    bool allowDowngrade = false,
   }) async {
-    await _runBootVersionCheck(storage, allowDowngrade: allowDowngrade);
     final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    await _runBootSnapshotPromotionPass(
+    final databaseId = await _runBoot(
       storage: storage,
       entryTypes: entryTypes,
       projections: effectiveProjections,
       promoters: effectivePromoters,
+      recordVersion: true,
     );
     return EventStore._(
       backend: storage,
       entryTypes: entryTypes,
       source: source,
       securityContexts: securityContexts,
+      databaseId: databaseId,
       projections: effectiveProjections,
       promoters: effectivePromoters,
       syncCycleTrigger: syncCycleTrigger,
@@ -308,17 +353,22 @@ class EventStore {
     );
   }
 
-  /// Opens an [EventStore] without running the lib-version boot check.
+  /// Opens an [EventStore] for a test: the boot of [open], refusals
+  /// included, without its library-version event.
   ///
-  /// Intended for **tests only** — use [EventStore.open] in production code.
-  /// Skipping the boot check means no `lib_version_initialized` event is
-  /// appended, which keeps sequence numbers predictable for tests that assert
-  /// on raw sequence values.
-  ///
-  /// The snapshot-promotion boot pass (entry-type downgrade refusal,
-  /// view_target_versions seeding, and snapshot promotion) still runs here:
-  /// on a greenfield log it's a no-op (no view rows, no stored target
-  /// versions), and tests that exercise version evolution want it to fire.
+  /// It refuses what [open] refuses (the database identity, the data
+  /// format, an entry-type downgrade), and otherwise seeds, promotes and
+  /// re-derives views and writes the boot record as [open] does. It
+  /// appends no `lib_version_initialized` or `lib_version_changed` event,
+  /// so sequence numbers stay predictable, and at a first open it mints the
+  /// database identity without a log record; a later [open] adopts that
+  /// identity. The guarantee that the log records every version that opened
+  /// the database holds for [open] only.
+  // Implements: EVS-DEV-event-store-open/A
+  // the test-only constructor: visible for testing, so the analyzer reports
+  //   a call from production code; the refusals of open; no library-version
+  //   event.
+  @visibleForTesting
   static Future<EventStore> openForTest({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -332,17 +382,19 @@ class EventStore {
   }) async {
     final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
     final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    await _runBootSnapshotPromotionPass(
+    final databaseId = await _runBoot(
       storage: storage,
       entryTypes: entryTypes,
       projections: effectiveProjections,
       promoters: effectivePromoters,
+      recordVersion: false,
     );
     return EventStore._(
       backend: storage,
       entryTypes: entryTypes,
       source: source,
       securityContexts: securityContexts,
+      databaseId: databaseId,
       projections: effectiveProjections,
       promoters: effectivePromoters,
       syncCycleTrigger: syncCycleTrigger,
@@ -351,47 +403,142 @@ class EventStore {
     );
   }
 
-  /// Runs the three boot-time entry-type-version helpers in fixed order
-  /// inside a single backend transaction:
+  /// The boot of [open] (with [recordVersion]) and of [openForTest]
+  /// (without), in one `bootTransaction` of [storage]. Returns the database
+  /// identity.
   ///
-  ///   1. [verifyNoEntryTypeDowngrade] — refuse boot if any entry type's
-  ///      `registeredVersion` is below the highest stored
-  ///      `view_target_versions` value.
-  ///   2. [seedViewTargetVersions] — write a `view_target_versions` row
-  ///      at the current `registeredVersion` for every (viewName, entry
-  ///      type matched by the projection's interest filter) pair that
-  ///      doesn't already have one.
-  ///   3. [promoteViewSnapshots] — for each view with a pair whose stored
-  ///      target lags the registry, re-derive the affected view rows from
-  ///      the log through the promoter chain, update
-  ///      `view_target_versions`, and emit
-  ///      one `view_snapshot_promoted` audit event per promoted pair via
-  ///      [_appendViewSnapshotPromotedAuditInTxn].
-  ///
-  /// All three run inside a single `backend.transaction` so a mid-pass
-  /// crash rolls back atomically and the next boot retries from a clean
-  /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B,
-  //             EVS-DEV-snapshot-promotion-on-open/A+B+C,
-  //             EVS-DEV-event-store-open/E
-  //
-  // Downgrade refusal runs before any mutation; lagging view rows are then
-  // promoted and a view_snapshot_promoted audit event emitted per pair; all
-  // three steps run inside one storage.transaction.
-  static Future<void> _runBootSnapshotPromotionPass({
+  /// Every refusal is decided before the first write: the stored shapes,
+  /// the database identity, the data format and the entry-type majors.
+  /// Then, in order: the library-version event (when [recordVersion] and
+  /// one is due), view-target seeding, snapshot promotion (each promoted
+  /// pair audited by a `view_snapshot_promoted` event), the re-derivation of
+  /// views behind the log, and the boot record. The whole body may run more
+  /// than once (a serialization retry, or a browser database re-running it
+  /// after another tab committed); each run decides again from what it
+  /// reads.
+  // Implements: EVS-DEV-event-store-open/B+C+D+E+F
+  // one boot transaction; refusals before any write; the library-version
+  //   event before seeding and promotion; the boot record on every accepted
+  //   boot.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B
+  // verifyNoEntryTypeDowngrade runs before any write of the boot
+  //   transaction.
+  // Implements: EVS-DEV-snapshot-promotion-on-open/A+B+C
+  // lagging view rows are re-derived and a view_snapshot_promoted audit
+  //   appended per pair, in the boot transaction.
+  // Implements: EVS-DEV-version-compatibility/L
+  // views behind the log for an entry type in their interest are
+  //   re-derived in the boot transaction.
+  static Future<String> _runBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required ProjectionRegistry projections,
     required PromoterRegistry promoters,
-  }) async {
-    await storage.transaction((txn) async {
+    required bool recordVersion,
+  }) {
+    final hooks = DeliveryTestHooks.current;
+    final build =
+        hooks?.buildDeclaration ??
+        (version: LibVersion.version, dataFormat: LibVersion.dataFormat);
+    return storage.bootTransaction<String>((txn) async {
+      _observeBootBodyRun(hooks);
+
+      // -------- Decide: nothing below writes until every refusal ran.
+      await _refuseEarlierFormatEvents(storage, txn);
+      final storedId = await storage.readDatabaseIdTxn(txn);
+      final LocalLibVersionHistory history;
+      try {
+        history = await VersionCheck.readLocalInTxn(storage, txn);
+      } on FormatException catch (e) {
+        throw DatabaseResetRequiredError(
+          'a library-version event is not in this data format: ${e.message}',
+        );
+      }
+      final initialized = history.firstInitialized;
+      final latest = history.latest;
+      if (initialized == null && latest != null) {
+        throw DatabaseResetRequiredError(
+          'its log records library-version changes but no initialization',
+        );
+      }
+      if (initialized != null) {
+        final recordedId = initialized.databaseId;
+        if (recordedId == null ||
+            history.events.any((recorded) => recorded.dataFormat == null)) {
+          throw DatabaseResetRequiredError(
+            'its library-version events record no database identity or no '
+            'data format',
+          );
+        }
+        if (storedId != recordedId) {
+          throw DatabaseIdentityMismatchError(
+            recordedDatabaseId: recordedId,
+            storedDatabaseId: storedId,
+          );
+        }
+        final recordedFormat = latest!.dataFormat!;
+        if (recordedFormat.major != build.dataFormat.major) {
+          throw DataFormatIncompatibleError(
+            recordedPackageVersion: latest.packageVersion ?? '(unrecorded)',
+            recordedDataFormat: recordedFormat,
+            packageVersion: build.version,
+            dataFormat: build.dataFormat,
+          );
+        }
+      }
       await verifyNoEntryTypeDowngrade(
         txn: txn,
         backend: storage,
         projections: projections,
         entryTypes: entryTypes,
       );
-      await seedViewTargetVersions(
+
+      // -------- Write.
+      final String databaseId;
+      var versionEventAppended = false;
+      if (initialized == null) {
+        databaseId = await storage.readOrCreateDatabaseIdTxn(txn);
+        if (recordVersion) {
+          await _appendLibVersionEventInTxn(
+            txn,
+            storage,
+            LibVersionEvents.initialized,
+            <String, Object?>{
+              'version': build.version,
+              'data_format': build.dataFormat.toJson(),
+              'database_id': databaseId,
+              'initializedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          );
+          versionEventAppended = true;
+        }
+      } else {
+        databaseId = initialized.databaseId!;
+        final recordedVersion = latest!.packageVersion;
+        final recordedFormat = latest.dataFormat!;
+        if (recordVersion &&
+            (recordedVersion != build.version ||
+                recordedFormat != build.dataFormat)) {
+          await _appendLibVersionEventInTxn(
+            txn,
+            storage,
+            LibVersionEvents.changed,
+            <String, Object?>{
+              'fromVersion': recordedVersion,
+              'toVersion': build.version,
+              'fromDataFormat': recordedFormat.toJson(),
+              'toDataFormat': build.dataFormat.toJson(),
+              'changedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          );
+          versionEventAppended = true;
+        }
+      }
+      if (versionEventAppended &&
+          (hooks?.afterBootVersionEvent?.call() ?? false)) {
+        throw const InjectedFailure('afterBootVersionEvent');
+      }
+      final seeded = await seedViewTargetVersions(
         txn: txn,
         backend: storage,
         projections: projections,
@@ -423,52 +570,59 @@ class EventStore {
               );
             },
       );
+      await catchUpViews(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        promoters: promoters,
+        entryTypes: entryTypes,
+        seeded: seeded,
+      );
+      // An accepted boot always writes, so a browser database checks this
+      // transaction against other tabs' commits and re-runs it on fresh data
+      // when one committed first.
+      await storage.writeBootCheckTxn(
+        txn,
+        BootCheck(
+          at: DateTime.now().toUtc(),
+          packageVersion: build.version,
+          dataFormat: build.dataFormat,
+        ),
+      );
+      return databaseId;
     });
   }
 
-  /// Runs the lib-version boot check against [storage].
-  ///
-  /// - First boot: appends `lib_version_initialized`.
-  /// - Upgrade: appends `lib_version_changed`.
-  /// - Downgrade: throws [DowngradeRefusedError] unless
-  ///   [allowDowngrade] is `true`.
-  /// - Same version: no-op.
-  static Future<void> _runBootVersionCheck(
-    StorageBackend storage, {
-    bool allowDowngrade = false,
-  }) async {
-    final recorded = await VersionCheck.findMostRecent(storage);
-    if (recorded == null) {
-      await _appendLibVersionEventToBackend(
-        storage,
-        LibVersionEvents.initialized,
-        <String, Object?>{
-          'version': LibVersion.version,
-          'initializedAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      );
-    } else {
-      final cmp = LibVersion.compare(
-        recorded.recordedVersion,
-        LibVersion.version,
-      );
-      if (cmp > 0 && !allowDowngrade) {
-        throw DowngradeRefusedError(
-          recorded.recordedVersion,
-          LibVersion.version,
-        );
-      } else if (cmp < 0) {
-        await _appendLibVersionEventToBackend(
-          storage,
-          LibVersionEvents.changed,
-          <String, Object?>{
-            'fromVersion': recorded.recordedVersion,
-            'toVersion': LibVersion.version,
-            'changedAt': DateTime.now().toUtc().toIso8601String(),
-          },
-        );
+  /// Throws [DatabaseResetRequiredError] when the latest event in the log
+  /// is not in this data format's stored shape.
+  static Future<void> _refuseEarlierFormatEvents(
+    StorageBackend storage,
+    Transaction txn,
+  ) async {
+    try {
+      await for (final _ in storage.readEventsReverseInTxn(txn)) {
+        break;
       }
-      // cmp == 0 or (cmp > 0 && allowDowngrade): no-op.
+    } on FormatException catch (e) {
+      throw DatabaseResetRequiredError(
+        'its events are not in this data format: ${e.message}',
+      );
+    }
+  }
+
+  static void _observeBootBodyRun(DeliveryTestHooks? hooks) {
+    final seam = hooks?.onBootBodyRun;
+    if (seam == null) return;
+    try {
+      seam();
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the onBootBodyRun test seam threw',
+        level: LibraryLogLevel.severe,
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
@@ -1751,7 +1905,7 @@ String _canonicalEventHash(Map<String, Object?> recordMap) =>
 /// Build and append one substrate-internal event to [backend] inside [txn].
 ///
 /// Encapsulates the ~25-line boilerplate shared by [EventStore.logRejectedBatch],
-/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventToBackend]:
+/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventInTxn]:
 /// assemble the 14-key record map, hash it with [_canonicalEventHash], call
 /// [StorageBackend.appendEvent], and optionally record the event into [collector].
 ///
@@ -1801,10 +1955,10 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   return event;
 }
 
-/// Append a substrate-emitted lib_version event directly to [backend].
+/// Append a substrate-emitted lib_version event to [backend] inside [txn].
 ///
 /// Bypasses [EventStore.appendInTxn] because lib_version events are
-/// appended from inside [EventStore.open] BEFORE the [EventStore]
+/// appended from inside [EventStore.open]'s boot BEFORE the [EventStore]
 /// instance exists, so we cannot reach the registry through it. The
 /// hardcoded `entryTypeVersion` `1.0` here is the one documented exception
 /// to the substrate-stamps-registeredVersion-from-the-registry rule
@@ -1815,43 +1969,42 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
 ///
 /// Delegates to [_appendRawInternalEventInTxn] for the actual
 /// record-assembly and hashing.
-Future<void> _appendLibVersionEventToBackend(
+Future<void> _appendLibVersionEventInTxn(
+  Transaction txn,
   StorageBackend backend,
   String eventType,
   Map<String, Object?> data,
 ) async {
-  await backend.transaction<void>((txn) async {
-    const uuid = Uuid();
-    final now = DateTime.now().toUtc();
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
-    final provenance0 = ProvenanceEntry(
-      hop: 'event_sourcing',
-      receivedAt: now,
-      identifier: 'event_sourcing',
-      softwareVersion: LibVersion.version,
-    );
-    await _appendRawInternalEventInTxn(
-      txn,
-      backend,
-      aggregateId: '_lib',
-      aggregateType: '_lib',
-      entryType: eventType,
-      entryTypeVersion: const EntryTypeVersion(1, 0),
-      eventType: eventType,
-      data: data,
-      initiator: _kLibVersionInitiator,
-      provenance0: provenance0,
-      localSeq: localSeq,
-      previousTailHash: previousTailHash,
-      uuid: uuid,
-    );
-  });
+  const uuid = Uuid();
+  final now = DateTime.now().toUtc();
+  final localSeq = await backend.nextSequenceNumber(txn);
+  final previousTailHash = await backend.readLatestEventHash(txn);
+  final provenance0 = ProvenanceEntry(
+    hop: 'event_sourcing',
+    receivedAt: now,
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.version,
+  );
+  await _appendRawInternalEventInTxn(
+    txn,
+    backend,
+    aggregateId: '_lib',
+    aggregateType: '_lib',
+    entryType: eventType,
+    entryTypeVersion: const EntryTypeVersion(1, 0),
+    eventType: eventType,
+    data: data,
+    initiator: _kLibVersionInitiator,
+    provenance0: provenance0,
+    localSeq: localSeq,
+    previousTailHash: previousTailHash,
+    uuid: uuid,
+  );
 }
 
 /// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
 ///
-/// Called by [EventStore._runBootSnapshotPromotionPass] (via the
+/// Called by [EventStore._runBoot] (via the
 /// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
 /// (viewName, entryType) pair that has been lifted to a new
 /// `registeredVersion`. Runs inside the same backend transaction as the

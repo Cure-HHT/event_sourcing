@@ -19,7 +19,12 @@
 /// - `SubscriptionFilter` — filter by aggregate type, entry type, event type.
 /// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
 /// - `Update` — sealed stream element: `Snapshot`, `EndOfReplay`, `Delta`, `Tombstone`.
-/// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
+/// - `DataFormatIncompatibleError` — thrown by `EventStore.open` when the
+///   database was last opened by a build of another data-format major.
+/// - `DatabaseResetRequiredError` / `DatabaseIdentityMismatchError` — thrown
+///   by `EventStore.open` for a database an earlier build wrote, or whose
+///   stored identity is missing or changed.
+/// - `LibVersion` — this build's package version and data-format version.
 /// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
 ///   entry type's registered major is below its stored target's major.
 /// - `EntryTypeVersion` / `DataFormatVersion` — major.minor versions of an
@@ -167,7 +172,6 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
     show
-        DowngradeRefusedError,
         EntryTypeVersionDowngradeError,
         EventStore,
         EventStoreSyncCycleTrigger,
@@ -190,6 +194,13 @@ export 'src/ingest/ingest_result.dart'
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.
+export 'src/lifecycle/boot_errors.dart'
+    show
+        DatabaseIdentityMismatchError,
+        DatabaseResetRequiredError,
+        DataFormatIncompatibleError;
+export 'src/lifecycle/lib_version.dart' show LibVersion;
+
 export 'src/permissions/authorization_bootstrap_result.dart'
     show AuthorizationBootstrapResult, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
@@ -324,6 +335,7 @@ export 'src/security/system_entry_types.dart'
 // library-private: only `PostgresBackend.open` calls it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
+export 'src/storage/boot_check.dart' show BootCheck;
 export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'

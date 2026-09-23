@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart';
 
 /// Private zone key under which [runWithDeliveryTestHooks] installs seams.
@@ -23,11 +24,19 @@ final Object _zoneKey = Object();
 /// committed ([afterWedgeTransaction]), or a fill's transaction fail after
 /// its writes ([failFillTransaction]); and run interleaving operations at
 /// named points between transactions ([beforeRegistryTransaction],
-/// [insideTransform], [afterFillReads]). None can make an operation succeed
-/// that would otherwise fail, an exception thrown by an observing seam
-/// ([onLog], [onRegistryBodyRun]) is reported and does not reach the
-/// library code that called it, and none receives a database handle or a
-/// transaction.
+/// [insideTransform], [afterFillReads]). The boot of `EventStore.open` has
+/// an observing seam ([onBootBodyRun]) and a failure injection after its
+/// library-version append ([afterBootVersionEvent]). One seam is an input
+/// substitution: [buildDeclaration] replaces the package and data-format
+/// versions the boot decides with and records, so that one test process can
+/// play two builds of the library against one database; it changes what
+/// the boot decides, as a build of those versions would. Apart from
+/// [buildDeclaration], under which an open succeeds or fails as the
+/// declared build's would, none can make an operation succeed that would
+/// otherwise fail; an exception thrown by an
+/// observing seam ([onLog], [onRegistryBodyRun], [onBootBodyRun]) is
+/// reported and does not reach the library code that called it, and none
+/// receives a database handle or a transaction.
 @internal
 @immutable
 class DeliveryTestHooks {
@@ -43,6 +52,9 @@ class DeliveryTestHooks {
     this.onRegistryBodyRun,
     this.insideTransform,
     this.afterFillReads,
+    this.onBootBodyRun,
+    this.afterBootVersionEvent,
+    this.buildDeclaration,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -105,6 +117,22 @@ class DeliveryTestHooks {
   /// Awaited after the fill's reads and before its compare-and-set
   /// transaction.
   final Future<void> Function(String destinationId)? afterFillReads;
+
+  /// Observes each run of `EventStore.open`'s boot transaction body, at its
+  /// start. A backend may run the body more than once. An exception it
+  /// throws is reported and does not reach the boot.
+  final void Function()? onBootBodyRun;
+
+  /// Consulted inside `EventStore.open`'s boot transaction right after it
+  /// appends a library-version event. Returning true makes the boot throw
+  /// [InjectedFailure] there, so the transaction rolls back.
+  final bool Function()? afterBootVersionEvent;
+
+  /// Input substitution: the package version and data-format version that
+  /// `EventStore.open`'s boot decides with and records in the
+  /// library-version event it appends, in place of the compiled
+  /// `LibVersion.version` and `LibVersion.dataFormat`.
+  final ({String version, DataFormatVersion dataFormat})? buildDeclaration;
 
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.

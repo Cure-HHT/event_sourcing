@@ -170,11 +170,13 @@ they shape what's possible:
   because every Allow/Deny outcome must be reproducible from the event
   log + the library version. App-supplied policy callbacks would break
   that.
-- **The substrate records its own version in the log.** Every
-  installation appends `lib_version_initialized` on first boot and
-  `lib_version_changed` on each upgrade. Downgrades are refused unless
-  explicitly opted in. "What did the library do at sequence N?" is
-  answerable from the log alone.
+- **The substrate records its own version in the log.** The first open
+  of a database appends `lib_version_initialized`, and every open by a
+  build of another package or data-format version appends
+  `lib_version_changed`, older builds included. Builds of one
+  data-format major share a database; another major is refused before
+  anything is written. "Which library opened the database, and in what
+  order?" is answerable from the log alone.
 - **Single-source-per-aggregate-type, today.** The multi-source
   machinery exists in design but is dormant in 0.x. In practice this
   means: in the 0.x model, each kind of aggregate is produced by one
@@ -838,9 +840,10 @@ that are not part of your payload:
   passed to `bootstrapAppendOnlyDatastore`. Producers don't choose it;
   the substrate stamps it.
 - **`lib_format_version`** — the data-format version of the
-  `event_sourcing` build that appended the event, also a major and a
-  minor number. It versions what the library stores and sends, not its
-  package version. Same idea, one level up.
+  `event_sourcing` build that appended the event
+  (`LibVersion.dataFormat`), also a major and a minor number. It
+  versions what the library stores and sends, not the package version
+  (`LibVersion.version`). Same idea, one level up.
 - **`metadata.change_reason`** — a free-form string describing the
   reason for the change. Defaults to `"initial"` if you don't supply
   one.
@@ -952,23 +955,68 @@ system accepted" without parsing the payload.
 
 ### The library records its own version in the log
 
-On the first boot against a fresh storage backend, the substrate
-appends a `lib_version_initialized` event recording the version of
-`event_sourcing` you're running. Each subsequent boot:
+A build of the library carries two versions: its package version
+(`LibVersion.version`) and its data-format version
+(`LibVersion.dataFormat`, a major and a minor number that versions what
+the library stores and sends). The data format decides; the package
+version is recorded for audit.
 
-- If the version matches what's recorded: silent no-op.
-- If the version is newer: append a `lib_version_changed` event.
-- If the version is older: refuse to open the store, unless you pass
-  `allowDowngrade: true` to `EventStore.open`. (This is a safety
-  net: an older library may not understand newer event shapes.)
+`EventStore.open` runs its whole boot in one storage transaction. On the
+first open of a database it mints the database identity
+(`EventStore.databaseId`, the same for every event store over the
+database) and appends a `lib_version_initialized` event recording the
+identity, the package version and the data format. Each later open:
 
-The same boot path runs a check called "entry-type downgrade refusal":
-if any registered entry type's major is less than the major of the
-highest version the substrate has previously recorded for that type
-(tracked in the `view_target_versions` table), boot fails. The substrate
-will not silently re-interpret an event under an older major. A build
-registering an older minor of the same major opens: minor steps only add
-fields with defaults, so it reads rows a newer minor promoted.
+- If the package version and data format match the latest recorded
+  ones: nothing is appended.
+- If either differs and the data-format major is the same: append a
+  `lib_version_changed` event, whether this build is newer or older (a
+  rollback, or an older revision running beside a newer one).
+- If the recorded data-format major differs: refuse with
+  `DataFormatIncompatibleError` before writing anything. An older build
+  cannot read a newer major, and a newer build has no reader for an
+  older one; the way out is the build that wrote the database, or a
+  restore.
+
+Only the library-version events the database appended itself count.
+Events ingested from a peer carry a receiver provenance entry, and the
+boot ignores them, so a peer's newer build never reads as this
+database's version. A stored identity that is missing or differs from
+the recorded one is refused (`DatabaseIdentityMismatchError`), and a
+database an earlier data format wrote is refused by name
+(`DatabaseResetRequiredError`): it must be reset. There is no override;
+`EventStore.openForTest` refuses the same databases and appends no
+library-version event, and it is for tests only.
+
+The same boot runs the "entry-type downgrade refusal", before it writes
+anything: if any registered entry type's major is less than the major
+of the highest version the substrate has recorded for that type
+(tracked in the `view_target_versions` table), the open fails. The
+substrate will not silently re-interpret an event under an older major.
+A build registering an older minor of the same major opens: minor steps
+only add fields with defaults, so it reads rows a newer minor promoted.
+
+On Postgres the boot's first statement locks the table holding the
+sequence counter, which every append writes, so the appends of a
+revision serving the same database wait for the boot to commit rather
+than abort it. That wait lasts for the whole boot: its reads of the
+library-version events and the stored view targets, its checks, and any
+promotion or re-derivation it performs. A release that promotes or
+re-derives a large view pauses the serving revision's appends for that
+long. Opening a `PostgresBackend` also runs the schema statements, which
+lock tables of their own for a moment.
+
+Deploying. Builds with the same data-format major and the same
+entry-type majors share a database in any mix: a no-traffic canary
+beside the serving revision, several instances, a restart, a rollback
+to the previous release. A build of another data-format major, or one
+that raises an entry-type major, is deployed stop-then-start: every
+instance of the old revision stops before the first instance of the new
+one opens the database, and the old revision's next open is refused
+afterwards. Recovery after such a deployment is a restore from a backup
+taken before the switch, or a roll-forward. Evolve compatibly where you
+can: add an optional field as a minor step, and make a real reshape a
+new entry type that you append instead of the old one.
 
 ### Schema evolution: entry types and promoters
 
@@ -1037,12 +1085,26 @@ Both paths exist because the schema-evolution discipline says "the log
 is canonical; you can reconstruct any past state by replaying the
 events through the current promoter chain."
 
-A view is folded only by the builds that register it. Registering a new
-view, or a new entry type in a view's interest, on a database that
-already holds events folds none of them: run `rebuildView` for the view.
-Events that a build not registering the view appends while it serves the
-same database are not folded into the view either, so run `rebuildView`
-again once the last such build has stopped.
+A view is folded only by the builds that register it, and the views
+catch up with the log at the next open. Registering a new view, or a
+new entry type in a view's interest, on a database that already holds
+events of that type re-derives the view from the log in the boot
+transaction. A build that stores an event of an entry type without
+folding it into a view another build registers -- the serving revision
+beside a canary that adds a view -- marks that view behind the log, and
+the next open of a build that registers the view re-derives it. Until
+that open the view lacks those events; `rebuildView` fills it at any
+time.
+
+Catch-up follows the entry types a view's interest names. A view whose
+interest names none -- one that selects by aggregate type, as
+`SubscriptionFilter(aggregateTypes: {...})` does, or matches every
+entry type -- is not caught up: registered over events already in the
+log it starts empty, and the events a build that does not register it
+stores stay out of it. The same holds when two builds' interests for one
+view differ only in aggregate types or in `includeSystemEvents`. Run
+`rebuildView` for such a view once no build that lacks it, or holds the
+narrower interest, still serves the database.
 
 ### Provenance: where an event has been
 

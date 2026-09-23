@@ -98,11 +98,16 @@ These commitments shape the library's design.
   Alternative policy models require library extension (same Append-
   Only Primitives discipline as projections), not app-side replacement.
 - **Library version recorded in the log.** Substrate emits
-  `lib_version_initialized` on first boot under a new lib version and
-  `lib_version_changed` on subsequent transitions. Downgrades are
-  refused by default. State at sequence N is reconstructable from
-  `(events, projection_specs, promoter_specs, lib_version)` — all in
-  the log.
+  `lib_version_initialized` (with the database identity) on the first
+  open and `lib_version_changed` on every open by a different package or
+  data-format version, older ones included, all in one boot transaction.
+  Compatibility is decided by the data-format major: an older library of
+  the same major opens and is recorded; another major is refused before
+  any write. The log records each open, not which of two builds
+  running side by side appended a given event. A view equals a replay
+  of the events under the projection and promoter specs of the build
+  that registers it once that build has re-derived it (boot promotion
+  and view catch-up at its open, or `rebuildView`).
 - **Entry-type version is substrate-owned.** Entry-type versions and
   the library's data-format version are `major.minor`. The substrate
   stamps `entryTypeVersion = entryTypes.byId(entryType).registeredVersion`
@@ -188,8 +193,8 @@ They are useful defaults, not unique truths:
 - A projection produces one row per aggregate, materialized via
   generic merge (the substrate could equally produce per-event rows or
   derived-only views)
-- "Version" is a monotonically-bumped integer per entry type (the
-  substrate could equally use content-hash-as-version)
+- "Version" is a major.minor pair per entry type (the substrate could
+  equally use content-hash-as-version)
 
 The library bundles these as primitives because most consumers want
 them, but they don't carry the same epistemic weight as Layer 1.
@@ -244,9 +249,10 @@ The currently-trusted inputs are:
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
-  positions, schedules, replay requests, wedge records and the registry
-  check record, and the security context it stores beside each event)
-  changes only through the library's operations. Every
+  positions, schedules, replay requests, wedge records, the registry
+  check record, the database identity and the view catch-up marks, and
+  the security context it stores beside each event) changes only
+  through the library's operations. Every
   `StorageBackend` member that writes is `@internal`, which the
   analyzer enforces but nothing enforces at run time: the consumer
   holds the backend (and, on Sembast, the database it opened), and a

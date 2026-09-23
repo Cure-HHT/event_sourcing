@@ -1255,6 +1255,128 @@ void _registerViewTargetVersionTests(
   bool Function() initializedOf,
 ) {
   group('view_target_versions storage', () {
+    // Verifies: EVS-DEV-version-compatibility/L
+    // the catch-up mark: marking a stored pair sets it and a repeat is
+    //   harmless, marking an absent pair writes nothing, writing the pair's
+    //   target keeps the mark, clearing removes it, clearing a view's targets
+    //   removes its marks, a rolled-back mark leaves none, and the read by
+    //   entry type returns every view's target of that entry type.
+    test('catch-up mark: mark, keep across a target write, clear, roll '
+        'back; targets read by entry type', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      Future<bool> behind(String view, String entryType) => backend.transaction(
+        (txn) => backend.readViewTargetBehindInTxn(txn, view, entryType),
+      );
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v1',
+          'note',
+          const EntryTypeVersion(1, 2),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'note',
+          const EntryTypeVersion(1, 0),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'other',
+          const EntryTypeVersion(3, 1),
+        );
+      });
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'note'),
+        ),
+        <String, EntryTypeVersion>{
+          'v1': const EntryTypeVersion(1, 2),
+          'v2': const EntryTypeVersion(1, 0),
+        },
+      );
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'absent'),
+        ),
+        isEmpty,
+      );
+      expect(await behind('v1', 'note'), isFalse);
+
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+          expect(
+            await backend.readViewTargetBehindInTxn(txn, 'v1', 'note'),
+            isTrue,
+          );
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await behind('v1', 'note'), isFalse);
+
+      await backend.transaction((txn) async {
+        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+        await backend.markViewTargetBehindInTxn(txn, 'absent', 'note');
+      });
+      expect(await behind('v1', 'note'), isTrue);
+      expect(await behind('v2', 'note'), isFalse);
+      expect(await behind('absent', 'note'), isFalse);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'absent', 'note'),
+        ),
+        isNull,
+      );
+
+      await backend.transaction(
+        (txn) => backend.writeViewTargetVersionInTxn(
+          txn,
+          'v1',
+          'note',
+          const EntryTypeVersion(1, 1),
+        ),
+      );
+      expect(await behind('v1', 'note'), isTrue);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        ),
+        const EntryTypeVersion(1, 1),
+      );
+
+      await backend.transaction(
+        (txn) => backend.clearViewTargetBehindInTxn(txn, 'v1', 'note'),
+      );
+      expect(await behind('v1', 'note'), isFalse);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        ),
+        const EntryTypeVersion(1, 1),
+      );
+
+      await backend.transaction(
+        (txn) => backend.markViewTargetBehindInTxn(txn, 'v2', 'other'),
+      );
+      await backend.transaction(
+        (txn) => backend.clearViewTargetVersionsInTxn(txn, 'v2'),
+      );
+      await backend.transaction(
+        (txn) => backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'other',
+          const EntryTypeVersion(3, 1),
+        ),
+      );
+      expect(await behind('v2', 'other'), isFalse);
+    });
+
     // Verifies: EVS-PRD-portability/D
     // Verifies: EVS-DEV-version-compatibility/A
     test('round-trip read/write keeps major and minor', () async {
@@ -2985,6 +3107,10 @@ void _registerQueueRecordTests(
   });
 }
 
+final RegExp _uuidV4 = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+
 // -------- Backend-state subgroup --------
 //
 // schema_version round-trip via
@@ -3003,6 +3129,191 @@ void _registerBackendStateTests(
         await backend.writeSchemaVersion(txn, 7);
       });
       expect(await backend.readSchemaVersion(), 7);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/F
+    // the database identity is minted once: a rolled-back mint leaves no
+    //   identity, and the committed one is stable in the same and a later
+    //   transaction.
+    test('database identity: minted once, stable, and a rolled-back mint '
+        'leaves none', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.transaction(backend.readDatabaseIdTxn), isNull);
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          final minted = await backend.readOrCreateDatabaseIdTxn(txn);
+          expect(minted, isNotEmpty);
+          expect(await backend.readDatabaseIdTxn(txn), minted);
+          throw StateError('roll back the mint');
+        }),
+        throwsStateError,
+      );
+      expect(await backend.transaction(backend.readDatabaseIdTxn), isNull);
+      final (first, second, read) = await backend.transaction(
+        (txn) async => (
+          await backend.readOrCreateDatabaseIdTxn(txn),
+          await backend.readOrCreateDatabaseIdTxn(txn),
+          await backend.readDatabaseIdTxn(txn),
+        ),
+      );
+      expect(second, first);
+      expect(read, first);
+      expect(_uuidV4.hasMatch(first), isTrue, reason: 'a version 4 UUID');
+      expect(
+        await backend.transaction(backend.readOrCreateDatabaseIdTxn),
+        first,
+      );
+      expect(await backend.transaction(backend.readDatabaseIdTxn), first);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot record commits and reads back in the same and a later
+    //   transaction, a second write overwrites it, and a rolled-back write
+    //   leaves the prior value.
+    test('boot record write, overwrite and rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final a = BootCheck(
+        at: DateTime.utc(2026, 5, 6, 7, 8, 9, 123),
+        packageVersion: '0.5.0',
+        dataFormat: const DataFormatVersion(2, 0),
+      );
+      final b = BootCheck(
+        at: DateTime.utc(2026, 5, 6, 7, 8, 10),
+        packageVersion: '0.6.0',
+        dataFormat: const DataFormatVersion(2, 1),
+      );
+      Future<BootCheck?> read() =>
+          backend.transaction(backend.readBootCheckTxn);
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeBootCheckTxn(txn, a);
+        return backend.readBootCheckTxn(txn);
+      });
+      expect(sameTxn, a);
+      expect(await read(), a);
+      await backend.transaction((txn) => backend.writeBootCheckTxn(txn, b));
+      expect(await read(), b);
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeBootCheckTxn(txn, a);
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), b);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot transaction commits what its body writes and rolls it back
+    //   when the body throws.
+    test(
+      'bootTransaction commits its body and rolls back on a throw',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final check = BootCheck(
+          at: DateTime.utc(2026, 5, 6),
+          packageVersion: '0.5.0',
+          dataFormat: const DataFormatVersion(2, 0),
+        );
+        await expectLater(
+          backend.bootTransaction<void>((txn) async {
+            await backend.writeBootCheckTxn(txn, check);
+            throw StateError('roll back');
+          }),
+          throwsStateError,
+        );
+        expect(await backend.transaction(backend.readBootCheckTxn), isNull);
+        final result = await backend.bootTransaction((txn) async {
+          await backend.writeBootCheckTxn(txn, check);
+          return 'done';
+        });
+        expect(result, 'done');
+        expect(await backend.transaction(backend.readBootCheckTxn), check);
+      },
+    );
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot reads the log inside its transaction: the reverse read sees
+    //   an append made earlier in the same transaction, newest first, and
+    //   filters by event type.
+    test('readEventsReverseInTxn sees an in-transaction append, newest '
+        'first', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await _appendBuilt(backend, (seq) => _event('r1', seq));
+      final (all, filtered) = await backend.transaction((txn) async {
+        final seq = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: seq,
+            entryType: 'lib_version_initialized',
+            eventType: 'lib_version_initialized',
+            clientTimestamp: DateTime.utc(2026, 5),
+            eventId: 'r2',
+          ),
+        );
+        final all = await backend.readEventsReverseInTxn(txn).toList();
+        final filtered = await backend
+            .readEventsReverseInTxn(
+              txn,
+              eventTypes: const <String>{'lib_version_initialized'},
+            )
+            .toList();
+        return (
+          [for (final e in all) e.eventId],
+          [for (final e in filtered) e.eventId],
+        );
+      });
+      expect(all, <String>['r2', 'r1']);
+      expect(filtered, <String>['r2']);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot's in-transaction reverse read crosses the backend's pages:
+    //   every event once, newest first, with and without a type filter.
+    test('readEventsReverseInTxn reads more than a page of mixed types '
+        'completely, once each, newest first', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const total = 1300;
+      await backend.transaction((txn) async {
+        for (var i = 0; i < total; i++) {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            _eventWithProvenance(
+              seq: seq,
+              entryType: i % 7 == 0 ? 'kind_rare' : 'kind_common',
+              eventType: i % 7 == 0 ? 'kind_rare' : 'kind_common',
+              clientTimestamp: DateTime.utc(2026, 5),
+              eventId: 'p$i',
+            ),
+          );
+        }
+      });
+      final (all, rare) = await backend.transaction((txn) async {
+        final all = await backend.readEventsReverseInTxn(txn).toList();
+        final rare = await backend
+            .readEventsReverseInTxn(
+              txn,
+              eventTypes: const <String>{'kind_rare'},
+            )
+            .toList();
+        return (
+          [for (final e in all) e.sequenceNumber],
+          [for (final e in rare) e.sequenceNumber],
+        );
+      });
+      final expectedAll = [for (var seq = total; seq >= 1; seq--) seq];
+      expect(all, expectedAll);
+      expect(rare, [
+        for (final seq in expectedAll)
+          if ((seq - 1) % 7 == 0) seq,
+      ]);
     });
   });
 }

@@ -18,6 +18,7 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -280,6 +281,49 @@ class _InMemoryBackend extends StorageBackend {
   @override
   Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) =>
       throw UnimplementedError();
+  @override
+  Future<String?> readDatabaseIdTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check) =>
+      throw UnimplementedError();
+  @override
+  Future<BootCheck?> readBootCheckTxn(Transaction txn) =>
+      throw UnimplementedError();
+  @override
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
+      throw UnimplementedError();
+  @override
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  }) => throw UnimplementedError();
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();
   @override

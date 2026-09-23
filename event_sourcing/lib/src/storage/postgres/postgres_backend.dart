@@ -35,15 +35,18 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show Random, min;
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -122,8 +125,9 @@ class TransactionRetryExhaustedException implements Exception {
     required this.lastError,
   });
 
-  /// Number of attempts made before giving up (equals the configured bound,
-  /// [PostgresBackend._maxTransactionAttempts]).
+  /// Number of attempts made before giving up: the configured bound,
+  /// [PostgresBackend._maxTransactionAttempts], for a transaction, and the
+  /// runs made within `bootLockWait` for the boot transaction.
   final int attempts;
 
   /// The serialization/deadlock failure from the final attempt; its `code`
@@ -140,9 +144,14 @@ class TransactionRetryExhaustedException implements Exception {
 
 /// Concrete Postgres-backed implementation of [StorageBackend].
 class PostgresBackend extends StorageBackend {
-  PostgresBackend._(this._pool);
+  PostgresBackend._(this._pool, {required Duration bootLockWait})
+    : _bootLockWait = bootLockWait;
 
   final Pool<void> _pool;
+
+  /// How long [bootTransaction] keeps re-running a boot that a concurrent
+  /// commit aborted before it gives up.
+  final Duration _bootLockWait;
 
   /// Latches true on the first call to [close]. Subsequent I/O on this
   /// backend instance throws [PostgresBackendClosedException]; the flag
@@ -170,15 +179,34 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/A
   // connects and emits the schema
   //   DDL on every open; idempotent on re-open against a provisioned db.
+  ///
+  /// The schema statements run in their own transaction on every open.
+  /// Each `CREATE INDEX IF NOT EXISTS` locks its table in `SHARE` mode
+  /// even when the index exists, and the `idempotency` column statement
+  /// locks that table exclusively, so an open waits for the appends in
+  /// flight on another instance and holds new ones back until it commits;
+  /// it can also end in a deadlock failure against another instance's
+  /// transactions, which this method does not retry. They also run before
+  /// `EventStore.open` refuses a database an earlier data format wrote, so
+  /// opening such a database may create a table or index it lacks before
+  /// the boot refuses it.
+  ///
+  /// [bootLockWait] bounds only how long `EventStore.open`'s boot
+  /// transaction keeps re-running after a serialization or deadlock
+  /// failure: a failure once it has passed since the first run started
+  /// throws [TransactionRetryExhaustedException]. It bounds neither the
+  /// boot's wait for its table lock nor the boot's run time (see
+  /// [bootTransaction]).
   static Future<PostgresBackend> open({
     required String url,
     SslMode sslMode = SslMode.require,
+    Duration bootLockWait = const Duration(seconds: 60),
   }) async {
     final endpoint = endpointFromUrl(url);
     final pool = Pool<void>.withEndpoints([
       endpoint,
     ], settings: PoolSettings(maxConnectionCount: 4, sslMode: sslMode));
-    final backend = PostgresBackend._(pool);
+    final backend = PostgresBackend._(pool, bootLockWait: bootLockWait);
     await pool.runTx(ensurePostgresSchema);
     return backend;
   }
@@ -309,6 +337,106 @@ class PostgresBackend extends StorageBackend {
         await Future<void>.delayed(Duration(milliseconds: 5 * attempt));
       }
     }
+  }
+
+  /// Runs `EventStore.open`'s boot as one `SERIALIZABLE` transaction whose
+  /// first statement locks the `backend_state` table in `SHARE ROW
+  /// EXCLUSIVE` mode.
+  ///
+  /// Every append updates the sequence counter row in `backend_state`, so
+  /// the lock waits for the appends that hold it to commit and then keeps
+  /// every later append out until the boot commits. `LOCK TABLE` takes no
+  /// snapshot: the transaction's snapshot is taken by the statement after
+  /// it, so it already includes every append the lock waited for, and those
+  /// appends cannot abort the boot. An append that started before the boot
+  /// committed fails once with a serialization failure afterwards, which
+  /// its own retry absorbs. So the appends of a revision serving the same
+  /// database, and every other write to `backend_state` (the drainer's fill
+  /// cursor among them), pause for the boot's whole duration: its reads of
+  /// the log's library-version events, its checks, and any seeding,
+  /// promotion and re-derivation it performs. Two boots on one database
+  /// run one after the other.
+  ///
+  /// The boot can still fail with a serialization or deadlock failure on a
+  /// table it does not lock. It is then re-run, with a jittered 5 to 50 ms
+  /// backoff, as long as the `bootLockWait` given to [open] has not passed
+  /// since the first run started; a failure after that throws
+  /// [TransactionRetryExhaustedException]. `bootLockWait` bounds only this
+  /// re-running: neither the wait for the table lock (behind a long
+  /// transaction such as another instance's boot) nor the run time of the
+  /// body is bounded, and a body that runs longer than `bootLockWait` gets
+  /// one run.
+  ///
+  /// Before the body runs, a database whose tables carry an earlier data
+  /// format's single integer version columns is refused with
+  /// [DatabaseResetRequiredError].
+  // Implements: EVS-DEV-event-store-open/E
+  // the boot transaction's first statement locks the table holding the
+  //   sequence counter, so a serving revision's appends queue behind the
+  //   boot instead of aborting it.
+  @override
+  @internal
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) async {
+    _checkOpen();
+    final giveUpAt = DateTime.now().add(_bootLockWait);
+    final random = Random();
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _pool.runTx<T>(
+          (tx) async {
+            final wrapper = PostgresTxn(tx);
+            try {
+              await tx.execute(
+                'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
+              );
+              await _refuseEarlierFormatColumns(tx);
+              return await body(wrapper);
+            } finally {
+              wrapper.invalidate();
+            }
+          },
+          settings: TransactionSettings(
+            isolationLevel: IsolationLevel.serializable,
+          ),
+        );
+      } on ServerException catch (e, st) {
+        final retryable = e.code == '40001' || e.code == '40P01';
+        if (!retryable) rethrow;
+        if (!DateTime.now().isBefore(giveUpAt)) {
+          Error.throwWithStackTrace(
+            TransactionRetryExhaustedException(attempts: attempt, lastError: e),
+            st,
+          );
+        }
+        await Future<void>.delayed(
+          Duration(milliseconds: 5 + random.nextInt(46)),
+        );
+      }
+    }
+  }
+
+  /// Throws [DatabaseResetRequiredError] when the `events` or
+  /// `view_target_versions` table carries an earlier data format's single
+  /// integer version column, before any statement reads or writes the
+  /// split major and minor columns.
+  static Future<void> _refuseEarlierFormatColumns(Session session) async {
+    final result = await session.execute(
+      Sql.named('''
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND ((table_name = 'events'
+                AND column_name IN ('entry_type_version', 'lib_format_version'))
+            OR (table_name = 'view_target_versions'
+                AND column_name = 'target_version'))
+        ORDER BY table_name, column_name
+      '''),
+    );
+    if (result.isEmpty) return;
+    final columns = [for (final row in result) '${row[0]}.${row[1]}'];
+    throw DatabaseResetRequiredError(
+      'its tables carry the single integer version columns of an earlier '
+      'data format: ${columns.join(', ')}',
+    );
   }
 
   // -------- Task 6: event log --------
@@ -936,6 +1064,77 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT view_name, target_major, target_minor
+        FROM view_target_versions
+        WHERE entry_type = @et
+      '''),
+      parameters: {'et': entryType},
+    );
+    return <String, EntryTypeVersion>{
+      for (final row in result)
+        row[0]! as String: _entryTypeVersionOf(row[1], row[2]),
+    };
+  }
+
+  @override
+  @internal
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => _setViewTargetBehind(txn, viewName, entryType, behind: true);
+
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT behind FROM view_target_versions
+        WHERE view_name = @v AND entry_type = @et
+      '''),
+      parameters: {'v': viewName, 'et': entryType},
+    );
+    return result.isNotEmpty && result.first[0] == true;
+  }
+
+  @override
+  @internal
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => _setViewTargetBehind(txn, viewName, entryType, behind: false);
+
+  Future<void> _setViewTargetBehind(
+    Transaction txn,
+    String viewName,
+    String entryType, {
+    required bool behind,
+  }) async {
+    final session = _asPgTxn(txn).session;
+    // Only a row whose mark differs is updated, so a repeated mark writes
+    // nothing.
+    await session.execute(
+      Sql.named('''
+        UPDATE view_target_versions SET behind = @b
+        WHERE view_name = @v AND entry_type = @et AND behind <> @b
+      '''),
+      parameters: {'v': viewName, 'et': entryType, 'b': behind},
+    );
+  }
+
   // -------- Task 9: FIFO --------
   //
   // Storage shape: a single `fifo_entries` table with PRIMARY KEY
@@ -1533,6 +1732,57 @@ class PostgresBackend extends StorageBackend {
     return value == null ? null : RegistryCheck.fromJson(_asJsonMap(value));
   }
 
+  // -------- Database identity and boot record --------
+
+  @override
+  @internal
+  Future<String?> readDatabaseIdTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, _databaseIdKey);
+    if (value == null) return null;
+    if (value is! String || value.isEmpty) {
+      throw StateError(
+        'backend_state[$_databaseIdKey] is not a non-empty string; '
+        'database corrupted',
+      );
+    }
+    return value;
+  }
+
+  @override
+  @internal
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO backend_state (key, value)
+        VALUES (@k, to_jsonb(@id::text))
+        ON CONFLICT (key) DO NOTHING
+      '''),
+      parameters: {'k': _databaseIdKey, 'id': const Uuid().v4()},
+    );
+    final stored = await readDatabaseIdTxn(txn);
+    if (stored == null) {
+      throw StateError(
+        'backend_state[$_databaseIdKey] is absent after it was written',
+      );
+    }
+    return stored;
+  }
+
+  @override
+  @internal
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check) =>
+      _writeStateTxn(txn, 'boot_check', check.toJson());
+
+  @override
+  @internal
+  Future<BootCheck?> readBootCheckTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, 'boot_check');
+    return value == null ? null : BootCheck.fromJson(_asJsonMap(value));
+  }
+
+  static const String _databaseIdKey = 'database_id';
+
   Future<Object?> _readStateTxn(Transaction txn, String key) async {
     final session = _asPgTxn(txn).session;
     final result = await session.execute(
@@ -1712,12 +1962,10 @@ class PostgresBackend extends StorageBackend {
   /// against a `List<String>` parameter.
   // Implements: EVS-PRD-event-log/D
   // read events in (reverse) order from
-  //   any starting position; underpins `VersionCheck.findMostRecent`'s
-  //   first-match-and-break consumer.
+  //   any starting position; a consumer may stop at its first match.
   // Implements: EVS-DEV-postgres-backend/D
   // backend passes the conformance
-  //   harness; method materialized so callers (lifecycle version-check) can
-  //   bind PostgresBackend interchangeably with SembastBackend.
+  //   harness; the reverse read behaves as SembastBackend's does.
   @override
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) async* {
     _checkOpen();
@@ -1755,6 +2003,48 @@ class PostgresBackend extends StorageBackend {
       // round-trip.
       lastSeenSequence = result.last.toColumnMap()['sequence_number'] as int;
       if (result.length < _reverseScanPageSize) return;
+    }
+  }
+
+  /// Pages on `sequence_number < @last`. The first page holds 16 events
+  /// and each later page twice as many, up to [_reverseScanPageSize], so a
+  /// caller that stops after the first few events reads little.
+  @override
+  @internal
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  }) async* {
+    int? lastSeenSequence;
+    var pageSize = 16;
+    while (true) {
+      final session = _asPgTxn(txn).session;
+      final wheres = <String>[];
+      final params = <String, dynamic>{};
+      if (lastSeenSequence != null) {
+        wheres.add('sequence_number < @last');
+        params['last'] = lastSeenSequence;
+      }
+      if (eventTypes != null) {
+        wheres.add('event_type = ANY(@types)');
+        params['types'] = eventTypes.toList();
+      }
+      final whereClause = _composeWhere(wheres);
+      final result = await session.execute(
+        Sql.named(
+          'SELECT * FROM events $whereClause '
+          'ORDER BY sequence_number DESC '
+          'LIMIT $pageSize',
+        ),
+        parameters: params,
+      );
+      if (result.isEmpty) return;
+      for (final row in result) {
+        yield _storedEventFromRow(row);
+      }
+      lastSeenSequence = result.last.toColumnMap()['sequence_number'] as int;
+      if (result.length < pageSize) return;
+      pageSize = min(pageSize * 2, _reverseScanPageSize);
     }
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import 'test_support/fake_destination.dart';
+import 'test_support/lib_version_seed.dart';
 
 Future<SembastBackend> _openBackend() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -217,94 +218,70 @@ void main() {
   //   EventStore.open calls.
   // -------------------------------------------------------------------------
   group('bootstrapEventStore routes through EventStore.open', () {
+    Future<LocalLibVersionHistory> history(StorageBackend backend) =>
+        backend.transaction((txn) => VersionCheck.readLocalInTxn(backend, txn));
+
+    // Verifies: EVS-DEV-event-store-open/B
     test('emits lib_version_initialized on first bootstrap', () async {
       final backend = await _openBackend();
-      await bootstrapEventStore(
+      final bundle = await bootstrapEventStore(
         backend: backend,
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
         destinations: const <Destination>[],
       );
-      final result = await VersionCheck.findMostRecent(backend);
-      expect(result, isNotNull);
-      expect(result!.recordedVersion, LibVersion.version);
-      expect(result.eventType, LibVersionEvents.initialized);
+      final recorded = (await history(backend)).latest;
+      expect(recorded, isNotNull);
+      expect(recorded!.packageVersion, LibVersion.version);
+      expect(recorded.dataFormat, LibVersion.dataFormat);
+      expect(recorded.databaseId, bundle.eventStore.databaseId);
+      expect(recorded.event.eventType, LibVersionEvents.initialized);
     });
 
-    test(
-      'throws DowngradeRefusedError when log was written by a newer lib',
-      () async {
-        final backend = await _openBackend();
-        // Simulate a future-version boot by directly appending a synthetic
-        // lib_version_initialized event with version 99.0.0.
-        await backend.transaction((txn) async {
-          final seq = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(
-            txn,
-            StoredEvent.synthetic(
-              eventId: 'synth-future-$seq',
-              aggregateId: '_lib',
-              aggregateType: '_lib',
-              entryType: LibVersionEvents.initialized,
-              eventType: LibVersionEvents.initialized,
-              sequenceNumber: seq,
-              eventHash: 'h-$seq',
-              initiator: const AutomationInitiator(service: 'event_sourcing'),
-              clientTimestamp: DateTime.utc(2026, 5, 9),
-              data: <String, dynamic>{
-                'version': '99.0.0',
-                'initializedAt': '2026-05-09T00:00:00Z',
-              },
-            ),
-          );
-        });
-        await expectLater(
-          bootstrapEventStore(
-            backend: backend,
-            source: _source,
-            entryTypes: const <EntryTypeDefinition>[],
-            destinations: const <Destination>[],
-          ),
-          throwsA(isA<DowngradeRefusedError>()),
-        );
-      },
-    );
+    // Verifies: EVS-DEV-event-store-open/C
+    test('an older build of the same data-format major opens through '
+        'bootstrap and records the change', () async {
+      final backend = await _openBackend();
+      await seedLibVersionEventForTest(
+        backend,
+        version: '99.0.0',
+        dataFormat: LibVersion.dataFormat.nextMinor,
+      );
+      final bundle = await bootstrapEventStore(
+        backend: backend,
+        source: _source,
+        entryTypes: const <EntryTypeDefinition>[],
+        destinations: const <Destination>[],
+      );
+      expect(bundle.eventStore, isA<EventStore>());
+      final recorded = (await history(backend)).events;
+      expect(recorded, hasLength(2));
+      expect(recorded.last.event.eventType, LibVersionEvents.changed);
+      expect(recorded.last.event.data['fromVersion'], '99.0.0');
+      expect(recorded.last.packageVersion, LibVersion.version);
+      expect(recorded.last.dataFormat, LibVersion.dataFormat);
+    });
 
-    test(
-      'allowDowngrade: true bypasses downgrade refusal in bootstrap path',
-      () async {
-        final backend = await _openBackend();
-        await backend.transaction((txn) async {
-          final seq = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(
-            txn,
-            StoredEvent.synthetic(
-              eventId: 'synth-future-$seq',
-              aggregateId: '_lib',
-              aggregateType: '_lib',
-              entryType: LibVersionEvents.initialized,
-              eventType: LibVersionEvents.initialized,
-              sequenceNumber: seq,
-              eventHash: 'h-$seq',
-              initiator: const AutomationInitiator(service: 'event_sourcing'),
-              clientTimestamp: DateTime.utc(2026, 5, 9),
-              data: <String, dynamic>{
-                'version': '99.0.0',
-                'initializedAt': '2026-05-09T00:00:00Z',
-              },
-            ),
-          );
-        });
-        // allowDowngrade: true — should succeed despite 99.0.0 recorded version.
-        final ds = await bootstrapEventStore(
+    // Verifies: EVS-DEV-event-store-open/D
+    test('a database of another data-format major is refused through '
+        'bootstrap before any write', () async {
+      final backend = await _openBackend();
+      await seedLibVersionEventForTest(
+        backend,
+        version: '99.0.0',
+        dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
+      );
+      final counter = await backend.readSequenceCounter();
+      await expectLater(
+        bootstrapEventStore(
           backend: backend,
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],
           destinations: const <Destination>[],
-          allowDowngrade: true,
-        );
-        expect(ds.eventStore, isA<EventStore>());
-      },
-    );
+        ),
+        throwsA(isA<DataFormatIncompatibleError>()),
+      );
+      expect(await backend.readSequenceCounter(), counter);
+    });
   });
 }

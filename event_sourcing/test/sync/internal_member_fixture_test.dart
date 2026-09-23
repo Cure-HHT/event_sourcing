@@ -1,10 +1,14 @@
 // Verifies: EVS-PRD-destinations/K
+// Verifies: EVS-DEV-event-store-open/A
+// the test-only EventStore.openForTest, called from a consumer's
+//   production code, is reported by the analyzer.
 //
 // Out-of-package analysis: a consumer package that depends on
 // event_sourcing by path, with `invalid_use_of_internal_member` as an
 // error, is reported for every use of an internal member -- on the
 // barrel's types and through a `src/` import alike -- and not for the
-// public reads, transaction and close operations. A third-party backend,
+// public reads, transaction and close operations. A call of the test-only
+// EventStore.openForTest from production code is reported as well. A third-party backend,
 // in a package of its own, that overrides every contract member and marks
 // each override of an internal member internal analyzes clean, and a
 // consumer's call through it is reported; a call through an override that
@@ -46,6 +50,10 @@ const _expected = <String, Set<String>>{
   },
   'calls_security_context_internal.dart': _internalUse,
   'calls_third_party_internal.dart': _internalUse,
+  // The test-only open, called from production code.
+  'calls_test_only_open.dart': <String>{
+    'invalid_use_of_visible_for_testing_member',
+  },
   'calls_unguarded_third_party.dart': <String>{},
   'calls_transaction_and_close.dart': <String>{},
 };

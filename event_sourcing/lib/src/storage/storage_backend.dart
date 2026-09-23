@@ -4,6 +4,7 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -58,9 +59,10 @@ import 'package:meta/meta.dart' show internal;
 /// its views and its security-context records hold only while its
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
-/// requests, wedge records and the registry check record, and the security
-/// context it stores beside each event) changes only through
-/// the library's operations. The internal marking is an analyzer guard,
+/// requests, wedge records, the registry check record, the database
+/// identity and the view catch-up marks, and the security context it
+/// stores beside each event) changes only through the library's
+/// operations. The internal marking is an analyzer guard,
 /// not a barrier: the consumer holds the backend (and, on Sembast, the
 /// database it opened), and a direct write is invisible to the library.
 // Implements: EVS-PRD-destinations/K
@@ -347,7 +349,8 @@ abstract class StorageBackend {
   );
 
   /// Persist [targetVersion] for the [viewName]/[entryType] pair.
-  /// Idempotent on repeat writes of the same value.
+  /// Idempotent on repeat writes of the same value. A pair's catch-up mark
+  /// (see [markViewTargetBehindInTxn]) is left as it is.
   @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
@@ -363,10 +366,49 @@ abstract class StorageBackend {
     String viewName,
   );
 
-  /// Remove every target-version entry for [viewName]. Used by
-  /// `rebuildView` before re-recording, and by view drop helpers.
+  /// Remove every target-version entry for [viewName], catch-up marks
+  /// included. Used by `rebuildView` before re-recording, and by view drop
+  /// helpers.
   @internal
   Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName);
+
+  /// Read every stored target of [entryType], keyed by view name.
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  );
+
+  /// Mark the stored [viewName]/[entryType] pair as behind the log: an
+  /// event of [entryType] was stored without being folded into [viewName].
+  /// No-op when the pair has no stored target. The mark stays until
+  /// [clearViewTargetBehindInTxn] or [clearViewTargetVersionsInTxn]
+  /// removes it; writing the pair's target version keeps it.
+  // Implements: EVS-DEV-version-compatibility/L
+  // the catch-up mark is a flag on the stored target, separate from its
+  //   version, which a lowered version could not express.
+  @internal
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  );
+
+  /// True when the stored [viewName]/[entryType] pair carries a catch-up
+  /// mark; false when it carries none or has no stored target.
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  );
+
+  /// Remove the catch-up mark of the [viewName]/[entryType] pair. No-op
+  /// when it carries none.
+  @internal
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  );
 
   // -------- FIFO (per destination) --------
 
@@ -666,6 +708,50 @@ abstract class StorageBackend {
   @internal
   Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn);
 
+  // -------- Database identity and boot record --------
+
+  /// Read the database identity inside [txn], or null when none is stored.
+  ///
+  /// Persisted under `backend_state` key `database_id`.
+  @internal
+  Future<String?> readDatabaseIdTxn(Transaction txn);
+
+  /// Read the database identity inside [txn]; when none is stored, mint a
+  /// random (version 4) UUID, store it and return it.
+  ///
+  /// The identity is written at most once: a later call in the same or a
+  /// later transaction returns the stored value, and a mint in a
+  /// transaction that does not commit leaves no identity behind.
+  // Implements: EVS-DEV-event-store-open/F
+  // the identity is minted at most once, inside the boot transaction.
+  @internal
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn);
+
+  /// Write [check] as the boot record inside [txn], replacing the previous
+  /// one.
+  ///
+  /// Persisted under `backend_state` key `boot_check`.
+  @internal
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check);
+
+  /// Read the boot record inside [txn], or null when none has been
+  /// written.
+  @internal
+  Future<BootCheck?> readBootCheckTxn(Transaction txn);
+
+  /// Run the body of `EventStore.open`'s boot as one transaction, with the
+  /// guarantees of [transaction].
+  ///
+  /// Every backend decides here how the boot is ordered against concurrent
+  /// appends to the same database: a backend whose transactions can abort
+  /// each other orders the boot so that appends committed while it runs
+  /// cannot starve it, and one whose transactions run one at a time runs
+  /// [body] through [transaction]. The shared conformance harness cannot
+  /// observe that ordering; it is the backend's responsibility, under the
+  /// storage trust boundary.
+  @internal
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body);
+
   /// Read a single FIFO row identified by [entryId] on [destinationId],
   /// or `null` when no such row exists (either the FIFO store was never
   /// written to, or the row was deleted). Non-transactional.
@@ -721,8 +807,8 @@ abstract class StorageBackend {
   /// Reverse stream of stored events, optionally filtered to a set of
   /// event types. Emits events in descending `sequence_number` order.
   ///
-  /// Used by lifecycle scans that need to terminate on the first match
-  /// without paging through the entire log. Consumers that only need the
+  /// A public read for callers that look for the latest events of a kind
+  /// without paging through the whole log. Consumers that only need the
   /// single most-recent match SHOULD `await for` and `break` (or return)
   /// on the first event.
   ///
@@ -730,6 +816,18 @@ abstract class StorageBackend {
   /// contained in the set are emitted; when null no type filtering is
   /// applied.
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes});
+
+  /// [readEventsReverse] inside [txn]: the stream sees the events the
+  /// transaction has appended so far, and is read to its end, or abandoned,
+  /// before the transaction body returns. Each event is emitted once, in
+  /// strictly descending `sequence_number` order, across however many
+  /// pages the backend reads; the body does not append while the stream is
+  /// open.
+  @internal
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  });
 
   // -------- Audit query --------
 

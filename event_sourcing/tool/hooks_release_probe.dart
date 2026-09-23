@@ -1,8 +1,9 @@
 // Release probe for the library's test seams.
 //
 // Installs every test seam, each recording that it fired and each failure
-// injection set to fail, then runs a registry operation and two delivery
-// passes (one destination delivers, one refuses and wedges) over an
+// injection set to fail, and substitutes another build's versions for the
+// boot, then opens the event store, runs a registry operation and two
+// delivery passes (one destination delivers, one refuses and wedges) over an
 // in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
 // or a `dart compile exe` executable) it must print an empty list of fired
 // seams and a completed delivery, and exit 0. Run with assertions enabled
@@ -26,6 +27,8 @@ class ProbeOutcome {
     required this.sequenceAdvance,
     required this.sentItems,
     required this.wedgeEvents,
+    required this.recordedVersion,
+    required this.recordedDataFormat,
   });
 
   /// Seams that fired, in order.
@@ -56,13 +59,21 @@ class ProbeOutcome {
   /// wedges once when no injection takes effect).
   final int wedgeEvents;
 
+  /// The package version the database's `lib_version_initialized` records.
+  final String? recordedVersion;
+
+  /// The data format the database's `lib_version_initialized` records.
+  final DataFormatVersion? recordedDataFormat;
+
   /// True when no seam fired, the passes delivered the one event, its
   /// outcome committed, and the refusing destination's wedge committed.
   bool get passed =>
       firedSeams.isEmpty &&
       delivered == 1 &&
       sentItems == 1 &&
-      wedgeEvents == 1;
+      wedgeEvents == 1 &&
+      recordedVersion == LibVersion.version &&
+      recordedDataFormat == LibVersion.dataFormat;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'fired_seams': firedSeams,
@@ -73,6 +84,8 @@ class ProbeOutcome {
     'sequence_advance': sequenceAdvance,
     'sent_items': sentItems,
     'wedge_events': wedgeEvents,
+    'recorded_version': recordedVersion,
+    'recorded_data_format': recordedDataFormat?.toString(),
     'passed': passed,
   };
 }
@@ -136,22 +149,42 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
   final healthy = _ProbeDestination('probe_healthy');
   final broken = _ProbeDestination('probe_broken', failTransform: true);
   final refusing = _ProbeDestination('probe_refusing', refuse: true);
-  final bundle = await bootstrapEventStore(
-    backend: backend,
-    source: const Source(
-      hopId: 'probe',
-      identifier: 'probe-install',
-      softwareVersion: 'probe@1',
+  final fired = <String>[];
+  // The boot runs with its seams installed and another build's versions
+  // substituted; without assertions it records the compiled versions.
+  final bootHooks = DeliveryTestHooks(
+    onBootBodyRun: () => fired.add('onBootBodyRun'),
+    afterBootVersionEvent: () {
+      fired.add('afterBootVersionEvent');
+      return false;
+    },
+    buildDeclaration: (
+      version: '9.9.9',
+      dataFormat: DataFormatVersion(LibVersion.dataFormat.major, 9),
     ),
-    entryTypes: const <EntryTypeDefinition>[
-      EntryTypeDefinition(
-        id: 'probe_event',
-        registeredVersion: EntryTypeVersion(1, 0),
-        name: 'Probe event',
-      ),
-    ],
-    destinations: <Destination>[healthy, broken, refusing],
   );
+  final bundle = await runWithDeliveryTestHooks(
+    bootHooks,
+    () => bootstrapEventStore(
+      backend: backend,
+      source: const Source(
+        hopId: 'probe',
+        identifier: 'probe-install',
+        softwareVersion: 'probe@1',
+      ),
+      entryTypes: const <EntryTypeDefinition>[
+        EntryTypeDefinition(
+          id: 'probe_event',
+          registeredVersion: EntryTypeVersion(1, 0),
+          name: 'Probe event',
+        ),
+      ],
+      destinations: <Destination>[healthy, broken, refusing],
+    ),
+  );
+  final initialized = (await backend.findAllEvents(
+    entryType: kLibVersionInitializedEntryType,
+  )).single;
   const initiator = AutomationInitiator(service: 'hooks-release-probe');
   final start = DateTime.utc(2000);
   for (final d in <Destination>[healthy, broken, refusing]) {
@@ -166,7 +199,6 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     initiator: initiator,
   );
 
-  final fired = <String>[];
   var fillFailures = 0;
   var wedgeFailures = 0;
   final hooks = DeliveryTestHooks(
@@ -257,6 +289,10 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     sequenceAdvance: sequenceAdvance,
     sentItems: sentItems,
     wedgeEvents: wedgeEvents,
+    recordedVersion: initialized.data['version'] as String?,
+    recordedDataFormat: DataFormatVersion.fromJson(
+      initialized.data['data_format'],
+    ),
   );
 }
 

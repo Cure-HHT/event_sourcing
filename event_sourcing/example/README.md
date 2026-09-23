@@ -100,17 +100,20 @@ The two `*.install.uuid` files are minted on first launch and re-read
 on every subsequent boot. To start over from scratch, delete the four
 files (or use the **Reset all** button in either pane's top bar — that
 button also deletes the database file). A `demo.db` or `demo_hub.db`
-written by a build of another library data format does not open under
-this build; delete it to start over.
+written by an earlier library build does not open under this build:
+instead of its panes the demo shows a message naming both files, and
+deleting them starts it over. One written by a build of another
+data-format major is not deleted: the message says to open it with a
+build of that major, or to restore a backup.
 
 ---
 
 ## 3. Bootstrap and Startup
 
-`example/lib/main.dart` boots in a fixed order:
+`example/lib/main.dart` resolves `applicationSupportDirectory` and runs
+the app `buildDemoApp` returns, which boots in a fixed order:
 
-1. Resolve `applicationSupportDirectory` and ensure the demo subdir
-   exists.
+1. Ensure the demo subdir exists.
 2. `_readOrMintUUID` reads (or mints + persists) each pane's install
    UUID.
 3. Bootstrap the **hub pane first** — the `DownstreamBridge` needs a
@@ -119,7 +122,10 @@ this build; delete it to start over.
 4. Construct the bridge.
 5. Bootstrap the **mobile pane** with the bridge wired into its native
    destinations.
-6. Hand both panes to `DualDemoApp`.
+6. Hand both panes to `DualDemoApp`. When a database file does not open
+   under this build (`DatabaseResetRequiredError` or
+   `DataFormatIncompatibleError`), return `DatabaseResetRequiredApp`
+   instead, naming the files to delete.
 
 Per-pane bootstrap (the `_bootstrapPane` function):
 

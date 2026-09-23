@@ -4,7 +4,6 @@
 // callers cannot override the registry-derived value.
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
         kEntryTypeRegistryInitializedEntryType,

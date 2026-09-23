@@ -3,16 +3,20 @@
 // The test seams have no effect without assertions: the probe in
 // `tool/hooks_release_probe.dart` installs every seam (the observers, the
 // awaited interleaving seams and the failure injections), then runs a
-// registry operation and two delivery passes. Run without assertions
+// registry operation and two delivery passes, after an open under another
+// build's substituted versions. Run without assertions
 // (`dart run --no-enable-asserts`, and as a `dart compile exe` executable)
-// no seam fires, the passes deliver and the send's outcome commits; run
-// in-process under `flutter test` (assertions on) every seam fires.
+// no seam fires, the passes deliver, the send's outcome commits and the
+// initialization records the compiled versions; run in-process under
+// `flutter test` (assertions on) every seam fires and the initialization
+// records the substituted versions.
 @Timeout(Duration(minutes: 5))
 library;
 
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -36,6 +40,18 @@ void _expectInert(ProcessResult result) {
   expect(outcome['sent_items'], 1, reason: '${result.stdout}');
   // The wedge failure injection was ignored: the refusal wedged.
   expect(outcome['wedge_events'], 1, reason: '${result.stdout}');
+  // The substituted build declaration was ignored: the initialization
+  // records the compiled versions.
+  expect(
+    outcome['recorded_version'],
+    LibVersion.version,
+    reason: '${result.stdout}',
+  );
+  expect(
+    outcome['recorded_data_format'],
+    LibVersion.dataFormat.toString(),
+    reason: '${result.stdout}',
+  );
   expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
 }
 
@@ -124,7 +140,16 @@ void main() {
           startsWith('afterWedgeHeadInTxn probe_refusing'),
           startsWith('afterWedgeTransaction probe_refusing'),
           contains('recorded alone'),
+          equals('onBootBodyRun'),
+          equals('afterBootVersionEvent'),
         ]),
+      );
+      // The substituted build declaration decided the boot and is what the
+      // initialization records.
+      expect(outcome.recordedVersion, '9.9.9');
+      expect(
+        outcome.recordedDataFormat,
+        DataFormatVersion(LibVersion.dataFormat.major, 9),
       );
       // The first wedge rolled back and its attempt was recorded alone; the
       // second pass wedged the head from that record, and the failure

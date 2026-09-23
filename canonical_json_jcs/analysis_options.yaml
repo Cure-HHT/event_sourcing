@@ -7,6 +7,8 @@ analyzer:
     strict-raw-types: true
 
   errors:
+    # A use of a member marked @visibleForTesting outside a test.
+    invalid_use_of_visible_for_testing_member: error
     # Treat warnings as errors for production medical software
     missing_required_param: error
     missing_return: error

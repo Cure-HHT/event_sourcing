@@ -68,7 +68,7 @@ ALCOA+ alignment (assertion G) lives entirely at this layer. The cryptographic a
 - Missing keys in a delta preserve prior; present-null clears (the substrate could equally treat null as absent).
 - Whoever appends the first event for an aggregate is the canonical authority for that aggregate (the substrate could equally require out-of-band canonicalization assignment).
 - A projection produces one row per aggregate, materialized via generic merge (the substrate could equally produce per-event rows or derived-only views).
-- "Version" is a monotonically-bumped integer per entry type (the substrate could equally use content-hash-as-version).
+- "Version" is a major.minor pair per entry type (the substrate could equally use content-hash-as-version).
 
 The library bundles these as primitives because most consumers want them, but they don't carry the same epistemic weight as Layer 1. Applications that want different interpretations build them on top of Layer 1 facts — by subscribing to raw events and computing app-side state, or by registering alternative convention sets shipped as new library primitives under the Append-Only Primitives discipline.
 
@@ -82,6 +82,8 @@ The library bundles these as primitives because most consumers want them, but th
 
 ## Changelog
 
+- 2026-09-23 | 0021ec08 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Epistemic layers: a version is a major.minor pair per entry type
 - 2026-09-23 | 0021ec08 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of H names the delivery configuration registered with a destination as part of the outbound transport boundary
 - 2026-08-10 | 0021ec08 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

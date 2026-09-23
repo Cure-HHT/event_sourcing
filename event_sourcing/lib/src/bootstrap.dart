@@ -3,9 +3,8 @@
 //   canonical production entry point that calls EventStore.open (the sole
 //   public constructor) before returning an EventStoreBundle facade.
 // Implements: EVS-DEV-event-store-open/E
-// the lib-version boot check and
-//   snapshot-promotion pass both run inside EventStore.open's single
-//   transaction; bootstrap wires this path via allowDowngrade forwarding.
+// bootstrapEventStore opens through EventStore.open, whose whole boot runs
+//   in one storage transaction.
 
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
@@ -82,9 +81,15 @@ class EventStoreBundle {
 /// Destinations are registered sequentially, preserving fail-fast on id
 /// collision.
 ///
-/// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
-/// lib-version boot check. Default `false` — production-correct behaviour
-/// is to refuse a downgrade. Pass `true` only during development / testing.
+/// The boot of [EventStore.open] runs as it documents: a build opens a
+/// database written by a build of the same data-format major, older ones
+/// included, and records that it did; a database of another data-format
+/// major is refused before anything is written. Builds with the same
+/// data-format major and entry-type majors share a database in any mix (a
+/// canary, several instances, a rollback); a build of another data-format
+/// major, or one that raises an entry-type major, is deployed
+/// stop-then-start, and recovery after it is a restore from a backup taken
+/// before the switch, or a roll-forward.
 Future<EventStoreBundle> bootstrapEventStore({
   required StorageBackend backend,
   required Source source,
@@ -92,7 +97,6 @@ Future<EventStoreBundle> bootstrapEventStore({
   required List<Destination> destinations,
   ProjectionRegistry? projections,
   EventStoreSyncCycleTrigger? syncCycleTrigger,
-  bool allowDowngrade = false,
 }) async {
   final typeRegistry = EntryTypeRegistry();
   for (final definition in kSystemEntryTypes) {
@@ -136,7 +140,6 @@ Future<EventStoreBundle> bootstrapEventStore({
     securityContexts: securityContexts,
     projections: projections,
     syncCycleTrigger: syncCycleTrigger,
-    allowDowngrade: allowDowngrade,
   );
 
   final destinationRegistry = DestinationRegistry(eventStore: eventStore);

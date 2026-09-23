@@ -238,10 +238,10 @@ The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
-requests, wedge records and the registry check record, and the security
-context it stores beside each event) changes only through
-the library's operations. Every `StorageBackend` member that writes is
-`@internal`; a consumer uses the reads, `transaction` (for its own reads;
+requests, wedge records, the registry check record, the database
+identity and the view catch-up marks, and the security context it stores
+beside each event) changes only through the library's operations. Every
+`StorageBackend` member that writes is `@internal`; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
 `close`, and delivers through `SyncCycle` and `DestinationRegistry`. The
 marking is an analyzer guard, not a run-time barrier (see
@@ -266,9 +266,11 @@ deployment — see the guide's "Advanced" chapter for detail:
   `SecurityDetails` (IP / user-agent / session) persist to a *separate*
   security-context store keyed by `event_id`, keeping request PII out of
   the event record.
-- **Library version in the log** — first boot appends
-  `lib_version_initialized`; upgrades append `lib_version_changed`;
-  downgrades are refused unless explicitly opted in.
+- **Library version in the log** — the first open appends
+  `lib_version_initialized` with the database identity; every open by
+  another package or data-format version appends `lib_version_changed`,
+  older ones included; a database last opened by another data-format
+  major is refused before any write (`DataFormatIncompatibleError`).
 - **Delivery** — each `Destination` delivers its queue in order, and a
   queue head the drain cannot deliver (a permanent refusal, or an
   exhausted attempt budget) wedges, halting that destination until an

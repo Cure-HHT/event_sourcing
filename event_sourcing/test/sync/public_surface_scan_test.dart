@@ -27,6 +27,8 @@ const _reads = <String, String>{
   'findViewRowsInTxn': 'reads a view in a txn',
   'readViewTargetVersionInTxn': 'reads one view target version',
   'readAllViewTargetVersionsInTxn': "reads a view's target versions",
+  'readViewTargetsForEntryTypeInTxn': "reads an entry type's view targets",
+  'readViewTargetBehindInTxn': "reads a view target's catch-up mark",
   'readFifoHead': 'reads a queue head',
   'listFifoEntries': 'reads a queue',
   'readFifoRow': 'reads one queue row',
@@ -81,6 +83,8 @@ const _functionTyped = <String, String>{
       "the consumer's transaction body; every write it can reach is internal",
   'EventStore.syncCycleTrigger (field)':
       'read-only view of the trigger the store fires after a commit',
+  'PostgresBackend.bootTransaction(body)':
+      "internal: runs the event store's own boot body",
   'PostgresBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'ScopeClassRegistry.new(projectionLookup)':
@@ -92,8 +96,12 @@ const _functionTyped = <String, String>{
   'ScopeDescendantExpander.new(findRowsInTxn)':
       'known unenumerated input: reads the containment rows that narrow a '
       'scoped read',
+  'SembastBackend.bootTransaction(body)':
+      "internal: runs the event store's own boot body",
   'SembastBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
+  'StorageBackend.bootTransaction(body)':
+      "internal: runs the event store's own boot body",
   'StorageBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'SubscriptionFilter.new(predicate)':
@@ -121,6 +129,55 @@ const _functionTyped = <String, String>{
       'wakes the delivery cycle after a commit; decides nothing',
 };
 
+/// Every test seam on `DeliveryTestHooks`, by kind. An observing seam sees
+/// a step; a failure injection makes an operation fail; an interleaving
+/// seam runs other operations at a named point; an input substitution
+/// replaces an input the library decides on, so what it decides changes
+/// (the release probe covers each). A new seam is classified here, or the
+/// scan fails.
+const _seamKinds = <String, String>{
+  'onLog': 'observe',
+  'onRegistryBodyRun': 'observe',
+  'onBootBodyRun': 'observe',
+  'failRegistryAuditAppend': 'failure injection',
+  'failOutcomeTransaction': 'failure injection',
+  'afterWedgeHeadInTxn': 'failure injection',
+  'afterWedgeTransaction': 'failure injection',
+  'failFillTransaction': 'failure injection',
+  'afterBootVersionEvent': 'failure injection',
+  'beforeRegistryTransaction': 'interleave',
+  'insideTransform': 'interleave',
+  'afterFillReads': 'interleave',
+  'buildDeclaration': 'input substitution',
+};
+
+const _seamKindNames = <String>{
+  'observe',
+  'failure injection',
+  'interleave',
+  'input substitution',
+};
+
+/// The problems with [kinds] as the classification of [hooks]'s fields:
+/// a field it does not list, a listed name that is no field, or an
+/// unknown kind.
+List<String> seamKindRule(ClassElement hooks, Map<String, String> kinds) {
+  final fields = <String>{
+    for (final field in hooks.fields)
+      if (!field.isStatic && !field.isOriginGetterSetter && field.name != null)
+        field.name!,
+  };
+  return <String>[
+    for (final field in fields.difference(kinds.keys.toSet()))
+      'DeliveryTestHooks.$field has no seam kind',
+    for (final name in kinds.keys.toSet().difference(fields))
+      '$name is classified but is no DeliveryTestHooks field',
+    for (final entry in kinds.entries)
+      if (!_seamKindNames.contains(entry.value))
+        '${entry.key}: unknown seam kind "${entry.value}"',
+  ];
+}
+
 /// Members on types other than `StorageBackend`, and top-level functions,
 /// that must be internal.
 const _mustBeInternal = <String, String>{
@@ -129,6 +186,7 @@ const _mustBeInternal = <String, String>{
   'writeQueueItemsTxn': 'enqueues queue items outside the fill',
   'seedViewTargetVersions': 'writes view target versions',
   'promoteViewSnapshots': 'rewrites view rows and target versions',
+  'catchUpViews': 'rewrites view rows and clears catch-up marks',
   'EventStoreBundle.setViewTargetVersion':
       'writes view_target_versions without the boot seeding',
   'AggregateFold.applyEvent': 'writes view rows',
@@ -196,16 +254,20 @@ const _unexportedOperations = <String, String>{
   'verifyNoEntryTypeDowngrade': 'reads view target versions; changes nothing',
   'PublishCollector.events': 'reads what the run collected',
   'PublishCollector.rowChanges': 'reads what the run collected',
-  'LibVersion.version': 'constant',
-  'LibVersion.dataFormat': 'constant',
   'canonicalEventHash': 'pure function; changes nothing',
-  'LibVersion.compare': 'pure function',
   'LibVersionEvents.initialized': 'constant',
   'LibVersionEvents.changed': 'constant',
-  'VersionCheckResult.recordedVersion': 'value field',
-  'VersionCheckResult.sequenceNumber': 'value field',
-  'VersionCheckResult.eventType': 'value field',
-  'VersionCheck.findMostRecent': 'reads the log',
+  'isLocallyAppended': 'pure function; changes nothing',
+  'RecordedLibVersion.event': 'value field',
+  'RecordedLibVersion.packageVersion': 'value field',
+  'RecordedLibVersion.dataFormat': 'value field',
+  'RecordedLibVersion.databaseId': 'value field',
+  'RecordedLibVersion.isInitialized': 'value field',
+  'LocalLibVersionHistory.events': 'value field',
+  'LocalLibVersionHistory.latest': 'value field',
+  'LocalLibVersionHistory.firstInitialized': 'value field',
+  'VersionCheck.readLocalInTxn':
+      'reads the library-version events in a transaction',
   'AggregateFoldChange.viewName': 'value field',
   'AggregateFoldChange.aggregateId': 'value field',
   'AggregateFoldChange.newValue': 'value field',
@@ -429,6 +491,7 @@ Future<void> fillBatch() async {}
 Future<void> writeQueueItemsTxn() async {}
 Future<void> seedViewTargetVersions() async {}
 Future<void> promoteViewSnapshots() async {}
+Future<void> catchUpViews() async {}
 ''';
 
 const _fixtureUnexportedWriter = '''
@@ -576,6 +639,13 @@ void main() {
 
     test('(e) the library logs only through its internal logger', () async {
       expect(directLoggingRule(await _unitsUnderLib(scanner)), isEmpty);
+    });
+
+    test('(h) every DeliveryTestHooks seam has a kind', () {
+      expect(
+        seamKindRule(classNamed(libraries, 'DeliveryTestHooks'), _seamKinds),
+        isEmpty,
+      );
     });
 
     test('(f) the must-be-internal set is internal', () {
@@ -824,6 +894,23 @@ void main() {
         contains("print('direct')"),
         contains("developer.log('direct')"),
       ]);
+    });
+
+    test('(h) a seam with no kind, and a stale classification, fail', () {
+      final hooks = classNamed(libraries, 'DeliveryTestHooks');
+      final withoutBuild = Map<String, String>.of(_seamKinds)
+        ..remove('buildDeclaration');
+      expect(
+        seamKindRule(hooks, withoutBuild),
+        contains('DeliveryTestHooks.buildDeclaration has no seam kind'),
+      );
+      expect(
+        seamKindRule(hooks, <String, String>{
+          ..._seamKinds,
+          'removedSeam': 'observe',
+        }),
+        contains('removedSeam is classified but is no DeliveryTestHooks field'),
+      );
     });
 
     test('(f) an unannotated copy of each must-be-internal member fails', () {

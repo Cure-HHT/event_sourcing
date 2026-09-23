@@ -21,3 +21,9 @@ Future<void> readPostgresQueues(PostgresBackend backend) async {
   await backend.wedgedFifos();
   await backend.close();
 }
+
+/// Reads the library's versions, which a deployment pipeline compares with
+/// the serving revision's: public constants.
+bool sameDataFormatMajor(DataFormatVersion serving) =>
+    LibVersion.dataFormat.major == serving.major &&
+    LibVersion.version.isNotEmpty;

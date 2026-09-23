@@ -31,6 +31,10 @@ Future<void> ensurePostgresSchema(Session session) async {
   // B-tree index automatically; a second non-unique index would be redundant.
   await session.execute(_eventsAggregateIdx);
   await session.execute(_eventsClientTsIdx);
+  // The boot reads the library-version events inside the transaction that
+  // holds every append back; this index keeps that read proportional to
+  // the number of those events, not to the length of the log.
+  await session.execute(_eventsTypeSeqIdx);
 
   await session.execute(_viewRowsTable);
   await session.execute(_viewTargetVersionsTable);
@@ -89,6 +93,11 @@ CREATE INDEX IF NOT EXISTS events_client_ts_idx
   ON events (client_timestamp)
 ''';
 
+const String _eventsTypeSeqIdx = '''
+CREATE INDEX IF NOT EXISTS events_type_seq_idx
+  ON events (event_type, sequence_number)
+''';
+
 // --- View rows ------------------------------------------------------------
 
 const String _viewRowsTable = '''
@@ -109,6 +118,7 @@ CREATE TABLE IF NOT EXISTS view_target_versions (
   entry_type      TEXT     NOT NULL,
   target_major    INTEGER  NOT NULL  CHECK (target_major >= 1),
   target_minor    INTEGER  NOT NULL  CHECK (target_minor >= 0),
+  behind          BOOLEAN  NOT NULL  DEFAULT false,
   PRIMARY KEY (view_name, entry_type)
 )
 ''';

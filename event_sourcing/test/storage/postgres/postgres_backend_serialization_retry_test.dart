@@ -23,6 +23,11 @@
 //   transaction that is handed the collector of another run is refused
 //   before any write, so a rolled-back append is never published and the
 //   outer run publishes nothing it did not append.
+// Verifies: EVS-DEV-event-store-open/E
+// the boot transaction is re-run after a serialization failure on a table
+//   it does not lock, as long as bootLockWait has not passed, and then
+//   throws TransactionRetryExhaustedException; a re-run boot records one
+//   initialization.
 
 @TestOn('vm')
 library;
@@ -30,6 +35,7 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
@@ -294,6 +300,199 @@ void main() {
       expect(received, isEmpty);
     });
   });
+
+  group('PostgresBackend boot transaction retry', () {
+    final backends = <PostgresBackend>[];
+    late Connection contender;
+
+    setUp(() async {
+      final conn = await Connection.open(
+        PostgresBackend.endpointFromUrl(url),
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+      await conn.execute('DROP SCHEMA public CASCADE');
+      await conn.execute('CREATE SCHEMA public');
+      await conn.close();
+      contender = await Connection.open(
+        PostgresBackend.endpointFromUrl(url),
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+    });
+
+    tearDown(() async {
+      await contender.close();
+      for (final backend in backends) {
+        await backend.close();
+      }
+      backends.clear();
+    });
+
+    Future<PostgresBackend> openBackend({
+      Duration bootLockWait = const Duration(seconds: 60),
+    }) async {
+      final backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        bootLockWait: bootLockWait,
+      );
+      backends.add(backend);
+      return backend;
+    }
+
+    // The contender updates the row the boot body writes, without
+    // committing, so the body's write waits for it; the contender commits
+    // once the body is seen waiting, which aborts the body's run with a
+    // serialization failure.
+    Future<void> contendOnViewRow(Future<Object?> boot) async {
+      await contender.execute('BEGIN');
+      await contender.execute(
+        "UPDATE view_rows SET row_data = '{\"writer\": \"contender\"}' "
+        "WHERE view_name = '$_contentionView' AND row_key = 'x'",
+      );
+      await _commitOnceBlocked(contender, boot);
+    }
+
+    Future<Object?> settle(Future<Object?> future) =>
+        future.then<Object?>((value) => value, onError: (Object e) => e);
+
+    test('a serialization failure after bootLockWait has passed throws '
+        'TransactionRetryExhaustedException', () async {
+      final backend = await openBackend(bootLockWait: Duration.zero);
+      await backend.transaction(
+        (txn) => backend.upsertViewRowInTxn(txn, _contentionView, 'x', {
+          'writer': 'setup',
+        }),
+      );
+      var runs = 0;
+      final boot = settle(
+        backend.bootTransaction<int>((txn) async {
+          runs++;
+          await backend.upsertViewRowInTxn(txn, _contentionView, 'x', {
+            'writer': 'boot',
+          });
+          return runs;
+        }),
+      );
+      await contendOnViewRow(boot);
+      final outcome = await boot;
+
+      expect(
+        outcome,
+        isA<TransactionRetryExhaustedException>()
+            .having((e) => e.attempts, 'attempts', 1)
+            .having((e) => e.lastError.code, 'lastError.code', '40001'),
+      );
+      expect(runs, 1);
+      final row = await backend.transaction(
+        (txn) => backend.readViewRowInTxn(txn, _contentionView, 'x'),
+      );
+      expect(row!['writer'], 'contender', reason: 'the boot committed nothing');
+    });
+
+    test('a serialization failure within bootLockWait re-runs the body, '
+        'and the second run commits', () async {
+      final backend = await openBackend();
+      await backend.transaction(
+        (txn) => backend.upsertViewRowInTxn(txn, _contentionView, 'x', {
+          'writer': 'setup',
+        }),
+      );
+      var runs = 0;
+      final boot = settle(
+        backend.bootTransaction<int>((txn) async {
+          runs++;
+          await backend.upsertViewRowInTxn(txn, _contentionView, 'x', {
+            'writer': 'boot',
+            'run': runs,
+          });
+          return runs;
+        }),
+      );
+      await contendOnViewRow(boot);
+
+      expect(await boot, 2);
+      expect(runs, 2);
+      final row = await backend.transaction(
+        (txn) => backend.readViewRowInTxn(txn, _contentionView, 'x'),
+      );
+      expect(row, <String, Object?>{'writer': 'boot', 'run': 2});
+    });
+
+    test('EventStore.open re-runs a boot a serialization failure aborted, '
+        'and records one initialization', () async {
+      final backend = await openBackend();
+      // The contender seeds the target the boot is about to seed, without
+      // committing, so the boot's insert waits for it and then fails.
+      await contender.execute('BEGIN');
+      await contender.execute(
+        'INSERT INTO view_target_versions '
+        '(view_name, entry_type, target_major, target_minor) '
+        "VALUES ('$_contentionView', 'test_event', 1, 0)",
+      );
+      var bootRuns = 0;
+      final open = settle(
+        runWithDeliveryTestHooks(
+          DeliveryTestHooks(onBootBodyRun: () => bootRuns++),
+          () => EventStore.open(
+            storage: backend,
+            entryTypes: EntryTypeRegistry()..register(_testEventDef()),
+            source: const Source(
+              hopId: 'test',
+              identifier: 'aaaa0001-0000-4000-8000-00000000000c',
+              softwareVersion: '0.0.0-test',
+            ),
+            securityContexts: PostgresSecurityContextStore(backend: backend),
+            projections: ProjectionRegistry()
+              ..register(
+                const AggregateProjectionSpec(
+                  viewName: _contentionView,
+                  interest: SubscriptionFilter(
+                    entryTypes: <String>{'test_event'},
+                  ),
+                  tombstoneEventTypes: <String>{},
+                ),
+              ),
+          ),
+        ),
+      );
+      await _commitOnceBlocked(contender, open);
+      final store = await open;
+
+      expect(store, isA<EventStore>());
+      expect(bootRuns, 2);
+      final initializations = await backend.findAllEvents(
+        entryType: 'lib_version_initialized',
+      );
+      expect(initializations, hasLength(1));
+      expect(
+        initializations.single.data['database_id'],
+        (store! as EventStore).databaseId,
+      );
+    });
+  });
+}
+
+/// Commits [contender]'s open transaction once another session of this
+/// database waits for a lock, or once [waiter] has completed.
+Future<void> _commitOnceBlocked(
+  Connection contender,
+  Future<Object?> waiter,
+) async {
+  var done = false;
+  unawaited(waiter.whenComplete(() => done = true));
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (!done) {
+    final waiting = await contender.execute(
+      "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+      'AND datname = current_database()',
+    );
+    if ((waiting.first[0]! as int) > 0) break;
+    if (DateTime.now().isAfter(deadline)) {
+      fail('no session waited for the contender');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  await contender.execute('COMMIT');
 }
 
 const _contentionView = 'contention';

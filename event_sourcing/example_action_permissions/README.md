@@ -172,8 +172,11 @@ docker compose up -d --wait
 ```
 
 The compose file keeps its data in a volume across restarts. A database
-written by a build of another library data format does not open under
-this build; to start from an empty database, remove the volume first:
+written by an earlier build of the library does not open under this
+build, whatever its data format: the open refuses it with
+`DatabaseResetRequiredError`, and it must be reset. A database of another
+data-format major is refused with `DataFormatIncompatibleError`. To
+start from an empty database, remove the volume first:
 
 ```text
 docker compose down -v
@@ -182,7 +185,8 @@ docker compose up -d --wait
 
 The same holds for the default sembast store, `demo.db` in the data
 directory (`--data-dir`, by default `~/.local/share/action_permissions_demo`):
-delete it to start from an empty database, or run with `--ephemeral`.
+delete it to reset a database an earlier build wrote, or run with
+`--ephemeral`.
 
 Then start the demo server pointed at it:
 

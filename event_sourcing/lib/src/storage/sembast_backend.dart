@@ -5,10 +5,12 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -134,6 +136,15 @@ class SembastBackend extends StorageBackend {
   }
 
   // -------- transaction --------
+
+  /// Runs the boot body through [transaction]. The transactions of one
+  /// Sembast database run one at a time in a process, so an append cannot
+  /// abort the boot; on a browser database shared by several tabs, a tab
+  /// whose commit another tab preceded re-runs the body on fresh data.
+  @override
+  @internal
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
+      transaction(body);
 
   // Implements: EVS-PRD-subscription/E
   // Post-commit notifications are queued on the
@@ -446,6 +457,44 @@ class SembastBackend extends StorageBackend {
     final records = await _eventStore.find(db, finder: finder);
     for (final r in records) {
       yield StoredEvent.fromMap(r.value, r.key);
+    }
+  }
+
+  /// Page size of [readEventsReverseInTxn].
+  static const int _reverseScanInTxnPageSize = 256;
+
+  /// Pages on `sequence_number` below the last event read, so an append
+  /// in [txn] while the stream is open does not shift the pages.
+  @override
+  @internal
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  }) async* {
+    int? lastSeenSequence;
+    while (true) {
+      final t = _requireValidTxn(txn);
+      final filters = <Filter>[
+        if (eventTypes != null)
+          Filter.inList('event_type', eventTypes.toList()),
+        if (lastSeenSequence != null)
+          Filter.lessThan('sequence_number', lastSeenSequence),
+      ];
+      final records = await _eventStore.find(
+        t._sembastTxn,
+        finder: Finder(
+          filter: filters.isEmpty
+              ? null
+              : (filters.length == 1 ? filters.single : Filter.and(filters)),
+          sortOrders: [SortOrder('sequence_number', false)],
+          limit: _reverseScanInTxnPageSize,
+        ),
+      );
+      for (final r in records) {
+        yield StoredEvent.fromMap(r.value, r.key);
+      }
+      if (records.length < _reverseScanInTxnPageSize) return;
+      lastSeenSequence = records.last.value['sequence_number']! as int;
     }
   }
 
@@ -828,6 +877,59 @@ class SembastBackend extends StorageBackend {
     return RegistryCheck.fromJson(Map<String, Object?>.from(value as Map));
   }
 
+  // -------- Database identity and boot record --------
+
+  static const _databaseIdKey = 'database_id';
+  static const _bootCheckKey = 'boot_check';
+
+  @override
+  @internal
+  Future<String?> readDatabaseIdTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_databaseIdKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    if (value is! String || value.isEmpty) {
+      throw StateError(
+        'backend_state[$_databaseIdKey] is not a non-empty string; '
+        'database corrupted',
+      );
+    }
+    return value;
+  }
+
+  @override
+  @internal
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn) async {
+    final existing = await readDatabaseIdTxn(txn);
+    if (existing != null) return existing;
+    final t = _requireValidTxn(txn);
+    final minted = const Uuid().v4();
+    await _backendStateStore.record(_databaseIdKey).put(t._sembastTxn, minted);
+    return minted;
+  }
+
+  @override
+  @internal
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_bootCheckKey)
+        .put(t._sembastTxn, check.toJson());
+  }
+
+  @override
+  @internal
+  Future<BootCheck?> readBootCheckTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_bootCheckKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return BootCheck.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
   // -------- Generic view storage --------
 
   final Map<String, StoreRef<String, Map<String, Object?>>> _viewStoreCache =
@@ -998,11 +1100,19 @@ class SembastBackend extends StorageBackend {
     return _targetVersionOf(raw, '$viewName::$entryType');
   }
 
-  /// Reads the `{major, minor}` target of one view-target record.
+  /// Reads the `{major, minor}` target of one view-target record. A
+  /// single integer target is the shape an earlier data format stored, and
+  /// throws [DatabaseResetRequiredError].
   static EntryTypeVersion _targetVersionOf(
     Map<String, Object?> record,
     String key,
   ) {
+    if (record['target_version'] is int) {
+      throw DatabaseResetRequiredError(
+        'its view target versions are single integers, the shape of an '
+        'earlier data format (view_target_versions[$key])',
+      );
+    }
     try {
       return EntryTypeVersion.fromJson(record['target_version']);
     } on FormatException catch (e) {
@@ -1022,13 +1132,86 @@ class SembastBackend extends StorageBackend {
     EntryTypeVersion targetVersion,
   ) async {
     final t = _requireValidTxn(txn);
-    await _viewTargetVersionsStoreRef
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    await record.put(t._sembastTxn, <String, Object?>{
+      'view_name': viewName,
+      'entry_type': entryType,
+      'target_version': targetVersion.toJson(),
+      if (existing?[_behindField] == true) _behindField: true,
+    });
+  }
+
+  /// Field of a view-target record that carries its catch-up mark.
+  static const _behindField = 'behind';
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final records = await _viewTargetVersionsStoreRef.find(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.equals('entry_type', entryType)),
+    );
+    return <String, EntryTypeVersion>{
+      for (final r in records)
+        (r.value['view_name'] as String): _targetVersionOf(r.value, r.key),
+    };
+  }
+
+  @override
+  @internal
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    if (existing == null || existing[_behindField] == true) return;
+    await record.put(t._sembastTxn, <String, Object?>{
+      ...existing,
+      _behindField: true,
+    });
+  }
+
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final existing = await _viewTargetVersionsStoreRef
         .record(_viewTargetVersionsKey(viewName, entryType))
-        .put(t._sembastTxn, <String, Object?>{
-          'view_name': viewName,
-          'entry_type': entryType,
-          'target_version': targetVersion.toJson(),
-        });
+        .get(t._sembastTxn);
+    return existing?[_behindField] == true;
+  }
+
+  @override
+  @internal
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    if (existing == null || existing[_behindField] != true) return;
+    await record.put(t._sembastTxn, <String, Object?>{
+      for (final entry in existing.entries)
+        if (entry.key != _behindField) entry.key: entry.value,
+    });
   }
 
   @override

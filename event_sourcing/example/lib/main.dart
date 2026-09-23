@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/database_reset_notice.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
@@ -126,13 +127,19 @@ Future<_PaneRuntime> _bootstrapPane({
       ),
     );
 
-  final datastore = await bootstrapEventStore(
-    backend: backend,
-    source: source,
-    entryTypes: allDemoEntryTypes,
-    destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    projections: diaryProjections,
-  );
+  final EventStoreBundle datastore;
+  try {
+    datastore = await bootstrapEventStore(
+      backend: backend,
+      source: source,
+      entryTypes: allDemoEntryTypes,
+      destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
+      projections: diaryProjections,
+    );
+  } on Object {
+    await backend.close();
+    rethrow;
+  }
 
   final now = DateTime.now().toUtc();
   for (final id in <String>[
@@ -187,6 +194,14 @@ Future<void> main() async {
 
   final appSupportDir = await getApplicationSupportDirectory();
   final demoDir = Directory(p.join(appSupportDir.path, 'event_sourcing_demo'));
+  runApp(await buildDemoApp(demoDir));
+}
+
+/// Opens both panes over the files in [demoDir] and returns the dual-pane
+/// app, or, when a database file does not open under this build (an
+/// earlier data format, or another data-format major), an app naming the
+/// files to delete.
+Future<Widget> buildDemoApp(Directory demoDir) async {
   await demoDir.create(recursive: true);
 
   final mobileInstallUUID = await _readOrMintUUID(
@@ -206,47 +221,59 @@ Future<void> main() async {
 
   // Hub must be bootstrapped first so the bridge can capture its
   // EventStore before mobile's NativeDemoDestination is constructed.
-  final hub = await _bootstrapPane(
-    dbPath: hubDbPath,
-    source: Source(
-      hopId: 'hub-server',
-      identifier: hubInstallUUID,
-      softwareVersion: 'event_sourcing_demo@0.1.0+1',
-    ),
-  );
-
-  final bridge = DownstreamBridge(hub.datastore.eventStore);
-
-  final mobile = await _bootstrapPane(
-    dbPath: mobileDbPath,
-    source: Source(
-      hopId: 'mobile-device',
-      identifier: mobileInstallUUID,
-      softwareVersion: 'event_sourcing_demo@0.1.0+1',
-    ),
-    bridge: bridge,
-  );
-
-  runApp(
-    DualDemoApp(
-      top: DemoPaneConfig(
-        datastore: mobile.datastore,
-        backend: mobile.backend,
-        appState: mobile.appState,
-        dbPath: mobile.dbPath,
-        tickController: mobile.tick,
-        policyNotifier: mobile.policyNotifier,
-        paneLabel: 'MOBILE',
+  _PaneRuntime? hub;
+  final _PaneRuntime mobile;
+  try {
+    hub = await _bootstrapPane(
+      dbPath: hubDbPath,
+      source: Source(
+        hopId: 'hub-server',
+        identifier: hubInstallUUID,
+        softwareVersion: 'event_sourcing_demo@0.1.0+1',
       ),
-      bottom: DemoPaneConfig(
-        datastore: hub.datastore,
-        backend: hub.backend,
-        appState: hub.appState,
-        dbPath: hub.dbPath,
-        tickController: hub.tick,
-        policyNotifier: hub.policyNotifier,
-        paneLabel: 'HUB',
+    );
+
+    final bridge = DownstreamBridge(hub.datastore.eventStore);
+
+    mobile = await _bootstrapPane(
+      dbPath: mobileDbPath,
+      source: Source(
+        hopId: 'mobile-device',
+        identifier: mobileInstallUUID,
+        softwareVersion: 'event_sourcing_demo@0.1.0+1',
       ),
+      bridge: bridge,
+    );
+  } on Object catch (e) {
+    if (!needsDatabaseReset(e)) rethrow;
+    if (hub != null) {
+      hub.tick.cancel();
+      await hub.backend.close();
+    }
+    stderr.writeln('[demo] $e');
+    return DatabaseResetRequiredApp(
+      message: databaseResetMessage(e, <String>[mobileDbPath, hubDbPath]),
+    );
+  }
+
+  return DualDemoApp(
+    top: DemoPaneConfig(
+      datastore: mobile.datastore,
+      backend: mobile.backend,
+      appState: mobile.appState,
+      dbPath: mobile.dbPath,
+      tickController: mobile.tick,
+      policyNotifier: mobile.policyNotifier,
+      paneLabel: 'MOBILE',
+    ),
+    bottom: DemoPaneConfig(
+      datastore: hub.datastore,
+      backend: hub.backend,
+      appState: hub.appState,
+      dbPath: hub.dbPath,
+      tickController: hub.tick,
+      policyNotifier: hub.policyNotifier,
+      paneLabel: 'HUB',
     ),
   );
 }

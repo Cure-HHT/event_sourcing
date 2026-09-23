@@ -8,7 +8,6 @@
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kViewSnapshotPromotedEntryType;
@@ -596,6 +595,372 @@ void runVersionCompatibilityScenarios(
         expect(_rowOf(rows[_kView]!, 'agg-r')!['y'], 5);
         expect(_rowOf(rows[_kView]!, 'agg-r')!['a'], 8);
         expect(_rowOf(rows[_kView]!, 'agg-new')!['y'], 0);
+      });
+    });
+
+    group('views catch up with the log', () {
+      const otherType = 'versioned_label';
+      const newView = 'versioned_note_titles_new';
+      const newViewSpec = AggregateProjectionSpec(
+        viewName: newView,
+        interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+        tombstoneEventTypes: <String>{},
+      );
+      const widenedSpec = AggregateProjectionSpec(
+        viewName: _kView,
+        interest: SubscriptionFilter(entryTypes: <String>{_kType, otherType}),
+        tombstoneEventTypes: <String>{'deleted'},
+      );
+
+      /// Opens a build registering [_kType] at `1.0`, [otherType] when
+      /// [withOther], and [projections].
+      Future<EventStore> openBuild(
+        List<ProjectionSpec> projections, {
+        bool withOther = false,
+      }) async {
+        final backend = await db!.openBackend();
+        final entryTypes = EntryTypeRegistry();
+        for (final definition in kSystemEntryTypes) {
+          entryTypes.register(definition);
+        }
+        entryTypes.register(
+          const EntryTypeDefinition(
+            id: _kType,
+            registeredVersion: EntryTypeVersion(1, 0),
+            name: _kType,
+          ),
+        );
+        if (withOther) {
+          entryTypes.register(
+            const EntryTypeDefinition(
+              id: otherType,
+              registeredVersion: EntryTypeVersion(1, 0),
+              name: otherType,
+            ),
+          );
+        }
+        final registry = ProjectionRegistry();
+        for (final spec in projections) {
+          registry.register(spec);
+        }
+        return EventStore.open(
+          storage: backend,
+          entryTypes: entryTypes,
+          source: _kSource,
+          securityContexts: db!.securityFor(backend),
+          projections: registry,
+        );
+      }
+
+      Future<bool> behind(EventStore store, String view, String entryType) =>
+          store.backend.transaction(
+            (txn) =>
+                store.backend.readViewTargetBehindInTxn(txn, view, entryType),
+          );
+
+      Future<List<Map<String, Object?>>> rowsAfterRebuild(
+        EventStore store,
+        String view,
+        Map<String, EntryTypeVersion> targets,
+      ) async {
+        final held = _sortedRows(await store.backend.findViewRows(view));
+        await rebuildView(
+          store: store,
+          viewName: view,
+          targetVersionByEntryType: targets,
+        );
+        expect(
+          _sortedRows(await store.backend.findViewRows(view)),
+          held,
+          reason: 'view $view: rebuildView differs',
+        );
+        return held;
+      }
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('a new view over an existing entry type is derived at its first '
+          'open, marked behind by the build that does not register it, and '
+          're-derived at the next open', () async {
+        if (db == null) return;
+        final older = await openBuild(<ProjectionSpec>[_kSpec]);
+        await _appendNote(older, 'agg-1', <String, Object?>{'a': 1});
+        await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
+
+        final newer = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
+        expect(await newer.backend.findViewRows(newView), hasLength(2));
+
+        // The older build keeps serving: its appends are not folded into the
+        // new view, and mark it.
+        await _appendNote(older, 'agg-3', <String, Object?>{'a': 3});
+        expect(await behind(older, newView, _kType), isTrue);
+        expect(await behind(older, _kView, _kType), isFalse);
+        expect(await newer.backend.findViewRows(newView), hasLength(2));
+
+        final reopened = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
+        expect(await behind(reopened, newView, _kType), isFalse);
+        final rows = await rowsAfterRebuild(reopened, newView, {
+          _kType: const EntryTypeVersion(1, 0),
+        });
+        expect(rows.map((r) => r['aggregateId']), <String>[
+          'agg-1',
+          'agg-2',
+          'agg-3',
+        ]);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test("an entry type added to a view's interest, ingested by the older "
+          'build, marks the view, and the next open of the newer build '
+          're-derives it', () async {
+        if (db == null) return;
+        final newer = await openBuild(<ProjectionSpec>[
+          widenedSpec,
+        ], withOther: true);
+        await _appendNote(newer, 'agg-1', <String, Object?>{'a': 1});
+
+        final older = await openBuild(<ProjectionSpec>[_kSpec]);
+        await older.ingestEvent(
+          _peerEvent(
+            entryTypeVersion: const EntryTypeVersion(1, 0),
+            dataFormat: LibVersion.dataFormat,
+            data: const <String, Object?>{'label': 'peer'},
+            aggregateId: 'agg-1',
+            entryType: otherType,
+          ),
+        );
+        expect(await behind(older, _kView, otherType), isTrue);
+        expect(await behind(older, _kView, _kType), isFalse);
+        final before = await older.backend.transaction(
+          (txn) => older.backend.readViewRowInTxn(txn, _kView, 'agg-1'),
+        );
+        expect(before!.containsKey('label'), isFalse);
+
+        final reopened = await openBuild(<ProjectionSpec>[
+          widenedSpec,
+        ], withOther: true);
+        expect(await behind(reopened, _kView, otherType), isFalse);
+        final rows = await rowsAfterRebuild(reopened, _kView, {
+          _kType: const EntryTypeVersion(1, 0),
+          otherType: const EntryTypeVersion(1, 0),
+        });
+        expect(_rowOf(rows, 'agg-1')!['label'], 'peer');
+        expect(_rowOf(rows, 'agg-1')!['a'], 1);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('a new table view over an existing entry type is derived whole at '
+          'its first open, marked by the build that does not register it, and '
+          're-derived whole at the next open', () async {
+        if (db == null) return;
+        const tableView = 'versioned_note_values_new';
+        const tableSpec = TableProjectionSpec(
+          viewName: tableView,
+          interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+          insertEventTypes: <String>{'finalized'},
+          removeEventTypes: <String>{'deleted'},
+          rowKey: CompositeKey(<String>['data.list', 'data.item']),
+          rowData: WholePayload(),
+        );
+        Future<List<Map<String, Object?>>> tableRows(EventStore store) async {
+          final rows = <Map<String, Object?>>[
+            for (final row in await store.backend.findViewRows(tableView))
+              Map<String, Object?>.from(row),
+          ];
+          String key(Map<String, Object?> row) =>
+              '${row['list']}/${row['item']}';
+          return rows..sort((x, y) => key(x).compareTo(key(y)));
+        }
+
+        final older = await openBuild(<ProjectionSpec>[_kSpec]);
+        await _appendNote(older, 'agg-1', <String, Object?>{
+          'list': 'l1',
+          'item': 'i1',
+          'a': 1,
+        });
+        await _appendNote(older, 'agg-2', <String, Object?>{
+          'list': 'l1',
+          'item': 'i2',
+          'a': 2,
+        });
+
+        final newer = await openBuild(<ProjectionSpec>[_kSpec, tableSpec]);
+        expect(await tableRows(newer), hasLength(2));
+
+        // The older build appends a new row and removes one: neither folds
+        // into the table view, and the view is marked.
+        await _appendNote(older, 'agg-3', <String, Object?>{
+          'list': 'l2',
+          'item': 'i3',
+          'a': 3,
+        });
+        await _appendNote(older, 'agg-1', <String, Object?>{
+          'list': 'l1',
+          'item': 'i1',
+        }, eventType: 'deleted');
+        expect(await behind(older, tableView, _kType), isTrue);
+        expect(await tableRows(newer), hasLength(2));
+
+        final reopened = await openBuild(<ProjectionSpec>[_kSpec, tableSpec]);
+        expect(await behind(reopened, tableView, _kType), isFalse);
+        final held = await tableRows(reopened);
+        await rebuildView(
+          store: reopened,
+          viewName: tableView,
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            _kType: EntryTypeVersion(1, 0),
+          },
+        );
+        expect(await tableRows(reopened), held, reason: 'rebuildView differs');
+        expect(held.map((row) => row['item']), <String>['i2', 'i3']);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('a view whose interest names no entry types is not caught up: a '
+          'new one registered over existing events stays empty until '
+          'rebuildView', () async {
+        if (db == null) return;
+        const byAggregateView = 'versioned_notes_by_aggregate_type';
+        const byAggregateSpec = AggregateProjectionSpec(
+          viewName: byAggregateView,
+          interest: SubscriptionFilter(aggregateTypes: <String>{'note'}),
+          tombstoneEventTypes: <String>{},
+        );
+        final older = await openBuild(<ProjectionSpec>[_kSpec]);
+        await _appendNote(older, 'agg-1', <String, Object?>{'a': 1});
+        await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
+
+        final newer = await openBuild(<ProjectionSpec>[
+          _kSpec,
+          byAggregateSpec,
+        ]);
+        expect(await newer.backend.findViewRows(byAggregateView), isEmpty);
+        expect(
+          await newer.backend.transaction(
+            (txn) =>
+                newer.backend.readViewTargetsForEntryTypeInTxn(txn, _kType),
+          ),
+          isNot(contains(byAggregateView)),
+          reason: 'no target is stored for an interest without entry types',
+        );
+
+        await rebuildView(
+          store: newer,
+          viewName: byAggregateView,
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            _kType: EntryTypeVersion(1, 0),
+          },
+        );
+        final rows = _sortedRows(
+          await newer.backend.findViewRows(byAggregateView),
+        );
+        expect(rows.map((r) => r['aggregateId']), <String>['agg-1', 'agg-2']);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('builds whose interests for one view differ only in aggregate '
+          'types mark nothing: the event only the wider interest matches '
+          'stays out of the view until rebuildView', () async {
+        if (db == null) return;
+        const narrowSpec = AggregateProjectionSpec(
+          viewName: _kView,
+          interest: SubscriptionFilter(
+            entryTypes: <String>{_kType},
+            aggregateTypes: <String>{'note'},
+          ),
+          tombstoneEventTypes: <String>{'deleted'},
+        );
+        const wideSpec = AggregateProjectionSpec(
+          viewName: _kView,
+          interest: SubscriptionFilter(
+            entryTypes: <String>{_kType},
+            aggregateTypes: <String>{'note', 'memo'},
+          ),
+          tombstoneEventTypes: <String>{'deleted'},
+        );
+        await openBuild(<ProjectionSpec>[wideSpec]);
+        final older = await openBuild(<ProjectionSpec>[narrowSpec]);
+        await older.append(
+          entryType: _kType,
+          aggregateId: 'memo-1',
+          aggregateType: 'memo',
+          eventType: 'finalized',
+          data: const <String, Object?>{'a': 1},
+          initiator: const UserInitiator('versions-user'),
+        );
+        expect(await behind(older, _kView, _kType), isFalse);
+
+        final reopened = await openBuild(<ProjectionSpec>[wideSpec]);
+        expect(
+          await reopened.backend.transaction(
+            (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
+          ),
+          isNull,
+        );
+        await rebuildView(
+          store: reopened,
+          viewName: _kView,
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            _kType: EntryTypeVersion(1, 0),
+          },
+        );
+        final row = await reopened.backend.transaction(
+          (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
+        );
+        expect(row!['a'], 1);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('a build that registers the view and names the entry type marks '
+          'nothing, whether or not its interest matches the event', () async {
+        if (db == null) return;
+        final store = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
+        await _appendNote(store, 'agg-1', <String, Object?>{'a': 1});
+        await _appendNote(
+          store,
+          'agg-1',
+          <String, Object?>{},
+          eventType: 'deleted',
+        );
+        expect(await behind(store, _kView, _kType), isFalse);
+        expect(await behind(store, newView, _kType), isFalse);
+      });
+
+      // Verifies: EVS-DEV-version-compatibility/L
+      test('a mark whose append does not commit is not kept', () async {
+        if (db == null) return;
+        await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
+        final older = await openBuild(<ProjectionSpec>[_kSpec]);
+        await expectLater(
+          older.runTransaction<void>((txn, collector) async {
+            await older.appendInTxn(
+              txn,
+              entryType: _kType,
+              aggregateId: 'agg-1',
+              aggregateType: 'note',
+              eventType: 'finalized',
+              data: const <String, Object?>{'a': 1},
+              initiator: const UserInitiator('versions-user'),
+              flowToken: null,
+              metadata: null,
+              security: null,
+              checkpointReason: null,
+              changeReason: null,
+              dedupeByContent: false,
+              collector: collector,
+            );
+            expect(
+              await older.backend.readViewTargetBehindInTxn(
+                txn,
+                newView,
+                _kType,
+              ),
+              isTrue,
+            );
+            throw StateError('roll back');
+          }),
+          throwsStateError,
+        );
+        expect(await behind(older, newView, _kType), isFalse);
       });
     });
 

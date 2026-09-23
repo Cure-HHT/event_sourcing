@@ -245,6 +245,67 @@ class ThirdPartyBackend extends StorageBackend {
   Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) =>
       throw UnimplementedError();
 
+  @internal
+  @override
+  Future<String?> readDatabaseIdTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<BootCheck?> readBootCheckTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
+      transaction(body);
+
+  @internal
+  @override
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) => throw UnimplementedError();
+
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();
 

@@ -25,6 +25,8 @@ const stateKinds = <String, String>{
   'replay requests': 'replay requests',
   'wedge records': 'wedge records',
   'registry check record': 'the registry check record',
+  'database identity': 'the database identity',
+  'catch-up marks': 'the view catch-up marks',
   'security context': 'the security context stored beside each event',
 };
 

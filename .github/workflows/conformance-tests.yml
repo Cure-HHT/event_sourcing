@@ -116,6 +116,15 @@ jobs:
       - name: Drain wedge event scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_drain_wedge_event_test.dart
         working-directory: event_sourcing
+      - name: Boot and data-format compatibility scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_data_format_compatibility_test.dart
+        working-directory: event_sourcing
+      - name: Concurrent first opens and database identity on Postgres
+        run: flutter test test/storage/postgres/postgres_database_identity_test.dart
+        working-directory: event_sourcing
+      - name: Boot under a serving revision's load on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

@@ -97,8 +97,9 @@ const String kEntryTypeRegistryInitializedEntryType =
     'system.entry_type_registry_initialized';
 
 /// Reserved id for the substrate-level lib-version-initialized event.
-/// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
-/// `_appendLibVersionEventToBackend` on first boot.
+/// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open`, through
+/// `_appendLibVersionEventInTxn` inside the boot transaction, at the first
+/// open of a database.
 // Implements: EVS-DEV-event-store-open/B
 // defines the entry-type id for the
 //   first-boot lib-version event; boot-version events are substrate-internal
@@ -106,8 +107,10 @@ const String kEntryTypeRegistryInitializedEntryType =
 const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 
 /// Reserved id for the substrate-level lib-version-changed event.
-/// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open` /
-/// `_appendLibVersionEventToBackend` on upgrade.
+/// Appended raw (bypassing EntryTypeRegistry) by `EventStore.open`, through
+/// `_appendLibVersionEventInTxn` inside the boot transaction, whenever the
+/// opening build's package version or data format differs from the one
+/// recorded last, an older one included.
 // Implements: EVS-DEV-event-store-open/C
 // defines the entry-type id for the
 //   version-transition lib-version event; boot-version events are substrate-
@@ -170,7 +173,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// opts in and receives them.
 ///
 /// The lib-version entries (`lib_version_initialized`,
-/// `lib_version_changed`) are appended raw by `_appendLibVersionEventToBackend`
+/// `lib_version_changed`) are appended raw by `_appendLibVersionEventInTxn`
 /// (bypassing `EntryTypeRegistry`), but registering them here ensures:
 ///   1. `byId()` returns a non-null definition for tests that iterate the
 ///      full `kReservedSystemEntryTypeIds` set.

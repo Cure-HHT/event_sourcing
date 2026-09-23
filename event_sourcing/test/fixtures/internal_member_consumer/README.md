@@ -9,7 +9,10 @@ naming its dependencies by path, then analyzes both:
   `invalid_use_of_internal_member`, whether it reaches the member through
   the barrel, a `src/` import, or a third-party backend whose override is
   itself marked internal;
-- `calls_transaction_and_close.dart` (the public reads, `transaction` and
-  `close`) and `calls_unguarded_third_party.dart` (a call through a
+- `calls_test_only_open.dart` must be reported for
+  `invalid_use_of_visible_for_testing_member`: `EventStore.openForTest`
+  is test-only;
+- `calls_transaction_and_close.dart` (the public reads, `transaction`,
+  `close` and the `LibVersion` constants) and `calls_unguarded_third_party.dart` (a call through a
   third-party override that carries no annotation, which the analyzer
   cannot see) must analyze clean.

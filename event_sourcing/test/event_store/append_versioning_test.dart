@@ -5,7 +5,6 @@
 //   LibVersion.dataFormat (EVS-PRD-event-log/A: immutable
 //   log record carries all version metadata at write-time).
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 

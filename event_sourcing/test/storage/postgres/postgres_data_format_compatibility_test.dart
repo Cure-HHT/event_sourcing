@@ -1,0 +1,208 @@
+// Runs the boot scenarios of EventStore.open on Postgres, plus the rollback
+// sequence of two builds opening one database in turn; gated on PG_TEST_URL.
+// The shared scenarios' assertions are cited on their own tests in
+// test_support/boot_conformance.dart.
+
+@TestOn('vm')
+library;
+
+import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart'
+    show LibVersionEvents;
+import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:postgres/postgres.dart';
+import 'package:test/test.dart';
+
+import '../../test_support/boot_conformance.dart';
+import 'test_postgres_url.dart';
+
+Future<Connection> _connect(String url) => Connection.open(
+  PostgresBackend.endpointFromUrl(url),
+  settings: const ConnectionSettings(sslMode: SslMode.disable),
+);
+
+/// A Postgres database the boot scenarios share: the `public` schema of
+/// the test database, dropped and created again for each test.
+class PostgresBootDatabase implements BootTestDatabase {
+  PostgresBootDatabase._(this._url);
+
+  /// Resets the schema and returns the database.
+  static Future<PostgresBootDatabase> reset(String url) async {
+    final tmp = await _connect(url);
+    await tmp.execute('DROP SCHEMA public CASCADE');
+    await tmp.execute('CREATE SCHEMA public');
+    await tmp.close();
+    return PostgresBootDatabase._(url);
+  }
+
+  final String _url;
+  final List<PostgresBackend> _backends = <PostgresBackend>[];
+
+  @override
+  Future<StorageBackend> openBackend() async {
+    final backend = await PostgresBackend.open(
+      url: _url,
+      sslMode: SslMode.disable,
+    );
+    _backends.add(backend);
+    return backend;
+  }
+
+  @override
+  MutableSecurityContextStore securityFor(StorageBackend backend) =>
+      PostgresSecurityContextStore(backend: backend as PostgresBackend);
+
+  @override
+  Future<void> rewriteStoredDatabaseId(String? value) async {
+    final conn = await _connect(_url);
+    try {
+      if (value == null) {
+        await conn.execute(
+          "DELETE FROM backend_state WHERE key = 'database_id'",
+        );
+      } else {
+        await conn.execute(
+          Sql.named('''
+            INSERT INTO backend_state (key, value)
+            VALUES ('database_id', to_jsonb(@v::text))
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+          '''),
+          parameters: {'v': value},
+        );
+      }
+    } finally {
+      await conn.close();
+    }
+  }
+
+  @override
+  Future<void> writeEarlierFormatShape() async {
+    // The tables as an earlier data format created them: one integer column
+    // for each version.
+    final conn = await _connect(_url);
+    try {
+      await conn.execute('''
+        CREATE TABLE events (
+          sequence_number      BIGINT       PRIMARY KEY,
+          event_id             TEXT         NOT NULL UNIQUE,
+          aggregate_id         TEXT         NOT NULL,
+          aggregate_type       TEXT         NOT NULL,
+          entry_type           TEXT         NOT NULL,
+          entry_type_version   INTEGER      NOT NULL,
+          lib_format_version   INTEGER      NOT NULL,
+          event_type           TEXT         NOT NULL,
+          data                 JSONB        NOT NULL,
+          metadata             JSONB        NOT NULL,
+          initiator            JSONB        NOT NULL,
+          client_timestamp     TIMESTAMPTZ  NOT NULL,
+          event_hash           TEXT         NOT NULL,
+          flow_token           TEXT,
+          previous_event_hash  TEXT
+        )
+      ''');
+      await conn.execute('''
+        CREATE TABLE view_target_versions (
+          view_name       TEXT     NOT NULL,
+          entry_type      TEXT     NOT NULL,
+          target_version  INTEGER  NOT NULL,
+          PRIMARY KEY (view_name, entry_type)
+        )
+      ''');
+    } finally {
+      await conn.close();
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    for (final backend in _backends) {
+      await backend.close();
+    }
+    _backends.clear();
+  }
+}
+
+void main() {
+  final url = testPostgresUrl();
+  runBootScenarios(() async {
+    if (url == null) return null;
+    return PostgresBootDatabase.reset(url);
+  }, backendLabel: 'postgres');
+
+  group('rollback between two builds of one data-format major (postgres)', () {
+    PostgresBootDatabase? db;
+
+    setUp(() async {
+      if (url == null) {
+        markTestSkipped('PG_TEST_URL unset');
+        return;
+      }
+      db = await PostgresBootDatabase.reset(url);
+    });
+
+    tearDown(() async {
+      await db?.close();
+      db = null;
+    });
+
+    // Verifies: EVS-DEV-event-store-open/C
+    // Verifies: EVS-DEV-event-store-open/E
+    test('the compiled and a newer build open in turn on separate backends; '
+        'the log records each change in order; two concurrent opens of the '
+        'older build append one change', () async {
+      if (db == null) return;
+      final d = db!;
+      final o1 = await openBootStoreForTest(d, await d.openBackend());
+      await appendBootNoteForTest(o1, 'o1');
+      final n1 = await openBootStoreForTest(
+        d,
+        await d.openBackend(),
+        newer: true,
+      );
+      await appendBootNoteForTest(n1, 'n1');
+      final o2 = await openBootStoreForTest(d, await d.openBackend());
+      await appendBootNoteForTest(o2, 'o2');
+      final n2 = await openBootStoreForTest(
+        d,
+        await d.openBackend(),
+        newer: true,
+      );
+      await appendBootNoteForTest(n2, 'n2');
+
+      List<(String, Object?)> transitions(List<StoredEvent> events) => [
+        for (final e in events)
+          (
+            e.eventType,
+            e.eventType == LibVersionEvents.initialized
+                ? e.data['version']
+                : e.data['toVersion'],
+          ),
+      ];
+      expect(transitions(await libVersionEventsForTest(n2.backend)), [
+        (LibVersionEvents.initialized, LibVersion.version),
+        (LibVersionEvents.changed, newerBuildVersionForTest),
+        (LibVersionEvents.changed, LibVersion.version),
+        (LibVersionEvents.changed, newerBuildVersionForTest),
+      ]);
+      for (final store in <EventStore>[o1, n1, o2, n2]) {
+        expect(store.databaseId, o1.databaseId);
+      }
+      expect(await n2.backend.findViewRows('boot_notes'), hasLength(4));
+
+      final concurrent = await Future.wait(<Future<EventStore>>[
+        d.openBackend().then((b) => openBootStoreForTest(d, b)),
+        d.openBackend().then((b) => openBootStoreForTest(d, b)),
+      ]);
+      final after = transitions(
+        await libVersionEventsForTest(concurrent.first.backend),
+      );
+      expect(after, hasLength(5));
+      expect(after.last, (LibVersionEvents.changed, LibVersion.version));
+      await appendBootNoteForTest(concurrent.last, 'o3');
+      expect(
+        await concurrent.first.backend.findViewRows('boot_notes'),
+        hasLength(5),
+      );
+    });
+  });
+}

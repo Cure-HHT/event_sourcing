@@ -32,6 +32,10 @@
 // when a view's stored target for the event's entry type has the registered
 //   major and a higher minor, the fold lowers it to the registered version in
 //   its own transaction.
+// Implements: EVS-DEV-version-compatibility/L
+// every stored target of the event's entry type whose view this build
+//   neither folds the event into nor registers for the entry type is marked
+//   behind the log in the fold's own transaction.
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
@@ -73,6 +77,12 @@ class ProjectionInterpreter {
   /// entry type has the registered major and a higher minor, the fold
   /// writes the registered version as the stored target, so the next open
   /// under the newer minor re-derives the rows this build folded.
+  ///
+  /// Every stored target of the event's entry type whose view this build
+  /// neither folds the event into nor registers for that entry type (a
+  /// view, or an entry type in a view's interest, that another build
+  /// sharing the database registers) is marked behind the log, so the next
+  /// open of a build that registers the view re-derives it.
   ///
   /// Returns the list of [AggregateFoldChange] records from every spec
   /// that produced a change; null results (e.g. tombstone of non-existent
@@ -130,6 +140,23 @@ class ProjectionInterpreter {
         version: registeredVersion,
       );
       if (change != null) changes.add(change);
+    }
+
+    // A stored target of this entry type whose view this build neither
+    // folds the event into nor registers for the entry type belongs to a
+    // view, or a view's interest, that another build registers: mark it, so
+    // the next open of a build that registers it re-derives the view.
+    final stored = await backend.readViewTargetsForEntryTypeInTxn(
+      txn,
+      event.entryType,
+    );
+    for (final viewName in stored.keys) {
+      final spec = projections.lookup(viewName);
+      final folds = spec != null && spec.interest.matches(event);
+      final registersPair =
+          spec?.interest.entryTypes?.contains(event.entryType) ?? false;
+      if (folds || registersPair) continue;
+      await backend.markViewTargetBehindInTxn(txn, viewName, event.entryType);
     }
     return changes;
   }
