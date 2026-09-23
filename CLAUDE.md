@@ -237,7 +237,17 @@ The currently-trusted inputs are:
   `event_sourcing/lib/src/storage/postgres/`). Both pass the same
   backend-agnostic conformance harness. Alternative backends
   (IndexedDB, etc.) are app-supplied; each is the trusted persistence
-  layer for that deployment.
+  layer for that deployment. Precondition (`EVS-PRD-destinations/L`):
+  the library's delivery guarantees, its views and its security-context
+  records hold only while its persisted state (destination queues, the
+  views it materializes, the records it keeps beside them, such as fill
+  positions and schedules, and the security context it stores beside
+  each event) changes only through the library's operations. Every
+  `StorageBackend` member that writes is `@internal`, which the
+  analyzer enforces but nothing enforces at run time: the consumer
+  holds the backend (and, on Sembast, the database it opened), and a
+  backend in another package keeps the guard only by marking its own
+  overrides `@internal`.
 - **`Destination` outbound transport.** Per-destination delivery
   transport (HTTP, WebSocket, file, etc.) supplied by the app at
   composition time. Trusted for transport-layer correctness and

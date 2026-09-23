@@ -974,10 +974,10 @@ void main() {
       },
     );
 
-    // TODO(CUR-1192): Add fault-injection test for Stage 8 rollback-on-persist-failure.
-    //   This requires a seam in StorageBackend to inject mid-transaction failures.
-    //   Without such a seam the rollback semantic is verified only by code inspection
-    //   and the Sembast transaction contract. Track as follow-up.
+    // Stage 8 rollback-on-persist-failure has no fault-injection test: the
+    // dispatcher has no seam that injects a failure mid-transaction, so the
+    // rollback is verified only by code inspection and the Sembast
+    // transaction contract.
   });
 
   // Stage 8 appends action events via appendInTxn, and the projection

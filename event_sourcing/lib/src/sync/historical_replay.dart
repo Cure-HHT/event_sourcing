@@ -18,6 +18,7 @@ import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:uuid/uuid.dart';
 
 const _uuidGen = Uuid();
@@ -78,6 +79,7 @@ const _uuidGen = Uuid();
 // live output.
 // concurrent record() serializes behind and sees the advanced
 // fill_cursor; no double-enqueue.
+@internal
 Future<void> runHistoricalReplay(
   Transaction txn,
   Destination destination,
@@ -281,6 +283,7 @@ Future<void> runHistoricalReplay(
 //   (independent of fill_cursor) and uses destination.canAddToBatch and
 //   destination.transform so rows are identical in shape to fillBatch's
 //   live output.
+@internal
 Future<void> runGapReplay(
   Transaction txn,
   Destination destination,

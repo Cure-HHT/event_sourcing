@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Abstract persistence contract for the event-sourcing substrate.
 ///
@@ -28,6 +29,38 @@ import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 /// changing callers. Writes are grouped into [transaction] bodies to
 /// guarantee atomicity across the four logical stores (event log, generic
 /// view store, per-destination FIFOs, backend_state KV).
+///
+/// Every member that writes is marked `@internal`: only the library's own
+/// operations call them. A consumer uses the reads, [transaction] (to run
+/// its own reads in one transaction; an event-store append runs only inside
+/// `EventStore.runTransaction`, which refuses any other transaction) and
+/// [close].
+///
+/// A third-party implementation overrides the internal members, and no
+/// code outside the implementing package calls them. The analyzer reports a
+/// call from another package only when the member it resolves to carries
+/// `@internal`, so the guard covers the shipped backends, and a backend in
+/// a separate package keeps it only by marking each of its overrides of an
+/// internal member `@internal` (declared under its package's `lib/src/`:
+/// the annotation on a declaration in a public library is itself a
+/// diagnostic). A backend declared in the application's own package is
+/// covered by the precondition below alone.
+///
+/// Precondition of this trust boundary: the library's delivery guarantees,
+/// its views and its security-context records hold only while its
+/// persisted state (destination queues, the views it materializes, the
+/// records it keeps beside them, such as fill positions and schedules, and
+/// the security context it stores beside each event) changes only through
+/// the library's operations. The internal marking is an analyzer guard,
+/// not a barrier: the consumer holds the backend (and, on Sembast, the
+/// database it opened), and a direct write is invisible to the library.
+// Implements: EVS-PRD-destinations/K
+// every member that writes a queue, a view,
+//   the persisted delivery state, the event sequence or the schema version
+//   is marked @internal on the contract and on each override.
+// Implements: EVS-PRD-destinations/L
+// the dartdoc above states the precondition
+//   of the storage trust boundary.
 // Implements: EVS-PRD-portability/D
 // platform-divergent persistent storage
 //   abstracted behind this Dart-side interface; the consuming application
@@ -73,6 +106,7 @@ abstract class StorageBackend {
   // append to the append-only, immutable log.
   // Implements: EVS-PRD-event-log/B
   // stable total order via sequence counter.
+  @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event);
 
   /// Events for one aggregate, sorted by `sequence_number` ascending.
@@ -183,6 +217,7 @@ abstract class StorageBackend {
   /// in the same transaction is a caller bug; implementations SHALL reject
   /// it with a clear error rather than advancing the counter implicitly
   /// (Phase-2 Prereq B, Option 1).
+  @internal
   Future<int> nextSequenceNumber(Transaction txn);
 
   /// Current value of the per-device sequence counter — i.e., the
@@ -211,6 +246,7 @@ abstract class StorageBackend {
   );
 
   /// Whole-row upsert into [viewName] at [key] inside [txn].
+  @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -219,6 +255,7 @@ abstract class StorageBackend {
   );
 
   /// Delete the row at [key] in [viewName] inside [txn].
+  @internal
   Future<void> deleteViewRowInTxn(Transaction txn, String viewName, String key);
 
   /// Iterate rows in [viewName] with optional `limit` / `offset`.
@@ -277,6 +314,7 @@ abstract class StorageBackend {
   });
 
   /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
+  @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName);
 
   // -------- View target versions --------
@@ -291,6 +329,7 @@ abstract class StorageBackend {
 
   /// Persist [targetVersion] for the [viewName]/[entryType] pair.
   /// Idempotent on repeat writes of the same value.
+  @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
@@ -307,6 +346,7 @@ abstract class StorageBackend {
 
   /// Remove every target-version entry for [viewName]. Used by
   /// `rebuildView` before re-recording, and by view drop helpers.
+  @internal
   Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName);
 
   // -------- FIFO (per destination) --------
@@ -352,6 +392,7 @@ abstract class StorageBackend {
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
   /// destination on first use so `hasFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
+  @internal
   Future<FifoEntry> enqueueFifo(
     String destinationId,
     List<StoredEvent> batch, {
@@ -371,6 +412,7 @@ abstract class StorageBackend {
   /// Implementations SHALL centralize row-construction logic here;
   /// [enqueueFifo] delegates to [enqueueFifoTxn] inside its own
   /// `transaction((txn) => ...)` wrapper.
+  @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -429,6 +471,7 @@ abstract class StorageBackend {
   /// target row before drain's subsequent `appendAttempt` transaction
   /// runs. Implementations SHALL emit a warning-level diagnostic when
   /// they no-op.
+  @internal
   Future<void> appendAttempt(
     String destinationId,
     String entryId,
@@ -459,6 +502,7 @@ abstract class StorageBackend {
   /// asked to mark `wedged`) the implementations SHALL throw `StateError`
   /// with both the existing and requested statuses in the message —
   /// this signals real corruption and loud failure is correct.
+  @internal
   Future<void> markFinal(
     String destinationId,
     String entryId,
@@ -480,6 +524,7 @@ abstract class StorageBackend {
   /// Write [version] into `backend_state` inside [txn]. Used by the schema
   /// migration path at boot; typical production flow writes the version once
   /// and leaves it alone until a migration.
+  @internal
   Future<void> writeSchemaVersion(Transaction txn, int version);
 
   /// Read the per-destination fill cursor — the highest `sequence_number`
@@ -502,12 +547,14 @@ abstract class StorageBackend {
   /// already composing a larger transaction (e.g., fill_batch) SHALL use
   /// [writeFillCursorTxn] to keep the cursor advance co-atomic with the
   /// enqueue / sequence-counter writes it accompanies.
+  @internal
   Future<void> writeFillCursor(String destinationId, int sequenceNumber);
 
   /// Write the per-destination fill cursor for [destinationId] to
   /// [sequenceNumber] inside [txn]. Participates in the surrounding
   /// transaction's atomicity: on rollback the cursor reverts to its
   /// pre-transaction value.
+  @internal
   Future<void> writeFillCursorTxn(
     Transaction txn,
     String destinationId,
@@ -543,6 +590,7 @@ abstract class StorageBackend {
   /// transaction. Callers already composing a transaction SHALL use
   /// [writeScheduleTxn] to keep the write co-atomic with adjacent
   /// schedule / FIFO mutations.
+  @internal
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
@@ -552,6 +600,7 @@ abstract class StorageBackend {
   /// surrounding transaction's atomicity so a schedule write and the
   /// ops that accompany it (e.g. FIFO-store drop in
   /// `deleteDestination`) commit or roll back together.
+  @internal
   Future<void> writeScheduleTxn(
     Transaction txn,
     String destinationId,
@@ -561,6 +610,7 @@ abstract class StorageBackend {
   /// Delete the `schedule_<destinationId>` record inside [txn]. Used by
   /// `deleteDestination` to drop schedule state and the FIFO store in
   /// one atomic step.
+  @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId);
 
   /// Drop the FIFO state for [destinationId] entirely inside [txn].
@@ -572,6 +622,7 @@ abstract class StorageBackend {
   /// `fifo_<destinationId>` store) the container itself is dropped;
   /// on backends with a shared FIFO table (e.g., postgres
   /// `fifo_entries`) the matching rows are deleted.
+  @internal
   Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
@@ -610,6 +661,7 @@ abstract class StorageBackend {
   /// [readFifoHead] for tombstoneAndRefill) before opening the
   /// transaction, so a missing row at this point indicates a
   /// concurrent delete race that these ops do not close.
+  @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
@@ -626,6 +678,7 @@ abstract class StorageBackend {
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue` — per
   /// all non-null rows are retained forever.
+  @internal
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,

@@ -230,6 +230,22 @@ same conformance harness:
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
   a `view_rows(view_name, row_key, row_data, …)` table.
 
+The trust in the storage seam has a precondition: the library's delivery
+guarantees, its views and its security-context records hold only while its
+persisted state (destination queues, the views it materializes, the
+records it keeps beside them, such as fill positions and schedules, and
+the security context it stores beside each event) changes only through
+the library's operations. Every `StorageBackend` member that writes is
+`@internal`; a consumer uses the reads, `transaction` (for its own reads;
+an event-store append runs only inside `EventStore.runTransaction`) and
+`close`, and delivers through `SyncCycle` and `DestinationRegistry`. The
+marking is an analyzer guard, not a run-time barrier (see
+`EVS-PRD-destinations/K` and `EVS-PRD-destinations/L`). It reaches a
+backend in another package only if that package marks its own overrides of
+the internal members `@internal` (declared under its `lib/src/`); a backend
+declared in the application's own package is covered by the precondition
+alone.
+
 Reactive `subscribe<T>` is wired over Sembast change-notifications; on
 Postgres, reactive UIs poll `findViewRows` on a cadence until
 `LISTEN/NOTIFY` plumbing lands (see `spec/postgres-backend.md`).

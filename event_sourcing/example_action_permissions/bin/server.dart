@@ -138,7 +138,7 @@ Future<void> main(List<String> args) async {
       sslMode: postgresSslMode,
     );
     backend = pg;
-    idempotencyStore = PostgresIdempotencyStore.over(pg.pool);
+    idempotencyStore = PostgresIdempotencyStore.forBackend(pg);
     backendDescription = 'postgres ($postgresUrl, ssl=${postgresSslMode.name})';
   } else {
     final dbPath = p.join(dataDir.path, 'demo.db');

@@ -18,6 +18,11 @@
 // Verifies: EVS-PRD-event-log/G
 // the re-run body's caller receives the
 //   committed run's event, not the rolled-back run's.
+// Verifies: EVS-PRD-destinations/K
+// an append inside a second, concurrent
+//   transaction that is handed the collector of another run is refused
+//   before any write, so a rolled-back append is never published and the
+//   outer run publishes nothing it did not append.
 
 @TestOn('vm')
 library;
@@ -217,6 +222,77 @@ void main() {
         expect(delivered.single.sequenceNumber, committed.sequenceNumber);
       },
     );
+  });
+
+  group('EventStore collector binding across two transactions', () {
+    late PostgresBackend backend;
+    late EventStore store;
+
+    setUp(() async {
+      final conn = await Connection.open(
+        PostgresBackend.endpointFromUrl(url),
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+      await conn.execute('DROP SCHEMA public CASCADE');
+      await conn.execute('CREATE SCHEMA public');
+      await conn.close();
+      backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      store = await _openStore(backend, 'aaaa0001-0000-4000-8000-00000000000b');
+    });
+
+    tearDown(() => backend.close());
+
+    test("an append in another transaction through the outer run's "
+        'collector is refused; nothing is appended or published', () async {
+      final received = <StoredEvent>[];
+      final sub = store
+          .subscribe<StoredEvent>(const SubscriptionFilter(), const Events())
+          .listen((u) {
+            if (u is Delta<StoredEvent>) received.add(u.value);
+          });
+      final before = await backend.findAllEvents();
+      final counterBefore = await backend.readSequenceCounter();
+
+      Object? refusal;
+      await store.runTransaction<void>((txnA, collectorA) async {
+        try {
+          await backend.transaction<void>((txnB) async {
+            await store.appendInTxn(
+              txnB,
+              entryType: 'test_event',
+              aggregateId: 'cross',
+              aggregateType: 'Test',
+              eventType: 'created',
+              data: const <String, Object?>{'k': 'v'},
+              initiator: const UserInitiator('u1'),
+              flowToken: null,
+              metadata: null,
+              security: null,
+              checkpointReason: null,
+              changeReason: null,
+              dedupeByContent: false,
+              collector: collectorA,
+            );
+          });
+        } on Object catch (e) {
+          refusal = e;
+        }
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await sub.cancel();
+
+      expect(
+        refusal,
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('does not belong to this transaction run'),
+        ),
+      );
+      expect(await backend.findAllEvents(), hasLength(before.length));
+      expect(await backend.readSequenceCounter(), counterBefore);
+      expect(received, isEmpty);
+    });
   });
 }
 

@@ -60,8 +60,8 @@ on a separate code path.
 
 The single MaterialApp hosts the two panes split by a draggable
 horizontal divider. Each pane runs its own 1-second sync tick that
-calls `fillBatch` per destination plus `SyncCycle()` for drain plus
-inbound poll.
+fires the pane's `SyncCycle`: one pass fills every destination's queue
+from the log and drains it.
 
 ---
 
@@ -224,11 +224,14 @@ Same code, two independent stores, two independently observable view
 states. The materialize-on-ingest behavior is what the receiver-side
 panel demonstrates.
 
-`example/lib/lights_materializer.dart` defines a second materializer
-maintaining an `rgb_lights` view from the three button-press entry
-types. It is shipped as a reference example for callers writing their
-own materializers; it is not wired into the demo's bootstrap by
-default.
+`example/lib/lights_state.dart` shows the other way to read the log:
+`LightsState` computes the three RGB lights in the app, folding the
+button-press events (replayed from the log, then live from
+`subscribe(Events)`) rather than writing a library view table. The
+library's views are written only by its projection interpreter; an
+application that wants its own interpretation computes it from the
+events. `widgets/lights_panel.dart` renders it; the demo's layout does
+not mount the panel.
 
 ---
 
@@ -250,7 +253,7 @@ resulting `WirePayload` verbatim. `Secondary` opts into
 
 `NativeUser` and `NativeAudit` are `NativeDemoDestination` —
 `serializesNatively: true`; lib produces the `esd/batch@1` envelope
-inside `fillBatch` and persists `envelope_metadata` with
+when the delivery cycle fills the queue and persists `envelope_metadata` with
 `wire_payload: null`. Drain reconstructs the wire bytes
 deterministically on each send attempt and (when a bridge is wired)
 hands them to `DownstreamBridge.deliver`, which calls

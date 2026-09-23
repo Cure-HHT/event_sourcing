@@ -58,8 +58,8 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   final ValueNotifier<Duration> sendLatency;
 
-  /// Live-tunable upper bound on current-batch length. fillBatch asks
-  /// `canAddToBatch` once per candidate; when the batch reaches this
+  /// Live-tunable upper bound on current-batch length. When the delivery
+  /// cycle fills the queue it asks `canAddToBatch` once per candidate; when the batch reaches this
   /// length, the next candidate is rejected.
   @override
   final ValueNotifier<int> batchSize;
@@ -82,14 +82,16 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
       currentBatch.length < batchSize.value;
 
-  // Library handles native serialization in fillBatch; the
+  // The delivery cycle serializes a native batch itself when it fills the
+  // queue; the
   // contract guarantees transform is never invoked when serializesNatively
   // is true, so this throw is defense-in-depth, not a code path.
   @override
   Future<WirePayload> transform(List<StoredEvent> batch) {
     throw StateError(
       'transform must not be called on a native destination '
-      '(serializesNatively=true); fillBatch builds the envelope itself.',
+      '(serializesNatively=true); the delivery cycle builds the envelope '
+      'itself.',
     );
   }
 

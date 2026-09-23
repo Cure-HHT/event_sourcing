@@ -25,6 +25,10 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 /// keeping peak memory modest on mobile and tolerable on server-scale logs.
 const int _rebuildChunkSize = 500;
 
+// Implements: EVS-PRD-destinations/K
+// the rebuild writes only target versions
+//   derived from the entry-type registry, so it writes nothing that the log
+//   and the registered versions do not determine.
 /// Rebuild exactly one view by replaying the event log through the registered
 /// [ProjectionSpec] for [viewName] on [store]. Clears the view AND the view's
 /// `view_target_versions` rows, writes the supplied [targetVersionByEntryType],
@@ -41,6 +45,17 @@ const int _rebuildChunkSize = 500;
 /// in the log whose `entry_type` is not in [targetVersionByEntryType] is
 /// skipped (it is not subject to this view's fold).
 ///
+/// Every target in [targetVersionByEntryType] SHALL be the registered
+/// version of a registered entry type: an unregistered entry type, or a
+/// target that differs from `store.entryTypes.byId(id).registeredVersion`,
+/// throws [ArgumentError] before any clear or write. The rebuilt rows are
+/// therefore the rows the library's fold derives from the log under the
+/// registered versions.
+///
+/// The rebuild does not notify live subscribers: an `AggregateMode`
+/// subscription keeps the rows it last received until the next append
+/// changes them.
+///
 /// Returns the number of events processed. Idempotent — running twice on
 /// the same log with the same map produces the same view rows.
 Future<int> rebuildView({
@@ -54,6 +69,22 @@ Future<int> rebuildView({
       'rebuildView: no ProjectionSpec registered under "$viewName" in '
       'store.projections. Register the spec before calling rebuildView.',
     );
+  }
+  for (final entry in targetVersionByEntryType.entries) {
+    final def = store.entryTypes.byId(entry.key);
+    if (def == null) {
+      throw ArgumentError(
+        'rebuildView: targetVersionByEntryType names entry type '
+        '"${entry.key}", which is not registered in store.entryTypes.',
+      );
+    }
+    if (def.registeredVersion != entry.value) {
+      throw ArgumentError(
+        'rebuildView: target ${entry.value} for entry type "${entry.key}" '
+        'differs from its registered version ${def.registeredVersion}. A '
+        'rebuild folds every entry type at its registered version.',
+      );
+    }
   }
   final backend = store.backend;
   return backend.transaction<int>((txn) async {

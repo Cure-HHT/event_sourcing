@@ -16,6 +16,7 @@
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed [IdempotencyStore]. Persists each dispatch outcome
@@ -30,10 +31,16 @@ import 'package:postgres/postgres.dart';
 /// (test harnesses, scripts) must call `ensurePostgresSchema` against
 /// the underlying database first.
 class PostgresIdempotencyStore implements IdempotencyStore {
-  /// Build a [PostgresIdempotencyStore] over an already-opened [Pool].
-  /// Pool lifecycle (open/close, connection limits) is the caller's
-  /// concern — `PostgresBackend` owns its own pool, and standalone
-  /// callers (e.g., the conformance harness) own theirs.
+  /// Build a [PostgresIdempotencyStore] over the connection pool of
+  /// [backend], so dispatch outcomes persist in the backend's database.
+  /// The backend owns the pool's lifecycle; closing the backend closes the
+  /// store's connections.
+  PostgresIdempotencyStore.forBackend(PostgresBackend backend)
+    : _pool = backend.pool;
+
+  /// Build a [PostgresIdempotencyStore] over an already-opened [Pool] the
+  /// caller owns (a standalone harness or script). Pool lifecycle
+  /// (open/close, connection limits) is the caller's concern.
   PostgresIdempotencyStore.over(this._pool);
 
   final Pool<void> _pool;

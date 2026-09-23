@@ -25,7 +25,12 @@ class _PaneHandle {
     required this.appState,
     required this.policyNotifier,
     required this.source,
-  });
+  }) : cycle = SyncCycle(
+         backend: backend,
+         registry: datastore.destinations,
+         source: source,
+         policyResolver: () => policyNotifier.value,
+       );
 
   final EventStoreBundle datastore;
   final SembastBackend backend;
@@ -33,21 +38,11 @@ class _PaneHandle {
   final ValueNotifier<SyncPolicy> policyNotifier;
   final Source source;
 
-  Future<void> tick() async {
-    final destinations = datastore.destinations.all();
-    for (final dest in destinations) {
-      final schedule = await datastore.destinations.scheduleOf(dest.id);
-      await fillBatch(
-        dest,
-        backend: backend,
-        schedule: schedule,
-        source: source,
-      );
-    }
-    for (final dest in destinations) {
-      await drain(dest, backend: backend, policy: policyNotifier.value);
-    }
-  }
+  /// The pane's delivery cycle: fills every destination's queue from the
+  /// log and drains it, with the pane's live policy.
+  final SyncCycle cycle;
+
+  Future<void> tick() => cycle();
 }
 
 Future<_PaneHandle> _mkPane({

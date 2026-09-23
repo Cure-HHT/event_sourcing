@@ -47,8 +47,8 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   final ValueNotifier<Duration> sendLatency;
 
-  /// Live-tunable upper bound on current-batch length. fillBatch asks
-  /// `canAddToBatch` once per candidate; when the batch reaches this
+  /// Live-tunable upper bound on current-batch length. When the delivery
+  /// cycle fills the queue it asks `canAddToBatch` once per candidate; when the batch reaches this
   /// length, the next candidate is rejected.
   @override
   final ValueNotifier<int> batchSize;

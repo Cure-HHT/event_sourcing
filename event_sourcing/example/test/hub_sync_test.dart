@@ -19,28 +19,23 @@ class _Pane {
     required this.backend,
     required this.source,
     required this.policyNotifier,
-  });
+  }) : cycle = SyncCycle(
+         backend: backend,
+         registry: datastore.destinations,
+         source: source,
+         policyResolver: () => policyNotifier.value,
+       );
 
   final EventStoreBundle datastore;
   final SembastBackend backend;
   final Source source;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
-  Future<void> tick() async {
-    final destinations = datastore.destinations.all();
-    for (final dest in destinations) {
-      final schedule = await datastore.destinations.scheduleOf(dest.id);
-      await fillBatch(
-        dest,
-        backend: backend,
-        schedule: schedule,
-        source: source,
-      );
-    }
-    for (final dest in destinations) {
-      await drain(dest, backend: backend, policy: policyNotifier.value);
-    }
-  }
+  /// The pane's delivery cycle: fills every destination's queue from the
+  /// log and drains it, with the pane's live policy.
+  final SyncCycle cycle;
+
+  Future<void> tick() => cycle();
 }
 
 Future<_Pane> _mkPane({
@@ -192,6 +187,35 @@ void main() {
         }
       },
     );
+
+    test('one SyncCycle pass enqueues rows for NativeUser and NativeAudit '
+        '(the cycle stamps native batches with the pane Source)', () async {
+      final mobile = await _mkPane(
+        dbName: 'mobile-native-enqueue.db',
+        source: const Source(
+          hopId: 'mobile-device',
+          identifier: '33333333-3333-4333-8333-333333333333',
+          softwareVersion: 'test',
+        ),
+      );
+      await _appendDemoNote(mobile, 'agg-native');
+      await mobile.tick();
+
+      final user = await mobile.backend.listFifoEntries('NativeUser');
+      final audit = await mobile.backend.listFifoEntries('NativeAudit');
+      expect(user, isNotEmpty, reason: 'NativeUser carries the demo_note');
+      expect(
+        audit,
+        isNotEmpty,
+        reason: 'NativeAudit carries the bootstrap system audits',
+      );
+      for (final row in <FifoEntry>[...user, ...audit]) {
+        expect(
+          row.envelopeMetadata?.senderIdentifier,
+          '33333333-3333-4333-8333-333333333333',
+        );
+      }
+    });
 
     test('events appended locally on hub do not flow back to mobile', () async {
       final hub = await _mkPane(

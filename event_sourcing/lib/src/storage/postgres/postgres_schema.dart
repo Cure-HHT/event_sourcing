@@ -3,6 +3,7 @@
 // EXISTS DDL for every table the PostgresBackend reads or writes. Running
 // this against an already-provisioned database is a no-op on the schema.
 
+import 'package:meta/meta.dart' show internal;
 import 'package:postgres/postgres.dart';
 
 /// The schema version this build of the postgres backend emits. Bumped
@@ -23,6 +24,7 @@ const int postgresBackendSchemaVersion = 1;
 /// transactional sessions returned by `Pool.runTx` satisfy this
 /// interface. `PostgresBackend.open` invokes this inside `runTx` so
 /// the schema emission is atomic.
+@internal
 Future<void> ensurePostgresSchema(Session session) async {
   await session.execute(_eventsTable);
   // No explicit index on event_id: the UNIQUE constraint above creates a

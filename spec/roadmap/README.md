@@ -15,7 +15,8 @@ names, frozen semantics).
 - `reaction.md` — reaction layer: reconnect optimizations,
   observability, pagination, validators, adapters.
 - `storage.md` — storage backends: reactive Postgres subscribe,
-  pooling, SQL-native view rows, additional backends.
+  pooling, SQL-native view rows, additional backends, a run-time barrier
+  on internal storage members.
 - `permissions.md` — permission-model extensions.
 - `projections.md` — projection/materializer primitives.
 - `sync.md` — sync/destination layer: inbound tombstone propagation.

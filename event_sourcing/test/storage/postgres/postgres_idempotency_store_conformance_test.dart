@@ -1,8 +1,10 @@
 // PostgresIdempotencyStore runs the backend-agnostic IdempotencyStore
-// conformance harness — the same suite InMemoryIdempotencyStore passes. It
-// reads and writes the idempotency table provisioned by ensurePostgresSchema,
-// keyed by (action_name, principal_id, idempotency_key). The harness's
-// assertions are cited on its own tests rather than here.
+// conformance harness — the same suite InMemoryIdempotencyStore passes —
+// twice: over a pool the caller owns, and over the pool of a
+// PostgresBackend (`forBackend`). It reads and writes the idempotency table
+// provisioned by ensurePostgresSchema, keyed by (action_name,
+// principal_id, idempotency_key). The harness's assertions are cited on
+// its own tests rather than here.
 
 @TestOn('vm')
 library;
@@ -46,4 +48,60 @@ void main() {
     );
     return PostgresIdempotencyStore.over(pool);
   }, label: 'postgres');
+
+  final backends = <PostgresBackend>[];
+  tearDown(() async {
+    for (final backend in backends) {
+      await backend.close();
+    }
+    backends.clear();
+  });
+
+  runIdempotencyStoreConformanceTests(() async {
+    if (url == null) return null;
+    final backend = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+    );
+    backends.add(backend);
+    final tmp = await Connection.open(
+      PostgresBackend.endpointFromUrl(url),
+      settings: const ConnectionSettings(sslMode: SslMode.disable),
+    );
+    await tmp.execute('TRUNCATE idempotency');
+    await tmp.close();
+    return PostgresIdempotencyStore.forBackend(backend);
+  }, label: 'postgres, over the backend pool');
+
+  // Verifies: EVS-DEV-postgres-backend/F
+  // a store built over the backend's pool
+  //   persists a dispatch outcome in the backend's database, and stops
+  //   serving once the backend that owns the pool is closed.
+  test('forBackend round-trips an outcome, and fails once the backend is '
+      'closed', () async {
+    if (url == null) {
+      markTestSkipped('PG_TEST_URL unset');
+      return;
+    }
+    final backend = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+    );
+    final store = PostgresIdempotencyStore.forBackend(backend);
+    await store.record(
+      actionName: 'for_backend',
+      principalId: 'p',
+      key: 'k',
+      resultJson: const <String, Object?>{'ok': true},
+      emittedEventIds: const <String>['e1'],
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+    );
+    final hit = await store.lookup('for_backend', 'p', 'k');
+    expect(hit, isNotNull);
+    expect(hit!.resultJson, <String, Object?>{'ok': true});
+    expect(hit.emittedEventIds, <String>['e1']);
+
+    await backend.close();
+    await expectLater(store.lookup('for_backend', 'p', 'k'), throwsA(anything));
+  });
 }

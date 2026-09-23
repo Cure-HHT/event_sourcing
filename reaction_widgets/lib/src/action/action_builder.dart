@@ -136,7 +136,7 @@ class _ActionBuilderState extends State<ActionBuilder> {
     // The web flt-semantics flattener drops a pure-annotation node, and an
     // interactive child (e.g. an action button) otherwise merges the identifier
     // away — so Playwright cannot find it. Empirically required to drive action
-    // buttons / view roots through the semantics tree (CUR-1307).
+    // buttons / view roots through the semantics tree.
     // Implements: EVS-PRD-reaction-widget-contract/K
     // when an automation identifier is
     //   supplied the child is wrapped in a single non-painting Semantics

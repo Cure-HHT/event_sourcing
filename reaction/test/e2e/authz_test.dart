@@ -14,8 +14,8 @@
 //   2) role_unassigned mid-subscription → server closes WS with 4003 →
 //      client RemoteAuthSession flips to Expired.
 // Remaining scenarios are kept as skipped scaffolds pending known future work:
-//   - row-level scope narrowing requires CUR-1331 scoped-permission
-//     fixture wiring on the harness;
+//   - row-level scope narrowing requires scoped-permission fixtures
+//     (role scopes seeded on the harness), which the harness lacks;
 //   - permission_revoked closing-all-affected-users is identical
 //     server-side to role_unassigned (same _forceLogout path) but
 //     requires policy fixtures to seed the right (role, perm) state;
@@ -70,7 +70,7 @@ void main() {
       // Seed Principal has scope on [a1, a2]; subscribe with
       // aggregates: [a1, a2, a3]; expect only a1, a2 rows.
     },
-    skip: 'expand with CUR-1331 scoped-permission fixtures',
+    skip: 'needs scoped-permission fixtures, which the harness lacks',
   );
 
   // --- Mid-session AuthorizationWatcher behavior ---
@@ -321,7 +321,9 @@ void main() {
       // permission_revoked(role: X, perm: ...). Assert: both WS
       // connections close with 4003.
     },
-    skip: 'expand with CUR-1331 fixtures + client-side 4003 close-frame wiring',
+    skip:
+        'needs scoped-permission fixtures and client-side 4003 close-frame '
+        'handling, which the harness lacks',
   );
 
   test(
@@ -331,7 +333,9 @@ void main() {
       // adding alice to role Y with scope. Assert: client receives
       // stale_data with reason: role_assigned; subscription stays open.
     },
-    skip: 'expand with CUR-1331 fixtures + client-side stale_data handling',
+    skip:
+        'needs scoped-permission fixtures and client-side stale_data '
+        'handling, which the harness lacks',
   );
 
   test(
@@ -341,7 +345,9 @@ void main() {
       // to role X. Assert: client receives stale_data with
       // reason: permission_added.
     },
-    skip: 'expand with CUR-1331 fixtures + client-side stale_data handling',
+    skip:
+        'needs scoped-permission fixtures and client-side stale_data '
+        'handling, which the harness lacks',
   );
 
   test(
@@ -350,7 +356,9 @@ void main() {
       // Without watchContainment(...): open subscription, mutate
       // patient_site_index, assert no stale_data is sent.
     },
-    skip: 'expand with CUR-1331 fixtures + client-side stale_data handling',
+    skip:
+        'needs scoped-permission fixtures and client-side stale_data '
+        'handling, which the harness lacks',
   );
 
   test(
@@ -360,6 +368,8 @@ void main() {
       // Open subscription. Mutate patient_site_index row. Assert:
       // client receives stale_data with reason: containment_changed.
     },
-    skip: 'expand with CUR-1331 fixtures + client-side stale_data handling',
+    skip:
+        'needs scoped-permission fixtures and client-side stale_data '
+        'handling, which the harness lacks',
   );
 }

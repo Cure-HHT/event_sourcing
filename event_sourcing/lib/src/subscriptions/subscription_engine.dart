@@ -13,6 +13,7 @@ import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Internal substrate component owning live broadcast streams of events
 /// and projection-row changes. EventStore.append publishes into this
@@ -23,8 +24,10 @@ class SubscriptionEngine {
   final StreamController<AggregateFoldChange> _rowBus =
       StreamController<AggregateFoldChange>.broadcast();
 
+  @internal
   void publishEvent(StoredEvent event) => _eventBus.add(event);
 
+  @internal
   void publishRowChange(AggregateFoldChange change) => _rowBus.add(change);
 
   Stream<Update<StoredEvent>> events(SubscriptionFilter filter) {

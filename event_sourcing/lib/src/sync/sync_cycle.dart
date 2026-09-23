@@ -9,12 +9,12 @@
 // (dynamic registration — registry.all() is
 //   called per cycle so destinations added or removed since the last cycle are
 //   reflected in the current run without restart)
-import 'dart:developer' as developer;
-
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
@@ -162,9 +162,10 @@ class SyncCycle {
       // per-attempt audit surface — without this log, a destination
       // whose fill fails on every cycle would silently stop receiving
       // new FIFO rows.
-      developer.log(
+      libraryLog(
+        'sync_cycle',
         'fillBatch failed for destination ${destination.id}',
-        name: 'sync_cycle',
+        level: LibraryLogLevel.severe,
         error: e,
         stackTrace: st,
       );
@@ -187,9 +188,10 @@ class SyncCycle {
       // `attempts[].error_message`. The log line below adds an
       // operator-visible signal for failures that escape that internal
       // catch (programming bugs in drain itself).
-      developer.log(
+      libraryLog(
+        'sync_cycle',
         'drain failed for destination ${destination.id}',
-        name: 'sync_cycle',
+        level: LibraryLogLevel.severe,
         error: e,
         stackTrace: st,
       );

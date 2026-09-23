@@ -12,6 +12,8 @@
 //   fromSequenceNumber / toSequenceNumber parameters
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/sembast_backend.dart'
+    show SembastBackendTestSupport;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';

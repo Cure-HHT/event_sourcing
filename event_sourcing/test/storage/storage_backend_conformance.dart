@@ -27,9 +27,39 @@
 // `tearDown` calls `backend.close()` inside try/catch so a skipped-test
 // teardown does not raise.
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/fifo_entry_helpers.dart';
+
+/// Runs [body] with the log seam installed and returns the warning lines
+/// the storage layer logged.
+Future<List<String>> _storageWarnings(Future<void> Function() body) async {
+  final records = <LibraryLogRecord>[];
+  await runWithDeliveryTestHooks(DeliveryTestHooks(onLog: records.add), body);
+  return <String>[
+    for (final r in records)
+      if (r.name == 'event_sourcing.storage' &&
+          r.level == LibraryLogLevel.warning)
+        r.message,
+  ];
+}
+
+/// Expects [warnings] to be exactly one line naming [method], [entryId] and
+/// [destinationId].
+void _expectOneNoOpWarning(
+  List<String> warnings, {
+  required String method,
+  required String entryId,
+  required String destinationId,
+}) {
+  expect(warnings, hasLength(1), reason: '$warnings');
+  expect(
+    warnings.single,
+    allOf(contains(method), contains(entryId), contains(destinationId)),
+  );
+}
 
 /// Run the backend-agnostic `StorageBackend` conformance suite against
 /// the implementation produced by [factory].
@@ -1620,6 +1650,10 @@ void _registerFifoTests(
       expect(head2?.attempts, [attempt, attempt2]);
     });
 
+    // Verifies: EVS-PRD-portability/D
+    // both backends no-op, and log one
+    //   warning naming the method, entry and destination, when the entry is
+    //   absent.
     test('appendAttempt no-ops when entry does not exist', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1630,10 +1664,18 @@ void _registerFifoTests(
         sequenceNumber: 1,
       );
       // Must not throw.
-      await backend.appendAttempt(
-        'primary',
-        'nonexistent',
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      final warnings = await _storageWarnings(
+        () => backend.appendAttempt(
+          'primary',
+          'nonexistent',
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        ),
+      );
+      _expectOneNoOpWarning(
+        warnings,
+        method: 'appendAttempt',
+        entryId: 'nonexistent',
+        destinationId: 'primary',
       );
       // The FIFO is otherwise untouched: e1 is still pending with no attempts.
       final head = await backend.readFifoHead('primary');
@@ -1641,13 +1683,24 @@ void _registerFifoTests(
       expect(head?.attempts, isEmpty);
     });
 
+    // Verifies: EVS-PRD-portability/D
+    // both backends no-op, and log one
+    //   warning, when the destination's queue does not exist.
     test('appendAttempt no-ops when FIFO store does not exist', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.appendAttempt(
-        'ghost-dest',
-        'any-entry',
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      final warnings = await _storageWarnings(
+        () => backend.appendAttempt(
+          'ghost-dest',
+          'any-entry',
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        ),
+      );
+      _expectOneNoOpWarning(
+        warnings,
+        method: 'appendAttempt',
+        entryId: 'any-entry',
+        destinationId: 'ghost-dest',
       );
       // Nothing materialized in the unknown store.
       expect(await backend.readFifoHead('ghost-dest'), isNull);
@@ -1829,6 +1882,10 @@ void _registerFifoTests(
       expect(await backend.readFifoHead('primary'), isNull);
     });
 
+    // Verifies: EVS-PRD-portability/D
+    // both backends no-op, and log one
+    //   warning naming the method, entry and destination, when the entry is
+    //   absent.
     test('markFinal no-ops when entry does not exist', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1839,18 +1896,61 @@ void _registerFifoTests(
         sequenceNumber: 1,
       );
       // Must not throw.
-      await backend.markFinal('primary', 'ghost', FinalStatus.sent);
+      final warnings = await _storageWarnings(
+        () => backend.markFinal('primary', 'ghost', FinalStatus.sent),
+      );
+      _expectOneNoOpWarning(
+        warnings,
+        method: 'markFinal',
+        entryId: 'ghost',
+        destinationId: 'primary',
+      );
       // e1 still at head, still pending.
       final head = await backend.readFifoHead('primary');
       expect(head?.entryId, e1.entryId);
       expect(head?.finalStatus, isNull);
     });
 
+    // Verifies: EVS-PRD-portability/D
+    // both backends no-op, and log one
+    //   warning, when the destination's queue does not exist.
     test('markFinal no-ops when FIFO store does not exist', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
+      final warnings = await _storageWarnings(
+        () => backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent),
+      );
+      _expectOneNoOpWarning(
+        warnings,
+        method: 'markFinal',
+        entryId: 'any-entry',
+        destinationId: 'ghost-dest',
+      );
       expect(await backend.readFifoHead('ghost-dest'), isNull);
+    });
+
+    // Verifies: EVS-PRD-portability/D
+    // neither backend logs a warning when
+    //   appendAttempt and markFinal find their entry.
+    test('appendAttempt and markFinal on a present entry log no '
+        'warning', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final warnings = await _storageWarnings(() async {
+        final e1 = await enqueueSingle(
+          backend,
+          'primary',
+          eventId: 'e1',
+          sequenceNumber: 1,
+        );
+        await backend.appendAttempt(
+          'primary',
+          e1.entryId,
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        );
+        await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      });
+      expect(warnings, isEmpty);
     });
 
     // markFinal idempotency: calling markFinal with the same status twice

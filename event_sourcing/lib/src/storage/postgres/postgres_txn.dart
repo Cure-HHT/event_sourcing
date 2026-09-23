@@ -3,6 +3,7 @@
 // after the transaction() body returns or throws.
 
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed [Transaction] handle. Holds a `package:postgres` [TxSession]
@@ -19,6 +20,7 @@ class PostgresTxn extends Transaction {
 
   /// The underlying postgres session. Throws [StateError] when accessed
   /// outside the `transaction()` body that produced this handle.
+  @internal
   TxSession get session {
     if (!_valid) {
       throw StateError('Transaction used outside its transaction() body');
@@ -28,6 +30,7 @@ class PostgresTxn extends Transaction {
 
   /// Mark this handle as invalid. Called by `PostgresBackend.transaction`
   /// after the body completes (success or failure).
+  @internal
   void invalidate() {
     _valid = false;
   }

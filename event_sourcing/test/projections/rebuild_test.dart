@@ -6,6 +6,11 @@
 // rebuild is deterministic and idempotent;
 //   tests confirm identical rows across two consecutive rebuilds on the same
 //   log, as well as cross-chunk correctness for large logs.
+// Verifies: EVS-PRD-destinations/K
+// the view rebuild writes only target
+//   versions derived from the entry-type registry: a target that differs
+//   from its entry type's registered version, or names an unregistered entry
+//   type, is refused before any write and the view is left untouched.
 //
 // ProjectionSpec replay; strict-superset target-version map.
 
@@ -34,9 +39,31 @@ Future<EventStore> _openStore() async {
   );
   final backend = SembastBackend(database: db);
   final proj = ProjectionRegistry()..register(_kAggSpec);
+  final entryTypes = EntryTypeRegistry()
+    ..register(
+      const EntryTypeDefinition(
+        id: _kEntryType,
+        registeredVersion: 1,
+        name: _kEntryType,
+      ),
+    )
+    ..register(
+      const EntryTypeDefinition(
+        id: 'other_event',
+        registeredVersion: 1,
+        name: 'other_event',
+      ),
+    )
+    ..register(
+      const EntryTypeDefinition(
+        id: 'newcomer_type',
+        registeredVersion: 2,
+        name: 'newcomer_type',
+      ),
+    );
   return EventStore.openForTest(
     storage: backend,
-    entryTypes: EntryTypeRegistry(),
+    entryTypes: entryTypes,
     source: const Source(
       hopId: 'test',
       identifier: 'test-device',
@@ -122,6 +149,53 @@ void main() {
       expect(stored.containsKey('other_event'), isTrue);
       await store.backend.close();
     });
+
+    for (final (label, targets) in <(String, Map<String, int>)>[
+      (
+        'a target below the registered version',
+        <String, int>{_kEntryType: 1, 'newcomer_type': 1},
+      ),
+      ('a target above the registered version', <String, int>{_kEntryType: 2}),
+      ('an unregistered entry type', <String, int>{_kEntryType: 1, 'bogus': 7}),
+    ]) {
+      test('$label is refused before any write', () async {
+        final store = await _openStore();
+        await _appendEvent(
+          store,
+          eventId: 'e1',
+          aggregateId: 'agg-1',
+          entryType: _kEntryType,
+          eventType: 'finalized',
+          data: const <String, dynamic>{'intensity': 'mild'},
+          clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
+        );
+        await rebuildView(
+          store: store,
+          viewName: 'toy_view',
+          targetVersionByEntryType: const <String, int>{_kEntryType: 1},
+        );
+        final rowsBefore = await store.backend.findViewRows('toy_view');
+        Future<Map<String, int>> storedTargets() =>
+            store.backend.transaction<Map<String, int>>(
+              (txn) =>
+                  store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+            );
+        final targetsBefore = await storedTargets();
+
+        await expectLater(
+          rebuildView(
+            store: store,
+            viewName: 'toy_view',
+            targetVersionByEntryType: targets,
+          ),
+          throwsArgumentError,
+        );
+
+        expect(await store.backend.findViewRows('toy_view'), rowsBefore);
+        expect(await storedTargets(), targetsBefore);
+        await store.backend.close();
+      });
+    }
 
     // raises StateError.
     test('missing ProjectionSpec raises StateError', () async {

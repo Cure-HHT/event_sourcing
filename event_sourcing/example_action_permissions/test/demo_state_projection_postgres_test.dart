@@ -46,7 +46,7 @@ void main() {
     addTearDown(pg.close);
     return DemoBackends(
       backend: pg,
-      idempotencyStore: PostgresIdempotencyStore.over(pg.pool),
+      idempotencyStore: PostgresIdempotencyStore.forBackend(pg),
     );
   }
 

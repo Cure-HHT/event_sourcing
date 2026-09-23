@@ -7,6 +7,7 @@
 //   filter so audit-mirroring destinations that opt in receive system events
 //   and destinations that do not are unaffected)
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 

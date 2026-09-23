@@ -34,6 +34,7 @@ import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 
 class ProjectionInterpreter {
   ProjectionInterpreter({
@@ -55,6 +56,7 @@ class ProjectionInterpreter {
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
   /// notification via `SubscriptionEngine.publishRowChange`.
+  @internal
   Future<List<AggregateFoldChange>> applyEvent({
     required Transaction txn,
     required StorageBackend backend,

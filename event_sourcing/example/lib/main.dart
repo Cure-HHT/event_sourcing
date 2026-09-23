@@ -51,9 +51,11 @@ class _PaneRuntime {
 /// destination's `send()` so mobile's outgoing wire stream lands in
 /// hub's `EventStore.ingestBatch`. The hub pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
-/// simulator (existing behavior).
-// The tick body drives fillBatch + drain per destination with live policy
-// from the per-pane policyNotifier.
+/// simulator.
+///
+/// The tick fires the pane's `SyncCycle`, which fills every destination's
+/// queue from the log and drains it with the live policy from the pane's
+/// policyNotifier.
 Future<_PaneRuntime> _bootstrapPane({
   required String dbPath,
   required Source source,
@@ -154,26 +156,17 @@ Future<_PaneRuntime> _bootstrapPane({
     policyNotifier: policyNotifier,
   );
 
-  // reentrancy guard and per-cycle policy resolution; we do per-pane
-  // fillBatch in this tick body since SyncCycle covers drain + inbound
-  // poll only.
+  // The cycle's reentrancy guard drops a tick that fires while a pass is
+  // still running; the policy is resolved once per pass. The native
+  // destinations stamp their batch envelopes with the pane's Source.
   final syncCycle = SyncCycle(
     backend: backend,
     registry: datastore.destinations,
+    source: source,
     policyResolver: () => policyNotifier.value,
   );
   final tick = Timer.periodic(const Duration(seconds: 1), (_) async {
     try {
-      final destinations = datastore.destinations.all();
-      for (final dest in destinations) {
-        final schedule = await datastore.destinations.scheduleOf(dest.id);
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          source: source,
-        );
-      }
       await syncCycle();
     } catch (e, s) {
       stderr.writeln('[demo:${source.hopId}] sync tick error: $e\n$s');

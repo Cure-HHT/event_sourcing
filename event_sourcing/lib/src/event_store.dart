@@ -78,38 +78,57 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
 
 /// Fire-and-forget trigger into `SyncCycle.call()`.
 typedef EventStoreSyncCycleTrigger = Future<void> Function();
 
-/// Accumulates [StoredEvent]s and [AggregateFoldChange]s produced inside a
-/// single transaction so that [EventStore._runInTxnWithPublish] can publish
-/// them to the subscription bus after the transaction commits. Callers that
-/// use [EventStore.appendInTxn] directly inside their own transaction MUST
-/// pass a [PublishCollector] and use [EventStore.runTransaction] so that
-/// subscribers receive delivery.
+/// Accumulates the [StoredEvent]s and [AggregateFoldChange]s that
+/// [EventStore.appendInTxn] produces inside one run of a transaction body,
+/// so that [EventStore.runTransaction] can publish them to the subscription
+/// bus after that run commits.
 ///
-/// `appendInTxn` runs the projection interpreter inside the same transaction
-/// as the event append (so action-emitted events update views atomically with
-/// the dispatch), and records the resulting row-change records here for
-/// post-commit publication.
+/// A collector belongs to exactly one run of one transaction body: the
+/// event store creates it for the run, binds it to the run's
+/// [Transaction], and closes it when the run ends. [EventStore.appendInTxn]
+/// refuses a collector that is bound to another transaction or whose run
+/// has ended, so an append can neither publish through a collector whose
+/// transaction does not commit it nor commit without being published.
 ///
-/// The type lives in `lib/src/` and is intentionally not re-exported from the
-/// package barrel: external consumers interact with the event store through the
-/// public [EventStore] API and never construct a collector directly. Only
-/// intra-package callers (e.g. `DestinationRegistry`) that open their own
-/// transaction via [EventStore.runTransaction] see this type.
+/// A consumer never constructs a collector; it receives one as the second
+/// argument of a [EventStore.runTransaction] body and passes it to
+/// [EventStore.appendInTxn].
 class PublishCollector {
+  PublishCollector._(this._transaction);
+
+  final Transaction _transaction;
+  bool _open = true;
   final List<StoredEvent> _events = <StoredEvent>[];
   final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
 
-  void add(StoredEvent event) => _events.add(event);
+  @internal
+  void add(StoredEvent event) {
+    _checkOpen();
+    _events.add(event);
+  }
 
-  void addRowChanges(Iterable<AggregateFoldChange> changes) =>
-      _rowChanges.addAll(changes);
+  @internal
+  void addRowChanges(Iterable<AggregateFoldChange> changes) {
+    _checkOpen();
+    _rowChanges.addAll(changes);
+  }
+
+  void _checkOpen() {
+    if (!_open) {
+      throw StateError(
+        'PublishCollector used after the transaction run it belongs to '
+        'ended',
+      );
+    }
+  }
 
   List<StoredEvent> get events => List<StoredEvent>.unmodifiable(_events);
 
@@ -455,9 +474,9 @@ class EventStore {
   /// listeners receive the same delivery they would from the public [append]
   /// method.
   ///
-  /// External callers (e.g. `DestinationRegistry`) that need to open their
-  /// own transaction and call [appendInTxn] SHOULD use this method instead
-  /// of `backend.transaction` directly to ensure subscription delivery.
+  /// This is the only transaction [appendInTxn] accepts: it requires the
+  /// collector this method hands [body], and refuses an append inside a
+  /// plain `backend.transaction`.
   ///
   /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
   /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
@@ -497,10 +516,12 @@ class EventStore {
         );
       }
       runInProgress = true;
-      collector = PublishCollector();
+      final runCollector = PublishCollector._(txn);
+      collector = runCollector;
       try {
-        return await body(txn, collector);
+        return await body(txn, runCollector);
       } finally {
+        runCollector._open = false;
         runInProgress = false;
       }
     });
@@ -581,7 +602,7 @@ class EventStore {
         // Implements: EVS-PRD-subscription/A
         // a filtered (row-scoped)
         // materialized-state snapshot. Materialize the whole allow-list in ONE
-        // bulk read (CUR-1471) instead of a BEGIN/SELECT/COMMIT per aggregate id —
+        // bulk read instead of a BEGIN/SELECT/COMMIT per aggregate id —
         // the former per-id transaction loop was an N+1 round-trip storm
         // (~3xN Cloud SQL round-trips for a site-scoped subscriber). Each
         // requested id still emits a Snapshot, with a null value for an absent
@@ -909,10 +930,18 @@ class EventStore {
     }
   }
 
-  /// Transactional companion to [append]. Use when the caller is already
-  /// inside a `backend.transaction` and wants the append to participate
-  /// (e.g. so a config-mutation audit event lands atomically with the
-  /// mutation that triggered it).
+  /// Transactional companion to [append]: appends inside the transaction
+  /// of a [runTransaction] body, so the append commits atomically with the
+  /// body's other work (for example a configuration change and the audit
+  /// event that records it).
+  ///
+  /// [txn] and [collector] are the two arguments the [runTransaction] body
+  /// received. The append throws [StateError] before any write when
+  /// [collector] belongs to another transaction or to a run that has ended:
+  /// the collector is what publishes the event and its view changes to live
+  /// subscribers once the run commits, so an append through any other
+  /// transaction would either publish an event its transaction rolled back
+  /// or commit an event no subscriber sees.
   ///
   /// Skips `unawaited(syncCycleTrigger?.call())` — the public [append]
   /// fires that AFTER the transaction commits.
@@ -923,12 +952,9 @@ class EventStore {
   /// Runs the projection interpreter inside the same transaction as the
   /// append, so all matching `ProjectionSpec`s materialize views before
   /// commit. Any spec throw rolls back the entire append.
-  ///
-  /// When [collector] is non-null, both the persisted event and the
-  /// resulting row changes are recorded into it so the surrounding
-  /// [_runInTxnWithPublish] / [runTransaction] call can publish them to the
-  /// subscription bus after commit. Callers that open their own transaction
-  /// via [runTransaction] MUST pass their collector here.
+  // Implements: EVS-PRD-destinations/K
+  // an append publishes only through the
+  //   collector of the transaction run that commits it.
   Future<StoredEvent?> appendInTxn(
     Transaction txn, {
     required String entryType,
@@ -943,8 +969,15 @@ class EventStore {
     required String? checkpointReason,
     required String? changeReason,
     required bool dedupeByContent,
-    PublishCollector? collector,
+    required PublishCollector collector,
   }) async {
+    if (!collector._open || !identical(collector._transaction, txn)) {
+      throw StateError(
+        'EventStore.appendInTxn: the collector does not belong to this '
+        'transaction run. Pass the transaction and collector a '
+        'runTransaction body received, while that body runs.',
+      );
+    }
     _validateAppendInputs(
       entryType: entryType,
       aggregateType: aggregateType,
@@ -1055,7 +1088,7 @@ class EventStore {
       await securityContexts.writeInTxn(txn, row);
     }
 
-    collector?.add(event);
+    collector.add(event);
 
     // Run the projection interpreter inside the same transaction so views
     // materialize atomically with the append. Action-emitted events (via
@@ -1066,7 +1099,7 @@ class EventStore {
       backend: backend,
       event: event,
     );
-    if (collector != null && rowChanges.isNotEmpty) {
+    if (rowChanges.isNotEmpty) {
       collector.addRowChanges(rowChanges);
     }
     return event;

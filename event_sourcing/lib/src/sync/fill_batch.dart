@@ -18,7 +18,8 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:uuid/uuid.dart';
 
 /// Module-private v4 UUID generator used by [fillBatch] to mint each
@@ -87,6 +88,7 @@ const _uuidGen = Uuid();
 /// (e.g. a user-visible submission that must ship promptly) so the coalescing
 /// window still applies to ordinary background cycles. Defaults to false, so
 /// the normal hold is unchanged.
+@internal
 Future<void> fillBatch(
   Destination destination, {
   required StorageBackend backend,

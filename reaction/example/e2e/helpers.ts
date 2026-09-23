@@ -1,5 +1,5 @@
 // Shared, app-agnostic Playwright helpers for driving a Flutter web app
-// through its semantics tree (CUR-1307).
+// through its semantics tree.
 //
 // Every interactive target the app annotates with `AutomationTarget`
 // (see lib/client/automation.dart) surfaces as a

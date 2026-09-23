@@ -6,5 +6,9 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
 
+  errors:
+    # A use of a library member marked @internal outside its package.
+    invalid_use_of_internal_member: error
+
   exclude:
     - 'build/**'

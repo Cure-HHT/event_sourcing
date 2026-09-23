@@ -57,6 +57,7 @@ import 'package:event_sourcing/src/promoters/primitives/transform.dart'
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Callback invoked by [promoteViewSnapshots] once per (viewName,
 /// entryType) pair that's been lifted from `fromVersion` to
@@ -82,6 +83,7 @@ typedef AuditEmitter =
 ///
 /// Runs inside the caller's transaction so the seeding and any
 /// subsequent boot-time work commit atomically.
+@internal
 Future<void> seedViewTargetVersions({
   required Transaction txn,
   required StorageBackend backend,
@@ -162,6 +164,7 @@ Future<void> verifyNoEntryTypeDowngrade({
 ///
 /// Runs THIRD (after [verifyNoEntryTypeDowngrade] and
 /// [seedViewTargetVersions]) inside the caller's transaction.
+@internal
 Future<void> promoteViewSnapshots({
   required Transaction txn,
   required StorageBackend backend,

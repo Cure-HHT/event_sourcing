@@ -22,6 +22,7 @@ import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Facade returned by `bootstrapEventStore`. Exposes the four
 /// collaborators an app reads through after startup: the write API
@@ -44,10 +45,15 @@ class EventStoreBundle {
   final SecurityContextStore securityContexts;
   final StorageBackend _backend;
 
-  /// Register or update a (`viewName`, `entryType`) → `version` entry in
-  /// the persisted `view_target_versions`. Used to add a new entry type
-  /// to a materialized view after bootstrap (e.g., when an application
-  /// adds a new entry type at runtime).
+  /// Library-internal write of one (`viewName`, `entryType`) → `version`
+  /// entry in the persisted `view_target_versions`, outside the boot
+  /// seeding. The library's own tests use it to stage stored targets.
+  ///
+  /// An application does not write view target versions: it registers
+  /// every entry type before `EventStore.open`, which seeds and promotes
+  /// the targets, or replays a view at the registered versions with
+  /// `rebuildView`.
+  @internal
   Future<void> setViewTargetVersion(
     String viewName,
     String entryType,

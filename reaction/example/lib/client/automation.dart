@@ -1,4 +1,4 @@
-// Reference instrumentation kit for UI automation (CUR-1307).
+// Reference instrumentation kit for UI automation.
 //
 // Demonstrates the "annotate once" pattern from the reaction_widgets
 // how-to: a single reusable wrapper that bakes in the web-semantics flags

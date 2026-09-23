@@ -5,31 +5,31 @@ library's actions and permissions modules end-to-end. The demo runs a Dart
 `shelf` server hosting the dispatcher, event store, and permission matrix,
 paired with a Flutter Linux client that renders a dual pane: user-facing
 controls on the left, server-side inspector on the right. It is the canonical
-hands-on validation surface for REQ-d00166 through REQ-d00178 — every claim the
-library makes about action dispatch, authorization, idempotency, identity
-decoupling, audit correlation, user provisioning, and snapshot delivery is
-demonstrated here as a runnable scenario, mirrored by an integration test under
-`test/walkthroughs/`.
+hands-on validation surface for the library's action and permission
+guarantees — every claim the library makes about action dispatch,
+authorization, idempotency, identity decoupling, audit correlation, user
+provisioning, and snapshot delivery is demonstrated here as a runnable
+scenario, mirrored by an integration test under `test/walkthroughs/`.
 
 ## What it exercises
 
-- REQ-d00166 — `Action` lifecycle (parse, validate, authorize, execute) and
+- The `Action` lifecycle (parse, validate, authorize, execute) and
   typed event emission, surfaced in the request history pane.
-- REQ-d00168 — Dispatcher pipeline correlation: every dispatch carries a fresh
+- Dispatcher pipeline correlation: every dispatch carries a fresh
   v4 `action_invocation_id`, and `authorization_denied` events are emitted by
   the authorize stage. Visible in the inspector's audit view.
-- REQ-d00170 — Idempotency policy matrix (none / optional / required) plus
+- Idempotency policy matrix (none / optional / required) plus
   cache-key composition that includes `principalId`, validated by the
   client-side replay mechanics.
-- REQ-d00171 — Denial events for parse failures, validation failures, and
+- Denial events for parse failures, validation failures, and
   unknown-action requests, surfaced as audit entries.
-- REQ-d00174 — `UserDirectory` materializer/seed-applier loop driven by
+- `UserDirectory` materializer/seed-applier loop driven by
   `provision_user` action emissions.
-- REQ-d00176 — `AuthorizationPolicy` matrix lookup as the single perimeter
+- `AuthorizationPolicy` matrix lookup as the single perimeter
   for all action authorization decisions.
-- REQ-d00177 — Per-`userId` `PermissionSnapshot` delivery to the client and
+- Per-`userId` `PermissionSnapshot` delivery to the client and
   cache invalidation on identity change.
-- REQ-d00178 — Identity decoupling: switching the active `userId` changes the
+- Identity decoupling: switching the active `userId` changes the
   effective permission set without restarting the server.
 
 ## Architecture
@@ -224,7 +224,7 @@ Still as `green-user-1`, click "Press Green Button" and "Edit Green Note".
 Watch a `green_button_pressed` event, then a `green_note_edited` event,
 appear in the inspector's event log. Switch to `blue-user-1` and repeat with
 the blue actions. Each happy path covers a different scope class in the
-permission matrix and confirms typed event emission per REQ-d00166-E.
+permission matrix and confirms typed event emission.
 
 Canonical test: `test/walkthroughs/walkthrough_02_happy_paths_test.dart`.
 

@@ -317,8 +317,7 @@ export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
 export 'src/storage/postgres/postgres.dart';
-export 'src/storage/sembast_backend.dart'
-    show SembastBackend, SembastBackendTestSupport;
+export 'src/storage/sembast_backend.dart' show SembastBackend;
 export 'src/storage/send_result.dart'
     show SendResult, SendOk, SendTransient, SendPermanent;
 export 'src/storage/source.dart' show Source;
@@ -341,8 +340,11 @@ export 'src/subscriptions/subscription_mode.dart'
 export 'src/subscriptions/update.dart'
     show Delta, EndOfReplay, Snapshot, Tombstone, Update;
 
-// Sync — backoff curve, drain loop, and top-level orchestrator.
-export 'src/sync/drain.dart' show Clock, drain;
-export 'src/sync/fill_batch.dart' show fillBatch;
+// Implements: EVS-PRD-destinations/K
+// the queue-changing functions are not
+//   exported; SyncCycle and DestinationRegistry are the entry points.
+// Sync — the delivery cycle, its clock and its policy. The cycle is the
+// only entry point that fills and drains destination queues.
+export 'src/sync/clock.dart' show Clock;
 export 'src/sync/sync_cycle.dart' show SyncCycle;
 export 'src/sync/sync_policy.dart' show SyncPolicy;

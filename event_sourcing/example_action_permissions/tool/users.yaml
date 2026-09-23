@@ -1,5 +1,4 @@
-# IMPLEMENTS REQUIREMENTS:
-#   REQ-d00175 — YAML seed pattern, applied to user directory in this demo.
+# YAML seed of the user directory in this demo.
 #
 # Each entry maps a userId to the role + activeSite the server resolves it to.
 # An unrecognized userId always resolves to AnonymousPrincipal.

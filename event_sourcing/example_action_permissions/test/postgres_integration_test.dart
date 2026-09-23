@@ -93,7 +93,7 @@ void main() {
       await tmp.close();
 
       backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
-      idempotencyStore = PostgresIdempotencyStore.over(backend.pool);
+      idempotencyStore = PostgresIdempotencyStore.forBackend(backend);
 
       components = await bootstrapDemoServer(
         backend: backend,
@@ -494,7 +494,7 @@ void main() {
         url: url,
         sslMode: SslMode.disable,
       );
-      final idem1 = PostgresIdempotencyStore.over(backend1.pool);
+      final idem1 = PostgresIdempotencyStore.forBackend(backend1);
       final components1 = await bootstrapDemoServer(
         backend: backend1,
         idempotencyStore: idem1,
@@ -575,7 +575,7 @@ void main() {
         sslMode: SslMode.disable,
       );
       addTearDown(backend2.close);
-      final idem2 = PostgresIdempotencyStore.over(backend2.pool);
+      final idem2 = PostgresIdempotencyStore.forBackend(backend2);
 
       // Read events + view rows from the NEW backend instance.
       final eventsPhase2 = await backend2.findAllEvents();

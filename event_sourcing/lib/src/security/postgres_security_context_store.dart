@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed `SecurityContextStore`. Persists one row per event in
@@ -56,6 +57,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     return EventSecurityContext.fromJson(_asJsonMap(result.first[0]));
   }
 
+  @internal
   @override
   Future<void> writeInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
@@ -73,6 +75,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     );
   }
 
+  @internal
   @override
   Future<void> upsertInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
@@ -94,6 +97,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     );
   }
 
+  @internal
   @override
   Future<void> deleteInTxn(Transaction txn, String eventId) async {
     final session = _session(txn);

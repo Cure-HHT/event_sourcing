@@ -35,12 +35,12 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -54,7 +54,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
 
@@ -64,13 +64,6 @@ import 'package:uuid/uuid.dart';
 /// beyond its internal random state. Parallels the sembast backend's
 /// module-private `_uuidGen` to keep the two impls structurally aligned.
 const _uuidGen = Uuid();
-
-/// Default warning-level diagnostic sink used by [PostgresBackend] when a
-/// FIFO mutation no-ops on a missing row. Routes through `dart:developer`
-/// at level 900 (matches sembast's `_defaultLogSink`).
-void _defaultLogSink(String message) {
-  developer.log(message, name: 'PostgresBackend', level: 900);
-}
 
 /// Thrown by every public [PostgresBackend] I/O method after
 /// `PostgresBackend.close` has run. Implements [Exception] (not [Error])
@@ -158,20 +151,6 @@ class PostgresBackend extends StorageBackend {
   //   conformance harness' close subgroup.
   bool _closed = false;
 
-  /// Visible-for-testing sink for the warning-level diagnostic emitted by
-  /// FIFO methods ([appendAttempt], [markFinal]) when they no-op on a
-  /// missing target row. Defaults to the package-private [_defaultLogSink],
-  /// which writes through `dart:developer` at `level: 900` (warning).
-  /// Tests install a `List<String>.add` closure to capture emitted lines
-  /// without depending on a global logger. Setting this to `null`
-  /// suppresses diagnostics entirely. Parallels
-  /// `SembastBackend.debugLogSink` field by name, shape, and semantics.
-  // Implements: EVS-PRD-destinations
-  // appendAttempt/markFinal emit a
-  //   warning-level diagnostic when the target row is absent (drain/unjam
-  //   or drain/delete race tolerance).
-  void Function(String)? debugLogSink = _defaultLogSink;
-
   /// Open against [url] using the supplied [sslMode]. Connects, emits
   /// the schema DDL (idempotent on re-open), and returns a ready
   /// backend. Callers MUST call [close] to release the connection
@@ -220,9 +199,10 @@ class PostgresBackend extends StorageBackend {
     );
   }
 
-  // Expose the underlying [Pool] so future subsystems (e.g.,
-  // PostgresIdempotencyStore) can share connections without
-  // re-parsing the URL. Internal; not part of the public API surface.
+  /// The underlying connection pool, shared with the library's own
+  /// Postgres-side stores (the idempotency store). Internal: a consumer
+  /// holding it could write the library's tables directly.
+  @internal
   Pool<void> get pool => _pool;
 
   /// Close the underlying connection pool. Idempotent: a second call is
@@ -348,6 +328,7 @@ class PostgresBackend extends StorageBackend {
   //   from nextSequenceNumber; persisted verbatim preserving total order;
   //   advance owned by nextSequenceNumber, not appendEvent.
   @override
+  @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     final session = _asPgTxn(txn).session;
     // Validate the reservation: the persisted counter must equal the seq
@@ -610,6 +591,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-PRD-event-log/B
   // monotonic per-transaction reserve.
   @override
+  @internal
   Future<int> nextSequenceNumber(Transaction txn) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
@@ -702,6 +684,7 @@ class PostgresBackend extends StorageBackend {
   // whole-row upsert via
   //   INSERT … ON CONFLICT (view_name, row_key) DO UPDATE.
   @override
+  @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -724,6 +707,7 @@ class PostgresBackend extends StorageBackend {
   // delete a single row from
   //   view_rows by (view_name, row_key); no-op when absent.
   @override
+  @internal
   Future<void> deleteViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -763,7 +747,7 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/B
   // bulk view_rows key-set read for the
   //   scoped AggregateMode snapshot: one `row_key = ANY(@keys)` query for the
-  //   whole allow-list instead of a BEGIN/SELECT/COMMIT per id (CUR-1471). The
+  //   whole allow-list instead of a BEGIN/SELECT/COMMIT per id. The
   //   Dart `List<String>` binds to a Postgres text[] (same as the event_type
   //   `ANY(@types)` filter); selecting row_key lets the caller re-key the map.
   @override
@@ -837,6 +821,7 @@ class PostgresBackend extends StorageBackend {
   // delete all rows for a view
   //   without touching other views (WHERE view_name = @v).
   @override
+  @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
@@ -876,6 +861,7 @@ class PostgresBackend extends StorageBackend {
   //   DO UPDATE so repeated writes for the same (view_name, entry_type) pair
   //   reflect the latest target_version value.
   @override
+  @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
@@ -919,6 +905,7 @@ class PostgresBackend extends StorageBackend {
   //   harness; clearViewTargetVersionsInTxn deletes all rows for the given
   //   view_name without touching rows belonging to other views.
   @override
+  @internal
   Future<void> clearViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
@@ -948,6 +935,7 @@ class PostgresBackend extends StorageBackend {
   //   its own transaction so the row write is atomic for callers that
   //   aren't already inside one.
   @override
+  @internal
   Future<FifoEntry> enqueueFifo(
     String destinationId,
     List<StoredEvent> batch, {
@@ -992,6 +980,7 @@ class PostgresBackend extends StorageBackend {
   //   per-destination counter in backend_state; row persisted with all
   //   contract fields.
   @override
+  @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -1195,6 +1184,7 @@ class PostgresBackend extends StorageBackend {
   //   "missing row" and "missing FIFO store" — both surface as zero
   //   affected rows on the same WHERE clause.
   @override
+  @internal
   Future<void> appendAttempt(
     String destinationId,
     String entryId,
@@ -1214,9 +1204,11 @@ class PostgresBackend extends StorageBackend {
       },
     );
     if (result.affectedRows == 0) {
-      debugLogSink?.call(
+      libraryLog(
+        'storage',
         'appendAttempt: entry $entryId absent from FIFO $destinationId; '
-        'skipping (expected during drain/unjam or drain/delete race)',
+            'skipping (expected during drain/unjam or drain/delete race)',
+        level: LibraryLogLevel.warning,
       );
     }
   }
@@ -1228,6 +1220,7 @@ class PostgresBackend extends StorageBackend {
   //   - StateError naming both statuses on mismatched already-final;
   //   - null -> sent stamps sent_at = NOW().toUtc().
   @override
+  @internal
   Future<void> markFinal(
     String destinationId,
     String entryId,
@@ -1244,9 +1237,11 @@ class PostgresBackend extends StorageBackend {
         parameters: {'dest': destinationId, 'e': entryId},
       );
       if (existing.isEmpty) {
-        debugLogSink?.call(
+        libraryLog(
+          'storage',
           'markFinal: entry $entryId absent from FIFO $destinationId; '
-          'skipping (expected during drain/unjam or drain/delete race)',
+              'skipping (expected during drain/unjam or drain/delete race)',
+          level: LibraryLogLevel.warning,
         );
         return;
       }
@@ -1399,6 +1394,7 @@ class PostgresBackend extends StorageBackend {
   //   are left untouched (tombstoneAndRefill preserves attempts[]
   //   verbatim).
   @override
+  @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
@@ -1482,6 +1478,7 @@ class PostgresBackend extends StorageBackend {
   //   audit records and never touched here. Returns the count of rows
   //   deleted (via the postgres driver's affectedRows).
   @override
+  @internal
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
@@ -1510,6 +1507,7 @@ class PostgresBackend extends StorageBackend {
   //   per-destination store; the counter on sembast is wiped via
   //   `backend_state` deletion.)
   @override
+  @internal
   Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
@@ -1542,6 +1540,7 @@ class PostgresBackend extends StorageBackend {
 
   // Key: 'schema_version'; value: integer. INSERT … ON CONFLICT DO UPDATE.
   @override
+  @internal
   Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
@@ -1571,6 +1570,7 @@ class PostgresBackend extends StorageBackend {
   // `async` so validation errors land as Future completions, matching
   // the contract surface and `expectLater(..., throwsArgumentError)`.
   @override
+  @internal
   Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
     _checkOpen();
     _validateFillCursorValue(sequenceNumber);
@@ -1582,6 +1582,7 @@ class PostgresBackend extends StorageBackend {
   // In-txn write for fill_cursor. INSERT … ON CONFLICT DO UPDATE.
   // `async` so validation errors land as Future completions.
   @override
+  @internal
   Future<void> writeFillCursorTxn(
     Transaction txn,
     String destinationId,
@@ -1614,6 +1615,7 @@ class PostgresBackend extends StorageBackend {
 
   // Non-txn write: opens its own transaction and delegates to [writeScheduleTxn].
   @override
+  @internal
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
@@ -1626,6 +1628,7 @@ class PostgresBackend extends StorageBackend {
 
   // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.
   @override
+  @internal
   Future<void> writeScheduleTxn(
     Transaction txn,
     String destinationId,
@@ -1644,6 +1647,7 @@ class PostgresBackend extends StorageBackend {
 
   // Delete the schedule row for [destinationId]. No-op when absent.
   @override
+  @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final session = _asPgTxn(txn).session;
     await session.execute(

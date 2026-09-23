@@ -568,7 +568,7 @@ class _FifoRowTile extends StatelessWidget {
       shapeSummary =
           'batch $batchPrefix | $count events | wire bytes recovered on demand';
     } else {
-      // wire_payload is the decoded JSON map stored by enqueueFifo;
+      // wire_payload is the decoded JSON map the delivery cycle stored;
       // re-encode it via JSON to get a representative byte count
       // comparable to the on-wire size. This is the same shape
       // `transform()` produced, so the count stays comparable across

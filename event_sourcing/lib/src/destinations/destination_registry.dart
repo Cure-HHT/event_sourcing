@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/historical_replay.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 
 /// Process-wide registry of synchronization destinations.
 ///
@@ -522,5 +523,9 @@ class DestinationRegistry {
       changeReason: null,
       dedupeByContent: false,
     );
+    if (DeliveryTestHooks.current?.failRegistryAuditAppend?.call(entryType) ??
+        false) {
+      throw InjectedFailure('registry audit append of $entryType');
+    }
   }
 }

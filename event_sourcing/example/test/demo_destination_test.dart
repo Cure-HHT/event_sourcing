@@ -108,7 +108,7 @@ void main() {
     });
   });
 
-  group('send routes by Connection (REQ-p01001)', () {
+  group('send routes by Connection', () {
     // Tests each Connection variant: Connection.ok → SendOk after
     // waiting sendLatency; Connection.broken → SendTransient with
     // "simulated disconnect"; Connection.rejecting → SendPermanent

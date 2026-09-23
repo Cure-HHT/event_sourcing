@@ -375,7 +375,7 @@ void main() {
         'identifier Semantics sets container + explicitChildNodes so the '
         'identifier survives an interactive child on the web semantics tree',
         (tester) async {
-          // Regression guard for CUR-1307: without these flags the web
+          // Regression guard: without these flags the web
           // flt-semantics flattener merges the identifier away when the child
           // is a button, so Playwright cannot find it. The Dart semantics tree
           // does not reproduce the web merge, so assert the construction.

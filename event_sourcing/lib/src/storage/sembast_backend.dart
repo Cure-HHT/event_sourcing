@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -17,7 +17,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
 import 'package:uuid/uuid.dart';
@@ -30,13 +30,6 @@ part 'sembast_test_support.dart';
 /// side-effect-free beyond its internal random state, so a shared
 /// instance is correct.
 const _uuidGen = Uuid();
-
-/// Package-private default log sink used when a [SembastBackend] instance
-/// has not overridden [SembastBackend.debugLogSink]. Routes through
-/// `dart:developer` at the warning level (`level: 900`).
-void _defaultLogSink(String message) {
-  developer.log(message, name: 'SembastBackend', level: 900);
-}
 
 /// Concrete Sembast-backed implementation of [StorageBackend].
 ///
@@ -139,15 +132,6 @@ class SembastBackend extends StorageBackend {
     await _db.close();
   }
 
-  /// Visible-for-testing sink for the warning-level diagnostic emitted by
-  /// [markFinal] and [appendAttempt] when they no-op on a missing target.
-  /// Defaults to the package-private [_defaultLogSink],
-  /// which writes through `dart:developer` at `level: 900` (warning).
-  /// Tests install a `List<String>.add` closure to capture emitted lines
-  /// without depending on a global logger. Setting this to `null`
-  /// suppresses diagnostics entirely.
-  void Function(String)? debugLogSink = _defaultLogSink;
-
   // -------- transaction --------
 
   // Implements: EVS-PRD-subscription/E
@@ -195,6 +179,7 @@ class SembastBackend extends StorageBackend {
   /// transaction. NOT part of the abstract `StorageBackend` contract —
   /// only sembast-side code should reach for this.
   // ignore: library_private_types_in_public_api
+  @internal
   sembast.Transaction unwrapSembastTxn(Transaction txn) =>
       _requireValidTxn(txn)._sembastTxn;
 
@@ -217,6 +202,7 @@ class SembastBackend extends StorageBackend {
   // sequence number stamped by caller from
   //   nextSequenceNumber; persisted verbatim preserving total order.
   @override
+  @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
@@ -379,6 +365,7 @@ class SembastBackend extends StorageBackend {
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
   @override
+  @internal
   Future<int> nextSequenceNumber(Transaction txn) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
@@ -543,6 +530,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
@@ -567,6 +555,7 @@ class SembastBackend extends StorageBackend {
   /// Write the per-destination fill cursor inside its own atomic
   /// transaction.
   @override
+  @internal
   Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
     _validateFillCursorValue(sequenceNumber);
     await _database().transaction((sembastTxn) async {
@@ -580,6 +569,7 @@ class SembastBackend extends StorageBackend {
   /// co-atomic with the surrounding transaction. Rolls back with the rest
   /// of the transaction body on a throw.
   @override
+  @internal
   Future<void> writeFillCursorTxn(
     Transaction txn,
     String destinationId,
@@ -630,6 +620,7 @@ class SembastBackend extends StorageBackend {
   /// Persist [schedule] for [destinationId] inside its own atomic
   /// transaction (standalone variant).
   @override
+  @internal
   Future<void> writeSchedule(
     String destinationId,
     DestinationSchedule schedule,
@@ -644,6 +635,7 @@ class SembastBackend extends StorageBackend {
   /// Persist [schedule] inside [txn] so the write participates in the
   /// surrounding transaction's atomicity.
   @override
+  @internal
   Future<void> writeScheduleTxn(
     Transaction txn,
     String destinationId,
@@ -658,6 +650,7 @@ class SembastBackend extends StorageBackend {
   /// Delete the persisted schedule record for [destinationId] inside
   /// [txn]. Used by `deleteDestination`.
   @override
+  @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
@@ -669,6 +662,7 @@ class SembastBackend extends StorageBackend {
   /// and remove [destinationId] from the known-FIFOs registry so
   /// `hasFifoWedged` / `wedgedFifos` no longer iterate it.
   @override
+  @internal
   Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
     final t = _requireValidTxn(txn);
     await _fifoStore(destinationId).drop(t._sembastTxn);
@@ -731,6 +725,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -749,6 +744,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> deleteViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -834,6 +830,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).delete(t._sembastTxn);
@@ -882,6 +879,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
@@ -915,6 +913,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> clearViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
@@ -954,6 +953,7 @@ class SembastBackend extends StorageBackend {
   /// relationship to the events the row carries — callers that need
   /// to correlate against events use `eventIds` / `sequenceRange`.
   @override
+  @internal
   Future<FifoEntry> enqueueFifo(
     String destinationId,
     List<StoredEvent> batch, {
@@ -999,6 +999,7 @@ class SembastBackend extends StorageBackend {
   /// bookkeeping all live here; [enqueueFifo] is a thin
   /// `transaction(...)` wrapper.
   @override
+  @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -1324,7 +1325,7 @@ class SembastBackend extends StorageBackend {
   ///
   /// Tolerates a missing target row or a never-registered FIFO store:
   /// in both cases this method returns without throwing and emits a
-  /// warning-level diagnostic via [debugLogSink]. This closes
+  /// warning-level log line through the library's logger. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
   /// concurrent user operation (unjamDestination, deleteDestination) may
@@ -1335,6 +1336,7 @@ class SembastBackend extends StorageBackend {
   /// branch covers both "unknown destination" and "row deleted from a
   /// known destination". No separate "store exists?" probe is needed.
   @override
+  @internal
   Future<void> appendAttempt(
     String destinationId,
     String entryId,
@@ -1350,10 +1352,12 @@ class SembastBackend extends StorageBackend {
         finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
       );
       if (records.isEmpty) {
-        debugLogSink?.call(
+        libraryLog(
+          'storage',
           'appendAttempt: entry $entryId absent from FIFO '
-          '$destinationId; skipping (expected during drain/unjam or '
-          'drain/delete race)',
+              '$destinationId; skipping (expected during drain/unjam or '
+              'drain/delete race)',
+          level: LibraryLogLevel.warning,
         );
         // No row mutated -> no FIFO-change emission.
         return;
@@ -1384,7 +1388,7 @@ class SembastBackend extends StorageBackend {
   ///
   /// Tolerates a missing target row or a never-registered FIFO store:
   /// in both cases this method returns without throwing and emits a
-  /// warning-level diagnostic via [debugLogSink]. This closes
+  /// warning-level log line through the library's logger. This closes
   /// the drain/unjam + drain/delete race documented in design §6.6 —
   /// drain `await send()`s outside any storage transaction, and a
   /// concurrent user operation (unjamDestination, deleteDestination) may
@@ -1401,6 +1405,7 @@ class SembastBackend extends StorageBackend {
   /// already terminal with a DIFFERENT status, `StateError` is thrown —
   /// this is real corruption and loud failure is correct.
   @override
+  @internal
   Future<void> markFinal(
     String destinationId,
     String entryId,
@@ -1423,9 +1428,11 @@ class SembastBackend extends StorageBackend {
         finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
       );
       if (records.isEmpty) {
-        debugLogSink?.call(
+        libraryLog(
+          'storage',
           'markFinal: entry $entryId absent from FIFO $destinationId; '
-          'skipping (expected during drain/unjam or drain/delete race)',
+              'skipping (expected during drain/unjam or drain/delete race)',
+          level: LibraryLogLevel.warning,
         );
         // No row mutated -> no FIFO-change emission.
         return;
@@ -1544,6 +1551,7 @@ class SembastBackend extends StorageBackend {
   /// existence before opening the transaction, so a missing row here
   /// indicates a concurrent delete race that these ops do not close.
   @override
+  @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
@@ -1620,6 +1628,7 @@ class SembastBackend extends StorageBackend {
   /// are left untouched regardless of their `sequence_in_queue` —
   /// all non-null rows are retained forever.
   @override
+  @internal
   Future<int> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,

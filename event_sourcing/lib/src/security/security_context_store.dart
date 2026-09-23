@@ -2,6 +2,7 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Read-side contract for the security-context sidecar. Mutations are
 /// package-private via `MutableSecurityContextStore` — only `EventStore`
@@ -38,10 +39,17 @@ abstract class SecurityContextStore {
 // `writeInTxn` / `upsertInTxn` /
 //   `deleteInTxn` all accept a `Transaction` so the caller (EventStore) can commit
 //   security and event-log mutations atomically.
+// Implements: EVS-PRD-destinations/K
+// the mutators of the security context
+//   stored beside each event are internal on the contract and on each
+//   override, so only the event store's operations change it.
 abstract class MutableSecurityContextStore extends SecurityContextStore {
+  @internal
   Future<void> writeInTxn(Transaction txn, EventSecurityContext row);
   Future<EventSecurityContext?> readInTxn(Transaction txn, String eventId);
+  @internal
   Future<void> deleteInTxn(Transaction txn, String eventId);
+  @internal
   Future<void> upsertInTxn(Transaction txn, EventSecurityContext row);
   Future<List<EventSecurityContext>> findUnredactedOlderThanInTxn(
     Transaction txn,

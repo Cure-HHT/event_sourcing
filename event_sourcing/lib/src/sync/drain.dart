@@ -32,12 +32,9 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
-
-/// Clock used to decide whether the head entry's backoff has elapsed.
-/// Tests pass a fixed-time closure; production passes `null` and picks
-/// up `DateTime.now().toUtc()`.
-typedef Clock = DateTime Function();
+import 'package:meta/meta.dart' show internal;
 
 /// Drain the head of [destination]'s FIFO: check backoff, call
 /// [Destination.send], record the attempt, and route the result to a
@@ -70,6 +67,7 @@ typedef Clock = DateTime Function();
 ///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
 /// loop falls back to [SyncPolicy.defaults].
+@internal
 Future<void> drain(
   Destination destination, {
   required StorageBackend backend,

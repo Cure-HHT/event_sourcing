@@ -80,3 +80,19 @@ requires a non-trivial cross-shard sequence-number coordination strategy,
 and the hash chain's per-installation linearity is what makes integrity
 verifiable in the first place — so any partitioning impl is a downstream
 extension under the same trust-boundary discipline, not a free lunch.
+
+## Closing consumer access to internal storage members
+
+**Baseline.** Every `StorageBackend` member that writes, and every raw
+handle to the database or to an engine transaction, is marked
+`@internal`, so a consumer's call to one is an analyzer error
+(`EVS-PRD-destinations/K`). The guarantee is stated as a precondition of
+the storage trust boundary (`EVS-PRD-destinations/L`): the consumer
+constructs the backend and holds it, on Sembast it also holds the
+`Database` it opened, and a direct write to the library's persisted state
+is invisible to the library.
+
+**Remaining.** A run-time barrier: for example, a capability-scoped
+backend handle that the library keeps and the consumer never receives,
+exposing to the consumer only the reads, `transaction` and `close`, and a
+Sembast construction path in which the library opens the database itself.
