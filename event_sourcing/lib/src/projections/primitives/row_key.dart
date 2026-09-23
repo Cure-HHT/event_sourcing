@@ -21,11 +21,12 @@ class AggregateIdKey extends RowKeyExtractor {
 }
 
 class CompositeKey extends RowKeyExtractor {
+  const CompositeKey(this.paths);
+
   /// Each path is dotted; the first segment is one of `data`, `metadata`,
   /// or a top-level field on the StoredEvent. The remaining segments
   /// index into the value.
   final List<String> paths;
-  const CompositeKey(this.paths);
 
   @override
   Object extract(StoredEvent event) {

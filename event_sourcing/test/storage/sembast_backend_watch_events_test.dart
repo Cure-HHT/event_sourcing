@@ -18,6 +18,7 @@ Future<StoredEvent> _appendEvent(
   SembastBackend backend, {
   required String eventId,
   String aggregateId = 'agg-1',
+  bool rollBack = false,
 }) {
   return backend.transaction((txn) async {
     final seq = await backend.nextSequenceNumber(txn);
@@ -38,6 +39,7 @@ Future<StoredEvent> _appendEvent(
       eventHash: 'hash-$eventId',
     );
     await backend.appendEvent(txn, event);
+    if (rollBack) throw StateError('injected rollback');
     return event;
   });
 }
@@ -187,6 +189,68 @@ void main() {
       } finally {
         await origBackend.close();
       }
+    });
+  });
+
+  // Verifies: EVS-PRD-subscription/E
+  // two transactions in flight at once on one backend: the committed one's
+  //   event reaches watchers exactly once, the rolled-back one's never.
+  group('SembastBackend.watchEvents under concurrent transactions', () {
+    late SembastBackend backend;
+    var dbCounter = 0;
+
+    setUp(() async {
+      dbCounter += 1;
+      backend = await _openBackend('watch-events-concurrent-$dbCounter.db');
+    });
+
+    tearDown(() async {
+      await backend.close();
+    });
+
+    /// Starts both appends without awaiting either, so both transactions
+    /// are in flight at once, and returns what a live watcher received.
+    Future<List<StoredEvent>> runPair({required bool firstRollsBack}) async {
+      final received = <StoredEvent>[];
+      final sub = backend.watchEvents().listen(received.add);
+      await pumpEventQueue();
+
+      final first = _appendEvent(
+        backend,
+        eventId: 'first',
+        rollBack: firstRollsBack,
+      );
+      final second = _appendEvent(
+        backend,
+        eventId: 'second',
+        rollBack: !firstRollsBack,
+      );
+      final outcomes = await Future.wait<Object?>([
+        first.then<Object?>((e) => e, onError: (Object e) => e),
+        second.then<Object?>((e) => e, onError: (Object e) => e),
+      ]);
+      expect(outcomes.whereType<StateError>(), hasLength(1));
+      await pumpEventQueue();
+      await sub.cancel();
+      return received;
+    }
+
+    test('first commits, second rolls back: only the first is delivered, '
+        'once', () async {
+      final received = await runPair(firstRollsBack: false);
+      final stored = await backend.findAllEvents();
+      expect(stored.map((e) => e.eventId), ['first']);
+      expect(received.map((e) => e.eventId), ['first']);
+      expect(received.single.sequenceNumber, stored.single.sequenceNumber);
+    });
+
+    test('first rolls back, second commits: only the second is delivered, '
+        'once', () async {
+      final received = await runPair(firstRollsBack: true);
+      final stored = await backend.findAllEvents();
+      expect(stored.map((e) => e.eventId), ['second']);
+      expect(received.map((e) => e.eventId), ['second']);
+      expect(received.single.sequenceNumber, stored.single.sequenceNumber);
     });
   });
 }

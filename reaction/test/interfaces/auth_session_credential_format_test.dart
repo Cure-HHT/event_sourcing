@@ -16,6 +16,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
+/// Returns [value] typed as [T]. Passing an explicit type argument makes the
+/// compiler check that [value] is assignable to the contracted type.
+T _asContracted<T>(T value) => value;
+
 void main() {
   group('AuthSession credential format opacity', () {
     test('AuthSession.setCredential signature is String? (no format type)', () {
@@ -25,7 +29,9 @@ void main() {
       // credential wrapper, this assignment fails to compile.
       final AuthSession session = LocalAuthSession();
       addTearDown(session.dispose);
-      final void Function(String?) setter = session.setCredential;
+      final setter = _asContracted<void Function(String?)>(
+        session.setCredential,
+      );
       expect(setter, isNotNull);
     });
 
@@ -75,8 +81,9 @@ void main() {
     test('setCredential(null) clears without format complaint', () {
       final session = LocalAuthSession();
       addTearDown(session.dispose);
-      session.setCredential('initial');
-      session.setCredential(null);
+      session
+        ..setCredential('initial')
+        ..setCredential(null);
       // Passing null is a contracted clear, not a format violation.
       expect(session.principal, isNull);
       expect(session.current, isA<NotAuthenticated>());

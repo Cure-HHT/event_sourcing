@@ -12,7 +12,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:reaction/reaction.dart';
 
 import 'multiclient_harness.dart';
 

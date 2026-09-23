@@ -4,9 +4,17 @@
 # Two jobs:
 #   sembast  — SembastBackend conformance + in-memory IdempotencyStore
 #              conformance. No external services required.
-#   postgres — PostgresBackend conformance + schema test + IdempotencyStore
-#              conformance + action_permissions_demo end-to-end integration.
-#              Runs a postgres:16 service container; gated on PG_TEST_URL.
+#   postgres — every Postgres-gated test file, each in its own step: the
+#              PostgresBackend schema, conformance and serialization-retry
+#              tests, IdempotencyStore conformance, and the
+#              example_action_permissions bootstrap, routes, state-projection
+#              and end-to-end integration tests. Runs a postgres:16 service
+#              container; the files are gated on PG_TEST_URL.
+#              event_sourcing/test/ci/postgres_ci_listing_test.dart fails when
+#              a gated file is not run here.
+#
+# The Flutter SDK is pinned (flutter-version) in every workflow so a new stable
+# release or lint set cannot change a run's outcome; bump it deliberately.
 
 name: Conformance tests
 
@@ -32,6 +40,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.7
       - name: Resolve deps (canonical_json_jcs)
         run: flutter pub get
         working-directory: canonical_json_jcs
@@ -73,6 +82,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.7
       - name: Resolve deps (canonical_json_jcs)
         run: flutter pub get
         working-directory: canonical_json_jcs
@@ -93,6 +103,9 @@ jobs:
         working-directory: event_sourcing
       - name: PostgresIdempotencyStore conformance
         run: flutter test test/storage/postgres/postgres_idempotency_store_conformance_test.dart
+        working-directory: event_sourcing
+      - name: PostgresBackend serialization retry
+        run: flutter test test/storage/postgres/postgres_backend_serialization_retry_test.dart
         working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart

@@ -12,7 +12,7 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
-import 'envelope.dart';
+import 'package:reaction/src/wire/envelope.dart';
 
 /// JSON codec for the substrate's [Update<T>] family. The wire ships
 /// rows as opaque `Map<String, Object?>`; the client applies its

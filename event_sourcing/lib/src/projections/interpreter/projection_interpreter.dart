@@ -36,18 +36,17 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 
 class ProjectionInterpreter {
-  final ProjectionRegistry projections;
-  final PromoterRegistry promoters;
-  final EntryTypeRegistry entryTypes;
-
   ProjectionInterpreter({
     required this.projections,
     required this.promoters,
     required this.entryTypes,
   });
+  final ProjectionRegistry projections;
+  final PromoterRegistry promoters;
+  final EntryTypeRegistry entryTypes;
 
   /// Apply [event] to all matching projection specs inside [txn]. When
-  /// [event.entryTypeVersion] is below the entry type's current
+  /// `event.entryTypeVersion` is below the entry type's current
   /// `registeredVersion`, the substrate applies the promoter chain for
   /// each matching view in-memory before folding. The original [event]
   /// is not modified; only an in-memory working copy is promoted.
@@ -55,7 +54,7 @@ class ProjectionInterpreter {
   /// Returns the list of [AggregateFoldChange] records from every spec
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
-  /// notification via [SubscriptionEngine.publishRowChange].
+  /// notification via `SubscriptionEngine.publishRowChange`.
   Future<List<AggregateFoldChange>> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
@@ -72,7 +71,7 @@ class ProjectionInterpreter {
     for (final spec in projections.all()) {
       if (!spec.interest.matches(event)) continue;
 
-      StoredEvent eventForFold = event;
+      var eventForFold = event;
       if (event.entryTypeVersion < registeredVersion) {
         final promotedData = PromoterExecutor.promote(
           registry: promoters,

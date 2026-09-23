@@ -8,9 +8,9 @@ sealed class TransformPrimitive {
 }
 
 class RenameField extends TransformPrimitive {
+  const RenameField({required this.sourceField, required this.targetField});
   final String sourceField;
   final String targetField;
-  const RenameField({required this.sourceField, required this.targetField});
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {
@@ -28,9 +28,9 @@ class RenameField extends TransformPrimitive {
 }
 
 class DefaultField extends TransformPrimitive {
+  const DefaultField({required this.fieldName, required this.defaultValue});
   final String fieldName;
   final Object? defaultValue;
-  const DefaultField({required this.fieldName, required this.defaultValue});
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {
@@ -42,8 +42,8 @@ class DefaultField extends TransformPrimitive {
 }
 
 class DropField extends TransformPrimitive {
-  final String fieldName;
   const DropField({required this.fieldName});
+  final String fieldName;
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {

@@ -27,8 +27,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
-import 'package:event_sourcing/src/promoters/primitives/transform.dart';
-import 'package:event_sourcing/src/promoters/promoter_spec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -234,7 +232,7 @@ void main() {
   });
 
   group('promoteViewSnapshots', () {
-    StoredEvent _event({
+    StoredEvent event({
       required int seq,
       required Map<String, Object?> data,
       int entryTypeVersion = 1,
@@ -260,7 +258,7 @@ void main() {
       );
     }
 
-    Future<void> _noopEmit({
+    Future<void> noopEmit({
       required String viewName,
       required String entryType,
       required int fromVersion,
@@ -321,11 +319,7 @@ void main() {
           final seq = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
-            _event(
-              seq: seq,
-              data: const {'body': 'hello'},
-              entryTypeVersion: 1,
-            ),
+            event(seq: seq, data: const {'body': 'hello'}, entryTypeVersion: 1),
           );
         });
 
@@ -336,7 +330,7 @@ void main() {
             projections: projections,
             promoters: promoters,
             entryTypes: entryTypes,
-            emitAudit: _noopEmit,
+            emitAudit: noopEmit,
             now: DateTime.utc(2026, 5, 11),
           );
         });
@@ -395,7 +389,7 @@ void main() {
         final seq = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(
           txn,
-          _event(
+          event(
             seq: seq,
             data: const {'body': 'note-body'},
             entryTypeVersion: 1,
@@ -410,7 +404,7 @@ void main() {
           projections: projections,
           promoters: promoters,
           entryTypes: entryTypes,
-          emitAudit: _noopEmit,
+          emitAudit: noopEmit,
           now: DateTime.utc(2026, 5, 11),
         );
       });
@@ -487,7 +481,7 @@ void main() {
           final seq = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
-            _event(seq: seq, data: const {'body': 'x'}, entryTypeVersion: 1),
+            event(seq: seq, data: const {'body': 'x'}, entryTypeVersion: 1),
           );
         });
 

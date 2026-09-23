@@ -35,14 +35,14 @@ import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 
-final rolePermissionGrantsSpec = TableProjectionSpec(
+const rolePermissionGrantsSpec = TableProjectionSpec(
   viewName: 'role_permission_grants',
-  interest: const SubscriptionFilter(
+  interest: SubscriptionFilter(
     eventTypes: {'permission_granted', 'permission_revoked'},
     aggregateTypes: {'role_permission_grant'},
   ),
-  insertEventTypes: const {'permission_granted'},
-  removeEventTypes: const {'permission_revoked'},
-  rowKey: const AggregateIdKey(),
-  rowData: const WholePayload(),
+  insertEventTypes: {'permission_granted'},
+  removeEventTypes: {'permission_revoked'},
+  rowKey: AggregateIdKey(),
+  rowData: WholePayload(),
 );

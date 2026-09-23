@@ -277,9 +277,16 @@ guide's "Cross-process client/server deployments" chapter and
 ```sh
 # Pure-Dart conformance (no services):
 cd event_sourcing && flutter test
+# Browser-only tests (sembast_web on IndexedDB, two tabs on one database):
+cd event_sourcing && flutter test --platform chrome test/web/
 # Postgres conformance/integration is gated on PG_TEST_URL (see
-# .github/workflows/conformance-tests.yml).
+# .github/workflows/conformance-tests.yml). Each file drops and recreates
+# the schema, so run them one file at a time.
 ```
+
+CI runs the analyzer and the full suite of every package in
+`.github/workflows/event-sourcing-tests.yml`, and the Postgres-gated files in
+`.github/workflows/conformance-tests.yml`.
 
 End-to-end and multi-client scenario suites and how/when to run them are
 documented in [`docs/e2e-testing.md`](../docs/e2e-testing.md).

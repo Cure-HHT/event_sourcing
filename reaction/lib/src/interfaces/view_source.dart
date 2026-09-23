@@ -20,13 +20,14 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///
 /// Two impls ship with `reaction`:
 ///
-/// - [LocalViewSource] (in-process): delegates to
-///   `eventStore.subscribe<T>(filter, AggregateMode(viewName, mapper,
-///   aggregates))`.
-/// - [RemoteViewSource] (cross-process): opens a WS
+/// - `LocalViewSource` (in-process): delegates to
+///   `eventStore.subscribe<T>(filter, AggregateMode(...))` with the
+///   view name, mapper and aggregates.
+/// - `RemoteViewSource` (cross-process): opens a WS
 ///   subscription with `(subscriptionId, viewName, filter, aggregates)`;
 ///   deserializes `Update<Map<String, Object?>>` envelopes and applies
 ///   the consumer's mapper client-side.
+// ignore: one_member_abstracts, a pluggable interface with Local and Remote implementations
 abstract interface class ViewSource {
   /// Watch a view's row-level updates.
   ///

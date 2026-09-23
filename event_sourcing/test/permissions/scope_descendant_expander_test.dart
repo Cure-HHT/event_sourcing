@@ -139,7 +139,7 @@ void main() {
     test('identity: assignment class equals target class', () async {
       final expander = ScopeDescendantExpander(
         registry: regionSiteParticipant(),
-        findRowsInTxn: (_, __, {where, limit, offset}) async => [],
+        findRowsInTxn: (_, _, {where, limit, offset}) async => [],
       );
       final result = await expander.expand(
         txn: const _FakeTxn(),
@@ -154,7 +154,7 @@ void main() {
     test('non-ancestor target returns empty set', () async {
       final expander = ScopeDescendantExpander(
         registry: regionSiteParticipant(),
-        findRowsInTxn: (_, __, {where, limit, offset}) async => [],
+        findRowsInTxn: (_, _, {where, limit, offset}) async => [],
       );
       // participant is NOT an ancestor of site.
       final result = await expander.expand(

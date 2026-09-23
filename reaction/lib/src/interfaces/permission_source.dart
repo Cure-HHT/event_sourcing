@@ -10,7 +10,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 
 /// Per-Principal view of the substrate's permissions surface — i.e.,
 /// "what is this user allowed to do, and over which scopes?" The active
-/// Principal is sourced from an [AuthSession] (set externally; not on
+/// Principal is sourced from an `AuthSession` (set externally; not on
 /// this interface) and used to scope the snapshot.
 ///
 /// The snapshot is the substrate's [EffectiveAuthorization]: active role
@@ -23,11 +23,11 @@ import 'package:event_sourcing/event_sourcing.dart';
 ///
 /// Two impls ship with `reaction`:
 ///
-/// - [LocalPermissionSource] (in-process): subscribes to the
+/// - `LocalPermissionSource` (in-process): subscribes to the
 ///   `role_permission_grants` and `user_role_scopes` views and routes
 ///   through `AuthorizationPolicy.effectivePermissionsFor` to derive
 ///   the [EffectiveAuthorization] for the active principal.
-/// - [RemotePermissionSource] (cross-process): initial
+/// - `RemotePermissionSource` (cross-process): initial
 ///   HTTP GET `/permissions/snapshot?principalId=...`; subsequent
 ///   updates via the multiplexed WS subscription on the same
 ///   projection.
@@ -49,7 +49,7 @@ abstract interface class PermissionSource {
   /// Use when the effective authorization context changes in a way the source
   /// can't observe on its own — e.g. an active-role switch carried as a
   /// per-request credential claim, where the active role changes but the
-  /// co-mounted [AuthSession] never leaves Authenticated (so neither the
+  /// co-mounted `AuthSession` never leaves Authenticated (so neither the
   /// Authenticated-transition refetch nor a server `stale_data` envelope
   /// fires). No-op when no Principal is active.
   Future<void> refresh();

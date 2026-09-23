@@ -27,8 +27,6 @@ const _kAggSpec = AggregateProjectionSpec(
   tombstoneEventTypes: <String>{'tombstone'},
 );
 
-final _kProjections = ProjectionRegistry()..register(_kAggSpec);
-
 Future<EventStore> _openStore() async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(

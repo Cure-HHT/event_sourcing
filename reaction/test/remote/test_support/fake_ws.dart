@@ -86,8 +86,8 @@ class FakeWsPair {
   final StreamController<Object?> _serverToClient = StreamController<Object?>();
   final _CloseCodeCell _clientCloseCell = _CloseCodeCell();
   final _CloseCodeCell _serverCloseCell = _CloseCodeCell();
-  late final _MemChannel serverSide;
-  late final _MemChannel clientSide;
+  late final WebSocketChannel serverSide;
+  late final WebSocketChannel clientSide;
   late final StreamSubscription<dynamic> _serverInboundSub;
   final Completer<void> _serverInboundDone = Completer<void>();
 

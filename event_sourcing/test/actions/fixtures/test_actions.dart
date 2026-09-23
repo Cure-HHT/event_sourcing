@@ -201,7 +201,7 @@ class RecordingAllowPolicy extends AuthorizationPolicy {
 
   /// Every [Transaction] the dispatcher injected into [isPermitted], in call
   /// order. Tests assert non-null and identity-equality with the txn the
-  /// dispatcher's [EventStore.runTransaction] body received.
+  /// dispatcher's `EventStore.runTransaction` body received.
   final List<Transaction?> txns = <Transaction?>[];
 
   @override

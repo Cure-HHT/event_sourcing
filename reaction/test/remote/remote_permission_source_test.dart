@@ -112,7 +112,9 @@ void main() {
         EffectiveAuthorizationCodec.encode(
           EffectiveAuthorization(
             activeRole: 'clinician',
-            rolePermissions: <Permission>{Permission('view:patient_diary')},
+            rolePermissions: <Permission>{
+              const Permission('view:patient_diary'),
+            },
             scopeAssignments: const <ScopeAssignment>[],
           ),
         ),

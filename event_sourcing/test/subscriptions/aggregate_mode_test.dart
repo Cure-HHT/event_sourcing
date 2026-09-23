@@ -15,13 +15,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 class _Note {
-  final String entryId;
-  final Map<String, Object?> answers;
   _Note({required this.entryId, required this.answers});
-  static _Note fromMap(Map<String, Object?> m) => _Note(
+  factory _Note.fromMap(Map<String, Object?> m) => _Note(
     entryId: m['latestEventId'] as String? ?? '_',
     answers: (m['answers'] as Map?)?.cast<String, Object?>() ?? {},
   );
+  final String entryId;
+  final Map<String, Object?> answers;
 }
 
 Future<EventStore> _open() async {
@@ -39,10 +39,10 @@ Future<EventStore> _open() async {
     );
   final projections = ProjectionRegistry()
     ..register(
-      AggregateProjectionSpec(
+      const AggregateProjectionSpec(
         viewName: 'diary_entries',
-        interest: const SubscriptionFilter(aggregateTypes: {'note'}),
-        tombstoneEventTypes: const {'tombstone'},
+        interest: SubscriptionFilter(aggregateTypes: {'note'}),
+        tombstoneEventTypes: {'tombstone'},
       ),
     );
   return EventStore.open(

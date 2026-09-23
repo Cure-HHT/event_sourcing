@@ -123,7 +123,6 @@ class NotesObserver {
       case EndOfReplay<Map<String, Object?>>():
         sawEndOfReplay = true;
       case Delta<Map<String, Object?>>(:final value):
-        if (value == null) break;
         final t = value['title'] as String?;
         if (t != null) {
           rows[t] = value;

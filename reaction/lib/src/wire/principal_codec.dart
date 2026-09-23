@@ -8,7 +8,7 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
-import 'envelope.dart';
+import 'package:reaction/src/wire/envelope.dart';
 
 /// JSON codec for the substrate's sealed [Principal] type.
 /// UserPrincipal and AnonymousPrincipal are distinguished by a

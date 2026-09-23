@@ -37,15 +37,15 @@ StoredEvent _ev(String type, Map<String, Object?> data) =>
       data: data,
     );
 
-final _spec = TableProjectionSpec(
+const _spec = TableProjectionSpec(
   viewName: 'role_permission_grants',
   interest: SubscriptionFilter(
-    eventTypes: const {'permission_granted', 'permission_revoked'},
+    eventTypes: {'permission_granted', 'permission_revoked'},
   ),
-  insertEventTypes: const {'permission_granted'},
-  removeEventTypes: const {'permission_revoked'},
-  rowKey: const CompositeKey(['data.role', 'data.permission', 'data.scope']),
-  rowData: const WholePayload(),
+  insertEventTypes: {'permission_granted'},
+  removeEventTypes: {'permission_revoked'},
+  rowKey: CompositeKey(['data.role', 'data.permission', 'data.scope']),
+  rowData: WholePayload(),
 );
 
 // NOTE: In this codebase, StoredEvent.data IS the event payload. The

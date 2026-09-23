@@ -41,7 +41,7 @@ void main() {
 
     test('fromJson rejects missing user_id', () {
       expect(
-        () => RoleUnassignedPayload.fromJson({
+        () => RoleUnassignedPayload.fromJson(const {
           'role': 'r',
           'scope': {'wildcard_class': true},
         }),

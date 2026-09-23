@@ -163,4 +163,91 @@ void main() {
       backend = await _openBackend('watch-fifo-reopen-$dbCounter.db');
     });
   });
+
+  // Verifies: EVS-PRD-subscription/E
+  // two transactions in flight at once on one backend: the committed one
+  //   notifies its FIFO's watchers exactly once, the rolled-back one never.
+  group('SembastBackend.watchFifo under concurrent transactions', () {
+    late SembastBackend backend;
+    var dbCounter = 0;
+
+    setUp(() async {
+      dbCounter += 1;
+      backend = await _openBackend('watch-fifo-concurrent-$dbCounter.db');
+    });
+
+    tearDown(() async {
+      await backend.close();
+    });
+
+    /// Enqueues one row on [destinationId] inside its own transaction and
+    /// throws after the write when [rollBack] is set.
+    Future<void> enqueueInTxn(
+      String destinationId, {
+      required String eventId,
+      required bool rollBack,
+    }) => backend.transaction<void>((txn) async {
+      await backend.enqueueFifoTxn(
+        txn,
+        destinationId,
+        [storedEventFixture(eventId: eventId, sequenceNumber: 1)],
+        wirePayload: wirePayloadJson(const <String, Object?>{'ok': true}),
+      );
+      if (rollBack) throw StateError('injected rollback');
+    });
+
+    /// Starts both transactions without awaiting either, so both are in
+    /// flight at once, then returns the emissions each destination's
+    /// watcher received after its initial snapshot.
+    Future<(List<List<FifoEntry>>, List<List<FifoEntry>>)> runPair({
+      required bool firstRollsBack,
+    }) async {
+      final emissionsA = <List<FifoEntry>>[];
+      final emissionsB = <List<FifoEntry>>[];
+      final subA = backend.watchFifo('A').listen(emissionsA.add);
+      final subB = backend.watchFifo('B').listen(emissionsB.add);
+      await pumpEventQueue();
+      expect(emissionsA, hasLength(1), reason: 'initial snapshot of A');
+      expect(emissionsB, hasLength(1), reason: 'initial snapshot of B');
+
+      final first = enqueueInTxn(
+        'A',
+        eventId: 'on-a',
+        rollBack: firstRollsBack,
+      );
+      final second = enqueueInTxn(
+        'B',
+        eventId: 'on-b',
+        rollBack: !firstRollsBack,
+      );
+      final outcomes = await Future.wait<Object?>([
+        first.then<Object?>((_) => null, onError: (Object e) => e),
+        second.then<Object?>((_) => null, onError: (Object e) => e),
+      ]);
+      expect(outcomes.whereType<StateError>(), hasLength(1));
+      await pumpEventQueue();
+
+      await subA.cancel();
+      await subB.cancel();
+      return (emissionsA.skip(1).toList(), emissionsB.skip(1).toList());
+    }
+
+    test('first commits, second rolls back: only the first notifies, '
+        'once', () async {
+      final (liveA, liveB) = await runPair(firstRollsBack: false);
+      expect(liveA, hasLength(1), reason: 'committed enqueue on A');
+      expect(liveA.single.single.eventIds, ['on-a']);
+      expect(liveB, isEmpty, reason: 'rolled-back enqueue on B');
+      expect(await backend.listFifoEntries('B'), isEmpty);
+    });
+
+    test('first rolls back, second commits: only the second notifies, '
+        'once', () async {
+      final (liveA, liveB) = await runPair(firstRollsBack: true);
+      expect(liveA, isEmpty, reason: 'rolled-back enqueue on A');
+      expect(liveB, hasLength(1), reason: 'committed enqueue on B');
+      expect(liveB.single.single.eventIds, ['on-b']);
+      expect(await backend.listFifoEntries('A'), isEmpty);
+    });
+  });
 }

@@ -5,8 +5,8 @@
 // are not parse-denied for programmatic/sequential callers).
 import 'package:event_sourcing/event_sourcing.dart';
 
-import '../interfaces/action_submitter.dart';
-import 'idempotency_key_generator.dart';
+import 'package:reaction/src/interfaces/action_submitter.dart';
+import 'package:reaction/src/state/idempotency_key_generator.dart';
 
 /// Non-widget action dispatch: the programmatic analog of `ActionBuilder`'s
 /// submit path. Mints an idempotency key (via [IdempotencyKeyGenerator]) when

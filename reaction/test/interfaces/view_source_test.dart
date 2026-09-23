@@ -26,6 +26,10 @@ class _StubViewSource implements ViewSource {
   }) => const Stream.empty();
 }
 
+/// Returns [value] typed as [T]. Passing an explicit type argument makes the
+/// compiler check that [value] is assignable to the contracted type.
+T _asContracted<T>(T value) => value;
+
 void main() {
   group('ViewSource interface shape', () {
     test('reachable through the public barrel with the contracted '
@@ -35,11 +39,13 @@ void main() {
       // If the interface ever drifts (renamed param, missing
       // optional, dropped generic), this fails to compile.
       final ViewSource source = _StubViewSource();
-      final Stream<Update<int>> stream = source.watch<int>(
-        viewName: 'noop_view',
-        mapper: (row) => 0,
-        filter: null,
-        aggregates: null,
+      final stream = _asContracted<Stream<Update<int>>>(
+        source.watch<int>(
+          viewName: 'noop_view',
+          mapper: (row) => 0,
+          filter: null,
+          aggregates: null,
+        ),
       );
       expect(stream, isA<Stream<Update<int>>>());
     });

@@ -65,9 +65,6 @@ import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
-import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
-import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
-import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
@@ -78,6 +75,9 @@ import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
+import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
@@ -100,7 +100,7 @@ typedef EventStoreSyncCycleTrigger = Future<void> Function();
 /// The type lives in `lib/src/` and is intentionally not re-exported from the
 /// package barrel: external consumers interact with the event store through the
 /// public [EventStore] API and never construct a collector directly. Only
-/// intra-package callers (e.g. [DestinationRegistry]) that open their own
+/// intra-package callers (e.g. `DestinationRegistry`) that open their own
 /// transaction via [EventStore.runTransaction] see this type.
 class PublishCollector {
   final List<StoredEvent> _events = <StoredEvent>[];
@@ -212,14 +212,14 @@ class EventStore {
   final ProjectionInterpreter _interpreter;
 
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
-  /// supplied directly on the constructor). Used by [rebuildView] to apply
+  /// supplied directly on the constructor). Used by `rebuildView` to apply
   /// promoter chains during replay.
   final PromoterRegistry _promoters;
 
-  /// Exposes the projection registry for [rebuildView].
+  /// Exposes the projection registry for `rebuildView`.
   ProjectionRegistry get projections => _interpreter.projections;
 
-  /// Exposes the promoter registry for [rebuildView].
+  /// Exposes the promoter registry for `rebuildView`.
   PromoterRegistry get promoters => _promoters;
 
   final Clock? _clock;
@@ -256,10 +256,8 @@ class EventStore {
     bool allowDowngrade = false,
   }) async {
     await _runBootVersionCheck(storage, allowDowngrade: allowDowngrade);
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    effectiveProjections.seal();
-    final effectivePromoters = promoters ?? PromoterRegistry();
-    effectivePromoters.seal();
+    final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
+    final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
     await _runBootSnapshotPromotionPass(
       storage: storage,
       entryTypes: entryTypes,
@@ -301,10 +299,8 @@ class EventStore {
     Clock? clock,
     Uuid? uuid,
   }) async {
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    effectiveProjections.seal();
-    final effectivePromoters = promoters ?? PromoterRegistry();
-    effectivePromoters.seal();
+    final effectiveProjections = (projections ?? ProjectionRegistry())..seal();
+    final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
     await _runBootSnapshotPromotionPass(
       storage: storage,
       entryTypes: entryTypes,
@@ -340,7 +336,7 @@ class EventStore {
   ///      one `view_snapshot_promoted` audit event per promoted pair via
   ///      [_appendViewSnapshotPromotedAuditInTxn].
   ///
-  /// All three run inside a single [backend.transaction] so a mid-pass
+  /// All three run inside a single `backend.transaction` so a mid-pass
   /// crash rolls back atomically and the next boot retries from a clean
   /// state.
   // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B,
@@ -459,26 +455,55 @@ class EventStore {
   /// listeners receive the same delivery they would from the public [append]
   /// method.
   ///
-  /// External callers (e.g. [DestinationRegistry]) that need to open their
+  /// External callers (e.g. `DestinationRegistry`) that need to open their
   /// own transaction and call [appendInTxn] SHOULD use this method instead
-  /// of [backend.transaction] directly to ensure subscription delivery.
+  /// of `backend.transaction` directly to ensure subscription delivery.
   ///
   /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
   /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
+  ///
+  /// The backend may run [body] more than once before one run commits (see
+  /// `StorageBackend.transaction`). Each run receives its own
+  /// [PublishCollector], and only the committed run's collector is
+  /// published. A caller keeps every value that describes a run -- event ids
+  /// it appended, a decision it reached, results it accumulated -- inside
+  /// [body] and returns it as [body]'s result, or resets it at the start of
+  /// each run, so that what it reports reflects only the committed run.
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
     return _runInTxnWithPublish(body);
   }
 
-  /// Internal helper: wraps a [backend.transaction] call with a
+  /// Internal helper: wraps a `backend.transaction` call with a
   /// [PublishCollector] and publishes all collected events and row changes
   /// after commit.
+  // Implements: EVS-PRD-subscription/E
+  // A backend may run the body more than once
+  //   (Postgres re-runs it after a serialization conflict; sembast_web re-runs
+  //   it after another tab commits first). Each run gets a fresh collector, and
+  //   only the collector of the run that committed (the last one) publishes.
+  //   Runs that overlap break that contract and are refused.
   Future<T> _runInTxnWithPublish<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
-    final collector = PublishCollector();
-    final result = await backend.transaction<T>((txn) => body(txn, collector));
+    late PublishCollector collector;
+    var runInProgress = false;
+    final result = await backend.transaction<T>((txn) async {
+      if (runInProgress) {
+        throw StateError(
+          'StorageBackend.transaction started a run of the body while an '
+          'earlier run was still in progress; runs must be sequential.',
+        );
+      }
+      runInProgress = true;
+      collector = PublishCollector();
+      try {
+        return await body(txn, collector);
+      } finally {
+        runInProgress = false;
+      }
+    });
     for (final event in collector.events) {
       _subs.publishEvent(event);
     }
@@ -508,7 +533,7 @@ class EventStore {
   ///
   /// Atomic snapshot-then-attach: opens a single live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and forward-mode delivery. A [_replayDone] flag
+  /// snapshot read and forward-mode delivery. A `_replayDone` flag
   /// inside the listener routes events to the buffer during snapshot
   /// read and directly to the output controller after it.
   ///
@@ -601,7 +626,7 @@ class EventStore {
     }
 
     controller = StreamController<Update<T>>(
-      onListen: () => start(),
+      onListen: start,
       onCancel: () async {
         await liveSub?.cancel();
         liveSub = null;
@@ -1110,6 +1135,10 @@ class EventStore {
     final outcomes = <PerEventIngestOutcome>[];
 
     await _runInTxnWithPublish<void>((txn, collector) async {
+      // Implements: EVS-PRD-event-log/G
+      // A re-run body starts from no outcomes, so
+      //   the result lists the committed run's outcomes only.
+      outcomes.clear();
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
         final storedEvent = StoredEvent.fromMap(
@@ -1236,19 +1265,11 @@ class EventStore {
       localSeq: localSeq,
     );
 
-    // 5. Read prior aggregate history before appendEvent so the
-    //    materializer receives "events strictly before the new one"
-    //    in symmetry with the append path's loop.
-    final aggregateHistory = await backend.findEventsForAggregateInTxn(
-      txn,
-      updatedEvent.aggregateId,
-    );
-
-    // 6. Persist via the same path as origin appends.
+    // 5. Persist via the same path as origin appends.
     await backend.appendEvent(txn, updatedEvent);
     collector?.add(updatedEvent);
 
-    // 7. Fire the projection interpreter symmetric with the local-append path.
+    // 6. Fire the projection interpreter symmetric with the local-append path.
     //    The interpreter runs inside the same transaction as `appendEvent`,
     //    applying all registered ProjectionSpecs whose interest filter matches
     //    the event. A throw propagates out and rolls back the entire ingest

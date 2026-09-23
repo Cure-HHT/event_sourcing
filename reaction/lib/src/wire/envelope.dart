@@ -5,6 +5,7 @@
 
 /// Discriminator and primitive-extraction helpers shared by all wire
 /// codecs. Package-private; never exported from reaction.dart.
+library;
 
 /// Reads the "type" discriminator from a wire envelope.
 String readType(Map<String, Object?> json) {

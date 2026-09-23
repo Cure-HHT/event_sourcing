@@ -29,10 +29,10 @@ void main() {
 
     final projections = ProjectionRegistry()
       ..register(
-        AggregateProjectionSpec(
+        const AggregateProjectionSpec(
           viewName: 'diary_entries',
-          interest: const SubscriptionFilter(aggregateTypes: {'note'}),
-          tombstoneEventTypes: const {'tombstone'},
+          interest: SubscriptionFilter(aggregateTypes: {'note'}),
+          tombstoneEventTypes: {'tombstone'},
         ),
       );
 

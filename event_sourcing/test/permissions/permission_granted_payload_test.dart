@@ -20,7 +20,7 @@ void main() {
 
     test('fromJson throws on missing role', () {
       expect(
-        () => PermissionGrantedPayload.fromJson({'permissionName': 'x'}),
+        () => PermissionGrantedPayload.fromJson(const {'permissionName': 'x'}),
         throwsA(anyOf(isA<TypeError>(), isA<FormatException>())),
       );
     });

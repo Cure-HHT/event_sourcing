@@ -327,7 +327,7 @@ class _ConnectionState {
   /// of truth that the write-path policy's `_matches`
   /// (`TableBackedAuthorizationPolicy`) also obeys, so the read path cannot
   /// over-grant relative to the write path by construction.
-  /// Each assignment is checked against the view binding's [scopeClass]
+  /// Each assignment is checked against the view binding's `scopeClass`
   /// BEFORE it is consumed:
   ///
   /// - `TotalWildcardScope` → genuinely unrestricted (no class). Returns

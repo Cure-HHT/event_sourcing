@@ -14,7 +14,6 @@ import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/reaction_handlers.dart';
 import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';

@@ -44,9 +44,9 @@ class IdempotencyEntry {
   /// EVS-PRD-action-dispatch/E: canonical-JSON (RFC 8785) encoding of the
   /// original submission's `rawInput`. The dispatcher compares this
   /// against the current submission's canonical-JSON `rawInput` at
-  /// Stage 4 — match → return [DispatchIdempotencyHit]; mismatch →
+  /// Stage 4 — match → return `DispatchIdempotencyHit`; mismatch →
   /// emit `idempotency_mismatch` denial event and return
-  /// [DispatchIdempotencyMismatch].
+  /// `DispatchIdempotencyMismatch`.
   ///
   /// Nullable for forward-compatibility: rows recorded before this
   /// field shipped have no canonical JSON to compare against. The

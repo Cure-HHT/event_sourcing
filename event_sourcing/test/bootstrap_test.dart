@@ -1,8 +1,6 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 

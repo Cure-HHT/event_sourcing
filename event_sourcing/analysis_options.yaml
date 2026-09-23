@@ -15,6 +15,10 @@ analyzer:
   exclude:
     - '**/*.g.dart'
     - '**/*.freezed.dart'
+    - 'build/**'
+    - 'example/**'
+    - 'example_action_permissions/**'
+    - 'example_clinical_scopes/**'
 
 linter:
   rules:

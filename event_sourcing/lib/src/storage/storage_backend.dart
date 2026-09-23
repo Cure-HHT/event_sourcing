@@ -43,6 +43,19 @@ abstract class StorageBackend {
   /// Concrete backends SHALL invalidate the [Transaction] handle when [body] returns
   /// or throws, so that a later out-of-scope use raises an error rather than
   /// silently writing against a closed transaction.
+  ///
+  /// A backend MAY run [body] more than once before one run commits, to
+  /// recover from a transient conflict: a serializable database re-runs it
+  /// after a serialization failure, and a browser database re-runs it when
+  /// another tab committed first. When it does, the runs SHALL be
+  /// sequential (a run starts only after the previous one returned or threw),
+  /// each run SHALL get a fresh [Transaction] handle, every write of a run
+  /// that does not commit SHALL be rolled back, and the run whose commit
+  /// completes the returned future SHALL be the last run started. A backend
+  /// that fires its own change notifications (for example a queue watcher)
+  /// SHALL fire only those of the committed run, after the commit. Callers
+  /// therefore keep any state that describes a run inside [body], or reset it
+  /// at the start of each run, so a discarded run leaves nothing behind.
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body);
 
   // -------- Events --------
@@ -269,7 +282,7 @@ abstract class StorageBackend {
   // -------- View target versions --------
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by [rebuildView]
+  /// if no entry has been registered. Used by `rebuildView`
   Future<int?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,

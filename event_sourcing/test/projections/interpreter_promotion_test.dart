@@ -14,8 +14,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
-import 'package:event_sourcing/src/promoters/primitives/transform.dart';
-import 'package:event_sourcing/src/promoters/promoter_spec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -59,14 +57,14 @@ void main() {
   group('ProjectionInterpreter promotion', () {
     test('event at registered version is folded raw (no promotion)', () async {
       final backend = await _openBackend();
-      final entryTypes = EntryTypeRegistry();
-      entryTypes.register(
-        const EntryTypeDefinition(
-          id: _kNoteEntryType,
-          registeredVersion: 1,
-          name: 'Note',
-        ),
-      );
+      final entryTypes = EntryTypeRegistry()
+        ..register(
+          const EntryTypeDefinition(
+            id: _kNoteEntryType,
+            registeredVersion: 1,
+            name: 'Note',
+          ),
+        );
 
       final projections = ProjectionRegistry()
         ..register(
@@ -101,14 +99,14 @@ void main() {
       'event below registered version is folded after per-view promotion',
       () async {
         final backend = await _openBackend();
-        final entryTypes = EntryTypeRegistry();
-        entryTypes.register(
-          const EntryTypeDefinition(
-            id: _kNoteEntryType,
-            registeredVersion: 2,
-            name: 'Note',
-          ),
-        );
+        final entryTypes = EntryTypeRegistry()
+          ..register(
+            const EntryTypeDefinition(
+              id: _kNoteEntryType,
+              registeredVersion: 2,
+              name: 'Note',
+            ),
+          );
 
         final projections = ProjectionRegistry()
           ..register(
@@ -174,14 +172,14 @@ void main() {
       // same entry type. After folding the same v1 event, viewA's row has
       // body_a; viewB's row has neither body nor body_a.
       final backend = await _openBackend();
-      final entryTypes = EntryTypeRegistry();
-      entryTypes.register(
-        const EntryTypeDefinition(
-          id: _kNoteEntryType,
-          registeredVersion: 2,
-          name: 'Note',
-        ),
-      );
+      final entryTypes = EntryTypeRegistry()
+        ..register(
+          const EntryTypeDefinition(
+            id: _kNoteEntryType,
+            registeredVersion: 2,
+            name: 'Note',
+          ),
+        );
 
       final projections = ProjectionRegistry()
         ..register(

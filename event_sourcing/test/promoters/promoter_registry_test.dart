@@ -15,10 +15,10 @@ PromoterSpec _spec(int from, int to) => PromoterSpec(
 void main() {
   group('PromoterRegistry', () {
     test('chain returns specs in order from -> to', () {
-      final reg = PromoterRegistry();
-      reg.register(_spec(1, 2));
-      reg.register(_spec(2, 3));
-      reg.register(_spec(3, 4));
+      final reg = PromoterRegistry()
+        ..register(_spec(1, 2))
+        ..register(_spec(2, 3))
+        ..register(_spec(3, 4));
       final chain = reg.chain(
         viewName: 'v',
         entryType: 't',
@@ -44,10 +44,10 @@ void main() {
     });
 
     test('chain throws when a step is missing', () {
-      final reg = PromoterRegistry();
-      reg.register(_spec(1, 2));
-      // missing 2 -> 3
-      reg.register(_spec(3, 4));
+      final reg = PromoterRegistry()
+        ..register(_spec(1, 2))
+        // missing 2 -> 3
+        ..register(_spec(3, 4));
       expect(
         () => reg.chain(
           viewName: 'v',
@@ -60,14 +60,12 @@ void main() {
     });
 
     test('register throws on duplicate (view, entry, fromVersion)', () {
-      final reg = PromoterRegistry();
-      reg.register(_spec(1, 2));
+      final reg = PromoterRegistry()..register(_spec(1, 2));
       expect(() => reg.register(_spec(1, 2)), throwsArgumentError);
     });
 
     test('register after seal throws', () {
-      final reg = PromoterRegistry();
-      reg.seal();
+      final reg = PromoterRegistry()..seal();
       expect(() => reg.register(_spec(1, 2)), throwsArgumentError);
     });
   });

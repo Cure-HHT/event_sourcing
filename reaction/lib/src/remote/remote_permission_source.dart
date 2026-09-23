@@ -32,7 +32,7 @@ import 'package:reaction/src/wire/effective_authorization_codec.dart';
 /// Clears to `null` when the auth session leaves Authenticated.
 ///
 /// Mid-session refresh: [refresh] re-fetches the snapshot and is wired
-/// by [RemoteScope] to the server's `stale_data` envelope (emitted by
+/// by `RemoteScope` to the server's `stale_data` envelope (emitted by
 /// the AuthorizationWatcher on security-EXPANDING changes — `role_assigned`,
 /// `permission_granted`, containment changes — see
 /// `spec/reaction-remote.md` "Mid-session permission changes"). UI
@@ -98,7 +98,7 @@ class RemotePermissionSource implements PermissionSource {
   /// Re-fetch the snapshot if currently authenticated. No-op otherwise
   /// (when the session is not Authenticated, [current] is already
   /// `null` and there is nothing on the server to read with our
-  /// credential). Wired by [RemoteScope] to the WS `stale_data`
+  /// credential). Wired by `RemoteScope` to the WS `stale_data`
   /// envelope so security-EXPANDING permission changes propagate to
   /// the UI without waiting for the next Authenticated transition.
   ///

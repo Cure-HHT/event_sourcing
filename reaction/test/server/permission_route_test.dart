@@ -37,8 +37,8 @@ void main() {
     final stub = _StubPolicy(
       EffectiveAuthorization(
         activeRole: 'install',
-        rolePermissions: {Permission('greet.send')},
-        scopeAssignments: [],
+        rolePermissions: {const Permission('greet.send')},
+        scopeAssignments: const [],
       ),
     );
     final handler = permissionSnapshotHandler(policy: stub);

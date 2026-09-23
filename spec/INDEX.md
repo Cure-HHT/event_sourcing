@@ -14,7 +14,7 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 5c082273 |
-| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | 5fd99e5f |
+| EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | f8de0379 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | efeb5afb |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 79454334 |
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
@@ -28,7 +28,7 @@
 | EVS-PRD-reaction-widget-contract      | Reaction Widget Contract        | prd-reaction.md                      | 57462176 |
 | EVS-PRD-regulatory-alignment          | Regulatory Alignment            | prd-regulatory-alignment.md          | d8a802ad |
 | EVS-PRD-scoped-permissions            | Scope-aware authorization model | scoped-permissions.md                | 3442b415 |
-| EVS-PRD-subscription                  | Subscription                    | prd-subscription.md                  | 57530d86 |
+| EVS-PRD-subscription                  | Subscription                    | prd-subscription.md                  | 026033a7 |
 | EVS-PRD-view-subscriber               | View Subscriber                 | prd-reaction.md                      | 4dd6e5f0 |
 
 ## DEVELOPMENT

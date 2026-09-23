@@ -34,7 +34,7 @@ void main() {
     });
 
     test('exhaustive switch across the three variants', () {
-      AuthStatus status = const NotAuthenticated();
+      const AuthStatus status = NotAuthenticated();
       final tag = switch (status) {
         Authenticated() => 'authd',
         NotAuthenticated() => 'unauth',

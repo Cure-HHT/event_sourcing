@@ -41,11 +41,11 @@ StoredEvent _ev(
   data: data,
 );
 
-final _spec = AggregateProjectionSpec(
+const _spec = AggregateProjectionSpec(
   viewName: 'diary_entries',
-  interest: SubscriptionFilter(aggregateTypes: const {'note'}),
-  tombstoneEventTypes: const {'tombstone'},
-  derivedFields: const [
+  interest: SubscriptionFilter(aggregateTypes: {'note'}),
+  tombstoneEventTypes: {'tombstone'},
+  derivedFields: [
     DerivedField(
       'effective_date',
       DottedPathLookup(

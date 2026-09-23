@@ -17,15 +17,9 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 
 /// Change record returned by [AggregateFold.applyEvent] and
-/// [TableFold.applyEvent]. Collected by [ProjectionInterpreter.applyEvent]
-/// and returned to [EventStore.append] for post-commit subscriber notification.
+/// `TableFold.applyEvent`. Collected by `ProjectionInterpreter.applyEvent`
+/// and returned to `EventStore.append` for post-commit subscriber notification.
 class AggregateFoldChange {
-  final String viewName;
-  final String aggregateId;
-  final Map<String, Object?>? newValue; // null = tombstoned
-  final int sequence;
-  final String cause;
-  final bool isTombstone;
   AggregateFoldChange({
     required this.viewName,
     required this.aggregateId,
@@ -34,6 +28,12 @@ class AggregateFoldChange {
     required this.cause,
     required this.isTombstone,
   });
+  final String viewName;
+  final String aggregateId;
+  final Map<String, Object?>? newValue; // null = tombstoned
+  final int sequence;
+  final String cause;
+  final bool isTombstone;
 }
 
 class AggregateFold {

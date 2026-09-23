@@ -8,8 +8,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 // AggregateIdKey and WholePayload are not re-exported from the barrel.
-import 'package:event_sourcing/src/projections/primitives/row_data.dart';
-import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fixtures/test_actions.dart'
@@ -667,7 +665,7 @@ void main() {
     test(
       'scopeFor returns class-matching BoundScope → Allow falls through',
       () async {
-        registry.register(ScopedPatientEditAction());
+        registry.register(const ScopedPatientEditAction());
         final policy = RecordingAllowPolicy();
         final allowDispatcher = ActionDispatcher(
           registry: registry,
@@ -733,11 +731,8 @@ void main() {
       'scopeFor returns class-mismatched BoundScope → Deny(scopeUnresolvable)',
       () async {
         registry.register(
-          ScopedPatientEditAction(
-            scopeOverride: const BoundScope(
-              class_: 'patient_group',
-              value: 'pg-7',
-            ),
+          const ScopedPatientEditAction(
+            scopeOverride: BoundScope(class_: 'patient_group', value: 'pg-7'),
           ),
         );
         final allowDispatcher = makeAllowDispatcher(
@@ -778,7 +773,7 @@ void main() {
       'scopeFor returns TotalWildcardScope → Deny(scopeUnresolvable)',
       () async {
         registry.register(
-          ScopedPatientEditAction(scopeOverride: const TotalWildcardScope()),
+          const ScopedPatientEditAction(scopeOverride: TotalWildcardScope()),
         );
         final allowDispatcher = makeAllowDispatcher(
           registry,
@@ -814,7 +809,7 @@ void main() {
     test(
       'class-matched scope is stamped onto policy-deny authorization_denied event',
       () async {
-        registry.register(ScopedPatientEditAction());
+        registry.register(const ScopedPatientEditAction());
         final denyDispatcher = ActionDispatcher(
           registry: registry,
           authorization: const AlwaysDenyNotGrantedPolicy(),
@@ -994,15 +989,13 @@ void main() {
       // `hello.said` events and writes one row per (aggregateId).
       final projections = ProjectionRegistry()
         ..register(
-          TableProjectionSpec(
+          const TableProjectionSpec(
             viewName: 'greetings_view',
-            interest: const SubscriptionFilter(
-              eventTypes: <String>{'hello.said'},
-            ),
-            insertEventTypes: const <String>{'hello.said'},
-            removeEventTypes: const <String>{},
-            rowKey: const AggregateIdKey(),
-            rowData: const WholePayload(),
+            interest: SubscriptionFilter(eventTypes: <String>{'hello.said'}),
+            insertEventTypes: <String>{'hello.said'},
+            removeEventTypes: <String>{},
+            rowKey: AggregateIdKey(),
+            rowData: WholePayload(),
           ),
         );
 
@@ -1041,8 +1034,9 @@ void main() {
         row,
         isNotNull,
         reason:
-            'appendInTxn must run the projection interpreter so action-'
-            'emitted events update views inside the dispatch transaction',
+            'appendInTxn must run the projection interpreter so '
+            'action-emitted events update views inside the dispatch '
+            'transaction',
       );
       expect(row!['who'], 'in-tx-world');
     });
@@ -1288,7 +1282,7 @@ void main() {
     // (multiple policy reads within one dispatch share one storage transaction)
     test('both isPermitted calls within one dispatch (TwoPermissionAction) '
         'receive the SAME Transaction instance — proves the policy reads share one '
-        'snapshot across the action\'s permission iteration', () async {
+        "snapshot across the action's permission iteration", () async {
       registry.register(TwoPermissionAction());
       final policy = RecordingAllowPolicy();
       final d = ActionDispatcher(
@@ -1314,7 +1308,7 @@ void main() {
         isTrue,
         reason:
             'authorize-stage policy reads for multiple permissions in '
-            'one dispatch must share the dispatcher\'s active txn',
+            "one dispatch must share the dispatcher's active txn",
       );
     });
 

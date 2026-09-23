@@ -9,25 +9,25 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('promotes payload through chain v1 -> v3', () {
-    final reg = PromoterRegistry();
-    reg.register(
-      const PromoterSpec(
-        viewName: 'v',
-        entryType: 't',
-        fromVersion: 1,
-        toVersion: 2,
-        transforms: [RenameField(sourceField: 'old', targetField: 'mid')],
-      ),
-    );
-    reg.register(
-      const PromoterSpec(
-        viewName: 'v',
-        entryType: 't',
-        fromVersion: 2,
-        toVersion: 3,
-        transforms: [RenameField(sourceField: 'mid', targetField: 'final')],
-      ),
-    );
+    final reg = PromoterRegistry()
+      ..register(
+        const PromoterSpec(
+          viewName: 'v',
+          entryType: 't',
+          fromVersion: 1,
+          toVersion: 2,
+          transforms: [RenameField(sourceField: 'old', targetField: 'mid')],
+        ),
+      )
+      ..register(
+        const PromoterSpec(
+          viewName: 'v',
+          entryType: 't',
+          fromVersion: 2,
+          toVersion: 3,
+          transforms: [RenameField(sourceField: 'mid', targetField: 'final')],
+        ),
+      );
     final result = PromoterExecutor.promote(
       registry: reg,
       viewName: 'v',

@@ -13,9 +13,9 @@ import 'package:reaction/src/scope/connection_status.dart';
 ///
 /// Two shipped impls:
 ///
-/// - [LocalScope]  — in-process composition (Local* impls); always
+/// - `LocalScope`  — in-process composition (Local* impls); always
 ///                   reports [Connected].
-/// - [RemoteScope] — cross-process composition (Remote* impls over a
+/// - `RemoteScope` — cross-process composition (Remote* impls over a
 ///                   shared WS); drives [ConnectionStatus] from WS
 ///                   lifecycle events.
 ///

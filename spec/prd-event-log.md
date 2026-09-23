@@ -23,6 +23,8 @@ E. The library SHALL make append progress under concurrent writers: when the sto
 
 F. The library SHALL allow a consumer-supplied event filter to include or exclude the events the library itself generates.
 
+G. When the storage layer runs a write more than once before one run commits, the library SHALL report to the caller, and record, only the outcome of the run that committed: an identifier, decision or result produced by a run that did not commit SHALL NOT appear in what the library returns or records.
+
 ## Rationale
 
 **Why append-only?** Audit and regulatory regimes demand that the history of state changes be reconstructable. Mutable storage breaks that reconstructability — once an event can be edited, the relationship between recorded history and reality becomes a matter of trust rather than evidence. Append-only eliminates that trust requirement at the storage layer.
@@ -35,6 +37,8 @@ F. The library SHALL allow a consumer-supplied event filter to include or exclud
 
 **Why retry transient conflicts instead of exposing them?** A storage backend that serializes concurrent writers (for example, one using a strict isolation level to keep the global order and the hash-chain tip consistent) signals an unresolvable concurrent access by aborting the loser with a transient "try again" error. That error is a normal, expected outcome of contention, not a defect — the documented remedy is simply to re-run the aborted work. Re-running is safe because every step of an append (order reservation, hash-tip read, insert, and derived-view writes) happens inside the aborted, rolled-back transaction, so a retry re-derives all of it from the latest committed state. Surfacing the transient error to application code instead would force every caller — including internal reactors — to re-implement the same retry, and a single unguarded caller would turn routine contention into a crash. Bounding the attempts keeps pathological contention from spinning forever; once the bound is reached the failure is surfaced honestly.
 
+**Why report only the committed run?** A re-run re-derives everything from the latest committed state, so a run that rolled back may have minted event identifiers the log never holds, or reached a decision that the committed run reversed -- an authorization denial, for example, that a role granted in between turned into a success. Returning the rolled-back run's values would tell a caller an action was denied although its events committed, or hand out an event identifier that names no stored event; an idempotency record built from them would replay that falsehood on every retry. Every value the library returns or records from a transactional write is therefore taken from the run that committed.
+
 **Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
 
 **Why must library-generated events be filterable?** The library records the events it generates itself — boot-version transitions, registry snapshots, retention and redaction audits — in the same log as the application's, so the audit trail is single and complete. But they are the library's own vocabulary, not the application's, and they are noise to most views. A consumer writing an ordinary view should not have to learn that vocabulary to keep them out, so a filter that does not ask for them does not receive them.
@@ -43,9 +47,11 @@ The opt-in matters as much as the default. An audit or forensic view is a legiti
 
 ## Changelog
 
+- 2026-09-23 | f8de0379 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add G: a re-run write reports and records only the committed run's outcome
 - 2026-09-07 | 5fd99e5f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-07 | - | - | Michael Lewis (<michael@anspar.org>) | Add F: a consumer's event filter can include or exclude library-generated events
 - 2026-08-10 | 06d5104c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e710dcce | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Event Log* | **Hash**: 5fd99e5f
+*End* *Event Log* | **Hash**: f8de0379

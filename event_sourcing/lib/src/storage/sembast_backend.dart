@@ -124,18 +124,6 @@ class SembastBackend extends StorageBackend {
   final StreamController<String> _viewChangesController =
       StreamController<String>.broadcast();
 
-  /// Per-transaction post-commit callback queue. The [transaction]
-  /// wrapper swaps in a fresh inner list around each body, then runs
-  /// the queued callbacks if and only if the body commits successfully.
-  /// Write paths ([appendEvent], FIFO mutators) push
-  /// `() => _eventsController.add(event)` /
-  /// `() => _fifoChangesController.add(destinationId)` onto this list
-  /// after their in-txn writes succeed; the wrapper drains them on
-  /// commit. The field is mutable so the wrapper can preserve outer
-  /// state across nested calls (sembast does not nest, but the swap is
-  /// the cleanest race-safe pattern).
-  List<void Function()> _pendingPostCommit = <void Function()>[];
-
   /// Close the underlying sembast database AND the reactive broadcast
   /// controllers used by [watchEvents] / [watchFifo] / [watchView]. After
   /// close, further calls to those reactive methods SHALL throw
@@ -143,6 +131,7 @@ class SembastBackend extends StorageBackend {
   ///
   /// Not safe to call concurrently with an in-flight [transaction]. The
   /// caller is responsible for awaiting outstanding work before closing.
+  @override
   Future<void> close() async {
     await _eventsController.close();
     await _fifoChangesController.close();
@@ -161,32 +150,33 @@ class SembastBackend extends StorageBackend {
 
   // -------- transaction --------
 
+  // Implements: EVS-PRD-subscription/E
+  // Post-commit notifications are queued on the
+  //   per-run transaction handle, not on the backend, so two transactions in
+  //   flight at once never share a queue. sembast_web re-runs a body when
+  //   another tab committed first; each run gets a fresh handle, and only the
+  //   run that committed (the last one) has its queue fired. A body that
+  //   throws commits nothing and fires nothing.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     final db = _database();
-    final outerPending = _pendingPostCommit;
-    final innerPending = <void Function()>[];
-    _pendingPostCommit = innerPending;
-    try {
-      final result = await db.transaction((sembastTxn) async {
-        final txn = _SembastTxn._(sembastTxn);
-        try {
-          return await body(txn);
-        } finally {
-          txn._invalidate();
-        }
-      });
-      // Commit succeeded — fire post-commit callbacks. Skip emissions
-      // when the corresponding controller has been closed (close() is
-      // not safe to race with in-flight transactions, but a fast-cycle
-      // test may still observe the closed state here).
-      for (final cb in innerPending) {
-        cb();
+    late _SembastTxn committedRun;
+    final result = await db.transaction((sembastTxn) async {
+      final txn = _SembastTxn._(sembastTxn);
+      committedRun = txn;
+      try {
+        return await body(txn);
+      } finally {
+        txn._invalidate();
       }
-      return result;
-    } finally {
-      _pendingPostCommit = outerPending;
+    });
+    // Each callback checks its controller is still open: close() is not
+    // safe to race with an in-flight transaction, but a fast-cycle test may
+    // still observe the closed state here.
+    for (final cb in committedRun._postCommit) {
+      cb();
     }
+    return result;
   }
 
   _SembastTxn _requireValidTxn(Transaction txn) {
@@ -245,7 +235,7 @@ class SembastBackend extends StorageBackend {
     await _eventStore.add(t._sembastTxn, event.toMap());
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_eventsController.isClosed) _eventsController.add(event);
     });
     return AppendResult(
@@ -710,7 +700,7 @@ class SembastBackend extends StorageBackend {
     }
     // post-commit so live `watchFifo(destinationId)` subscribers see
     // the FIFO-store drop (subsequent listFifoEntries will be empty).
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_fifoChangesController.isClosed) {
         _fifoChangesController.add(destinationId);
       }
@@ -751,7 +741,7 @@ class SembastBackend extends StorageBackend {
     await _viewStore(
       viewName,
     ).record(key).put(t._sembastTxn, Map<String, Object?>.from(row));
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -766,7 +756,7 @@ class SembastBackend extends StorageBackend {
   ) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).record(key).delete(t._sembastTxn);
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -847,7 +837,7 @@ class SembastBackend extends StorageBackend {
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).delete(t._sembastTxn);
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -1124,11 +1114,11 @@ class SembastBackend extends StorageBackend {
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);
     // post-commit so live `watchFifo(destinationId)` subscribers learn
-    // of the new row. Pushed onto _pendingPostCommit so the emission is
+    // of the new row. Queued on the transaction handle so the emission is
     // co-atomic with the surrounding `transaction()` commit; fires only
     // if the transaction succeeds. `enqueueFifo` (the standalone
     // wrapper) routes through `transaction()` for the same reason.
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_fifoChangesController.isClosed) {
         _fifoChangesController.add(destinationId);
       }
@@ -1380,7 +1370,7 @@ class SembastBackend extends StorageBackend {
       await store.record(record.key).put(t._sembastTxn, updated);
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the appended attempt.
-      _pendingPostCommit.add(() {
+      t._postCommit.add(() {
         if (!_fifoChangesController.isClosed) {
           _fifoChangesController.add(destinationId);
         }
@@ -1469,7 +1459,7 @@ class SembastBackend extends StorageBackend {
       await store.record(record.key).put(t._sembastTxn, updated);
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the terminal-status transition.
-      _pendingPostCommit.add(() {
+      t._postCommit.add(() {
         if (!_fifoChangesController.isClosed) {
           _fifoChangesController.add(destinationId);
         }
@@ -1612,8 +1602,8 @@ class SembastBackend extends StorageBackend {
     await store.record(record.key).put(t._sembastTxn, updated);
     // post-commit so live `watchFifo(destinationId)` subscribers see
     // the final-status transition (tombstone / drain-terminal). The
-    // surrounding `transaction()` drains _pendingPostCommit on commit.
-    _pendingPostCommit.add(() {
+    // surrounding `transaction()` fires the handle's queue on commit.
+    t._postCommit.add(() {
       if (!_fifoChangesController.isClosed) {
         _fifoChangesController.add(destinationId);
       }
@@ -1650,7 +1640,7 @@ class SembastBackend extends StorageBackend {
       // post-commit so live `watchFifo(destinationId)` subscribers see
       // the trail-sweep deletion. Skip when no rows were actually
       // removed to avoid spurious wakeups.
-      _pendingPostCommit.add(() {
+      t._postCommit.add(() {
         if (!_fifoChangesController.isClosed) {
           _fifoChangesController.add(destinationId);
         }
@@ -1866,6 +1856,12 @@ class SembastBackend extends StorageBackend {
 class _SembastTxn extends Transaction {
   _SembastTxn._(this._sembastTxn);
   final sembast.Transaction _sembastTxn;
+
+  /// Notifications to fire if this run of the transaction body commits.
+  /// Write paths push `() => controller.add(...)` here after their in-txn
+  /// writes succeed; [SembastBackend.transaction] fires the list of the run
+  /// that committed.
+  final List<void Function()> _postCommit = <void Function()>[];
   bool _isValid = true;
   void _invalidate() {
     _isValid = false;

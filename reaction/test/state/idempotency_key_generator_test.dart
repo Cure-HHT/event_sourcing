@@ -37,9 +37,9 @@ void main() {
 }
 
 class _StubIdempotencyKeyGenerator implements IdempotencyKeyGenerator {
+  _StubIdempotencyKeyGenerator(this._keys);
   final List<String> _keys;
   int _i = 0;
-  _StubIdempotencyKeyGenerator(this._keys);
 
   @override
   String generate() => _keys[_i++];

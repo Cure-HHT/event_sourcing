@@ -15,8 +15,8 @@ sealed class FallbackValue {
 }
 
 class ConstantValue extends FallbackValue {
-  final Object? value;
   const ConstantValue(this.value);
+  final Object? value;
   @override
   Object? resolve({required DateTime firstEventTimestamp}) => value;
 }
@@ -37,9 +37,9 @@ sealed class DerivedFieldComputation {
 }
 
 class DottedPathLookup extends DerivedFieldComputation {
+  const DottedPathLookup(this.path, {required this.fallback});
   final String path;
   final FallbackValue fallback;
-  const DottedPathLookup(this.path, {required this.fallback});
 
   @override
   Object? resolve({
@@ -63,7 +63,7 @@ class DottedPathLookup extends DerivedFieldComputation {
 }
 
 class DerivedField {
+  const DerivedField(this.fieldName, this.computation);
   final String fieldName;
   final DerivedFieldComputation computation;
-  const DerivedField(this.fieldName, this.computation);
 }

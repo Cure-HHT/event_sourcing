@@ -184,52 +184,6 @@ export 'src/ingest/ingest_errors.dart'
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Projections — declarative view specs, the registry that holds them, and
-// the parameterized rebuild helper. Projections use the declarative
-// ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
-// is intentionally NOT exported — it lives under test/test_support/ so
-// production code cannot depend on it.
-export 'src/projections/rebuild.dart' show rebuildView;
-// Callers create AggregateProjectionSpec / TableProjectionSpec values,
-// register them in a ProjectionRegistry, and pass the registry to
-// bootstrapEventStore or directly to EventStore.
-export 'src/projections/projection_spec.dart'
-    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
-export 'src/projections/projection_registry.dart' show ProjectionRegistry;
-// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
-// when an app declares its own projections. Re-exported because they are the
-// public API surface for defining projection shape, not internal implementation.
-export 'src/projections/primitives/row_key.dart'
-    show AggregateIdKey, CompositeKey, RowKeyExtractor;
-export 'src/projections/primitives/row_data.dart'
-    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
-export 'src/projections/primitives/derived_field.dart'
-    show
-        ConstantValue,
-        DerivedField,
-        DerivedFieldComputation,
-        DottedPathLookup,
-        FallbackValue,
-        FirstEventTimestamp;
-
-// Promoters — entry-type version promotion chains for schema migration.
-export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
-export 'src/promoters/promoter_spec.dart' show PromoterSpec;
-export 'src/promoters/primitives/transform.dart'
-    show
-        DefaultField,
-        DropField,
-        RenameField,
-        TransformChain,
-        TransformPrimitive;
-
-// Subscriptions — live-update stream primitives returned by
-// EventStore.subscribe<T>().
-export 'src/subscriptions/subscription_mode.dart'
-    show AggregateMode, Events, SubscriptionMode;
-export 'src/subscriptions/update.dart'
-    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
-
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.
 export 'src/permissions/authorization_bootstrap_result.dart'
@@ -240,12 +194,8 @@ export 'src/permissions/bootstrap_role_assignments.dart'
     show RoleAssignmentSeedResult, bootstrapRoleAssignments;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
-export 'src/permissions/scope_descendant_expander.dart'
-    show ScopeDescendantExpander;
 export 'src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
-export 'src/permissions/permission_seed_applier.dart'
-    show PermissionSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
     show FailSafeAuthorizationPolicy;
 export 'src/permissions/permission_granted_payload.dart'
@@ -253,16 +203,17 @@ export 'src/permissions/permission_granted_payload.dart'
 export 'src/permissions/permission_revoked_payload.dart'
     show PermissionRevokedPayload;
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
+export 'src/permissions/permission_seed_applier.dart'
+    show PermissionSeedApplier, SeedApplyResult;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show computeRoleAssignmentAggregateId;
 export 'src/permissions/role_assignment_seed.dart'
     show RoleAssignmentSeed, RoleAssignmentSeedEntry;
-export 'src/permissions/role_unassigned_payload.dart'
-    show RoleUnassignedPayload;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
-export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
+export 'src/permissions/role_unassigned_payload.dart'
+    show RoleUnassignedPayload;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
 export 'src/permissions/scope_class_match.dart'
     show ScopeClassMatch, matchScopeClass;
@@ -270,17 +221,61 @@ export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
     show ContainmentReference, ScopeClassSpec;
+export 'src/permissions/scope_descendant_expander.dart'
+    show ScopeDescendantExpander;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
+export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;
+
+// Projections — declarative view specs, the registry that holds them, and
+// the parameterized rebuild helper. Projections use the declarative
+// ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
+// is intentionally NOT exported — it lives under test/test_support/ so
+// production code cannot depend on it.
+// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
+// when an app declares its own projections. Re-exported because they are the
+// public API surface for defining projection shape, not internal implementation.
+export 'src/projections/primitives/derived_field.dart'
+    show
+        ConstantValue,
+        DerivedField,
+        DerivedFieldComputation,
+        DottedPathLookup,
+        FallbackValue,
+        FirstEventTimestamp;
+export 'src/projections/primitives/row_data.dart'
+    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+export 'src/projections/primitives/row_key.dart'
+    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+export 'src/projections/projection_registry.dart' show ProjectionRegistry;
+// Callers create AggregateProjectionSpec / TableProjectionSpec values,
+// register them in a ProjectionRegistry, and pass the registry to
+// bootstrapEventStore or directly to EventStore.
+export 'src/projections/projection_spec.dart'
+    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
+export 'src/projections/rebuild.dart' show rebuildView;
+
+// Promoters — entry-type version promotion chains for schema migration.
+export 'src/promoters/primitives/transform.dart'
+    show
+        DefaultField,
+        DropField,
+        RenameField,
+        TransformChain,
+        TransformPrimitive;
+export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
+export 'src/promoters/promoter_spec.dart' show PromoterSpec;
 
 // Security module — EventSecurityContext value type, SecurityDetails caller
 // input, SecurityRetentionPolicy sweeps, SecurityContextStore read-only
 // surface, concrete impls, and reserved system entry types for
 // redaction/compact/purge audit events.
 export 'src/security/event_security_context.dart' show EventSecurityContext;
+export 'src/security/postgres_security_context_store.dart'
+    show PostgresSecurityContextStore;
 export 'src/security/security_context_store.dart'
     show AuditRow, PagedAudit, SecurityContextStore;
 export 'src/security/security_details.dart' show SecurityDetails;
@@ -288,8 +283,6 @@ export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
 export 'src/security/sembast_security_context_store.dart'
     show SembastSecurityContextStore;
-export 'src/security/postgres_security_context_store.dart'
-    show PostgresSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
         // Security-context lifecycle audits.
@@ -340,6 +333,13 @@ export 'src/storage/storage_exception.dart'
 export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/transaction.dart' show Transaction;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
+
+// Subscriptions — live-update stream primitives returned by
+// EventStore.subscribe<T>().
+export 'src/subscriptions/subscription_mode.dart'
+    show AggregateMode, Events, SubscriptionMode;
+export 'src/subscriptions/update.dart'
+    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
 
 // Sync — backoff curve, drain loop, and top-level orchestrator.
 export 'src/sync/drain.dart' show Clock, drain;

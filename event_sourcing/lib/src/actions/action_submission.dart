@@ -3,15 +3,22 @@
 // Implements: EVS-DEV-flow-token/A
 // ActionSubmission carries the optional opaque flowToken correlation token into the dispatch flow.
 
-/// The complete input to one [ActionDispatcher.dispatch] call.
+/// The complete input to one `ActionDispatcher.dispatch` call.
 ///
 /// Bundles the action name, raw input, and optional idempotency/flow
-/// correlation fields. The substrate's [ActionContext] is passed as a
+/// correlation fields. The substrate's `ActionContext` is passed as a
 /// SEPARATE argument to `dispatch`, not carried on this submission —
 /// the caller owns Principal construction and timing.
 ///
-/// Symmetric with [DispatchResult] on the output side.
+/// Symmetric with `DispatchResult` on the output side.
 class ActionSubmission {
+  const ActionSubmission({
+    required this.actionName,
+    required this.rawInput,
+    this.idempotencyKey,
+    this.flowToken,
+  });
+
   /// Registered name of the action to dispatch (e.g. `'submit_note'`).
   /// Matches what `ActionRegistry.lookup` accepts.
   final String actionName;
@@ -31,11 +38,4 @@ class ActionSubmission {
   /// onto every emitted event's metadata so downstream audit can trace
   /// related actions across a single user flow.
   final String? flowToken;
-
-  const ActionSubmission({
-    required this.actionName,
-    required this.rawInput,
-    this.idempotencyKey,
-    this.flowToken,
-  });
 }

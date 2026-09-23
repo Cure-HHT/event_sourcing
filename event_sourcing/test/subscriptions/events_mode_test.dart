@@ -69,7 +69,7 @@ void main() {
       final received = <StoredEvent>[];
       final sub = store
           .subscribe<StoredEvent>(
-            SubscriptionFilter(aggregateTypes: const {'X'}),
+            const SubscriptionFilter(aggregateTypes: {'X'}),
             const Events(),
           )
           .listen((Update<StoredEvent> u) {

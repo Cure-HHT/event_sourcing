@@ -32,12 +32,12 @@ void main() {
   });
 
   test('rejects duplicate registration', () {
-    final r = ViewScopeRegistry();
-    r.register(
-      viewName: 'v',
-      scopeClass: 'site',
-      aggregateIdResolver: (_) => null,
-    );
+    final r = ViewScopeRegistry()
+      ..register(
+        viewName: 'v',
+        scopeClass: 'site',
+        aggregateIdResolver: (_) => null,
+      );
     expect(
       () => r.register(
         viewName: 'v',

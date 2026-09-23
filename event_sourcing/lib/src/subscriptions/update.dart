@@ -8,15 +8,15 @@
 // (sequence field on every variant
 //   preserves log order; consumers can rely on monotonic sequence numbers)
 sealed class Update<T> {
-  int get sequence;
   const Update();
+  int get sequence;
 }
 
 class Snapshot<T> extends Update<T> {
+  const Snapshot({required this.value, required this.sequence});
   final T? value;
   @override
   final int sequence;
-  const Snapshot({required this.value, required this.sequence});
 }
 
 /// Marker emitted by `EventStore.subscribe<T>` (AggregateMode only) after
@@ -31,26 +31,26 @@ class Snapshot<T> extends Update<T> {
 ///
 /// Not emitted by `Events()`-mode subscriptions (no replay phase).
 class EndOfReplay<T> extends Update<T> {
+  const EndOfReplay({required this.sequence});
   @override
   final int sequence;
-  const EndOfReplay({required this.sequence});
 }
 
 class Delta<T> extends Update<T> {
-  final T value;
-  @override
-  final int sequence;
-  final String cause;
   const Delta({
     required this.value,
     required this.sequence,
     required this.cause,
   });
+  final T value;
+  @override
+  final int sequence;
+  final String cause;
 }
 
 class Tombstone<T> extends Update<T> {
+  const Tombstone({required this.aggregateId, required this.sequence});
   final String aggregateId;
   @override
   final int sequence;
-  const Tombstone({required this.aggregateId, required this.sequence});
 }

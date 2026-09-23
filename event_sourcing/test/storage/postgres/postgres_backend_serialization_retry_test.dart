@@ -10,9 +10,19 @@
 // transaction<T> runs at SERIALIZABLE
 //   isolation (conflicting concurrent txns retry/serialize); rollback on throw,
 //   commit on return, handle invalidated after body.
+// Verifies: EVS-PRD-subscription/E
+// when the backend re-runs a transaction
+//   body after a serialization conflict raised after the body appended, live
+//   subscribers receive only the committed run's event, once, carrying its
+//   committed sequence number.
+// Verifies: EVS-PRD-event-log/G
+// the re-run body's caller receives the
+//   committed run's event, not the rolled-back run's.
 
 @TestOn('vm')
 library;
+
+import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:postgres/postgres.dart';
@@ -89,6 +99,139 @@ void main() {
       expect(all, hasLength(concurrency));
     });
   });
+
+  group('EventStore publication across a retried transaction', () {
+    late PostgresBackend backendA;
+    late PostgresBackend backendB;
+    late EventStore storeA;
+
+    setUp(() async {
+      final conn = await Connection.open(
+        PostgresBackend.endpointFromUrl(url),
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+      await conn.execute('DROP SCHEMA public CASCADE');
+      await conn.execute('CREATE SCHEMA public');
+      await conn.close();
+      backendA = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      backendB = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+      storeA = await _openStore(
+        backendA,
+        'aaaa0001-0000-4000-8000-00000000000a',
+      );
+    });
+
+    tearDown(() async {
+      await backendA.close();
+      await backendB.close();
+    });
+
+    test(
+      'a body that appends and then hits a serialization conflict is '
+      're-run, and only the committed run is published and returned',
+      () async {
+        // A view row both transactions write. It exists before the test so
+        // both writes are updates of one row.
+        await backendA.transaction(
+          (txn) => backendA.upsertViewRowInTxn(txn, _contentionView, 'x', {
+            'writer': 'setup',
+          }),
+        );
+
+        final received = <StoredEvent>[];
+        final sub = storeA
+            .subscribe<StoredEvent>(const SubscriptionFilter(), const Events())
+            .listen((u) {
+              if (u is Delta<StoredEvent>) received.add(u.value);
+            });
+
+        // The first run appends (so its collector holds an event), then waits
+        // while a contender on another connection updates the shared row and
+        // commits. The first run's own update of that row then fails with
+        // 40001, after the append, and the backend re-runs the body.
+        var bodyRuns = 0;
+        final appendedInFirstRun = Completer<void>();
+        final contenderCommitted = Completer<void>();
+        final appendFuture = storeA.runTransaction<StoredEvent?>((
+          txn,
+          collector,
+        ) async {
+          bodyRuns += 1;
+          final event = await storeA.appendInTxn(
+            txn,
+            entryType: 'test_event',
+            aggregateId: 'contended',
+            aggregateType: 'Test',
+            eventType: 'created',
+            data: const <String, Object?>{'k': 'v'},
+            initiator: const UserInitiator('u1'),
+            flowToken: null,
+            metadata: null,
+            security: null,
+            checkpointReason: null,
+            changeReason: null,
+            dedupeByContent: false,
+            collector: collector,
+          );
+          if (bodyRuns == 1) {
+            appendedInFirstRun.complete();
+            await contenderCommitted.future;
+          }
+          await backendA.upsertViewRowInTxn(txn, _contentionView, 'x', {
+            'writer': 'store-a',
+            'run': bodyRuns,
+          });
+          return event;
+        });
+
+        await appendedInFirstRun.future;
+        await backendB.transaction(
+          (txn) => backendB.upsertViewRowInTxn(txn, _contentionView, 'x', {
+            'writer': 'contender',
+          }),
+        );
+        contenderCommitted.complete();
+        final returned = await appendFuture;
+
+        expect(bodyRuns, 2, reason: 'the conflict must re-run the body');
+        final stored = (await backendA.findAllEvents())
+            .where((e) => e.aggregateId == 'contended')
+            .toList();
+        expect(stored, hasLength(1), reason: 'only the committed run appended');
+        final committed = stored.single;
+        expect(returned!.eventId, committed.eventId);
+        expect(returned.sequenceNumber, committed.sequenceNumber);
+
+        await _waitForCount(received, 1);
+        // A duplicate published late would arrive within this quiet period.
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        await sub.cancel();
+        final delivered = received
+            .where((e) => e.aggregateId == 'contended')
+            .toList();
+        expect(
+          delivered.map((e) => e.eventId).toList(),
+          [committed.eventId],
+          reason: 'exactly one delivery, of the committed run',
+        );
+        expect(delivered.single.sequenceNumber, committed.sequenceNumber);
+      },
+    );
+  });
+}
+
+const _contentionView = 'contention';
+
+/// Waits until [items] holds at least [count] entries, failing after a
+/// bounded timeout.
+Future<void> _waitForCount(List<Object?> items, int count) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (items.length < count) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('expected $count deliveries, saw ${items.length}');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
 }
 
 StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
@@ -107,3 +250,23 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash-$eventId',
 );
+
+EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(
+  id: 'test_event',
+  registeredVersion: 1,
+  name: 'test_event',
+);
+
+Future<EventStore> _openStore(PostgresBackend backend, String installId) {
+  final registry = EntryTypeRegistry()..register(_testEventDef());
+  return EventStore.openForTest(
+    storage: backend,
+    entryTypes: registry,
+    source: Source(
+      hopId: 'test',
+      identifier: installId,
+      softwareVersion: '0.0.0-test',
+    ),
+    securityContexts: PostgresSecurityContextStore(backend: backend),
+  );
+}

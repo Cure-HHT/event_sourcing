@@ -19,8 +19,8 @@ sealed class AuthStatus {
 /// the substrate's `ActionDispatcher`, `PermissionSource`, and audit log
 /// will use.
 class Authenticated extends AuthStatus {
-  final Principal principal;
   const Authenticated({required this.principal});
+  final Principal principal;
 }
 
 /// No credential is set, or the credential was rejected and never
@@ -48,7 +48,7 @@ class Expired extends AuthStatus {
 ///   from the wire.
 ///
 /// The active [principal] flows into all other reaction interfaces
-/// ([ActionSubmitter] submissions, [PermissionSource] scope) via the
+/// (`ActionSubmitter` submissions, `PermissionSource` scope) via the
 /// `ReActionScope` InheritedWidget (in `reaction_widgets`) or
 /// directly when consumers wire components manually.
 abstract interface class AuthSession {

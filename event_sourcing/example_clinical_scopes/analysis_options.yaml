@@ -6,6 +6,9 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
 
+  exclude:
+    - 'build/**'
+
 linter:
   rules:
     - prefer_const_constructors

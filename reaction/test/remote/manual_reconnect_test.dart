@@ -277,9 +277,7 @@ void main() {
           maxAttempts: 3,
           multiplier: 2,
         ),
-      );
-
-      conn.setCredential('alice');
+      )..setCredential('alice');
       conn
           .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
           .listen((_) {}, onError: (_) {});
@@ -395,7 +393,7 @@ void main() {
         httpClient: FakeHttpClient(),
       );
       await scope.dispose();
-      expect(() => scope.reconnect(), throwsStateError);
+      expect(scope.reconnect, throwsStateError);
     });
   });
 }

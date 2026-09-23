@@ -7,8 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 
 class _StubValidator implements PrincipalAuthValidator {
-  final Map<String, Principal> _accepts;
   _StubValidator(this._accepts);
+  final Map<String, Principal> _accepts;
 
   @override
   Future<Principal> authenticate(String credential) async {

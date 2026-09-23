@@ -16,7 +16,6 @@ import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 
 /// Chunk size for the streaming read of the event log during a rebuild.
@@ -29,10 +28,10 @@ const int _rebuildChunkSize = 500;
 /// Rebuild exactly one view by replaying the event log through the registered
 /// [ProjectionSpec] for [viewName] on [store]. Clears the view AND the view's
 /// `view_target_versions` rows, writes the supplied [targetVersionByEntryType],
-/// then applies the promoter chain (from [store.promoters]) and dispatches to
+/// then applies the promoter chain (from `store.promoters`) and dispatches to
 /// the appropriate fold interpreter ([AggregateFold] / [TableFold]) for every
 /// event whose entry type is in [targetVersionByEntryType] and whose
-/// [store.projections] spec's `interest` matches. Runs in one backend
+/// `store.projections` spec's `interest` matches. Runs in one backend
 /// transaction.
 ///
 /// Strict-superset rule: every entry-type already present in the stored

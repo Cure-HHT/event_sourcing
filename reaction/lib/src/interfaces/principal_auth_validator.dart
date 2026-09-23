@@ -27,6 +27,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// it is shared with the server-side `reaction` server module;
 /// dependency direction is one-way (server depends on reaction;
 /// reaction does not depend on the server).
+// ignore: one_member_abstracts, a pluggable interface the deployment implements
 abstract interface class PrincipalAuthValidator {
   /// Validate [credential] and return the authenticated [Principal].
   /// Throws [AuthenticationDenied] on rejection.
@@ -37,8 +38,8 @@ abstract interface class PrincipalAuthValidator {
 /// is rejected. The [message] is for server-side logging only — do not
 /// surface it raw to clients, as it may leak validator internals.
 class AuthenticationDenied implements Exception {
-  final String message;
   const AuthenticationDenied(this.message);
+  final String message;
 
   @override
   String toString() => 'AuthenticationDenied: $message';

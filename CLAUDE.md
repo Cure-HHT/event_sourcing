@@ -12,10 +12,19 @@ Builder primitives, `ViewListener`, `PermissionGate`,
 `ReActionErrorListener`) and the sibling `reaction_widgets_testing/`
 (shipped `FakeReaction` + `pumpReactionWidget` widget-test doubles,
 split out so consumers' release builds don't pull `flutter_test`).
-All other packages remain pure Dart. CI therefore runs `dart test`
-on the pure-Dart packages and `flutter test` on both
-`reaction_widgets/` and `reaction_widgets_testing/`. Downstream
-consumers pin this repo by git ref.
+All other library packages are pure Dart at runtime, though the
+`event_sourcing` and `reaction` test suites run under `flutter test`.
+CI (`.github/workflows/event-sourcing-tests.yml`) runs
+`flutter analyze --no-pub` (infos fatal) and `flutter test` in each of
+the eight Flutter packages (`event_sourcing`, its three examples,
+`reaction`, `reaction/example`, `reaction_widgets`,
+`reaction_widgets_testing`), `dart analyze` and `dart test` in
+`provenance` and `canonical_json_jcs`, the browser-only
+`event_sourcing/test/web/` suite in Chrome, and the
+`event_sourcing/example` desktop integration test;
+`conformance-tests.yml` runs every Postgres-gated test file against a
+Postgres service. Every workflow pins the Flutter SDK version.
+Downstream consumers pin this repo by git ref.
 
 The substrate ships two concrete `StorageBackend` reference
 implementations — `SembastBackend` (mobile/Flutter) and

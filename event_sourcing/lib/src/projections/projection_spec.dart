@@ -36,6 +36,12 @@ sealed class ProjectionSpec {
 /// (e.g., first-write-wins, role-filtered, validation-gated) is doing
 /// something equally valid; it just doesn't use this spec.
 class AggregateProjectionSpec extends ProjectionSpec {
+  const AggregateProjectionSpec({
+    required this.viewName,
+    required this.interest,
+    required this.tombstoneEventTypes,
+    this.derivedFields = const [],
+  });
   @override
   final String viewName;
   @override
@@ -51,13 +57,6 @@ class AggregateProjectionSpec extends ProjectionSpec {
   final Set<String> tombstoneEventTypes;
 
   final List<DerivedField> derivedFields;
-
-  const AggregateProjectionSpec({
-    required this.viewName,
-    required this.interest,
-    required this.tombstoneEventTypes,
-    this.derivedFields = const [],
-  });
 }
 
 /// A projection that maintains a flat lookup table — one row per
@@ -67,15 +66,6 @@ class AggregateProjectionSpec extends ProjectionSpec {
 /// merge inserts rather than overwriting; the present semantics are
 /// conventions chosen for the common case.
 class TableProjectionSpec extends ProjectionSpec {
-  @override
-  final String viewName;
-  @override
-  final SubscriptionFilter interest;
-  final Set<String> insertEventTypes;
-  final Set<String> removeEventTypes;
-  final RowKeyExtractor rowKey;
-  final RowDataExtractor rowData;
-
   const TableProjectionSpec({
     required this.viewName,
     required this.interest,
@@ -84,4 +74,12 @@ class TableProjectionSpec extends ProjectionSpec {
     required this.rowKey,
     required this.rowData,
   });
+  @override
+  final String viewName;
+  @override
+  final SubscriptionFilter interest;
+  final Set<String> insertEventTypes;
+  final Set<String> removeEventTypes;
+  final RowKeyExtractor rowKey;
+  final RowDataExtractor rowData;
 }

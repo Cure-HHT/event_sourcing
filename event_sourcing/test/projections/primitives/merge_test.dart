@@ -115,7 +115,7 @@ void main() {
         },
       );
       final b =
-          ((result['a'] as Map<String, Object?>)['b'] as Map<String, Object?>);
+          (result['a'] as Map<String, Object?>)['b'] as Map<String, Object?>;
       expect(b['c'], 'new');
       expect(b['d'], 'keep');
     });
