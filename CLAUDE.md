@@ -103,17 +103,20 @@ These commitments shape the library's design.
   refused by default. State at sequence N is reconstructable from
   `(events, projection_specs, promoter_specs, lib_version)` — all in
   the log.
-- **Entry-type version is substrate-owned.** The substrate stamps
-  `entryTypeVersion = entryTypes.byId(entryType).registeredVersion` on
-  every appended event. Producers do not choose the version; ingest
-  transparently promotes older-peer events before the fold;
-  `EventStore.open` snapshot-promotes view rows on a `registeredVersion`
-  bump and refuses downgrade. Promoter primitives are restricted to
-  shape-changers (`RenameField`, `DefaultField`, `DropField`) so the
-  chain commutes with the deep-merge fold — snapshot promotion at boot
-  is provably equivalent to event-replay-with-promotion. The normative
-  requirements live in the boot-flow DEV specs
-  (`spec/dev-append-stamps-registered-version.md`,
+- **Entry-type version is substrate-owned.** Entry-type versions and
+  the library's data-format version are `major.minor`. The substrate
+  stamps `entryTypeVersion = entryTypes.byId(entryType).registeredVersion`
+  on every appended event, and the event hash covers it. Producers do not
+  choose the version; ingest transparently promotes older-peer events
+  before the fold. A minor step is compatible by definition: its
+  promoters are `DefaultField` only, enforced at registration, while
+  `RenameField`/`DropField` need a major step. Downgrade refusal and
+  ingest compare majors only, so builds of one major share a database.
+  `EventStore.open` re-derives lagging view rows from the log through the
+  same fold step the interpreter and `rebuildView` use, so boot promotion
+  equals event-replay-with-promotion by construction. The normative
+  requirements live in `spec/dev-version-compatibility.md` and the
+  boot-flow DEV specs (`spec/dev-append-stamps-registered-version.md`,
   `spec/dev-ingest-promotes-before-fold.md`,
   `spec/dev-snapshot-promotion-on-open.md`,
   `spec/dev-entry-type-downgrade-refusal.md`,
