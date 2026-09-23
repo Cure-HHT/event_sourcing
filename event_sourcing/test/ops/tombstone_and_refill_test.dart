@@ -322,7 +322,7 @@ void main() {
         headEntryId,
         initiator: _testInit,
       );
-      expect(result.targetRowId, headEntryId);
+      expect(result.rowId, headEntryId);
 
       final after = await _readAllFifoRows(backend, setup.destination.id);
       expect(after.length, 1);
@@ -461,7 +461,7 @@ void main() {
       expect(await backend.readFillCursor(setup.destination.id), 0);
     });
 
-    // targetRowId, deletedTrailCount, and rewoundTo.
+    // rowId, deletedTrailCount, and rewoundTo.
     test('returns TombstoneAndRefillResult with correct fields', () async {
       final setup = await _seedFifo(
         backend,
@@ -477,7 +477,7 @@ void main() {
         initiator: _testInit,
       );
       expect(result, isA<TombstoneAndRefillResult>());
-      expect(result.targetRowId, headEntryId);
+      expect(result.rowId, headEntryId);
       expect(result.deletedTrailCount, 4);
       expect(result.rewoundTo, 2); // head first_seq = 3, so 3-1 = 2
     });

@@ -864,6 +864,65 @@ void runQueueRegistryScenarios(
     });
 
     // ------------------------------------------------------------------
+    // Destination audit event types
+    // ------------------------------------------------------------------
+
+    group('audit event types', () {
+      // Verifies: EVS-DEV-destination-drain/H
+      // every kind of destination audit is
+      //   stored and read back with its own event type, the same for every
+      //   audit of its kind.
+      test(
+        'each kind of destination audit reads back with its event type',
+        () async {
+          if (!available) return;
+          await activate(FakeDestination(id: 'x', allowHardDelete: true));
+          await w.registry.setEndDate(
+            'x',
+            DateTime.utc(2029, 1, 1),
+            initiator: _init,
+          );
+          await w.registry.deactivateDestination('x', initiator: _init);
+          final head = await enqueueSingle(
+            w.backend,
+            'x',
+            eventId: 'evt-1',
+            sequenceNumber: 1,
+          );
+          await wedgeHeadForTest(w.backend, 'x');
+          await w.registry.tombstoneAndRefill(
+            'x',
+            head.entryId,
+            initiator: _init,
+          );
+          await w.registry.deleteDestination('x', initiator: _init);
+          const eventTypeOf = <String, String>{
+            kDestinationRegisteredEntryType: kDestinationRegisteredEventType,
+            kDestinationStartDateSetEntryType:
+                kDestinationStartDateSetEventType,
+            kDestinationEndDateSetEntryType: kDestinationEndDateSetEventType,
+            kDestinationDeletedEntryType: kDestinationDeletedEventType,
+            kDestinationWedgeRecoveredEntryType:
+                kDestinationWedgeRecoveredEventType,
+          };
+          for (final kind in eventTypeOf.entries) {
+            final audits = await w.audits(kind.key);
+            expect(audits, isNotEmpty, reason: '${kind.key} was appended');
+            for (final audit in audits) {
+              expect(audit.eventType, kind.value, reason: kind.key);
+              expect(audit.aggregateType, 'system_destination');
+            }
+          }
+          expect(
+            await w.audits(kDestinationEndDateSetEntryType),
+            hasLength(2),
+            reason: 'setEndDate and deactivateDestination',
+          );
+        },
+      );
+    });
+
+    // ------------------------------------------------------------------
     // The opt-in in effect and operations from any registry
     // ------------------------------------------------------------------
 

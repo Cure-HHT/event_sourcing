@@ -39,7 +39,7 @@
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
-| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | c29a506a |
+| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 815cd8be |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 66b0a2e5 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 6c1448cd |

@@ -197,8 +197,15 @@ class StoredEvent {
   /// refuses an event whose data-format major differs from the receiver's.
   final DataFormatVersion libFormatVersion;
 
-  /// User-intent discriminator for the event: 'finalized' | 'checkpoint' |
-  /// 'tombstone'.
+  /// Discriminator for what the event records within its entry type. For a
+  /// user entry type the appender chooses it (for example 'finalized',
+  /// 'checkpoint' or 'tombstone'), and a projection spec's event-type sets
+  /// key on it. For a reserved system entry type the library sets it per
+  /// kind; each kind of destination audit event carries its own, exported
+  /// as `kDestinationRegisteredEventType`,
+  /// `kDestinationStartDateSetEventType`, `kDestinationEndDateSetEventType`,
+  /// `kDestinationDeletedEventType` and
+  /// `kDestinationWedgeRecoveredEventType`.
   final String eventType;
 
   /// Monotonically increasing sequence number.

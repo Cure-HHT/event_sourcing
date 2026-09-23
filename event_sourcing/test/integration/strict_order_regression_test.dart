@@ -291,7 +291,7 @@ void main() {
         initiator: _testInit,
       );
       expect(result, isA<TombstoneAndRefillResult>());
-      expect(result.targetRowId, wedgedEntryId);
+      expect(result.rowId, wedgedEntryId);
       // trail sweep.
       expect(result.deletedTrailCount, 1);
       // e2.sequenceNumber - 1 = 1 (= e1.sequenceNumber).

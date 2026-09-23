@@ -45,6 +45,37 @@ const String kDestinationDeletedEntryType = 'system.destination_deleted';
 const String kDestinationWedgeRecoveredEntryType =
     'system.destination_wedge_recovered';
 
+// Implements: EVS-DEV-destination-drain/H
+// each kind of destination audit event carries
+//   an event type distinct from every other kind's, so a declarative filter
+//   or projection tells the kinds apart by event type.
+
+/// Aggregate type of every destination audit event. The aggregate id is the
+/// appending install's `Source.identifier` and the destination id is
+/// `data['id']`.
+const String kDestinationAuditAggregateType = 'system_destination';
+
+/// Event type of the destination-registration audit
+/// ([kDestinationRegisteredEntryType]).
+const String kDestinationRegisteredEventType = 'destination_registered';
+
+/// Event type of the destination start-date set audit
+/// ([kDestinationStartDateSetEntryType]).
+const String kDestinationStartDateSetEventType = 'destination_start_date_set';
+
+/// Event type of the destination end-date set audit
+/// ([kDestinationEndDateSetEntryType]).
+const String kDestinationEndDateSetEventType = 'destination_end_date_set';
+
+/// Event type of the destination deletion audit
+/// ([kDestinationDeletedEntryType]).
+const String kDestinationDeletedEventType = 'destination_deleted';
+
+/// Event type of the wedge-recovery audit
+/// ([kDestinationWedgeRecoveredEntryType]).
+const String kDestinationWedgeRecoveredEventType =
+    'destination_wedge_recovered';
+
 /// Reserved id for the retention-policy-applied audit event emitted by
 /// `EventStore.applyRetentionPolicy` once per sweep.
 const String kRetentionPolicyAppliedEntryType =

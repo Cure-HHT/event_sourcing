@@ -14,6 +14,9 @@
 //   included) inside one transaction that writes, record replay requests
 //   instead of enqueuing, and perform recovery and deletion in one
 //   transaction each.
+// Implements: EVS-DEV-destination-drain/H
+// every destination audit the registry
+//   appends carries the event type of its kind.
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';
@@ -235,6 +238,7 @@ class DestinationRegistry {
           txn,
           collector,
           entryType: kDestinationRegisteredEntryType,
+          eventType: kDestinationRegisteredEventType,
           data: <String, Object?>{
             'id': id,
             'wire_format': wireFormat,
@@ -394,6 +398,7 @@ class DestinationRegistry {
       txn,
       collector,
       entryType: kDestinationStartDateSetEntryType,
+      eventType: kDestinationStartDateSetEventType,
       data: <String, Object?>{
         'id': id,
         'start_date': when.toUtc().toIso8601String(),
@@ -458,6 +463,7 @@ class DestinationRegistry {
       txn,
       collector,
       entryType: kDestinationEndDateSetEntryType,
+      eventType: kDestinationEndDateSetEventType,
       data: <String, Object?>{
         'id': id,
         'end_date': endDate.toUtc().toIso8601String(),
@@ -546,6 +552,7 @@ class DestinationRegistry {
         txn,
         collector,
         entryType: kDestinationDeletedEntryType,
+        eventType: kDestinationDeletedEventType,
         data: <String, Object?>{
           'id': id,
           'tombstoned_row_id': retirement.tombstonedRowId,
@@ -649,9 +656,10 @@ class DestinationRegistry {
       txn,
       collector,
       entryType: kDestinationWedgeRecoveredEntryType,
+      eventType: kDestinationWedgeRecoveredEventType,
       data: <String, Object?>{
         'id': destinationId,
-        'target_row_id': fifoRowId,
+        'row_id': fifoRowId,
         'target_event_id_range_first_seq': targetFirstSeq,
         'target_event_id_range_last_seq': targetLastSeq,
         'deleted_trail_count': sweep.deletedCount,
@@ -662,7 +670,7 @@ class DestinationRegistry {
     _injectAfterLastWrite(kDestinationWedgeRecoveredEntryType);
     return _Done<TombstoneAndRefillResult>(
       TombstoneAndRefillResult(
-        targetRowId: fifoRowId,
+        rowId: fifoRowId,
         deletedTrailCount: sweep.deletedCount,
         rewoundTo: rewoundTo,
       ),
@@ -681,9 +689,12 @@ class DestinationRegistry {
   /// Emit a system audit event for a destination mutation inside [txn].
   ///
   /// The aggregate is stamped as `source.identifier` (the install UUID)
-  /// / `system_destination` / `finalized`; the destination identity
-  /// lives in `data['id']`. Every destination mutation a single install
-  /// emits therefore lands in a single per-install hash-chained system
+  /// / [kDestinationAuditAggregateType], and the event type is [eventType],
+  /// the per-kind event type paired with [entryType] (for example
+  /// [kDestinationDeletedEventType]), so a declarative filter or projection
+  /// tells the kinds apart by event type. The destination identity lives in
+  /// `data['id']`. Every destination mutation a single install emits
+  /// therefore lands in a single per-install hash-chained system
   /// aggregate. Emission uses no flow token, metadata, security,
   /// checkpoint, or change reason. dedupeByContent is left off because
   /// each destination mutation records a distinct timeline entry.
@@ -696,6 +707,7 @@ class DestinationRegistry {
     Transaction txn,
     PublishCollector collector, {
     required String entryType,
+    required String eventType,
     required Map<String, Object?> data,
     required Initiator initiator,
   }) async {
@@ -704,8 +716,8 @@ class DestinationRegistry {
       collector: collector,
       entryType: entryType,
       aggregateId: _eventStore.source.identifier,
-      aggregateType: 'system_destination',
-      eventType: 'finalized',
+      aggregateType: kDestinationAuditAggregateType,
+      eventType: eventType,
       data: data,
       initiator: initiator,
       flowToken: null,

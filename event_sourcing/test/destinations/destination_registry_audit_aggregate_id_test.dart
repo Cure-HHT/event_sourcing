@@ -1,6 +1,7 @@
 // Verifies: EVS-PRD-destinations/A+D
 // verifies that every destination
-// mutation audit (add, setStartDate, setEndDate, delete, tombstoneAndRefill)
+// mutation audit (add, setStartDate, setEndDate, deactivate, delete,
+// tombstoneAndRefill)
 // stamps aggregateId = source.identifier so the per-install audit stream is
 // a single hash-chained system aggregate (A) persisted atomically with the
 // mutation (D).
@@ -11,6 +12,9 @@
 // `data.id`. This makes the destination-registry audit stream a
 // per-install hash-chained system aggregate, while preserving "all
 // audits about destination X" queries via `entry_type` + `data.id`.
+// Verifies: EVS-DEV-destination-drain/H
+// the audits in the one per-install system
+//   aggregate are told apart by event type: each kind carries its own.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -92,6 +96,7 @@ void main() {
         'primary',
         reason: 'destination identity moves into data.id',
       );
+      expect(audit.eventType, kDestinationRegisteredEventType);
     });
 
     // destination_start_date_set audit stamps aggregateId =
@@ -113,6 +118,7 @@ void main() {
       expect(audit.aggregateId, _installUUID);
       expect(audit.data['id'], 'primary');
       expect(audit.data['start_date'], start.toUtc().toIso8601String());
+      expect(audit.eventType, kDestinationStartDateSetEventType);
     });
 
     // destination_end_date_set audit stamps aggregateId =
@@ -139,6 +145,27 @@ void main() {
       expect(audit.aggregateId, _installUUID);
       expect(audit.data['id'], 'primary');
       expect(audit.data['end_date'], endDate.toUtc().toIso8601String());
+      expect(audit.eventType, kDestinationEndDateSetEventType);
+    });
+
+    // deactivateDestination appends the end-date audit, under
+    // aggregateId = source.identifier and the end-date event type.
+    test('deactivateDestination audit uses source.identifier as '
+        'aggregateId', () async {
+      await ds.destinations.addDestination(
+        FakeDestination(id: 'retiring'),
+        initiator: _automation,
+      );
+      await ds.destinations.deactivateDestination('retiring', initiator: _user);
+      final audits = await _eventsOfType(
+        backend,
+        kDestinationEndDateSetEntryType,
+      );
+      expect(audits, hasLength(1));
+      final audit = audits.single;
+      expect(audit.aggregateId, _installUUID);
+      expect(audit.data['id'], 'retiring');
+      expect(audit.eventType, kDestinationEndDateSetEventType);
     });
 
     // destination_deleted audit stamps aggregateId = source.identifier;
@@ -156,6 +183,7 @@ void main() {
       expect(audit.aggregateId, _installUUID);
       expect(audit.data['id'], 'purgeable');
       expect(audit.data['allow_hard_delete'], isTrue);
+      expect(audit.eventType, kDestinationDeletedEventType);
     });
 
     // destination_wedge_recovered audit stamps aggregateId =
@@ -190,7 +218,8 @@ void main() {
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
       expect(audit.data['id'], 'wedged');
-      expect(audit.data['target_row_id'], head.entryId);
+      expect(audit.data['row_id'], head.entryId);
+      expect(audit.eventType, kDestinationWedgeRecoveredEventType);
     });
 
     // distinct destination ids share a single per-install system

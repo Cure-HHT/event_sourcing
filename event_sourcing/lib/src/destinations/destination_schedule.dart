@@ -123,21 +123,22 @@ enum SetEndDateResult { closed, scheduled, applied }
 
 /// Result of `tombstoneAndRefill`
 ///
-/// Carries three operator-visible values: the `entry_id` of the target
+/// Carries three operator-visible values: the `entry_id` of the wedged
 /// row flipped to `tombstoned`, the count of trail null rows deleted in
 /// the same transaction, and the value `fill_cursor` was rewound to.
 class TombstoneAndRefillResult {
   const TombstoneAndRefillResult({
-    required this.targetRowId,
+    required this.rowId,
     required this.deletedTrailCount,
     required this.rewoundTo,
   });
 
-  /// `entry_id` of the tombstoned target row.
-  final String targetRowId;
+  /// `entry_id` of the tombstoned row, recorded as `row_id` on the
+  /// recovery audit.
+  final String rowId;
 
   /// Count of null-finalStatus rows whose sequence_in_queue was strictly
-  /// greater than the target's sequence_in_queue that were deleted from
+  /// greater than the tombstoned row's sequence_in_queue that were deleted from
   /// the FIFO store in the same transaction.
   final int deletedTrailCount;
 

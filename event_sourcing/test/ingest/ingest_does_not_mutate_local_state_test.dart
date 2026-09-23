@@ -496,15 +496,20 @@ void main() {
 
         // Sanity: an originator-side fifoRowId MUST NOT exist on the
         // receiver's FIFO. (Bridged wedge audits name originator
-        // FIFO row ids in `data.target_row_id` — this id is
+        // FIFO row ids in `data.row_id` — this id is
         // originator-private and has no meaning on the receiver.)
-        final auditTargetRowId = auditEvent.data['target_row_id'];
+        final auditRowId = auditEvent.data['row_id'];
+        expect(
+          auditRowId,
+          equals(origHeadRowId),
+          reason: 'the recovery audit names the recovered originator row',
+        );
         for (final row in postReceiverFifo) {
           expect(
             row.entryId,
-            isNot(equals(auditTargetRowId)),
+            isNot(equals(auditRowId)),
             reason:
-                'an originator FIFO row id (data.target_row_id) MUST '
+                'an originator FIFO row id (data.row_id) MUST '
                 'NOT appear in the receiver FIFO just because the '
                 'receiver ingested the audit',
           );

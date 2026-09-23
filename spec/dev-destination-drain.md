@@ -23,6 +23,8 @@ F. An operator recovery SHALL read the queue head, remove the trail items and re
 
 G. A fill SHALL write queue items, the fill position or a cleared replay request only when, inside its transaction, the persisted schedule (start date, end date, registration and hard-delete opt-in), the head status, the fill position and the replay request equal those its batch was computed from, and SHALL run the destination's transform and every walk of the log outside that transaction.
 
+H. The library SHALL append each kind of destination audit event with one event type, distinct from the event type of every other kind of destination audit event.
+
 U. Every destination-registry operation SHALL decide its outcome, refusals and outcomes that change nothing included, inside one transaction that writes, so that on every backend the decision reflects every commit the storage orders before it; an outcome that changes nothing else SHALL write only a database-wide check record.
 
 ## Rationale
@@ -43,11 +45,15 @@ U. Every destination-registry operation SHALL decide its outcome, refusals and o
 
 **Why compare and set (assertion G)?** The fill reads the schedule, the head, the fill position and the replay request, walks the log and awaits the destination's transform before it writes. Another process may delete, register again, reschedule or recover the destination meanwhile. The fill's transaction re-reads that state and writes nothing when any of it changed, so a fill never enqueues an item for a registration that no longer exists, never moves a fill position backwards, and never admits an event past an end date set while it ran. The head is compared by its status alone: the fill appends behind the head, so a head delivered meanwhile does not change what it may write, while a head wedged meanwhile means nothing may be filled behind it. The transform and the log walk run outside the transaction because a backend may run a transaction body again after a conflict, and consumer code must not run inside a body the storage may repeat without bound.
 
+**Why a distinct event type per kind (assertion H)?** Every destination audit event is appended to one per-install system aggregate under one aggregate type, so the aggregate identifies the install and not the kind of change. A subscription filter that admits reserved system events admits all of them, whatever its entry-type allow-list says, and the library's default `TableProjectionSpec` interpretation chooses between inserting and removing a row by event type. The event type is therefore the field a filter or a projection can use, without a predicate closure, to tell a recovery from a deletion or a registration from a date change.
+
 **Why decide every registry outcome in a writing transaction (assertion U)?** A browser database shared by several tabs validates a transaction against the other tabs' commits only when the transaction writes; a read-only transaction may read a tab's cached state. A refusal, or an outcome that changes nothing, therefore writes one small database-wide record and returns its outcome, and the operation throws or returns after the commit, so no outcome is decided on stale data. On a serializable server database the write is harmless.
 
 ## Changelog
 
+- 2026-09-23 | 815cd8be | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add H: each kind of destination audit event carries its own event type
 - 2026-09-23 | c29a506a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-G and U: queue deletion and re-registration, status changes, attempt and outcome atomicity, drainer-only enqueue, recovery, fill compare-and-set, registry decisions in writing transactions
 
-*End* *Destination queue mechanics* | **Hash**: c29a506a
+*End* *Destination queue mechanics* | **Hash**: 815cd8be

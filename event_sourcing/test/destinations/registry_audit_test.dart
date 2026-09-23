@@ -4,6 +4,10 @@
 // deleteDestination, tombstoneAndRefill) emits a system audit event in the
 // same transaction as the mutation (D), and that the audit carries the
 // correct configuration fields (A).
+// Verifies: EVS-DEV-destination-drain/H
+// every kind of destination audit carries its
+//   own event type, distinct from every other kind's and never the generic
+//   `finalized`.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -76,7 +80,8 @@ void main() {
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
       expect(audit.aggregateType, 'system_destination');
-      expect(audit.eventType, 'finalized');
+      expect(audit.eventType, kDestinationRegisteredEventType);
+      expect(audit.eventType, 'destination_registered');
       expect(audit.data['id'], 'primary');
       expect(audit.data['wire_format'], 'fake-v1');
       expect(audit.data['allow_hard_delete'], isFalse);
@@ -100,6 +105,9 @@ void main() {
       expect(audits, hasLength(1));
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
+      expect(audit.aggregateType, 'system_destination');
+      expect(audit.eventType, kDestinationStartDateSetEventType);
+      expect(audit.eventType, 'destination_start_date_set');
       expect(audit.data['id'], 'primary');
       expect(audit.data['start_date'], start.toUtc().toIso8601String());
       expect(audit.initiator, _user);
@@ -132,6 +140,9 @@ void main() {
       expect(audits, hasLength(1));
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
+      expect(audit.aggregateType, 'system_destination');
+      expect(audit.eventType, kDestinationEndDateSetEventType);
+      expect(audit.eventType, 'destination_end_date_set');
       expect(audit.data['id'], 'primary');
       expect(audit.data['end_date'], endDate.toUtc().toIso8601String());
       expect(audit.data['prior_end_date'], isNull);
@@ -158,6 +169,7 @@ void main() {
         kDestinationEndDateSetEntryType,
       );
       expect(audits, hasLength(1));
+      expect(audits.single.eventType, kDestinationEndDateSetEventType);
       expect(audits.single.initiator, _user);
       expect(audits.single.data['result'], 'closed');
     });
@@ -174,6 +186,9 @@ void main() {
       expect(audits, hasLength(1));
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
+      expect(audit.aggregateType, 'system_destination');
+      expect(audit.eventType, kDestinationDeletedEventType);
+      expect(audit.eventType, 'destination_deleted');
       expect(audit.data['id'], 'purgeable');
       expect(audit.data['allow_hard_delete'], isTrue);
       // An empty queue: nothing tombstoned, nothing deleted.
@@ -208,7 +223,7 @@ void main() {
         head.entryId,
         initiator: _user,
       );
-      expect(result.targetRowId, head.entryId);
+      expect(result.rowId, head.entryId);
       final audits = await _eventsOfType(
         backend,
         kDestinationWedgeRecoveredEntryType,
@@ -216,13 +231,97 @@ void main() {
       expect(audits, hasLength(1));
       final audit = audits.single;
       expect(audit.aggregateId, _installUUID);
+      expect(audit.aggregateType, 'system_destination');
+      expect(audit.eventType, kDestinationWedgeRecoveredEventType);
+      expect(audit.eventType, 'destination_wedge_recovered');
       expect(audit.data['id'], 'wedged');
-      expect(audit.data['target_row_id'], head.entryId);
+      expect(audit.data['row_id'], head.entryId);
+      expect(audit.data.containsKey('target_row_id'), isFalse);
       expect(audit.data['target_event_id_range_first_seq'], 1);
       expect(audit.data['target_event_id_range_last_seq'], 1);
       expect(audit.data['deleted_trail_count'], 0);
       expect(audit.data['rewound_to'], 0);
       expect(audit.initiator, _user);
+    });
+
+    // Every kind of destination audit is told apart by its event type
+    // alone: after one of each operation, no destination audit carries the
+    // generic `finalized`, and the kinds carry pairwise distinct event
+    // types, each the same for every audit of its kind. The kinds are read
+    // from the reserved entry-type ids, so a destination audit kind the
+    // library adds fails this test until the fixture appends one of it.
+    test('destination audits carry pairwise distinct event types and none '
+        'is finalized', () async {
+      await ds.destinations.addDestination(
+        FakeDestination(id: 'wedged', allowHardDelete: true),
+        initiator: _automation,
+      );
+      await ds.destinations.setStartDate(
+        'wedged',
+        DateTime.utc(2026, 1, 1),
+        initiator: _automation,
+      );
+      await ds.destinations.setEndDate(
+        'wedged',
+        DateTime.now().add(const Duration(days: 30)),
+        initiator: _automation,
+      );
+      final head = await enqueueSingle(
+        backend,
+        'wedged',
+        eventId: 'evt-1',
+        sequenceNumber: 1,
+      );
+      await wedgeHeadForTest(backend, 'wedged');
+      await ds.destinations.tombstoneAndRefill(
+        'wedged',
+        head.entryId,
+        initiator: _user,
+      );
+      await ds.destinations.deleteDestination('wedged', initiator: _user);
+
+      final destinationAuditEntryTypes = kReservedSystemEntryTypeIds
+          .where((id) => id.startsWith('system.destination_'))
+          .toSet();
+      final audits = (await backend.findAllEvents())
+          .where((e) => destinationAuditEntryTypes.contains(e.entryType))
+          .toList();
+      expect(
+        audits.map((e) => e.entryType).toSet(),
+        destinationAuditEntryTypes,
+        reason: 'one audit of every kind was appended',
+      );
+      expect(
+        audits.where((e) => e.eventType == 'finalized'),
+        isEmpty,
+        reason: 'no destination audit carries the generic finalized',
+      );
+      final eventTypesByKind = <String, Set<String>>{};
+      for (final audit in audits) {
+        eventTypesByKind
+            .putIfAbsent(audit.entryType, () => <String>{})
+            .add(audit.eventType);
+      }
+      for (final entry in eventTypesByKind.entries) {
+        expect(
+          entry.value,
+          hasLength(1),
+          reason: 'every ${entry.key} audit carries one event type',
+        );
+      }
+      final eventTypes = eventTypesByKind.values.map((s) => s.single).toSet();
+      expect(
+        eventTypes,
+        hasLength(destinationAuditEntryTypes.length),
+        reason: 'every kind carries an event type no other kind carries',
+      );
+      expect(eventTypes, <String>{
+        kDestinationRegisteredEventType,
+        kDestinationStartDateSetEventType,
+        kDestinationEndDateSetEventType,
+        kDestinationDeletedEventType,
+        kDestinationWedgeRecoveredEventType,
+      });
     });
 
     // When addDestination throws ArgumentError (duplicate id), no audit

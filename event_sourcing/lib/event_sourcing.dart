@@ -292,12 +292,18 @@ export 'src/security/system_entry_types.dart'
         kSecurityContextCompactedEntryType,
         kSecurityContextPurgedEntryType,
         kSecurityContextRedactedEntryType,
-        // Destination-mutation audits.
+        // Destination-mutation audits: entry types and the per-kind event
+        // types they are appended under.
         kDestinationDeletedEntryType,
+        kDestinationDeletedEventType,
         kDestinationEndDateSetEntryType,
+        kDestinationEndDateSetEventType,
         kDestinationRegisteredEntryType,
+        kDestinationRegisteredEventType,
         kDestinationStartDateSetEntryType,
+        kDestinationStartDateSetEventType,
         kDestinationWedgeRecoveredEntryType,
+        kDestinationWedgeRecoveredEventType,
         // Retention sweep audit.
         kRetentionPolicyAppliedEntryType,
         // Bootstrap registry-initialized audit.
