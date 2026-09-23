@@ -400,11 +400,32 @@ repeat clicks.
 To see runtime add plus replay: click **Add destination**, set id =
 `Backup`, allowHardDelete = true, submit. A new column appears,
 state = `DORMANT`. Set Backup's start date to a value earlier than
-any event in the log. Observe Backup's schedule flips to `ACTIVE`,
-the lib walks the event log in sequence order, batches into groups
+any event in the log. Observe Backup's schedule flips to `ACTIVE`;
+setting the start date records a replay request and enqueues
+nothing itself. On the next tick the delivery cycle performs the
+replay: it walks the event log in sequence order, batches into groups
 respecting `canAddToBatch`, and populates Backup's FIFO with
-`pending` rows; on the next tick they drain to `sent`. Other panels
-are unaffected.
+`pending` rows, which then drain to `sent`. Other panels are
+unaffected.
+
+The replay covers every event in the window up to that tick,
+including events appended after the start date was set, and none of
+them waits out Backup's `maxAccumulateTime`. The drain that follows
+sends the replayed rows one after another in the same tick, each
+after Backup's send latency: with a 10 s latency, a three-row replay
+keeps that tick busy for about 30 s before the rows all show `sent`.
+
+### Deleting a destination keeps its delivery record
+
+To see deletion: open Backup's **ops** drawer and click **Delete
+destination**. While Backup's head row is pending (it may be in
+delivery) the delete is refused and the panel's banner names the
+reason. Set Backup's connection to `rejecting` so the head wedges,
+then delete: Backup's live column disappears and a read-only
+`Backup (deleted)` column appears, listing the rows the deletion
+kept — every `sent` row, and the wedged head, now `tombstoned`. The
+pending rows behind the head are gone. Adding `Backup` again starts
+a new registration.
 
 ### setEndDate semantics
 

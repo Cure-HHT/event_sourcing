@@ -47,8 +47,12 @@ Future<_Pane> _mkPane({
   final backend = SembastBackend(database: db);
   final policyNotifier = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
 
+  // The demo's simulated network latency is dropped to zero: a pane's first
+  // cycle performs each destination's activation replay, which enqueues and
+  // sends every note appended so far in one pass.
   final primary = DemoDestination(
     id: 'Primary',
+    initialSendLatency: Duration.zero,
     filter: const SubscriptionFilter(
       entryTypes: <String>{
         'demo_note',
@@ -59,6 +63,7 @@ Future<_Pane> _mkPane({
   );
   final secondary = DemoDestination(
     id: 'Secondary',
+    initialSendLatency: Duration.zero,
     allowHardDelete: true,
     filter: const SubscriptionFilter(
       entryTypes: <String>{'green_button_pressed', 'blue_button_pressed'},

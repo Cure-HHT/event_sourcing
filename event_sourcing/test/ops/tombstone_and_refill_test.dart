@@ -1,12 +1,12 @@
 // Verifies: EVS-PRD-destinations/C+D+F
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
@@ -14,6 +14,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -138,7 +139,12 @@ _seedFifo(
       eventId: 'sent-e$seq',
       sequenceNumber: seq,
     );
-    await backend.markFinal(destination.id, row.entryId, FinalStatus.sent);
+    await setStatusForTest(
+      backend,
+      destination.id,
+      row.entryId,
+      FinalStatus.sent,
+    );
   }
   String? headEntryId;
   if (headKind != _HeadKind.none) {
@@ -153,7 +159,8 @@ _seedFifo(
     if (headKind == _HeadKind.wedged) {
       // Seed one attempt so -B can assert attempts[] is
       // preserved across the wedged -> tombstoned flip.
-      await backend.appendAttempt(
+      await appendAttemptForTest(
+        backend,
         destination.id,
         headEntryId,
         AttemptResult(
@@ -163,7 +170,12 @@ _seedFifo(
           httpStatus: 500,
         ),
       );
-      await backend.markFinal(destination.id, headEntryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        destination.id,
+        headEntryId,
+        FinalStatus.wedged,
+      );
     }
   }
   // Trail rows (all pre-terminal / null final_status).
@@ -179,7 +191,7 @@ _seedFifo(
   // fill_cursor tracks the last enqueued row's sequence_number so the
   // rewind is observable.
   if (seq > 0) {
-    await backend.writeFillCursor(destination.id, seq);
+    await writeFillCursorForTest(backend, destination.id, seq);
   }
   return (
     backend: backend,
@@ -324,26 +336,36 @@ void main() {
       expect(afterHead['sequence_in_queue'], beforeHead['sequence_in_queue']);
     });
 
-    // final_status flips to tombstoned and attempts[] is preserved
-    // (empty on a pre-terminal row).
-    test('null head transitions to tombstoned; attempts preserved', () async {
-      final setup = await _seedFifo(backend, headKind: _HeadKind.pending);
+    // Verifies: EVS-PRD-destinations/M
+    // recovery of a pending head is refused:
+    //   afterwards the row is pending, the fill cursor unchanged, the trail
+    //   intact, and no recovery event is appended.
+    test('a pending head is refused; nothing changes', () async {
+      final setup = await _seedFifo(
+        backend,
+        headKind: _HeadKind.pending,
+        trailCount: 2,
+      );
       final headEntryId = setup.headEntryId!;
       final before = await _readAllFifoRows(backend, setup.destination.id);
-      final beforeHead = before.single;
-      expect(beforeHead['final_status'], isNull);
-      expect(beforeHead['attempts'] as List, isEmpty);
+      final cursorBefore = await backend.readFillCursor(setup.destination.id);
 
-      final result = await setup.registry.tombstoneAndRefill(
-        setup.destination.id,
-        headEntryId,
-        initiator: _testInit,
+      await expectLater(
+        setup.registry.tombstoneAndRefill(
+          setup.destination.id,
+          headEntryId,
+          initiator: _testInit,
+        ),
+        throwsStateError,
       );
-      expect(result.targetRowId, headEntryId);
 
-      final after = await _readAllFifoRows(backend, setup.destination.id);
-      expect(after.single['final_status'], FinalStatus.tombstoned.toJson());
-      expect(after.single['attempts'] as List, isEmpty);
+      expect(await _readAllFifoRows(backend, setup.destination.id), before);
+      expect(before.first['final_status'], isNull);
+      expect(await backend.readFillCursor(setup.destination.id), cursorBefore);
+      final recoveries = (await backend.findAllEvents()).where(
+        (e) => e.entryType == kDestinationWedgeRecoveredEntryType,
+      );
+      expect(recoveries, isEmpty);
     });
 
     // is strictly greater than the target's is deleted from the FIFO.
@@ -484,10 +506,10 @@ void main() {
         eventStore: deps.eventStore,
       );
       final destination = FakeDestination(id: 'dst-f', batchCapacity: 3);
-      // Register + set startDate BEFORE appending events so the
-      // historical-replay branch sees zero candidates
-      // and does not auto-enqueue rows that would conflict with our
-      // controlled seeding below.
+      // Register + set startDate. The activation's replay request is
+      // performed by the first fill, which runs only after the recovery, so
+      // it does not enqueue rows that would conflict with the controlled
+      // seeding below.
       await registry.addDestination(destination, initiator: _testInit);
       await registry.setStartDate(
         destination.id,
@@ -501,8 +523,7 @@ void main() {
       }
 
       // Directly enqueue three 3-event batches. These land at
-      // sequence_in_queue 1, 2, 3 because the FIFO is empty after
-      // setStartDate's zero-event replay branch.
+      // sequence_in_queue 1, 2, 3 because the FIFO is empty.
       Future<void> enqueueBatch(List<int> seqs) async {
         await backend.transaction((txn) async {
           final events = <StoredEvent>[];
@@ -527,7 +548,8 @@ void main() {
       final rows0 = await _readAllFifoRows(backend, destination.id);
       expect(rows0.length, 3);
       final headEntryId = rows0.first['entry_id']! as String;
-      await backend.appendAttempt(
+      await appendAttemptForTest(
+        backend,
         destination.id,
         headEntryId,
         AttemptResult(
@@ -537,10 +559,15 @@ void main() {
           httpStatus: 500,
         ),
       );
-      await backend.markFinal(destination.id, headEntryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        destination.id,
+        headEntryId,
+        FinalStatus.wedged,
+      );
       // fill_cursor at 9 (last enqueued seq) so the rewind is
       // observable.
-      await backend.writeFillCursor(destination.id, 9);
+      await writeFillCursorForTest(backend, destination.id, 9);
 
       // Act: tombstone + refill.
       final result = await registry.tombstoneAndRefill(
@@ -556,7 +583,7 @@ void main() {
       // batchCapacity=3, three calls cover events 1-3, 4-6, 7-9.
       final schedule = await registry.scheduleOf(destination.id);
       for (var i = 0; i < 3; i++) {
-        await fillBatch(
+        await fillWithScheduleForTest(
           destination,
           backend: backend,
           schedule: schedule,
@@ -588,21 +615,12 @@ void main() {
       // distinct entry_ids.
       final allEntryIds = rows1.map((r) => r['entry_id']! as String).toList();
       expect(allEntryIds.toSet().length, allEntryIds.length);
-      // fill_cursor advanced through all 9 user events. The registry
-      // emits -J/K and -G audit events that
-      // consume sequence_number slots in event_log, so the absolute
-      // value is offset; assert against the last user event's seq
-      // instead of a literal.
-      // Match only the seeded user events (e1..e9). The registry's audit
-      // emissions get random v4-UUID event ids, and a UUID may begin with the
-      // hex digit 'e' (~1/16), so `startsWith('e')` intermittently catches one
-      // and inflates the max seq above the fill cursor — a flaky failure.
-      // `^e\d+$` matches `e<digits>` exactly, excluding UUIDs.
-      final lastUserSeq = (await backend.findAllEvents())
-          .where((e) => RegExp(r'^e\d+$').hasMatch(e.eventId))
-          .map((e) => e.sequenceNumber)
-          .reduce((a, b) => a > b ? a : b);
-      expect(await backend.readFillCursor(destination.id), lastUserSeq);
+      // fill_cursor advanced through all 9 user events, and the fill then
+      // advances past the registry's audit events, which the
+      // destination's filter rejects, so the cursor ends at the log's last
+      // event.
+      final lastSeq = (await backend.findAllEvents()).last.sequenceNumber;
+      expect(await backend.readFillCursor(destination.id), lastSeq);
     });
   });
 }

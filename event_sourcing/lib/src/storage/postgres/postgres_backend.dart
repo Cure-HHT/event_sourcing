@@ -40,7 +40,6 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -50,6 +49,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
@@ -945,40 +945,9 @@ class PostgresBackend extends StorageBackend {
   // scan: any row with a given destination_id IS the registration. This
   // collapses the "register on first use" step into the INSERT itself.
 
-  /// Standalone enqueue: opens this backend's own atomic transaction and
-  /// delegates row construction to [enqueueFifoTxn]. Callers composing a
-  /// larger transaction (e.g., `fillBatch` advancing fill_cursor) SHALL use
-  /// [enqueueFifoTxn] directly.
-  // Implements: EVS-PRD-destinations
-  // standalone enqueue path; opens
-  //   its own transaction so the row write is atomic for callers that
-  //   aren't already inside one.
-  @override
-  @internal
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  }) async {
-    // `async` so the synchronous _checkOpen throw lands as a rejected
-    // Future rather than at the call site (parallels findAllEvents).
-    _checkOpen();
-    return transaction(
-      (txn) => enqueueFifoTxn(
-        txn,
-        destinationId,
-        batch,
-        wirePayload: wirePayload,
-        nativeEnvelope: nativeEnvelope,
-      ),
-    );
-  }
-
-  /// Centralized row construction for the FIFO enqueue path. Both
-  /// [enqueueFifo] (which wraps this in its own transaction) and callers
-  /// already composing a transaction (fillBatch, runHistoricalReplay)
-  /// route through here so all the contract enforcement — empty-batch
+  /// Centralized row construction for the FIFO enqueue path, inside the
+  /// caller's transaction (the fill and the replays it performs), so all
+  /// the contract enforcement — empty-batch
   /// rejection, XOR shape, UUID minting, monotone sequence_in_queue
   /// assignment — lives in exactly one place.
   ///
@@ -1011,7 +980,7 @@ class PostgresBackend extends StorageBackend {
       throw ArgumentError.value(
         batch,
         'batch',
-        'enqueueFifo requires a non-empty batch',
+        'enqueueFifoTxn requires a non-empty batch',
       );
     }
     // XOR: exactly one payload shape is legal. Reject both null and both
@@ -1019,7 +988,7 @@ class PostgresBackend extends StorageBackend {
     // ambiguous (wire_payload, envelope_metadata) pair.
     if ((wirePayload == null) == (nativeEnvelope == null)) {
       throw ArgumentError(
-        'enqueueFifo requires exactly one of wirePayload or nativeEnvelope '
+        'enqueueFifoTxn requires exactly one of wirePayload or nativeEnvelope '
         'to be non-null; got '
         'wirePayload=${wirePayload == null ? "null" : "set"}, '
         'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
@@ -1046,7 +1015,7 @@ class PostgresBackend extends StorageBackend {
           throw ArgumentError.value(
             wp,
             'wirePayload',
-            'enqueueFifo requires wirePayload.bytes to encode a JSON object '
+            'enqueueFifoTxn requires wirePayload.bytes to encode a JSON object '
                 '(Map); got ${decoded.runtimeType}',
           );
         }
@@ -1055,7 +1024,7 @@ class PostgresBackend extends StorageBackend {
         throw ArgumentError.value(
           wp,
           'wirePayload',
-          'enqueueFifo requires wirePayload.bytes to be UTF-8 JSON: '
+          'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
               '${e.message}',
         );
       }
@@ -1153,17 +1122,33 @@ class PostgresBackend extends StorageBackend {
   Future<FifoEntry?> readFifoHead(String destinationId) async {
     _checkOpen();
     final result = await _pool.execute(
-      Sql.named('''
-        SELECT * FROM fifo_entries
-        WHERE destination_id = @dest
-          AND (final_status IS NULL OR final_status = 'wedged')
-        ORDER BY sequence_in_queue ASC
-        LIMIT 1
-      '''),
+      Sql.named(_fifoHeadSql),
       parameters: {'dest': destinationId},
     );
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
+
+  @override
+  @internal
+  Future<FifoEntry?> readFifoHeadTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named(_fifoHeadSql),
+      parameters: {'dest': destinationId},
+    );
+    return result.isEmpty ? null : _fifoEntryFromRow(result.first);
+  }
+
+  static const String _fifoHeadSql = '''
+    SELECT * FROM fifo_entries
+    WHERE destination_id = @dest
+      AND (final_status IS NULL OR final_status = 'wedged')
+    ORDER BY sequence_in_queue ASC
+    LIMIT 1
+  ''';
 
   // Implements: EVS-PRD-destinations
   // listFifoEntries enumerates rows
@@ -1191,26 +1176,38 @@ class PostgresBackend extends StorageBackend {
     return result.map(_fifoEntryFromRow).toList(growable: false);
   }
 
-  /// Append [attempt] to the entry's `attempts[]` JSONB array. JSONB
-  /// concatenation via `||` requires the right operand to be a JSONB
-  /// array; we pass `[attempt.toJson()]` so the driver encodes a
-  /// single-element array which gets concatenated onto the existing
-  /// attempts list.
-  // Implements: EVS-PRD-destinations
-  // appendAttempt no-ops with a
-  //   warning when the target row is absent (drain/unjam race
-  //   tolerance). Postgres collapses the sembast distinction between
-  //   "missing row" and "missing FIFO store" — both surface as zero
-  //   affected rows on the same WHERE clause.
+  /// Append [attempt] to the entry's `attempts[]` JSONB array inside
+  /// [txn]. Throws [StateError] when the entry is absent or terminal.
   @override
   @internal
-  Future<void> appendAttempt(
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
   ) async {
-    _checkOpen();
-    final result = await _pool.execute(
+    final session = _asPgTxn(txn).session;
+    final existing = await session.execute(
+      Sql.named('''
+        SELECT final_status FROM fifo_entries
+        WHERE destination_id = @dest AND entry_id = @e
+      '''),
+      parameters: {'dest': destinationId, 'e': entryId},
+    );
+    if (existing.isEmpty) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): no such queue item; '
+        'the drainer records an attempt only on the pending head it sent.',
+      );
+    }
+    final currentRaw = existing.first[0] as String?;
+    if (currentRaw != null) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): the item is '
+        '$currentRaw; an attempt is recorded only on a pending item.',
+      );
+    }
+    await session.execute(
       Sql.named('''
         UPDATE fifo_entries
         SET attempts = attempts || @attempt:jsonb
@@ -1222,84 +1219,6 @@ class PostgresBackend extends StorageBackend {
         'attempt': <Object?>[attempt.toJson()],
       },
     );
-    if (result.affectedRows == 0) {
-      libraryLog(
-        'storage',
-        'appendAttempt: entry $entryId absent from FIFO $destinationId; '
-            'skipping (expected during drain/unjam or drain/delete race)',
-        level: LibraryLogLevel.warning,
-      );
-    }
-  }
-
-  // Implements: EVS-PRD-destinations
-  // markFinal:
-  //   - no-op + warning when target row absent;
-  //   - idempotent return when row already final with matching status;
-  //   - StateError naming both statuses on mismatched already-final;
-  //   - null -> sent stamps sent_at = NOW().toUtc().
-  @override
-  @internal
-  Future<void> markFinal(
-    String destinationId,
-    String entryId,
-    FinalStatus status,
-  ) async {
-    _checkOpen();
-    await transaction<void>((txn) async {
-      final session = _asPgTxn(txn).session;
-      final existing = await session.execute(
-        Sql.named('''
-          SELECT final_status FROM fifo_entries
-          WHERE destination_id = @dest AND entry_id = @e
-        '''),
-        parameters: {'dest': destinationId, 'e': entryId},
-      );
-      if (existing.isEmpty) {
-        libraryLog(
-          'storage',
-          'markFinal: entry $entryId absent from FIFO $destinationId; '
-              'skipping (expected during drain/unjam or drain/delete race)',
-          level: LibraryLogLevel.warning,
-        );
-        return;
-      }
-      final currentRaw = existing.first[0] as String?;
-      // final_status transitions are one-way. Duplicate call with the
-      // SAME status is a no-op (at-least-once drain race-closer);
-      // mismatched status is real corruption — loud failure.
-      if (currentRaw != null) {
-        if (currentRaw == status.name) return;
-        throw StateError(
-          'markFinal($destinationId, $entryId, ${status.name}): entry is '
-          'already $currentRaw; final_status transitions are one-way.',
-        );
-      }
-      if (status == FinalStatus.sent) {
-        await session.execute(
-          Sql.named('''
-            UPDATE fifo_entries
-            SET final_status = @s, sent_at = @t:timestamptz
-            WHERE destination_id = @dest AND entry_id = @e
-          '''),
-          parameters: {
-            's': status.name,
-            't': DateTime.now().toUtc(),
-            'dest': destinationId,
-            'e': entryId,
-          },
-        );
-      } else {
-        await session.execute(
-          Sql.named('''
-            UPDATE fifo_entries
-            SET final_status = @s
-            WHERE destination_id = @dest AND entry_id = @e
-          '''),
-          parameters: {'s': status.name, 'dest': destinationId, 'e': entryId},
-        );
-      }
-    });
   }
 
   // Implements: EVS-PRD-destinations
@@ -1356,10 +1275,9 @@ class PostgresBackend extends StorageBackend {
           final enqueuedAt = (row[3] as DateTime).toUtc();
           final attemptsRaw = row[4] as List;
           final hasAttempts = attemptsRaw.isNotEmpty;
-          // Wedged-with-no-attempts is rare but legal (e.g., manual
-          // setFinalStatusTxn(wedged) bypassing drain); the summary
-          // surfaces enqueued_at + a placeholder error string so
-          // operators can identify the row without a separate code path.
+          // A wedged row with no attempts is not produced by the drain,
+          // but the summary still surfaces enqueued_at + a placeholder
+          // error string so operators can identify such a row.
           final DateTime wedgedAt;
           final String lastError;
           if (hasAttempts) {
@@ -1403,22 +1321,18 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
 
-  // Implements: EVS-PRD-destinations
-  // setFinalStatusTxn enforces legal
-  //   transitions: {null -> sent | wedged | tombstoned, wedged ->
-  //   tombstoned}. Throws StateError on illegal transitions and on
-  //   missing rows (caller is expected to have verified existence via
-  //   readFifoHead before opening the txn). On null -> sent stamps
-  //   sent_at; on every other legal transition attempts[] and sent_at
-  //   are left untouched (tombstoneAndRefill preserves attempts[]
-  //   verbatim).
+  // Implements: EVS-DEV-destination-drain/B
+  // setFinalStatusTxn allows exactly
+  //   null -> sent, null -> wedged and wedged -> tombstoned; every other pair,
+  //   a repeated status and a missing row throw StateError with nothing
+  //   written. null -> sent stamps sent_at; attempts[] is never touched.
   @override
   @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   ) async {
     final session = _asPgTxn(txn).session;
     final existing = await session.execute(
@@ -1430,34 +1344,19 @@ class PostgresBackend extends StorageBackend {
     );
     if (existing.isEmpty) {
       throw StateError(
-        'setFinalStatusTxn($destinationId, $entryId, $status): target '
-        'row not found. Callers must verify existence (readFifoHead) '
-        'before opening the transaction; a missing row here indicates '
-        'a concurrent delete race.',
+        'setFinalStatusTxn($destinationId, $entryId, $status): no such '
+        'queue item.',
       );
     }
     final currentRaw = existing.first[0] as String?;
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw);
-    // Legal transitions:
-    //  - null   -> sent          (drain SendOk)
-    //  - null   -> wedged        (drain SendPermanent / max-attempts)
-    //  - null   -> tombstoned    (tombstoneAndRefill on null head)
-    //  - wedged -> tombstoned    (tombstoneAndRefill on wedged head)
-    // sent/tombstoned are terminal end-states; status=null target is
-    // not legal via this method.
-    final valid =
-        (current == null &&
-            (status == FinalStatus.sent ||
-                status == FinalStatus.wedged ||
-                status == FinalStatus.tombstoned)) ||
-        (current == FinalStatus.wedged && status == FinalStatus.tombstoned);
-    if (!valid) {
+    if (!isLegalFinalStatusTransition(current, status)) {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
-        '$current -> $status. Legal transitions: null -> {sent, wedged, '
-        'tombstoned}; wedged -> {tombstoned}. (one-way rule.)',
+        '${current?.name} -> ${status.name}. Legal transitions: '
+        'null -> sent, null -> wedged, wedged -> tombstoned.',
       );
     }
     if (status == FinalStatus.sent) {
@@ -1468,37 +1367,35 @@ class PostgresBackend extends StorageBackend {
           WHERE destination_id = @dest AND entry_id = @e
         '''),
         parameters: {
-          's': status!.name,
+          's': status.name,
           't': DateTime.now().toUtc(),
           'dest': destinationId,
           'e': entryId,
         },
       );
     } else {
-      // wedged / tombstoned: stamp final_status, leave sent_at and
-      // attempts[] untouched. attempts[] preservation is load-bearing
-      // for tombstoneAndRefill.
       await session.execute(
         Sql.named('''
           UPDATE fifo_entries
           SET final_status = @s
           WHERE destination_id = @dest AND entry_id = @e
         '''),
-        parameters: {'s': status!.name, 'dest': destinationId, 'e': entryId},
+        parameters: {'s': status.name, 'dest': destinationId, 'e': entryId},
       );
     }
   }
 
-  // Implements: EVS-PRD-destinations
+  // Implements: EVS-DEV-destination-drain/F
   // trail-sweep DELETE used by
   //   tombstoneAndRefill: removes rows whose sequence_in_queue is
   //   strictly greater than [afterSequenceInQueue] AND whose
-  //   final_status IS null. Terminal rows are retained forever as
-  //   audit records and never touched here. Returns the count of rows
-  //   deleted (via the postgres driver's affectedRows).
+  //   final_status IS null. Terminal rows are retained for the database's
+  //   lifetime as audit records and never touched here. Returns a
+  //   TrailSweepResult (the deleted count and lowest first sequence, read
+  //   through DELETE ... RETURNING).
   @override
   @internal
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
@@ -1510,32 +1407,137 @@ class PostgresBackend extends StorageBackend {
         WHERE destination_id = @dest
           AND sequence_in_queue > @afterSeq
           AND final_status IS NULL
+        RETURNING event_id_first_seq
       '''),
       parameters: {'dest': destinationId, 'afterSeq': afterSequenceInQueue},
     );
-    return result.affectedRows;
+    int? minFirstSeq;
+    for (final row in result) {
+      final firstSeq = row[0]! as int;
+      if (minFirstSeq == null || firstSeq < minFirstSeq) minFirstSeq = firstSeq;
+    }
+    return TrailSweepResult(
+      deletedCount: result.length,
+      minFirstSeq: minFirstSeq,
+    );
   }
 
-  // Implements: EVS-PRD-destinations
-  // drop the FIFO store for
-  //   [destinationId] entirely (used by `deleteDestination`).
-  //   Postgres has no per-destination store, so we delete every row
-  //   under the destination_id discriminator AND the persisted
-  //   sequence_in_queue counter so a subsequent re-use of the same
-  //   id starts at 1 again. (Sembast achieves the same by dropping the
-  //   per-destination store; the counter on sembast is wiped via
-  //   `backend_state` deletion.)
+  // Implements: EVS-DEV-destination-drain/A
+  // retire a deleted destination's queue:
+  //   refuse a pending head; tombstone a wedged head; delete the pending rows
+  //   and the fill cursor; keep every terminal row and the sequence_in_queue
+  //   counter so a re-added destination's rows continue above the retained
+  //   ones (the primary key is (destination_id, sequence_in_queue)).
   @override
   @internal
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
+  Future<QueueRetirement> retireQueueTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
     final session = _asPgTxn(txn).session;
-    await session.execute(
-      Sql.named('DELETE FROM fifo_entries WHERE destination_id = @dest'),
+    final head = await readFifoHeadTxn(txn, destinationId);
+    if (head != null && head.finalStatus == null) {
+      throw StateError(
+        'retireQueueTxn($destinationId): the queue head ${head.entryId} is '
+        'pending and may be in delivery; it is retired only once wedged.',
+      );
+    }
+    String? tombstoned;
+    if (head != null) {
+      await setFinalStatusTxn(
+        txn,
+        destinationId,
+        head.entryId,
+        FinalStatus.tombstoned,
+      );
+      tombstoned = head.entryId;
+    }
+    final deleted = await session.execute(
+      Sql.named('''
+        DELETE FROM fifo_entries
+        WHERE destination_id = @dest AND final_status IS NULL
+      '''),
       parameters: {'dest': destinationId},
     );
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
-      parameters: {'k': _fifoSeqCounterKey(destinationId)},
+      parameters: {'k': 'fill_cursor_$destinationId'},
+    );
+    return QueueRetirement(
+      tombstonedRowId: tombstoned,
+      deletedPendingCount: deleted.affectedRows,
+    );
+  }
+
+  // -------- Replay requests --------
+
+  @override
+  @internal
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'replay_request_$destinationId');
+    return value == null ? null : ReplayRequest.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  ) => _writeStateTxn(txn, 'replay_request_$destinationId', request.toJson());
+
+  @override
+  @internal
+  Future<void> clearReplayRequestTxn(Transaction txn, String destinationId) =>
+      _deleteStateTxn(txn, 'replay_request_$destinationId');
+
+  // -------- Registry check record --------
+
+  @override
+  @internal
+  Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>
+      _writeStateTxn(txn, 'registry_check', check.toJson());
+
+  @override
+  @internal
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) async {
+    final value = await _readStateTxn(txn, 'registry_check');
+    return value == null ? null : RegistryCheck.fromJson(_asJsonMap(value));
+  }
+
+  Future<Object?> _readStateTxn(Transaction txn, String key) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('SELECT value FROM backend_state WHERE key = @k'),
+      parameters: {'k': key},
+    );
+    return result.isEmpty ? null : result.first[0];
+  }
+
+  Future<void> _writeStateTxn(
+    Transaction txn,
+    String key,
+    Map<String, Object?> value,
+  ) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO backend_state (key, value)
+        VALUES (@k, @v:jsonb)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+      '''),
+      parameters: {'k': key, 'v': value},
+    );
+  }
+
+  Future<void> _deleteStateTxn(Transaction txn, String key) async {
+    final session = _asPgTxn(txn).session;
+    await session.execute(
+      Sql.named('DELETE FROM backend_state WHERE key = @k'),
+      parameters: {'k': key},
     );
   }
 
@@ -1584,18 +1586,16 @@ class PostgresBackend extends StorageBackend {
     return result.isEmpty ? -1 : result.first[0] as int;
   }
 
-  // Non-txn write: opens its own transaction via [transaction] and
-  // delegates to [writeFillCursorTxn]. Same pattern as [enqueueFifo].
-  // `async` so validation errors land as Future completions, matching
-  // the contract surface and `expectLater(..., throwsArgumentError)`.
+  // In-txn read of fill_cursor; -1 when unset.
   @override
   @internal
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
-    _checkOpen();
-    _validateFillCursorValue(sequenceNumber);
-    return transaction(
-      (txn) => writeFillCursorTxn(txn, destinationId, sequenceNumber),
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId) async {
+    final session = _asPgTxn(txn).session;
+    final result = await session.execute(
+      Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
+      parameters: {'k': 'fill_cursor_$destinationId'},
     );
+    return result.isEmpty ? -1 : result.first[0] as int;
   }
 
   // In-txn write for fill_cursor. INSERT … ON CONFLICT DO UPDATE.
@@ -1632,17 +1632,17 @@ class PostgresBackend extends StorageBackend {
     return DestinationSchedule.fromJson(_asJsonMap(result.first[0]));
   }
 
-  // Non-txn write: opens its own transaction and delegates to [writeScheduleTxn].
+  // In-txn read of the schedule; null when absent.
   @override
   @internal
-  Future<void> writeSchedule(
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    DestinationSchedule schedule,
   ) async {
-    // `async` so a synchronous _checkOpen throw lands as a rejected
-    // Future rather than at the call site (parallels findAllEvents).
-    _checkOpen();
-    return transaction((txn) => writeScheduleTxn(txn, destinationId, schedule));
+    final value = await _readStateTxn(txn, 'schedule_$destinationId');
+    return value == null
+        ? null
+        : DestinationSchedule.fromJson(_asJsonMap(value));
   }
 
   // In-txn write for schedule. INSERT … ON CONFLICT DO UPDATE.

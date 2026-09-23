@@ -4,14 +4,13 @@
 //   contract: (a) the on-disk lockstep between the Sembast int store-key
 //   and the payload's `sequence_in_queue`; (b) sequence_in_queue's
 //   never-reused property after a raw `store.delete` bypassing the
-//   public API. The warning lines of the `markFinal`/`appendAttempt`
-//   no-op branches are asserted on both backends by the conformance
-//   harness.
+//   public API.
 //
-// The abstract StorageBackend FIFO contract (enqueueFifo, readFifoHead,
-// listFifoEntries, appendAttempt, markFinal, hasFifoWedged/wedgedFifos,
-// fill-cursor read/write, markFinal idempotency and one-way transitions)
-// is exercised against this backend by
+// The abstract StorageBackend FIFO contract (enqueueFifoTxn,
+// readFifoHead, listFifoEntries, appendAttemptTxn, setFinalStatusTxn,
+// hasFifoWedged/wedgedFifos, fill-cursor read/write, and the exact legal
+// status transitions: a repeated status, a missing item or a terminal
+// item throws StateError) is exercised against this backend by
 // `sembast_backend_conformance_test.dart` via the backend-agnostic
 // conformance harness in `storage_backend_conformance.dart`.
 import 'package:event_sourcing/src/storage/sembast_backend.dart';

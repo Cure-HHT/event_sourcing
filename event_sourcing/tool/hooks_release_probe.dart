@@ -1,8 +1,8 @@
 // Release probe for the library's test seams.
 //
-// Installs seams whose log observer and failure injection would both fire,
-// then runs a registry operation and one delivery pass over an in-memory
-// Sembast database. Run without assertions (`dart run --no-enable-asserts`,
+// Installs every test seam, each recording that it fired and each failure
+// injection set to fail, then runs a registry operation and two delivery
+// passes over an in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
 // or a `dart compile exe` executable) it must print an empty list of fired
 // seams and a completed delivery, and exit 0. Run with assertions enabled
 // the same body reports the seams that fired, and the process exits 1.
@@ -23,6 +23,7 @@ class ProbeOutcome {
     required this.registryEndDate,
     required this.endDateSetEvents,
     required this.sequenceAdvance,
+    required this.sentItems,
   });
 
   /// Seams that fired, in order.
@@ -46,8 +47,12 @@ class ProbeOutcome {
   /// How far the registry operation advanced the sequence counter.
   final int sequenceAdvance;
 
-  /// True when no seam fired and the pass delivered the one event.
-  bool get passed => firedSeams.isEmpty && delivered == 1;
+  /// The healthy destination's queue items marked sent after the passes.
+  final int sentItems;
+
+  /// True when no seam fired, the passes delivered the one event and its
+  /// outcome committed.
+  bool get passed => firedSeams.isEmpty && delivered == 1 && sentItems == 1;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'fired_seams': firedSeams,
@@ -56,6 +61,7 @@ class ProbeOutcome {
     'registry_end_date': registryEndDate,
     'end_date_set_events': endDateSetEvents,
     'sequence_advance': sequenceAdvance,
+    'sent_items': sentItems,
     'passed': passed,
   };
 }
@@ -143,11 +149,32 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
   );
 
   final fired = <String>[];
+  var fillFailures = 0;
   final hooks = DeliveryTestHooks(
     onLog: (record) => fired.add('onLog ${record.name}: ${record.message}'),
     failRegistryAuditAppend: (entryType) {
       fired.add('failRegistryAuditAppend $entryType');
       return true;
+    },
+    // The first fill's transaction fails; the second pass fills, sends and
+    // then fails the send's outcome transaction.
+    failFillTransaction: (destinationId) {
+      fired.add('failFillTransaction $destinationId');
+      return fillFailures++ == 0;
+    },
+    failOutcomeTransaction: (destinationId, outcome) {
+      fired.add('failOutcomeTransaction $destinationId $outcome');
+      return true;
+    },
+    beforeRegistryTransaction: (op) async {
+      fired.add('beforeRegistryTransaction $op');
+    },
+    onRegistryBodyRun: (op) => fired.add('onRegistryBodyRun $op'),
+    insideTransform: (destinationId) async {
+      fired.add('insideTransform $destinationId');
+    },
+    afterFillReads: (destinationId) async {
+      fired.add('afterFillReads $destinationId');
     },
   );
   late final String? storedEndDate;
@@ -181,7 +208,11 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
       source: bundle.eventStore.source,
     );
     await cycle();
+    await cycle();
   });
+  final sentItems = (await backend.listFifoEntries(
+    healthy.id,
+  )).where((e) => e.finalStatus == FinalStatus.sent).length;
   await backend.close();
   return ProbeOutcome(
     firedSeams: fired,
@@ -190,6 +221,7 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     registryEndDate: registryEndDate,
     endDateSetEvents: endDateSetEvents,
     sequenceAdvance: sequenceAdvance,
+    sentItems: sentItems,
   );
 }
 

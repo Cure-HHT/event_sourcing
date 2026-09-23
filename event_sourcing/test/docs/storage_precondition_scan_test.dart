@@ -22,6 +22,8 @@ const stateKinds = <String, String>{
   'records it keeps beside them': 'the records kept beside them',
   'fill positions': 'fill positions',
   'schedules': 'schedules',
+  'replay requests': 'replay requests',
+  'registry check record': 'the registry check record',
   'security context': 'the security context stored beside each event',
 };
 

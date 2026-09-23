@@ -37,9 +37,10 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/queue_test_support.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -406,7 +407,7 @@ void main() {
         final origSchedule = await originator.datastore.destinations.scheduleOf(
           'orig-dest',
         );
-        await fillBatch(
+        await fillWithScheduleForTest(
           origDest,
           backend: originator.backend,
           schedule: origSchedule,
@@ -430,6 +431,9 @@ void main() {
         final preReceiverFifo = await receiver.backend.listFifoEntries(
           'recv-dest',
         );
+
+        // Recovery requires a wedged head.
+        await wedgeHeadForTest(originator.backend, 'orig-dest');
 
         // Trigger originator's wedge recovery — emits a real
         // `system.destination_wedge_recovered` audit naming

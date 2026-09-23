@@ -143,15 +143,6 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  }) => throw UnimplementedError();
-
-  @internal
-  @override
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -173,7 +164,8 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<void> appendAttempt(
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
@@ -181,11 +173,57 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<void> markFinal(
+  Future<FifoEntry?> readFifoHeadTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    String entryId,
-    FinalStatus status,
   ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<QueueRetirement> retireQueueTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearReplayRequestTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) =>
+      throw UnimplementedError();
 
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();
@@ -203,11 +241,6 @@ class ThirdPartyBackend extends StorageBackend {
 
   @override
   Future<int> readFillCursor(String destinationId) =>
-      throw UnimplementedError();
-
-  @internal
-  @override
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) =>
       throw UnimplementedError();
 
   @internal
@@ -232,13 +265,6 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<void> writeSchedule(
-    String destinationId,
-    DestinationSchedule schedule,
-  ) => throw UnimplementedError();
-
-  @internal
-  @override
   Future<void> writeScheduleTxn(
     Transaction txn,
     String destinationId,
@@ -248,11 +274,6 @@ class ThirdPartyBackend extends StorageBackend {
   @internal
   @override
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) =>
-      throw UnimplementedError();
-
-  @internal
-  @override
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
 
   @override
@@ -265,12 +286,12 @@ class ThirdPartyBackend extends StorageBackend {
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,

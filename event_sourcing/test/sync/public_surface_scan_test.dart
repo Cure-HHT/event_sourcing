@@ -125,8 +125,7 @@ const _functionTyped = <String, String>{
 const _mustBeInternal = <String, String>{
   'drain': 'drains a queue outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
-  'runHistoricalReplay': 'enqueues and rewinds a fill position',
-  'runGapReplay': 'enqueues and rewinds a fill position',
+  'writeQueueItemsTxn': 'enqueues queue items outside the fill',
   'seedViewTargetVersions': 'writes view target versions',
   'promoteViewSnapshots': 'rewrites view rows and target versions',
   'EventStoreBundle.setViewTargetVersion':
@@ -275,11 +274,12 @@ class ScanFixtureOverrideBackend extends SembastBackend {
   ScanFixtureOverrideBackend({required super.database});
 
   @override
-  Future<void> markFinal(
+  Future<void> setFinalStatusTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     FinalStatus status,
-  ) => super.markFinal(destinationId, entryId, status);
+  ) => super.setFinalStatusTxn(txn, destinationId, entryId, status);
 }
 
 abstract class ScanFixtureContract extends StorageBackend {
@@ -416,8 +416,7 @@ class PostgresSecurityContextStore {
 
 Future<void> drain() async {}
 Future<void> fillBatch() async {}
-Future<void> runHistoricalReplay() async {}
-Future<void> runGapReplay() async {}
+Future<void> writeQueueItemsTxn() async {}
 Future<void> seedViewTargetVersions() async {}
 Future<void> promoteViewSnapshots() async {}
 ''';
@@ -664,7 +663,7 @@ void main() {
         nonReads: _nonReads,
       );
       expect(violations, <Matcher>[
-        contains('ScanFixtureOverrideBackend.markFinal'),
+        contains('ScanFixtureOverrideBackend.setFinalStatusTxn'),
       ]);
     });
 

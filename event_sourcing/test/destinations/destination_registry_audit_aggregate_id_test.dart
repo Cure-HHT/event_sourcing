@@ -18,6 +18,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
 
 const _installUUID = 'aaaa1111-2222-3333-4444-555566667777';
 const _source = Source(
@@ -174,6 +175,8 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
+      // Recovery requires a wedged head.
+      await wedgeHeadForTest(backend, 'wedged');
       await ds.destinations.tombstoneAndRefill(
         'wedged',
         head.entryId,

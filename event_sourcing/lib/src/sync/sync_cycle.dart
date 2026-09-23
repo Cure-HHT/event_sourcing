@@ -140,15 +140,12 @@ class SyncCycle {
     bool flushHeld,
   ) async {
     // Step 1: promote events appended since the last cycle into this
-    // destination's FIFO. Without this, drain has nothing to read past
-    // what runHistoricalReplay enqueued at activation time, and every
-    // post-activation event is stranded in the event log.
+    // destination's FIFO, after performing any replay a registry operation
+    // requested. The fill reads the persisted schedule itself.
     try {
-      final schedule = await _registry.scheduleOf(destination.id);
       await fillBatch(
         destination,
         backend: _backend,
-        schedule: schedule,
         source: _source,
         clock: _clock,
         flushHeld: flushHeld,
@@ -157,11 +154,10 @@ class SyncCycle {
       // Swallow — one destination's fill failure must
       // not cancel another's drain. The drain step still runs because
       // any FIFO rows enqueued by a prior cycle are still drainable.
-      // Unlike drain (which records each attempt into the entry's
-      // attempts[].error_message before throwing), fillBatch has no
-      // per-attempt audit surface — without this log, a destination
-      // whose fill fails on every cycle would silently stop receiving
-      // new FIFO rows.
+      // A failed fill wrote nothing (its transaction rolled back) and has
+      // no per-attempt record — without this log, a destination whose
+      // fill fails on every cycle would silently stop receiving new FIFO
+      // rows.
       libraryLog(
         'sync_cycle',
         'fillBatch failed for destination ${destination.id}',
@@ -181,13 +177,12 @@ class SyncCycle {
       );
     } catch (e, st) {
       // Per the contract, one destination's failure does not cancel
-      // another's drain. We swallow here so Future.wait does not abort;
-      // the drain loop itself has already recorded the attempt via its
-      // internal try/catch on `destination.send`, so the exception is
-      // not silently lost — it is still surfaced via the entry's
-      // `attempts[].error_message`. The log line below adds an
-      // operator-visible signal for failures that escape that internal
-      // catch (programming bugs in drain itself).
+      // another's drain. We swallow here so Future.wait does not abort.
+      // A send's own failure never reaches here: drain records it as the
+      // attempt's outcome. An exception that escapes drain means an
+      // outcome transaction did not commit, so no attempt was recorded:
+      // the head stays pending and is sent again by a later cycle. The
+      // log line below is the only record of that failure.
       libraryLog(
         'sync_cycle',
         'drain failed for destination ${destination.id}',

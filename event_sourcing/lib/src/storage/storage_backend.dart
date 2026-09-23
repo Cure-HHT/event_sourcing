@@ -7,6 +7,7 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
@@ -31,6 +32,12 @@ import 'package:meta/meta.dart' show internal;
 /// guarantee atomicity across the four logical stores (event log, generic
 /// view store, per-destination FIFOs, backend_state KV).
 ///
+/// Queue items whose `final_status` is terminal (`sent`, `wedged`,
+/// `tombstoned`) are retained for the database's lifetime, including after
+/// their destination is deleted: they are the delivery record. Only items
+/// whose `final_status` is null are ever deleted (by an operator recovery's
+/// trail sweep, or by a deletion).
+///
 /// Every member that writes is marked `@internal`: only the library's own
 /// operations call them. A consumer uses the reads, [transaction] (to run
 /// its own reads in one transaction; an event-store append runs only inside
@@ -50,8 +57,8 @@ import 'package:meta/meta.dart' show internal;
 /// Precondition of this trust boundary: the library's delivery guarantees,
 /// its views and its security-context records hold only while its
 /// persisted state (destination queues, the views it materializes, the
-/// records it keeps beside them, such as fill positions and schedules, and
-/// the security context it stores beside each event) changes only through
+/// records it keeps beside them, such as fill positions, schedules, replay
+/// requests and the registry check record, and the security context it stores beside each event) changes only through
 /// the library's operations. The internal marking is an analyzer guard,
 /// not a barrier: the consumer holds the backend (and, on Sembast, the
 /// database it opened), and a direct write is invisible to the library.
@@ -90,6 +97,16 @@ abstract class StorageBackend {
   /// SHALL fire only those of the committed run, after the commit. Callers
   /// therefore keep any state that describes a run inside [body], or reset it
   /// at the start of each run, so a discarded run leaves nothing behind.
+  ///
+  /// Committed transactions SHALL be serializable: their combined effect
+  /// SHALL equal that of running the committed runs one at a time in some
+  /// order. The library's decisions that read inside a transaction and
+  /// write on what they read (the fill's compare-and-set, the destination
+  /// registry's refusals, the recovery's and the deletion's head checks)
+  /// hold only under this isolation. `PostgresBackend` runs every
+  /// transaction at `SERIALIZABLE` and `SembastBackend` runs one
+  /// transaction at a time; a backend that allows a weaker isolation
+  /// breaks the delivery guarantees.
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body);
 
   // -------- Events --------
@@ -352,16 +369,16 @@ abstract class StorageBackend {
 
   // -------- FIFO (per destination) --------
 
-  /// Append a batch-shaped entry to destination [destinationId]'s FIFO.
-  /// The batch covers every event in [batch], which MUST be non-empty.
-  /// The returned `FifoEntry` carries the backend-assigned
-  /// `sequence_in_queue` and the constructed `event_ids` +
-  /// `event_id_range` fields.
+  /// Append a batch-shaped entry to destination [destinationId]'s FIFO
+  /// inside [txn]. The batch covers every event in [batch], which MUST be
+  /// non-empty. The returned `FifoEntry` carries the backend-assigned
+  /// `sequence_in_queue`, a fresh v4-UUID `entry_id` and the constructed
+  /// `event_ids` + `event_id_range` fields.
   ///
-  /// The backend opens its own atomic transaction for the write so
-  /// callers that are not already composing a larger transaction can
-  /// enqueue in one call. Callers composing a larger transaction (e.g.,
-  /// replay, fill_batch) use [enqueueFifoTxn] instead.
+  /// The write participates in the surrounding transaction's atomicity,
+  /// so the queue item and the fill's other writes (the fill position, a
+  /// cleared replay request) commit or roll back together. Only the fill
+  /// enqueues; the contract has no enqueue outside a transaction.
   ///
   /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null.
   /// The two payload shapes are mutually exclusive:
@@ -394,26 +411,6 @@ abstract class StorageBackend {
   /// destination on first use so `hasFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
   @internal
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  });
-
-  /// Transactional variant of [enqueueFifo]: participates in the
-  /// surrounding transaction's atomicity so the FIFO-row write and the
-  /// accompanying writes (e.g., fill_cursor advance in `fillBatch`) commit
-  /// or roll back together. Same contract as [enqueueFifo] otherwise:
-  /// rejects empty [batch], enforces the XOR `(wirePayload,
-  /// nativeEnvelope)` precondition, mints a fresh v4-UUID `entry_id`,
-  /// assigns monotonically-increasing `sequence_in_queue`, and registers
-  /// the destination on first use.
-  ///
-  /// Implementations SHALL centralize row-construction logic here;
-  /// [enqueueFifo] delegates to [enqueueFifoTxn] inside its own
-  /// `transaction((txn) => ...)` wrapper.
-  @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -439,6 +436,12 @@ abstract class StorageBackend {
   /// `wedgedFifos` probe.
   Future<FifoEntry?> readFifoHead(String destinationId);
 
+  /// [readFifoHead] inside [txn], so the result reflects writes staged in
+  /// the same transaction and the check that reads it runs in the
+  /// transaction it governs.
+  @internal
+  Future<FifoEntry?> readFifoHeadTxn(Transaction txn, String destinationId);
+
   /// Enumerate FIFO entries for [destinationId], ordered by
   /// `sequence_in_queue` ascending. Optionally sliced by
   /// [afterSequenceInQueue] (exclusive lower bound) and [limit] (cap on
@@ -461,53 +464,21 @@ abstract class StorageBackend {
   });
 
   /// Append [attempt] to the `attempts[]` list of the entry identified by
-  /// `(destinationId, entryId)`. Does not change `final_status`.
+  /// `(destinationId, entryId)` inside [txn]. Does not change
+  /// `final_status`.
   ///
-  /// Implementations SHALL be a no-op (return without throwing) when the
-  /// FIFO row identified by `entryId` does not exist in the destination's
-  /// FIFO store, and SHALL be a no-op when the FIFO store for
-  /// `destinationId` does not exist. This tolerates the
-  /// drain/unjam + drain/delete race: drain `await send()`s outside a
-  /// storage transaction, and a concurrent user operation may remove the
-  /// target row before drain's subsequent `appendAttempt` transaction
-  /// runs. Implementations SHALL emit a warning-level diagnostic when
-  /// they no-op.
+  /// The drainer records an attempt only on the pending head it sent, in
+  /// the same transaction as the status the attempt produces. Implementations
+  /// SHALL throw [StateError] when the destination has no queue, when the
+  /// entry is absent, and when the entry is terminal: no library operation
+  /// removes or finalizes an item while the drainer is attempting it, so each
+  /// of these is a defect, not a race.
   @internal
-  Future<void> appendAttempt(
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
-  );
-
-  /// Transition an entry to a terminal `final_status`. When [status] is
-  /// [FinalStatus.sent] the entry's `sent_at` is also set. Entries
-  /// transitioned to terminal status are retained forever as send-log
-  /// records; they are never deleted.
-  ///
-  /// Implementations SHALL be a no-op (return without throwing) when the
-  /// FIFO row identified by `entryId` does not exist in the destination's
-  /// FIFO store, and SHALL be a no-op when the FIFO store for
-  /// `destinationId` does not exist — see the matching
-  /// note on [appendAttempt] for the race this closes. Implementations
-  /// SHALL emit a warning-level diagnostic when they no-op.
-  ///
-  /// **Idempotent on matching already-final rows.** When the entry's
-  /// current `final_status` equals [status] the call returns without
-  /// throwing and without performing any additional write. This closes
-  /// the at-least-once drain race: concurrent drainers may both reach
-  /// `markFinal` after the first one succeeds; the second observes the
-  /// already-correct terminal state and returns cleanly.
-  ///
-  /// **Throws `StateError` on a status mismatch.** When the entry is
-  /// already terminal with a *different* status (e.g. already `sent`,
-  /// asked to mark `wedged`) the implementations SHALL throw `StateError`
-  /// with both the existing and requested statuses in the message —
-  /// this signals real corruption and loud failure is correct.
-  @internal
-  Future<void> markFinal(
-    String destinationId,
-    String entryId,
-    FinalStatus status,
   );
 
   /// True iff any registered destination's FIFO head is `wedged`.
@@ -534,8 +505,8 @@ abstract class StorageBackend {
   /// written, i.e., no row has yet been enqueued for this destination.
   ///
   /// Note: `-1` is both the default-when-unset sentinel and the only
-  /// legal pre-start rewind value (e.g., `unjamDestination` rewinding a
-  /// destination with no sent rows). Callers that need
+  /// legal pre-start rewind value (an operator recovery of a head that
+  /// carries the first event). Callers that need
   /// to distinguish "never written" from "explicitly rewound to -1" MUST
   /// do so via other bookkeeping; this method treats them as equivalent.
   ///
@@ -543,13 +514,10 @@ abstract class StorageBackend {
   /// Non-transactional, read-only.
   Future<int> readFillCursor(String destinationId);
 
-  /// Write the per-destination fill cursor for [destinationId] to
-  /// [sequenceNumber]. Opens its own atomic transaction. Callers that are
-  /// already composing a larger transaction (e.g., fill_batch) SHALL use
-  /// [writeFillCursorTxn] to keep the cursor advance co-atomic with the
-  /// enqueue / sequence-counter writes it accompanies.
+  /// [readFillCursor] inside [txn], so the result reflects a cursor write
+  /// staged in the same transaction.
   @internal
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber);
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId);
 
   /// Write the per-destination fill cursor for [destinationId] to
   /// [sequenceNumber] inside [txn]. Participates in the surrounding
@@ -587,20 +555,18 @@ abstract class StorageBackend {
   /// `DestinationSchedule.toJson`.
   Future<DestinationSchedule?> readSchedule(String destinationId);
 
-  /// Write [schedule] for [destinationId] inside its own atomic
-  /// transaction. Callers already composing a transaction SHALL use
-  /// [writeScheduleTxn] to keep the write co-atomic with adjacent
-  /// schedule / FIFO mutations.
+  /// [readSchedule] inside [txn], so a registry operation or a fill decides
+  /// from the persisted schedule in the transaction it writes in.
   @internal
-  Future<void> writeSchedule(
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    DestinationSchedule schedule,
   );
 
-  /// Transactional variant of [writeSchedule]: participates in the
-  /// surrounding transaction's atomicity so a schedule write and the
-  /// ops that accompany it (e.g. FIFO-store drop in
-  /// `deleteDestination`) commit or roll back together.
+  /// Persist [schedule] for [destinationId] inside [txn], so a schedule
+  /// write commits or rolls back with the registry operation's other
+  /// writes and its audit event. Only the destination registry writes a
+  /// schedule; the contract has no schedule write outside a transaction.
   @internal
   Future<void> writeScheduleTxn(
     Transaction txn,
@@ -609,22 +575,67 @@ abstract class StorageBackend {
   );
 
   /// Delete the `schedule_<destinationId>` record inside [txn]. Used by
-  /// `deleteDestination` to drop schedule state and the FIFO store in
-  /// one atomic step.
+  /// `deleteDestination` beside [retireQueueTxn], so the schedule is
+  /// removed in the transaction that retires the queue.
   @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId);
 
-  /// Drop the FIFO state for [destinationId] entirely inside [txn].
-  /// Implementations SHALL remove every row associated with the
-  /// destination (not just the currently-present records), so a
-  /// subsequent `readFifoHead` on the same id returns null without
-  /// seeing any trailing state. On backends that physically store
-  /// FIFOs in per-destination containers (e.g., the sembast
-  /// `fifo_<destinationId>` store) the container itself is dropped;
-  /// on backends with a shared FIFO table (e.g., postgres
-  /// `fifo_entries`) the matching rows are deleted.
+  /// Retire [destinationId]'s queue inside [txn] when the destination is
+  /// deleted.
+  ///
+  /// Implementations SHALL throw [StateError] and change nothing when the
+  /// queue head is pending (`final_status` null): the head may be in
+  /// delivery. Otherwise they SHALL tombstone a wedged head
+  /// (`wedged -> tombstoned`), delete every item whose `final_status` is
+  /// null (all of which lie behind the head), delete the destination's
+  /// fill cursor, and keep every terminal item and the destination's
+  /// `sequence_in_queue` counter: retained items keep their keys, and items
+  /// enqueued after the destination is registered again continue above them.
+  /// The destination stays known to [hasFifoWedged] and [wedgedFifos].
+  ///
+  /// Returns the tombstoned head's `entry_id` (null for a queue with no
+  /// head) and the number of pending items deleted.
   @internal
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId);
+  Future<QueueRetirement> retireQueueTxn(Transaction txn, String destinationId);
+
+  // -------- Replay requests --------
+
+  /// Read [destinationId]'s pending replay request inside [txn], or null.
+  ///
+  /// Persisted under `backend_state` key `replay_request_<destinationId>`.
+  @internal
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [request] as [destinationId]'s pending replay request inside
+  /// [txn], replacing any earlier one.
+  @internal
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  );
+
+  /// Delete [destinationId]'s pending replay request inside [txn]. No-op
+  /// when none is pending.
+  @internal
+  Future<void> clearReplayRequestTxn(Transaction txn, String destinationId);
+
+  // -------- Registry check record --------
+
+  /// Write [check] as the database-wide registry check record inside [txn],
+  /// replacing the previous one.
+  ///
+  /// Persisted under `backend_state` key `registry_check`.
+  @internal
+  Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check);
+
+  /// Read the database-wide registry check record inside [txn], or null
+  /// when none has been written.
+  @internal
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn);
 
   /// Read a single FIFO row identified by [entryId] on [destinationId],
   /// or `null` when no such row exists (either the FIFO store was never
@@ -637,50 +648,40 @@ abstract class StorageBackend {
   Future<FifoEntry?> readFifoRow(String destinationId, String entryId);
 
   /// Set the row's `final_status` to [status] inside [txn]. The legal
-  /// transitions are:
+  /// transitions are exactly:
   ///
-  /// - `null -> sent` — drain-terminal (SendOk).
-  /// - `null -> wedged` — drain-terminal (SendPermanent, or
-  ///   SendTransient at max attempts).
-  /// - `null -> tombstoned` — `tombstoneAndRefill` on a still-pending
-  ///   head.
-  /// - `wedged -> tombstoned` — `tombstoneAndRefill` on a wedged head.
+  /// - `null -> sent` — the drainer delivered the pending head.
+  /// - `null -> wedged` — the drainer wedged the pending head.
+  /// - `wedged -> tombstoned` — an operator recovery or a deletion retired
+  ///   a wedged head.
   ///
-  /// Any other transition is illegal and SHALL throw `StateError`.
-  /// `sent` and `tombstoned` are terminal end-states and cannot
-  /// transition further. The one-way rule for `null -> terminal` owned
-  /// by [markFinal] is subsumed here but the narrower contract on
-  /// [markFinal] (null-targets only) remains in force for its callers.
+  /// Implementations SHALL throw [StateError] and change nothing on every
+  /// other pair, on a repeated status, and when the target row is absent.
   ///
   /// On `null -> sent` the implementation SHALL stamp
   /// `sent_at = DateTime.now().toUtc()`. On every other transition
-  /// `attempts[]` and `sent_at` SHALL be left untouched —
-  /// tombstoneAndRefill preserves the wedged row's attempts[] verbatim.
-  ///
-  /// Implementations SHALL throw [StateError] when the target row is
-  /// absent — callers are expected to have verified existence (via
-  /// [readFifoHead] for tombstoneAndRefill) before opening the
-  /// transaction, so a missing row at this point indicates a
-  /// concurrent delete race that these ops do not close.
+  /// `attempts[]` and `sent_at` SHALL be left untouched, so a tombstoned
+  /// row keeps the attempts of the wedge it retired.
   @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   );
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
-  /// `final_status IS null`. Returns the count of rows deleted.
+  /// `final_status IS null`. Returns the count of rows deleted and the
+  /// lowest `event_id_range.first_seq` among them, both computed in [txn].
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
-  /// tombstoned target in one transaction. Rows whose
+  /// tombstoned target in one transaction; the recovery rewinds the fill
+  /// cursor below the lowest event the sweep removed. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
-  /// are left untouched regardless of their `sequence_in_queue` — per
-  /// all non-null rows are retained forever.
+  /// are left untouched regardless of their `sequence_in_queue`.
   @internal
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,

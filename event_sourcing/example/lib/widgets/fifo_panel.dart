@@ -442,13 +442,18 @@ class _FifoPanelState extends State<FifoPanel> {
                 TextButton(
                   onPressed: () async {
                     try {
-                      await widget.appState.registry.deleteDestination(
+                      await widget.appState.deleteDestination(
                         widget.destination.id,
-                        initiator: const UserInitiator('demo-user-1'),
                       );
                       _flashBanner('deleted');
                     } catch (e) {
-                      _flashBanner('delete err: $e');
+                      // A refusal (for example while the queue head is
+                      // pending and may be in delivery) names its reason.
+                      _flashBanner(
+                        e is StateError
+                            ? 'delete refused: ${e.message}'
+                            : 'delete err: $e',
+                      );
                     }
                   },
                   child: const Text(
@@ -579,11 +584,8 @@ class _FifoRowTile extends StatelessWidget {
           : utf8.encode(jsonEncode(payload)).length.toString();
       shapeSummary = 'wire_payload: $bytesLabel bytes';
     }
-    // Show TombstoneAndRefill button only on wedged rows. A healthy pending
-    // head is also a valid target but surfacing the control
-    // on every transient null head during rapid enqueue reads as a false
-    // "this row needs intervention" signal. Operator scripts can still call
-    // tombstoneAndRefill on a null head directly through the library API.
+    // Show the TombstoneAndRefill button only on wedged rows: recovery
+    // requires a wedged head.
     final isWedged = status == 'wedged';
     return InkWell(
       onTap: onTap,

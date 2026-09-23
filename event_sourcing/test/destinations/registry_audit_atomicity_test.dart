@@ -1,24 +1,19 @@
 // Verifies: EVS-PRD-destinations/D
 // verifies atomicity of DestinationRegistry
-// mutations: when the audit appendInTxn fails the surrounding transaction
-// rolls back, so the schedule write / FIFO mutation never persists without
-// its audit (D — durable queues commit atomically with their audit).
-//
-// Each test registers a `DestinationRegistry` against an `EventStore` whose
-// `EntryTypeRegistry` is truncated — only the system entry types needed to
-// reach the mutation under test are registered, so the FAILING audit append
-// (the one whose entry type is intentionally omitted) throws via
-// `_validateAppendInputs`. The surrounding `backend.transaction` rolls back:
-// the prior mutation's side effects (schedule write, FIFO drop, etc.) do not
-// persist. The partial state ("mutation persisted, audit lost") is
-// unobservable.
-
+// mutations: a failure injected after an operation's last write (through the
+// `failRegistryAuditAppend` test seam) rolls the whole transaction back, so
+// the schedule write or queue retirement never persists without its audit
+// (D — durable queues commit atomically with their audit). Each test asserts
+// the exact end state: every record the operation writes, and the log, as
+// they were before the call.
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -28,175 +23,137 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Build a `DestinationRegistry` whose `EventStore` has an EntryTypeRegistry
-/// with NO system entry types registered. Every audit emission throws
-/// `ArgumentError` at the registry's pre-I/O validation step, which
-/// surfaces synchronously inside the surrounding `backend.transaction`
-/// and rolls it back.
-Future<DestinationRegistry> _buildBrokenRegistry(SembastBackend backend) async {
-  final deps = await buildAuditedRegistryDeps(
-    backend,
-    auditEntryTypeOverride: const <EntryTypeDefinition>[],
-  );
-  return DestinationRegistry(backend: backend, eventStore: deps.eventStore);
-}
+/// Everything the registry operations under test may change, and the log.
+Future<Map<String, Object?>> _state(
+  SembastBackend backend,
+  String id,
+) async => <String, Object?>{
+  'schedule': (await backend.readSchedule(id))?.toJson(),
+  'rows': <Object?>[
+    for (final r in await backend.listFifoEntries(id)) r.toJson(),
+  ],
+  'cursor': await backend.readFillCursor(id),
+  'request': (await backend.transaction(
+    (txn) => backend.readReplayRequestTxn(txn, id),
+  ))?.toJson(),
+  'events': <String>[for (final e in await backend.findAllEvents()) e.eventId],
+};
 
-/// Build a `DestinationRegistry` whose `EntryTypeRegistry` covers only
-/// the system entry types in [allowed]. Audit emissions for any other
-/// system entry type throw `ArgumentError` and roll back the
-/// surrounding transaction.
-///
-/// Used to test mid-flow audit failure: register the entry types
-/// needed to land setup mutations (e.g., addDestination + setStartDate),
-/// but omit the entry type the mutation under test would emit. The
-/// setup mutations succeed, then the mutation under test fails inside
-/// its txn, rolling back the underlying schedule/FIFO write.
-Future<DestinationRegistry> _buildPartialRegistry(
-  SembastBackend backend, {
-  required Iterable<String> allowed,
-}) async {
-  final allowedSet = allowed.toSet();
-  final deps = await buildAuditedRegistryDeps(
-    backend,
-    auditEntryTypeOverride: kSystemEntryTypes
-        .where((d) => allowedSet.contains(d.id))
-        .toList(),
-  );
-  return DestinationRegistry(backend: backend, eventStore: deps.eventStore);
-}
+/// Runs [op] with a failure injected after the last write of the operation
+/// whose audit is [entryType].
+Future<void> _failing(String entryType, Future<void> Function() op) =>
+    runWithDeliveryTestHooks(
+      DeliveryTestHooks(failRegistryAuditAppend: (t) => t == entryType),
+      op,
+    );
 
 void main() {
   group('DestinationRegistry mutation atomicity', () {
     late SembastBackend backend;
+    late DestinationRegistry registry;
     var counter = 0;
 
     setUp(() async {
       counter += 1;
       backend = await _openBackend('atomicity-$counter.db');
+      final deps = await buildAuditedRegistryDeps(backend);
+      registry = DestinationRegistry(
+        backend: backend,
+        eventStore: deps.eventStore,
+      );
     });
 
     tearDown(() async {
       await backend.close();
     });
 
-    // The schedule write and in-memory registration must both roll back
-    // when the audit append fails (readSchedule returns null afterwards).
+    // The schedule write and the in-memory registration roll back when the
+    // transaction fails after the audit append.
     test(
-      'addDestination: audit failure rolls back the schedule write',
+      'addDestination: an injected failure rolls back the schedule write',
       () async {
-        final registry = await _buildBrokenRegistry(backend);
         final dest = FakeDestination(id: 'atomic');
+        final before = await _state(backend, 'atomic');
 
         await expectLater(
-          registry.addDestination(dest, initiator: _testInit),
-          throwsArgumentError,
+          _failing(
+            kDestinationRegisteredEntryType,
+            () => registry.addDestination(dest, initiator: _testInit),
+          ),
+          throwsA(isA<InjectedFailure>()),
         );
 
-        // Schedule did NOT persist — txn rolled back.
+        expect(await _state(backend, 'atomic'), before);
         expect(await backend.readSchedule('atomic'), isNull);
-        // In-memory state was not updated (we update only after commit).
         expect(registry.byId('atomic'), isNull);
       },
     );
 
-    // The schedule write must roll back when the audit append fails. Built
-    // with `system.destination_registered` registered (so addDestination
-    // succeeds) but `system.destination_start_date_set` omitted (so
-    // setStartDate's audit append throws inside the txn). The surrounding
-    // `backend.transaction` rolls back the schedule write; afterwards
-    // `schedule.startDate` is still null.
-    test('setStartDate: audit failure rolls back the schedule write', () async {
-      final registry = await _buildPartialRegistry(
-        backend,
-        allowed: const <String>{kDestinationRegisteredEntryType},
-      );
-
-      // Setup: addDestination succeeds because its audit type IS
-      // registered. The destination is in the in-memory cache and a
-      // dormant schedule is persisted.
-      await registry.addDestination(
-        FakeDestination(id: 'atomic'),
-        initiator: _testInit,
-      );
-      final scheduleBefore = await backend.readSchedule('atomic');
-      expect(scheduleBefore, isNotNull);
-      expect(scheduleBefore!.startDate, isNull);
-
-      // Act: setStartDate's audit type is NOT registered, so the
-      // audit append throws inside the txn and rolls back the
-      // schedule write.
-      await expectLater(
-        registry.setStartDate(
-          'atomic',
-          DateTime.utc(2026, 1, 1),
-          initiator: _testInit,
-        ),
-        throwsArgumentError,
-      );
-
-      // Assert: persisted schedule is unchanged (startDate still
-      // null) — the schedule write rolled back with the audit.
-      final scheduleAfter = await backend.readSchedule('atomic');
-      expect(scheduleAfter, isNotNull);
-      expect(scheduleAfter!.startDate, isNull);
-    });
-
-    // The FIFO + schedule drop must roll back when the audit append fails.
-    // Built with `system.destination_registered` and
-    // `system.destination_start_date_set` registered (so addDestination +
-    // setStartDate setup succeed) but `system.destination_deleted` omitted
-    // (so deleteDestination's audit append throws inside the txn). The
-    // surrounding `backend.transaction` rolls back the FIFO + schedule drops;
-    // afterwards the destination is still registered and its FIFO head row +
-    // schedule are still present.
+    // The schedule write and the replay request roll back with the audit.
     test(
-      'deleteDestination: audit failure rolls back FIFO + schedule drop',
+      'setStartDate: an injected failure rolls back the schedule write',
       () async {
-        final registry = await _buildPartialRegistry(
-          backend,
-          allowed: const <String>{
-            kDestinationRegisteredEntryType,
-            kDestinationStartDateSetEntryType,
-          },
-        );
-
-        // Setup: register a deletable destination, set its startDate,
-        // and enqueue a FIFO row so the FIFO store is non-empty. Both
-        // mutations succeed (their audit types are registered).
         await registry.addDestination(
-          FakeDestination(id: 'purgeable', allowHardDelete: true),
+          FakeDestination(id: 'atomic'),
           initiator: _testInit,
         );
-        await registry.setStartDate(
-          'purgeable',
-          DateTime.utc(2020, 1, 1),
-          initiator: _testInit,
-        );
-        await enqueueSingle(
-          backend,
-          'purgeable',
-          eventId: 'evt-1',
-          sequenceNumber: 1,
-        );
-        // Sanity: schedule + FIFO head present.
-        expect(await backend.readSchedule('purgeable'), isNotNull);
-        expect(await backend.readFifoHead('purgeable'), isNotNull);
+        final before = await _state(backend, 'atomic');
 
-        // Act: deleteDestination's audit type is NOT registered, so
-        // the audit append throws inside the txn and rolls back the
-        // FIFO + schedule drops.
         await expectLater(
-          registry.deleteDestination('purgeable', initiator: _testInit),
-          throwsArgumentError,
+          _failing(
+            kDestinationStartDateSetEntryType,
+            () => registry.setStartDate(
+              'atomic',
+              DateTime.utc(2026, 1, 1),
+              initiator: _testInit,
+            ),
+          ),
+          throwsA(isA<InjectedFailure>()),
         );
 
-        // Assert: destination is still registered (in-memory state
-        // is updated only after the txn commits) AND the schedule +
-        // FIFO head are still persisted.
-        expect(registry.byId('purgeable'), isNotNull);
-        expect(await backend.readSchedule('purgeable'), isNotNull);
-        expect(await backend.readFifoHead('purgeable'), isNotNull);
+        expect(await _state(backend, 'atomic'), before);
+        expect((await backend.readSchedule('atomic'))!.startDate, isNull);
       },
     );
+
+    // The queue retirement and the schedule drop roll back with the audit.
+    test('deleteDestination: an injected failure rolls back the queue '
+        'retirement and the schedule drop', () async {
+      await registry.addDestination(
+        FakeDestination(id: 'purgeable', allowHardDelete: true),
+        initiator: _testInit,
+      );
+      await registry.setStartDate(
+        'purgeable',
+        DateTime.utc(2020, 1, 1),
+        initiator: _testInit,
+      );
+      await enqueueSingle(
+        backend,
+        'purgeable',
+        eventId: 'evt-1',
+        sequenceNumber: 1,
+      );
+      await enqueueSingle(
+        backend,
+        'purgeable',
+        eventId: 'evt-2',
+        sequenceNumber: 2,
+      );
+      await wedgeHeadForTest(backend, 'purgeable');
+      final before = await _state(backend, 'purgeable');
+
+      await expectLater(
+        _failing(
+          kDestinationDeletedEntryType,
+          () => registry.deleteDestination('purgeable', initiator: _testInit),
+        ),
+        throwsA(isA<InjectedFailure>()),
+      );
+
+      expect(await _state(backend, 'purgeable'), before);
+      expect(registry.byId('purgeable'), isNotNull);
+      expect(await backend.readFifoHead('purgeable'), isNotNull);
+    });
   });
 }

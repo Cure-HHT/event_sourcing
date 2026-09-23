@@ -10,12 +10,14 @@ class UnguardedThirdPartyBackend extends ThirdPartyBackend {
   const UnguardedThirdPartyBackend();
 
   @override
-  Future<FifoEntry> enqueueFifo(
+  Future<FifoEntry> enqueueFifoTxn(
+    Transaction txn,
     String destinationId,
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
-  }) => super.enqueueFifo(
+  }) => super.enqueueFifoTxn(
+    txn,
     destinationId,
     batch,
     wirePayload: wirePayload,

@@ -200,7 +200,7 @@ void main() {
     // Equality covers eventIds and sequenceRange: two entries differing only
     // in eventIds are NOT equal. These guard the completeness of `==`, which
     // the backend conformance harness uses to compare a read-back entry
-    // against the one enqueueFifo returned.
+    // against the one enqueueFifoTxn returned.
     test('equality distinguishes entries differing only in eventIds', () {
       final a = makeBatch(eventIds: const ['ev-x']);
       final b = makeBatch(eventIds: const ['ev-y']);
@@ -221,7 +221,7 @@ void main() {
 
   group('FifoEntry nullable final_status', () {
     // null means "not yet terminal". Drain may attempt a row whose
-    // finalStatus is null; non-null terminal values are retained forever
+    // finalStatus is null; non-null terminal values are retained for the database's lifetime
     // as audit records.
     test('finalStatus is nullable; null is not a terminal state', () {
       final entry = FifoEntry(

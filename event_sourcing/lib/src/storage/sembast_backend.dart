@@ -5,7 +5,6 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -13,6 +12,7 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
@@ -160,6 +160,12 @@ class SembastBackend extends StorageBackend {
     // still observe the closed state here.
     for (final cb in committedRun._postCommit) {
       cb();
+    }
+    // One queue notification per destination the committed run changed.
+    for (final destinationId in committedRun._fifoChanged) {
+      if (!_fifoChangesController.isClosed) {
+        _fifoChangesController.add(destinationId);
+      }
     }
     return result;
   }
@@ -553,17 +559,16 @@ class SembastBackend extends StorageBackend {
     return (value as int?) ?? -1;
   }
 
-  /// Write the per-destination fill cursor inside its own atomic
-  /// transaction.
+  /// Read the per-destination fill cursor inside [txn]. Returns -1 when the
+  /// key is absent.
   @override
   @internal
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
-    _validateFillCursorValue(sequenceNumber);
-    await _database().transaction((sembastTxn) async {
-      await _backendStateStore
-          .record(_fillCursorKey(destinationId))
-          .put(sembastTxn, sequenceNumber);
-    });
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_fillCursorKey(destinationId))
+        .get(t._sembastTxn);
+    return (value as int?) ?? -1;
   }
 
   /// Write the per-destination fill cursor inside [txn] so the advance is
@@ -588,7 +593,7 @@ class SembastBackend extends StorageBackend {
   /// all other values are `sequence_number`s drawn from the
   /// event log, which are non-negative ints. Reject anything smaller than
   /// `-1` at write time so a bogus caller value cannot land as a stored
-  /// cursor and confuse downstream fillBatch / unjam logic.
+  /// cursor and confuse the fill or a recovery rewind.
   void _validateFillCursorValue(int sequenceNumber) {
     if (sequenceNumber < -1) {
       throw ArgumentError.value(
@@ -618,19 +623,22 @@ class SembastBackend extends StorageBackend {
     );
   }
 
-  /// Persist [schedule] for [destinationId] inside its own atomic
-  /// transaction (standalone variant).
+  /// Read the persisted `DestinationSchedule` for [destinationId] inside
+  /// [txn], or null when no schedule record exists.
   @override
   @internal
-  Future<void> writeSchedule(
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    DestinationSchedule schedule,
   ) async {
-    await _database().transaction((sembastTxn) async {
-      await _backendStateStore
-          .record(_scheduleKey(destinationId))
-          .put(sembastTxn, schedule.toJson());
-    });
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_scheduleKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DestinationSchedule.fromJson(
+      Map<String, Object?>.from(value as Map),
+    );
   }
 
   /// Persist [schedule] inside [txn] so the write participates in the
@@ -659,47 +667,122 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
-  /// Drop the entire `fifo_<destinationId>` Sembast store inside [txn]
-  /// and remove [destinationId] from the known-FIFOs registry so
-  /// `hasFifoWedged` / `wedgedFifos` no longer iterate it.
+  /// Retire [destinationId]'s queue inside [txn] on deletion: refuse a
+  /// pending head, tombstone a wedged head, delete the null-status records
+  /// (all behind the head) and the fill cursor, and keep every terminal
+  /// record, the `sequence_in_queue` counter and the id in the known-FIFOs
+  /// list. Pushes one post-commit `watchFifo` notification.
+  // Implements: EVS-DEV-destination-drain/A
+  // retire a deleted destination's queue:
+  //   refuse a pending head; tombstone a wedged head; delete the pending
+  //   records and the fill cursor; keep terminal records and the counter.
   @override
   @internal
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
+  Future<QueueRetirement> retireQueueTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
     final t = _requireValidTxn(txn);
-    await _fifoStore(destinationId).drop(t._sembastTxn);
-    // Also drop the fill-cursor record so a later addDestination of the
-    // same id starts from a clean slate rather than inheriting a stale
-    // cursor.
+    final head = await readFifoHeadTxn(txn, destinationId);
+    if (head != null && head.finalStatus == null) {
+      throw StateError(
+        'retireQueueTxn($destinationId): the queue head ${head.entryId} is '
+        'pending and may be in delivery; it is retired only once wedged.',
+      );
+    }
+    String? tombstoned;
+    if (head != null) {
+      await setFinalStatusTxn(
+        txn,
+        destinationId,
+        head.entryId,
+        FinalStatus.tombstoned,
+      );
+      tombstoned = head.entryId;
+    }
+    final deleted = await _fifoStore(destinationId).delete(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.isNull('final_status')),
+    );
     await _backendStateStore
         .record(_fillCursorKey(destinationId))
         .delete(t._sembastTxn);
-    // Drop the per-destination sequence_in_queue counter so a later
-    // addDestination of the same id starts at 1 rather than inheriting
-    // the old counter. The "never reused" invariant is scoped to a
-    // destination's lifetime; a fresh addDestination begins a new lifetime.
+    t._fifoChanged.add(destinationId);
+    return QueueRetirement(
+      tombstonedRowId: tombstoned,
+      deletedPendingCount: deleted,
+    );
+  }
+
+  // -------- Replay requests --------
+
+  static String _replayRequestKey(String destinationId) =>
+      'replay_request_$destinationId';
+
+  @override
+  @internal
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_replayRequestKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return ReplayRequest.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  ) async {
+    final t = _requireValidTxn(txn);
     await _backendStateStore
-        .record(_fifoSeqCounterKey(destinationId))
+        .record(_replayRequestKey(destinationId))
+        .put(t._sembastTxn, request.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_replayRequestKey(destinationId))
         .delete(t._sembastTxn);
-    // Remove the id from the known-FIFOs registry so wedged-FIFO
-    // iteration does not hit a dropped store.
-    final current =
-        (await _backendStateStore.record(_knownFifosKey).get(t._sembastTxn)
-                as List?)
-            ?.cast<String>()
-            .toList() ??
-        <String>[];
-    if (current.remove(destinationId)) {
-      await _backendStateStore
-          .record(_knownFifosKey)
-          .put(t._sembastTxn, current);
-    }
-    // post-commit so live `watchFifo(destinationId)` subscribers see
-    // the FIFO-store drop (subsequent listFifoEntries will be empty).
-    t._postCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+  }
+
+  // -------- Registry check record --------
+
+  static const _registryCheckKey = 'registry_check';
+
+  @override
+  @internal
+  Future<void> writeRegistryCheckTxn(
+    Transaction txn,
+    RegistryCheck check,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_registryCheckKey)
+        .put(t._sembastTxn, check.toJson());
+  }
+
+  @override
+  @internal
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_registryCheckKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return RegistryCheck.fromJson(Map<String, Object?>.from(value as Map));
   }
 
   // -------- Generic view storage --------
@@ -936,61 +1019,11 @@ class SembastBackend extends StorageBackend {
 
   // -------- FIFO --------
 
-  /// Append a batch-shaped row to destination [destinationId]'s FIFO. The
-  /// row covers every event in [batch].
-  ///
-  /// Opens its own atomic transaction and delegates the actual row
-  /// construction to [enqueueFifoTxn]. Callers already composing a larger
-  /// transaction (replay, fill_batch) SHALL use [enqueueFifoTxn] so the
-  /// enqueue and any accompanying writes (e.g., fill_cursor advance)
-  /// commit co-atomically.
-  ///
-  /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null
-  ///. See [StorageBackend.enqueueFifo] for the contract
-  /// distinguishing the two payload shapes.
-  ///
-  /// The backend owns `sequence_in_queue` via the persisted
-  /// `fifo_seq_counter_<destinationId>` record:
-  /// monotonic, never reused.
-  ///
-  /// The returned `FifoEntry` is the persisted record. Callers that
-  /// need to advance a per-destination cursor use
-  /// `result.sequenceRange.lastSeq` as the inclusive upper bound of the
-  /// batch on the event log.
-  ///
-  /// The row's `entry_id` is a freshly-minted v4 UUID and has no
-  /// relationship to the events the row carries — callers that need
-  /// to correlate against events use `eventIds` / `sequenceRange`.
-  @override
-  @internal
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  }) async {
-    // Route through this backend's `transaction()` (rather than the
-    // raw `_database().transaction(...)`) so the post-commit callback
-    // appended inside `enqueueFifoTxn` is drained by the wrapper on
-    // commit; otherwise FIFO-change emissions on the
-    // standalone enqueue path would silently drop.
-    return transaction(
-      (txn) => enqueueFifoTxn(
-        txn,
-        destinationId,
-        batch,
-        wirePayload: wirePayload,
-        nativeEnvelope: nativeEnvelope,
-      ),
-    );
-  }
-
-  /// Transactional variant of [enqueueFifo]: participates in the
-  /// surrounding [txn] so the FIFO-row write and the caller's
-  /// accompanying writes commit or roll back together. Used by
-  /// `fillBatch` to keep the enqueue + fill_cursor advance co-atomic,
-  /// and by `runHistoricalReplay` to compose a larger walk of the event
-  /// log into a single transaction.
+  /// Append a queue item to [destinationId]'s FIFO inside [txn], so the
+  /// FIFO-row write and the caller's accompanying writes commit or roll
+  /// back together. Used by
+  /// `fillBatch` to keep the enqueue, the fill_cursor advance and a
+  /// cleared replay request co-atomic.
   ///
   /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null:
   ///
@@ -1005,8 +1038,7 @@ class SembastBackend extends StorageBackend {
   /// Centralizes all row-construction logic: empty-batch rejection,
   /// XOR-shape enforcement, v4-UUID `entry_id` minting,
   /// `sequence_in_queue` assignment, and the known-FIFOs registry
-  /// bookkeeping all live here; [enqueueFifo] is a thin
-  /// `transaction(...)` wrapper.
+  /// bookkeeping all live here.
   @override
   @internal
   Future<FifoEntry> enqueueFifoTxn(
@@ -1020,7 +1052,7 @@ class SembastBackend extends StorageBackend {
       throw ArgumentError.value(
         batch,
         'batch',
-        'enqueueFifo requires a non-empty batch',
+        'enqueueFifoTxn requires a non-empty batch',
       );
     }
     // XOR enforcement: exactly one payload shape is legal. Reject both
@@ -1028,7 +1060,7 @@ class SembastBackend extends StorageBackend {
     // never carries an ambiguous (wire_payload, envelope_metadata) pair.
     if ((wirePayload == null) == (nativeEnvelope == null)) {
       throw ArgumentError(
-        'enqueueFifo requires exactly one of wirePayload or nativeEnvelope '
+        'enqueueFifoTxn requires exactly one of wirePayload or nativeEnvelope '
         'to be non-null; got '
         'wirePayload=${wirePayload == null ? "null" : "set"}, '
         'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
@@ -1062,7 +1094,7 @@ class SembastBackend extends StorageBackend {
           throw ArgumentError.value(
             wp,
             'wirePayload',
-            'enqueueFifo requires wirePayload.bytes to encode a JSON object '
+            'enqueueFifoTxn requires wirePayload.bytes to encode a JSON object '
                 '(Map); got ${decoded.runtimeType}',
           );
         }
@@ -1071,7 +1103,7 @@ class SembastBackend extends StorageBackend {
         throw ArgumentError.value(
           wp,
           'wirePayload',
-          'enqueueFifo requires wirePayload.bytes to be UTF-8 JSON: '
+          'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
               '${e.message}',
         );
       }
@@ -1123,16 +1155,7 @@ class SembastBackend extends StorageBackend {
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);
-    // post-commit so live `watchFifo(destinationId)` subscribers learn
-    // of the new row. Queued on the transaction handle so the emission is
-    // co-atomic with the surrounding `transaction()` commit; fires only
-    // if the transaction succeeds. `enqueueFifo` (the standalone
-    // wrapper) routes through `transaction()` for the same reason.
-    t._postCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+    t._fifoChanged.add(destinationId);
     return entry;
   }
 
@@ -1173,11 +1196,21 @@ class SembastBackend extends StorageBackend {
   /// observe the wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
   @override
-  Future<FifoEntry?> readFifoHead(String destinationId) async {
-    final db = _database();
+  Future<FifoEntry?> readFifoHead(String destinationId) =>
+      _readFifoHead(_database(), destinationId);
+
+  @override
+  @internal
+  Future<FifoEntry?> readFifoHeadTxn(Transaction txn, String destinationId) =>
+      _readFifoHead(_requireValidTxn(txn)._sembastTxn, destinationId);
+
+  Future<FifoEntry?> _readFifoHead(
+    DatabaseClient client,
+    String destinationId,
+  ) async {
     final store = _fifoStore(destinationId);
     final records = await store.find(
-      db,
+      client,
       finder: Finder(
         filter: Filter.or([
           Filter.isNull('final_status'),
@@ -1329,158 +1362,47 @@ class SembastBackend extends StorageBackend {
     return controller.stream;
   }
 
-  /// Append [attempt] to the entry's attempts[]. Does not change
-  /// finalStatus. Runs in its own transaction.
-  ///
-  /// Tolerates a missing target row or a never-registered FIFO store:
-  /// in both cases this method returns without throwing and emits a
-  /// warning-level log line through the library's logger. This closes
-  /// the drain/unjam + drain/delete race documented in design §6.6 —
-  /// drain `await send()`s outside any storage transaction, and a
-  /// concurrent user operation (unjamDestination, deleteDestination) may
-  /// remove the row before drain's subsequent `appendAttempt` runs.
-  ///
-  /// In Sembast, stores are lazily-created namespaces: a store that was
-  /// never written to simply has zero records, so the `records.isEmpty`
-  /// branch covers both "unknown destination" and "row deleted from a
-  /// known destination". No separate "store exists?" probe is needed.
+  /// Append [attempt] to the entry's attempts[] inside [txn]. Does not
+  /// change finalStatus. Throws [StateError] when the entry is absent (in
+  /// Sembast a never-written store has no records, so this also covers an
+  /// unknown destination) or terminal.
   @override
   @internal
-  Future<void> appendAttempt(
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
   ) async {
-    // Route through this backend's `transaction()` so post-commit FIFO
-    // emissions appended below are drained on commit.
-    await transaction((txn) async {
-      final t = _requireValidTxn(txn);
-      final store = _fifoStore(destinationId);
-      final records = await store.find(
-        t._sembastTxn,
-        finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    final t = _requireValidTxn(txn);
+    final store = _fifoStore(destinationId);
+    final records = await store.find(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    );
+    if (records.isEmpty) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): no such queue item; '
+        'the drainer records an attempt only on the pending head it sent.',
       );
-      if (records.isEmpty) {
-        libraryLog(
-          'storage',
-          'appendAttempt: entry $entryId absent from FIFO '
-              '$destinationId; skipping (expected during drain/unjam or '
-              'drain/delete race)',
-          level: LibraryLogLevel.warning,
-        );
-        // No row mutated -> no FIFO-change emission.
-        return;
-      }
-      final record = records.single;
-      final updated = Map<String, Object?>.from(record.value);
-      final attemptsRaw = <Map<String, Object?>>[
-        ...(updated['attempts'] as List? ?? const <Object?>[])
-            .cast<Map<String, Object?>>()
-            .map(Map<String, Object?>.from),
-        attempt.toJson(),
-      ];
-      updated['attempts'] = attemptsRaw;
-      await store.record(record.key).put(t._sembastTxn, updated);
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the appended attempt.
-      t._postCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
-    });
-  }
-
-  /// Transition entry's finalStatus to [status]. For `sent`, also stamps
-  /// `sent_at = DateTime.now().toUtc()`. The entry is RETAINED: no delete
-  /// ever happens through this path.
-  ///
-  /// Tolerates a missing target row or a never-registered FIFO store:
-  /// in both cases this method returns without throwing and emits a
-  /// warning-level log line through the library's logger. This closes
-  /// the drain/unjam + drain/delete race documented in design §6.6 —
-  /// drain `await send()`s outside any storage transaction, and a
-  /// concurrent user operation (unjamDestination, deleteDestination) may
-  /// remove the row before drain's subsequent `markFinal` runs.
-  ///
-  /// In Sembast, stores are lazily-created namespaces: a store that was
-  /// never written to simply has zero records, so the `records.isEmpty`
-  /// branch covers both "unknown destination" and "row deleted from a
-  /// known destination". No separate "store exists?" probe is needed.
-  ///
-  /// The one-way transition rule is preserved with idempotency: when the
-  /// entry is already terminal with the SAME status as [status], the call
-  /// returns cleanly (no-op, no re-stamp of `sent_at`). When the entry is
-  /// already terminal with a DIFFERENT status, `StateError` is thrown —
-  /// this is real corruption and loud failure is correct.
-  @override
-  @internal
-  Future<void> markFinal(
-    String destinationId,
-    String entryId,
-    FinalStatus status,
-  ) async {
-    // markFinal transitions a pre-terminal row (final_status == null)
-    // into one of the three non-null terminal states. `null` is not a
-    // legal target — it is the INITIAL state and is set only by
-    // enqueueFifo. The non-null target is enforced by the parameter
-    // type `FinalStatus` (non-nullable); the type system makes a
-    // runtime null-check unnecessary here.
-    //
-    // Routed through this backend's `transaction()` so post-commit
-    // FIFO emissions appended below are drained on commit.
-    await transaction((txn) async {
-      final t = _requireValidTxn(txn);
-      final store = _fifoStore(destinationId);
-      final records = await store.find(
-        t._sembastTxn,
-        finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    }
+    final record = records.single;
+    final updated = Map<String, Object?>.from(record.value);
+    final currentRaw = updated['final_status'];
+    if (currentRaw != null) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): the item is '
+        '$currentRaw; an attempt is recorded only on a pending item.',
       );
-      if (records.isEmpty) {
-        libraryLog(
-          'storage',
-          'markFinal: entry $entryId absent from FIFO $destinationId; '
-              'skipping (expected during drain/unjam or drain/delete race)',
-          level: LibraryLogLevel.warning,
-        );
-        // No row mutated -> no FIFO-change emission.
-        return;
-      }
-      final record = records.single;
-      final updated = Map<String, Object?>.from(record.value);
-      final currentRaw = updated['final_status'];
-      final currentStatus = currentRaw == null
-          ? null
-          : FinalStatus.fromJson(currentRaw as String);
-      // final_status is one-way: null -> sent|wedged|tombstoned.
-      // A duplicate call with the SAME status is a no-op — drain() is
-      // documented at-least-once and concurrent drainers can both reach
-      // markFinal after the first completes. Matching status: return
-      // cleanly. Mismatched status: real corruption; loud failure.
-      if (currentStatus != null) {
-        if (currentStatus == status) {
-          // Idempotent duplicate — first call already wrote the correct
-          // terminal state. No additional write or sent_at re-stamp needed.
-          return;
-        }
-        throw StateError(
-          'markFinal($destinationId, $entryId, $status): entry is already '
-          '$currentStatus; final_status transitions are one-way.',
-        );
-      }
-      updated['final_status'] = status.toJson();
-      if (status == FinalStatus.sent) {
-        updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
-      }
-      await store.record(record.key).put(t._sembastTxn, updated);
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the terminal-status transition.
-      t._postCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
-    });
+    }
+    updated['attempts'] = <Map<String, Object?>>[
+      ...(updated['attempts'] as List? ?? const <Object?>[])
+          .cast<Map<String, Object?>>()
+          .map(Map<String, Object?>.from),
+      attempt.toJson(),
+    ];
+    await store.record(record.key).put(t._sembastTxn, updated);
+    t._fifoChanged.add(destinationId);
   }
 
   @override
@@ -1537,35 +1459,24 @@ class SembastBackend extends StorageBackend {
   }
 
   /// Transition the target row's `final_status` to [status] inside
-  /// [txn]. The legal transitions, enforced by a guard below, are:
+  /// [txn]. The legal transitions are exactly `null -> sent`,
+  /// `null -> wedged` and `wedged -> tombstoned`; every other pair, a
+  /// repeated status and a missing row throw [StateError] with nothing
+  /// written.
   ///
-  /// - `null -> sent` — drain-terminal SendOk; stamps
-  ///   `sent_at = DateTime.now().toUtc()`.
-  /// - `null -> wedged` — drain-terminal SendPermanent / SendTransient
-  ///   at max attempts.
-  /// - `null -> tombstoned` — tombstoneAndRefill on a null head
-  ///  .
-  /// - `wedged -> tombstoned` — tombstoneAndRefill on a wedged head
-  ///  .
-  ///
-  /// Any other transition throws [StateError]. In particular `sent`
-  /// and `tombstoned` are terminal end-states; they cannot transition
-  /// to anything else.
-  ///
-  /// Preserves `attempts[]` verbatim on every transition (
-  /// tombstoneAndRefill requires it). `sent_at` is set on `null -> sent`
-  /// and untouched on every other transition.
-  ///
-  /// Throws [StateError] on a missing target row: callers verify
-  /// existence before opening the transaction, so a missing row here
-  /// indicates a concurrent delete race that these ops do not close.
+  /// Preserves `attempts[]` verbatim on every transition. `sent_at` is set
+  /// on `null -> sent` and untouched on every other transition.
+  // Implements: EVS-DEV-destination-drain/B
+  // exactly null -> sent, null -> wedged and
+  //   wedged -> tombstoned; every other pair, a repeat and a missing row
+  //   throw StateError with nothing written.
   @override
   @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   ) async {
     final t = _requireValidTxn(txn);
     final store = _fifoStore(destinationId);
@@ -1575,10 +1486,8 @@ class SembastBackend extends StorageBackend {
     );
     if (records.isEmpty) {
       throw StateError(
-        'setFinalStatusTxn($destinationId, $entryId, $status): target '
-        'row not found. Callers must verify existence (readFifoHead) '
-        'before opening the transaction; a missing row here indicates '
-        'a concurrent delete race.',
+        'setFinalStatusTxn($destinationId, $entryId, $status): no such '
+        'queue item.',
       );
     }
     final record = records.single;
@@ -1587,84 +1496,63 @@ class SembastBackend extends StorageBackend {
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw as String);
-    // Legal transitions:
-    //  - null  -> sent          (drain SendOk)
-    //  - null  -> wedged        (drain SendPermanent / max-attempts)
-    //  - null  -> tombstoned    (tombstoneAndRefill on null head)
-    //  - wedged -> tombstoned   (tombstoneAndRefill on wedged head)
-    final valid =
-        (current == null &&
-            (status == FinalStatus.sent ||
-                status == FinalStatus.wedged ||
-                status == FinalStatus.tombstoned)) ||
-        (current == FinalStatus.wedged && status == FinalStatus.tombstoned);
-    if (!valid) {
+    if (!isLegalFinalStatusTransition(current, status)) {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
-        '$current -> $status. Legal transitions: null -> {sent, wedged, '
-        'tombstoned}; wedged -> {tombstoned}. (one-way '
-        'rule.)',
+        '${current?.name} -> ${status.name}. Legal transitions: '
+        'null -> sent, null -> wedged, wedged -> tombstoned.',
       );
     }
-    updated['final_status'] = status?.toJson();
+    updated['final_status'] = status.toJson();
     if (status == FinalStatus.sent) {
-      // Drain-terminal SendOk stamps sent_at.
       updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
     }
-    // attempts[] is deliberately NOT touched
-    // tombstoneAndRefill requires verbatim preservation; the
-    // drain-terminal null->{sent,wedged} path has already appended its
-    // attempts via appendAttempt before calling markFinal /
-    // setFinalStatusTxn.
     await store.record(record.key).put(t._sembastTxn, updated);
-    // post-commit so live `watchFifo(destinationId)` subscribers see
-    // the final-status transition (tombstone / drain-terminal). The
-    // surrounding `transaction()` fires the handle's queue on commit.
-    t._postCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+    t._fifoChanged.add(destinationId);
   }
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
-  /// `final_status IS null`. Returns the count of rows deleted.
+  /// `final_status IS null`. Returns a [TrailSweepResult]: the count of
+  /// rows deleted and the lowest first event sequence they carried.
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
   /// tombstoned target in one transaction. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue` —
-  /// all non-null rows are retained forever.
+  /// all non-null rows are retained for the database's lifetime.
   @override
   @internal
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   ) async {
     final t = _requireValidTxn(txn);
     final store = _fifoStore(destinationId);
-    final deleted = await store.delete(
-      t._sembastTxn,
-      finder: Finder(
-        filter: Filter.and([
-          Filter.isNull('final_status'),
-          Filter.greaterThan('sequence_in_queue', afterSequenceInQueue),
-        ]),
-      ),
+    final finder = Finder(
+      filter: Filter.and([
+        Filter.isNull('final_status'),
+        Filter.greaterThan('sequence_in_queue', afterSequenceInQueue),
+      ]),
     );
-    if (deleted > 0) {
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the trail-sweep deletion. Skip when no rows were actually
-      // removed to avoid spurious wakeups.
-      t._postCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
+    final matching = await store.find(t._sembastTxn, finder: finder);
+    int? minFirstSeq;
+    for (final record in matching) {
+      final range = Map<String, Object?>.from(
+        record.value['event_id_range']! as Map,
+      );
+      final firstSeq = range['first_seq']! as int;
+      if (minFirstSeq == null || firstSeq < minFirstSeq) {
+        minFirstSeq = firstSeq;
+      }
     }
-    return deleted;
+    await store.records(matching.map((r) => r.key)).delete(t._sembastTxn);
+    t._fifoChanged.add(destinationId);
+    return TrailSweepResult(
+      deletedCount: matching.length,
+      minFirstSeq: minFirstSeq,
+    );
   }
 
   // -------- Event lookup by event_id --------
@@ -1880,6 +1768,10 @@ class _SembastTxn extends Transaction {
   /// writes succeed; [SembastBackend.transaction] fires the list of the run
   /// that committed.
   final List<void Function()> _postCommit = <void Function()>[];
+
+  /// Destinations whose queue this run changed; each is notified once if
+  /// the run commits.
+  final Set<String> _fifoChanged = <String>{};
   bool _isValid = true;
   void _invalidate() {
     _isValid = false;

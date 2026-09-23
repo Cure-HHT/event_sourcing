@@ -18,10 +18,17 @@
 //   rather than propagated to the caller of the pass)
 // Implements: EVS-PRD-destinations/I
 // (a failed attempt below maxAttempts
-//   returns without markFinal, leaving the row at the head of its queue)
+//   commits the attempt alone, leaving the row pending at the head of its
+//   queue)
 // Implements: EVS-PRD-destinations/J
-// (every attempt is recorded via
-//   appendAttempt before the outcome is routed)
+// (every attempt is recorded, in the
+//   transaction that commits the outcome it produced)
+// Implements: EVS-DEV-destination-drain/C
+// (the attempt and the status it
+//   produces commit in one transaction)
+// Implements: EVS-DEV-destination-drain/D
+// (an attempt is recorded only on the
+//   pending head the drain sent)
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -34,6 +41,7 @@ import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Drain the head of [destination]'s FIFO: check backoff, call
@@ -141,38 +149,50 @@ Future<void> drain(
     }
 
     final attempt = _attemptFromResult(result, now());
-    await backend.appendAttempt(destination.id, head.entryId, attempt);
 
-    // Route the outcome. SendPermanent and SendTransient-at-maxAttempts both
-    // mark the head wedged; the next loop iteration sees the wedged row via
-    // readFifoHead and halts at the top-of-loop check. Trail rows are never
-    // attempted ahead of a wedged head — strict-order delivery.
+    // Route the outcome. The attempt and the status it produces commit in
+    // one transaction: SendOk marks the head sent; SendPermanent and
+    // SendTransient at the attempt cap mark it wedged; a SendTransient below
+    // the cap records the attempt alone and leaves the head pending (backoff
+    // applies on the next pass). The next loop iteration sees a wedged head
+    // via readFifoHead and halts at the top-of-loop check, so trail rows are
+    // never attempted ahead of a wedged head.
+    final FinalStatus? status;
     switch (result) {
       case SendOk():
-        await backend.markFinal(destination.id, head.entryId, FinalStatus.sent);
-        continue;
+        status = FinalStatus.sent;
       case SendPermanent():
-        await backend.markFinal(
+        status = FinalStatus.wedged;
+      case SendTransient():
+        // head.attempts.length is the count BEFORE this attempt.
+        status = head.attempts.length + 1 >= effective.maxAttempts
+            ? FinalStatus.wedged
+            : null;
+    }
+    await backend.transaction((txn) async {
+      await backend.appendAttemptTxn(
+        txn,
+        destination.id,
+        head.entryId,
+        attempt,
+      );
+      if (status != null) {
+        await backend.setFinalStatusTxn(
+          txn,
           destination.id,
           head.entryId,
-          FinalStatus.wedged,
+          status,
         );
-        continue;
-      case SendTransient():
-        // head.attempts.length is the count BEFORE this attempt was
-        // appended. After appendAttempt, the entry has attempts.length+1.
-        // The spec: "attempts.length + 1 >= maxAttempts -> wedged".
-        if (head.attempts.length + 1 >= effective.maxAttempts) {
-          await backend.markFinal(
+      }
+      if (DeliveryTestHooks.current?.failOutcomeTransaction?.call(
             destination.id,
-            head.entryId,
-            FinalStatus.wedged,
-          );
-          continue;
-        }
-        // Below the attempt cap: backoff applies on the next drain tick.
-        return;
-    }
+            attempt.outcome,
+          ) ??
+          false) {
+        throw InjectedFailure('drain outcome transaction of ${destination.id}');
+      }
+    });
+    if (status == null) return;
   }
 }
 

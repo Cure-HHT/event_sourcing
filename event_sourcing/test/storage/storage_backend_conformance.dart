@@ -27,41 +27,11 @@
 // `tearDown` calls `backend.close()` inside try/catch so a skipped-test
 // teardown does not raise.
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/fifo_entry_helpers.dart';
-
-/// Runs [body] with the log seam installed and returns the warning lines
-/// the storage layer logged.
-Future<List<String>> _storageWarnings(Future<void> Function() body) async {
-  final records = <LibraryLogRecord>[];
-  await runWithDeliveryTestHooks(DeliveryTestHooks(onLog: records.add), body);
-  return <String>[
-    for (final r in records)
-      if (r.name == 'event_sourcing.storage' &&
-          r.level == LibraryLogLevel.warning)
-        r.message,
-  ];
-}
-
-/// Expects [warnings] to be exactly one line naming [method], [entryId] and
-/// [destinationId].
-void _expectOneNoOpWarning(
-  List<String> warnings, {
-  required String method,
-  required String entryId,
-  required String destinationId,
-}) {
-  expect(warnings, hasLength(1), reason: '$warnings');
-  expect(
-    warnings.single,
-    allOf(contains(method), contains(entryId), contains(destinationId)),
-  );
-}
 
 /// Run the backend-agnostic `StorageBackend` conformance suite against
 /// the implementation produced by [factory].
@@ -120,6 +90,7 @@ void runStorageBackendConformanceTests(
     _registerFifoTests(() => backend, () => initialized);
     _registerListFifoEntriesTests(() => backend, () => initialized);
     _registerFillCursorTests(() => backend, () => initialized);
+    _registerQueueRecordTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
     _registerEventVersionColumnTests(
@@ -1472,21 +1443,22 @@ void _registerViewTargetVersionTests(
 
 // -------- FIFO subgroup --------
 //
-// FIFO persistence methods (enqueueFifo,
-//   readFifoHead, listFifoEntries, appendAttempt, markFinal,
+// FIFO persistence methods (enqueueFifoTxn,
+//   readFifoHead, listFifoEntries, appendAttemptTxn, setFinalStatusTxn,
 //   hasFifoWedged/wedgedFifos) are part of the StorageBackend abstraction.
-//   markFinal idempotency + one-way transition rule are part of the FIFO
-//   contract; drain's at-least-once delivery depends on
-//   markFinal(same-status) being a no-op.
+//   setFinalStatusTxn allows exactly pending -> sent, pending -> wedged
+//   and wedged -> tombstoned; a repeated status or a missing item throws
+//   StateError. appendAttemptTxn throws StateError on a missing or
+//   terminal item.
 void _registerFifoTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
   group('FIFO', () {
-    // -------- enqueueFifo + validation --------
+    // -------- enqueueFifoTxn + validation --------
 
     // Verifies: EVS-PRD-portability/D
-    test('enqueueFifo + readFifoHead round-trip', () async {
+    test('enqueueFifoTxn + readFifoHead round-trip', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final enqueued = await enqueueSingle(
@@ -1507,7 +1479,7 @@ void _registerFifoTests(
       expect(head.attempts, isEmpty);
       expect(head.sentAt, isNull);
       expect(head.sequenceInQueue, enqueued.sequenceInQueue);
-      // Whole-value parity: the entry read back equals the one enqueueFifo
+      // Whole-value parity: the entry read back equals the one enqueueFifoTxn
       // returned, field for field. Sembast persists FifoEntry.toJson and
       // Postgres maps explicit columns, so a field added to FifoEntry is
       // carried automatically by one backend and silently dropped by the
@@ -1517,20 +1489,23 @@ void _registerFifoTests(
       expect(head, equals(enqueued));
     });
 
-    test('enqueueFifo rejects an empty batch with ArgumentError', () async {
+    test('enqueueFifoTxn rejects an empty batch with ArgumentError', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
-        backend.enqueueFifo(
-          'primary',
-          const [],
-          wirePayload: wirePayloadJson(const {'k': 'v'}),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(
+            txn,
+            'primary',
+            const [],
+            wirePayload: wirePayloadJson(const {'k': 'v'}),
+          ),
         ),
         throwsArgumentError,
       );
     });
 
-    test('enqueueFifo assigns distinct UUID entry_ids even when the same '
+    test('enqueueFifoTxn assigns distinct UUID entry_ids even when the same '
         'event id is enqueued twice', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1574,7 +1549,7 @@ void _registerFifoTests(
 
     // -------- enqueueFifoTxn — native vs 3rd-party wire-format branch --------
 
-    test('enqueueFifo with nativeEnvelope persists '
+    test('enqueueFifoTxn with nativeEnvelope persists '
         'envelope_metadata and nulls wire_payload', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1587,7 +1562,11 @@ void _registerFifoTests(
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('dest', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'dest', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
       final head = await backend.readFifoHead('dest');
       expect(head, isNotNull);
       expect(
@@ -1609,7 +1588,7 @@ void _registerFifoTests(
       );
     });
 
-    test('enqueueFifo with wirePayload stores '
+    test('enqueueFifoTxn with wirePayload stores '
         'wire_payload, envelope_metadata is null', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1619,7 +1598,10 @@ void _registerFifoTests(
         contentType: 'application/json',
         transformVersion: 'json-v1',
       );
-      await backend.enqueueFifo('dest', [event], wirePayload: payload);
+      await backend.transaction(
+        (txn) =>
+            backend.enqueueFifoTxn(txn, 'dest', [event], wirePayload: payload),
+      );
       final head = await backend.readFifoHead('dest');
       expect(head, isNotNull);
       expect(head!.wirePayload, isNotNull);
@@ -1635,36 +1617,41 @@ void _registerFifoTests(
       expect(head.wireFormat, 'application/json');
     });
 
-    test('enqueueFifo rejects supplying both wirePayload '
+    test('enqueueFifoTxn rejects supplying both wirePayload '
         'and nativeEnvelope', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
-        backend.enqueueFifo(
-          'dest',
-          [event],
-          wirePayload: wirePayloadJson(const {'k': 'v'}),
-          nativeEnvelope: BatchEnvelopeMetadata(
-            batchFormatVersion: '2',
-            batchId: 'batch-x',
-            senderHop: 'mobile-1',
-            senderIdentifier: 'device-uuid',
-            senderSoftwareVersion: 'diary@1.2.3',
-            sentAt: DateTime.utc(2026, 4, 25, 12),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(
+            txn,
+            'dest',
+            [event],
+            wirePayload: wirePayloadJson(const {'k': 'v'}),
+            nativeEnvelope: BatchEnvelopeMetadata(
+              batchFormatVersion: '2',
+              batchId: 'batch-x',
+              senderHop: 'mobile-1',
+              senderIdentifier: 'device-uuid',
+              senderSoftwareVersion: 'diary@1.2.3',
+              sentAt: DateTime.utc(2026, 4, 25, 12),
+            ),
           ),
         ),
         throwsArgumentError,
       );
     });
 
-    test('enqueueFifo rejects supplying neither wirePayload '
+    test('enqueueFifoTxn rejects supplying neither wirePayload '
         'nor nativeEnvelope', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
-        backend.enqueueFifo('dest', [event]),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(txn, 'dest', [event]),
+        ),
         throwsArgumentError,
       );
     });
@@ -1710,9 +1697,12 @@ void _registerFifoTests(
       expect((await backend.readFifoHead('B'))?.eventIds, ['b-only']);
     });
 
-    // -------- appendAttempt --------
+    // -------- appendAttemptTxn --------
 
-    test('appendAttempt appends without changing final_status', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // an attempt is appended to a pending
+    //   item without changing its status.
+    test('appendAttemptTxn appends without changing final_status', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1728,7 +1718,7 @@ void _registerFifoTests(
         errorMessage: 'timeout',
         httpStatus: 503,
       );
-      await backend.appendAttempt('primary', e1.entryId, attempt);
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
 
       final head = await backend.readFifoHead('primary');
       expect(head?.attempts, [attempt]);
@@ -1741,16 +1731,15 @@ void _registerFifoTests(
         errorMessage: 'timeout',
         httpStatus: 503,
       );
-      await backend.appendAttempt('primary', e1.entryId, attempt2);
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt2);
       final head2 = await backend.readFifoHead('primary');
       expect(head2?.attempts, [attempt, attempt2]);
     });
 
-    // Verifies: EVS-PRD-portability/D
-    // both backends no-op, and log one
-    //   warning naming the method, entry and destination, when the entry is
-    //   absent.
-    test('appendAttempt no-ops when entry does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a missing
+    //   item is an error, and nothing changes.
+    test('appendAttemptTxn throws StateError on a missing item', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1759,52 +1748,87 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      // Must not throw.
-      final warnings = await _storageWarnings(
-        () => backend.appendAttempt(
+      await expectLater(
+        appendAttemptForTest(
+          backend,
           'primary',
           'nonexistent',
           AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
         ),
+        throwsStateError,
       );
-      _expectOneNoOpWarning(
-        warnings,
-        method: 'appendAttempt',
-        entryId: 'nonexistent',
-        destinationId: 'primary',
-      );
-      // The FIFO is otherwise untouched: e1 is still pending with no attempts.
       final head = await backend.readFifoHead('primary');
       expect(head?.entryId, e1.entryId);
       expect(head?.attempts, isEmpty);
     });
 
-    // Verifies: EVS-PRD-portability/D
-    // both backends no-op, and log one
-    //   warning, when the destination's queue does not exist.
-    test('appendAttempt no-ops when FIFO store does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a destination
+    //   with no queue is an error, and nothing is created.
+    test('appendAttemptTxn throws StateError on a missing queue', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      final warnings = await _storageWarnings(
-        () => backend.appendAttempt(
+      await expectLater(
+        appendAttemptForTest(
+          backend,
           'ghost-dest',
           'any-entry',
           AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
         ),
+        throwsStateError,
       );
-      _expectOneNoOpWarning(
-        warnings,
-        method: 'appendAttempt',
-        entryId: 'any-entry',
-        destinationId: 'ghost-dest',
-      );
-      // Nothing materialized in the unknown store.
       expect(await backend.readFifoHead('ghost-dest'), isNull);
+      expect(await backend.listFifoEntries('ghost-dest'), isEmpty);
     });
 
-    // -------- markFinal --------
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a terminal
+    //   item is an error, and the item is unchanged.
+    test('appendAttemptTxn throws StateError on a terminal item', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final wedged = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        wedged.entryId,
+        FinalStatus.wedged,
+      );
+      for (final entry in <FifoEntry>[sent, wedged]) {
+        final before = await backend.readFifoRow('primary', entry.entryId);
+        await expectLater(
+          appendAttemptForTest(
+            backend,
+            'primary',
+            entry.entryId,
+            AttemptResult(
+              attemptedAt: DateTime.utc(2026, 4, 22),
+              outcome: 'ok',
+            ),
+          ),
+          throwsStateError,
+        );
+        final after = await backend.readFifoRow('primary', entry.entryId);
+        expect(after!.toJson(), before!.toJson());
+      }
+    });
 
-    test('markFinal sent retains the entry', () async {
+    // Verifies: EVS-DEV-destination-drain/C
+    // an attempt written in a transaction
+    //   that rolls back is not recorded.
+    test('appendAttemptTxn rolls back with its transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1813,10 +1837,52 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.appendAttemptTxn(
+            txn,
+            'primary',
+            e1.entryId,
+            AttemptResult(
+              attemptedAt: DateTime.utc(2026, 4, 22),
+              outcome: 'ok',
+            ),
+          );
+          await backend.setFinalStatusTxn(
+            txn,
+            'primary',
+            e1.entryId,
+            FinalStatus.sent,
+          );
+          throw StateError('simulated failure after the outcome writes');
+        }),
+        throwsStateError,
+      );
+      final row = await backend.readFifoRow('primary', e1.entryId);
+      expect(row!.attempts, isEmpty);
+      expect(row.finalStatus, isNull);
+      expect(row.sentAt, isNull);
+    });
+
+    // -------- setFinalStatusTxn --------
+
+    test('status sent retains the entry', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
 
       // After marking sent, readFifoHead moves past it to the next pending.
       expect(await backend.readFifoHead('primary'), isNull);
+      expect(
+        (await backend.readFifoRow('primary', e1.entryId))!.finalStatus,
+        FinalStatus.sent,
+      );
 
       final e2 = await enqueueSingle(
         backend,
@@ -1828,7 +1894,7 @@ void _registerFifoTests(
       expect(nextHead?.entryId, e2.entryId);
     });
 
-    test('markFinal sent sets sent_at', () async {
+    test('status sent sets sent_at', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1838,7 +1904,7 @@ void _registerFifoTests(
         sequenceNumber: 1,
       );
       final before = DateTime.now().toUtc();
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
       final after = DateTime.now().toUtc();
 
       final row = await backend.readFifoRow('primary', e1.entryId);
@@ -1848,7 +1914,7 @@ void _registerFifoTests(
       expect(row.sentAt!.isBefore(after) || row.sentAt == after, isTrue);
     });
 
-    test('markFinal wedged does NOT set sent_at', () async {
+    test('status wedged does NOT set sent_at', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1857,14 +1923,138 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
 
       final row = await backend.readFifoRow('primary', e1.entryId);
       expect(row, isNotNull);
       expect(row!.sentAt, isNull);
     });
 
-    test('after markFinal sent, readFifoHead returns next pending', () async {
+    // Verifies: EVS-DEV-destination-drain/B
+    // wedged -> tombstoned keeps the
+    //   wedge's attempts and leaves sent_at unset.
+    test('wedged -> tombstoned keeps attempts', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'permanent',
+        errorMessage: 'refused',
+      );
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.tombstoned,
+      );
+      final row = await backend.readFifoRow('primary', e1.entryId);
+      expect(row!.finalStatus, FinalStatus.tombstoned);
+      expect(row.attempts, [attempt]);
+      expect(row.sentAt, isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // every transition other than
+    //   null -> sent, null -> wedged and wedged -> tombstoned throws, and the
+    //   item is unchanged.
+    test('every illegal transition throws and leaves the item '
+        'unchanged', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      var seq = 0;
+      Future<FifoEntry> itemAt(FinalStatus? status) async {
+        seq += 1;
+        final e = await enqueueSingle(
+          backend,
+          'primary',
+          eventId: 'ill-$seq',
+          sequenceNumber: seq,
+        );
+        switch (status) {
+          case null:
+            break;
+          case FinalStatus.sent:
+            await seedSentRowForTest(backend, 'primary', e.entryId);
+          case FinalStatus.wedged:
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.wedged,
+            );
+          case FinalStatus.tombstoned:
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.wedged,
+            );
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.tombstoned,
+            );
+        }
+        return e;
+      }
+
+      const illegal = <(FinalStatus?, FinalStatus)>[
+        (null, FinalStatus.tombstoned),
+        (FinalStatus.sent, FinalStatus.sent),
+        (FinalStatus.sent, FinalStatus.wedged),
+        (FinalStatus.sent, FinalStatus.tombstoned),
+        (FinalStatus.wedged, FinalStatus.wedged),
+        (FinalStatus.wedged, FinalStatus.sent),
+        (FinalStatus.tombstoned, FinalStatus.tombstoned),
+        (FinalStatus.tombstoned, FinalStatus.sent),
+        (FinalStatus.tombstoned, FinalStatus.wedged),
+      ];
+      for (final (from, to) in illegal) {
+        final e = await itemAt(from);
+        final before = await backend.readFifoRow('primary', e.entryId);
+        await expectLater(
+          setStatusForTest(backend, 'primary', e.entryId, to),
+          throwsStateError,
+          reason: '$from -> $to',
+        );
+        final after = await backend.readFifoRow('primary', e.entryId);
+        expect(after!.toJson(), before!.toJson(), reason: '$from -> $to');
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // a status change on a missing item
+    //   throws.
+    test('setFinalStatusTxn throws StateError on a missing item', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await expectLater(
+        setStatusForTest(backend, 'primary', 'ghost', FinalStatus.sent),
+        throwsStateError,
+      );
+      expect(await backend.listFifoEntries('primary'), isEmpty);
+    });
+
+    test('after status sent, readFifoHead returns next pending', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1880,7 +2070,7 @@ void _registerFifoTests(
         sequenceNumber: 2,
       );
 
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
 
       final head = await backend.readFifoHead('primary');
       expect(head?.entryId, e2.entryId);
@@ -1904,8 +2094,13 @@ void _registerFifoTests(
       );
       await enqueueSingle(backend, 'primary', eventId: 'e3', sequenceNumber: 3);
 
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await backend.markFinal('primary', e2.entryId, FinalStatus.wedged);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.wedged,
+      );
       // e3 is left pending.
 
       final head = await backend.readFifoHead('primary');
@@ -1931,17 +2126,18 @@ void _registerFifoTests(
         eventId: 'e2',
         sequenceNumber: 2,
       );
-      // Transition the head into tombstoned via the public setFinalStatusTxn
-      // method (null -> tombstoned is a legal transition per the contract);
-      // this focuses the test on readFifoHead's skip-past behavior.
-      await backend.transaction((txn) async {
-        await backend.setFinalStatusTxn(
-          txn,
-          'primary',
-          e1.entryId,
-          FinalStatus.tombstoned,
-        );
-      });
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.tombstoned,
+      );
 
       final head = await backend.readFifoHead('primary');
       expect(head, isNotNull);
@@ -1965,24 +2161,28 @@ void _registerFifoTests(
         eventId: 'e2',
         sequenceNumber: 2,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await backend.transaction((txn) async {
-        await backend.setFinalStatusTxn(
-          txn,
-          'primary',
-          e2.entryId,
-          FinalStatus.tombstoned,
-        );
-      });
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.tombstoned,
+      );
 
       expect(await backend.readFifoHead('primary'), isNull);
     });
 
-    // Verifies: EVS-PRD-portability/D
-    // both backends no-op, and log one
-    //   warning naming the method, entry and destination, when the entry is
-    //   absent.
-    test('markFinal no-ops when entry does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // the head read inside a transaction
+    //   reflects a status change staged in that transaction.
+    test('readFifoHeadTxn sees a status change staged in its '
+        'transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1991,110 +2191,235 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      // Must not throw.
-      final warnings = await _storageWarnings(
-        () => backend.markFinal('primary', 'ghost', FinalStatus.sent),
+      final e2 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
       );
-      _expectOneNoOpWarning(
-        warnings,
-        method: 'markFinal',
-        entryId: 'ghost',
-        destinationId: 'primary',
-      );
-      // e1 still at head, still pending.
-      final head = await backend.readFifoHead('primary');
-      expect(head?.entryId, e1.entryId);
-      expect(head?.finalStatus, isNull);
-    });
-
-    // Verifies: EVS-PRD-portability/D
-    // both backends no-op, and log one
-    //   warning, when the destination's queue does not exist.
-    test('markFinal no-ops when FIFO store does not exist', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      final warnings = await _storageWarnings(
-        () => backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent),
-      );
-      _expectOneNoOpWarning(
-        warnings,
-        method: 'markFinal',
-        entryId: 'any-entry',
-        destinationId: 'ghost-dest',
-      );
-      expect(await backend.readFifoHead('ghost-dest'), isNull);
-    });
-
-    // Verifies: EVS-PRD-portability/D
-    // neither backend logs a warning when
-    //   appendAttempt and markFinal find their entry.
-    test('appendAttempt and markFinal on a present entry log no '
-        'warning', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      final warnings = await _storageWarnings(() async {
-        final e1 = await enqueueSingle(
-          backend,
-          'primary',
-          eventId: 'e1',
-          sequenceNumber: 1,
-        );
-        await backend.appendAttempt(
+      final seen = await backend.transaction((txn) async {
+        final before = await backend.readFifoHeadTxn(txn, 'primary');
+        await backend.setFinalStatusTxn(
+          txn,
           'primary',
           e1.entryId,
-          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+          FinalStatus.sent,
         );
-        await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+        final after = await backend.readFifoHeadTxn(txn, 'primary');
+        return (before?.entryId, after?.entryId);
       });
-      expect(warnings, isEmpty);
+      expect(seen, (e1.entryId, e2.entryId));
+      expect(
+        await backend.transaction(
+          (txn) => backend.readFifoHeadTxn(txn, 'unknown'),
+        ),
+        isNull,
+      );
     });
 
-    // markFinal idempotency: calling markFinal with the same status twice
-    // returns cleanly without throwing; the row retains its final status.
-    test('markFinal sent twice on the same row returns cleanly '
-        '(no throw, row stays sent)', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      final e1 = await enqueueSingle(
-        backend,
-        'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
-      );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        backend.markFinal('primary', e1.entryId, FinalStatus.sent),
-        completes,
-      );
-      final all = await backend.listFifoEntries('primary');
-      expect(all, hasLength(1));
-      expect(all.single.finalStatus, FinalStatus.sent);
-    });
+    // -------- trail sweep --------
 
-    // markFinal one-way transition: transitioning from one final status to
-    // a different final status throws a StateError naming both statuses.
-    test('markFinal sent then markFinal wedged throws StateError '
-        'naming both statuses', () async {
+    // Verifies: EVS-DEV-destination-drain/F
+    // the trail sweep deletes only the
+    //   pending items behind the given position and reports the lowest event
+    //   any of them carried.
+    test('deleteNullRowsAfterSequenceInQueueTxn reports count and lowest '
+        'first_seq', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      final e1 = await enqueueSingle(
+      final head = await enqueueSingle(
         backend,
         'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
+        eventId: 'h',
+        sequenceNumber: 10,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        () async =>
-            backend.markFinal('primary', e1.entryId, FinalStatus.wedged),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('sent'), contains('wedged')),
-          ),
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 't1',
+        sequenceNumber: 12,
+      );
+      // A later item carrying a lower event (a gap replay's item).
+      await enqueueSingle(backend, 'primary', eventId: 't2', sequenceNumber: 4);
+      final sweep = await backend.transaction(
+        (txn) => backend.deleteNullRowsAfterSequenceInQueueTxn(
+          txn,
+          'primary',
+          head.sequenceInQueue,
         ),
       );
+      expect(sweep, const TrailSweepResult(deletedCount: 2, minFirstSeq: 4));
+      final rows = await backend.listFifoEntries('primary');
+      expect(rows.map((r) => r.entryId), [head.entryId]);
+
+      final empty = await backend.transaction(
+        (txn) => backend.deleteNullRowsAfterSequenceInQueueTxn(
+          txn,
+          'primary',
+          head.sequenceInQueue,
+        ),
+      );
+      expect(empty, const TrailSweepResult(deletedCount: 0));
+    });
+
+    // -------- queue retirement --------
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retirement refuses a pending head and
+    //   changes nothing.
+    test('retireQueueTxn refuses a pending head; nothing changes', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e2', sequenceNumber: 2);
+      await writeFillCursorForTest(backend, 'primary', 2);
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      await expectLater(
+        backend.transaction((txn) => backend.retireQueueTxn(txn, 'primary')),
+        throwsStateError,
+      );
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+      expect(await backend.readFillCursor('primary'), 2);
+      expect((await backend.readFifoHead('primary'))!.entryId, e1.entryId);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retirement tombstones a wedged head,
+    //   deletes the pending items and the fill cursor, keeps terminal items
+    //   and the sequence_in_queue counter.
+    test('retireQueueTxn tombstones a wedged head, deletes pending items and '
+        'the cursor, keeps terminal items and the counter', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e3', sequenceNumber: 3);
+      await enqueueSingle(backend, 'primary', eventId: 'e4', sequenceNumber: 4);
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await writeFillCursorForTest(backend, 'primary', 4);
+
+      final retirement = await backend.transaction(
+        (txn) => backend.retireQueueTxn(txn, 'primary'),
+      );
+      expect(
+        retirement,
+        QueueRetirement(tombstonedRowId: head.entryId, deletedPendingCount: 2),
+      );
+      final rows = await backend.listFifoEntries('primary');
+      expect(rows.map((r) => (r.entryId, r.finalStatus)), [
+        (sent.entryId, FinalStatus.sent),
+        (head.entryId, FinalStatus.tombstoned),
+      ]);
+      expect(await backend.readFillCursor('primary'), -1);
+      expect(await backend.readFifoHead('primary'), isNull);
+      expect(await backend.hasFifoWedged(), isFalse);
+
+      // The counter is kept: a later item continues above the retained ones.
+      final next = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e5',
+        sequenceNumber: 5,
+      );
+      expect(next.sequenceInQueue, 5);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retiring an empty queue, or one with
+    //   only terminal items, tombstones nothing.
+    test('retireQueueTxn on an empty or all-terminal queue', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(
+        await backend.transaction(
+          (txn) => backend.retireQueueTxn(txn, 'never-used'),
+        ),
+        const QueueRetirement(tombstonedRowId: null, deletedPendingCount: 0),
+      );
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      expect(
+        await backend.transaction(
+          (txn) => backend.retireQueueTxn(txn, 'primary'),
+        ),
+        const QueueRetirement(tombstonedRowId: null, deletedPendingCount: 0),
+      );
+      expect(
+        (await backend.readFifoRow('primary', sent.entryId))!.finalStatus,
+        FinalStatus.sent,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // a retirement in a transaction that
+    //   rolls back changes nothing.
+    test('retireQueueTxn rolls back with its transaction', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e2', sequenceNumber: 2);
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await writeFillCursorForTest(backend, 'primary', 2);
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.retireQueueTxn(txn, 'primary');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+      expect(await backend.readFillCursor('primary'), 2);
     });
 
     // -------- hasFifoWedged + wedgedFifos --------
@@ -2112,7 +2437,7 @@ void _registerFifoTests(
 
       expect(await backend.hasFifoWedged(), isFalse);
 
-      await backend.markFinal('A', a1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'A', a1.entryId, FinalStatus.wedged);
       expect(await backend.hasFifoWedged(), isTrue);
     });
 
@@ -2134,7 +2459,8 @@ void _registerFifoTests(
       );
 
       // Record an attempt on A's head so the summary has a lastError.
-      await backend.appendAttempt(
+      await appendAttemptForTest(
+        backend,
         'A',
         a1.entryId,
         AttemptResult(
@@ -2144,8 +2470,8 @@ void _registerFifoTests(
           httpStatus: 400,
         ),
       );
-      await backend.markFinal('A', a1.entryId, FinalStatus.wedged);
-      await backend.markFinal('C', c1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'A', a1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'C', c1.entryId, FinalStatus.wedged);
 
       final summaries = await backend.wedgedFifos();
       final byDest = {for (final s in summaries) s.destinationId: s};
@@ -2173,7 +2499,12 @@ void _registerFifoTests(
         eventId: 'e-bare',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', bare.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'primary',
+        bare.entryId,
+        FinalStatus.wedged,
+      );
 
       final summary = (await backend.wedgedFifos()).single;
       expect(summary.destinationId, 'primary');
@@ -2191,7 +2522,7 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await setStatusForTest(backend, 'primary', e1.entryId, FinalStatus.sent);
       expect(await backend.hasFifoWedged(), isFalse);
       expect(await backend.wedgedFifos(), isEmpty);
     });
@@ -2200,7 +2531,7 @@ void _registerFifoTests(
 
     // The backend assigns sequence_in_queue monotonically starting at 1,
     // independent of any caller-side sequencing.
-    test('enqueueFifo assigns its own monotonic sequence_in_queue '
+    test('enqueueFifoTxn assigns its own monotonic sequence_in_queue '
         '(Prereq A, Option 1)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2248,7 +2579,7 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await setStatusForTest(backend, 'primary', e1.entryId, FinalStatus.sent);
       final e2 = await enqueueSingle(
         backend,
         'primary',
@@ -2256,7 +2587,7 @@ void _registerFifoTests(
         sequenceNumber: 2,
       );
       // e2 should get sequence 2, not 1 (the slot vacated by e1 going sent
-      // is NOT reused — terminal-state rows are retained forever).
+      // is NOT reused — terminal-state rows are retained for the database's lifetime).
       final row = await backend.readFifoRow('primary', e2.entryId);
       expect(row, isNotNull);
       expect(row!.sequenceInQueue, 2);
@@ -2367,24 +2698,24 @@ void _registerFillCursorTests(
       expect(await backend.readFillCursor('primary'), -1);
     });
 
-    test('writeFillCursor then readFillCursor round-trips', () async {
+    test('writeFillCursorTxn then readFillCursor round-trips', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.writeFillCursor('primary', 42);
+      await writeFillCursorForTest(backend, 'primary', 42);
       expect(await backend.readFillCursor('primary'), 42);
 
       // A second write replaces the prior value (monotonic advance is
       // caller policy; the backend contract just stores what it's given).
-      await backend.writeFillCursor('primary', 100);
+      await writeFillCursorForTest(backend, 'primary', 100);
       expect(await backend.readFillCursor('primary'), 100);
     });
 
-    test('writeFillCursor inside a transaction participates in '
+    test('writeFillCursorTxn inside a transaction participates in '
         'atomicity (rollback confirms cursor was NOT advanced)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       // Pre-transaction baseline.
-      await backend.writeFillCursor('primary', 7);
+      await writeFillCursorForTest(backend, 'primary', 7);
       expect(await backend.readFillCursor('primary'), 7);
 
       await expectLater(
@@ -2412,24 +2743,178 @@ void _registerFillCursorTests(
       expect(await backend.readFillCursor('primary'), -1);
       expect(await backend.readFillCursor('secondary'), -1);
 
-      await backend.writeFillCursor('primary', 10);
+      await writeFillCursorForTest(backend, 'primary', 10);
       expect(await backend.readFillCursor('primary'), 10);
       expect(await backend.readFillCursor('secondary'), -1);
 
-      await backend.writeFillCursor('secondary', 22);
+      await writeFillCursorForTest(backend, 'secondary', 22);
       expect(await backend.readFillCursor('secondary'), 22);
       expect(await backend.readFillCursor('primary'), 10);
     });
 
-    test('writeFillCursor rejects sequenceNumber < -1', () async {
+    // Verifies: EVS-DEV-destination-drain/G
+    // the fill position read inside a
+    //   transaction reflects a write staged in that transaction.
+    test('readFillCursorTxn sees an in-transaction write', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await writeFillCursorForTest(backend, 'primary', 3);
+      final seen = await backend.transaction((txn) async {
+        final before = await backend.readFillCursorTxn(txn, 'primary');
+        await backend.writeFillCursorTxn(txn, 'primary', 9);
+        final after = await backend.readFillCursorTxn(txn, 'primary');
+        final unset = await backend.readFillCursorTxn(txn, 'other');
+        return (before, after, unset);
+      });
+      expect(seen, (3, 9, -1));
+    });
+
+    test('writeFillCursorTxn rejects sequenceNumber < -1', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
-        backend.writeFillCursor('primary', -2),
+        writeFillCursorForTest(backend, 'primary', -2),
         throwsArgumentError,
       );
       // The failed write left the cursor unchanged.
       expect(await backend.readFillCursor('primary'), -1);
+    });
+  });
+}
+
+// -------- Records kept beside a queue --------
+//
+// The schedule, the replay request and the registry check record round-trip
+// through the contract reads, in the same transaction and a later one, and
+// roll back with their transaction.
+void _registerQueueRecordTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('records beside a queue', () {
+    // Verifies: EVS-DEV-destination-drain/A
+    // the persisted schedule keeps its
+    //   registration identity and hard-delete opt-in exactly.
+    // Verifies: EVS-DEV-destination-drain/G
+    // the fill compares the whole persisted
+    //   schedule, registration included, so the read returns what was written.
+    test('schedule round-trips registrationId and allowHardDelete', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      for (final optIn in <bool>[true, false]) {
+        final schedule = DestinationSchedule(
+          startDate: DateTime.utc(2026, 1, 2, 3),
+          endDate: DateTime.utc(2027, 1, 2, 3),
+          registrationId: 'reg-$optIn',
+          allowHardDelete: optIn,
+        );
+        final sameTxn = await backend.transaction((txn) async {
+          await backend.writeScheduleTxn(txn, 'dest-$optIn', schedule);
+          return backend.readScheduleTxn(txn, 'dest-$optIn');
+        });
+        expect(sameTxn, schedule);
+        final later = await backend.transaction(
+          (txn) => backend.readScheduleTxn(txn, 'dest-$optIn'),
+        );
+        expect(later, schedule);
+        expect(later!.registrationId, 'reg-$optIn');
+        expect(later.allowHardDelete, optIn);
+        expect(await backend.readSchedule('dest-$optIn'), schedule);
+      }
+      expect(
+        await backend.transaction(
+          (txn) => backend.readScheduleTxn(txn, 'absent'),
+        ),
+        isNull,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/E
+    // a replay request round-trips, is
+    //   overwritten, rolls back with its transaction and is cleared.
+    test('replay request write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const first = ReplayRequest(firstActivation: true);
+      final gap = ReplayRequest(gapUpper: DateTime.utc(2026, 3, 4, 5, 6, 7));
+      Future<ReplayRequest?> read() => backend.transaction(
+        (txn) => backend.readReplayRequestTxn(txn, 'dest'),
+      );
+
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeReplayRequestTxn(txn, 'dest', first);
+        return backend.readReplayRequestTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read(), first);
+
+      await backend.transaction(
+        (txn) => backend.writeReplayRequestTxn(txn, 'dest', gap),
+      );
+      expect(await read(), gap);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeReplayRequestTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), gap);
+
+      await backend.transaction(
+        (txn) => backend.clearReplayRequestTxn(txn, 'dest'),
+      );
+      expect(await read(), isNull);
+      // Clearing an absent request is a no-op.
+      await backend.transaction(
+        (txn) => backend.clearReplayRequestTxn(txn, 'dest'),
+      );
+      expect(await read(), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/U
+    // the registry check record commits
+    //   and reads back in the same and a later transaction, a second write
+    //   overwrites it, and a rolled-back write leaves the prior value.
+    test('registry check write, overwrite and rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final a = RegistryCheck(
+        op: 'setStartDate',
+        destinationId: 'd1',
+        outcome: 'unchanged',
+        at: DateTime.utc(2026, 5, 6, 7, 8, 9, 123),
+      );
+      final b = RegistryCheck(
+        op: 'deleteDestination',
+        destinationId: 'd2',
+        outcome: 'refused_pending_head',
+        at: DateTime.utc(2026, 5, 6, 7, 8, 10),
+      );
+      Future<RegistryCheck?> read() =>
+          backend.transaction(backend.readRegistryCheckTxn);
+
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeRegistryCheckTxn(txn, a);
+        return backend.readRegistryCheckTxn(txn);
+      });
+      expect(sameTxn, a);
+      expect(await read(), a);
+
+      await backend.transaction((txn) => backend.writeRegistryCheckTxn(txn, b));
+      expect(await read(), b);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeRegistryCheckTxn(txn, a);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), b);
     });
   });
 }

@@ -16,12 +16,12 @@ import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
+import '../test_support/queue_test_support.dart';
 
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
@@ -103,7 +103,7 @@ void main() {
       final dest = FakeDestination(id: 'fake');
 
       // First tick at t0: upper = t0, e1 in-window, e2 deferred.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -128,7 +128,7 @@ void main() {
 
       // Advance the clock past e2's client_timestamp. Now e2 is in-window.
       final t1 = DateTime.utc(2026, 5, 1);
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -201,7 +201,7 @@ void main() {
       //   e3: in-window (subscription matches, client_timestamp <= upper).
       // Walk stops at e2 (first deferred). e1 contributes to cursor
       // advance (permanent), e2 and e3 stay deferred.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -232,7 +232,7 @@ void main() {
 
       // Advance clock past e2; e3 is also in-window now (was already).
       final t1 = DateTime.utc(2026, 5, 1);
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -250,7 +250,7 @@ void main() {
       );
 
       // Continue draining.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -306,7 +306,7 @@ void main() {
       final dest = FakeDestination(id: 'throttle', batchCapacity: 100);
 
       // Step 1: endDate = end of February. Should enqueue e1, e2 only.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: DestinationSchedule(
@@ -327,7 +327,7 @@ void main() {
       );
 
       // Step 2: inch endDate to end of April. Should pick up e3, e4.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: DestinationSchedule(
@@ -344,7 +344,7 @@ void main() {
       );
 
       // Step 3: widen endDate to far future. e5 should land.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: DestinationSchedule(
@@ -391,7 +391,7 @@ void main() {
         filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -412,9 +412,9 @@ void main() {
 
     // Events below startDate are permanently rejected for the current
     // invocation; the cursor MAY advance past them. Under monotonic-
-    // backward semantics, a later setStartDate(earlier) re-promotes the
-    // gap window via runGapReplay (independent of fill_cursor); fillBatch
-    // does not need to keep these events re-evaluable.
+    // backward semantics, a later setStartDate(earlier) requests a gap
+    // replay of the events at or below fill_cursor; fillBatch does not need
+    // to keep these events re-evaluable.
     test('events below startDate advance cursor', () async {
       final t0 = DateTime.utc(2026, 4, 15, 12);
       final schedule = DestinationSchedule(
@@ -437,7 +437,7 @@ void main() {
 
       final dest = FakeDestination(id: 'lower');
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -453,7 +453,7 @@ void main() {
         reason:
             'cursor advanced past startDate-rejected e1 (lower bound is '
             'permanent for fillBatch; -C backward moves are '
-            'handled by runGapReplay)',
+            'handled by the gap replay they request)',
       );
     });
   });
@@ -476,7 +476,7 @@ void main() {
         startDate: DateTime.utc(2027, 1, 1), // future
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -509,7 +509,7 @@ void main() {
         endDate: DateTime.utc(2026, 3, 1), // before startDate
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -552,7 +552,7 @@ void main() {
         endDate: DateTime.utc(2026, 3, 1), // past relative to t0
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,

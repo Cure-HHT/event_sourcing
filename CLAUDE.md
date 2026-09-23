@@ -244,8 +244,8 @@ The currently-trusted inputs are:
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
   views it materializes, the records it keeps beside them, such as fill
-  positions and schedules, and the security context it stores beside
-  each event) changes only through the library's operations. Every
+  positions, schedules, replay requests and the registry check record,
+  and the security context it stores beside each event) changes only through the library's operations. Every
   `StorageBackend` member that writes is `@internal`, which the
   analyzer enforces but nothing enforces at run time: the consumer
   holds the backend (and, on Sembast, the database it opened), and a

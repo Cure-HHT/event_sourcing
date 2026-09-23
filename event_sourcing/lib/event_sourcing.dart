@@ -320,6 +320,8 @@ export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
 export 'src/storage/postgres/postgres.dart';
+export 'src/storage/queue_records.dart'
+    show QueueRetirement, RegistryCheck, ReplayRequest, TrailSweepResult;
 export 'src/storage/sembast_backend.dart' show SembastBackend;
 export 'src/storage/send_result.dart'
     show SendResult, SendOk, SendTransient, SendPermanent;

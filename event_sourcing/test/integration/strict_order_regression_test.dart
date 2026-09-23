@@ -22,10 +22,10 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart'
     show SembastBackendTestSupport;
 import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -227,7 +227,7 @@ void main() {
       // Three fillBatch calls promote e1, e2, e3 into three single-
       // event FIFO rows (batchCapacity = 1).
       for (var i = 0; i < 3; i++) {
-        await fillBatch(
+        await fillWithScheduleForTest(
           destination,
           backend: backend,
           schedule: schedule,
@@ -305,7 +305,7 @@ void main() {
       // into fresh FIFO rows starting from the rewound cursor, then
       // drain ships them.
       for (var i = 0; i < 2; i++) {
-        await fillBatch(
+        await fillWithScheduleForTest(
           destination,
           backend: backend,
           schedule: schedule,

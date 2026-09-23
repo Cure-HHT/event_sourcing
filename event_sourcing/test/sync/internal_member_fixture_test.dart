@@ -58,7 +58,7 @@ const _minimumInternalUses = <String, int>{
   'calls_publish_collector_internal.dart': 2,
   'calls_drain_internal.dart': 1,
   'calls_fill_batch_internal.dart': 1,
-  // runHistoricalReplay and runGapReplay.
+  // buildHistoricalReplayRows and writeQueueItemsTxn.
   'calls_historical_replay_internal.dart': 2,
   // runWithDeliveryTestHooks and the DeliveryTestHooks constructor.
   'calls_test_hooks_internal.dart': 2,

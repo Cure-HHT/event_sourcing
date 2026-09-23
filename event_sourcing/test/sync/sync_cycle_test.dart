@@ -35,7 +35,7 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Enqueue a single-event row through the batch-aware `enqueueFifo`.
+/// Enqueue a single-event row through the batch-aware `enqueueFifoTxn`.
 /// The backend mints a v4-UUID `entry_id`; callers that need to look
 /// the row up later capture the returned `FifoEntry.entryId`.
 Future<String> _enqueueOne(
@@ -231,7 +231,8 @@ void main() {
 
       final e1RowId = await _enqueueOne(backend, 'fake', 'e1');
       // Pre-load one transient attempt so the next attempt trips the cap.
-      await backend.appendAttempt(
+      await appendAttemptForTest(
+        backend,
         'fake',
         e1RowId,
         AttemptResult(

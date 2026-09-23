@@ -1,5 +1,8 @@
 import 'package:event_sourcing/src/sync/historical_replay.dart';
 
-/// Reaches the replay that enqueues and rewinds a fill position through a
-/// `src/` import.
-List<Object> replayEntryPoints() => <Object>[runHistoricalReplay, runGapReplay];
+/// Reaches the replay builders and the queue writer the fill commits them
+/// through, through a `src/` import.
+List<Object> replayEntryPoints() => <Object>[
+  buildHistoricalReplayRows,
+  writeQueueItemsTxn,
+];

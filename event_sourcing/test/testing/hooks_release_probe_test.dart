@@ -1,11 +1,12 @@
 // Verifies: EVS-DEV-destination-drain-lock/F
 //
 // The test seams have no effect without assertions: the probe in
-// `tool/hooks_release_probe.dart` installs a log observer and a failure
-// injection, then runs a registry operation and a delivery pass. Run
-// without assertions (`dart run --no-enable-asserts`, and as a
-// `dart compile exe` executable) no seam fires and the pass delivers; run
-// in-process under `flutter test` (assertions on) both seams fire.
+// `tool/hooks_release_probe.dart` installs every seam (the observers, the
+// awaited interleaving seams and the failure injections), then runs a
+// registry operation and two delivery passes. Run without assertions
+// (`dart run --no-enable-asserts`, and as a `dart compile exe` executable)
+// no seam fires, the passes deliver and the send's outcome commits; run
+// in-process under `flutter test` (assertions on) every seam fires.
 @Timeout(Duration(minutes: 5))
 library;
 
@@ -31,6 +32,8 @@ void _expectInert(ProcessResult result) {
   // The injection was ignored, so the registry operation committed.
   expect(outcome['stored_end_date'], isNotNull, reason: '${result.stdout}');
   expect(outcome['end_date_set_events'], 1, reason: '${result.stdout}');
+  // The fill and outcome failure injections were ignored.
+  expect(outcome['sent_items'], 1, reason: '${result.stdout}');
   expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
 }
 
@@ -101,7 +104,7 @@ void main() {
   });
 
   test(
-    'with assertions enabled the same probe body fires both seams',
+    'with assertions enabled the same probe body fires every seam',
     () async {
       final outcome = await runHooksReleaseProbe();
       expect(
@@ -110,8 +113,16 @@ void main() {
           startsWith('failRegistryAuditAppend'),
           startsWith('registry operation failed'),
           startsWith('onLog event_sourcing.sync_cycle'),
+          startsWith('beforeRegistryTransaction setEndDate'),
+          startsWith('onRegistryBodyRun setEndDate'),
+          startsWith('afterFillReads'),
+          startsWith('insideTransform'),
+          startsWith('failFillTransaction'),
+          startsWith('failOutcomeTransaction'),
         ]),
       );
+      // The injected outcome failure rolled the send's outcome back.
+      expect(outcome.sentItems, 0);
       expect(outcome.passed, isFalse);
       // The injected failure rolled the registry operation back: no end
       // date stored or reported, no audit event, no sequence number used.

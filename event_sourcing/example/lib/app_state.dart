@@ -73,6 +73,34 @@ class AppState extends ChangeNotifier {
   /// vs wire_payload)
   List<Destination> get destinations => registry.all().toList(growable: false);
 
+  final List<String> _deleted = <String>[];
+
+  /// Destinations this hub deleted and has not registered again, in
+  /// deletion order. A deletion keeps the destination's delivered, wedged
+  /// and recovered queue items as its delivery record; the FIFO column list
+  /// renders a read-only panel of those retained items for each id here
+  /// (the live columns come from the registry, which forgets a deleted
+  /// destination).
+  List<String> get deletedDestinationIds => <String>[
+    for (final id in _deleted)
+      if (registry.byId(id) == null) id,
+  ];
+
+  /// Delegate to `DestinationRegistry.deleteDestination`, record the id so
+  /// its retained queue items stay visible, and notify listeners. Throws
+  /// what the registry throws, including its refusal while the queue head
+  /// is pending.
+  Future<void> deleteDestination(String id) async {
+    await registry.deleteDestination(
+      id,
+      initiator: const UserInitiator('demo-user-1'),
+    );
+    _deleted
+      ..remove(id)
+      ..add(id);
+    notifyListeners();
+  }
+
   /// Delegate to `DestinationRegistry.addDestination` and notify listeners
   /// so widgets bound to `destinations` rebuild. The demo stamps a
   /// stable `UserInitiator('demo-user-1')` on every UI-driven mutation

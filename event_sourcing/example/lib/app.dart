@@ -6,6 +6,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/widgets/audit_panel.dart';
+import 'package:event_sourcing_demo/widgets/deleted_fifo_panel.dart';
 import 'package:event_sourcing_demo/widgets/detail_panel.dart';
 import 'package:event_sourcing_demo/widgets/event_stream_panel.dart';
 import 'package:event_sourcing_demo/widgets/fifo_panel.dart';
@@ -250,6 +251,17 @@ class _DemoPaneState extends State<DemoPane> {
           ),
         ),
         _divider('fifo_${dest.id}', fallback: _kDefaultFifoColumnWidth),
+      ],
+      for (final id in widget.appState.deletedDestinationIds) ...<Widget>[
+        SizedBox(
+          width: _widthOf('deleted_$id', fallback: _kDefaultFifoColumnWidth),
+          child: DeletedFifoPanel(
+            destinationId: id,
+            backend: widget.backend,
+            key: ValueKey<String>('deleted_$id'),
+          ),
+        ),
+        _divider('deleted_$id', fallback: _kDefaultFifoColumnWidth),
       ],
       Expanded(
         child: DetailPanel(

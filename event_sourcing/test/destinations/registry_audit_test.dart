@@ -11,6 +11,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
 
 const _user = UserInitiator('demo-user-1');
 const _automation = AutomationInitiator(service: 'test-bootstrap');
@@ -175,6 +176,9 @@ void main() {
       expect(audit.aggregateId, _installUUID);
       expect(audit.data['id'], 'purgeable');
       expect(audit.data['allow_hard_delete'], isTrue);
+      // An empty queue: nothing tombstoned, nothing deleted.
+      expect(audit.data['tombstoned_row_id'], isNull);
+      expect(audit.data['deleted_pending_count'], 0);
       expect(audit.initiator, _user);
     });
 
@@ -197,6 +201,8 @@ void main() {
         eventId: 'evt-1',
         sequenceNumber: 1,
       );
+      // Recovery requires a wedged head.
+      await wedgeHeadForTest(backend, 'wedged');
       final result = await ds.destinations.tombstoneAndRefill(
         'wedged',
         head.entryId,

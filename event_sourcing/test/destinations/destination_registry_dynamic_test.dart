@@ -5,15 +5,19 @@
 // semantics supporting dynamic re-configuration (F).
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -55,9 +59,17 @@ void main() {
       expect(schedule.startDate, isNull);
       expect(schedule.endDate, isNull);
       // Persisted too (a later process restart recovers the dormant
-      // state).
+      // state), stamped with the registration's identity (the id of the
+      // registration event) and the destination's hard-delete opt-in.
       final persisted = await backend.readSchedule('primary');
-      expect(persisted, const DestinationSchedule());
+      final registered = (await backend.findAllEvents()).singleWhere(
+        (e) => e.entryType == kDestinationRegisteredEntryType,
+      );
+      expect(
+        persisted,
+        DestinationSchedule(registrationId: registered.eventId),
+      );
+      expect(persisted!.allowHardDelete, isFalse);
     });
 
     // A second addDestination with the same id throws ArgumentError.
@@ -289,14 +301,19 @@ void main() {
       expect(registry.byId('primary'), isNotNull);
     });
 
-    // deleteDestination unregisters + drops FIFO + drops schedule in one
-    // transaction.
-    test('deleteDestination drops FIFO store and schedule when '
-        'allowHardDelete is true', () async {
+    // Verifies: EVS-PRD-destinations/O
+    // deleting a destination whose head is
+    //   wedged tombstones the head, keeps it as the delivery record, and
+    //   drops the schedule.
+    // Verifies: EVS-DEV-destination-drain/A
+    // the deletion reads the head in its
+    //   transaction and retires the queue.
+    test('deleteDestination retires a wedged queue and drops the schedule '
+        'when allowHardDelete is true', () async {
       final d = FakeDestination(id: 'purgeable', allowHardDelete: true);
       await registry.addDestination(d, initiator: _testInit);
-      // Enqueue one row to populate the FIFO store before the drop.
-      await enqueueSingle(
+      // Enqueue one row and wedge it, so the head is not pending.
+      final row = await enqueueSingle(
         backend,
         'purgeable',
         eventId: 'e1',
@@ -305,14 +322,16 @@ void main() {
         wireFormat: 'fake-v1',
         transformVersion: 'fake-v1',
       );
-      expect(await backend.readFifoHead('purgeable'), isNotNull);
+      await wedgeHeadForTest(backend, 'purgeable');
       expect(await backend.readSchedule('purgeable'), isNotNull);
 
       await registry.deleteDestination('purgeable', initiator: _testInit);
       // Unregistered in-memory.
       expect(registry.byId('purgeable'), isNull);
-      // FIFO store drained.
+      // No head remains; the wedged row is retained, tombstoned.
       expect(await backend.readFifoHead('purgeable'), isNull);
+      final retained = await backend.readFifoRow('purgeable', row.entryId);
+      expect(retained!.finalStatus, FinalStatus.tombstoned);
       // Schedule record dropped.
       expect(await backend.readSchedule('purgeable'), isNull);
     });
@@ -444,13 +463,16 @@ void main() {
         clientTimestamp: DateTime.utc(2026, 4, 20),
       );
 
-      // First activation at Apr 10. Historical replay enqueues events
-      // with client_timestamp >= Apr 10: only Apr 12 and Apr 20.
+      // First activation at Apr 10 records a replay request; the next fill
+      // performs it and enqueues events with client_timestamp >= Apr 10:
+      // only Apr 12 and Apr 20.
       await registry.setStartDate(
         'gap',
         DateTime.utc(2026, 4, 10),
         initiator: _testInit,
       );
+      expect(await backend.listFifoEntries('gap'), isEmpty);
+      await fillBatch(dest, backend: backend);
 
       var fifo = await backend.listFifoEntries('gap');
       var fifoIds = fifo.expand((r) => r.eventIds).toList();
@@ -469,6 +491,7 @@ void main() {
         DateTime.utc(2026, 4, 1),
         initiator: _testInit,
       );
+      await fillBatch(dest, backend: backend);
 
       fifo = await backend.listFifoEntries('gap');
       fifoIds = fifo.expand((r) => r.eventIds).toList();

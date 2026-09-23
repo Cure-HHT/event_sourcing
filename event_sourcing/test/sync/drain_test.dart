@@ -32,7 +32,7 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Enqueue a single-event row via the batch-aware `enqueueFifo`. The
+/// Enqueue a single-event row via the batch-aware `enqueueFifoTxn`. The
 /// backend mints a v4-UUID `entry_id` at enqueue time (independent of
 /// the event id); callers that need to look the row up later capture the
 /// returned `FifoEntry.entryId`.
@@ -81,7 +81,7 @@ void main() {
       await drain(dest, backend: backend);
 
       expect(dest.sent, hasLength(1));
-      // After markFinal sent, the head is gone; readFifoHead returns null.
+      // After the head is marked sent, readFifoHead returns null.
       expect(await backend.readFifoHead('fake'), isNull);
     });
 
@@ -111,7 +111,7 @@ void main() {
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('fake', e1RowId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'fake', e1RowId, FinalStatus.wedged);
       // Script would throw StateError if send() were invoked (see
       // FakeDestination.send); absence of such a throw confirms
       // drain did not call send. We script SendOk defensively so a
@@ -400,7 +400,12 @@ void main() {
       );
       // Pre-load attempts: smallPolicy.maxAttempts - 1 transient records.
       for (var i = 0; i < smallPolicy.maxAttempts - 1; i++) {
-        await backend.appendAttempt('fake', e1RowId, _attemptResultFactory(i));
+        await appendAttemptForTest(
+          backend,
+          'fake',
+          e1RowId,
+          _attemptResultFactory(i),
+        );
       }
       // Clock well past any backoff window.
       final longAfter = DateTime.utc(2027, 1, 1);
@@ -435,7 +440,12 @@ void main() {
       // Pre-load 2 attempts: well below the default cap of 20, so a
       // transient should leave the entry pending (head still present).
       for (var i = 0; i < 2; i++) {
-        await backend.appendAttempt('fake', e1RowId, _attemptResultFactory(i));
+        await appendAttemptForTest(
+          backend,
+          'fake',
+          e1RowId,
+          _attemptResultFactory(i),
+        );
       }
       final longAfter = DateTime.utc(2027, 1, 1);
       final dest = FakeDestination(
@@ -504,7 +514,11 @@ void main() {
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('fake', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
 
       // First drain: scripted SendTransient leaves the row pending and
       // captures the bytes the destination saw on attempt #1.
@@ -582,7 +596,11 @@ void main() {
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('fake', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
 
       // Surgically delete the event from the origin event store
       // (bypasses the append-only API; test-only mutation that simulates

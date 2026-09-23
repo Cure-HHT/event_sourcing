@@ -19,13 +19,14 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
+import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/native_destination.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -97,7 +98,7 @@ void main() {
       final dest = FakeDestination(id: 'fake');
       const schedule = DestinationSchedule();
       // Dormant schedule: should be a no-op despite candidates.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -112,7 +113,7 @@ void main() {
     test('fillBatch with empty event log does not advance cursor', () async {
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -140,7 +141,7 @@ void main() {
       final dest = FakeDestination(id: 'fake', batchCapacity: 3);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -171,7 +172,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // now - batch.first.clientTimestamp = 10s, well below 5 minutes.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -197,7 +198,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // age = 10s, well below the 5-minute window — but flushHeld overrides.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -225,7 +226,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // Clock advanced 10 minutes past the event; age (10min) > 5min.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -259,7 +260,7 @@ void main() {
 
       final dest = FakeDestination(id: 'fake', batchCapacity: 10);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -296,7 +297,7 @@ void main() {
         endDate: DateTime.utc(2026, 4, 15),
       );
       // now() is well after endDate so the upper bound is endDate.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -317,7 +318,7 @@ void main() {
       // moved). fillBatch's walk stops at e-after (deferred); cursor
       // does NOT advance past it. this preserves
       // re-evaluability when endDate later widens.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -341,7 +342,7 @@ void main() {
         startDate: DateTime.utc(2026, 4, 1),
         endDate: DateTime.utc(2026, 4, 30),
       );
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: widened,
@@ -369,7 +370,7 @@ void main() {
       );
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -392,7 +393,7 @@ void main() {
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -403,7 +404,7 @@ void main() {
 
       // Second call — no new events. Should not touch the cursor, and
       // should not enqueue a second FIFO row.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -440,7 +441,7 @@ void main() {
         filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -453,7 +454,7 @@ void main() {
 
       // Idempotency: a repeat call with no new candidates
       // does not re-advance the cursor and does not enqueue anything.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -476,7 +477,7 @@ void main() {
       );
       final dest = FakeDestination(id: 'fake', batchCapacity: 10);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -484,7 +485,12 @@ void main() {
       );
       final wedgedRow = await backend.readFifoHead('fake');
       expect(wedgedRow, isNotNull);
-      await backend.markFinal('fake', wedgedRow!.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'fake',
+        wedgedRow!.entryId,
+        FinalStatus.wedged,
+      );
 
       // Step 2: snapshot post-wedge state.
       final cursorBeforeSecondFill = await backend.readFillCursor('fake');
@@ -504,7 +510,7 @@ void main() {
         clientTimestamp: DateTime.utc(2026, 4, 22, 11, 45),
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -538,10 +544,20 @@ void main() {
         eventId: 'e1',
         clientTimestamp: DateTime.utc(2026, 4, 22, 10),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
       final wedged = await backend.readFifoHead('fake');
       expect(wedged, isNotNull);
-      await backend.markFinal('fake', wedged!.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'fake',
+        wedged!.entryId,
+        FinalStatus.wedged,
+      );
 
       // Phase B: append two MORE matching events while wedged. fillBatch
       // wedge-skips both invocations — no FIFO rows added, no cursor
@@ -551,13 +567,23 @@ void main() {
         eventId: 'e2',
         clientTimestamp: DateTime.utc(2026, 4, 22, 10, 30),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
       await _appendEvent(
         backend,
         eventId: 'e3',
         clientTimestamp: DateTime.utc(2026, 4, 22, 11),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
 
       // Sanity: still only the wedged row in the FIFO.
       expect(await backend.readFifoHead('fake'), isNotNull);
@@ -583,7 +609,12 @@ void main() {
       // Phase D: next fillBatch. Promotes e1, e2, e3 in ONE pass into
       // ONE FIFO row (batchCapacity=10 admits all three), advances
       // fill_cursor to e3.sequenceNumber.
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
 
       final fresh = await backend.readFifoHead('fake');
       expect(fresh, isNotNull);
@@ -612,7 +643,7 @@ void main() {
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       final fillClock = DateTime.utc(2026, 4, 22, 12);
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -662,7 +693,7 @@ void main() {
       final dest = NativeDestination(id: 'native');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       await expectLater(
-        fillBatch(
+        fillWithScheduleForTest(
           dest,
           backend: backend,
           schedule: schedule,

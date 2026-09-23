@@ -21,9 +21,10 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 /// strict order on write and are never reordered. `finalStatus` is
 /// nullable; `null` means "not-yet-terminal" (drain may attempt the
 /// row). Once delivered they are marked `FinalStatus.sent`; on
-/// permanent failure they are marked `FinalStatus.wedged`; rows excised
-/// by a trail sweep are marked `FinalStatus.tombstoned`. All non-null
-/// terminal states are retained forever as send-log / audit records.
+/// permanent failure they are marked `FinalStatus.wedged`; a wedged head
+/// that an operator recovery or a deletion retires is marked
+/// `FinalStatus.tombstoned`. Rows with a non-null status are retained for
+/// the database's lifetime as the delivery record.
 ///
 /// `eventIds` is a non-empty `List<String>`, `sequenceRange` is an
 /// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
@@ -212,7 +213,7 @@ class FifoEntry {
     );
   }
 
-  /// Stable per-row identifier used by `markFinal`, `appendAttempt`,
+  /// Stable per-row identifier used by the drain's outcome writes,
   /// `tombstoneAndRefill`, and operator diagnostics. Generated as a v4
   /// UUID at enqueue time and never reused across rows; two FIFO rows
   /// (of any `final_status`, including tombstoned archive rows) never
@@ -255,14 +256,14 @@ class FifoEntry {
   /// write transaction commit instant for all practical purposes).
   final DateTime enqueuedAt;
 
-  /// Historical send attempts; grows, never shrinks; retained forever per
-  ///
+  /// Historical send attempts; grows, never shrinks; retained for the
+  /// database's lifetime with the entry.
   final List<AttemptResult> attempts;
 
   /// Terminal state of this entry. `null` on enqueue and while the row is
   /// still a drain candidate; moves to `sent`, `wedged`, or `tombstoned`
-  /// on a terminal transition. Non-null terminal values are retained
-  /// forever as audit records.
+  /// on a terminal transition. Non-null terminal values are retained for
+  /// the database's lifetime as audit records.
   final FinalStatus? finalStatus;
 
   /// When the entry was marked `sent`; null while pre-terminal, wedged,

@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
@@ -206,13 +207,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
   @override
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  }) => throw UnimplementedError();
-  @override
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -230,17 +224,48 @@ class _InMemoryBackend extends StorageBackend {
     int? limit,
   }) => throw UnimplementedError();
   @override
-  Future<void> appendAttempt(
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
   ) => throw UnimplementedError();
   @override
-  Future<void> markFinal(
+  Future<FifoEntry?> readFifoHeadTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    String entryId,
-    FinalStatus status,
   ) => throw UnimplementedError();
+  @override
+  Future<QueueRetirement> retireQueueTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+  @override
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  ) => throw UnimplementedError();
+  @override
+  Future<void> clearReplayRequestTxn(Transaction txn, String destinationId) =>
+      throw UnimplementedError();
+  @override
+  Future<void> writeRegistryCheckTxn(Transaction txn, RegistryCheck check) =>
+      throw UnimplementedError();
+  @override
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) =>
+      throw UnimplementedError();
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();
   @override
@@ -254,9 +279,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<int> readFillCursor(String destinationId) =>
       throw UnimplementedError();
   @override
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) =>
-      throw UnimplementedError();
-  @override
   Future<void> writeFillCursorTxn(
     Transaction txn,
     String destinationId,
@@ -265,11 +287,6 @@ class _InMemoryBackend extends StorageBackend {
   @override
   Future<DestinationSchedule?> readSchedule(String destinationId) =>
       throw UnimplementedError();
-  @override
-  Future<void> writeSchedule(
-    String destinationId,
-    DestinationSchedule schedule,
-  ) => throw UnimplementedError();
   @override
   Future<void> writeScheduleTxn(
     Transaction txn,
@@ -280,9 +297,6 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
   @override
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) =>
-      throw UnimplementedError();
-  @override
   Future<FifoEntry?> readFifoRow(String destinationId, String entryId) =>
       throw UnimplementedError();
   @override
@@ -290,10 +304,10 @@ class _InMemoryBackend extends StorageBackend {
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   ) => throw UnimplementedError();
   @override
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
