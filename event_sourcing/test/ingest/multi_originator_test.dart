@@ -46,28 +46,28 @@ Future<_Fixture> _openStore({
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_redacted',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Redacted',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_compacted',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Compacted',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_purged',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Purged',
       ),
     );
@@ -93,7 +93,7 @@ BatchEnvelope _buildEnvelope(
   required String senderSoftwareVersion,
 }) {
   return BatchEnvelope(
-    batchFormatVersion: '1',
+    batchFormatVersion: '2',
     batchId: const Uuid().v4(),
     senderHop: senderHop,
     senderIdentifier: senderIdentifier,

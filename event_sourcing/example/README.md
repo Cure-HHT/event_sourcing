@@ -99,7 +99,9 @@ Both panes persist their state under
 The two `*.install.uuid` files are minted on first launch and re-read
 on every subsequent boot. To start over from scratch, delete the four
 files (or use the **Reset all** button in either pane's top bar — that
-button also deletes the database file).
+button also deletes the database file). A `demo.db` or `demo_hub.db`
+written by a build of another library data format does not open under
+this build; delete it to start over.
 
 ---
 
@@ -168,7 +170,7 @@ lifecycle / CQRS / lights demonstrations.
 ```dart
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo note',
   widgetId: 'demo_note_widget_v1',
   widgetConfig: <String, Object?>{},
@@ -243,8 +245,8 @@ The demo registers four destinations per pane:
 | --- | --- | --- | --- |
 | `Primary` | 3rd-party | `demo-json-v1` | `demo_note`, `red_button_pressed`, `green_button_pressed` |
 | `Secondary` | 3rd-party | `demo-json-v1` | `green_button_pressed`, `blue_button_pressed` |
-| `NativeUser` | Native (`esd/batch@1`) | `esd/batch@1` | All four user entry types |
-| `NativeAudit` | Native (`esd/batch@1`) | `esd/batch@1` | System events only |
+| `NativeUser` | Native (`esd/batch@2`) | `esd/batch@2` | All four user entry types |
+| `NativeAudit` | Native (`esd/batch@2`) | `esd/batch@2` | System events only |
 
 `Primary` and `Secondary` are `DemoDestination` —
 `serializesNatively: false`; lib invokes `transform` and persists the
@@ -252,7 +254,7 @@ resulting `WirePayload` verbatim. `Secondary` opts into
 `allowHardDelete: true` so the demo can exercise hard-delete on it.
 
 `NativeUser` and `NativeAudit` are `NativeDemoDestination` —
-`serializesNatively: true`; lib produces the `esd/batch@1` envelope
+`serializesNatively: true`; lib produces the `esd/batch@2` envelope
 when the delivery cycle fills the queue and persists `envelope_metadata` with
 `wire_payload: null`. Drain reconstructs the wire bytes
 deterministically on each send attempt and (when a bridge is wired)

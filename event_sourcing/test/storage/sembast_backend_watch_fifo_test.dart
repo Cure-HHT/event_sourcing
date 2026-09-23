@@ -103,17 +103,17 @@ void main() {
       expect(emA, isEmpty);
     });
 
-    // envelopeMetadata for native (`esd/batch@1`) rows. The row-typed
+    // envelopeMetadata for native (`esd/batch@2`) rows. The row-typed
     // snapshot exposes the envelope identity that drain reconstructs from,
     // and wirePayload is null on the emitted entry.
     test('watchFifo emits envelopeMetadata for '
         'native rows; wirePayload is null on the snapshot', () async {
-      // Enqueue a native esd/batch@1 row via the public enqueueFifo
+      // Enqueue a native esd/batch@2 row via the public enqueueFifo
       // nativeEnvelope: path so the row's envelope_metadata column is
       // exercised end-to-end through the watchFifo snapshot pipeline.
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-watch-1',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-watch',
@@ -151,7 +151,7 @@ void main() {
       expect(entry.envelopeMetadata!.batchId, 'batch-watch-1');
       expect(entry.envelopeMetadata!.senderHop, 'mobile-1');
       expect(entry.envelopeMetadata!.senderIdentifier, 'device-watch');
-      expect(entry.envelopeMetadata!.batchFormatVersion, '1');
+      expect(entry.envelopeMetadata!.batchFormatVersion, '2');
     });
 
     test('watchFifo closes on backend close, then throws', () async {

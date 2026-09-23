@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
@@ -858,7 +859,7 @@ class SembastBackend extends StorageBackend {
       '$viewName::$entryType';
 
   @override
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -868,14 +869,22 @@ class SembastBackend extends StorageBackend {
         .record(_viewTargetVersionsKey(viewName, entryType))
         .get(t._sembastTxn);
     if (raw == null) return null;
-    final v = raw['target_version'];
-    if (v is! int) {
+    return _targetVersionOf(raw, '$viewName::$entryType');
+  }
+
+  /// Reads the `{major, minor}` target of one view-target record.
+  static EntryTypeVersion _targetVersionOf(
+    Map<String, Object?> record,
+    String key,
+  ) {
+    try {
+      return EntryTypeVersion.fromJson(record['target_version']);
+    } on FormatException catch (e) {
       throw StateError(
-        'view_target_versions[$viewName::$entryType]: target_version not int '
-        '(got ${v.runtimeType}); database corrupted',
+        'view_target_versions[$key]: target_version is not a '
+        '{major, minor} version (${e.message}); database corrupted',
       );
     }
-    return v;
   }
 
   @override
@@ -884,7 +893,7 @@ class SembastBackend extends StorageBackend {
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   ) async {
     final t = _requireValidTxn(txn);
     await _viewTargetVersionsStoreRef
@@ -892,12 +901,12 @@ class SembastBackend extends StorageBackend {
         .put(t._sembastTxn, <String, Object?>{
           'view_name': viewName,
           'entry_type': entryType,
-          'target_version': targetVersion,
+          'target_version': targetVersion.toJson(),
         });
   }
 
   @override
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   ) async {
@@ -906,9 +915,9 @@ class SembastBackend extends StorageBackend {
       t._sembastTxn,
       finder: Finder(filter: Filter.equals('view_name', viewName)),
     );
-    return <String, int>{
+    return <String, EntryTypeVersion>{
       for (final r in records)
-        (r.value['entry_type'] as String): (r.value['target_version'] as int),
+        (r.value['entry_type'] as String): _targetVersionOf(r.value, r.key),
     };
   }
 
@@ -989,8 +998,8 @@ class SembastBackend extends StorageBackend {
   ///   map`, `wire_format = wirePayload.contentType`,
   ///   `transform_version = wirePayload.transformVersion`,
   ///   `envelope_metadata = null`.
-  /// - [nativeEnvelope] (native `esd/batch@1`): persists
-  ///   `wire_payload = null`, `wire_format = "esd/batch@1"`,
+  /// - [nativeEnvelope] (native `esd/batch@2`): persists
+  ///   `wire_payload = null`, `wire_format = "esd/batch@2"`,
   ///   `transform_version = null`, `envelope_metadata = nativeEnvelope`.
   ///
   /// Centralizes all row-construction logic: empty-batch rejection,

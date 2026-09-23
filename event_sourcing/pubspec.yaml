@@ -1,6 +1,6 @@
 name: event_sourcing
 description: "Event-sourcing core library: offline-first storage, sync, ingest, materialization, and security"
-version: 0.3.1
+version: 0.5.0
 publish_to: none
 homepage:
 

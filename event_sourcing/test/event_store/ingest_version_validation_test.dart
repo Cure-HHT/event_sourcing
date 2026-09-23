@@ -1,11 +1,8 @@
-// Verifies: EVS-PRD-ingest/D,
-//           EVS-DEV-ingest-promotes-before-fold/A
-//
-// Ingest verifies event integrity before admitting events, rejecting any
-// event whose lib_format_version or entry_type_version is ahead of the
-// receiver's known versions. Version-ahead events cannot be promoted (no
-// inverse chain exists), so the batch is rejected with a typed error before
-// any log write; validation order is lib-ahead before entry-type-ahead.
+// Ingest refuses, before any log write, an event whose data-format major
+// differs from the receiver's or whose entry-type major is above the
+// registered major; the data-format check runs first. A batch mixing a
+// compatible event with a refused one is covered, on both backends, by
+// test_support/version_compatibility_conformance.dart.
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -15,7 +12,7 @@ import 'package:uuid/uuid.dart';
 
 const _uuid = Uuid();
 
-/// Build an `esd/batch@1` envelope manually with a one-event payload, with
+/// Build an `esd/batch@2` envelope manually with a one-event payload, with
 /// caller-controlled `entry_type_version` / `lib_format_version` on the
 /// embedded event. Mirrors the shape produced by
 /// `event_sourcing/example/lib/synthetic_ingest.dart`'s
@@ -23,8 +20,8 @@ const _uuid = Uuid();
 /// ingest-validation tests stay self-contained.
 Uint8List _envelope({
   required String entryType,
-  required int entryTypeVersion,
-  required int libFormatVersion,
+  required EntryTypeVersion entryTypeVersion,
+  required DataFormatVersion libFormatVersion,
 }) {
   final now = DateTime.now().toUtc();
   const senderHop = 'remote-mobile-1';
@@ -42,8 +39,8 @@ Uint8List _envelope({
     'aggregate_id': 'remote-aggregate-1',
     'aggregate_type': 'note',
     'entry_type': entryType,
-    'entry_type_version': entryTypeVersion,
-    'lib_format_version': libFormatVersion,
+    'entry_type_version': entryTypeVersion.toJson(),
+    'lib_format_version': libFormatVersion.toJson(),
     'event_type': 'finalized',
     'sequence_number': 1001,
     'data': <String, Object?>{
@@ -76,7 +73,7 @@ Uint8List _envelope({
 }
 
 Future<EventStoreBundle> _bootstrapWithRegistry({
-  required int registeredVersion,
+  required EntryTypeVersion registeredVersion,
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'ingest-validation-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -101,64 +98,80 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
 }
 
 void main() {
-  group('lib_format_version-ahead', () {
-    test('throws IngestLibFormatVersionAhead and rolls back batch', () async {
-      final ds = await _bootstrapWithRegistry(registeredVersion: 1);
+  group('data-format major differs', () {
+    // Verifies: EVS-DEV-version-compatibility/D
+    test('throws IngestDataFormatIncompatible and writes nothing', () async {
+      final ds = await _bootstrapWithRegistry(
+        registeredVersion: const EntryTypeVersion(1, 0),
+      );
+      final backend = ds.eventStore.backend;
+      final eventsBefore = (await backend.findAllEvents()).length;
+      final counterBefore = await backend.readSequenceCounter();
       final bytes = _envelope(
         entryType: 'demo_note',
-        entryTypeVersion: 1,
-        libFormatVersion: StoredEvent.currentLibFormatVersion + 1,
+        entryTypeVersion: const EntryTypeVersion(1, 0),
+        libFormatVersion: const DataFormatVersion(3, 0),
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
-        throwsA(isA<IngestLibFormatVersionAhead>()),
+        throwsA(isA<IngestDataFormatIncompatible>()),
       );
-      // No event landed.
-      // Note: rebuild via direct backend findAll bypassed since the facade
-      // doesn't re-export a backend handle. Use the indirect signal that the
-      // batch is rolled back: a follow-up valid ingest sees only its own
-      // event.
+      expect((await backend.findAllEvents()).length, eventsBefore);
+      expect(await backend.readSequenceCounter(), counterBefore);
     });
   });
 
-  group('entry_type_version-ahead', () {
-    test('throws IngestEntryTypeVersionAhead and rolls back batch', () async {
-      final ds = await _bootstrapWithRegistry(registeredVersion: 2);
+  group('entry-type major ahead', () {
+    // Verifies: EVS-DEV-version-compatibility/D
+    test('throws IngestEntryTypeVersionAhead and writes nothing', () async {
+      final ds = await _bootstrapWithRegistry(
+        registeredVersion: const EntryTypeVersion(2, 0),
+      );
+      final backend = ds.eventStore.backend;
+      final eventsBefore = (await backend.findAllEvents()).length;
+      final counterBefore = await backend.readSequenceCounter();
       final bytes = _envelope(
         entryType: 'demo_note',
-        entryTypeVersion: 5,
-        libFormatVersion: 1,
+        entryTypeVersion: const EntryTypeVersion(5, 0),
+        libFormatVersion: const DataFormatVersion(2, 0),
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
         throwsA(isA<IngestEntryTypeVersionAhead>()),
       );
+      expect((await backend.findAllEvents()).length, eventsBefore);
+      expect(await backend.readSequenceCounter(), counterBefore);
     });
   });
 
   group('validation order', () {
-    test('lib-ahead checked before entry-type-ahead', () async {
-      final ds = await _bootstrapWithRegistry(registeredVersion: 2);
+    // Verifies: EVS-DEV-version-compatibility/D
+    test('the data format is checked before the entry-type version', () async {
+      final ds = await _bootstrapWithRegistry(
+        registeredVersion: const EntryTypeVersion(2, 0),
+      );
       final bytes = _envelope(
         entryType: 'demo_note',
-        entryTypeVersion: 5, // also too high
-        libFormatVersion:
-            StoredEvent.currentLibFormatVersion + 1, // also too high
+        entryTypeVersion: const EntryTypeVersion(5, 0), // also too high
+        libFormatVersion: const DataFormatVersion(3, 0), // also refused
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
-        throwsA(isA<IngestLibFormatVersionAhead>()),
+        throwsA(isA<IngestDataFormatIncompatible>()),
       );
     });
   });
 
   group('happy path', () {
-    test('matched versions ingest cleanly', () async {
-      final ds = await _bootstrapWithRegistry(registeredVersion: 5);
+    // Verifies: EVS-DEV-version-compatibility/D
+    test('a lower major with no view to promote for ingests cleanly', () async {
+      final ds = await _bootstrapWithRegistry(
+        registeredVersion: const EntryTypeVersion(5, 0),
+      );
       final bytes = _envelope(
         entryType: 'demo_note',
-        entryTypeVersion: 3,
-        libFormatVersion: 1,
+        entryTypeVersion: const EntryTypeVersion(3, 0),
+        libFormatVersion: const DataFormatVersion(2, 0),
       );
       final result = await ds.eventStore.ingestBatch(
         bytes,

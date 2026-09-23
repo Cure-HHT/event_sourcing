@@ -26,7 +26,7 @@ class FifoPanel extends StatefulWidget {
   /// The destination this panel renders. Either a `DemoDestination`
   /// (lossy 3rd-party shape: `transform()` produces opaque bytes the
   /// FIFO row stores under `wire_payload`) or any other [Destination]
-  /// such as a native `esd/batch@1` destination (FIFO row stores
+  /// such as a native `esd/batch@2` destination (FIFO row stores
   /// `envelope_metadata` instead). The demo-specific
   /// connection / latency / batch-size knobs render whenever the
   /// destination implements [DemoKnobs] — both demo destinations do.
@@ -53,7 +53,7 @@ class _FifoPanelState extends State<FifoPanel> {
   /// Non-null when the destination implements [DemoKnobs], in which case
   /// the panel renders the live-tunable connection / latency / batch-size
   /// / accumulate knobs. Both `DemoDestination` (lossy) and
-  /// `NativeDemoDestination` (esd/batch@1) implement DemoKnobs in the
+  /// `NativeDemoDestination` (esd/batch@2) implement DemoKnobs in the
   /// example app, so all three columns expose the same controls.
   /// Null for production destinations that don't carry these knobs.
   DemoKnobs? get _demo {

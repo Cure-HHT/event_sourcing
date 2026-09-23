@@ -89,8 +89,11 @@ sembast store the reference impl uses today; the contents are the same
 operates on. The tables are:
 
 - **`events`** — the append-only event log. Columns include `sequence`
-  (BIGINT PRIMARY KEY), `entry_type` (TEXT), `entry_type_version`
-  (INTEGER), `aggregate_id` (TEXT), `event_id` (TEXT UNIQUE),
+  (BIGINT PRIMARY KEY), `entry_type` (TEXT), the entry-type version and
+  the data-format version as major and minor `INTEGER` columns
+  (`entry_type_version_major`, `entry_type_version_minor`,
+  `lib_format_version_major`, `lib_format_version_minor`), `aggregate_id`
+  (TEXT), `event_id` (TEXT UNIQUE),
   `payload` (JSONB), `prev_hash` (TEXT), `hash` (TEXT),
   `client_timestamp` (TIMESTAMPTZ), `originator_hop_id` (TEXT),
   `originator_identifier` (TEXT), and a `metadata` JSONB column for the
@@ -104,8 +107,9 @@ operates on. The tables are:
   `view_name = ?` ordered by `row_key`.
 - **`view_target_versions`** — the per-view target-version map
   maintained by `EventStore.open`'s snapshot-promotion pass.
-  Single-row-per-view KV; columns `view_name TEXT PRIMARY KEY`,
-  `target_version INTEGER`.
+  One row per (view, entry type); columns `view_name TEXT`,
+  `entry_type TEXT`, `target_major INTEGER`, `target_minor INTEGER`,
+  keyed by `(view_name, entry_type)`.
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)` with the
   queued event reference and delivery bookkeeping columns

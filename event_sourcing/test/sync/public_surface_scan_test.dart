@@ -193,6 +193,8 @@ const _unexportedOperations = <String, String>{
   'PublishCollector.events': 'reads what the run collected',
   'PublishCollector.rowChanges': 'reads what the run collected',
   'LibVersion.version': 'constant',
+  'LibVersion.dataFormat': 'constant',
+  'canonicalEventHash': 'pure function; changes nothing',
   'LibVersion.compare': 'pure function',
   'LibVersionEvents.initialized': 'constant',
   'LibVersionEvents.changed': 'constant',

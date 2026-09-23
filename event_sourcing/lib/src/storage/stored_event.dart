@@ -1,4 +1,6 @@
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:provenance/provenance.dart';
 
@@ -15,6 +17,10 @@ import 'package:provenance/provenance.dart';
 // flow_token is stored as an opaque String, type-checked only (never parsed or interpreted by the substrate).
 // Implements: EVS-PRD-event-log/B
 // carries sequenceNumber for total ordering.
+// Implements: EVS-DEV-version-compatibility/A+C
+// entryTypeVersion and
+//   libFormatVersion are major.minor values, stored and read as
+//   {major, minor} objects; a malformed one is a FormatException.
 // Implements: EVS-PRD-portability/C
 // pure Dart value type; no platform
 //   dependency; serialises identically on every Dart-supported runtime.
@@ -50,8 +56,16 @@ class StoredEvent {
     final aggregateId = _requireString(map, 'aggregate_id');
     final aggregateType = _requireString(map, 'aggregate_type');
     final entryType = _requireString(map, 'entry_type');
-    final entryTypeVersion = _requireInt(map, 'entry_type_version');
-    final libFormatVersion = _requireInt(map, 'lib_format_version');
+    final entryTypeVersion = _requireVersion(
+      map,
+      'entry_type_version',
+      EntryTypeVersion.fromJson,
+    );
+    final libFormatVersion = _requireVersion(
+      map,
+      'lib_format_version',
+      DataFormatVersion.fromJson,
+    );
     final eventType = _requireString(map, 'event_type');
     final sequenceNumber = _requireInt(map, 'sequence_number');
     final data = _requireMap(map, 'data');
@@ -131,8 +145,8 @@ class StoredEvent {
     Map<String, dynamic>? metadata,
     String? flowToken,
     String? previousEventHash,
-    int entryTypeVersion = 1,
-    int libFormatVersion = 1,
+    EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0),
+    DataFormatVersion libFormatVersion = LibVersion.dataFormat,
   }) => StoredEvent(
     key: key,
     eventId: eventId,
@@ -152,12 +166,6 @@ class StoredEvent {
     previousEventHash: previousEventHash,
   );
 
-  /// Storage shape version the current lib build produces. Stamped on every
-  /// event by `EventStore.append` and propagated over the wire. Receivers
-  /// reject events whose `lib_format_version > currentLibFormatVersion` per
-  ///
-  static const int currentLibFormatVersion = 1;
-
   /// Database key.
   final int key;
 
@@ -174,20 +182,20 @@ class StoredEvent {
   /// 'order_placed', 'invoice_paid'). First-class
   final String entryType;
 
-  /// Application schema version under which this event was authored.
+  /// Entry-type version under which this event was authored.
   ///
-  /// Stamped by the substrate from `EntryTypeDefinition.registeredVersion`
+  /// Stamped by the library from `EntryTypeDefinition.registeredVersion`
   /// on every local append (the caller does not choose it). Preserved
-  /// verbatim on ingested events — reflects the originating install's
-  /// registry at the time of append. Ingest-side promotion (in
-  /// `ProjectionInterpreter`) and boot-time snapshot promotion (in
-  /// `EventStore.open`) read this field to decide whether the event needs
-  /// to be lifted to a newer version before fold.
-  final int entryTypeVersion;
+  /// verbatim on ingested events -- it reflects the originating install's
+  /// registry at the time of append. The projection interpreter and
+  /// `rebuildView` read it to decide whether the event is promoted before
+  /// the fold, and ingest reads it to refuse a higher major.
+  final EntryTypeVersion entryTypeVersion;
 
-  /// Storage shape version this event was persisted with. Stamped by the
-  /// lib from [currentLibFormatVersion] on every append.
-  final int libFormatVersion;
+  /// Data-format version of the build that appended this event. Stamped by
+  /// the library from `LibVersion.dataFormat` on every append; ingest
+  /// refuses an event whose data-format major differs from the receiver's.
+  final DataFormatVersion libFormatVersion;
 
   /// User-intent discriminator for the event: 'finalized' | 'checkpoint' |
   /// 'tombstone'.
@@ -281,8 +289,8 @@ class StoredEvent {
       'aggregate_id': aggregateId,
       'aggregate_type': aggregateType,
       'entry_type': entryType,
-      'entry_type_version': entryTypeVersion,
-      'lib_format_version': libFormatVersion,
+      'entry_type_version': entryTypeVersion.toJson(),
+      'lib_format_version': libFormatVersion.toJson(),
       'event_type': eventType,
       'sequence_number': sequenceNumber,
       'data': data,
@@ -311,6 +319,33 @@ String _requireString(Map<String, Object?> map, String key) {
     throw FormatException('StoredEvent: missing or non-string "$key"');
   }
   return value;
+}
+
+/// Parses the version stored under [key] with [parse], naming [key] in the
+/// [FormatException] a missing or malformed value throws. An integer is the
+/// version shape of a data format before `2.0`, which this build does not
+/// read, and the message says so.
+T _requireVersion<T>(
+  Map<String, Object?> map,
+  String key,
+  T Function(Object? json) parse,
+) {
+  final value = map[key];
+  if (value == null) {
+    throw FormatException('StoredEvent: missing "$key"');
+  }
+  if (value is int) {
+    throw FormatException(
+      'StoredEvent: "$key" is the integer $value, a version shape this '
+      'data format does not read; the record was written by a build of an '
+      'earlier data format',
+    );
+  }
+  try {
+    return parse(value);
+  } on FormatException catch (e) {
+    throw FormatException('StoredEvent: "$key": ${e.message}');
+  }
 }
 
 int _requireInt(Map<String, Object?> map, String key) {

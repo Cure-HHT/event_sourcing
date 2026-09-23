@@ -31,7 +31,7 @@ Future<SembastBackend> _openBackend() async {
 StoredEvent _event({
   required int seq,
   required Map<String, Object?> data,
-  int entryTypeVersion = 1,
+  EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0),
 }) {
   return StoredEvent(
     key: seq,
@@ -40,7 +40,7 @@ StoredEvent _event({
     aggregateType: 'note',
     entryType: _kNoteEntryType,
     entryTypeVersion: entryTypeVersion,
-    libFormatVersion: 1,
+    libFormatVersion: const DataFormatVersion(2, 0),
     eventType: 'finalized',
     sequenceNumber: seq,
     data: data,
@@ -61,7 +61,7 @@ void main() {
         ..register(
           const EntryTypeDefinition(
             id: _kNoteEntryType,
-            registeredVersion: 1,
+            registeredVersion: EntryTypeVersion(1, 0),
             name: 'Note',
           ),
         );
@@ -103,7 +103,7 @@ void main() {
           ..register(
             const EntryTypeDefinition(
               id: _kNoteEntryType,
-              registeredVersion: 2,
+              registeredVersion: EntryTypeVersion(2, 0),
               name: 'Note',
             ),
           );
@@ -123,8 +123,8 @@ void main() {
             const PromoterSpec(
               viewName: 'notes',
               entryType: _kNoteEntryType,
-              fromVersion: 1,
-              toVersion: 2,
+              fromVersion: EntryTypeVersion(1, 0),
+              toVersion: EntryTypeVersion(2, 0),
               transforms: <TransformPrimitive>[
                 RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
@@ -143,7 +143,7 @@ void main() {
             event: _event(
               seq: 1,
               data: const {'body': 'hello'},
-              entryTypeVersion: 1,
+              entryTypeVersion: const EntryTypeVersion(1, 0),
             ),
           );
         });
@@ -176,7 +176,7 @@ void main() {
         ..register(
           const EntryTypeDefinition(
             id: _kNoteEntryType,
-            registeredVersion: 2,
+            registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
           ),
         );
@@ -201,8 +201,8 @@ void main() {
           const PromoterSpec(
             viewName: 'view_a',
             entryType: _kNoteEntryType,
-            fromVersion: 1,
-            toVersion: 2,
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
             transforms: <TransformPrimitive>[
               RenameField(sourceField: 'body', targetField: 'body_a'),
             ],
@@ -212,8 +212,8 @@ void main() {
           const PromoterSpec(
             viewName: 'view_b',
             entryType: _kNoteEntryType,
-            fromVersion: 1,
-            toVersion: 2,
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
             transforms: <TransformPrimitive>[DropField(fieldName: 'body')],
           ),
         );
@@ -230,7 +230,7 @@ void main() {
           event: _event(
             seq: 1,
             data: const {'body': 'hello'},
-            entryTypeVersion: 1,
+            entryTypeVersion: const EntryTypeVersion(1, 0),
           ),
         );
       });

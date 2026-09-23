@@ -13,7 +13,7 @@ A. During boot, the substrate SHALL ensure every (viewName, interest-matched ent
 
 B. The substrate SHALL NOT overwrite existing `view_target_versions` rows during seeding; existing target values are preserved.
 
-C. Newly-seeded rows SHALL carry the current `registeredVersion` of the entry type as their target value.
+C. Newly-seeded rows SHALL carry the registered major and minor of the entry type as their target value.
 
 D. The set of (viewName, entryType) pairs to consider for seeding SHALL be derived from each registered `ProjectionSpec`'s interest filter — the entry types that the projection's `interest` matches at the current registry state.
 
@@ -21,11 +21,13 @@ D. The set of (viewName, entryType) pairs to consider for seeding SHALL be deriv
 
 **Why seed lazily rather than at registry-mutation time?** The registry is immutable post-`EventStore.open` (per EVS-DEV-event-store-open), so there is no other write moment. Seeding inline with the boot pass guarantees the table is populated before any subscriber can observe it.
 
-**Why preserve existing rows rather than reset to the registered version?** An existing row carries history — it was set to its current value by a prior promotion or initialization. Overwriting it would silently undo promotion progress and confuse the downgrade-refusal check on a subsequent boot.
+**Why preserve existing rows rather than reset to the registered version?** An existing row carries history — it was set to its current value by a prior promotion or initialization. Overwriting it would silently undo promotion progress and confuse the downgrade-refusal check on a subsequent boot. Seeding therefore never overwrites a target. The writers that can lower one are a fold under an older minor of the same major (EVS-DEV-version-compatibility/E), which records that the rows it folded need re-promotion, `rebuildView`, which writes the registered versions it rebuilt the view at, and `EventStoreBundle.setViewTargetVersion`, an internal writer that writes whatever version it is given and that the library's own tests use to stage a stored target.
 
 ## Changelog
 
+- 2026-09-23 | 0ea6c582 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Amend C: seeded targets carry the registered major and minor; the Rationale names every writer that can lower a target
 - 2026-08-10 | 911a148f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | eb373312 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *view_target_versions seeding at boot* | **Hash**: 911a148f
+*End* *view_target_versions seeding at boot* | **Hash**: 0ea6c582

@@ -51,28 +51,28 @@ void main() {
       ..register(
         const EntryTypeDefinition(
           id: 'participant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Participant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-Permission Grant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'user_role_scope',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-Role-Scope Assignment',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'action_denial',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Action Denial',
         ),
       );

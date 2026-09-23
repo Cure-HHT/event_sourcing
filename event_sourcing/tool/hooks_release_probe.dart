@@ -122,7 +122,7 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     entryTypes: const <EntryTypeDefinition>[
       EntryTypeDefinition(
         id: 'probe_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Probe event',
       ),
     ],

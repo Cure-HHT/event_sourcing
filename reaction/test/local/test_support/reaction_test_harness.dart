@@ -48,14 +48,14 @@ class ReactionTestHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'note',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Note',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'greeting',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Greeting',
         ),
       )
@@ -63,7 +63,7 @@ class ReactionTestHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-Permission Grant',
         ),
       )
@@ -77,7 +77,7 @@ class ReactionTestHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'user_role_scope',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-Role-Scope Assignment',
         ),
       )
@@ -85,7 +85,7 @@ class ReactionTestHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'action_denial',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Action Denial',
         ),
       )
@@ -97,7 +97,7 @@ class ReactionTestHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'account_disabled',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Account Disabled',
         ),
       );

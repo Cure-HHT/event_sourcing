@@ -91,21 +91,21 @@ class PolicyHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-permission grant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'user_role_scope',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-role-scope assignment',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'patient_site_assignment',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Patient-to-site assignment',
         ),
       );

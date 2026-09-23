@@ -211,7 +211,7 @@ Future<void> fillBatch(
   }
 
   // Branch on destination.serializesNatively. Native destinations
-  // consume the library's `esd/batch@1` format; the library mints the
+  // consume the library's `esd/batch@2` format; the library mints the
   // envelope identity from the local `Source` and enqueues via
   // `nativeEnvelope:`. The on-the-wire bytes are reconstructed
   // deterministically at drain time so we do NOT call

@@ -3,7 +3,7 @@ import 'package:uuid/uuid.dart';
 
 /// Helper for the "Ingest sample batch" demo button on `top_action_bar.dart`.
 ///
-/// Builds a minimal, well-formed `esd/batch@1` envelope carrying ONE
+/// Builds a minimal, well-formed `esd/batch@2` envelope carrying ONE
 /// synthetic event that pretends to come from a different device
 /// (`remote-mobile-1`). The resulting envelope is fed to
 /// `EventStore.ingestBatch`, which stamps a receiver `ProvenanceEntry`
@@ -39,7 +39,7 @@ class SyntheticBatchBuilder {
   static const _uuid = Uuid();
 
   /// Construct a one-event `BatchEnvelope` ready for
-  /// `eventStore.ingestBatch(envelope.encode(), wireFormat: 'esd/batch@1')`.
+  /// `eventStore.ingestBatch(envelope.encode(), wireFormat: 'esd/batch@2')`.
   ///
   /// The synthetic event is shaped like a "demo_note" finalized append on
   /// the originator: a single origin `ProvenanceEntry` with
@@ -74,8 +74,8 @@ class SyntheticBatchBuilder {
       'aggregate_id': aggregateId,
       'aggregate_type': aggregateType,
       'entry_type': entryType,
-      'entry_type_version': 1,
-      'lib_format_version': StoredEvent.currentLibFormatVersion,
+      'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
+      'lib_format_version': const DataFormatVersion(2, 0).toJson(),
       'event_type': 'finalized',
       'sequence_number': originSequenceNumber,
       'data': <String, Object?>{

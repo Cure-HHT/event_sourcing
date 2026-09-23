@@ -6,17 +6,22 @@
 @TestOn('vm')
 library;
 
-import 'package:event_sourcing/src/storage/sembast_backend.dart';
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import 'storage_backend_conformance.dart';
 
 void main() {
-  runStorageBackendConformanceTests(() async {
-    final db = await newDatabaseFactoryMemory().openDatabase(
-      'conformance-${DateTime.now().microsecondsSinceEpoch}.db',
-    );
-    return SembastBackend(database: db);
-  }, backendLabel: 'sembast (memory)');
+  runStorageBackendConformanceTests(
+    () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'conformance-${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+      return SembastBackend(database: db);
+    },
+    backendLabel: 'sembast (memory)',
+    securityStoreOf: (backend) =>
+        SembastSecurityContextStore(backend: backend as SembastBackend),
+  );
 }

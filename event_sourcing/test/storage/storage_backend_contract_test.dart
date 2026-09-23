@@ -25,6 +25,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -184,7 +185,7 @@ class _InMemoryBackend extends StorageBackend {
   Future<void> clearViewInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
   @override
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -194,10 +195,10 @@ class _InMemoryBackend extends StorageBackend {
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   ) => throw UnimplementedError();
   @override
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   ) => throw UnimplementedError();

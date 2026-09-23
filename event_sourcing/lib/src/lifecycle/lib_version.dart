@@ -1,4 +1,9 @@
 // Implements: EVS-DEV-event-store-open/B+C+D
+// Implements: EVS-DEV-version-compatibility/C
+// LibVersion.dataFormat is the library's data-format version, distinct from
+//   the package version.
+import 'package:event_sourcing/src/versions.dart';
+
 /// Substrate-level library version metadata. The version is recorded in
 /// the event log via `lib_version_initialized` and `lib_version_changed`
 /// events; the boot flow refuses to start when the log was last processed
@@ -6,7 +11,13 @@
 class LibVersion {
   /// The version of the event_sourcing library compiled into this build.
   /// Update in lockstep with `pubspec.yaml`'s `version` field.
-  static const String version = '0.4.0';
+  static const String version = '0.5.0';
+
+  /// The data-format version of this build: what it stores and sends,
+  /// distinct from [version]. Stamped on every event the library appends.
+  /// Builds whose data-format majors are equal are compatible; see
+  /// [DataFormatVersion] for the rule that decides a minor or a major bump.
+  static const DataFormatVersion dataFormat = DataFormatVersion(2, 0);
 
   /// Returns negative if [a] < [b], positive if [a] > [b], 0 if equal.
   /// Compares dot-separated integer components left to right; trailing

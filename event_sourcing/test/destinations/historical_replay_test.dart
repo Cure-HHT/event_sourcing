@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/sync/fill_batch.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';
@@ -45,8 +46,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: aggregateId,
       aggregateType: 'note',
       entryType: entryType,
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},

@@ -45,7 +45,7 @@ Future<_Fixture> _openStore({
   registry.register(
     const EntryTypeDefinition(
       id: 'epistaxis_event',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Epistaxis Event',
     ),
   );
@@ -66,7 +66,7 @@ Future<_Fixture> _openStore({
 /// Build a [BatchEnvelope] bytes payload containing the given [events].
 BatchEnvelope _buildEnvelope(List<StoredEvent> events) {
   return BatchEnvelope(
-    batchFormatVersion: '1',
+    batchFormatVersion: '2',
     batchId: const Uuid().v4(),
     senderHop: 'mobile-device',
     senderIdentifier: 'device-1',

@@ -115,7 +115,7 @@ class ThirdPartyBackend extends StorageBackend {
       throw UnimplementedError();
 
   @override
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -127,11 +127,11 @@ class ThirdPartyBackend extends StorageBackend {
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   ) => throw UnimplementedError();
 
   @override
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   ) => throw UnimplementedError();

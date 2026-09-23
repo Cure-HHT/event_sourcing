@@ -2,6 +2,7 @@
 // Implements: EVS-DEV-ingest-promotes-before-fold/C
 // Implements: EVS-DEV-snapshot-promotion-on-open/B
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
+import 'package:event_sourcing/src/versions.dart';
 
 class PromoterSpec {
   const PromoterSpec({
@@ -13,7 +14,7 @@ class PromoterSpec {
   });
   final String viewName;
   final String entryType;
-  final int fromVersion;
-  final int toVersion;
+  final EntryTypeVersion fromVersion;
+  final EntryTypeVersion toVersion;
   final List<TransformPrimitive> transforms;
 }

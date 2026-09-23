@@ -1,0 +1,43 @@
+# EVS-DEV-version-compatibility: Entry-type and data-format versions
+
+**Level**: DEV | **Status**: Active | **Implements**: -
+**Refines**: EVS-PRD-event-log
+
+## Purpose
+
+How the library versions each entry type and its own data format, and what it lets builds of different versions do on one database and across ingest. An entry-type version and the library's data-format version are each a major and a minor number, and builds whose majors agree are compatible. The library enforces the rules it can check -- the shape of every registered promoter step, and the majors at open and at ingest -- and states the rest as a precondition the consumer keeps.
+
+## Assertions
+
+A. The library SHALL identify each entry-type version by a major and a minor number, and SHALL treat two versions of an entry type as compatible exactly when their majors are equal.
+
+B. The library SHALL refuse to register a promoter step within one major unless it leads to the next minor and every transform in it is a `DefaultField`, and SHALL refuse a step across majors unless it leads to minor 0 of the next major; a minor step with no registered promoter SHALL leave the payload unchanged.
+
+C. The library SHALL declare a data-format version, a major and a minor number distinct from its package version, SHALL stamp it on every event it appends, and SHALL treat builds with the same data-format major as compatible.
+
+D. On every ingest entry point the library SHALL refuse, before any write, an event whose data-format major differs from its own, whose entry-type major is above the registered major, or whose entry-type version is below the registered version with no registered promoter path from it for a view the event folds into; SHALL accept an event of the registered entry-type major at any minor, folding it unchanged when its minor is not below the registered minor; and SHALL accept an event of an entry type it does not register at any version.
+
+E. When the library folds an event into a view under a registered entry-type version whose major equals, and whose minor is below, the view's stored target version for that entry type, it SHALL lower the stored target to the registered version in the same transaction.
+
+J. The library SHALL include an event's entry-type version and data-format version in the content from which the event's hash is derived.
+
+K. The library SHALL append a registry audit event recording the major and minor version of every registered entry type whenever the registered set, or any registered major or minor, differs from the latest registry audit it appended.
+
+## Rationale
+
+**Why do majors decide compatibility (assertions A to D)?** Builds registering different minors of one major read and write each other's events when a minor bump only adds optional fields: an older build ignores a field it does not know, and a newer build supplies the default for a field an older event lacks. That a minor bump only adds optional fields -- that producers do not rename, drop or re-type a field within a major -- is a precondition the consumer keeps; the library does not see producer code, and a minor bump with no promoter is legal. What the library enforces is what it can check. Registration refuses a same-major promoter step whose transforms are not all `DefaultField` and a step across majors that does not lead to minor 0 of the next major, so no registered promoter renames or drops a field within a major. Open and ingest compare majors. Ingest applies the rule to events from peers: a same-major event is accepted at any minor; one of a higher major is refused before anything is written, and so is one of a different data-format major, which this build has no reader for; and one below the registered version is refused by name when a view it folds into has no promoter path from its version, because the fold could not promote it. An event of an entry type the receiver does not register is accepted at any version and stored as it is, as a relay stores what it forwards; it folds under its own version into any view whose interest names it.
+
+**Why does a fold lower the stored target (assertion E)?** In a canary overlap the older-minor build is the one already serving: it never reopens, and it keeps folding after the newer build's boot promotion. The rows it folds lack the newer minor's fields. Lowering the stored target to the version it folded under records that, so the next open under the newer minor finds a stored target below its registered version and re-promotes the view. Re-promotion re-derives the affected rows from the log (EVS-DEV-snapshot-promotion-on-open/B), so they equal a replay under the newer build's versions. The fold lowers a target only for the views the folding build registers: a view, or an entry type in a view's interest, that only the newer build registers is not folded by the older build, and the events the older build appends are missing from it until `rebuildView` runs for that view.
+
+**Why is the data-format version distinct from the package version (assertion C)?** A release that changes no stored or sent shape is compatible with its predecessor whatever its package version. The data-format version names exactly the stored and sent shapes, so the compatibility decision rests on what a build can read, not on its release number. A data-format major bump, like an entry-type major bump, is a stop-then-start deployment: every instance of the old major stops before one of the new major starts.
+
+**Why do the versions enter the event hash (assertion J)?** The versions decide whether ingest accepts an event and how it is promoted, so a forwarder that rewrote them would change what the receiver folds. Covering them by the hash makes such a rewrite break the event's hash and, at the next hop, the chain.
+
+**Why record every major and minor in the registry audit (assertion K)?** The registry audit is how the log records which entry-type versions a database was opened with. Recording the minor as well as the major means a minor raise is recorded as a major raise is, and an unchanged registry appends nothing.
+
+## Changelog
+
+- 2026-09-23 | b1c77f28 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-E, J, K: entry-type and data-format versions are major.minor; promoter step rule; ingest compares majors, refuses an unpromotable lower version and accepts an unregistered entry type; a fold under an older minor lowers the stored target; versions are hashed; the registry audit records every major and minor
+
+*End* *Entry-type and data-format versions* | **Hash**: b1c77f28

@@ -27,7 +27,7 @@ Future<EventStore> _bootstrap({
     entryTypes: <EntryTypeDefinition>[
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
       ),
     ],

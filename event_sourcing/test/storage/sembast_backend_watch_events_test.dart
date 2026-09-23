@@ -28,8 +28,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: aggregateId,
       aggregateType: 'note',
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: 'finalized',
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -132,7 +132,7 @@ void main() {
         ..register(
           const EntryTypeDefinition(
             id: 'epistaxis_event',
-            registeredVersion: 1,
+            registeredVersion: EntryTypeVersion(1, 0),
             name: 'Epistaxis Event',
           ),
         );

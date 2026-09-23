@@ -15,7 +15,9 @@ import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 
 /// The library's canonical batch envelope. Exactly one format version is
-/// supported: `"1"` (identifier `"esd/batch@1"`).
+/// supported: `"2"` (identifier `"esd/batch@2"`). A batch in any other
+/// format, an earlier one included, is refused with [IngestDecodeFailure]
+/// naming the format.
 class BatchEnvelope {
   const BatchEnvelope({
     required this.batchFormatVersion,
@@ -40,10 +42,10 @@ class BatchEnvelope {
       throw const IngestDecodeFailure('envelope must be a JSON object');
     }
     final versionRaw = decoded['batch_format_version'];
-    if (versionRaw != '1') {
+    if (versionRaw != currentBatchFormatVersion) {
       throw IngestDecodeFailure(
         'unsupported batch_format_version: got ${versionRaw ?? "(missing)"}; '
-        'expected "1"',
+        'expected "$currentBatchFormatVersion"',
       );
     }
     final version = versionRaw as String;
@@ -85,15 +87,15 @@ class BatchEnvelope {
   }
 
   /// Canonical identifier for this format.
-  static const String wireFormat = 'esd/batch@1';
+  static const String wireFormat = 'esd/batch@2';
 
   /// Canonical `batch_format_version` value carried inside an
-  /// `esd/batch@1` envelope. Held as a static constant (distinct name
+  /// `esd/batch@2` envelope. Held as a static constant (distinct name
   /// from the instance field [BatchEnvelope.batchFormatVersion]) so
   /// callers minting a fresh envelope (e.g. `fillBatch` building a
   /// native `BatchEnvelopeMetadata`) and the decoder share one source
   /// of truth for the version string.
-  static const String currentBatchFormatVersion = '1';
+  static const String currentBatchFormatVersion = '2';
 
   final String batchFormatVersion;
   final String batchId;

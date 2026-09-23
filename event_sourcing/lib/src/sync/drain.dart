@@ -94,7 +94,7 @@ Future<void> drain(
     }
 
     // Reconstruct a WirePayload from the FifoEntry's stored fields.
-    // Native `esd/batch@1` rows reconstruct bytes from
+    // Native `esd/batch@2` rows reconstruct bytes from
     // `envelopeMetadata` + `eventIds`-resolved events through
     // `BatchEnvelope.encode`, which JCS-canonicalizes the envelope so
     // the result is byte-identical across retries.
@@ -110,7 +110,7 @@ Future<void> drain(
         if (ev == null) {
           throw StateError(
             'native FIFO row ${head.entryId} references missing event '
-            '$eventId; cannot reconstruct esd/batch@1 wire bytes',
+            '$eventId; cannot reconstruct esd/batch@2 wire bytes',
           );
         }
         events.add(Map<String, Object?>.from(ev.toMap()));

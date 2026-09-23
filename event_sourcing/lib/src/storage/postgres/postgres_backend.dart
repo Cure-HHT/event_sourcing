@@ -54,6 +54,7 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
@@ -357,12 +358,14 @@ class PostgresBackend extends StorageBackend {
       Sql.named('''
         INSERT INTO events (
           sequence_number, event_id, aggregate_id, aggregate_type, entry_type,
-          entry_type_version, lib_format_version, event_type,
+          entry_type_version_major, entry_type_version_minor,
+          lib_format_version_major, lib_format_version_minor, event_type,
           data, metadata, initiator,
           client_timestamp, event_hash, flow_token, previous_event_hash
         ) VALUES (
           @seq, @eventId, @aggId, @aggType, @entryType,
-          @entryTypeV, @libFmtV, @eventType,
+          @entryTypeMajor, @entryTypeMinor,
+          @libFmtMajor, @libFmtMinor, @eventType,
           @data:jsonb, @metadata:jsonb, @initiator:jsonb,
           @clientTs:timestamptz, @eventHash, @flowToken, @prevHash
         )
@@ -373,8 +376,10 @@ class PostgresBackend extends StorageBackend {
         'aggId': event.aggregateId,
         'aggType': event.aggregateType,
         'entryType': event.entryType,
-        'entryTypeV': event.entryTypeVersion,
-        'libFmtV': event.libFormatVersion,
+        'entryTypeMajor': event.entryTypeVersion.major,
+        'entryTypeMinor': event.entryTypeVersion.minor,
+        'libFmtMajor': event.libFormatVersion.major,
+        'libFmtMinor': event.libFormatVersion.minor,
         'eventType': event.eventType,
         'data': event.data,
         'metadata': event.metadata,
@@ -835,10 +840,11 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-postgres-backend/D
   // backend passes the conformance
   //   harness; readViewTargetVersionInTxn reads a single row from the
-  //   view_target_versions(view_name, entry_type, target_version) table and
-  //   returns null when the (view_name, entry_type) pair is absent.
+  //   view_target_versions(view_name, entry_type, target_major,
+  //   target_minor) table and returns null when the (view_name, entry_type)
+  //   pair is absent.
   @override
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -846,58 +852,71 @@ class PostgresBackend extends StorageBackend {
     final session = _asPgTxn(txn).session;
     final result = await session.execute(
       Sql.named('''
-        SELECT target_version FROM view_target_versions
+        SELECT target_major, target_minor FROM view_target_versions
         WHERE view_name = @v AND entry_type = @et
         LIMIT 1
       '''),
       parameters: {'v': viewName, 'et': entryType},
     );
-    return result.isEmpty ? null : result.first[0] as int;
+    return result.isEmpty
+        ? null
+        : _entryTypeVersionOf(result.first[0], result.first[1]);
   }
 
   // Implements: EVS-DEV-postgres-backend/D
   // backend passes the conformance
   //   harness; writeViewTargetVersionInTxn upserts via INSERT … ON CONFLICT
   //   DO UPDATE so repeated writes for the same (view_name, entry_type) pair
-  //   reflect the latest target_version value.
+  //   reflect the latest target major and minor.
   @override
   @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   ) async {
     final session = _asPgTxn(txn).session;
     await session.execute(
       Sql.named('''
-        INSERT INTO view_target_versions (view_name, entry_type, target_version)
-        VALUES (@v, @et, @tv)
+        INSERT INTO view_target_versions
+          (view_name, entry_type, target_major, target_minor)
+        VALUES (@v, @et, @major, @minor)
         ON CONFLICT (view_name, entry_type)
-        DO UPDATE SET target_version = EXCLUDED.target_version
+        DO UPDATE SET target_major = EXCLUDED.target_major,
+                      target_minor = EXCLUDED.target_minor
       '''),
-      parameters: {'v': viewName, 'et': entryType, 'tv': targetVersion},
+      parameters: {
+        'v': viewName,
+        'et': entryType,
+        'major': targetVersion.major,
+        'minor': targetVersion.minor,
+      },
     );
   }
 
   // Implements: EVS-DEV-postgres-backend/D
   // backend passes the conformance
   //   harness; readAllViewTargetVersionsInTxn returns all (entry_type →
-  //   target_version) pairs for the given view_name as a Map<String, int>.
+  //   target version) pairs for the given view_name.
   @override
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   ) async {
     final session = _asPgTxn(txn).session;
     final result = await session.execute(
       Sql.named('''
-        SELECT entry_type, target_version FROM view_target_versions
+        SELECT entry_type, target_major, target_minor
+        FROM view_target_versions
         WHERE view_name = @v
       '''),
       parameters: {'v': viewName},
     );
-    return {for (final row in result) row[0] as String: row[1] as int};
+    return <String, EntryTypeVersion>{
+      for (final row in result)
+        row[0]! as String: _entryTypeVersionOf(row[1], row[2]),
+    };
   }
 
   // Implements: EVS-DEV-postgres-backend/D
@@ -972,7 +991,7 @@ class PostgresBackend extends StorageBackend {
   ///   `envelope_metadata = null`.
   /// - Native (`nativeEnvelope`): `envelope_metadata` stores the
   ///   `BatchEnvelopeMetadata` map; `wire_payload = null`;
-  ///   `wire_format = 'esd/batch@1'`; `transform_version = null`.
+  ///   `wire_format = 'esd/batch@2'`; `transform_version = null`.
   // Implements: EVS-PRD-destinations
   // empty batch rejected with
   //   ArgumentError; XOR(wirePayload, nativeEnvelope) enforced; v4 UUID
@@ -1812,8 +1831,10 @@ class PostgresBackend extends StorageBackend {
       Sql.named('''
         SELECT
           events.sequence_number, events.event_id, events.aggregate_id,
-          events.aggregate_type, events.entry_type, events.entry_type_version,
-          events.lib_format_version, events.event_type,
+          events.aggregate_type, events.entry_type,
+          events.entry_type_version_major, events.entry_type_version_minor,
+          events.lib_format_version_major, events.lib_format_version_minor,
+          events.event_type,
           events.data, events.metadata, events.initiator,
           events.client_timestamp, events.event_hash, events.flow_token,
           events.previous_event_hash,
@@ -1840,23 +1861,23 @@ class PostgresBackend extends StorageBackend {
         aggregateId: row[2] as String,
         aggregateType: row[3] as String,
         entryType: row[4] as String,
-        entryTypeVersion: row[5] as int,
-        libFormatVersion: row[6] as int,
-        eventType: row[7] as String,
-        data: _asJsonMap(row[8]),
-        metadata: _asJsonMap(row[9]),
-        initiator: Initiator.fromJson(_asJsonMap(row[10])),
-        clientTimestamp: (row[11] as DateTime).toUtc(),
-        eventHash: row[12] as String,
-        flowToken: row[13] as String?,
-        previousEventHash: row[14] as String?,
+        entryTypeVersion: _entryTypeVersionOf(row[5], row[6]),
+        libFormatVersion: _dataFormatVersionOf(row[7], row[8]),
+        eventType: row[9] as String,
+        data: _asJsonMap(row[10]),
+        metadata: _asJsonMap(row[11]),
+        initiator: Initiator.fromJson(_asJsonMap(row[12])),
+        clientTimestamp: (row[13] as DateTime).toUtc(),
+        eventHash: row[14] as String,
+        flowToken: row[15] as String?,
+        previousEventHash: row[16] as String?,
       );
       // The security row is reified from the JSONB `payload` column so
       // every field on EventSecurityContext (user_agent, session_id,
       // geo_*, redacted_at, redaction_reason) lands populated — the
       // top-level `recorded_at` / `ip_address` columns exist only for
       // server-side filtering and ORDER BY.
-      final context = EventSecurityContext.fromJson(_asJsonMap(row[17]));
+      final context = EventSecurityContext.fromJson(_asJsonMap(row[19]));
       rows.add(AuditRow(event: event, securityContext: context));
     }
     String? nextCursor;
@@ -1953,8 +1974,14 @@ class PostgresBackend extends StorageBackend {
       aggregateId: m['aggregate_id'] as String,
       aggregateType: m['aggregate_type'] as String,
       entryType: m['entry_type'] as String,
-      entryTypeVersion: m['entry_type_version'] as int,
-      libFormatVersion: m['lib_format_version'] as int,
+      entryTypeVersion: _entryTypeVersionOf(
+        m['entry_type_version_major'],
+        m['entry_type_version_minor'],
+      ),
+      libFormatVersion: _dataFormatVersionOf(
+        m['lib_format_version_major'],
+        m['lib_format_version_minor'],
+      ),
       eventType: m['event_type'] as String,
       sequenceNumber: m['sequence_number'] as int,
       data: _asJsonMap(m['data']),
@@ -2068,3 +2095,20 @@ class _AuditCursorPoint {
     return base64Url.encode(utf8.encode(raw));
   }
 }
+
+/// An entry-type version read from its two columns, through the strict
+/// parser, so a stored value out of range is refused on read as the
+/// Sembast backend refuses it.
+EntryTypeVersion _entryTypeVersionOf(Object? major, Object? minor) =>
+    EntryTypeVersion.fromJson(<String, Object?>{
+      'major': major,
+      'minor': minor,
+    });
+
+/// A data-format version read from its two columns, through the strict
+/// parser.
+DataFormatVersion _dataFormatVersionOf(Object? major, Object? minor) =>
+    DataFormatVersion.fromJson(<String, Object?>{
+      'major': major,
+      'minor': minor,
+    });

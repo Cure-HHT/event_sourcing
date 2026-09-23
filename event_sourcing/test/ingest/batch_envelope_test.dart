@@ -34,7 +34,7 @@ void main() {
   group('BatchEnvelope encode/decode', () {
     test('round-trips a single-event envelope preserving all fields', () {
       final envelope = BatchEnvelope(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-xyz',
         senderHop: 'mobile-device',
         senderIdentifier: 'device-abc',
@@ -51,7 +51,7 @@ void main() {
 
     test('encoding is deterministic (JCS-canonical)', () {
       final envelope = BatchEnvelope(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-xyz',
         senderHop: 'mobile-device',
         senderIdentifier: 'device-abc',
@@ -92,10 +92,11 @@ void main() {
       );
     });
 
-    test('decode rejects unsupported batch_format_version', () {
+    // Verifies: EVS-DEV-version-compatibility/D
+    test('decode rejects the earlier batch_format_version by name', () {
       final bad = utf8.encode(
         jsonEncode(<String, Object?>{
-          'batch_format_version': '2',
+          'batch_format_version': '1',
           'batch_id': 'x',
           'sender_hop': 'y',
           'sender_identifier': 'z',
@@ -106,7 +107,13 @@ void main() {
       );
       expect(
         () => BatchEnvelope.decode(Uint8List.fromList(bad)),
-        throwsA(isA<IngestDecodeFailure>()),
+        throwsA(
+          isA<IngestDecodeFailure>().having(
+            (e) => e.message,
+            'message',
+            allOf(contains('batch_format_version'), contains('1')),
+          ),
+        ),
       );
     });
   });

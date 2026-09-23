@@ -34,14 +34,14 @@ EntryTypeRegistry _registry() {
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'greeting',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
       ),
     );
@@ -221,7 +221,7 @@ void main() {
           ))!,
       ];
       final envelope = BatchEnvelope(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: const Uuid().v4(),
         senderHop: 'mobile-device',
         senderIdentifier: 'device-1',

@@ -1,17 +1,15 @@
-// Verifies: EVS-DEV-event-store-open/B+C
-// Verifies the bootstrap-time `system.entry_type_registry_initialized`
-// audit event:
+// The bootstrap-time `system.entry_type_registry_initialized` audit event:
 //
 // - Fresh bootstrap emits exactly one event whose data.registry maps every
-//   registered entry-type id to its registeredVersion.
+//   registered entry-type id to its registered version, written `M.m`.
 // - Same-version reboot (same backend, same caller-supplied entry types)
 //   no-ops via dedupeByContent — the second bootstrap finds prior content
 //   identical and writes nothing.
 // - Schema bumps emit a new audit event:
 //     - adding a new caller entry type changes the registry map shape, so
 //       dedupe is broken and a new event lands.
-//     - bumping registeredVersion on an existing caller entry type changes
-//       the map's value for that key, so a new event lands.
+//     - raising the minor (or the major) of an existing caller entry type
+//       changes the map's value for that key, so a new event lands.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +21,9 @@ const _source = Source(
   softwareVersion: 'init-audit-test@1.0.0',
 );
 
-EntryTypeDefinition _typeA({int version = 1}) => EntryTypeDefinition(
+EntryTypeDefinition _typeA({
+  EntryTypeVersion version = const EntryTypeVersion(1, 0),
+}) => EntryTypeDefinition(
   id: 'demo_note',
   registeredVersion: version,
   name: 'Demo Note',
@@ -31,7 +31,7 @@ EntryTypeDefinition _typeA({int version = 1}) => EntryTypeDefinition(
 
 EntryTypeDefinition _typeB() => const EntryTypeDefinition(
   id: 'red_button',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Red Button',
 );
 
@@ -61,6 +61,7 @@ Future<List<StoredEvent>> _eventsOfType(
 
 void main() {
   group('bootstrap registry-initialized audit', () {
+    // Verifies: EVS-DEV-version-compatibility/K
     test(
       'fresh bootstrap emits '
       'system.entry_type_registry_initialized with full registry map',
@@ -93,15 +94,17 @@ void main() {
         for (final definition in ds.entryTypes.all()) {
           expect(
             registryMap[definition.id],
-            definition.registeredVersion,
+            definition.registeredVersion.toString(),
             reason:
                 'registry map missing or wrong version for ${definition.id}',
           );
         }
         expect(registryMap.length, ds.entryTypes.all().length);
 
-        // for the audit's own entry type (1, defined in kSystemEntryTypes).
-        expect(audit.entryTypeVersion, 1);
+        // The audit's own entry type is registered at 1.0 in
+        // kSystemEntryTypes.
+        expect(audit.entryTypeVersion, const EntryTypeVersion(1, 0));
+        expect(registryMap['demo_note'], '1.0');
         expect(
           audit.initiator,
           const AutomationInitiator(service: 'lib-bootstrap'),
@@ -109,6 +112,7 @@ void main() {
       },
     );
 
+    // Verifies: EVS-DEV-version-compatibility/K
     test('same-version reboot no-ops via dedupeByContent — '
         'still exactly one audit event', () async {
       // First bootstrap.
@@ -147,6 +151,7 @@ void main() {
       expect(secondAudits.single.eventId, firstAudits.single.eventId);
     });
 
+    // Verifies: EVS-DEV-version-compatibility/K
     test('schema bump (new entry type added) emits a new '
         'audit event with the updated registry map', () async {
       final factory = newDatabaseFactoryMemory();
@@ -176,30 +181,33 @@ void main() {
       expect(audits, hasLength(2));
       final later = audits[1];
       final laterRegistry = later.data['registry'] as Map<String, Object?>;
-      expect(laterRegistry['demo_note'], 1);
-      expect(laterRegistry['red_button'], 1);
+      expect(laterRegistry['demo_note'], '1.0');
+      expect(laterRegistry['red_button'], '1.0');
     });
 
-    test('schema bump (registeredVersion bump on existing '
-        'caller type) emits a new audit event', () async {
+    // Verifies: EVS-DEV-version-compatibility/K
+    test('a minor raise on an existing caller type emits a new audit event '
+        'recording M.m for every type', () async {
       final factory = newDatabaseFactoryMemory();
-      const path = 'bump-version.db';
+      const path = 'bump-minor.db';
       final backendA = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
         backend: backendA,
         source: _source,
-        entryTypes: <EntryTypeDefinition>[_typeA(version: 1)],
+        entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
       );
 
-      // Reboot with the SAME id but a bumped registeredVersion — the
-      // map value for demo_note changes from 1 to 2. dedupe breaks;
-      // a new audit lands recording the bump.
+      // Reboot with the same id at the next minor: the map value for
+      // demo_note changes from 1.0 to 1.1, so a new audit lands.
       final backendB = await _openMemoryBackend(factory, path);
-      await bootstrapEventStore(
+      final ds = await bootstrapEventStore(
         backend: backendB,
         source: _source,
-        entryTypes: <EntryTypeDefinition>[_typeA(version: 2)],
+        entryTypes: <EntryTypeDefinition>[
+          _typeA(version: const EntryTypeVersion(1, 1)),
+          _typeB(),
+        ],
         destinations: const <Destination>[],
       );
 
@@ -208,12 +216,53 @@ void main() {
         kEntryTypeRegistryInitializedEntryType,
       );
       expect(audits, hasLength(2));
-      final earlier = audits[0];
-      final later = audits[1];
-      final earlierMap = earlier.data['registry'] as Map<String, Object?>;
-      final laterMap = later.data['registry'] as Map<String, Object?>;
-      expect(earlierMap['demo_note'], 1);
-      expect(laterMap['demo_note'], 2);
+      final earlierMap = audits[0].data['registry'] as Map<String, Object?>;
+      final laterMap = audits[1].data['registry'] as Map<String, Object?>;
+      expect(earlierMap['demo_note'], '1.0');
+      expect(laterMap['demo_note'], '1.1');
+      expect(laterMap['red_button'], '1.0');
+      expect(laterMap.length, ds.entryTypes.all().length);
+      for (final definition in ds.entryTypes.all()) {
+        expect(
+          laterMap[definition.id],
+          '${definition.registeredVersion.major}.'
+          '${definition.registeredVersion.minor}',
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/K
+    test('a major raise on an existing caller type emits a new audit '
+        'event', () async {
+      final factory = newDatabaseFactoryMemory();
+      const path = 'bump-major.db';
+      final backendA = await _openMemoryBackend(factory, path);
+      await bootstrapEventStore(
+        backend: backendA,
+        source: _source,
+        entryTypes: <EntryTypeDefinition>[_typeA()],
+        destinations: const <Destination>[],
+      );
+
+      final backendB = await _openMemoryBackend(factory, path);
+      await bootstrapEventStore(
+        backend: backendB,
+        source: _source,
+        entryTypes: <EntryTypeDefinition>[
+          _typeA(version: const EntryTypeVersion(2, 0)),
+        ],
+        destinations: const <Destination>[],
+      );
+
+      final audits = await _eventsOfType(
+        backendB,
+        kEntryTypeRegistryInitializedEntryType,
+      );
+      expect(audits, hasLength(2));
+      final earlierMap = audits[0].data['registry'] as Map<String, Object?>;
+      final laterMap = audits[1].data['registry'] as Map<String, Object?>;
+      expect(earlierMap['demo_note'], '1.0');
+      expect(laterMap['demo_note'], '2.0');
     });
   });
 }

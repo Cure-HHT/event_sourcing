@@ -14,19 +14,24 @@ import 'test_postgres_url.dart';
 
 void main() {
   final url = testPostgresUrl();
-  runStorageBackendConformanceTests(() async {
-    if (url == null) return null;
-    // Fresh schema per test: drop+recreate public so each test sees an
-    // empty database. Split into two execute calls because postgres
-    // v3.5 rejects multi-statement strings in Session.execute.
-    final endpoint = PostgresBackend.endpointFromUrl(url);
-    final tmp = await Connection.open(
-      endpoint,
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
-    );
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-    return PostgresBackend.open(url: url, sslMode: SslMode.disable);
-  }, backendLabel: 'postgres');
+  runStorageBackendConformanceTests(
+    () async {
+      if (url == null) return null;
+      // Fresh schema per test: drop+recreate public so each test sees an
+      // empty database. Split into two execute calls because postgres
+      // v3.5 rejects multi-statement strings in Session.execute.
+      final endpoint = PostgresBackend.endpointFromUrl(url);
+      final tmp = await Connection.open(
+        endpoint,
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+      await tmp.execute('DROP SCHEMA public CASCADE');
+      await tmp.execute('CREATE SCHEMA public');
+      await tmp.close();
+      return PostgresBackend.open(url: url, sslMode: SslMode.disable);
+    },
+    backendLabel: 'postgres',
+    securityStoreOf: (backend) =>
+        PostgresSecurityContextStore(backend: backend as PostgresBackend),
+  );
 }

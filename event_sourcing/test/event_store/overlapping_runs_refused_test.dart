@@ -37,7 +37,7 @@ void main() {
       ..register(
         const EntryTypeDefinition(
           id: 'note',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'note',
         ),
       );

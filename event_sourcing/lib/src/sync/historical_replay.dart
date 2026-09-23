@@ -185,7 +185,7 @@ Future<void> runHistoricalReplay(
   // currentBatch still gets each event enqueued as a one-event row here;
   // rejecting the empty-batch case would silently drop events.
   // Native destinations (`serializesNatively == true`) consume the
-  // library's `esd/batch@1` envelope; replay must mint
+  // library's `esd/batch@2` envelope; replay must mint
   // `BatchEnvelopeMetadata` from the caller's `source` and enqueue via
   // `nativeEnvelope:`, mirroring `fillBatch`'s native branch
   //. Calling `transform` on a native destination

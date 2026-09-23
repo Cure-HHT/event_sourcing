@@ -171,6 +171,19 @@ Bring up the local-dev Postgres (the compose file in this directory):
 docker compose up -d --wait
 ```
 
+The compose file keeps its data in a volume across restarts. A database
+written by a build of another library data format does not open under
+this build; to start from an empty database, remove the volume first:
+
+```text
+docker compose down -v
+docker compose up -d --wait
+```
+
+The same holds for the default sembast store, `demo.db` in the data
+directory (`--data-dir`, by default `~/.local/share/action_permissions_demo`):
+delete it to start from an empty database, or run with `--ephemeral`.
+
 Then start the demo server pointed at it:
 
 ```text

@@ -73,14 +73,14 @@ Future<({EventStore store, SembastBackend backend})> _openSecondStore() async {
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action denial',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'greeting',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Greeting',
       ),
     );

@@ -316,8 +316,8 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   aggregateId: 'agg-1',
   aggregateType: 'note',
   entryType: 'epistaxis_event',
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: 'Event',
   sequenceNumber: sequenceNumber,
   data: const <String, dynamic>{},
@@ -329,7 +329,7 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
 
 EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(
   id: 'test_event',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'test_event',
 );
 

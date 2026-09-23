@@ -52,7 +52,7 @@ Future<_Fixture> _openStore({
   registry.register(
     const EntryTypeDefinition(
       id: 'epistaxis_event',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Epistaxis Event',
     ),
   );
@@ -78,7 +78,7 @@ BatchEnvelope _buildEnvelope(
   required String senderSoftwareVersion,
 }) {
   return BatchEnvelope(
-    batchFormatVersion: '1',
+    batchFormatVersion: '2',
     batchId: const Uuid().v4(),
     senderHop: senderHop,
     senderIdentifier: senderIdentifier,

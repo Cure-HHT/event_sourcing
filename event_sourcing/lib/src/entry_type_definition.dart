@@ -4,12 +4,17 @@
 //   append-only log.
 // Implements: EVS-DEV-append-stamps-registered-version/A
 // the
-//   registeredVersion field is the source value that EventStore.append
-//   stamps onto every appended event's entryTypeVersion field.
+//   registeredVersion field (a major and a minor) is the source value that
+//   EventStore.append stamps onto every appended event's entryTypeVersion
+//   field.
+// Implements: EVS-DEV-version-compatibility/A
+// an entry type's version is an EntryTypeVersion, a major and a minor.
 // Implements: EVS-DEV-append-stamps-registered-version/C
 // registeredVersion
 //   is owned by this definition and the EntryTypeRegistry; it does not
 //   appear on the public append/appendInTxn signatures.
+
+import 'package:event_sourcing/src/versions.dart';
 
 /// Metadata describing one entry type supported by the event store.
 ///
@@ -27,9 +32,6 @@
 /// content hash covers the canonicalized id-to-version map — a cryptographic
 /// comparison at the level that matters, rather than a field-wise one here.
 ///
-/// JSON serialization uses snake_case keys:
-/// `id`, `registered_version`, `name`, `materialize`.
-///
 class EntryTypeDefinition {
   const EntryTypeDefinition({
     required this.id,
@@ -40,10 +42,10 @@ class EntryTypeDefinition {
   /// Matches `event.entry_type` for every event of this entry type.
   final String id;
 
-  /// Highest `entry_type_version` this lib build's registry accepts on
-  /// `EventStore.ingestBatch`. Currently a single version per entry type;
-  /// ingest rejects events whose `entry_type_version` exceeds this value.
-  final int registeredVersion;
+  /// The version of this entry type the build registers: the library
+  /// stamps it on every event it appends of this type. Ingest accepts an
+  /// event of the same major at any minor, and refuses a higher major.
+  final EntryTypeVersion registeredVersion;
 
   /// Display name used by operational tooling.
   final String name;

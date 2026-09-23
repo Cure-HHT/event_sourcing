@@ -21,7 +21,9 @@
 /// - `Update` — sealed stream element: `Snapshot`, `EndOfReplay`, `Delta`, `Tombstone`.
 /// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
 /// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
-///   entry type's `registeredVersion` is below its stored target.
+///   entry type's registered major is below its stored target's major.
+/// - `EntryTypeVersion` / `DataFormatVersion` — major.minor versions of an
+///   entry type and of the library's data format.
 ///
 /// ## Quick start
 ///
@@ -177,10 +179,11 @@ export 'src/ingest/chain_verdict.dart'
 export 'src/ingest/ingest_errors.dart'
     show
         IngestChainBroken,
+        IngestDataFormatIncompatible,
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
-        IngestIdentityMismatch,
-        IngestLibFormatVersionAhead;
+        IngestEntryTypeVersionUnpromotable,
+        IngestIdentityMismatch;
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
@@ -348,3 +351,6 @@ export 'src/subscriptions/update.dart'
 export 'src/sync/clock.dart' show Clock;
 export 'src/sync/sync_cycle.dart' show SyncCycle;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
+
+// Versions — entry-type versions and the library's data-format version.
+export 'src/versions.dart' show DataFormatVersion, EntryTypeVersion;

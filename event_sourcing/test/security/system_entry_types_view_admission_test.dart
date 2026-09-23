@@ -80,7 +80,7 @@ void main() {
       final byId = {for (final d in kSystemEntryTypes) d.id: d};
       for (final id in <String>['ingest-audit', 'view_snapshot_promoted']) {
         expect(byId.containsKey(id), isTrue, reason: '$id must be registered');
-        expect(byId[id]!.registeredVersion, 1);
+        expect(byId[id]!.registeredVersion, const EntryTypeVersion(1, 0));
       }
     });
   });

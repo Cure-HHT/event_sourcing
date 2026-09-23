@@ -17,7 +17,7 @@ C. `EventStore.open` SHALL emit `lib_version_changed` on subsequent transitions 
 
 D. `EventStore.open` SHALL refuse to construct an instance under a library version older than the most recent recorded version, throwing `DowngradeRefusedError` before any state mutation, unless the caller explicitly passes `allowDowngrade: true` — in which case the older instance opens normally **and no `lib_version_changed` event is appended**. The downgrade is intentional and unrecorded in the event log; deployments using `allowDowngrade: true` are responsible for their own out-of-band audit trail of which library version ran when. The asymmetry exists so downgrade is a deliberate decision, not the default; the silent-no-emit choice avoids fabricating a "downgrade to" event the rest of the substrate would have to reason about.
 
-E. `EventStore.open` SHALL open two storage transactions in sequence: (1) a **library-version phase** that reads the most-recent recorded library version, refuses to open on un-allowed downgrade, and on version change appends a `lib_version_initialized` or `lib_version_changed` event; (2) a **snapshot-promotion phase** that performs entry-type downgrade checks against `registeredVersion`, seeds `view_target_versions` rows for any (viewName, entry-type) pairs newly bumped, and runs the registered promoter chain over existing view rows for those entry types (emitting one `view_snapshot_promoted` audit per promoted pair). Each phase is internally atomic; phase-to-phase atomicity is not asserted. A crash between phases is recoverable on next boot — phase 1's version check is idempotent (no-op when the recorded version already matches the new one) and phase 2's target-version seed is idempotent (no-op when a row already exists at the registered version).
+E. `EventStore.open` SHALL open two storage transactions in sequence: (1) a **library-version phase** that reads the most-recent recorded library version, refuses to open on un-allowed downgrade, and on version change appends a `lib_version_initialized` or `lib_version_changed` event; (2) a **snapshot-promotion phase** that performs entry-type downgrade checks against `registeredVersion`, seeds `view_target_versions` rows for any (viewName, entry-type) pairs newly bumped, and re-derives the affected view rows of the pairs whose stored target lags the registered version, promoting their events through the registered promoter chain (emitting one `view_snapshot_promoted` audit per promoted pair). Each phase is internally atomic; phase-to-phase atomicity is not asserted. A crash between phases is recoverable on next boot — phase 1's version check is idempotent (no-op when the recorded version already matches the new one) and phase 2's target-version seed is idempotent (no-op when a row already exists at the registered version).
 
 ## Rationale
 
@@ -29,7 +29,9 @@ E. `EventStore.open` SHALL open two storage transactions in sequence: (1) a **li
 
 ## Changelog
 
+- 2026-09-23 | f7ed1a50 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Amend E: the snapshot-promotion phase re-derives the affected view rows through the promoter chain
 - 2026-08-10 | 963d9e19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 98a3dab0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *EventStore.open boot flow* | **Hash**: 963d9e19
+*End* *EventStore.open boot flow* | **Hash**: f7ed1a50

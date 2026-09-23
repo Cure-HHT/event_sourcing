@@ -93,7 +93,11 @@ the view subscription.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:sembast/sembast_memory.dart';
 
-const kNote = EntryTypeDefinition(id: 'note', registeredVersion: 1, name: 'Note');
+const kNote = EntryTypeDefinition(
+  id: 'note',
+  registeredVersion: EntryTypeVersion(1, 0),
+  name: 'Note',
+);
 
 Future<void> main() async {
   final db = await newDatabaseFactoryMemory().openDatabase('demo.db');

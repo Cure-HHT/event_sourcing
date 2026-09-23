@@ -36,7 +36,7 @@ void main() {
   String nextPath() => 'bridge-${++pathCounter}.db';
 
   group('DownstreamBridge.deliver', () {
-    test('valid esd/batch@1 envelope returns SendOk', () async {
+    test('valid esd/batch@2 envelope returns SendOk', () async {
       final hub = await _bootstrapHub(nextPath());
       final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
@@ -73,12 +73,12 @@ void main() {
       expect(result, isA<SendTransient>());
     });
 
-    test('IngestLibFormatVersionAhead -> SendPermanent', () async {
+    test('IngestDataFormatIncompatible -> SendPermanent', () async {
       final stub = _ThrowingEventStore(
-        const IngestLibFormatVersionAhead(
+        const IngestDataFormatIncompatible(
           eventId: 'e-1',
-          wireVersion: 2,
-          receiverVersion: 1,
+          wireFormat: DataFormatVersion(3, 0),
+          receiverFormat: DataFormatVersion(2, 0),
         ),
       );
       final bridge = DownstreamBridge(stub);
@@ -93,8 +93,26 @@ void main() {
         const IngestEntryTypeVersionAhead(
           eventId: 'e-1',
           entryType: 'demo_note',
-          wireVersion: 5,
-          receiverVersion: 2,
+          wireVersion: EntryTypeVersion(5, 0),
+          receiverVersion: EntryTypeVersion(2, 0),
+        ),
+      );
+      final bridge = DownstreamBridge(stub);
+      final result = await bridge.deliver(
+        _wirePayload(Uint8List.fromList(<int>[1])),
+      );
+      expect(result, isA<SendPermanent>());
+    });
+
+    test('IngestEntryTypeVersionUnpromotable -> SendPermanent', () async {
+      final stub = _ThrowingEventStore(
+        const IngestEntryTypeVersionUnpromotable(
+          eventId: 'e-1',
+          entryType: 'demo_note',
+          viewName: 'demo_notes',
+          wireVersion: EntryTypeVersion(1, 3),
+          receiverVersion: EntryTypeVersion(2, 0),
+          reason: 'no major step is registered from major 1',
         ),
       );
       final bridge = DownstreamBridge(stub);

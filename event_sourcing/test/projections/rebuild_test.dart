@@ -43,21 +43,21 @@ Future<EventStore> _openStore() async {
     ..register(
       const EntryTypeDefinition(
         id: _kEntryType,
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: _kEntryType,
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'other_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'other_event',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'newcomer_type',
-        registeredVersion: 2,
+        registeredVersion: EntryTypeVersion(2, 0),
         name: 'newcomer_type',
       ),
     );
@@ -93,8 +93,8 @@ Future<void> _appendEvent(
         aggregateId: aggregateId,
         aggregateType: 'SampleAggregate',
         entryType: entryType,
-        entryTypeVersion: 1,
-        libFormatVersion: 1,
+        entryTypeVersion: const EntryTypeVersion(1, 0),
+        libFormatVersion: const DataFormatVersion(2, 0),
         eventType: eventType,
         sequenceNumber: seq,
         data: data,
@@ -123,13 +123,13 @@ void main() {
           txn,
           'toy_view',
           'sample_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
         await store.backend.writeViewTargetVersionInTxn(
           txn,
           'toy_view',
           'other_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await expectLater(
@@ -137,26 +137,41 @@ void main() {
           store: store,
           viewName: 'toy_view',
           // 'other_event' missing — strict-superset violation.
-          targetVersionByEntryType: const <String, int>{'sample_event': 1},
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            'sample_event': EntryTypeVersion(1, 0),
+          },
         ),
         throwsArgumentError,
       );
       // Existing entries remain.
-      final stored = await store.backend.transaction<Map<String, int>>(
-        (txn) async =>
-            store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-      );
+      final stored = await store.backend
+          .transaction<Map<String, EntryTypeVersion>>(
+            (txn) async =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
       expect(stored.containsKey('other_event'), isTrue);
       await store.backend.close();
     });
 
-    for (final (label, targets) in <(String, Map<String, int>)>[
+    for (final (label, targets) in <(String, Map<String, EntryTypeVersion>)>[
       (
         'a target below the registered version',
-        <String, int>{_kEntryType: 1, 'newcomer_type': 1},
+        <String, EntryTypeVersion>{
+          _kEntryType: const EntryTypeVersion(1, 0),
+          'newcomer_type': const EntryTypeVersion(1, 0),
+        },
       ),
-      ('a target above the registered version', <String, int>{_kEntryType: 2}),
-      ('an unregistered entry type', <String, int>{_kEntryType: 1, 'bogus': 7}),
+      (
+        'a target above the registered version',
+        <String, EntryTypeVersion>{_kEntryType: const EntryTypeVersion(2, 0)},
+      ),
+      (
+        'an unregistered entry type',
+        <String, EntryTypeVersion>{
+          _kEntryType: const EntryTypeVersion(1, 0),
+          'bogus': const EntryTypeVersion(7, 0),
+        },
+      ),
     ]) {
       test('$label is refused before any write', () async {
         final store = await _openStore();
@@ -172,11 +187,13 @@ void main() {
         await rebuildView(
           store: store,
           viewName: 'toy_view',
-          targetVersionByEntryType: const <String, int>{_kEntryType: 1},
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            _kEntryType: EntryTypeVersion(1, 0),
+          },
         );
         final rowsBefore = await store.backend.findViewRows('toy_view');
-        Future<Map<String, int>> storedTargets() =>
-            store.backend.transaction<Map<String, int>>(
+        Future<Map<String, EntryTypeVersion>> storedTargets() =>
+            store.backend.transaction<Map<String, EntryTypeVersion>>(
               (txn) =>
                   store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
             );
@@ -219,7 +236,9 @@ void main() {
         rebuildView(
           store: store,
           viewName: 'toy_view',
-          targetVersionByEntryType: const <String, int>{'sample_event': 1},
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            'sample_event': EntryTypeVersion(1, 0),
+          },
         ),
         throwsStateError,
       );
@@ -234,7 +253,7 @@ void main() {
           txn,
           'toy_view',
           'sample_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await _appendEvent(
@@ -249,17 +268,21 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{
-          'sample_event': 1,
-          'newcomer_type': 2, // brand new — allowed
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+          'newcomer_type': EntryTypeVersion(2, 0), // brand new — allowed
         },
       );
       expect(processed, 1);
-      final stored = await store.backend.transaction<Map<String, int>>(
-        (txn) async =>
-            store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-      );
-      expect(stored, <String, int>{'sample_event': 1, 'newcomer_type': 2});
+      final stored = await store.backend
+          .transaction<Map<String, EntryTypeVersion>>(
+            (txn) async =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
+      expect(stored, <String, EntryTypeVersion>{
+        'sample_event': const EntryTypeVersion(1, 0),
+        'newcomer_type': const EntryTypeVersion(2, 0),
+      });
       await store.backend.close();
     });
 
@@ -275,7 +298,9 @@ void main() {
         data: const <String, dynamic>{'intensity': 'mild'},
         clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
       );
-      const map = <String, int>{'sample_event': 1};
+      const map = <String, EntryTypeVersion>{
+        'sample_event': EntryTypeVersion(1, 0),
+      };
       final first = await rebuildView(
         store: store,
         viewName: 'toy_view',
@@ -324,7 +349,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
 
       expect(processed, 1);
@@ -364,7 +391,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
       expect(processed, totalEvents);
 
@@ -399,7 +428,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
       expect(processed, 1);
       final rows = await store.backend.findViewRows('toy_view');

@@ -89,19 +89,23 @@ Future<BootstrapResult> bootstrap() async {
   }
   entryTypes
     ..register(
-      const EntryTypeDefinition(id: 'note', registeredVersion: 1, name: 'Note'),
+      const EntryTypeDefinition(
+        id: 'note',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'Note',
+      ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'role_permission_grant',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-Permission Grant',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'user_role_scope',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-Role-Scope Assignment',
       ),
     )
@@ -109,7 +113,7 @@ Future<BootstrapResult> bootstrap() async {
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action Denial',
       ),
     );

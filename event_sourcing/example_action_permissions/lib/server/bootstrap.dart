@@ -218,24 +218,32 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
   // Action-emitted entry types.
   EntryTypeDefinition(
     id: 'help_request',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Help Request',
   ),
-  EntryTypeDefinition(id: 'demo_note', registeredVersion: 1, name: 'Demo Note'),
+  EntryTypeDefinition(
+    id: 'demo_note',
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Demo Note',
+  ),
   EntryTypeDefinition(
     id: 'green_button_press',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Green Button Press',
   ),
   EntryTypeDefinition(
     id: 'blue_button_press',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Blue Button Press',
   ),
-  EntryTypeDefinition(id: 'red_alarm', registeredVersion: 1, name: 'Red Alarm'),
+  EntryTypeDefinition(
+    id: 'red_alarm',
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Red Alarm',
+  ),
   EntryTypeDefinition(
     id: 'user_provisioned',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'User Provisioned',
   ),
   // Permissions module emits these via PermissionSeedApplier on bootstrap.
@@ -243,7 +251,7 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
   // (TableProjectionSpec) registered in the ProjectionRegistry.
   EntryTypeDefinition(
     id: 'role_permission_grant',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Role-Permission Grant',
   ),
   // Permissions module emits role_assigned events here via
@@ -251,13 +259,13 @@ const List<EntryTypeDefinition> _demoEntryTypes = <EntryTypeDefinition>[
   // userRoleScopesSpec) drives the policy's scope-coverage check.
   EntryTypeDefinition(
     id: 'user_role_scope',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'User-Role-Scope Assignment',
   ),
   // The dispatcher emits one of these for every denial stage.
   EntryTypeDefinition(
     id: 'action_denial',
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Action Denial',
   ),
 ];

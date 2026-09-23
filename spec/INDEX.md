@@ -35,17 +35,17 @@
 
 | ID                                         | Title                                                        | File                                    | Hash     |
 | ------------------------------------------ | ------------------------------------------------------------ | --------------------------------------- | -------- |
-| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | 6e9c508c |
+| EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | b0a57e30 |
 | EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 66b0a2e5 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
-| EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3e482dbc |
-| EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 963d9e19 |
+| EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 6c1448cd |
+| EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | f7ed1a50 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 45a08e62 |
-| EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                                   | dev-ingest-promotes-before-fold.md      | e855369a |
+| EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                                   | dev-ingest-promotes-before-fold.md      | 6e8f0c6d |
 | EVS-DEV-postgres-backend                   | Postgres backend reference impl                              | dev-postgres-backend.md                 | 4e78d64b |
 | EVS-DEV-role-assignment-aggregate-id       | Canonical-JSON aggregate id for role assignments             | scoped-permissions.md                   | bec821d0 |
 | EVS-DEV-scope-class-registry-validation    | Composition-time scope-class registry validation             | scoped-permissions.md                   | 010a6b1f |
@@ -53,6 +53,7 @@
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable           | scoped-permissions.md                   | 2cfc7054 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
-| EVS-DEV-snapshot-promotion-on-open         | Snapshot promotion at EventStore.open                        | dev-snapshot-promotion-on-open.md       | 7ccb1106 |
+| EVS-DEV-snapshot-promotion-on-open         | Snapshot promotion at EventStore.open                        | dev-snapshot-promotion-on-open.md       | a68e72b1 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
-| EVS-DEV-view-target-versions-seeding       | view_target_versions seeding at boot                         | dev-view-target-versions-seeding.md     | 911a148f |
+| EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | b1c77f28 |
+| EVS-DEV-view-target-versions-seeding       | view_target_versions seeding at boot                         | dev-view-target-versions-seeding.md     | 0ea6c582 |

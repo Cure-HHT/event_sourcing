@@ -487,13 +487,13 @@ final datastore = await bootstrapAppendOnlyDatastore(
   entryTypes: <EntryTypeDefinition>[
     EntryTypeDefinition(
       id: 'role_permission_grant',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Role-permission grant',
       materialize: false,
     ),
     EntryTypeDefinition(
       id: 'user_role_scope',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'User-role-scope assignment',
       materialize: false,
     ),
@@ -507,8 +507,10 @@ final eventStore = datastore.eventStore;
 
 Every event type your app appends must have its `entryType` registered
 here — missing entries fail at append time, not boot. The
-`registeredVersion` is what gets stamped on every event of that type;
-bumping it later signals a schema change.
+`registeredVersion` -- a major and a minor number -- is what gets
+stamped on every event of that type; raising it later signals a schema
+change (a minor to add a field with a default, a major to rename or drop
+one).
 
 ### 6. Apply the permissions seed
 
@@ -824,18 +826,21 @@ that are not part of your payload:
   order for this installation.
 - **`event_id`** — a UUIDv4 the substrate generates per event.
 - **`event_hash`** — a SHA-256 deterministically derived from the
-  event's canonical-form content (see `spec/prd-canonical-json.md` for
-  the serialization contract).
+  event's canonical-form content, both version fields below included
+  (see `spec/prd-canonical-json.md` for the serialization contract).
 - **`previous_event_hash`** — the hash of the immediately preceding
   event in the log. This chains the log: any modification, insertion,
   or deletion of a prior event breaks the chain from that point
   forward.
 - **`entry_type_version`** — the version of the entry type at the time
-  this event was appended. Read from the `EntryTypeRegistry` you passed
-  to `bootstrapAppendOnlyDatastore`. Producers don't choose it; the
-  substrate stamps it.
-- **`lib_format_version`** — the version of `event_sourcing` itself
-  at the time of append. Same idea, one level up.
+  this event was appended, a major and a minor number
+  (`{"major": 1, "minor": 0}`). Read from the `EntryTypeRegistry` you
+  passed to `bootstrapAppendOnlyDatastore`. Producers don't choose it;
+  the substrate stamps it.
+- **`lib_format_version`** — the data-format version of the
+  `event_sourcing` build that appended the event, also a major and a
+  minor number. It versions what the library stores and sends, not its
+  package version. Same idea, one level up.
 - **`metadata.change_reason`** — a free-form string describing the
   reason for the change. Defaults to `"initial"` if you don't supply
   one.
@@ -958,36 +963,86 @@ appends a `lib_version_initialized` event recording the version of
   net: an older library may not understand newer event shapes.)
 
 The same boot path runs a check called "entry-type downgrade refusal":
-if any registered entry type's `registeredVersion` is less than the
+if any registered entry type's major is less than the major of the
 highest version the substrate has previously recorded for that type
 (tracked in the `view_target_versions` table), boot fails. The substrate
-will not silently re-interpret an event under an older schema.
+will not silently re-interpret an event under an older major. A build
+registering an older minor of the same major opens: minor steps only add
+fields with defaults, so it reads rows a newer minor promoted.
 
 ### Schema evolution: entry types and promoters
 
 When you need to evolve an event shape — rename a field, add a default,
-drop a column — you bump the entry type's `registeredVersion` and
+drop a column — you raise the entry type's `registeredVersion` and
 register a `PromoterSpec` describing the transformation. The substrate
 supplies a small fixed set of promoter primitives (`RenameField`,
 `DefaultField`, `DropField`) that are deliberately limited to
-shape-changes so the promoter chain is commutative with the
-deep-merge fold.
+shape-changes. Adding a field with a default is a minor step, whose
+promoters may only be `DefaultField` (or none); renaming or dropping a
+field is a major step, to minor 0 of the next major.
+`PromoterRegistry.register` refuses any other step:
+
+```dart
+final promoters = PromoterRegistry()
+  ..register(const PromoterSpec(
+    viewName: 'notes',
+    entryType: 'note',
+    fromVersion: EntryTypeVersion(1, 0),
+    toVersion: EntryTypeVersion(1, 1),
+    transforms: <TransformPrimitive>[
+      DefaultField(fieldName: 'language', defaultValue: 'en'),
+    ],
+  ))
+  ..register(const PromoterSpec(
+    viewName: 'notes',
+    entryType: 'note',
+    fromVersion: EntryTypeVersion(1, 1),
+    toVersion: EntryTypeVersion(2, 0),
+    transforms: <TransformPrimitive>[
+      RenameField(sourceField: 'body', targetField: 'text'),
+    ],
+  ));
+```
+
+The library checks the shape of every step it registers; what it
+cannot check is producer code. A minor bump is safe only when it adds
+optional fields: producers do not rename, drop or re-type a field
+within a major. Make any other change a major step.
 
 Two paths exercise the promoters:
 
-- **Boot-time snapshot promotion.** When `EventStore.open` sees a
-  view row written under an older `entry_type_version` than is now
-  registered, it walks the promoter chain over the stored row and
-  writes the upgraded shape back. This runs once per upgrade.
-- **Ingest-time event promotion.** When an event arrives from an
-  older peer (see below), the substrate runs the promoter chain on
-  the incoming payload before passing it to the projection fold. The
-  log records the event at its original `entry_type_version`; the
+- **Boot-time snapshot promotion.** When `EventStore.open` finds a
+  view whose stored target version for an entry type is below the
+  registered one -- after an upgrade, or after a build of an older
+  minor folded into it -- it re-derives the view's affected rows from
+  the log: it folds their events again, each promoted through the
+  chain to the registered version, and records the new target. The
+  re-derived rows are the rows `rebuildView` produces.
+- **Fold-time event promotion.** When an event of an older version is
+  folded -- one ingested from an older peer (see below), or one an
+  older build appended -- the substrate runs the promoter chain on
+  the payload before passing it to the projection fold. The log
+  records the event at its original `entry_type_version`; the
   promotion happens in-memory.
+
+A promoted `DefaultField` fills a field only when neither the event nor
+the view row it folds into already carries it, looked up under the
+name the field has at the registered version (after any later rename
+in the chain). An older event that does not mention a field leaves the
+row's value as it is, exactly as the fold treats any key an event
+omits; a table view has no row to decide against, so there the default
+is always supplied.
 
 Both paths exist because the schema-evolution discipline says "the log
 is canonical; you can reconstruct any past state by replaying the
 events through the current promoter chain."
+
+A view is folded only by the builds that register it. Registering a new
+view, or a new entry type in a view's interest, on a database that
+already holds events folds none of them: run `rebuildView` for the view.
+Events that a build not registering the view appends while it serves the
+same database are not folded into the view either, so run `rebuildView`
+again once the last such build has stopped.
 
 ### Provenance: where an event has been
 

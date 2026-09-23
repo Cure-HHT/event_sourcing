@@ -285,7 +285,7 @@ void main() {
 
   group('FifoEntry envelopeMetadata + nullable wirePayload', () {
     final meta = BatchEnvelopeMetadata(
-      batchFormatVersion: '1',
+      batchFormatVersion: '2',
       batchId: 'b-001',
       senderHop: 'mobile-1',
       senderIdentifier: 'device-uuid',
@@ -302,7 +302,7 @@ void main() {
         eventIds: const <String>['e1'],
         sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
-        wireFormat: 'esd/batch@1',
+        wireFormat: 'esd/batch@2',
         wirePayload: null,
         transformVersion: 'native-v1',
         enqueuedAt: DateTime.utc(2026, 4, 25, 12),
@@ -319,7 +319,7 @@ void main() {
       expect(
         json['envelope_metadata'],
         equals(<String, Object?>{
-          'batch_format_version': '1',
+          'batch_format_version': '2',
           'batch_id': 'b-001',
           'sender_hop': 'mobile-1',
           'sender_identifier': 'device-uuid',

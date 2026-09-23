@@ -37,28 +37,28 @@ Future<_Fixture> _openStore({
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_redacted',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Redacted',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_compacted',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Compacted',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'security_context_purged',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'SC Purged',
       ),
     );
@@ -200,8 +200,8 @@ void main() {
           'aggregate_id': 'agg-chain-null',
           'aggregate_type': 'note',
           'entry_type': 'epistaxis_event',
-          'entry_type_version': 1,
-          'lib_format_version': 1,
+          'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
+          'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
           'event_type': 'finalized',
           'sequence_number': 1,
           'data': const <String, Object?>{},

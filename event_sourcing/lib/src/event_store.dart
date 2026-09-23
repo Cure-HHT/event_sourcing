@@ -26,25 +26,31 @@
 //   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
 // Implements: EVS-DEV-append-stamps-registered-version/A
 // append looks up
-//   entryTypes.byId(entryType).registeredVersion and stamps it on the event.
+//   entryTypes.byId(entryType).registeredVersion and stamps its major and
+//   minor on the event.
 // Implements: EVS-DEV-append-stamps-registered-version/B
 // appendInTxn
-//   applies the same registry-lookup stamping as append.
+//   stamps the same registered major and minor as append.
 // Implements: EVS-DEV-append-stamps-registered-version/C
 // entryTypeVersion
 //   does not appear on the public append/appendInTxn signatures.
+// Implements: EVS-DEV-version-compatibility/C
+// every append path stamps LibVersion.dataFormat as the event's
+//   lib_format_version.
 // Implements: EVS-DEV-snapshot-promotion-on-open
 // _runBootSnapshotPromotionPass
 //   promotes lagging view rows and emits view_snapshot_promoted audit events.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A
 // EntryTypeVersionDowngradeError
-//   is thrown from open when registeredVersion < stored target version.
+//   is thrown from open when a registered major is below the major of the
+//   highest stored target version.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/B
 // verifyNoEntryTypeDowngrade
 //   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C
 // EntryTypeVersionDowngradeError
-//   carries entryType id, fromVersion, and toVersion for diagnostic logging.
+//   carries the entryType id and the stored and registered versions, each a
+//   major and a minor, for diagnostic logging.
 
 import 'dart:async';
 import 'dart:convert';
@@ -70,6 +76,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/event_hash.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -79,6 +86,7 @@ import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
@@ -167,13 +175,12 @@ class DowngradeRefusedError extends Error {
       '(development use only).';
 }
 
-/// Thrown by [EventStore.open] when any registered entry type's
-/// `registeredVersion` is below the highest value recorded for that
-/// entry type across the local `view_target_versions` store. The lib
-/// has no `DemotionSpec` mechanism in Phase I; the only resolution is
-/// to pin a lib build whose registry's `registeredVersion` is at least
-/// as high as the stored target. See
-/// docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md.
+/// Thrown by [EventStore.open] when a registered entry type's major is
+/// below the major of the highest target version stored for that entry type
+/// in `view_target_versions`: the views hold rows folded under a newer
+/// major, which this build cannot read. A higher stored minor of the same
+/// major is not a downgrade. The resolution is a build whose registered
+/// major is at least [fromVersion]'s major.
 class EntryTypeVersionDowngradeError extends Error {
   EntryTypeVersionDowngradeError({
     required this.entryType,
@@ -181,18 +188,23 @@ class EntryTypeVersionDowngradeError extends Error {
     required this.toVersion,
   });
 
+  /// The entry type whose registered major is below its stored major.
   final String entryType;
-  final int fromVersion;
-  final int toVersion;
+
+  /// The highest target version stored for [entryType].
+  final EntryTypeVersion fromVersion;
+
+  /// The version this build registers for [entryType].
+  final EntryTypeVersion toVersion;
 
   @override
   String toString() =>
       'EntryTypeVersionDowngradeError: entry type "$entryType" was '
-      'previously folded at registeredVersion=$fromVersion (stored in '
-      'view_target_versions), but the current registry has '
-      'registeredVersion=$toVersion. Phase I refuses entry-type '
-      'downgrade unconditionally. Pin a lib build with '
-      'registeredVersion >= $fromVersion for "$entryType".';
+      'previously folded at version $fromVersion (stored in '
+      'view_target_versions), but this build registers version $toVersion. '
+      'A build whose registered major (${toVersion.major}) is below the '
+      'stored major (${fromVersion.major}) is refused. Run a build that '
+      'registers major ${fromVersion.major} or higher for "$entryType".';
 }
 
 /// The substrate's append-only event log. Serves callers across mobile and
@@ -349,9 +361,10 @@ class EventStore {
   ///      at the current `registeredVersion` for every (viewName, entry
   ///      type matched by the projection's interest filter) pair that
   ///      doesn't already have one.
-  ///   3. [promoteViewSnapshots] — for each pair where the stored target
-  ///      lags the registry, apply the registered promoter chain to the
-  ///      affected view rows, update `view_target_versions`, and emit
+  ///   3. [promoteViewSnapshots] — for each view with a pair whose stored
+  ///      target lags the registry, re-derive the affected view rows from
+  ///      the log through the promoter chain, update
+  ///      `view_target_versions`, and emit
   ///      one `view_snapshot_promoted` audit event per promoted pair via
   ///      [_appendViewSnapshotPromotedAuditInTxn].
   ///
@@ -390,13 +403,12 @@ class EventStore {
         projections: projections,
         promoters: promoters,
         entryTypes: entryTypes,
-        now: DateTime.now().toUtc(),
         emitAudit:
             ({
               required String viewName,
               required String entryType,
-              required int fromVersion,
-              required int toVersion,
+              required EntryTypeVersion fromVersion,
+              required EntryTypeVersion toVersion,
               required int rowsPromoted,
             }) async {
               await _appendViewSnapshotPromotedAuditInTxn(
@@ -681,15 +693,14 @@ class EventStore {
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event.
   ///
-  /// The substrate stamps `entry_type_version` from the registry's
-  /// `EntryTypeDefinition.registeredVersion` for [entryType] and stamps
-  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. The
-  /// substrate is the single source of truth for both fields; callers do
-  /// not (and cannot) supply them. Ingest still validates
-  /// `entry_type_version` against the registry
+  /// The library stamps `entry_type_version` with the registered major and
+  /// minor (`EntryTypeDefinition.registeredVersion` for [entryType]) and
+  /// `lib_format_version` with its data-format version
+  /// (`LibVersion.dataFormat`). The library is the single source of truth
+  /// for both fields; callers do not (and cannot) supply them.
   // Implements: EVS-DEV-append-stamps-registered-version
   // substrate stamps
-  //   entry_type_version from registry.registeredVersion; callers do not
+  //   entry_type_version with the registered major and minor; callers do not
   //   supply this field. dedupeByContent skips the append when content
   //   matches the prior event; any throw rolls back the entire append.
   Future<StoredEvent?> append({
@@ -1057,8 +1068,8 @@ class EventStore {
       'aggregate_id': aggregateId,
       'aggregate_type': aggregateType,
       'entry_type': entryType,
-      'entry_type_version': entryTypeVersion,
-      'lib_format_version': StoredEvent.currentLibFormatVersion,
+      'entry_type_version': entryTypeVersion.toJson(),
+      'lib_format_version': LibVersion.dataFormat.toJson(),
       'event_type': eventType,
       'sequence_number': sequenceNumber,
       'data': dataMap,
@@ -1132,7 +1143,9 @@ class EventStore {
   /// Process-local ingest. Opens its own transaction and delegates to
   /// [_ingestOneInTxn] with `batchContext: null`.
   ///
-  /// Accepts an [incoming] StoredEvent, verifies Chain 1, checks idempotency
+  /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
+  /// or entry-type version ([IngestDataFormatIncompatible],
+  /// [IngestEntryTypeVersionAhead]), verifies Chain 1, checks idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
@@ -1146,7 +1159,7 @@ class EventStore {
     });
   }
 
-  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@1` envelope,
+  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope,
   /// runs every subject event through [_ingestOneInTxn] inside a single
   /// transaction, and stamps each with a [BatchContext] referencing this
   /// batch. Throws [IngestDecodeFailure] for any unsupported [wireFormat] or
@@ -1174,26 +1187,15 @@ class EventStore {
       outcomes.clear();
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
-        final storedEvent = StoredEvent.fromMap(
-          Map<String, Object?>.from(eventMap),
-          0,
-        );
-        if (storedEvent.libFormatVersion >
-            StoredEvent.currentLibFormatVersion) {
-          throw IngestLibFormatVersionAhead(
-            eventId: storedEvent.eventId,
-            wireVersion: storedEvent.libFormatVersion,
-            receiverVersion: StoredEvent.currentLibFormatVersion,
+        final StoredEvent storedEvent;
+        try {
+          storedEvent = StoredEvent.fromMap(
+            Map<String, Object?>.from(eventMap),
+            0,
           );
-        }
-        final def = entryTypes.byId(storedEvent.entryType);
-        if (def != null &&
-            storedEvent.entryTypeVersion > def.registeredVersion) {
-          throw IngestEntryTypeVersionAhead(
-            eventId: storedEvent.eventId,
-            entryType: storedEvent.entryType,
-            wireVersion: storedEvent.entryTypeVersion,
-            receiverVersion: def.registeredVersion,
+        } on FormatException catch (e) {
+          throw IngestDecodeFailure(
+            'batch ${envelope.batchId} event $i: ${e.message}',
           );
         }
         final batchContext = BatchContext(
@@ -1227,6 +1229,58 @@ class EventStore {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
+    // 0. Version compatibility, before any read or write: the data-format
+    //    major must equal this build's, and the entry-type major must not be
+    //    above the registered one. A same-major event is accepted at any
+    //    minor.
+    // Implements: EVS-DEV-version-compatibility/D
+    // every ingest entry point (ingestEvent and each event of ingestBatch)
+    //   refuses a different data-format major or a higher entry-type major
+    //   before any write.
+    if (!incoming.libFormatVersion.isCompatibleWith(LibVersion.dataFormat)) {
+      throw IngestDataFormatIncompatible(
+        eventId: incoming.eventId,
+        wireFormat: incoming.libFormatVersion,
+        receiverFormat: LibVersion.dataFormat,
+      );
+    }
+    // An entry type this build does not register is accepted at any
+    // version: it is stored as it is and folds under its own version.
+    final def = entryTypes.byId(incoming.entryType);
+    if (def != null &&
+        incoming.entryTypeVersion.major > def.registeredVersion.major) {
+      throw IngestEntryTypeVersionAhead(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        wireVersion: incoming.entryTypeVersion,
+        receiverVersion: def.registeredVersion,
+      );
+    }
+    // Implements: EVS-DEV-version-compatibility/D
+    // an event below the registered version that a view it folds into has
+    //   no promoter path for is refused by name before any write.
+    if (def != null && incoming.entryTypeVersion < def.registeredVersion) {
+      for (final spec in projections.all()) {
+        if (!spec.interest.matches(incoming)) continue;
+        final gap = promoters.chainGap(
+          viewName: spec.viewName,
+          entryType: incoming.entryType,
+          fromVersion: incoming.entryTypeVersion,
+          toVersion: def.registeredVersion,
+        );
+        if (gap != null) {
+          throw IngestEntryTypeVersionUnpromotable(
+            eventId: incoming.eventId,
+            entryType: incoming.entryType,
+            viewName: spec.viewName,
+            wireVersion: incoming.entryTypeVersion,
+            receiverVersion: def.registeredVersion,
+            reason: gap,
+          );
+        }
+      }
+    }
+
     // 1. Chain 1 verify on the incoming provenance.
     final verdict = _verifyChainOn(incoming);
     if (!verdict.isValid) {
@@ -1573,11 +1627,11 @@ class EventStore {
   /// Typical call site:
   /// ```dart
   /// try {
-  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@1');
+  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@2');
   /// } on IngestIdentityMismatch catch (e) {
   ///   await store.logRejectedBatch(
   ///     bytes,
-  ///     wireFormat: 'esd/batch@1',
+  ///     wireFormat: 'esd/batch@2',
   ///     reason: 'identityMismatch',
   ///     failedEventId: e.eventId,
   ///     errorDetail: e.toString(),
@@ -1689,28 +1743,10 @@ class EventStore {
 /// Fixed initiator used for substrate-emitted lib_version events.
 const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 
-/// Canonical event hash used by every raw-record-map append site.
-///
-/// Extracts the 11-field identity set from [recordMap] and returns its
-/// SHA-256 as a hex string. Used by [EventStore._eventHash] (the normal
-/// append path) and [_appendLibVersionEventToBackend] (the substrate-
-/// internal boot path).
-String _canonicalEventHash(Map<String, Object?> recordMap) {
-  final hashInput = <String, Object?>{
-    'event_id': recordMap['event_id'],
-    'aggregate_id': recordMap['aggregate_id'],
-    'entry_type': recordMap['entry_type'],
-    'event_type': recordMap['event_type'],
-    'sequence_number': recordMap['sequence_number'],
-    'data': recordMap['data'],
-    'initiator': recordMap['initiator'],
-    'flow_token': recordMap['flow_token'],
-    'client_timestamp': recordMap['client_timestamp'],
-    'previous_event_hash': recordMap['previous_event_hash'],
-    'metadata': recordMap['metadata'],
-  };
-  return sha256.convert(canonicalizeBytes(hashInput)).toString();
-}
+/// Canonical event hash used by every raw-record-map append site; see
+/// [canonicalEventHash].
+String _canonicalEventHash(Map<String, Object?> recordMap) =>
+    canonicalEventHash(recordMap);
 
 /// Build and append one substrate-internal event to [backend] inside [txn].
 ///
@@ -1728,7 +1764,7 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required String aggregateId,
   required String aggregateType,
   required String entryType,
-  required int entryTypeVersion,
+  required EntryTypeVersion entryTypeVersion,
   required String eventType,
   required Map<String, Object?> data,
   required Initiator initiator,
@@ -1744,8 +1780,8 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
     'aggregate_id': aggregateId,
     'aggregate_type': aggregateType,
     'entry_type': entryType,
-    'entry_type_version': entryTypeVersion,
-    'lib_format_version': StoredEvent.currentLibFormatVersion,
+    'entry_type_version': entryTypeVersion.toJson(),
+    'lib_format_version': LibVersion.dataFormat.toJson(),
     'event_type': eventType,
     'sequence_number': localSeq,
     'data': data,
@@ -1770,11 +1806,11 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
 /// Bypasses [EventStore.appendInTxn] because lib_version events are
 /// appended from inside [EventStore.open] BEFORE the [EventStore]
 /// instance exists, so we cannot reach the registry through it. The
-/// hardcoded `entryTypeVersion: 1` here is the one documented exception
+/// hardcoded `entryTypeVersion` `1.0` here is the one documented exception
 /// to the substrate-stamps-registeredVersion-from-the-registry rule
 /// (see EVS-DEV-append-stamps-registered-version). If
 /// `kLibVersionInitializedEntryType` / `kLibVersionChangedEntryType`
-/// ever bump their `registeredVersion` in `kSystemEntryTypes`, this
+/// ever raise their `registeredVersion` in `kSystemEntryTypes`, this
 /// constant must move in lockstep.
 ///
 /// Delegates to [_appendRawInternalEventInTxn] for the actual
@@ -1801,7 +1837,7 @@ Future<void> _appendLibVersionEventToBackend(
       aggregateId: '_lib',
       aggregateType: '_lib',
       entryType: eventType,
-      entryTypeVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
       eventType: eventType,
       data: data,
       initiator: _kLibVersionInitiator,
@@ -1833,8 +1869,8 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
   EntryTypeRegistry entryTypes, {
   required String viewName,
   required String entryType,
-  required int fromVersion,
-  required int toVersion,
+  required EntryTypeVersion fromVersion,
+  required EntryTypeVersion toVersion,
   required int rowsPromoted,
 }) async {
   const uuid = Uuid();
@@ -1860,8 +1896,8 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
     data: <String, Object?>{
       'viewName': viewName,
       'entryType': entryType,
-      'fromVersion': fromVersion,
-      'toVersion': toVersion,
+      'fromVersion': fromVersion.toString(),
+      'toVersion': toVersion.toString(),
       'rowsPromoted': rowsPromoted,
     },
     initiator: _kLibVersionInitiator,

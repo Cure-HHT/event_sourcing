@@ -12,11 +12,10 @@
 //   fully specified and auditable; rebuild does not silently shrink the set
 //   of entry types the view covers.
 import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
-import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
+import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
-import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 
 /// Chunk size for the streaming read of the event log during a rebuild.
 ///
@@ -32,8 +31,8 @@ const int _rebuildChunkSize = 500;
 /// Rebuild exactly one view by replaying the event log through the registered
 /// [ProjectionSpec] for [viewName] on [store]. Clears the view AND the view's
 /// `view_target_versions` rows, writes the supplied [targetVersionByEntryType],
-/// then applies the promoter chain (from `store.promoters`) and dispatches to
-/// the appropriate fold interpreter ([AggregateFold] / [TableFold]) for every
+/// then folds, through the projection interpreter's fold step (promotion
+/// through `store.promoters`, then the aggregate or table fold), every
 /// event whose entry type is in [targetVersionByEntryType] and whose
 /// `store.projections` spec's `interest` matches. Runs in one backend
 /// transaction.
@@ -61,7 +60,7 @@ const int _rebuildChunkSize = 500;
 Future<int> rebuildView({
   required EventStore store,
   required String viewName,
-  required Map<String, int> targetVersionByEntryType,
+  required Map<String, EntryTypeVersion> targetVersionByEntryType,
 }) async {
   final spec = store.projections.lookup(viewName);
   if (spec == null) {
@@ -127,36 +126,18 @@ Future<int> rebuildView({
         final tgt = targetVersionByEntryType[event.entryType];
         if (tgt == null) continue;
 
-        final promoted = PromoterExecutor.promote(
-          registry: store.promoters,
-          viewName: viewName,
-          entryType: event.entryType,
-          fromVersion: event.entryTypeVersion,
-          toVersion: tgt,
-          payload: event.data,
+        // The fold step of the projection interpreter, under the target:
+        // a lower version is promoted, each default decided against the
+        // row being rebuilt; an equal or higher minor folds unchanged; a
+        // higher major throws, rolling the rebuild back.
+        await ProjectionInterpreter.foldIntoView(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          promoters: store.promoters,
+          event: event,
+          version: tgt,
         );
-
-        // Rebuild applies the promoted payload via a synthetic event whose
-        // data field is replaced with the promoted map. We use copyWith-style
-        // construction since StoredEvent is immutable.
-        final promotedEvent = event.withData(promoted);
-
-        switch (spec) {
-          case AggregateProjectionSpec():
-            await AggregateFold.applyEvent(
-              txn: txn,
-              backend: backend,
-              spec: spec,
-              event: promotedEvent,
-            );
-          case TableProjectionSpec():
-            await TableFold.applyEvent(
-              txn: txn,
-              backend: backend,
-              spec: spec,
-              event: promotedEvent,
-            );
-        }
         processed++;
       }
 

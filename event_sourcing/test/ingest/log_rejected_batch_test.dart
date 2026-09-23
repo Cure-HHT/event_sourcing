@@ -47,7 +47,7 @@ Future<_Fixture> _openStore({
   registry.register(
     const EntryTypeDefinition(
       id: 'epistaxis_event',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Epistaxis Event',
     ),
   );
@@ -79,7 +79,7 @@ void main() {
           final bytes = Uint8List.fromList(utf8.encode('garbage bytes'));
           await dest.store.logRejectedBatch(
             bytes,
-            wireFormat: 'esd/batch@1',
+            wireFormat: 'esd/batch@2',
             reason: 'decodeFailure',
             failedEventId: null,
             errorDetail: 'test: invalid envelope',
@@ -106,7 +106,7 @@ void main() {
         final bytes = Uint8List.fromList(utf8.encode('some binary content'));
         await dest.store.logRejectedBatch(
           bytes,
-          wireFormat: 'esd/batch@1',
+          wireFormat: 'esd/batch@2',
           reason: 'decodeFailure',
         );
 
@@ -132,7 +132,7 @@ void main() {
 
         await dest.store.logRejectedBatch(
           bytes,
-          wireFormat: 'esd/batch@1',
+          wireFormat: 'esd/batch@2',
           reason: 'identityMismatch',
           failedEventId: 'event-id-xyz',
           errorDetail: 'hash collision detail',
@@ -144,7 +144,7 @@ void main() {
         expect(auditEvents, hasLength(1));
         final data = auditEvents[0].data;
 
-        expect(data['wire_format'], equals('esd/batch@1'));
+        expect(data['wire_format'], equals('esd/batch@2'));
         expect(data['byte_length'], equals(4));
         expect(data['wire_bytes_hash'], equals(expectedHash));
         expect(data['reason'], equals('identityMismatch'));
@@ -163,7 +163,7 @@ void main() {
         final bytes = Uint8List.fromList([0xAA, 0xBB]);
         await dest.store.logRejectedBatch(
           bytes,
-          wireFormat: 'esd/batch@1',
+          wireFormat: 'esd/batch@2',
           reason: 'decodeFailure',
         );
 
@@ -200,13 +200,13 @@ void main() {
 
         await dest.store.logRejectedBatch(
           bytes1,
-          wireFormat: 'esd/batch@1',
+          wireFormat: 'esd/batch@2',
           reason: 'decodeFailure',
           errorDetail: 'first error',
         );
         await dest.store.logRejectedBatch(
           bytes2,
-          wireFormat: 'esd/batch@1',
+          wireFormat: 'esd/batch@2',
           reason: 'decodeFailure',
           errorDetail: 'second error',
         );
@@ -244,7 +244,7 @@ void main() {
           final bytes = Uint8List.fromList([0xFF]);
           await dest.store.logRejectedBatch(
             bytes,
-            wireFormat: 'esd/batch@1',
+            wireFormat: 'esd/batch@2',
             reason: 'decodeFailure',
           );
 

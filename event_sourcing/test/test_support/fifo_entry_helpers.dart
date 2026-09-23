@@ -8,6 +8,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 
 /// Build a minimal `StoredEvent` fixture with the given id and sequence
 /// number. Tests that need a batch input to `StorageBackend.enqueueFifo`
@@ -24,8 +25,8 @@ StoredEvent storedEventFixture({
   aggregateId: aggregateId,
   aggregateType: 'note',
   entryType: entryType,
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: eventType,
   sequenceNumber: sequenceNumber,
   data: const <String, dynamic>{},

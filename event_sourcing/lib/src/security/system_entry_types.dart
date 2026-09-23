@@ -14,6 +14,7 @@
 //   and kLibVersionChangedEntryType are the boot-version event types emitted
 //   by EventStore.open on first boot and on version transitions respectively.
 import 'package:event_sourcing/src/entry_type_definition.dart';
+import 'package:event_sourcing/src/versions.dart';
 
 /// Reserved id for the per-event security-context redaction audit event.
 const String kSecurityContextRedactedEntryType = 'security_context_redacted';
@@ -143,72 +144,72 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
   EntryTypeDefinition(
     id: kSecurityContextRedactedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Redacted',
   ),
   EntryTypeDefinition(
     id: kSecurityContextCompactedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Compacted',
   ),
   EntryTypeDefinition(
     id: kSecurityContextPurgedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Purged',
   ),
   EntryTypeDefinition(
     id: kDestinationRegisteredEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Registered',
   ),
   EntryTypeDefinition(
     id: kDestinationStartDateSetEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Start Date Set',
   ),
   EntryTypeDefinition(
     id: kDestinationEndDateSetEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination End Date Set',
   ),
   EntryTypeDefinition(
     id: kDestinationDeletedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Deleted',
   ),
   EntryTypeDefinition(
     id: kDestinationWedgeRecoveredEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedge Recovered',
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Retention Policy Applied',
   ),
   EntryTypeDefinition(
     id: kEntryTypeRegistryInitializedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Entry Type Registry Initialized',
   ),
   EntryTypeDefinition(
     id: kLibVersionInitializedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Initialized',
   ),
   EntryTypeDefinition(
     id: kLibVersionChangedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Changed',
   ),
   EntryTypeDefinition(
     id: kIngestAuditEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'Ingest Audit',
   ),
   EntryTypeDefinition(
     id: kViewSnapshotPromotedEntryType,
-    registeredVersion: 1,
+    registeredVersion: EntryTypeVersion(1, 0),
     name: 'View Snapshot Promoted',
   ),
 ];

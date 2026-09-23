@@ -493,11 +493,11 @@ void main() {
         );
       });
 
-      // Enqueue a native esd/batch@1 row directly via the
+      // Enqueue a native esd/batch@2 row directly via the
       // nativeEnvelope: path. Drain reconstructs the wire bytes from
       // envelope_metadata + event_ids-resolved events on each attempt.
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
@@ -575,7 +575,7 @@ void main() {
         );
       });
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',

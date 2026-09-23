@@ -25,7 +25,7 @@ import '../test_support/fifo_entry_helpers.dart';
 
 EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(
   id: 'test_event',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'test_event',
 );
 

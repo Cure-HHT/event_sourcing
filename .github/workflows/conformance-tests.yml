@@ -107,6 +107,9 @@ jobs:
       - name: PostgresBackend serialization retry
         run: flutter test test/storage/postgres/postgres_backend_serialization_retry_test.dart
         working-directory: event_sourcing
+      - name: Entry-type and data-format versions on Postgres
+        run: flutter test test/storage/postgres/postgres_versions_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

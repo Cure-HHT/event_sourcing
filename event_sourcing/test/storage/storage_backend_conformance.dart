@@ -28,6 +28,8 @@
 // teardown does not raise.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/storage/event_hash.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -74,9 +76,15 @@ void _expectOneNoOpWarning(
 ///
 /// [backendLabel] is the human-readable name folded into the outer group
 /// title (e.g. `'sembast (memory)'`, `'postgres'`).
+///
+/// [securityStoreOf] returns the security-context store that stores beside
+/// the events of the backend it is given; the suite uses it to write the
+/// context `queryAudit` joins.
 void runStorageBackendConformanceTests(
   Future<StorageBackend?> Function() factory, {
   required String backendLabel,
+  required MutableSecurityContextStore Function(StorageBackend backend)
+  securityStoreOf,
 }) {
   group('StorageBackend conformance ($backendLabel)', () {
     late StorageBackend backend;
@@ -114,6 +122,11 @@ void runStorageBackendConformanceTests(
     _registerFillCursorTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
+    _registerEventVersionColumnTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
     _registerCloseTests(() => backend, () => initialized);
   });
 }
@@ -131,8 +144,8 @@ StoredEvent _event(
     aggregateId: aggregateId,
     aggregateType: 'note',
     entryType: 'epistaxis_event',
-    entryTypeVersion: 1,
-    libFormatVersion: 1,
+    entryTypeVersion: const EntryTypeVersion(1, 0),
+    libFormatVersion: const DataFormatVersion(2, 0),
     eventType: 'Event',
     sequenceNumber: sequenceNumber,
     data: const <String, dynamic>{},
@@ -158,8 +171,8 @@ StoredEvent _eventWithProvenance({
   aggregateId: aggregateId,
   aggregateType: 'note',
   entryType: entryType,
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: eventType,
   sequenceNumber: seq,
   data: const <String, Object?>{},
@@ -1272,7 +1285,8 @@ void _registerViewTargetVersionTests(
 ) {
   group('view_target_versions storage', () {
     // Verifies: EVS-PRD-portability/D
-    test('round-trip read/write', () async {
+    // Verifies: EVS-DEV-version-compatibility/A
+    test('round-trip read/write keeps major and minor', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
@@ -1280,7 +1294,7 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
           'demo_note',
-          3,
+          const EntryTypeVersion(1, 3),
         );
       });
       await backend.transaction((txn) async {
@@ -1290,7 +1304,7 @@ void _registerViewTargetVersionTests(
             'diary_entries',
             'demo_note',
           ),
-          3,
+          const EntryTypeVersion(1, 3),
         );
       });
     });
@@ -1310,6 +1324,7 @@ void _registerViewTargetVersionTests(
       });
     });
 
+    // Verifies: EVS-DEV-version-compatibility/A
     test('readAll returns full map for one view', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1318,19 +1333,19 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
           'demo_note',
-          2,
+          const EntryTypeVersion(2, 1),
         );
         await backend.writeViewTargetVersionInTxn(
           txn,
           'diary_entries',
           'epistaxis',
-          5,
+          const EntryTypeVersion(5, 0),
         );
         await backend.writeViewTargetVersionInTxn(
           txn,
           'other_view',
           'demo_note',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await backend.transaction((txn) async {
@@ -1338,7 +1353,10 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
         );
-        expect(map, <String, int>{'demo_note': 2, 'epistaxis': 5});
+        expect(map, const <String, EntryTypeVersion>{
+          'demo_note': EntryTypeVersion(2, 1),
+          'epistaxis': EntryTypeVersion(5, 0),
+        });
       });
     });
 
@@ -1346,8 +1364,18 @@ void _registerViewTargetVersionTests(
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'view_a', 'x', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'view_b', 'x', 2);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'view_a',
+          'x',
+          const EntryTypeVersion(1, 0),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'view_b',
+          'x',
+          const EntryTypeVersion(2, 0),
+        );
       });
       await backend.transaction((txn) async {
         await backend.clearViewTargetVersionsInTxn(txn, 'view_a');
@@ -1357,18 +1385,86 @@ void _registerViewTargetVersionTests(
           await backend.readViewTargetVersionInTxn(txn, 'view_a', 'x'),
           isNull,
         );
-        expect(await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'), 2);
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'),
+          const EntryTypeVersion(2, 0),
+        );
       });
     });
 
-    test('idempotent overwrite', () async {
+    // Verifies: EVS-DEV-version-compatibility/A
+    test('overwrite, including a lower minor within the major', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 2);
-        expect(await backend.readViewTargetVersionInTxn(txn, 'v', 'e'), 2);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 1),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 1),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 4),
+        );
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 4),
+        );
+      });
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 2),
+        );
+      });
+      await backend.transaction((txn) async {
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 2),
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/E
+    test('a write in a transaction that throws is rolled back', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 3),
+        );
+      });
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeViewTargetVersionInTxn(
+            txn,
+            'v',
+            'e',
+            const EntryTypeVersion(1, 0),
+          );
+          throw StateError('injected failure after the write');
+        }),
+        throwsStateError,
+      );
+      await backend.transaction((txn) async {
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 3),
+        );
       });
     });
   });
@@ -1484,7 +1580,7 @@ void _registerFifoTests(
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
@@ -1504,7 +1600,7 @@ void _registerFifoTests(
       expect(head.envelopeMetadata!.senderHop, 'mobile-1');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-uuid');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'diary@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '1');
+      expect(head.envelopeMetadata!.batchFormatVersion, '2');
       expect(head.wireFormat, BatchEnvelope.wireFormat);
       expect(
         head.transformVersion,
@@ -1550,7 +1646,7 @@ void _registerFifoTests(
           [event],
           wirePayload: wirePayloadJson(const {'k': 'v'}),
           nativeEnvelope: BatchEnvelopeMetadata(
-            batchFormatVersion: '1',
+            batchFormatVersion: '2',
             batchId: 'batch-x',
             senderHop: 'mobile-1',
             senderIdentifier: 'device-uuid',
@@ -2438,6 +2534,114 @@ void _registerCloseTests(
       // After close(), operations on the backend fail; the caller owns
       // re-opening if reads are desired post-close.
       await expectLater(backend.findAllEvents(), throwsA(isA<Exception>()));
+    });
+  });
+}
+
+// -------- Event version columns --------
+//
+// The entry-type version and the data-format version of an event keep their
+// major and minor through every read path that builds a StoredEvent, in and
+// out of a transaction, and the event's hash verifies after each read.
+void _registerEventVersionColumnTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('event version columns', () {
+    // Verifies: EVS-DEV-version-compatibility/A+C
+    test('an event stamped entry type 1.3 and data format 2.1 reads back '
+        'exactly through every read path, and its hash verifies', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const entryVersion = EntryTypeVersion(1, 3);
+      const dataFormat = DataFormatVersion(2, 1);
+      final recordedAt = DateTime.utc(2026, 5, 1, 12);
+
+      late StoredEvent appended;
+      await backend.transaction((txn) async {
+        final seq = await backend.nextSequenceNumber(txn);
+        final record = <String, Object?>{
+          'event_id': 'versioned-1',
+          'aggregate_id': 'agg-versions',
+          'aggregate_type': 'note',
+          'entry_type': 'versioned_note',
+          'entry_type_version': entryVersion.toJson(),
+          'lib_format_version': dataFormat.toJson(),
+          'event_type': 'finalized',
+          'sequence_number': seq,
+          'data': <String, Object?>{'title': 'v'},
+          'metadata': <String, Object?>{
+            'change_reason': 'initial',
+            'provenance': <Map<String, Object?>>[
+              <String, Object?>{
+                'hop': 'mobile-device',
+                'received_at': '2026-05-01T12:00:00.000Z',
+                'identifier': 'install-A',
+                'software_version': 'app@1.0.0',
+              },
+            ],
+          },
+          'initiator': const UserInitiator('u-versions').toJson(),
+          'flow_token': 'flow-versions',
+          'client_timestamp': recordedAt.toIso8601String(),
+          'previous_event_hash': null,
+        };
+        record['event_hash'] = canonicalEventHash(record);
+        appended = StoredEvent.fromMap(record, seq);
+        await backend.appendEvent(txn, appended);
+        await securityStoreOf(backend).writeInTxn(
+          txn,
+          EventSecurityContext(
+            eventId: 'versioned-1',
+            recordedAt: recordedAt,
+            ipAddress: '10.0.0.1',
+          ),
+        );
+      });
+
+      void expectExact(StoredEvent? read, String path) {
+        expect(read, isNotNull, reason: path);
+        expect(read!.entryTypeVersion, entryVersion, reason: path);
+        expect(read.libFormatVersion, dataFormat, reason: path);
+        final map = Map<String, Object?>.from(read.toMap())
+          ..remove('event_hash');
+        expect(canonicalEventHash(map), appended.eventHash, reason: path);
+      }
+
+      StoredEvent? pick(Iterable<StoredEvent> events) {
+        for (final e in events) {
+          if (e.eventId == 'versioned-1') return e;
+        }
+        return null;
+      }
+
+      expectExact(
+        pick(await backend.findEventsForAggregate('agg-versions')),
+        'findEventsForAggregate',
+      );
+      expectExact(pick(await backend.findAllEvents()), 'findAllEvents');
+      expectExact(await backend.findEventById('versioned-1'), 'findEventById');
+      expectExact(
+        pick(await backend.readEventsReverse().toList()),
+        'readEventsReverse',
+      );
+      final audit = await backend.queryAudit(flowToken: 'flow-versions');
+      expectExact(pick(audit.rows.map((r) => r.event)), 'queryAudit');
+      await backend.transaction((txn) async {
+        expectExact(
+          pick(await backend.findEventsForAggregateInTxn(txn, 'agg-versions')),
+          'findEventsForAggregateInTxn',
+        );
+        expectExact(
+          pick(await backend.findAllEventsInTxn(txn)),
+          'findAllEventsInTxn',
+        );
+        expectExact(
+          await backend.findEventByIdInTxn(txn, 'versioned-1'),
+          'findEventByIdInTxn',
+        );
+      });
     });
   });
 }

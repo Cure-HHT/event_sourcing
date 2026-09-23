@@ -60,8 +60,14 @@ CREATE TABLE IF NOT EXISTS events (
   aggregate_id         TEXT         NOT NULL,
   aggregate_type       TEXT         NOT NULL,
   entry_type           TEXT         NOT NULL,
-  entry_type_version   INTEGER      NOT NULL,
-  lib_format_version   INTEGER      NOT NULL,
+  entry_type_version_major  INTEGER  NOT NULL
+    CHECK (entry_type_version_major >= 1),
+  entry_type_version_minor  INTEGER  NOT NULL
+    CHECK (entry_type_version_minor >= 0),
+  lib_format_version_major  INTEGER  NOT NULL
+    CHECK (lib_format_version_major >= 1),
+  lib_format_version_minor  INTEGER  NOT NULL
+    CHECK (lib_format_version_minor >= 0),
   event_type           TEXT         NOT NULL,
   data                 JSONB        NOT NULL,
   metadata             JSONB        NOT NULL,
@@ -101,7 +107,8 @@ const String _viewTargetVersionsTable = '''
 CREATE TABLE IF NOT EXISTS view_target_versions (
   view_name       TEXT     NOT NULL,
   entry_type      TEXT     NOT NULL,
-  target_version  INTEGER  NOT NULL,
+  target_major    INTEGER  NOT NULL  CHECK (target_major >= 1),
+  target_minor    INTEGER  NOT NULL  CHECK (target_minor >= 0),
   PRIMARY KEY (view_name, entry_type)
 )
 ''';

@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Abstract persistence contract for the event-sourcing substrate.
@@ -321,7 +322,7 @@ abstract class StorageBackend {
 
   /// Read the persisted target version for [viewName]/[entryType], or `null`
   /// if no entry has been registered. Used by `rebuildView`
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -334,12 +335,12 @@ abstract class StorageBackend {
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   );
 
   /// Read all entry-type → target-version entries for [viewName].
   /// Used by `rebuildView`'s strict-superset check.
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   );
@@ -371,10 +372,10 @@ abstract class StorageBackend {
   ///   `wire_payload`, with `wire_format = wirePayload.contentType` and
   ///   `envelope_metadata = null`. Drain hands the bytes back to
   ///   `Destination.send` verbatim.
-  /// - [nativeEnvelope] (native `esd/batch@1` path) — caller (typically
+  /// - [nativeEnvelope] (native `esd/batch@2` path) — caller (typically
   ///   `fillBatch`) built the envelope identity from the local
   ///   `Source`. The metadata is persisted under `envelope_metadata`,
-  ///   with `wire_payload = null` and `wire_format = "esd/batch@1"`.
+  ///   with `wire_payload = null` and `wire_format = "esd/batch@2"`.
   ///   Drain reconstructs wire bytes deterministically (RFC 8785 JCS)
   ///   from `envelope_metadata` + `event_ids`-resolved events on each
   ///   send attempt.

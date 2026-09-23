@@ -20,6 +20,7 @@ import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/sync/fill_batch.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -54,8 +55,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: aggregateId,
       aggregateType: 'note',
       entryType: entryType,
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -632,7 +633,10 @@ void main() {
       expect(head.envelopeMetadata!.senderHop, 'mobile-device');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-fb-native');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'my_app@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '1');
+      expect(
+        head.envelopeMetadata!.batchFormatVersion,
+        BatchEnvelope.currentBatchFormatVersion,
+      );
       expect(
         head.envelopeMetadata!.sentAt,
         fillClock,

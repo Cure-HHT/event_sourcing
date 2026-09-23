@@ -11,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('BatchEnvelopeMetadata', () {
     final fixture = BatchEnvelopeMetadata(
-      batchFormatVersion: '1',
+      batchFormatVersion: '2',
       batchId: 'b-001',
       senderHop: 'mobile-1',
       senderIdentifier: 'device-uuid',
@@ -27,7 +27,7 @@ void main() {
 
     test('fromEnvelope copies metadata, drops events', () {
       final env = BatchEnvelope(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'b-001',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',

@@ -56,7 +56,7 @@ class _Fixture {
 
 const EntryTypeDefinition _demoNoteDef = EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo Note',
 );
 

@@ -34,13 +34,13 @@ var _dbCounter = 0;
 
 const _kNote = EntryTypeDefinition(
   id: 'note',
-  registeredVersion: 3,
+  registeredVersion: EntryTypeVersion(3, 0),
   name: 'Note',
 );
 
 const _kLights = EntryTypeDefinition(
   id: 'lights',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Lights',
 );
 
@@ -96,11 +96,11 @@ void main() {
       await backend.transaction((txn) async {
         expect(
           await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
-          3,
+          const EntryTypeVersion(3, 0),
         );
         expect(
           await backend.readViewTargetVersionInTxn(txn, 'lights', 'lights'),
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
     });
@@ -113,7 +113,12 @@ void main() {
       // Pre-seed at a lagging version (simulating a prior boot under an
       // older registry where note was at registeredVersion=1).
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'notes',
+          'note',
+          const EntryTypeVersion(1, 0),
+        );
       });
 
       await backend.transaction((txn) async {
@@ -128,7 +133,7 @@ void main() {
       await backend.transaction((txn) async {
         expect(
           await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
-          1,
+          const EntryTypeVersion(1, 0),
           reason:
               'seedViewTargetVersions must not overwrite an existing '
               'row; that lagging value drives the snapshot-promotion pass.',
@@ -156,7 +161,7 @@ void main() {
         await backend.transaction((txn) async {
           expect(
             await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
-            3,
+            const EntryTypeVersion(3, 0),
           );
           // lights has no projection; no row was seeded.
           expect(
@@ -179,7 +184,7 @@ void main() {
       entryTypes.register(
         const EntryTypeDefinition(
           id: 'note',
-          registeredVersion: 1, // downgrade!
+          registeredVersion: EntryTypeVersion(1, 0), // downgrade!
           name: 'Note',
         ),
       );
@@ -188,7 +193,12 @@ void main() {
       // Simulate: an earlier boot had note at registeredVersion=3 and
       // promoted the view to that target.
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 3);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'notes',
+          'note',
+          const EntryTypeVersion(3, 0),
+        );
       });
 
       await expectLater(
@@ -203,8 +213,16 @@ void main() {
         throwsA(
           isA<EntryTypeVersionDowngradeError>()
               .having((e) => e.entryType, 'entryType', 'note')
-              .having((e) => e.fromVersion, 'fromVersion', 3)
-              .having((e) => e.toVersion, 'toVersion', 1),
+              .having(
+                (e) => e.fromVersion,
+                'fromVersion',
+                const EntryTypeVersion(3, 0),
+              )
+              .having(
+                (e) => e.toVersion,
+                'toVersion',
+                const EntryTypeVersion(1, 0),
+              ),
         ),
       );
     });
@@ -215,7 +233,12 @@ void main() {
       final projections = ProjectionRegistry()..register(_kNotesSpec);
 
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'notes',
+          'note',
+          const EntryTypeVersion(1, 0),
+        );
       });
 
       // No throw; the registry's note is at 3, stored is 1 (lag, not
@@ -235,7 +258,7 @@ void main() {
     StoredEvent event({
       required int seq,
       required Map<String, Object?> data,
-      int entryTypeVersion = 1,
+      EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0),
       String aggregateId = 'agg-1',
     }) {
       return StoredEvent(
@@ -245,7 +268,7 @@ void main() {
         aggregateType: 'note',
         entryType: 'note',
         entryTypeVersion: entryTypeVersion,
-        libFormatVersion: 1,
+        libFormatVersion: const DataFormatVersion(2, 0),
         eventType: 'finalized',
         sequenceNumber: seq,
         data: data,
@@ -261,8 +284,8 @@ void main() {
     Future<void> noopEmit({
       required String viewName,
       required String entryType,
-      required int fromVersion,
-      required int toVersion,
+      required EntryTypeVersion fromVersion,
+      required EntryTypeVersion toVersion,
       required int rowsPromoted,
     }) async {}
 
@@ -283,7 +306,7 @@ void main() {
         entryTypes.register(
           const EntryTypeDefinition(
             id: 'note',
-            registeredVersion: 2,
+            registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
           ),
         );
@@ -293,8 +316,8 @@ void main() {
             const PromoterSpec(
               viewName: 'notes',
               entryType: 'note',
-              fromVersion: 1,
-              toVersion: 2,
+              fromVersion: EntryTypeVersion(1, 0),
+              toVersion: EntryTypeVersion(2, 0),
               transforms: <TransformPrimitive>[
                 RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
@@ -305,7 +328,12 @@ void main() {
         // with v1 shape, AND append the v1 event so the affected-agg query
         // can find agg-1.
         await backend.transaction((txn) async {
-          await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
+          await backend.writeViewTargetVersionInTxn(
+            txn,
+            'notes',
+            'note',
+            const EntryTypeVersion(1, 0),
+          );
           await backend.upsertViewRowInTxn(
             txn,
             'notes',
@@ -319,7 +347,11 @@ void main() {
           final seq = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
-            event(seq: seq, data: const {'body': 'hello'}, entryTypeVersion: 1),
+            event(
+              seq: seq,
+              data: const {'body': 'hello'},
+              entryTypeVersion: const EntryTypeVersion(1, 0),
+            ),
           );
         });
 
@@ -331,7 +363,6 @@ void main() {
             promoters: promoters,
             entryTypes: entryTypes,
             emitAudit: noopEmit,
-            now: DateTime.utc(2026, 5, 11),
           );
         });
 
@@ -341,7 +372,7 @@ void main() {
           expect(row.containsKey('body'), isFalse);
           expect(
             await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
-            2,
+            const EntryTypeVersion(2, 0),
           );
         });
       },
@@ -354,24 +385,43 @@ void main() {
       final projections = ProjectionRegistry()
         ..register(_kNotesSpec)
         ..register(_kLightsSpec);
-      // Promoter for notes 1->3; lights is at stored=registered=1
-      // (no promotion needed).
+      // Promoters for notes 1.0 -> 2.0 -> 3.0; lights is at
+      // stored = registered = 1.0 (no promotion needed).
       final promoters = PromoterRegistry()
         ..register(
           const PromoterSpec(
             viewName: 'notes',
             entryType: 'note',
-            fromVersion: 1,
-            toVersion: 3,
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
             transforms: <TransformPrimitive>[
               RenameField(sourceField: 'body', targetField: 'note_body'),
             ],
           ),
+        )
+        ..register(
+          const PromoterSpec(
+            viewName: 'notes',
+            entryType: 'note',
+            fromVersion: EntryTypeVersion(2, 0),
+            toVersion: EntryTypeVersion(3, 0),
+            transforms: <TransformPrimitive>[],
+          ),
         );
 
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'lights', 'lights', 1);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'notes',
+          'note',
+          const EntryTypeVersion(1, 0),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'lights',
+          'lights',
+          const EntryTypeVersion(1, 0),
+        );
         // notes row needs promotion; lights row should NOT be touched.
         await backend.upsertViewRowInTxn(
           txn,
@@ -392,7 +442,7 @@ void main() {
           event(
             seq: seq,
             data: const {'body': 'note-body'},
-            entryTypeVersion: 1,
+            entryTypeVersion: const EntryTypeVersion(1, 0),
           ),
         );
       });
@@ -405,7 +455,6 @@ void main() {
           promoters: promoters,
           entryTypes: entryTypes,
           emitAudit: noopEmit,
-          now: DateTime.utc(2026, 5, 11),
         );
       });
 
@@ -431,8 +480,8 @@ void main() {
         Future<void> recordingEmit({
           required String viewName,
           required String entryType,
-          required int fromVersion,
-          required int toVersion,
+          required EntryTypeVersion fromVersion,
+          required EntryTypeVersion toVersion,
           required int rowsPromoted,
         }) async {
           calls.add({
@@ -452,7 +501,7 @@ void main() {
         entryTypes.register(
           const EntryTypeDefinition(
             id: 'note',
-            registeredVersion: 2,
+            registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
           ),
         );
@@ -462,8 +511,8 @@ void main() {
             const PromoterSpec(
               viewName: 'notes',
               entryType: 'note',
-              fromVersion: 1,
-              toVersion: 2,
+              fromVersion: EntryTypeVersion(1, 0),
+              toVersion: EntryTypeVersion(2, 0),
               transforms: <TransformPrimitive>[
                 RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
@@ -471,7 +520,12 @@ void main() {
           );
 
         await backend.transaction((txn) async {
-          await backend.writeViewTargetVersionInTxn(txn, 'notes', 'note', 1);
+          await backend.writeViewTargetVersionInTxn(
+            txn,
+            'notes',
+            'note',
+            const EntryTypeVersion(1, 0),
+          );
           await backend.upsertViewRowInTxn(
             txn,
             'notes',
@@ -481,7 +535,11 @@ void main() {
           final seq = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
-            event(seq: seq, data: const {'body': 'x'}, entryTypeVersion: 1),
+            event(
+              seq: seq,
+              data: const {'body': 'x'},
+              entryTypeVersion: const EntryTypeVersion(1, 0),
+            ),
           );
         });
 
@@ -493,15 +551,14 @@ void main() {
             promoters: promoters,
             entryTypes: entryTypes,
             emitAudit: recordingEmit,
-            now: DateTime.utc(2026, 5, 11),
           );
         });
 
         expect(calls, hasLength(1));
         expect(calls.single['viewName'], 'notes');
         expect(calls.single['entryType'], 'note');
-        expect(calls.single['fromVersion'], 1);
-        expect(calls.single['toVersion'], 2);
+        expect(calls.single['fromVersion'], const EntryTypeVersion(1, 0));
+        expect(calls.single['toVersion'], const EntryTypeVersion(2, 0));
         expect(calls.single['rowsPromoted'], 1);
       },
     );
@@ -533,7 +590,7 @@ void main() {
         entryTypes.register(
           const EntryTypeDefinition(
             id: 'note',
-            registeredVersion: 1,
+            registeredVersion: EntryTypeVersion(1, 0),
             name: 'Note',
           ),
         );
@@ -569,7 +626,7 @@ void main() {
         entryTypes.register(
           const EntryTypeDefinition(
             id: 'note',
-            registeredVersion: 2,
+            registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
           ),
         );
@@ -579,8 +636,8 @@ void main() {
             const PromoterSpec(
               viewName: 'notes',
               entryType: 'note',
-              fromVersion: 1,
-              toVersion: 2,
+              fromVersion: EntryTypeVersion(1, 0),
+              toVersion: EntryTypeVersion(2, 0),
               transforms: <TransformPrimitive>[
                 RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
@@ -606,7 +663,7 @@ void main() {
           expect(row.containsKey('body'), isFalse);
           expect(
             await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
-            2,
+            const EntryTypeVersion(2, 0),
           );
         });
 
@@ -616,8 +673,8 @@ void main() {
         );
         expect(audits, hasLength(1));
         expect(audits.single.data['viewName'], 'notes');
-        expect(audits.single.data['fromVersion'], 1);
-        expect(audits.single.data['toVersion'], 2);
+        expect(audits.single.data['fromVersion'], '1.0');
+        expect(audits.single.data['toVersion'], '2.0');
         expect(audits.single.data['rowsPromoted'], 1);
       }
     });
@@ -637,7 +694,7 @@ void main() {
         entryTypes.register(
           const EntryTypeDefinition(
             id: 'note',
-            registeredVersion: 2,
+            registeredVersion: EntryTypeVersion(2, 0),
             name: 'Note',
           ),
         );
@@ -671,7 +728,7 @@ void main() {
       entryTypes.register(
         const EntryTypeDefinition(
           id: 'note',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Note',
         ),
       );
@@ -692,8 +749,16 @@ void main() {
         throwsA(
           isA<EntryTypeVersionDowngradeError>()
               .having((e) => e.entryType, 'entryType', 'note')
-              .having((e) => e.fromVersion, 'fromVersion', 2)
-              .having((e) => e.toVersion, 'toVersion', 1),
+              .having(
+                (e) => e.fromVersion,
+                'fromVersion',
+                const EntryTypeVersion(2, 0),
+              )
+              .having(
+                (e) => e.toVersion,
+                'toVersion',
+                const EntryTypeVersion(1, 0),
+              ),
         ),
       );
     });

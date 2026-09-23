@@ -36,8 +36,11 @@ class _Fixture {
   final SembastSecurityContextStore securityContexts;
 }
 
-EntryTypeDefinition _simpleDef(String id) =>
-    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
+EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
+  id: id,
+  registeredVersion: const EntryTypeVersion(1, 0),
+  name: id,
+);
 
 Future<_Fixture> _setup({DateTime? now}) async {
   final db = await newDatabaseFactoryMemory().openDatabase(

@@ -18,6 +18,7 @@ names, frozen semantics).
   pooling, SQL-native view rows, additional backends, a run-time barrier
   on internal storage members.
 - `permissions.md` — permission-model extensions.
-- `projections.md` — projection/materializer primitives.
+- `projections.md` — projection/materializer primitives; views that
+  catch up with the log.
 - `sync.md` — sync/destination layer: inbound tombstone propagation.
 - `authentication.md` — substrate-level authentication closure.

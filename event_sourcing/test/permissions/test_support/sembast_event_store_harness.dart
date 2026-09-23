@@ -42,14 +42,14 @@ const List<EntryTypeDefinition> _kPermissionsEntryTypeDefinitions =
     <EntryTypeDefinition>[
       EntryTypeDefinition(
         id: kRolePermissionGrantEntryType,
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-permission grant',
         // Projection is driven by the registered ProjectionSpec
         // (rolePermissionGrantsSpec).
       ),
       EntryTypeDefinition(
         id: kUserRoleScopeEntryType,
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-role-scope assignment',
         // Projection is driven by the registered ProjectionSpec
         // (userRoleScopesSpec).

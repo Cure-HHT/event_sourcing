@@ -7,8 +7,10 @@
 //   regardless of platform; pure-Dart serialisation.
 // Verifies: EVS-DEV-flow-token/D
 // flowToken is an opaque nullable String that round-trips; a non-string flow_token is rejected.
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
@@ -16,8 +18,8 @@ Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
   'aggregate_id': 'a',
   'aggregate_type': 'note',
   'entry_type': 'epistaxis_event',
-  'entry_type_version': 1,
-  'lib_format_version': 1,
+  'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
+  'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
   'event_type': 'finalized',
   'sequence_number': 1,
   'data': const {
@@ -44,8 +46,8 @@ Map<String, Object?> _validEventMap() => <String, Object?>{
   'client_timestamp': DateTime.utc(2026, 4, 26).toIso8601String(),
   'event_hash': 'hash-1',
   'previous_event_hash': null,
-  'entry_type_version': 1,
-  'lib_format_version': 1,
+  'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
+  'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
 };
 
 void main() {
@@ -135,9 +137,12 @@ void main() {
         initiator: const UserInitiator('u-1'),
         clientTimestamp: DateTime.utc(2026, 4, 26),
         eventHash: 'hash-1',
-        entryTypeVersion: 7,
+        entryTypeVersion: const EntryTypeVersion(7, 0),
       );
-      expect(e.toMap()['entry_type_version'], 7);
+      expect(e.toMap()['entry_type_version'], <String, Object?>{
+        'major': 7,
+        'minor': 0,
+      });
     });
 
     test('toMap includes lib_format_version', () {
@@ -148,9 +153,12 @@ void main() {
         initiator: const UserInitiator('u-1'),
         clientTimestamp: DateTime.utc(2026, 4, 26),
         eventHash: 'hash-1',
-        libFormatVersion: 3,
+        libFormatVersion: const DataFormatVersion(3, 1),
       );
-      expect(e.toMap()['lib_format_version'], 3);
+      expect(e.toMap()['lib_format_version'], <String, Object?>{
+        'major': 3,
+        'minor': 1,
+      });
     });
 
     test('fromMap rejects missing entry_type_version', () {
@@ -158,9 +166,28 @@ void main() {
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    test('fromMap rejects non-int entry_type_version', () {
-      final m = _validEventMap()..['entry_type_version'] = 'not-an-int';
+    test('fromMap rejects a non-object entry_type_version', () {
+      final m = _validEventMap()..['entry_type_version'] = 'not-a-version';
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/A
+    test('fromMap rejects an entry_type_version with a malformed component, '
+        'naming the key', () {
+      for (final bad in <Object?>[
+        1,
+        <String, Object?>{'major': 1},
+        <String, Object?>{'major': '1', 'minor': 0},
+        <String, Object?>{'major': 0, 'minor': 0},
+        <String, Object?>{'major': 1, 'minor': -1},
+      ]) {
+        final m = _validEventMap()..['entry_type_version'] = bad;
+        expect(
+          () => StoredEvent.fromMap(m, 0),
+          throwsFormatException,
+          reason: '$bad',
+        );
+      }
     });
 
     test('fromMap rejects missing lib_format_version', () {
@@ -168,22 +195,43 @@ void main() {
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    test('fromMap rejects non-int lib_format_version', () {
+    test('fromMap rejects a non-object lib_format_version', () {
       final m = _validEventMap()..['lib_format_version'] = true;
       expect(() => StoredEvent.fromMap(m, 0), throwsFormatException);
     });
 
-    test('round-trip preserves both fields', () {
-      final m = _validEventMap()
-        ..['entry_type_version'] = 11
-        ..['lib_format_version'] = 1;
-      final e = StoredEvent.fromMap(m, 0);
-      expect(e.entryTypeVersion, 11);
-      expect(e.libFormatVersion, 1);
+    // Verifies: EVS-DEV-version-compatibility/C
+    test('fromMap rejects a lib_format_version with a malformed component', () {
+      for (final bad in <Object?>[
+        2,
+        <String, Object?>{'minor': 0},
+        <String, Object?>{'major': 2, 'minor': 'x'},
+      ]) {
+        final m = _validEventMap()..['lib_format_version'] = bad;
+        expect(
+          () => StoredEvent.fromMap(m, 0),
+          throwsFormatException,
+          reason: '$bad',
+        );
+      }
     });
 
-    test('currentLibFormatVersion is 1', () {
-      expect(StoredEvent.currentLibFormatVersion, 1);
+    test('round-trip preserves both fields', () {
+      final m = _validEventMap()
+        ..['entry_type_version'] = <String, Object?>{'major': 11, 'minor': 4}
+        ..['lib_format_version'] = <String, Object?>{'major': 2, 'minor': 3};
+      final e = StoredEvent.fromMap(m, 0);
+      expect(e.entryTypeVersion, const EntryTypeVersion(11, 4));
+      expect(e.libFormatVersion, const DataFormatVersion(2, 3));
+      expect(
+        StoredEvent.fromMap(e.toMap(), 0).entryTypeVersion,
+        const EntryTypeVersion(11, 4),
+      );
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/C
+    test('the data-format version of this build is 2.0', () {
+      expect(LibVersion.dataFormat, const DataFormatVersion(2, 0));
     });
   });
 
@@ -195,8 +243,8 @@ void main() {
         aggregateId: 'agg-1',
         aggregateType: 'note',
         entryType: 'note',
-        entryTypeVersion: 2,
-        libFormatVersion: 1,
+        entryTypeVersion: const EntryTypeVersion(2, 0),
+        libFormatVersion: const DataFormatVersion(2, 0),
         eventType: 'finalized',
         sequenceNumber: 42,
         data: <String, dynamic>{'old_key': 'old_value'},

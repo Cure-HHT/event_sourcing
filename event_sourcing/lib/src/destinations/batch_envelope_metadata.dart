@@ -6,7 +6,7 @@
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 
 /// Metadata extracted from a `BatchEnvelope` minus its events list.
-/// Persisted on a FIFO row when the row's `wire_format == "esd/batch@1"`,
+/// Persisted on a FIFO row when the row's `wire_format == "esd/batch@2"`,
 /// so that drain can reconstruct the wire bytes deterministically by
 /// re-encoding `(envelope_metadata + events resolved via findEventById)`.
 ///

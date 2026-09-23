@@ -22,6 +22,7 @@ import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Facade returned by `bootstrapEventStore`. Exposes the four
@@ -57,7 +58,7 @@ class EventStoreBundle {
   Future<void> setViewTargetVersion(
     String viewName,
     String entryType,
-    int version,
+    EntryTypeVersion version,
   ) {
     return _backend.transaction((txn) async {
       await _backend.writeViewTargetVersionInTxn(
@@ -146,14 +147,18 @@ Future<EventStoreBundle> bootstrapEventStore({
 
   // Emit an event recording the registry's full id->registered_version map
   // after EventStore construction and before destination registration.
-  // dedupeByContent: same-state reboots no-op; a schema bump (added entry
-  // type or registeredVersion bump) emits a new event. Each install uses
+  // dedupeByContent: same-state reboots no-op; a schema change (an added
+  // entry type, or a raised major or minor) emits a new event. Each install uses
   // source.identifier as its aggregate, so there is a single per-installation
   // hash-chained system aggregate spanning bootstrap, destination registry,
   // and retention/redaction audits.
-  final registryStateMap = <String, int>{};
+  // Implements: EVS-DEV-version-compatibility/K
+  // the registry audit records every registered entry type's major and minor
+  //   as `M.m`; a changed set, major or minor changes the content, so a new
+  //   audit is appended, and an unchanged registry dedupes to none.
+  final registryStateMap = <String, String>{};
   for (final definition in typeRegistry.all()) {
-    registryStateMap[definition.id] = definition.registeredVersion;
+    registryStateMap[definition.id] = definition.registeredVersion.toString();
   }
   await eventStore.append(
     entryType: kEntryTypeRegistryInitializedEntryType,

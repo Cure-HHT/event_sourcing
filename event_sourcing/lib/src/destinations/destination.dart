@@ -72,11 +72,11 @@ abstract class Destination {
   bool get allowHardDelete => false;
 
   /// Whether this destination consumes the library's canonical batch
-  /// format (`esd/batch@1`). When `true`, `fillBatch` skips
+  /// format (`esd/batch@2`). When `true`, `fillBatch` skips
   /// [transform] entirely and instead constructs a
   /// `BatchEnvelopeMetadata` from the library's source identity, persisted
   /// on the FIFO row as `envelope_metadata` with `wire_payload: null` and
-  /// `wire_format: "esd/batch@1"`. The drain path reconstructs the wire
+  /// `wire_format: "esd/batch@2"`. The drain path reconstructs the wire
   /// bytes deterministically via `BatchEnvelope.encode` over the
   /// row's events plus `envelope_metadata`.
   ///
