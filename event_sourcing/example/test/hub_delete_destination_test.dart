@@ -130,15 +130,17 @@ void main() {
     );
     // Let the panel's first snapshot arrive, then delete: the panel
     // refreshes from the queue watcher alone.
-    for (var i = 0; i < 5; i++) {
+    final wedged = find.textContaining('wedged');
+    for (var i = 0; i < 500 && wedged.evaluate().isEmpty; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 10)),
       );
       await tester.pump();
     }
-    expect(find.textContaining('wedged'), findsOneWidget);
+    expect(wedged, findsOneWidget);
     await tester.runAsync(() => hub.state.deleteDestination('Secondary'));
-    for (var i = 0; i < 5; i++) {
+    final tombstoned = find.textContaining('tombstoned');
+    for (var i = 0; i < 500 && tombstoned.evaluate().isEmpty; i++) {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 10)),
       );
@@ -152,7 +154,7 @@ void main() {
     );
     expect(find.text('Secondary (deleted)'), findsOneWidget);
     expect(find.textContaining('sent'), findsOneWidget);
-    expect(find.textContaining('tombstoned'), findsOneWidget);
+    expect(tombstoned, findsOneWidget);
     await tester.runAsync(() async {
       await hub.state.stopDelivery();
       await hub.backend.close();

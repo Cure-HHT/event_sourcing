@@ -119,6 +119,20 @@ Future<Set<int>> _holdersOf(String url, int key) async => <int>{
     if (e.value.any((lock) => lock.$1 == key)) e.key,
 };
 
+/// The number of sessions on the current database waiting for a lock.
+Future<int> _lockWaiters(String url) async {
+  final c = await _connect(url);
+  try {
+    final r = await c.execute(
+      "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+      'AND datname = current_database()',
+    );
+    return r.first[0]! as int;
+  } finally {
+    await c.close();
+  }
+}
+
 /// The Postgres URL of a second server whose database and schema have the
 /// names PG_TEST_URL's have, or null when the environment has none.
 String? _otherServerUrl() {
@@ -488,6 +502,11 @@ void main() {
     test('an open waits while another holds the boot lock', () async {
       if (url == null) return;
       final release = Completer<void>();
+      // Released on failure too, so a held boot cannot keep tearDown's
+      // close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final heldA = Completer<void>();
       final backendA = await open();
       final backendB = await open();
@@ -562,6 +581,11 @@ void main() {
         'refused, naming the holder', () async {
       if (url == null) return;
       final release = Completer<void>();
+      // Released on failure too, so a held boot cannot keep tearDown's
+      // close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final held = Completer<void>();
       final holder = runWithDeliveryTestHooks(
         DeliveryTestHooks(
@@ -1045,6 +1069,11 @@ void main() {
       final timers = _Timers();
       var probes = 0;
       final release = Completer<void>();
+      // Released on failure too, so a held boot cannot keep tearDown's
+      // close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final inside = Completer<void>();
       final backend = await runWithDeliveryTestHooks(
         DeliveryTestHooks(
@@ -1104,7 +1133,13 @@ void main() {
         DeliveryTestHooks(timerFactory: timers.create),
         () => _openStore(backendA),
       );
-      await _until(() async => (await _holdersOf(url, xKey)).isNotEmpty);
+      // The component lock is taken before the registration's other locks;
+      // the boot reaches the blocker only once the registration is done.
+      await _until(
+        () async =>
+            (await _holdersOf(url, xKey)).isNotEmpty &&
+            await _lockWaiters(url) > 0,
+      );
       final oldPid = (await _holdersOf(url, xKey)).single;
       await _terminate(url, oldPid);
       timers.fireAll();
@@ -1158,7 +1193,12 @@ void main() {
       backends.remove(backendB);
       timers.fireAll();
       await _until(() => backendA.generationStatus == GenerationStatus.fenced);
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      // The fenced backend gives its locks up after it reports the fence.
+      await _until(
+        () async =>
+            (await _holdersOf(url, x1)).isEmpty &&
+            (await _holdersOf(url, y1)).isEmpty,
+      );
       expect(await _holdersOf(url, x1), isEmpty);
       expect(await _holdersOf(url, y1), isEmpty);
       await _openStore(
@@ -1213,6 +1253,11 @@ void main() {
       );
       backends.add(backend);
       final release = Completer<void>();
+      // Released on failure too, so a held boot cannot keep tearDown's
+      // close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final inside = Completer<void>();
       final first = runWithDeliveryTestHooks(
         DeliveryTestHooks(

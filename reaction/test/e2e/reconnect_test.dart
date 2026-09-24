@@ -67,7 +67,10 @@ void main() {
       received.add,
       onError: (Object _) => errored = true,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await until(
+      () => received.any((u) => u is EndOfReplay),
+      reason: 'the end of the replay',
+    );
     expect(received.whereType<Snapshot<Map<String, Object?>>>().length, 2);
     expect(received.whereType<EndOfReplay<Map<String, Object?>>>().length, 1);
 
@@ -93,7 +96,12 @@ void main() {
     // (4) Wait for the auto-reconnect loop to fire (default backoff:
     // 250ms initial). The existing stream remains open and receives
     // a fresh Snapshot x 2 -> EndOfReplay on top of the originals.
-    await Future<void>.delayed(const Duration(milliseconds: 800));
+    await until(
+      () =>
+          errored ||
+          received.whereType<EndOfReplay<Map<String, Object?>>>().length == 2,
+      reason: 'the replay after the reconnect',
+    );
 
     expect(
       errored,

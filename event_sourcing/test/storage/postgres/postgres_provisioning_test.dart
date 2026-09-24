@@ -393,6 +393,11 @@ void main() {
       if (url == null) return;
       await PostgresBackend.provision(url, sslMode: SslMode.disable);
       final release = Completer<void>();
+      // Released on failure too, so a held boot cannot keep tearDown's
+      // close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final inside = Completer<void>();
       final opening = runWithDeliveryTestHooks(
         DeliveryTestHooks(

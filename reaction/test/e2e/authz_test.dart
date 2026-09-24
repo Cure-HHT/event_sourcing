@@ -110,8 +110,10 @@ void main() {
     final updates = <Update<Map<String, Object?>>>[];
     final errors = <Object>[];
     final sub = stream.listen(updates.add, onError: errors.add);
-    // Wait for the snapshot/EOR to settle.
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await until(
+      () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
+      reason: "alice's connection registered",
+    );
 
     // Append role_unassigned for alice. AuthorizationWatcher matches on
     // aggregateType=user_role_scope + eventType=role_unassigned and
@@ -142,10 +144,13 @@ void main() {
     await h.scope.authSession.stream
         .firstWhere((s) => s is Expired)
         .timeout(const Duration(seconds: 2));
-    // Pump once more so the error-out-subs loop inside _onWsClosed
-    // delivers 'wire_disconnected' onto the subscription stream
-    // (onAuthClose is fired first, then the loop runs).
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // The error-out-subs loop inside _onWsClosed delivers
+    // 'wire_disconnected' onto the subscription stream (onAuthClose is
+    // fired first, then the loop runs).
+    await until(
+      () => errors.any((e) => e.toString().contains('wire_disconnected')),
+      reason: 'the subscription errored',
+    );
 
     expect(h.scope.authSession.current, isA<Expired>());
     // Subscription is wire-errored by the same _onWsClosed path.
@@ -191,7 +196,10 @@ void main() {
     );
     final errors = <Object>[];
     final sub = stream.listen((_) {}, onError: errors.add);
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await until(
+      () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
+      reason: "alice's connection registered",
+    );
 
     // Disable alice's account: an account-aggregate event whose aggregateId IS
     // the user (mirrors the portal's user_deactivated on portal_user).
@@ -208,9 +216,13 @@ void main() {
     await h.scope.authSession.stream
         .firstWhere((s) => s is Expired)
         .timeout(const Duration(seconds: 2));
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await until(
+      () => errors.any((e) => e.toString().contains('wire_disconnected')),
+      reason: 'the subscription errored',
+    );
 
     expect(h.scope.authSession.current, isA<Expired>());
+    // Subscription is wire-errored by the same _onWsClosed path.
     expect(
       errors.any((e) => e.toString().contains('wire_disconnected')),
       isTrue,
@@ -262,8 +274,10 @@ void main() {
         mapper: (m) => m,
       );
       final sub = stream.listen((_) {}, onError: (_) {});
-      // Wait for snapshot/EOR to settle.
-      await Future<void>.delayed(const Duration(milliseconds: 200));
+      await until(
+        () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
+        reason: "alice's connection registered",
+      );
 
       // Revoke alice's role via the substrate, mirroring what an
       // /admin/revoke route would do in a real app.
