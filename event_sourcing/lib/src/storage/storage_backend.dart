@@ -168,8 +168,9 @@ abstract class StorageBackend {
   /// filtering is applied.
   ///
   /// [entryType] matches the event's `entry_type` exactly.
-  /// [clientTimestampStart] / [clientTimestampEnd] are inclusive bounds on
-  /// `event.client_timestamp` (compared in UTC).
+  /// [clientTimestampStart] (inclusive) and [clientTimestampEnd] (exclusive)
+  /// bound `event.client_timestamp` (compared in UTC), so consecutive
+  /// windows `[a, b)` and `[b, c)` never both return an event at `b`.
   ///
   /// Concrete backends are expected to translate these filters to whatever
   /// query mechanism they support (indexed predicate, WHERE clause, etc.).
@@ -207,8 +208,8 @@ abstract class StorageBackend {
   /// memory.
   ///
   /// Also optionally filtered by [entryType] (exact match on `entry_type`)
-  /// and [clientTimestampStart] / [clientTimestampEnd] (inclusive bounds on
-  /// `client_timestamp`, compared in UTC). All supplied filters compose with
+  /// and [clientTimestampStart] (inclusive) / [clientTimestampEnd]
+  /// (exclusive) bounds on `client_timestamp`, compared in UTC. All supplied filters compose with
   /// AND. Concrete backends translate these to whatever query mechanism they
   /// support.
   ///

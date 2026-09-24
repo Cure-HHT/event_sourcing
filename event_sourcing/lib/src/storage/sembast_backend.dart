@@ -419,9 +419,9 @@ class SembastBackend extends StorageBackend {
   // Implements: EVS-DEV-find-all-events-extended-filters/C
   // AND-composition;
   //   entry-type and client-timestamp filters land as sembast Filter predicates
-  //   on the top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
-  //   strings sort lexicographically in chronological order so
-  //   greaterThanOrEquals / lessThanOrEquals reproduce the intended bounds).
+  //   on the top-level `entry_type` / `client_timestamp` fields; the
+  //   client-timestamp bounds compare parsed instants, start inclusive and
+  //   end exclusive.
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
@@ -485,19 +485,21 @@ class SembastBackend extends StorageBackend {
     if (entryType != null) {
       filters.add(Filter.equals('entry_type', entryType));
     }
+    // The stored `client_timestamp` is an ISO 8601 string whose fraction
+    // has three or six digits, so text order is not time order within a
+    // millisecond; the bounds compare the parsed instants.
     if (clientTimestampStart != null) {
       filters.add(
-        Filter.greaterThanOrEquals(
-          'client_timestamp',
-          clientTimestampStart.toUtc().toIso8601String(),
+        Filter.custom(
+          (record) =>
+              !_clientTimestampOf(record).isBefore(clientTimestampStart),
         ),
       );
     }
     if (clientTimestampEnd != null) {
       filters.add(
-        Filter.lessThanOrEquals(
-          'client_timestamp',
-          clientTimestampEnd.toUtc().toIso8601String(),
+        Filter.custom(
+          (record) => _clientTimestampOf(record).isBefore(clientTimestampEnd),
         ),
       );
     }
@@ -505,6 +507,10 @@ class SembastBackend extends StorageBackend {
     if (filters.length == 1) return filters.single;
     return Filter.and(filters);
   }
+
+  /// The instant a stored event record's `client_timestamp` names.
+  static DateTime _clientTimestampOf(RecordSnapshot<Object?, Object?> record) =>
+      DateTime.parse(record['client_timestamp']! as String);
 
   /// Reserve-and-increment the sequence counter within [txn]. Phase-2
   /// Prereq B, Option 1: the counter is advanced as a side effect so that

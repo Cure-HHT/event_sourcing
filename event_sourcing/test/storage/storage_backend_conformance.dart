@@ -726,39 +726,54 @@ void _registerFindAllEventsFilterTests(
     });
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/A
-    test('clientTimestampEnd filter is inclusive-upper-bound', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 1),
-        ),
-      );
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 5),
-        ),
-      );
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 10),
-        ),
-      );
+    test(
+      'clientTimestampEnd filter is an exclusive upper bound: an event at '
+      'the end is excluded, one a microsecond before it is included',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final end = DateTime.utc(2026, 1, 5);
+        for (final at in <DateTime>[
+          DateTime.utc(2026, 1, 1),
+          end.subtract(const Duration(microseconds: 1)),
+          end,
+          end.add(const Duration(microseconds: 1)),
+          DateTime.utc(2026, 1, 10),
+        ]) {
+          await _appendBuilt(
+            backend,
+            (s) => _eventWithProvenance(
+              seq: s,
+              entryType: 'note',
+              clientTimestamp: at,
+            ),
+          );
+        }
 
-      final earlier = await backend.findAllEvents(
-        clientTimestampEnd: DateTime.utc(2026, 1, 5),
-      );
-      expect(earlier.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
-    });
+        final earlier = await backend.findAllEvents(clientTimestampEnd: end);
+        expect(earlier.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
+
+        final inTxn = await backend.transaction(
+          (txn) => backend.findAllEventsInTxn(txn, clientTimestampEnd: end),
+        );
+        expect(inTxn.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
+
+        // The start stays inclusive: [end, end + 1 day) holds the event at
+        // the end and the one a microsecond after it, and nothing earlier.
+        final window = await backend.findAllEvents(
+          clientTimestampStart: end,
+          clientTimestampEnd: end.add(const Duration(days: 1)),
+        );
+        expect(window.map((e) => e.sequenceNumber).toList(), <int>[3, 4]);
+
+        // Bounds compare instants, not text: a bound a microsecond after the
+        // end holds the event at the end and not the one a microsecond later.
+        final upTo = await backend.findAllEvents(
+          clientTimestampEnd: end.add(const Duration(microseconds: 1)),
+        );
+        expect(upTo.map((e) => e.sequenceNumber).toList(), <int>[1, 2, 3]);
+      },
+    );
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/C
     test('AND-composes entryType with timestamp range', () async {

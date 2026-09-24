@@ -260,6 +260,14 @@ created by an earlier release is dropped and provisioned again with
   `SendFence`. `DestinationSchedule` gains `registrationId` and
   `allowHardDelete`. New public reads: `listSchedules`,
   `readViewTargetsForEntryTypeInTxn`, `readViewTargetBehindInTxn`.
+- `findAllEvents` and `findAllEventsInTxn` treat `clientTimestampEnd` as an
+  exclusive bound, on both reference backends: an event whose
+  `client_timestamp` equals the end is not returned, so consecutive windows
+  `[a, b)` and `[b, c)` never return the same event. `clientTimestampStart`
+  stays inclusive. A caller that relied on an inclusive end passes an end
+  one microsecond later. Both bounds compare instants, so on Sembast an
+  event within the same millisecond as a bound falls on the correct side of
+  it.
 - `EventStore.appendInTxn` requires the `PublishCollector` its
   `runTransaction` body received.
 - `debugLogSink` is removed; library log lines go to `dart:developer` and

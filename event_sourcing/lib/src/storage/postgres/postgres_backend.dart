@@ -1070,7 +1070,7 @@ class PostgresBackend extends StorageBackend {
       params['ctsStart'] = clientTimestampStart.toUtc();
     }
     if (clientTimestampEnd != null) {
-      wheres.add('client_timestamp <= @ctsEnd:timestamptz');
+      wheres.add('client_timestamp < @ctsEnd:timestamptz');
       params['ctsEnd'] = clientTimestampEnd.toUtc();
     }
     if (originatorHopId != null) {
