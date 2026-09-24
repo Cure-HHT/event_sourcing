@@ -145,6 +145,9 @@ void main() {
           provList[1] = hop1;
           meta['provenance'] = provList;
           tamperedMap['metadata'] = meta;
+          // Reseal the record so its own hash verifies and the broken
+          // arrival hash is the one failure.
+          tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
           final tampered = StoredEvent.fromMap(
             tamperedMap,
             stored.sequenceNumber,

@@ -113,10 +113,14 @@ void main() {
           // also the Chain 2 tail position.
           final seqAfterFirstIngest = await dest.backend.readSequenceCounter();
 
-          // 2. Build batch with a tampered e1' — same event_id, different hash.
+          // 2. Build batch with a divergent e1' — same event_id, different
+          //    content, sealed with the canonical hash of that content.
           final e1TamperedMap = e1.toMap();
-          e1TamperedMap['event_hash'] =
-              'tampered-hash-abcdef1234567890abcdef01';
+          e1TamperedMap['data'] = const {
+            'answers': {'severity': 'severe'},
+          };
+          final divergentHash = canonicalEventHash(e1TamperedMap);
+          e1TamperedMap['event_hash'] = divergentHash;
           final e1Tampered = StoredEvent.fromMap(e1TamperedMap, 0);
 
           final envelope = _buildEnvelope([e1Tampered]);
@@ -178,11 +182,8 @@ void main() {
             (txn) async => dest.backend.findEventByIdInTxn(txn, e1.eventId),
           );
           expect(storedE1, isNotNull);
-          // The stored hash must differ from the tampered hash.
-          expect(
-            storedE1!.eventHash,
-            isNot(equals('tampered-hash-abcdef1234567890abcdef01')),
-          );
+          // The stored hash must differ from the divergent copy's hash.
+          expect(storedE1!.eventHash, isNot(equals(divergentHash)));
           // The stored data must match e1's original data.
           expect(storedE1.data['answers'], equals({'severity': 'mild'}));
         } finally {
@@ -216,7 +217,10 @@ void main() {
 
         // 2. Build a tampered batch and trigger rejection.
         final e1TamperedMap = e1.toMap();
-        e1TamperedMap['event_hash'] = 'tampered-hash-abcdef1234567890abcdef02';
+        e1TamperedMap['data'] = const {
+          'answers': {'severity': 'severe'},
+        };
+        e1TamperedMap['event_hash'] = canonicalEventHash(e1TamperedMap);
         final e1Tampered = StoredEvent.fromMap(e1TamperedMap, 0);
         final envelope = _buildEnvelope([e1Tampered]);
         final bytes = envelope.encode();

@@ -8,23 +8,11 @@ import 'package:uuid/uuid.dart';
 /// (`remote-mobile-1`). The resulting envelope is fed to
 /// `EventStore.ingestBatch`, which stamps a receiver `ProvenanceEntry`
 /// (with `origin_sequence_number` carrying the wire-supplied seq) and
-/// reassigns a fresh local `sequence_number`
+/// reassigns a fresh local `sequence_number`.
 ///
-/// **Single-event-per-batch by design.** The `EventStore.ingestBatch`
-/// Chain 1 verifier walks every provenance entry from index `len-1` down
-/// to (exclusive) index `0`, recomputing each receiver hop's
-/// `arrival_hash`. With a single origin entry the loop never executes,
-/// so chain-1 trivially passes — the synthetic event's `event_hash` need
-/// not match a real canonical hash. A multi-event batch would also pass
-/// (each event's chain is verified independently), but staying at one
-/// event keeps the helper self-contained: no need to import
-/// `package:crypto` / `canonical_json_jcs` from the example, avoiding a
-/// `depend_on_referenced_packages` lint failure.
-///
-/// The receiver-side `_appendReceiverProvenance` recomputes a real
-/// canonical hash for the stored event; the synthetic placeholder hash
-/// only ever lives on the receiver provenance entry's `arrival_hash`
-/// field, where its role is documentary, not verifying.
+/// The event is sealed as an originator seals it: its `event_hash` is
+/// `canonicalEventHash` of the record, which the receiver recomputes and
+/// refuses the event (`IngestChainBroken`) when it differs.
 class SyntheticBatchBuilder {
   SyntheticBatchBuilder({
     this.senderHop = 'remote-mobile-1',
@@ -46,7 +34,7 @@ class SyntheticBatchBuilder {
   /// `received_at = now` and the sender's identifier/software_version,
   /// `sequence_number = originSequenceNumber` (defaults to 1001 — high
   /// enough to be visually distinguishable from local sequence numbers
-  /// in the demo), and a deterministic-looking placeholder `event_hash`.
+  /// in the demo), and the canonical hash of the record as its `event_hash`.
   BatchEnvelope buildSingleEventBatch({
     int originSequenceNumber = 1001,
     String aggregateId = 'remote-aggregate-1',
@@ -94,14 +82,9 @@ class SyntheticBatchBuilder {
       'initiator': UserInitiator(userId).toJson(),
       'flow_token': null,
       'client_timestamp': now.toIso8601String(),
-      // Placeholder; the receiver only reads this field to stamp it as
-      // `arrival_hash` on its own provenance entry. Chain 1 verification
-      // never recomputes a hash at the origin position (loop walks from
-      // `len-1` down to but not including `0`), so a non-canonical value
-      // here is harmless for the demo.
-      'event_hash': 'synthetic-origin-hash-$eventId',
       'previous_event_hash': null,
     };
+    eventMap['event_hash'] = canonicalEventHash(eventMap);
     return BatchEnvelope(
       batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
       batchId: 'demo-ingest-${now.millisecondsSinceEpoch}',

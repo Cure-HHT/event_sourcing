@@ -140,8 +140,8 @@ Future<_Store> _openPeer(int n) async {
 
 var _forged = 0;
 
-/// An event as a peer sends it, with one origin provenance entry, so the
-/// receiver has no hop link to verify: the shape of [data], [entryType],
+/// An event as a peer sends it, with one origin provenance entry and the
+/// canonical hash of its record: the shape of [data], [entryType],
 /// [aggregateType] and [eventType] is whatever the test gives.
 StoredEvent forgedEvent({
   required String entryType,
@@ -151,7 +151,7 @@ StoredEvent forgedEvent({
 }) {
   _forged += 1;
   final now = DateTime.utc(2026, 9, 1, 12, 0, _forged % 60);
-  return StoredEvent.fromMap(<String, Object?>{
+  final record = <String, Object?>{
     'event_id': 'forged-$_forged-${DateTime.now().microsecondsSinceEpoch}',
     'aggregate_id': _peerSource.identifier,
     'aggregate_type': aggregateType,
@@ -175,9 +175,10 @@ StoredEvent forgedEvent({
     'initiator': const AutomationInitiator(service: 'peer').toJson(),
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
-    'event_hash': 'forged-hash-$_forged',
     'previous_event_hash': null,
-  }, 0);
+  };
+  record['event_hash'] = canonicalEventHash(record);
+  return StoredEvent.fromMap(record, 0);
 }
 
 /// A wedge event's data as the drainer writes it, for [destinationId] of

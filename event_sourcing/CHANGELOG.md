@@ -161,6 +161,16 @@ created by an earlier release is dropped and provisioned again with
   `IngestEntryTypeVersionUnpromotable`: an event of a lower version that a
   view's promoter steps do not lead from is refused by name, before any
   write. A malformed event version is reported as `IngestDecodeFailure`.
+- Ingest verifies every event's own hash, whatever the length of its
+  provenance: `ingestEvent` and `ingestBatch` recompute the canonical hash
+  of the record as it arrives and refuse the event before any write when it
+  differs from its `event_hash` (`ingestBatch` refuses the whole batch).
+  An event with only its origin provenance entry is checked too, so a sender
+  that builds events by hand seals each record with `canonicalEventHash`
+  (now exported) after its last change; an invented `event_hash` is refused.
+  `IngestChainBroken` carries the failing link's `kind`
+  (`ChainFailureKind`), whose new `eventHashMismatch` names this refusal,
+  and `verifyEventChain` reports the same failure.
 
 ### Versions and the boot
 

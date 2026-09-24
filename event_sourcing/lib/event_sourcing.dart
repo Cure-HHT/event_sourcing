@@ -385,6 +385,7 @@ export 'src/storage/drain_records.dart'
         DrainerDeclaration,
         RefillGuard,
         UnservedReason;
+export 'src/storage/event_hash.dart' show canonicalEventHash;
 export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
 export 'src/storage/generation.dart'

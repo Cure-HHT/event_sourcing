@@ -17,7 +17,6 @@ import 'dart:math' show Random;
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/event_hash.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 

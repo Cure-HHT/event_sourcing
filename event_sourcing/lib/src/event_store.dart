@@ -1902,7 +1902,9 @@ class EventStore {
   /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
   /// or entry-type version ([IngestDataFormatIncompatible],
   /// [IngestEntryTypeVersionAhead]) and a reserved system event the library
-  /// does not append ([IngestReservedEventRefused]), verifies Chain 1, checks
+  /// does not append ([IngestReservedEventRefused]), verifies Chain 1 (the
+  /// event's own hash against its content and every hop's arrival hash,
+  /// refusing with [IngestChainBroken]), checks
   /// idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
@@ -2044,12 +2046,14 @@ class EventStore {
     //     any read or write.
     _refuseUndeclaredReservedEvent(incoming);
 
-    // 1. Chain 1 verify on the incoming provenance.
+    // 1. Chain 1: the event's own hash against its content, then each
+    //    hop's arrival hash.
     final verdict = _verifyChainOn(incoming);
     if (!verdict.isValid) {
       final failure = verdict.failures.first;
       throw IngestChainBroken(
         eventId: incoming.eventId,
+        kind: failure.kind,
         hopIndex: failure.position,
         expectedHash: failure.expectedHash,
         actualHash: failure.actualHash,
@@ -2192,12 +2196,13 @@ class EventStore {
   // Verification APIs
   // -----------------------------------------------------------------------
 
-  /// Walk Chain 1 on [event].metadata.provenance backward from tail to origin.
-  /// Non-throwing; returns a [ChainVerdict] with `ok=true` when every
-  /// `arrival_hash` matches the recomputed hash at that hop, `ok=false`
-  /// otherwise with a list of [ChainFailure] instances describing each broken
-  /// link. Returns `ok=true` for origin-only events (single-entry provenance —
-  /// no inter-hop links to verify).
+  /// Walk Chain 1 on [event]: check that its `event_hash` is the canonical
+  /// hash of its content, then walk `metadata.provenance` backward from tail
+  /// to origin. Non-throwing; returns a [ChainVerdict] with `ok=true` when the
+  /// event's hash and every `arrival_hash` match the hash recomputed at that
+  /// hop, `ok=false` otherwise with a list of [ChainFailure] instances
+  /// describing each broken link. An origin-only event (single-entry
+  /// provenance) has no inter-hop link; its own hash is still checked.
   ///
   /// See design spec §2.11.
   Future<ChainVerdict> verifyEventChain(StoredEvent event) async {
@@ -2320,7 +2325,34 @@ class EventStore {
       );
     }
     final failures = <ChainFailure>[];
-    // Walk from tail back to hop 1 (skip origin at index 0).
+    // Implements: EVS-PRD-ingest/D
+    // the event's own hash is recomputed from the record it carries,
+    //   whatever the length of its provenance, so an origin-only event whose
+    //   `event_hash` is not the hash of its content is refused before any
+    //   write.
+    // Implements: EVS-PRD-hash-chain-integrity/A
+    // the hash an event states must be the canonical hash of its content.
+    //
+    // `event_hash` is the hash the last hop stored the record under: the
+    // originator's for an origin-only event, the last receiver's for a
+    // relayed one. Each hop seals exactly the record it holds (its own
+    // provenance entry and its own `sequence_number` included) and sends
+    // that record verbatim, so the record on the wire hashes to its
+    // `event_hash` with no reconstruction. The hops below the last are
+    // covered by the arrival-hash walk that follows.
+    final recomputedTail = _eventHash(event.toMap());
+    if (recomputedTail != event.eventHash) {
+      failures.add(
+        ChainFailure(
+          position: provenance.length - 1,
+          kind: ChainFailureKind.eventHashMismatch,
+          expectedHash: event.eventHash,
+          actualHash: recomputedTail,
+        ),
+      );
+    }
+    // Walk from tail back to hop 1: each receiver hop's `arrival_hash` is
+    // the hash of the record as the hop before it stored it.
     //
     // Each receiver hop reassigns the stored event's `sequence_number` to
     // its local counter. To recompute the hash at hop k-1,

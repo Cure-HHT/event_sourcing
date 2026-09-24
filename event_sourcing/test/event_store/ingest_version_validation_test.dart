@@ -57,9 +57,9 @@ Uint8List _envelope({
     'initiator': const UserInitiator('remote-user-1').toJson(),
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
-    'event_hash': 'synthetic-origin-hash-$eventId',
     'previous_event_hash': null,
   };
+  eventMap['event_hash'] = canonicalEventHash(eventMap);
   final envelope = BatchEnvelope(
     batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
     batchId: 'test-ingest-${now.microsecondsSinceEpoch}',

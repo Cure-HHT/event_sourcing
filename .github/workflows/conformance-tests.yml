@@ -143,6 +143,9 @@ jobs:
       - name: Destination-wedges view and reserved-event scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_destination_wedges_view_test.dart
         working-directory: event_sourcing
+      - name: Ingest event-hash scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_hash_test.dart
+        working-directory: event_sourcing
       - name: Boot and data-format compatibility scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_data_format_compatibility_test.dart
         working-directory: event_sourcing

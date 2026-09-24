@@ -8,6 +8,11 @@
 
 /// Reason a single chain link failed verification.
 enum ChainFailureKind {
+  /// The event's `event_hash` did not equal the canonical hash of the
+  /// record it carries (`canonicalEventHash`): the hash its last hop sealed
+  /// the record with does not match the record's content.
+  eventHashMismatch,
+
   /// `provenance[k].arrival_hash` did not equal the recomputed hash at hop k.
   arrivalHashMismatch,
 

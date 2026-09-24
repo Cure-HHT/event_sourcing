@@ -1403,7 +1403,7 @@ void runVersionCompatibilityScenarios(
 var _peerCounter = 0;
 
 /// An event as a peer at [entryTypeVersion] and [dataFormat] sends it: one
-/// origin provenance entry, so the receiver has no hop link to verify.
+/// origin provenance entry and the canonical hash of its record.
 StoredEvent _peerEvent({
   required EntryTypeVersion entryTypeVersion,
   required DataFormatVersion dataFormat,
@@ -1413,7 +1413,7 @@ StoredEvent _peerEvent({
 }) {
   _peerCounter += 1;
   final now = DateTime.utc(2026, 9, 1, 12, 0, _peerCounter);
-  return StoredEvent.fromMap(<String, Object?>{
+  final record = <String, Object?>{
     'event_id': 'peer-event-$_peerCounter-${now.microsecondsSinceEpoch}',
     'aggregate_id': aggregateId ?? 'peer-aggregate-$_peerCounter',
     'aggregate_type': 'note',
@@ -1437,9 +1437,10 @@ StoredEvent _peerEvent({
     'initiator': const UserInitiator('peer-user').toJson(),
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
-    'event_hash': 'peer-origin-hash-$_peerCounter',
     'previous_event_hash': null,
-  }, 0);
+  };
+  record['event_hash'] = canonicalEventHash(record);
+  return StoredEvent.fromMap(record, 0);
 }
 
 Uint8List _batchOf(StoredEvent event, {String? batchFormatVersion}) =>

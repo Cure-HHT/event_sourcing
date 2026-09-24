@@ -1306,7 +1306,10 @@ design:
   hash chain against what's stored, extends the provenance chain, and
   admits the events into the local log. Ingested events flow into
   projections and subscriptions identically to locally-produced events.
-- The substrate verifies hash-chain integrity on every ingested event.
+- The substrate verifies hash-chain integrity on every ingested event:
+  the event's `event_hash` against the canonical hash of its content,
+  and each receiver hop's arrival hash against the record the hop before
+  it stored.
   A break produces a `ChainVerdict` recording exactly where the chain
   diverged from what was expected; the local install can refuse the
   batch and emit an audit event explaining the refusal.

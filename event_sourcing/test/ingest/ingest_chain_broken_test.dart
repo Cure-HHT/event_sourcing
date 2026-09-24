@@ -124,6 +124,9 @@ void main() {
         provList[1] = hop1;
         metadata['provenance'] = provList;
         tamperedMap['metadata'] = metadata;
+        // Reseal the record so its own hash verifies and the broken arrival
+        // hash is what the receiver refuses.
+        tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
         // 4. Third destination must throw IngestChainBroken at hopIndex=1.
@@ -132,6 +135,11 @@ void main() {
           throwsA(
             isA<IngestChainBroken>()
                 .having((e) => e.eventId, 'eventId', original.eventId)
+                .having(
+                  (e) => e.kind,
+                  'kind',
+                  ChainFailureKind.arrivalHashMismatch,
+                )
                 .having((e) => e.hopIndex, 'hopIndex', 1),
           ),
         );
@@ -189,14 +197,20 @@ void main() {
           'flow_token': null,
           'client_timestamp': now.toIso8601String(),
           'previous_event_hash': null,
-          'event_hash': 'some-hash-value-for-test',
         };
+        recordMap['event_hash'] = canonicalEventHash(recordMap);
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);
 
         await expectLater(
           () => dest.store.ingestEvent(syntheticEvent),
           throwsA(
-            isA<IngestChainBroken>().having((e) => e.hopIndex, 'hopIndex', 1),
+            isA<IngestChainBroken>()
+                .having(
+                  (e) => e.kind,
+                  'kind',
+                  ChainFailureKind.arrivalHashMismatch,
+                )
+                .having((e) => e.hopIndex, 'hopIndex', 1),
           ),
         );
       } finally {

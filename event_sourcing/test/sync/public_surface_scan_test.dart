@@ -373,7 +373,6 @@ const _unexportedOperations = <String, String>{
   'verifyNoEntryTypeDowngrade': 'reads view target versions; changes nothing',
   'PublishCollector.events': 'reads what the run collected',
   'PublishCollector.rowChanges': 'reads what the run collected',
-  'canonicalEventHash': 'pure function; changes nothing',
   'LibVersionEvents.initialized': 'constant',
   'LibVersionEvents.changed': 'constant',
   'isLocallyAppended': 'pure function; changes nothing',
@@ -418,6 +417,7 @@ const _topLevelOperations = <String, String>{
   'bootstrapEventStore': 'opens the event store and its registries',
   'bootstrapRoleAssignments':
       'appends the role-assignment seed through the event store',
+  'canonicalEventHash': 'pure function; changes nothing',
   'classifyStorageException': 'pure function; changes nothing',
   'computeRoleAssignmentAggregateId': 'pure function; changes nothing',
   'configurationFingerprint': 'pure function; changes nothing',

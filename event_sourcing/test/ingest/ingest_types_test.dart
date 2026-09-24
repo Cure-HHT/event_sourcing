@@ -49,12 +49,14 @@ void main() {
     test('carries diagnostic fields in toString', () {
       const err = IngestChainBroken(
         eventId: 'e1',
+        kind: ChainFailureKind.arrivalHashMismatch,
         hopIndex: 1,
         expectedHash: 'a',
         actualHash: 'b',
       );
       expect(err.toString(), contains('e1'));
       expect(err.toString(), contains('hopIndex: 1'));
+      expect(err.toString(), contains('kind: arrivalHashMismatch'));
     });
   });
 }

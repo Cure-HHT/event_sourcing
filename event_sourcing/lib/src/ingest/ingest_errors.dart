@@ -10,6 +10,7 @@
 //   idempotency semantics (identical re-presentations are safe; divergent
 //   re-presentations are rejected)
 
+import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/versions.dart';
 
 /// Thrown by `EventStore.ingestBatch` / `ingestEvent` / `BatchEnvelope.decode`
@@ -23,24 +24,44 @@ class IngestDecodeFailure implements Exception {
   String toString() => 'IngestDecodeFailure: $message';
 }
 
-/// Thrown by `ingestBatch` / `ingestEvent` when an incoming event's Chain 1
-/// does not verify — some hop's `arrival_hash` does not match the hash the
-/// prior state would produce.
+/// Thrown by `ingestBatch` / `ingestEvent`, before any write, when an
+/// incoming event's Chain 1 does not verify: its `event_hash` is not the
+/// canonical hash of the record it carries
+/// ([ChainFailureKind.eventHashMismatch]), some hop's `arrival_hash` does not
+/// match the hash the prior state would produce
+/// ([ChainFailureKind.arrivalHashMismatch]), or it carries no provenance
+/// ([ChainFailureKind.provenanceMissing]). `ingestBatch` refuses the whole
+/// batch.
 class IngestChainBroken implements Exception {
   const IngestChainBroken({
     required this.eventId,
+    required this.kind,
     required this.hopIndex,
     required this.expectedHash,
     required this.actualHash,
   });
+
+  /// The refused event.
   final String eventId;
+
+  /// Which link failed.
+  final ChainFailureKind kind;
+
+  /// The `provenance[]` index of the failing hop: for
+  /// [ChainFailureKind.eventHashMismatch], the last hop, whose hash
+  /// `event_hash` is; -1 when provenance is missing.
   final int hopIndex;
+
+  /// The hash the event states: its `event_hash`, or the hop's
+  /// `arrival_hash`.
   final String expectedHash;
+
+  /// The hash recomputed from the event's content.
   final String actualHash;
   @override
   String toString() =>
-      'IngestChainBroken(eventId: $eventId, hopIndex: $hopIndex, '
-      'expected: $expectedHash, actual: $actualHash)';
+      'IngestChainBroken(eventId: $eventId, kind: ${kind.name}, '
+      'hopIndex: $hopIndex, expected: $expectedHash, actual: $actualHash)';
 }
 
 /// Thrown by `ingestBatch` / `ingestEvent` when an incoming event's
