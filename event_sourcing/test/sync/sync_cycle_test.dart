@@ -99,6 +99,11 @@ void main() {
     // without being blocked on the slow one.
     test('drains run concurrently across registered destinations', () async {
       final gate = Completer<void>();
+      // Released on failure too, so a blocked send cannot hold the cycle's
+      // close in tearDown and time out the tests that follow.
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
 
       final slow = FakeDestination(
         id: 'slow',
@@ -116,8 +121,12 @@ void main() {
       final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       final cycleFuture = sync.call();
 
-      // Give the scheduler a few microtasks so the fast drain completes.
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // The fast drain completes while the slow one is still blocked.
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (fast.sent.isEmpty || slow.sent.isEmpty) {
+        if (DateTime.now().isAfter(deadline)) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       expect(fast.sent, hasLength(1));
       // Slow destination received the payload but is still blocked.
       expect(slow.sent, hasLength(1));
@@ -152,6 +161,9 @@ void main() {
     // pass, and the second call completes when that pass is done.
     test('a reentrant call runs one more pass and waits for it', () async {
       final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
       final dest = FakeDestination(
         id: 'fake',
         script: [const SendOk()],
@@ -163,9 +175,12 @@ void main() {
 
       final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
       final first = sync.call();
-      // Give the first call enough microtasks to reach `send` and block
-      // on the gate.
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      // Wait for the first call to reach `send` and block on the gate.
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (dest.sent.isEmpty) {
+        if (DateTime.now().isAfter(deadline)) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       expect(sync.state, SyncCycleState.running);
       expect(dest.sent, hasLength(1));
 

@@ -1256,9 +1256,11 @@ void runDeliveryCycleScenarios(
                 isEmpty,
                 reason: 'no send under the lost epoch',
               );
+              // The gate records the epoch after the send is recorded as
+              // started, so the wait is for the recorded epoch itself.
               await until(() async {
                 await timers.fire();
-                return d.started.isNotEmpty;
+                return first.isNotEmpty;
               }, reason: 'delivery after re-acquisition');
               expect(first.single, greaterThan(epoch!));
             },
