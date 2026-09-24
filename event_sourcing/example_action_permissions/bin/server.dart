@@ -13,6 +13,7 @@
 // carries the deployment's revision identifier into the cycle's declared
 // configuration.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
@@ -327,20 +328,17 @@ Future<void> main(List<String> args) async {
     exit(1);
   }
 
-  final cycleWatch = host.watchCycle(
-    cycle,
-    log: stdout.writeln,
-    onStoppedForGood: stopFenced,
-  );
-
   // On SIGINT or SIGTERM: stop serving, close the delivery cycle (it
   // releases the drain lock, so a standby process takes over), then close
-  // the event store and its backend.
+  // the event store and its backend. The handlers are installed before the
+  // cycle's state is reported, so a signal that follows the report is
+  // always handled.
+  Timer? cycleWatch;
   Future<void> shutdown(ProcessSignal signal) async {
     if (shuttingDown) return;
     shuttingDown = true;
     stdout.writeln('demo server stopping ($signal)');
-    cycleWatch.cancel();
+    cycleWatch?.cancel();
     await host.close();
     await cycle.close(timeout: const Duration(seconds: 10));
     await components.eventStore.close();
@@ -349,6 +347,12 @@ Future<void> main(List<String> args) async {
 
   ProcessSignal.sigint.watch().listen(shutdown);
   if (!Platform.isWindows) ProcessSignal.sigterm.watch().listen(shutdown);
+
+  cycleWatch = host.watchCycle(
+    cycle,
+    log: stdout.writeln,
+    onStoppedForGood: stopFenced,
+  );
 }
 
 Directory _resolveDataDir(String? overridePath) {
