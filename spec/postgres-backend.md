@@ -95,8 +95,10 @@ operates on. The tables are:
   version and the data-format version as major and minor `INTEGER` columns
   (`entry_type_version_major`, `entry_type_version_minor`,
   `lib_format_version_major`, `lib_format_version_minor`), `data`,
-  `metadata` and `initiator` (JSONB), `client_timestamp` (TIMESTAMPTZ),
-  `event_hash` and `previous_event_hash` (TEXT), and `flow_token` (TEXT).
+  `metadata` and `initiator` (JSONB), `client_timestamp` (TIMESTAMPTZ)
+  with `client_timestamp_text` (TEXT, the timestamp's string as the event
+  hash covers it), `event_hash` and `previous_event_hash` (TEXT), and
+  `flow_token` (TEXT).
   Secondary indexes on `(aggregate_id, sequence_number)`,
   `client_timestamp` and `(event_type, sequence_number)` support the
   filter combinations enumerated in

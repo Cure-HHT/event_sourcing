@@ -42,9 +42,40 @@ class StoredEvent {
     required this.eventHash,
     this.flowToken,
     this.previousEventHash,
-  });
+  }) : _clientTimestampText = null,
+       _initiatorJson = null;
+
+  const StoredEvent._parsed({
+    required this.key,
+    required this.eventId,
+    required this.aggregateId,
+    required this.aggregateType,
+    required this.entryType,
+    required this.entryTypeVersion,
+    required this.libFormatVersion,
+    required this.eventType,
+    required this.sequenceNumber,
+    required this.data,
+    required this.metadata,
+    required this.initiator,
+    required this.clientTimestamp,
+    required this.eventHash,
+    required this.flowToken,
+    required this.previousEventHash,
+    required String? clientTimestampText,
+    required Map<String, Object?>? initiatorJson,
+  }) : _clientTimestampText = clientTimestampText,
+       _initiatorJson = initiatorJson;
 
   /// Create from a database record map.
+  ///
+  /// Every field the event hash covers (`canonicalEventHash`) reads back
+  /// from [toMap] as it stands in [map]: `client_timestamp` keeps its
+  /// string as written (whatever its fraction digits or offset spelling),
+  /// and `initiator` keeps its map, including keys and absent optional keys
+  /// that [Initiator] does not model. So a record parsed here hashes as it
+  /// did before parsing, and the copy a backend stores and a relay forwards
+  /// still hashes to the `event_hash` it carries.
   ///
   /// Every required field is explicitly type-checked via an `is!` guard and
   /// a thrown [FormatException] naming the offending key. A malformed event
@@ -105,7 +136,7 @@ class StoredEvent {
         'StoredEvent: "previous_event_hash" must be a String when present',
       );
     }
-    return StoredEvent(
+    return StoredEvent._parsed(
       key: key,
       eventId: eventId,
       aggregateId: aggregateId,
@@ -122,6 +153,10 @@ class StoredEvent {
       clientTimestamp: clientTimestamp,
       eventHash: eventHash,
       previousEventHash: previousHashRaw as String?,
+      clientTimestampText: map['client_timestamp']! as String,
+      initiatorJson: Map<String, Object?>.unmodifiable(
+        Map<String, Object?>.from(initiatorRaw),
+      ),
     );
   }
 
@@ -235,6 +270,16 @@ class StoredEvent {
   /// Hash of previous event (for chain integrity).
   final String? previousEventHash;
 
+  /// The `client_timestamp` string of the record this event was parsed
+  /// from; null for an event built with the constructor, whose [toMap]
+  /// writes [clientTimestamp] with `toIso8601String`.
+  final String? _clientTimestampText;
+
+  /// The `initiator` map of the record this event was parsed from; null for
+  /// an event built with the constructor, whose [toMap] writes
+  /// [initiator]'s `toJson`.
+  final Map<String, Object?>? _initiatorJson;
+
   /// First `ProvenanceEntry` in this event's chain — the originator's hop.
   ///
   /// Materialized from `metadata['provenance'][0]` on each access. Convenience
@@ -269,7 +314,7 @@ class StoredEvent {
   /// promoted payload through the fold interpreters without modifying the
   /// in-memory original or rebuilding the event hash chain.
   StoredEvent withData(Map<String, Object?> newData) {
-    return StoredEvent(
+    return StoredEvent._parsed(
       key: key,
       eventId: eventId,
       aggregateId: aggregateId,
@@ -286,10 +331,14 @@ class StoredEvent {
       eventHash: eventHash,
       flowToken: flowToken,
       previousEventHash: previousEventHash,
+      clientTimestampText: _clientTimestampText,
+      initiatorJson: _initiatorJson,
     );
   }
 
-  /// Convert to a map for storage/serialization.
+  /// Convert to a map for storage/serialization. For an event parsed with
+  /// [StoredEvent.fromMap], `client_timestamp` and `initiator` are written
+  /// as the parsed record held them.
   Map<String, dynamic> toMap() {
     return {
       'event_id': eventId,
@@ -302,9 +351,12 @@ class StoredEvent {
       'sequence_number': sequenceNumber,
       'data': data,
       'metadata': metadata,
-      'initiator': initiator.toJson(),
+      'initiator': _initiatorJson == null
+          ? initiator.toJson()
+          : Map<String, Object?>.of(_initiatorJson),
       'flow_token': flowToken,
-      'client_timestamp': clientTimestamp.toIso8601String(),
+      'client_timestamp':
+          _clientTimestampText ?? clientTimestamp.toIso8601String(),
       'event_hash': eventHash,
       'previous_event_hash': previousEventHash,
     };

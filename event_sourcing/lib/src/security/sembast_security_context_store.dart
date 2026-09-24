@@ -68,11 +68,10 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
-    final cutoffIso = cutoff.toUtc().toIso8601String();
     final finder = Finder(
       filter: Filter.and([
         Filter.isNull('redacted_at'),
-        Filter.lessThanOrEquals('recorded_at', cutoffIso),
+        recordedAtNotAfter(cutoff),
       ]),
     );
     final records = await _store.find(sembastTxn, finder: finder);
@@ -90,10 +89,7 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
-    final cutoffIso = cutoff.toUtc().toIso8601String();
-    final finder = Finder(
-      filter: Filter.lessThanOrEquals('recorded_at', cutoffIso),
-    );
+    final finder = Finder(filter: recordedAtNotAfter(cutoff));
     final records = await _store.find(sembastTxn, finder: finder);
     return records
         .map(

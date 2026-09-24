@@ -183,5 +183,12 @@ final class DataFormatVersion implements Comparable<DataFormatVersion> {
   if (minor < 0) {
     throw FormatException('$typeName: "minor" must be >= 0, got $minor');
   }
+  // A version is exactly its two numbers, so its `toJson` reproduces the
+  // map it was read from; an event's hash covers that map.
+  for (final key in json.keys) {
+    if (key != 'major' && key != 'minor') {
+      throw FormatException('$typeName: unexpected key "$key"');
+    }
+  }
   return (major, minor);
 }

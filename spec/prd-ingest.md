@@ -35,6 +35,8 @@ G. The ingest path SHALL admit every event that passes this requirement's integr
 
 **Why verify hash-chain integrity at ingest?** Ingest is the boundary between an external deployment's audit trail and this deployment's. Admitting an event whose chain doesn't verify would let upstream tampering propagate downstream. Verifying at the boundary catches it once, at the place that has both the upstream chain and the local trust anchor.
 
+**What the verification covers.** Each incoming event's own hash is recomputed over the record exactly as it arrived, whatever the length of its provenance, and each receiver hop's arrival hash over the record as the hop before it stored it. The hash is unkeyed (EVS-PRD-hash-chain-integrity, Rationale), so the check catches a record altered in transit or at rest without its hashes being recomputed, not one whose hashes were recomputed to match. The incoming event's `previous_event_hash` is not checked against the event before it in the upstream log.
+
 **Why is ingest idempotent?** Cross-tier transports retry. The same upstream event may be presented at the ingest path many times (delivery retries, replay after restart, reconfiguration of upstream destinations). Idempotency on event identity (the upstream hash) makes retries safe and ensures the local log records each upstream event exactly once.
 
 **Why does ingest participate in canonicalization rules rather than being canonical by default?** Multi-source editing is the case where ingested events and locally-originated events both target the same aggregate. The library's resolution of "which events are canonical for this aggregate?" is governed by configurable canonicalization rules (the multi-source-canonicalization PRD specifies the rule grammar), which can be configured per aggregate or per aggregate type. Ingest doesn't presume canonicality; it presents the event for the rule to evaluate.
@@ -43,6 +45,8 @@ G. The ingest path SHALL admit every event that passes this requirement's integr
 
 ## Changelog
 
+- 2026-09-24 | 79454334 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale states what ingest verification covers
 - 2026-08-10 | 79454334 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-08-06 | a8814731 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section

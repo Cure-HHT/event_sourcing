@@ -106,6 +106,16 @@ void runStorageBackendConformanceTests(
       () => initialized,
       securityStoreOf,
     );
+    _registerEventSpellingTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
+    _registerRecordedAtComparisonTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
     _registerCloseTests(() => backend, () => initialized);
   });
 }
@@ -4124,6 +4134,289 @@ void _registerEventVersionColumnTests(
           'findEventByIdInTxn',
         );
       });
+    });
+  });
+}
+
+// -------- Hashed fields as the sender spelled them --------
+//
+// An event's hash covers its `client_timestamp` string and its `initiator`
+// map as they were hashed. A backend that stores an event must read it back
+// with those two fields exactly as it was given them, so that a copy it
+// forwards still hashes to the `event_hash` it carries.
+void _registerEventSpellingTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('hashed fields as spelled', () {
+    const spellings = <String, (String, Map<String, Object?>)>{
+      'a timestamp without a fraction': (
+        '2026-05-01T12:00:00Z',
+        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
+      ),
+      'a timestamp with a +00:00 offset': (
+        '2026-05-01T12:00:00+00:00',
+        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
+      ),
+      'a timestamp with a +02:00 offset': (
+        '2026-05-01T14:00:00.5+02:00',
+        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
+      ),
+      'a timestamp with microseconds': (
+        '2026-05-01T12:00:00.000001Z',
+        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
+      ),
+      'an initiator with a key this build does not read': (
+        '2026-05-01T12:00:00.000Z',
+        <String, Object?>{
+          'type': 'user',
+          'user_id': 'u-spelling',
+          'display_name': 'A. User',
+        },
+      ),
+      'an automation initiator without its optional key': (
+        '2026-05-01T12:00:00.000Z',
+        <String, Object?>{'type': 'automation', 'service': 'svc'},
+      ),
+    };
+    var n = 0;
+    for (final spelling in spellings.entries) {
+      // Verifies: EVS-PRD-hash-chain-integrity/D
+      // Verifies: EVS-DEV-postgres-backend/D
+      test('an event with ${spelling.key} reads back as it was stored '
+          'through every read path, and its hash verifies', () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        n += 1;
+        final eventId = 'spelled-$n';
+        final aggregateId = 'agg-spelled-$n';
+        final flowToken = 'flow-spelled-$n';
+        final (timestamp, initiator) = spelling.value;
+        late StoredEvent appended;
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          final record = <String, Object?>{
+            'event_id': eventId,
+            'aggregate_id': aggregateId,
+            'aggregate_type': 'note',
+            'entry_type': 'spelled_note',
+            'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
+            'lib_format_version': LibVersion.dataFormat.toJson(),
+            'event_type': 'finalized',
+            'sequence_number': seq,
+            'data': <String, Object?>{'title': 's', 'note': null},
+            'metadata': <String, Object?>{
+              'change_reason': null,
+              'provenance': <Map<String, Object?>>[
+                <String, Object?>{
+                  'hop': 'mobile-device',
+                  'received_at': '2026-05-01T12:00:00Z',
+                  'identifier': 'install-A',
+                  'software_version': 'app@1.0.0',
+                },
+              ],
+            },
+            'initiator': initiator,
+            'flow_token': flowToken,
+            'client_timestamp': timestamp,
+            'previous_event_hash': null,
+          };
+          record['event_hash'] = canonicalEventHash(record);
+          appended = StoredEvent.fromMap(record, seq);
+          await backend.appendEvent(txn, appended);
+          await securityStoreOf(backend).writeInTxn(
+            txn,
+            EventSecurityContext(
+              eventId: eventId,
+              recordedAt: DateTime.utc(2026, 5, 1, 12),
+            ),
+          );
+        });
+
+        final reads = await _readEveryPath(
+          backend,
+          eventId: eventId,
+          aggregateId: aggregateId,
+          flowToken: flowToken,
+          initiator: Initiator.fromJson(initiator),
+        );
+        for (final read in reads.entries) {
+          final event = read.value;
+          expect(event, isNotNull, reason: read.key);
+          final map = event!.toMap();
+          expect(map['client_timestamp'], timestamp, reason: read.key);
+          expect(map['initiator'], initiator, reason: read.key);
+          expect(
+            event.clientTimestamp.isAtSameMomentAs(DateTime.parse(timestamp)),
+            isTrue,
+            reason: read.key,
+          );
+          expect(canonicalEventHash(map), appended.eventHash, reason: read.key);
+          expect(event.eventHash, appended.eventHash, reason: read.key);
+        }
+      });
+    }
+  });
+}
+
+/// The event [eventId] as every read path of [backend] returns it, keyed by
+/// the path's name. [flowToken] and [initiator] must be the event's own and
+/// the event must have a security context beside it, for `queryAudit`.
+Future<Map<String, StoredEvent?>> _readEveryPath(
+  StorageBackend backend, {
+  required String eventId,
+  required String aggregateId,
+  required String flowToken,
+  required Initiator initiator,
+}) async {
+  StoredEvent? pick(Iterable<StoredEvent> events) {
+    for (final e in events) {
+      if (e.eventId == eventId) return e;
+    }
+    return null;
+  }
+
+  final reads = <String, StoredEvent?>{
+    'findEventsForAggregate': pick(
+      await backend.findEventsForAggregate(aggregateId),
+    ),
+    'findAllEvents': pick(await backend.findAllEvents()),
+    'findEventById': await backend.findEventById(eventId),
+    'readEventsReverse': pick(await backend.readEventsReverse().toList()),
+    'queryAudit': pick(
+      (await backend.queryAudit(flowToken: flowToken)).rows.map((r) => r.event),
+    ),
+    'queryAudit by initiator': pick(
+      (await backend.queryAudit(
+        initiator: initiator,
+        flowToken: flowToken,
+      )).rows.map((r) => r.event),
+    ),
+  };
+  await backend.transaction((txn) async {
+    reads['findEventsForAggregateInTxn'] = pick(
+      await backend.findEventsForAggregateInTxn(txn, aggregateId),
+    );
+    reads['findAllEventsInTxn'] = pick(await backend.findAllEventsInTxn(txn));
+    reads['findEventByIdInTxn'] = await backend.findEventByIdInTxn(
+      txn,
+      eventId,
+    );
+  });
+  return reads;
+}
+
+// -------- recorded_at comparisons --------
+//
+// A security context's `recorded_at` is compared as an instant, so a record
+// a microsecond on either side of a cutoff or a bound falls on the correct
+// side of it, whatever the number of fraction digits its stored form has.
+void _registerRecordedAtComparisonTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('recorded_at comparisons', () {
+    final at = DateTime.utc(2026, 6, 1, 12);
+    final justAfter = at.add(const Duration(microseconds: 1));
+    final justBefore = at.subtract(const Duration(microseconds: 1));
+
+    /// Security contexts recorded a microsecond before [at], at [at], and a
+    /// microsecond after it, each beside an event of flow `flow-recorded`.
+    Future<void> seed(StorageBackend backend) async {
+      final times = <String, DateTime>{
+        'rec-before': justBefore,
+        'rec-at': at,
+        'rec-after': justAfter,
+      };
+      for (final entry in times.entries) {
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent(
+              key: 0,
+              eventId: entry.key,
+              aggregateId: 'agg-recorded',
+              aggregateType: 'note',
+              entryType: 'epistaxis_event',
+              entryTypeVersion: const EntryTypeVersion(1, 0),
+              libFormatVersion: const DataFormatVersion(2, 0),
+              eventType: 'Event',
+              sequenceNumber: seq,
+              data: const <String, dynamic>{},
+              metadata: const <String, dynamic>{},
+              initiator: const UserInitiator('u'),
+              clientTimestamp: entry.value,
+              eventHash: 'hash-${entry.key}',
+              flowToken: 'flow-recorded',
+            ),
+          );
+          await securityStoreOf(backend).writeInTxn(
+            txn,
+            EventSecurityContext(eventId: entry.key, recordedAt: entry.value),
+          );
+        });
+      }
+    }
+
+    Set<String> idsOf(Iterable<EventSecurityContext> rows) => <String>{
+      for (final r in rows) r.eventId,
+    };
+
+    // Verifies: EVS-PRD-portability/C
+    // Verifies: EVS-DEV-postgres-backend/D
+    test(
+      'findOlderThanInTxn and findUnredactedOlderThanInTxn include a '
+      'record at the cutoff and exclude one a microsecond after it',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        await seed(backend);
+        final store = securityStoreOf(backend);
+        await backend.transaction((txn) async {
+          expect(idsOf(await store.findOlderThanInTxn(txn, at)), <String>{
+            'rec-before',
+            'rec-at',
+          });
+          expect(
+            idsOf(await store.findUnredactedOlderThanInTxn(txn, at)),
+            <String>{'rec-before', 'rec-at'},
+          );
+          expect(
+            idsOf(await store.findOlderThanInTxn(txn, justBefore)),
+            <String>{'rec-before'},
+          );
+          expect(
+            idsOf(await store.findUnredactedOlderThanInTxn(txn, justAfter)),
+            <String>{'rec-before', 'rec-at', 'rec-after'},
+          );
+        });
+      },
+    );
+
+    // Verifies: EVS-PRD-portability/C
+    // Verifies: EVS-DEV-postgres-backend/D
+    test('queryAudit from and to include a record at the bound and exclude '
+        'one a microsecond outside it', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await seed(backend);
+      Future<Set<String>> audit({DateTime? from, DateTime? to}) async =>
+          <String>{
+            for (final r in (await backend.queryAudit(
+              flowToken: 'flow-recorded',
+              from: from,
+              to: to,
+            )).rows)
+              r.event.eventId,
+          };
+      expect(await audit(from: at), <String>{'rec-at', 'rec-after'});
+      expect(await audit(from: justAfter), <String>{'rec-after'});
+      expect(await audit(to: at), <String>{'rec-before', 'rec-at'});
+      expect(await audit(to: justBefore), <String>{'rec-before'});
+      expect(await audit(from: at, to: at), <String>{'rec-at'});
     });
   });
 }

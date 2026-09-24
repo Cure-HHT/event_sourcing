@@ -27,6 +27,10 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 **What does the hash cover?** An event's hash is derived from its id, aggregate id, entry type, entry-type version, data-format version, event type, sequence number, data, initiator, flow token, client timestamp, the hash of the event before it, and its metadata, provenance included. The two versions are covered because they decide whether a receiver accepts an event and how it promotes it (EVS-DEV-version-compatibility/J).
 
+**Which spelling of a field is hashed?** Each field is hashed as the record holds it: the client timestamp as its string, the initiator as its map with every key it carries. Reading a record keeps those spellings, and every backend stores and returns them unchanged, so a stored copy, and the copy a relay forwards, hashes to the value its sender sealed. The library writes the times it stamps in UTC.
+
+**What the hash does not establish.** The hash is an unkeyed SHA-256. It detects a change to a hashed field made without recomputing every hash the change affects; it does not detect a forger who recomputes them. The aggregate type is not part of the hash input, so a change to it alone is not detected. At ingest, an incoming event's `previous_event_hash` is not checked against the event before it in the upstream log.
+
 **Why hash the canonical form, not the wire form?** Wire forms vary across platforms, library versions, and locales — JSON property order, Unicode normalization, numeric representation. A hash over the wire form would let a benign re-serialization look like tampering. Hashing the canonical form (per EVS-PRD-canonical-json) gives observers on different platforms a single, reproducible value to compare.
 
 **Why third-party verifiability?** Regulatory audit cannot rest on trusting the system being audited. By making integrity verifiable from the log alone — no application code, no privileged credentials — the library separates "the system that produced the log" from "the system that verifies it", which is the property that lets a regulator independently confirm the audit trail.
@@ -35,6 +39,8 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 ## Changelog
 
+- 2026-09-24 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale states which spelling is hashed and what the hash does not establish
 - 2026-09-23 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale names the hashed fields, the entry-type and data-format versions included
 - 2026-08-10 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

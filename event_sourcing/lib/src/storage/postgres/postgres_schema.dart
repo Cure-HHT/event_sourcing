@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS events (
   metadata             JSONB        NOT NULL,
   initiator            JSONB        NOT NULL,
   client_timestamp     TIMESTAMPTZ  NOT NULL,
+  client_timestamp_text  TEXT       NOT NULL,
   event_hash           TEXT         NOT NULL,
   flow_token           TEXT,
   previous_event_hash  TEXT

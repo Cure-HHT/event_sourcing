@@ -270,10 +270,11 @@ void main() {
                   aggregate_type, entry_type, entry_type_version_major,
                   entry_type_version_minor, lib_format_version_major,
                   lib_format_version_minor, event_type, data, metadata,
-                  initiator, client_timestamp, event_hash)
+                  initiator, client_timestamp, client_timestamp_text,
+                  event_hash)
                 VALUES (@seq, @id, 'agg', 'note', 'versioned_note', @em,
                   @en, @lm, @ln, 'finalized', '{}'::jsonb, '{}'::jsonb,
-                  '{}'::jsonb, now(), 'h')
+                  '{}'::jsonb, now(), '2026-09-01T12:00:00.000Z', 'h')
               """),
               parameters: <String, Object?>{
                 'seq': seq,

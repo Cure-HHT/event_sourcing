@@ -881,6 +881,7 @@ class PostgresBackend extends StorageBackend {
         'create one.',
       );
     }
+    final record = event.toMap();
     await session.execute(
       Sql.named('''
         INSERT INTO events (
@@ -888,13 +889,15 @@ class PostgresBackend extends StorageBackend {
           entry_type_version_major, entry_type_version_minor,
           lib_format_version_major, lib_format_version_minor, event_type,
           data, metadata, initiator,
-          client_timestamp, event_hash, flow_token, previous_event_hash
+          client_timestamp, client_timestamp_text,
+          event_hash, flow_token, previous_event_hash
         ) VALUES (
           @seq, @eventId, @aggId, @aggType, @entryType,
           @entryTypeMajor, @entryTypeMinor,
           @libFmtMajor, @libFmtMinor, @eventType,
           @data:jsonb, @metadata:jsonb, @initiator:jsonb,
-          @clientTs:timestamptz, @eventHash, @flowToken, @prevHash
+          @clientTs:timestamptz, @clientTsText,
+          @eventHash, @flowToken, @prevHash
         )
       '''),
       parameters: {
@@ -910,8 +913,13 @@ class PostgresBackend extends StorageBackend {
         'eventType': event.eventType,
         'data': event.data,
         'metadata': event.metadata,
-        'initiator': event.initiator.toJson(),
+        // The hash covers `initiator` and `client_timestamp` as the record
+        // spells them, so both are stored in that spelling: the initiator
+        // map whole, and the timestamp's string beside the instant that
+        // filters and orders by it.
+        'initiator': record['initiator'],
         'clientTs': event.clientTimestamp.toUtc(),
+        'clientTsText': record['client_timestamp'],
         'eventHash': event.eventHash,
         'flowToken': event.flowToken,
         'prevHash': event.previousEventHash,
@@ -2729,11 +2737,39 @@ class PostgresBackend extends StorageBackend {
     final params = <String, dynamic>{};
 
     if (initiator != null) {
-      // events.initiator is JSONB; the `@v:jsonb = jsonb` comparison is
-      // structural (independent of key order) so the comparison matches
-      // SembastBackend's `events.where((e) => e.initiator == initiator)`.
-      wheres.add('events.initiator = @initJson:jsonb');
-      params['initJson'] = initiator.toJson();
+      // events.initiator holds the map the event's record carried, which
+      // may have keys Initiator does not model or lack an optional one, so
+      // the predicate compares the fields Initiator equality reads, as
+      // SembastBackend's `events.where((e) => e.initiator == initiator)`
+      // does. `->>` reads an absent key and a JSON null alike as NULL.
+      final (kind, fields) = switch (initiator) {
+        UserInitiator(:final userId) => (
+          'user',
+          <String, String?>{'user_id': userId},
+        ),
+        AutomationInitiator(:final service, :final triggeringEventId) => (
+          'automation',
+          <String, String?>{
+            'service': service,
+            'triggering_event_id': triggeringEventId,
+          },
+        ),
+        AnonymousInitiator(:final ipAddress) => (
+          'anonymous',
+          <String, String?>{'ip_address': ipAddress},
+        ),
+      };
+      wheres.add("events.initiator ->> 'type' = @initType");
+      params['initType'] = kind;
+      var i = 0;
+      for (final field in fields.entries) {
+        i += 1;
+        wheres.add(
+          "events.initiator ->> '${field.key}' "
+          'IS NOT DISTINCT FROM @initField$i::text',
+        );
+        params['initField$i'] = field.value;
+      }
     }
     if (flowToken != null) {
       wheres.add('events.flow_token = @flowTok');
@@ -2773,17 +2809,7 @@ class PostgresBackend extends StorageBackend {
     // nextCursor.
     final result = await _pool.execute(
       Sql.named('''
-        SELECT
-          events.sequence_number, events.event_id, events.aggregate_id,
-          events.aggregate_type, events.entry_type,
-          events.entry_type_version_major, events.entry_type_version_minor,
-          events.lib_format_version_major, events.lib_format_version_minor,
-          events.event_type,
-          events.data, events.metadata, events.initiator,
-          events.client_timestamp, events.event_hash, events.flow_token,
-          events.previous_event_hash,
-          security_context.recorded_at, security_context.ip_address,
-          security_context.payload
+        SELECT events.*, security_context.payload AS security_payload
         FROM events
         INNER JOIN security_context
           ON events.event_id = security_context.event_id
@@ -2798,30 +2824,15 @@ class PostgresBackend extends StorageBackend {
     final returnedCount = result.length > limit ? limit : result.length;
     for (var i = 0; i < returnedCount; i++) {
       final row = result[i];
-      final event = StoredEvent(
-        key: row[0] as int,
-        sequenceNumber: row[0] as int,
-        eventId: row[1] as String,
-        aggregateId: row[2] as String,
-        aggregateType: row[3] as String,
-        entryType: row[4] as String,
-        entryTypeVersion: _entryTypeVersionOf(row[5], row[6]),
-        libFormatVersion: _dataFormatVersionOf(row[7], row[8]),
-        eventType: row[9] as String,
-        data: _asJsonMap(row[10]),
-        metadata: _asJsonMap(row[11]),
-        initiator: Initiator.fromJson(_asJsonMap(row[12])),
-        clientTimestamp: (row[13] as DateTime).toUtc(),
-        eventHash: row[14] as String,
-        flowToken: row[15] as String?,
-        previousEventHash: row[16] as String?,
-      );
+      final event = _storedEventFromRow(row);
       // The security row is reified from the JSONB `payload` column so
       // every field on EventSecurityContext (user_agent, session_id,
       // geo_*, redacted_at, redaction_reason) lands populated — the
       // top-level `recorded_at` / `ip_address` columns exist only for
       // server-side filtering and ORDER BY.
-      final context = EventSecurityContext.fromJson(_asJsonMap(row[19]));
+      final context = EventSecurityContext.fromJson(
+        _asJsonMap(row.toColumnMap()['security_payload']),
+      );
       rows.add(AuditRow(event: event, securityContext: context));
     }
     String? nextCursor;
@@ -2910,41 +2921,40 @@ class PostgresBackend extends StorageBackend {
   /// from nested JSONB decoding) into the `Map<String, dynamic>` shape
   /// [StoredEvent] expects on its public surface.
   ///
-  /// Skips `StoredEvent.fromMap` because that factory expects
-  /// `client_timestamp` to be an ISO 8601 *string*; the binary protocol
-  /// has already produced a `DateTime` for us, so we construct the value
-  /// type directly to avoid a stringify-then-parse round-trip.
+  /// The event is parsed with `StoredEvent.fromMap` from the record the
+  /// row holds, so `client_timestamp` (from `client_timestamp_text`) and
+  /// `initiator` read back in the spelling the event hash covers. The
+  /// versions are read from their columns through the strict parser.
   StoredEvent _storedEventFromRow(ResultRow row) {
     final m = row.toColumnMap();
-    return StoredEvent(
-      // `key` mirrors `sequence_number` for the Postgres backend: the
-      // sembast backend's `key` is the auto-assigned record key, which
-      // happens to track sequence_number for the events store. On
-      // Postgres there's no separate key surface — sequence_number IS
-      // the primary key.
-      key: m['sequence_number'] as int,
-      eventId: m['event_id'] as String,
-      aggregateId: m['aggregate_id'] as String,
-      aggregateType: m['aggregate_type'] as String,
-      entryType: m['entry_type'] as String,
-      entryTypeVersion: _entryTypeVersionOf(
+    final seq = m['sequence_number'] as int;
+    // `key` mirrors `sequence_number` for the Postgres backend: the
+    // sembast backend's `key` is the auto-assigned record key, which
+    // happens to track sequence_number for the events store. On Postgres
+    // there's no separate key surface — sequence_number IS the primary key.
+    return StoredEvent.fromMap(<String, Object?>{
+      'event_id': m['event_id'],
+      'aggregate_id': m['aggregate_id'],
+      'aggregate_type': m['aggregate_type'],
+      'entry_type': m['entry_type'],
+      'entry_type_version': _entryTypeVersionOf(
         m['entry_type_version_major'],
         m['entry_type_version_minor'],
-      ),
-      libFormatVersion: _dataFormatVersionOf(
+      ).toJson(),
+      'lib_format_version': _dataFormatVersionOf(
         m['lib_format_version_major'],
         m['lib_format_version_minor'],
-      ),
-      eventType: m['event_type'] as String,
-      sequenceNumber: m['sequence_number'] as int,
-      data: _asJsonMap(m['data']),
-      metadata: _asJsonMap(m['metadata']),
-      initiator: Initiator.fromJson(_asJsonMap(m['initiator'])),
-      flowToken: m['flow_token'] as String?,
-      clientTimestamp: (m['client_timestamp'] as DateTime).toUtc(),
-      eventHash: m['event_hash'] as String,
-      previousEventHash: m['previous_event_hash'] as String?,
-    );
+      ).toJson(),
+      'event_type': m['event_type'],
+      'sequence_number': seq,
+      'data': _asJsonMap(m['data']),
+      'metadata': _asJsonMap(m['metadata']),
+      'initiator': _asJsonMap(m['initiator']),
+      'flow_token': m['flow_token'],
+      'client_timestamp': m['client_timestamp_text'],
+      'event_hash': m['event_hash'],
+      'previous_event_hash': m['previous_event_hash'],
+    }, seq);
   }
 
   /// Reify a Postgres `fifo_entries` row into a [FifoEntry]. JSONB

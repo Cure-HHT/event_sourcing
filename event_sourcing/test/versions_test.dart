@@ -97,6 +97,10 @@ void main() {
         'negative minor': (<String, Object?>{'major': 1, 'minor': -1}, 'minor'),
         'zero major': (<String, Object?>{'major': 0, 'minor': 0}, 'major'),
         'not a map': (1, 'major'),
+        'an extra key': (
+          <String, Object?>{'major': 1, 'minor': 0, 'patch': 0},
+          'patch',
+        ),
       };
       for (final entry in cases.entries) {
         final (value, key) = entry.value;
@@ -172,6 +176,10 @@ void main() {
         'negative minor': (<String, Object?>{'major': 2, 'minor': -3}, 'minor'),
         'zero major': (<String, Object?>{'major': 0, 'minor': 1}, 'major'),
         'integer': (2, 'major'),
+        'an extra key': (
+          <String, Object?>{'major': 2, 'minor': 0, 'patch': 1},
+          'patch',
+        ),
       };
       for (final entry in cases.entries) {
         final (value, key) = entry.value;

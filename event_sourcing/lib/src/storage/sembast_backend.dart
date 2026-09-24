@@ -2365,17 +2365,10 @@ class SembastBackend extends StorageBackend {
       securityFilters.add(Filter.equals('ip_address', ipAddress));
     }
     if (from != null) {
-      securityFilters.add(
-        Filter.greaterThanOrEquals(
-          'recorded_at',
-          from.toUtc().toIso8601String(),
-        ),
-      );
+      securityFilters.add(recordedAtNotBefore(from));
     }
     if (to != null) {
-      securityFilters.add(
-        Filter.lessThanOrEquals('recorded_at', to.toUtc().toIso8601String()),
-      );
+      securityFilters.add(recordedAtNotAfter(to));
     }
     // NOTE: we re-sort the join result in memory (see `rows.sort(...)`
     // below) so the in-memory order is authoritative for pagination; the
@@ -2550,3 +2543,21 @@ class _AuditCursorPoint {
 final class _RunsLostToOtherWriters implements Exception {
   const _RunsLostToOtherWriters();
 }
+
+/// The instant a stored security-context record's `recorded_at` names.
+DateTime _recordedAtOf(RecordSnapshot<Object?, Object?> record) =>
+    DateTime.parse(record['recorded_at']! as String);
+
+/// A filter admitting security-context records recorded at or before
+/// [bound]. The stored `recorded_at` is an ISO 8601 string whose fraction
+/// has three or six digits, so text order is not time order within a
+/// millisecond; the filter compares the parsed instants.
+@internal
+Filter recordedAtNotAfter(DateTime bound) =>
+    Filter.custom((record) => !_recordedAtOf(record).isAfter(bound));
+
+/// A filter admitting security-context records recorded at or after
+/// [bound], comparing parsed instants as [recordedAtNotAfter] does.
+@internal
+Filter recordedAtNotBefore(DateTime bound) =>
+    Filter.custom((record) => !_recordedAtOf(record).isBefore(bound));

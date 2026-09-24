@@ -83,6 +83,19 @@ StoredEvent _altered(StoredEvent event, Map<String, Object?> changes) =>
       ...changes,
     }, 0);
 
+/// The changes that set [key] of the last provenance entry of [event] to
+/// [value].
+Map<String, Object?> _withLastHop(StoredEvent event, String key, Object value) {
+  final provenance = <Map<String, Object?>>[
+    for (final entry in event.metadata['provenance']! as List)
+      Map<String, Object?>.from(entry as Map),
+  ];
+  provenance.last[key] = value;
+  return <String, Object?>{
+    'metadata': <String, Object?>{...event.metadata, 'provenance': provenance},
+  };
+}
+
 Uint8List _batchOf(List<StoredEvent> events) => BatchEnvelope(
   batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
   batchId: 'ingest-hash-batch-${events.first.eventId}',
@@ -94,6 +107,172 @@ Uint8List _batchOf(List<StoredEvent> events) => BatchEnvelope(
     for (final e in events) Map<String, Object?>.from(e.toMap()),
   ],
 ).encode();
+
+/// A record as a hand-built sender seals it, with an origin provenance
+/// entry, [clientTimestamp] and [initiator] spelled as given, a `null`
+/// member in its data and its metadata, and an `event_hash` that is the
+/// canonical hash of the record as it stands.
+Map<String, Object?> _spelledRecord({
+  required String clientTimestamp,
+  required Map<String, Object?> initiator,
+}) {
+  _built += 1;
+  final record = <String, Object?>{
+    'event_id': 'hash-spelled-$_built-${DateTime.now().microsecondsSinceEpoch}',
+    'aggregate_id': 'hash-spelled-aggregate-$_built',
+    'aggregate_type': 'note',
+    'entry_type': _noteType,
+    'entry_type_version': _noteDef.registeredVersion.toJson(),
+    'lib_format_version': LibVersion.dataFormat.toJson(),
+    'event_type': 'finalized',
+    'sequence_number': 8000 + _built,
+    'data': <String, Object?>{'title': 'spelled $_built', 'note': null},
+    'metadata': <String, Object?>{
+      'change_reason': null,
+      'provenance': <Map<String, Object?>>[
+        <String, Object?>{
+          'hop': _peerSource.hopId,
+          'received_at': clientTimestamp,
+          'identifier': _peerSource.identifier,
+          'software_version': _peerSource.softwareVersion,
+        },
+      ],
+    },
+    'initiator': initiator,
+    'flow_token': null,
+    'client_timestamp': clientTimestamp,
+    'previous_event_hash': null,
+  };
+  record['event_hash'] = canonicalEventHash(record);
+  return record;
+}
+
+/// Sender spellings of the hashed fields that a parse-and-reserialize would
+/// rewrite: each is `(client_timestamp, initiator)`.
+const Map<String, (String, Map<String, Object?>)> _spellings =
+    <String, (String, Map<String, Object?>)>{
+      'a client timestamp without a fraction': (
+        '2026-09-01T12:00:00Z',
+        <String, Object?>{'type': 'user', 'user_id': 'peer-user'},
+      ),
+      'a client timestamp with a +00:00 offset': (
+        '2026-09-01T12:00:00+00:00',
+        <String, Object?>{'type': 'user', 'user_id': 'peer-user'},
+      ),
+      'an initiator with a key this build does not read': (
+        '2026-09-01T12:00:00.000Z',
+        <String, Object?>{
+          'type': 'user',
+          'user_id': 'peer-user',
+          'display_name': 'Peer User',
+        },
+      ),
+      'an automation initiator without its optional key': (
+        '2026-09-01T12:00:00.000Z',
+        <String, Object?>{'type': 'automation', 'service': 'peer-service'},
+      ),
+    };
+
+/// Changes to one hashed field of a [_spelledRecord] each, the `event_hash`
+/// kept.
+final Map<String, Map<String, Object?> Function(Map<String, Object?>)>
+_tampers = <String, Map<String, Object?> Function(Map<String, Object?>)>{
+  'event_id': (r) => <String, Object?>{'event_id': '${r['event_id']}-x'},
+  'aggregate_id': (r) => <String, Object?>{
+    'aggregate_id': '${r['aggregate_id']}-x',
+  },
+  'entry_type': (r) => const <String, Object?>{'entry_type': 'other_note'},
+  'entry_type_version': (r) => <String, Object?>{
+    'entry_type_version': const EntryTypeVersion(1, 1).toJson(),
+  },
+  'lib_format_version': (r) => <String, Object?>{
+    'lib_format_version': LibVersion.dataFormat.nextMinor.toJson(),
+  },
+  'event_type': (r) => const <String, Object?>{'event_type': 'checkpoint'},
+  'sequence_number': (r) => <String, Object?>{
+    'sequence_number': (r['sequence_number']! as int) + 1,
+  },
+  'data': (r) => const <String, Object?>{
+    'data': <String, Object?>{'title': 'tampered', 'note': null},
+  },
+  'a null data member removed': (r) => <String, Object?>{
+    'data': <String, Object?>{'title': (r['data']! as Map)['title']},
+  },
+  'initiator': (r) => <String, Object?>{
+    'initiator': const UserInitiator('someone-else').toJson(),
+  },
+  'an initiator key this build does not read': (r) => <String, Object?>{
+    'initiator': <String, Object?>{
+      ...(r['initiator']! as Map<String, Object?>),
+      'display_name': 'Someone Else',
+    },
+  },
+  'flow_token': (r) => const <String, Object?>{'flow_token': 'flow-x'},
+  'client_timestamp': (r) => <String, Object?>{
+    'client_timestamp': DateTime.parse(
+      r['client_timestamp']! as String,
+    ).add(const Duration(seconds: 1)).toUtc().toIso8601String(),
+  },
+  'client_timestamp respelled at the same instant': (r) => <String, Object?>{
+    'client_timestamp': DateTime.parse(
+      r['client_timestamp']! as String,
+    ).toUtc().toIso8601String(),
+  },
+  'previous_event_hash': (r) => const <String, Object?>{
+    'previous_event_hash': 'some-earlier-hash',
+  },
+  'metadata': (r) => <String, Object?>{
+    'metadata': <String, Object?>{
+      ...(r['metadata']! as Map<String, Object?>),
+      'change_reason': 'tampered',
+    },
+  },
+};
+
+Uint8List _batchOfRecords(List<Map<String, Object?>> records) => BatchEnvelope(
+  batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
+  batchId: 'ingest-hash-batch-${records.first['event_id']}',
+  senderHop: _peerSource.hopId,
+  senderIdentifier: _peerSource.identifier,
+  senderSoftwareVersion: _peerSource.softwareVersion,
+  sentAt: DateTime.utc(2026, 9, 1, 12),
+  events: records,
+).encode();
+
+/// The two ingest entry points over records as a sender spelled them: the
+/// batch carries each record as it is, and `ingestEvent` takes each record
+/// as `StoredEvent.fromMap` parses it.
+final Map<String, Future<void> Function(EventStore, List<Map<String, Object?>>)>
+_recordIngestPaths =
+    <String, Future<void> Function(EventStore, List<Map<String, Object?>>)>{
+      'ingestBatch': (store, records) async {
+        await store.ingestBatch(
+          _batchOfRecords(records),
+          wireFormat: BatchEnvelope.wireFormat,
+        );
+      },
+      'ingestEvent': (store, records) async {
+        for (final r in records) {
+          await store.ingestEvent(StoredEvent.fromMap(r, 0));
+        }
+      },
+    };
+
+const Source _downstreamSource = Source(
+  hopId: 'archive',
+  identifier: 'downstream-install',
+  softwareVersion: 'test@1.0.0',
+);
+
+/// A wall clock that is not UTC: `toIso8601String` of the times it returns
+/// carries no zone designator.
+DateTime Function() _localClock() {
+  var tick = 0;
+  return () {
+    tick += 1;
+    return DateTime(2026, 9, 1, 12, 0, 0, 0, tick);
+  };
+}
 
 /// The two ingest entry points, each taking the whole list of events: the
 /// batch in one envelope, or each event in its own `ingestEvent` call.
@@ -162,11 +341,14 @@ void runIngestHashScenarios(
       available = true;
       db = database;
       backend = await db.openBackend();
+      // The store under test runs on a wall clock that is not UTC, so the
+      // events it appends and the hops it stamps are timed by one.
       store = await EventStore.openForTest(
         storage: backend,
         entryTypes: EntryTypeRegistry()..register(_noteDef),
         source: _receiverSource,
         securityContexts: db.securityFor(backend),
+        clock: _localClock(),
       );
     });
 
@@ -212,6 +394,217 @@ void runIngestHashScenarios(
         reason: 'the relay stamped its own hop',
       );
       return relayed;
+    }
+
+    /// A store of its own on an in-memory Sembast database, downstream of
+    /// the store under test.
+    Future<EventStore> downstream() async {
+      opened += 1;
+      return _openSembastStore(
+        'ingest-hash-downstream-$label-$opened.db',
+        _downstreamSource,
+      );
+    }
+
+    for (final path in _recordIngestPaths.entries) {
+      group('${path.key} of records as a sender spelled them', () {
+        for (final spelling in _spellings.entries) {
+          // Verifies: EVS-PRD-ingest/B+D
+          // Verifies: EVS-PRD-hash-chain-integrity/A+D
+          test('admits an event with ${spelling.key}, stores the record as '
+              'it arrived, and a downstream store admits the copy it '
+              'forwards', () async {
+            if (!available) return;
+            final (timestamp, initiator) = spelling.value;
+            final record = _spelledRecord(
+              clientTimestamp: timestamp,
+              initiator: initiator,
+            );
+            await path.value(store, <Map<String, Object?>>[record]);
+            final stored = (await backend.findEventById(
+              record['event_id']! as String,
+            ))!;
+            final storedMap = stored.toMap();
+            expect(storedMap['client_timestamp'], timestamp);
+            expect(storedMap['initiator'], initiator);
+            expect(storedMap['data'], record['data']);
+            expect(canonicalEventHash(storedMap), stored.eventHash);
+            final provenance = stored.metadata['provenance']! as List;
+            expect(
+              (provenance.last as Map)['arrival_hash'],
+              record['event_hash'],
+            );
+
+            final next = await downstream();
+            await next.ingestEvent(stored);
+            final forwarded = (await next.backend.findEventById(
+              stored.eventId,
+            ))!;
+            expect((forwarded.metadata['provenance']! as List).length, 3);
+            expect((await next.verifyEventChain(forwarded)).isValid, isTrue);
+          });
+        }
+
+        for (final tamper in _tampers.entries) {
+          // Verifies: EVS-PRD-ingest/D
+          // Verifies: EVS-PRD-hash-chain-integrity/A
+          test('refuses an event whose ${tamper.key} changed after it was '
+              'sealed, writing nothing', () async {
+            if (!available) return;
+            final record = _spelledRecord(
+              clientTimestamp: '2026-09-01T12:00:00Z',
+              initiator: <String, Object?>{
+                'type': 'user',
+                'user_id': 'peer-user',
+                'display_name': 'Peer User',
+              },
+            );
+            final tampered = <String, Object?>{
+              ...record,
+              ...tamper.value(record),
+            };
+            expect(
+              canonicalEventHash(tampered),
+              isNot(record['event_hash']),
+              reason: 'the change is to a hashed field',
+            );
+            final before = await snapshot();
+            await expectLater(
+              path.value(store, <Map<String, Object?>>[tampered]),
+              throwsA(
+                isA<IngestChainBroken>()
+                    .having(
+                      (e) => e.kind,
+                      'kind',
+                      ChainFailureKind.eventHashMismatch,
+                    )
+                    .having(
+                      (e) => e.expectedHash,
+                      'expectedHash',
+                      record['event_hash'],
+                    )
+                    .having(
+                      (e) => e.actualHash,
+                      'actualHash',
+                      canonicalEventHash(tampered),
+                    ),
+              ),
+            );
+            expect(await snapshot(), before);
+          });
+        }
+
+        // Verifies: EVS-PRD-ingest/D
+        test('refuses an event whose metadata is null as missing its '
+            'provenance, writing nothing', () async {
+          if (!available) return;
+          final record = <String, Object?>{
+            ..._spelledRecord(
+              clientTimestamp: '2026-09-01T12:00:00Z',
+              initiator: const UserInitiator('peer-user').toJson(),
+            ),
+            'metadata': null,
+          };
+          record['event_hash'] = canonicalEventHash(record);
+          final before = await snapshot();
+          await expectLater(
+            path.value(store, <Map<String, Object?>>[record]),
+            throwsA(
+              isA<IngestChainBroken>().having(
+                (e) => e.kind,
+                'kind',
+                ChainFailureKind.provenanceMissing,
+              ),
+            ),
+          );
+          expect(await snapshot(), before);
+        });
+      });
+    }
+
+    // Verifies: EVS-PRD-ingest/D
+    // Verifies: EVS-PRD-hash-chain-integrity/D
+    test('an event appended on a wall clock that is not UTC is stored with '
+        'UTC timestamps and admitted by a receiver', () async {
+      if (!available) return;
+      final appended = (await store.append(
+        entryType: _noteType,
+        aggregateId: 'local-clock',
+        aggregateType: 'note',
+        eventType: 'finalized',
+        data: <String, Object?>{'title': 'local clock'},
+        initiator: _init,
+      ))!;
+      final stored = (await backend.findEventById(appended.eventId))!;
+      final storedMap = stored.toMap();
+      expect(storedMap['client_timestamp'], endsWith('Z'));
+      expect(
+        ((stored.metadata['provenance']! as List).single as Map)['received_at'],
+        endsWith('Z'),
+      );
+      expect(
+        storedMap['client_timestamp'],
+        appended.toMap()['client_timestamp'],
+      );
+      expect(canonicalEventHash(storedMap), stored.eventHash);
+
+      final receiver = await downstream();
+      await receiver.ingestEvent(stored);
+      expect(await receiver.backend.findEventById(stored.eventId), isNotNull);
+    });
+
+    // Verifies: EVS-PRD-ingest/D
+    test('a receiver hop stamped on a wall clock that is not UTC records its '
+        'arrival in UTC, and a downstream store admits the copy', () async {
+      if (!available) return;
+      final event = _originEvent();
+      await store.ingestEvent(event);
+      final stored = (await backend.findEventById(event.eventId))!;
+      expect(
+        ((stored.metadata['provenance']! as List).last as Map)['received_at'],
+        endsWith('Z'),
+      );
+      final next = await downstream();
+      await next.ingestEvent(stored);
+      expect(await next.backend.findEventById(stored.eventId), isNotNull);
+    });
+
+    // A change confined to the last hop's own provenance entry, or to the
+    // sequence number the last hop assigned, leaves every arrival hash
+    // below it intact: the arrival-hash walk alone admits it, and only the
+    // event-hash check refuses it.
+    final lastHopTampers = <String, Map<String, Object?> Function(StoredEvent)>{
+      "the last hop's received_at": (e) =>
+          _withLastHop(e, 'received_at', '2020-01-01T00:00:00.000Z'),
+      "the last hop's identifier": (e) =>
+          _withLastHop(e, 'identifier', 'someone-else'),
+      "the last hop's sequence number": (e) => <String, Object?>{
+        'sequence_number': e.sequenceNumber + 100,
+      },
+    };
+    for (final tamper in lastHopTampers.entries) {
+      // Verifies: EVS-PRD-ingest/D
+      // Verifies: EVS-PRD-hash-chain-integrity/A
+      test('refuses a relayed event with ${tamper.key} changed, which only '
+          'the event-hash check catches, writing nothing', () async {
+        if (!available) return;
+        final relayed = await relayedEvent();
+        final event = _altered(relayed, tamper.value(relayed));
+        final verdict = await store.verifyEventChain(event);
+        expect(
+          verdict.failures.map((f) => f.kind),
+          <ChainFailureKind>[ChainFailureKind.eventHashMismatch],
+          reason: 'every arrival hash still verifies',
+        );
+        final before = await snapshot();
+        for (final ingest in _ingestPaths.values) {
+          await expectLater(
+            ingest(store, <StoredEvent>[event]),
+            throwsA(_eventHashRefused(event)),
+          );
+        }
+        expect(await snapshot(), before);
+      });
     }
 
     for (final path in _ingestPaths.entries) {

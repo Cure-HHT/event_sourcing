@@ -162,15 +162,29 @@ created by an earlier release is dropped and provisioned again with
   view's promoter steps do not lead from is refused by name, before any
   write. A malformed event version is reported as `IngestDecodeFailure`.
 - Ingest verifies every event's own hash, whatever the length of its
-  provenance: `ingestEvent` and `ingestBatch` recompute the canonical hash
-  of the record as it arrives and refuse the event before any write when it
-  differs from its `event_hash` (`ingestBatch` refuses the whole batch).
+  provenance, and refuses the event before any write when it differs from
+  its `event_hash` (`ingestBatch` refuses the whole batch). `ingestBatch`
+  hashes each record exactly as the envelope carried it, not the parsed
+  event;
+  `ingestEvent` hashes `incoming.toMap()` of the event its caller parsed.
   An event with only its origin provenance entry is checked too, so a sender
   that builds events by hand seals each record with `canonicalEventHash`
   (now exported) after its last change; an invented `event_hash` is refused.
   `IngestChainBroken` carries the failing link's `kind`
   (`ChainFailureKind`), whose new `eventHashMismatch` names this refusal,
-  and `verifyEventChain` reports the same failure.
+  and `verifyEventChain` reports the same failure. The hash is an unkeyed
+  SHA-256 and does not cover `aggregate_type`; an incoming event's
+  `previous_event_hash` is not checked against the upstream log.
+- `StoredEvent.fromMap` keeps every field the event hash covers as the
+  record spelled it: `toMap` writes back the `client_timestamp` string (a
+  timestamp without a fraction, or with a `+00:00` offset, is not
+  rewritten) and the `initiator` map, including keys `Initiator` does not
+  model. Both backends store and return those spellings, so a received
+  record, its stored copy and the copy a relay forwards hash alike. A
+  version map with a key other than `major` and `minor` is malformed.
+- The event store writes every time it stamps (an event's
+  `client_timestamp`, a provenance entry's `received_at`) in UTC, whatever
+  zone an injected `clock` returns.
 
 ### Versions and the boot
 
@@ -267,7 +281,9 @@ created by an earlier release is dropped and provisioned again with
   stays inclusive. A caller that relied on an inclusive end passes an end
   one microsecond later. Both bounds compare instants, so on Sembast an
   event within the same millisecond as a bound falls on the correct side of
-  it.
+  it. So do the Sembast security-context store's retention cutoffs
+  (`findOlderThanInTxn`, `findUnredactedOlderThanInTxn`) and `queryAudit`'s
+  `from` and `to`.
 - `EventStore.appendInTxn` requires the `PublishCollector` its
   `runTransaction` body received.
 - `debugLogSink` is removed; library log lines go to `dart:developer` and
@@ -300,6 +316,12 @@ created by an earlier release is dropped and provisioned again with
   (`PostgresBackend.generationStatus`).
 - A transaction re-run after a serialization failure that wrote the
   sequence counter's table first takes that table's lock.
+- The `events` table stores `client_timestamp_text`, the timestamp's
+  string as the event hash covers it, beside the `client_timestamp`
+  instant, and stores `initiator` as the event's record holds it;
+  `queryAudit(initiator:)` matches the fields `Initiator` models. The
+  column is part of schema version 1, so a database provisioned by an
+  earlier 0.5.0 build is provisioned again.
 - `PostgresIdempotencyStore.over` is `@visibleForTesting`; `forBackend` is
   fenced.
 

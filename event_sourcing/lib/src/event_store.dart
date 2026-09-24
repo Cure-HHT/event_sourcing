@@ -1278,7 +1278,12 @@ class EventStore {
     );
   }
 
-  DateTime _now() => (_clock ?? () => DateTime.now().toUtc())();
+  /// The current instant in UTC, whatever zone the injected clock returns
+  /// it in: every time the store writes into a hashed field (an event's
+  /// `client_timestamp`, a provenance entry's `received_at`) is written as
+  /// a `Z`-suffixed string, which every backend stores and reads back
+  /// unchanged.
+  DateTime _now() => (_clock ?? DateTime.now)().toUtc();
 
   /// Append a new event. Returns the persisted `StoredEvent`, or `null`
   /// when `dedupeByContent` is true and the content matches the
@@ -1908,6 +1913,11 @@ class EventStore {
   /// idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
+  ///
+  /// The caller already holds the parsed event, so its hash is checked over
+  /// `incoming.toMap()`. For an event parsed with [StoredEvent.fromMap] that
+  /// is the record it was parsed from, as far as the hash reaches: parsing
+  /// keeps every hashed field as the record spelled it.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
     return _runInTxnWithPublish((txn, collector) async {
       return _ingestOneInTxn(
@@ -1926,6 +1936,12 @@ class EventStore {
   /// malformed bytes; throws the refusal of any event, [ingestEvent]'s
   /// refusals included, rolling back the whole batch; throws [IngestIdentityMismatch] (rolling back the whole
   /// batch) if any subject has a hash conflict with an already-stored event.
+  ///
+  /// Each event's `event_hash` is checked against the canonical hash of its
+  /// record exactly as the envelope carried it, not of the parsed event. The
+  /// parsed event keeps every hashed field as that record spelled it, so
+  /// the stored copy, and the copy a later delivery forwards, hash as the
+  /// record did.
   ///
   /// See design spec §2.5.
   Future<IngestBatchResult> ingestBatch(
@@ -1971,6 +1987,7 @@ class EventStore {
           storedEvent,
           batchContext: batchContext,
           collector: collector,
+          wireRecord: eventMap,
         );
         outcomes.add(outcome);
       }
@@ -1983,12 +2000,15 @@ class EventStore {
   /// `ingestBatch` loop.
   ///
   /// [batchContext] is non-null when called from `ingestBatch`, null when
-  /// called from [ingestEvent].
+  /// called from [ingestEvent]. [wireRecord] is the record [incoming] was
+  /// parsed from, as the batch envelope carried it; the event's own hash is
+  /// checked over it when given.
   Future<PerEventIngestOutcome> _ingestOneInTxn(
     Transaction txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
     PublishCollector? collector,
+    Map<String, Object?>? wireRecord,
   }) async {
     // 0. Version compatibility, before any read or write: the data-format
     //    major must equal this build's, and the entry-type major must not be
@@ -2048,7 +2068,7 @@ class EventStore {
 
     // 1. Chain 1: the event's own hash against its content, then each
     //    hop's arrival hash.
-    final verdict = _verifyChainOn(incoming);
+    final verdict = _verifyChainOn(incoming, wireRecord: wireRecord);
     if (!verdict.isValid) {
       final failure = verdict.failures.first;
       throw IngestChainBroken(
@@ -2294,8 +2314,13 @@ class EventStore {
       _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
-  /// verdict. Used by [ingestEvent] and [verifyEventChain].
-  ChainVerdict _verifyChainOn(StoredEvent event) {
+  /// verdict. Used by [ingestEvent] and [verifyEventChain]. The event's own
+  /// hash is checked over [wireRecord] when given (the record as a batch
+  /// envelope carried it), else over `event.toMap()`.
+  ChainVerdict _verifyChainOn(
+    StoredEvent event, {
+    Map<String, Object?>? wireRecord,
+  }) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List) {
       return const ChainVerdict(
@@ -2326,21 +2351,30 @@ class EventStore {
     }
     final failures = <ChainFailure>[];
     // Implements: EVS-PRD-ingest/D
-    // the event's own hash is recomputed from the record it carries,
-    //   whatever the length of its provenance, so an origin-only event whose
-    //   `event_hash` is not the hash of its content is refused before any
+    // the event's own hash is recomputed from the record as it arrived,
+    //   whatever the length of its provenance, so an event whose
+    //   `event_hash` is not the hash of that record is refused before any
     //   write.
     // Implements: EVS-PRD-hash-chain-integrity/A
     // the hash an event states must be the canonical hash of its content.
     //
     // `event_hash` is the hash the last hop stored the record under: the
     // originator's for an origin-only event, the last receiver's for a
-    // relayed one. Each hop seals exactly the record it holds (its own
-    // provenance entry and its own `sequence_number` included) and sends
-    // that record verbatim, so the record on the wire hashes to its
-    // `event_hash` with no reconstruction. The hops below the last are
-    // covered by the arrival-hash walk that follows.
-    final recomputedTail = _eventHash(event.toMap());
+    // relayed one. Each hop seals the record it holds (its own provenance
+    // entry and its own `sequence_number` included) and a delivery sends
+    // that stored record. A batch's record is hashed exactly as the
+    // envelope carried it; `StoredEvent.fromMap` keeps every hashed field
+    // as the record spelled it, so a parsed event's `toMap()` hashes the
+    // same, and so does the copy this hop stores and forwards. The hops
+    // below the last are covered by the arrival-hash walk that follows,
+    // which rebuilds each earlier hop's record from the same fields.
+    //
+    // Limits: the hash is an unkeyed SHA-256, so the check detects a change
+    // made without recomputing every hash it affects, not a forger who
+    // recomputes them. `aggregate_type` is outside the hash input.
+    // `previous_event_hash` is not checked against the event before it in
+    // the upstream log.
+    final recomputedTail = _eventHash(wireRecord ?? event.toMap());
     if (recomputedTail != event.eventHash) {
       failures.add(
         ChainFailure(

@@ -13,9 +13,18 @@ import 'package:crypto/crypto.dart';
 /// event hash and metadata (provenance included).
 ///
 /// [recordMap] is an event record in its stored shape (`StoredEvent.toMap`);
-/// any `event_hash` key in it is ignored. Every append path, the ingest
-/// re-stamp and Chain 1 verification derive an event's hash here, so a
-/// hash computed at one of them reproduces at every other.
+/// any `event_hash` key in it is ignored, and so is `aggregate_type`, which
+/// the hash does not cover. Each field is hashed as the record holds it:
+/// `client_timestamp` as its string, `initiator` as its map with every key
+/// it carries. Every append path, the ingest re-stamp and Chain 1
+/// verification derive an event's hash here, and `StoredEvent.fromMap`
+/// keeps every hashed field as the record spelled it, so a hash computed at
+/// one of them reproduces at every other. A sender that builds records by
+/// hand seals each one here after its last change; ingest recomputes the
+/// hash over the record exactly as it arrived.
+///
+/// The hash is an unkeyed SHA-256: it detects a change made without
+/// recomputing the hash, not one whose author recomputes it.
 String canonicalEventHash(Map<String, Object?> recordMap) {
   final hashInput = <String, Object?>{
     'event_id': recordMap['event_id'],
