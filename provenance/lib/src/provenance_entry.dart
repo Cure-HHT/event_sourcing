@@ -7,6 +7,7 @@
 //   deserialization without loss of information)
 
 import 'package:provenance/src/batch_context.dart';
+import 'package:provenance/src/iso8601_instant.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.
 ///
@@ -15,9 +16,11 @@ import 'package:provenance/src/batch_context.dart';
 /// `event.metadata.provenance`. The class is pure data; the
 /// append-and-don't-mutate invariants live in the `appendHop()` helper.
 ///
-/// `receivedAt` is a UTC or timezone-offset-explicit instant; `fromJson`
-/// rejects offsetless ISO 8601 strings to preserve the ALCOA+
-/// *Contemporaneous* guarantee.
+/// `receivedAt` is an instant; `fromJson` reads `received_at` with
+/// [parseIso8601Instant], refusing a timestamp without an explicit offset,
+/// outside the four-digit years or with a calendar field out of range, so
+/// every host reads the same instant from it and the ALCOA+
+/// *Contemporaneous* guarantee holds across the audit chain.
 ///
 /// `identifier` and `softwareVersion` shape rules (-D, -E) are
 /// **permanent caller obligations**, not deferred validation: the source of
@@ -27,7 +30,7 @@ import 'package:provenance/src/batch_context.dart';
 /// conforming values.
 ///
 // received_at, identifier, software_version, and optional transform_version.
-// received_at offset validation enforced at the JSON boundary;
+// received_at timestamp form enforced at the JSON boundary;
 // identifier and software_version shapes are caller obligations by design.
 // arrival_hash, previous_ingest_hash, ingest_sequence_number, batch_context,
 // origin_sequence_number.
@@ -46,9 +49,12 @@ class ProvenanceEntry {
   });
 
   // missing any required field, with wrong types, or with a received_at that
-  // lacks an explicit timezone offset (Z or ±HH[:]MM). An offsetless string
-  // would be silently interpreted as local time, breaking the ALCOA+
-  // Contemporaneous guarantee in a cross-system audit chain.
+  // parseIso8601Instant refuses. An offsetless string would be read as local
+  // time, and an out-of-range field rolled over to another instant, breaking
+  // the ALCOA+ Contemporaneous guarantee in a cross-system audit chain.
+  // Implements: EVS-DEV-event-record/C
+  // received_at is read in the shared timestamp form, and refused naming
+  //   the field otherwise.
   factory ProvenanceEntry.fromJson(Map<String, Object?> json) {
     final hop = _requireString(json, 'hop');
     final receivedAtRaw = _requireString(json, 'received_at');
@@ -60,18 +66,13 @@ class ProvenanceEntry {
         'ProvenanceEntry: "transform_version" must be a String when present',
       );
     }
-    if (!_offsetPattern.hasMatch(receivedAtRaw)) {
-      throw FormatException(
-        'ProvenanceEntry: "received_at" must include an explicit timezone '
-        'offset (Z or +/-HH[:]MM); got "$receivedAtRaw"',
-      );
-    }
     final DateTime receivedAt;
     try {
-      receivedAt = DateTime.parse(receivedAtRaw);
+      receivedAt = parseIso8601Instant(receivedAtRaw);
     } on FormatException catch (e) {
       throw FormatException(
-        'ProvenanceEntry: "received_at" is not a valid ISO 8601 string: '
+        'ProvenanceEntry: "received_at" is not an ISO 8601 date-time with a '
+        'four-digit year, calendar fields in range and an explicit offset: '
         '${e.message}',
       );
     }
@@ -107,8 +108,8 @@ class ProvenanceEntry {
 
   /// The instant this hop received the event.
   ///
-  /// Parsed from the `received_at` string by `DateTime.parse`, which
-  /// UTC-normalizes any offsetful ISO 8601 timestamp: the absolute instant
+  /// Parsed from the `received_at` string by [parseIso8601Instant], which
+  /// UTC-normalizes the offsetful ISO 8601 timestamp: the absolute instant
   /// is preserved but the original offset is not retained on this field.
   /// `toJson()` therefore re-emits the value as a `Z`-suffixed UTC string
   /// via `toIso8601String()`, not as the original offset string.
@@ -200,12 +201,6 @@ class ProvenanceEntry {
       'batchContext: $batchContext, '
       'originSequenceNumber: $originSequenceNumber)';
 }
-
-// (including hour-only ±HH) at the end of the string. The positive-lookbehind
-// `(?<=\d)` requires the offset to immediately follow a digit, so strings
-// like "foo+0500" do not sneak past this layer (DateTime.parse rejects them
-// too, so this is defense-in-depth).
-final RegExp _offsetPattern = RegExp(r'(?<=\d)(Z|[+-]\d{2}(:?\d{2})?)$');
 
 String _requireString(Map<String, Object?> json, String key) {
   final value = json[key];

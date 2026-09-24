@@ -133,14 +133,14 @@ abstract class StorageBackend {
   ///
   /// [event] is stored as [StoredEvent.toMap] writes it, every key that
   /// record carries included, and reads back the same. An event whose
-  /// client timestamp is not one a record may carry
-  /// ([StoredEvent.requireRecordTimestamp]) throws [FormatException] and
-  /// nothing is written.
+  /// client timestamp, or a provenance entry's `received_at`, is not one a
+  /// record may carry ([StoredEvent.requireRecordTimestamps]) throws
+  /// [FormatException] and nothing is written.
   // Implements: EVS-PRD-event-log/A
   // append to the append-only, immutable log.
-  // Implements: EVS-DEV-event-record/A+B
-  // the append refuses a client timestamp a record may not carry, and
-  //   stores every key of the record, returning it unchanged on read.
+  // Implements: EVS-DEV-event-record/A+B+C
+  // the append refuses a client timestamp or received_at a record may not
+  //   carry, and stores every key of the record, returning it unchanged on read.
   // Implements: EVS-PRD-event-log/B
   // stable total order via sequence counter.
   @internal

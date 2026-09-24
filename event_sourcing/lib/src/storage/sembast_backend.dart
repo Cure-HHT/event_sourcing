@@ -366,7 +366,7 @@ class SembastBackend extends StorageBackend {
         'appendEvent consumes a reservation, it does not create one.)',
       );
     }
-    event.requireRecordTimestamp();
+    event.requireRecordTimestamps();
     await _eventStore.add(t._sembastTxn, event.toMap());
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.

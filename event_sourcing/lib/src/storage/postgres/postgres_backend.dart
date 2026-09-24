@@ -881,7 +881,7 @@ class PostgresBackend extends StorageBackend {
         'create one.',
       );
     }
-    event.requireRecordTimestamp();
+    event.requireRecordTimestamps();
     final record = event.toMap();
     await session.execute(
       Sql.named('''

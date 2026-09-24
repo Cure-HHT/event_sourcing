@@ -343,7 +343,7 @@ void main() {
 
     // Verifies: EVS-DEV-event-record/A
     test('an event built with a local clientTimestamp writes it in UTC, and '
-        'one outside the four-digit years fails requireRecordTimestamp', () {
+        'one outside the four-digit years fails requireRecordTimestamps', () {
       final local = DateTime(2026, 9, 1, 12);
       final ev = StoredEvent.synthetic(
         eventId: 'e',
@@ -356,7 +356,7 @@ void main() {
       final written = ev.toMap()['client_timestamp']! as String;
       expect(written, endsWith('Z'));
       expect(DateTime.parse(written).isAtSameMomentAs(local), isTrue);
-      ev.requireRecordTimestamp();
+      ev.requireRecordTimestamps();
       expect(
         StoredEvent.fromMap(<String, Object?>{
           ...ev.toMap(),
@@ -373,12 +373,104 @@ void main() {
         eventHash: 'h',
       );
       expect(
-        far.requireRecordTimestamp,
+        far.requireRecordTimestamps,
         throwsA(
           isA<FormatException>().having(
             (e) => e.message,
             'message',
             contains('"client_timestamp"'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('provenance received_at form', () {
+    Map<String, Object?> withReceivedAt(String receivedAt) =>
+        _validEventMap()
+          ..['metadata'] = <String, Object?>{
+            'provenance': <Object?>[
+              <String, Object?>{
+                'hop': 'mobile-device',
+                'received_at': '2026-04-26T00:00:00.000Z',
+                'identifier': 'device-1',
+                'software_version': 'app@1.0.0',
+              },
+              <String, Object?>{
+                'hop': 'relay',
+                'received_at': receivedAt,
+                'identifier': 'relay-1',
+                'software_version': 'relay@1.0.0',
+              },
+            ],
+          };
+
+    // Verifies: EVS-DEV-event-record/C
+    test('fromMap admits every provenance received_at in the timestamp form '
+        'and keeps its spelling', () {
+      for (final receivedAt in <String>[
+        '2026-09-01T12:00:00Z',
+        '2026-09-01T06:30:00.25-05:30',
+        '2026-09-01T14:00:00+0200',
+      ]) {
+        final record = withReceivedAt(receivedAt);
+        final ev = StoredEvent.fromMap(record, 0);
+        expect(ev.toMap()['metadata'], record['metadata'], reason: receivedAt);
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/C
+    test('fromMap refuses a provenance received_at without an offset, '
+        'outside the four-digit years or with a field out of range, naming '
+        'received_at', () {
+      for (final receivedAt in <String>[
+        '2026-09-01T12:00:00',
+        '10000-01-01T00:00:00Z',
+        '2026-02-30T00:00:00Z',
+        '2026-09-01T24:00:00Z',
+      ]) {
+        expect(
+          () => StoredEvent.fromMap(withReceivedAt(receivedAt), 0),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('"received_at"'),
+            ),
+          ),
+          reason: receivedAt,
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/C
+    test('an event built with a provenance received_at without an offset '
+        'fails requireRecordTimestamps naming received_at', () {
+      final ev = StoredEvent.synthetic(
+        eventId: 'e',
+        aggregateId: 'a',
+        entryType: 'note',
+        initiator: const UserInitiator('u'),
+        clientTimestamp: DateTime.utc(2026, 9, 1),
+        eventHash: 'h',
+        metadata: <String, dynamic>{
+          'provenance': <Object?>[
+            <String, Object?>{
+              'hop': 'mobile-device',
+              'received_at': '2026-09-01T12:00:00',
+              'identifier': 'device-1',
+              'software_version': 'app@1.0.0',
+            },
+          ],
+        },
+      );
+      expect(
+        ev.requireRecordTimestamps,
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"received_at"'),
           ),
         ),
       );

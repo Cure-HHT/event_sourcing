@@ -1,6 +1,5 @@
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/record_timestamp.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
@@ -89,9 +88,11 @@ class StoredEvent {
   /// forwards still hashes to the `event_hash` it carries. A top-level key
   /// this build does not read is kept too, and [toMap] writes it back.
   ///
-  /// `client_timestamp` must be a date-time with a four-digit year,
-  /// calendar fields within their ranges, and an explicit offset (`Z` or
-  /// `+/-HH[:]MM`); any other value is a [FormatException] naming it.
+  /// `client_timestamp`, and the `received_at` of every entry of the
+  /// metadata's `provenance` list that carries one, must be a date-time with a four-digit
+  /// year, calendar fields within their ranges, and an explicit offset (`Z`
+  /// or `+/-HH[:]MM`), the form [parseIso8601Instant] reads; any other value
+  /// is a [FormatException] naming the field.
   ///
   /// Every required field is explicitly type-checked via an `is!` guard and
   /// a thrown [FormatException] naming the offending key. A malformed event
@@ -144,6 +145,7 @@ class StoredEvent {
     }
 
     final clientTimestamp = _requireDateTime(map, 'client_timestamp');
+    _requireProvenanceTimestamps(metadata);
     final eventHash = _requireString(map, 'event_hash');
 
     final previousHashRaw = map['previous_event_hash'];
@@ -338,23 +340,27 @@ class StoredEvent {
   /// build does not read, with their values; null when there are none.
   final Map<String, Object?>? _unknownFields;
 
-  /// Throws [FormatException] naming `client_timestamp` when the timestamp
-  /// [toMap] writes is not one a record may carry (see
-  /// [StoredEvent.fromMap]). An event parsed from a record always passes;
-  /// one built with the constructor fails when its [clientTimestamp] lies
-  /// outside the four-digit years.
+  /// Throws [FormatException] naming the field when a timestamp [toMap]
+  /// writes is not one a record may carry (see [StoredEvent.fromMap]): the
+  /// `client_timestamp`, or the `received_at` of an entry of the metadata's
+  /// `provenance` list. An event parsed from a record passes unless its
+  /// metadata was changed since; one built with the constructor fails when
+  /// its [clientTimestamp] lies outside the four-digit years or a
+  /// provenance entry's `received_at` is not in the timestamp form.
   @internal
-  void requireRecordTimestamp() {
-    if (_clientTimestampText != null) return;
-    final text = clientTimestamp.toUtc().toIso8601String();
-    try {
-      parseRecordTimestamp(text);
-    } on FormatException catch (e) {
-      throw FormatException(
-        'StoredEvent: "client_timestamp" is not a timestamp a record may '
-        'carry: ${e.message}',
-      );
+  void requireRecordTimestamps() {
+    if (_clientTimestampText == null) {
+      final text = clientTimestamp.toUtc().toIso8601String();
+      try {
+        parseIso8601Instant(text);
+      } on FormatException catch (e) {
+        throw FormatException(
+          'StoredEvent: "client_timestamp" is not a timestamp a record may '
+          'carry: ${e.message}',
+        );
+      }
     }
+    _requireProvenanceTimestamps(metadata);
   }
 
   /// First `ProvenanceEntry` in this event's chain — the originator's hop.
@@ -518,11 +524,45 @@ DateTime _requireDateTime(Map<String, Object?> map, String key) {
     );
   }
   try {
-    return parseRecordTimestamp(value);
+    return parseIso8601Instant(value);
   } on FormatException catch (e) {
     throw FormatException(
       'StoredEvent: "$key" is not a timestamp a record may carry: '
       '${e.message}',
     );
+  }
+}
+
+/// Throws [FormatException] naming `received_at` when an entry of
+/// [metadata]'s `provenance` list is a map carrying a `received_at` that is
+/// not a string in the timestamp form [parseIso8601Instant] reads. The
+/// shape of the list and of its entries otherwise (a missing or non-list
+/// `provenance`, an entry that is not a map or lacks `received_at`) is left
+/// to the chain checks and [ProvenanceEntry.fromJson], which read them.
+// Implements: EVS-DEV-event-record/C
+// a record carrying a provenance received_at outside the timestamp form is
+//   malformed, naming the field.
+void _requireProvenanceTimestamps(Map<String, dynamic> metadata) {
+  final provenance = metadata['provenance'];
+  if (provenance is! List) return;
+  for (var i = 0; i < provenance.length; i++) {
+    final entry = provenance[i];
+    if (entry is! Map) continue;
+    final receivedAt = entry['received_at'];
+    if (receivedAt == null) continue;
+    if (receivedAt is! String) {
+      throw FormatException(
+        'StoredEvent: provenance[$i] has a non-string "received_at" '
+        '(expected ISO 8601)',
+      );
+    }
+    try {
+      parseIso8601Instant(receivedAt);
+    } on FormatException catch (e) {
+      throw FormatException(
+        'StoredEvent: provenance[$i] "received_at" is not a timestamp a '
+        'record may carry: ${e.message}',
+      );
+    }
   }
 }

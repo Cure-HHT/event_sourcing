@@ -227,8 +227,9 @@ final Map<String, _Spelling> _spellings = <String, _Spelling>{
   ),
 };
 
-/// Client timestamps a record may not carry, each refused as a malformed
-/// record naming `client_timestamp`.
+/// Timestamps a record may not carry, each refused as a malformed record
+/// naming the field that carries it: `client_timestamp`, or a provenance
+/// entry's `received_at`.
 const Map<String, String> _malformedTimestamps = <String, String>{
   'no offset': '2026-09-01T12:00:00',
   'no offset, with a fraction': '2026-09-01T12:00:00.000',
@@ -576,6 +577,39 @@ void runIngestHashScenarios(
           });
         }
 
+        for (final malformed in _malformedTimestamps.entries) {
+          // Verifies: EVS-DEV-event-record/C
+          test('refuses an event whose provenance received_at has '
+              '${malformed.key} as a malformed record naming the field, '
+              'writing nothing', () async {
+            if (!available) return;
+            final record = _spelledRecord(
+              clientTimestamp: '2026-09-01T12:00:00Z',
+              receivedAt: malformed.value,
+              initiator: _peerUser,
+            );
+            final before = await snapshot();
+            await expectLater(
+              path.value(store, <Map<String, Object?>>[record]),
+              throwsA(
+                anyOf(
+                  isA<IngestDecodeFailure>().having(
+                    (e) => e.message,
+                    'message',
+                    contains('"received_at"'),
+                  ),
+                  isA<FormatException>().having(
+                    (e) => e.message,
+                    'message',
+                    contains('"received_at"'),
+                  ),
+                ),
+              ),
+            );
+            expect(await snapshot(), before);
+          });
+        }
+
         for (final tamper in _tampers.entries) {
           // Verifies: EVS-PRD-ingest/D
           // Verifies: EVS-PRD-hash-chain-integrity/A
@@ -685,6 +719,47 @@ void runIngestHashScenarios(
             (e) => e.message,
             'message',
             contains('"client_timestamp"'),
+          ),
+        ),
+      );
+      expect(await snapshot(), before);
+    });
+
+    // Verifies: EVS-DEV-event-record/C
+    test('ingestEvent refuses an event built with a provenance received_at '
+        'without an offset as a decode failure naming the field, writing '
+        'nothing', () async {
+      if (!available) return;
+      final event = StoredEvent.synthetic(
+        eventId: 'hash-offsetless-received-at',
+        aggregateId: 'hash-offsetless-received-at',
+        aggregateType: 'note',
+        entryType: _noteType,
+        initiator: const UserInitiator('peer-user'),
+        clientTimestamp: DateTime.utc(2026, 9, 1, 12),
+        eventHash: 'unsealed',
+        metadata: <String, dynamic>{
+          'provenance': <Map<String, Object?>>[
+            <String, Object?>{
+              ...ProvenanceEntry(
+                hop: _peerSource.hopId,
+                receivedAt: DateTime.utc(2026, 9, 1, 12),
+                identifier: _peerSource.identifier,
+                softwareVersion: _peerSource.softwareVersion,
+              ).toJson(),
+              'received_at': '2026-09-01T12:00:00',
+            },
+          ],
+        },
+      );
+      final before = await snapshot();
+      await expectLater(
+        store.ingestEvent(event),
+        throwsA(
+          isA<IngestDecodeFailure>().having(
+            (e) => e.message,
+            'message',
+            contains('"received_at"'),
           ),
         ),
       );

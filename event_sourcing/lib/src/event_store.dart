@@ -1919,15 +1919,16 @@ class EventStore {
   /// is the record it was parsed from, as far as the hash reaches: parsing
   /// keeps every hashed field as the record spelled it.
   ///
-  /// An event whose client timestamp is not one a record may carry throws
-  /// [IngestDecodeFailure] naming `client_timestamp`, before any write; an
-  /// event parsed with [StoredEvent.fromMap] was already refused there.
-  // Implements: EVS-DEV-event-record/A
-  // both ingest entry points refuse a malformed client timestamp as a
-  //   decode failure naming the field, before any write.
+  /// An event whose client timestamp, or a provenance entry's
+  /// `received_at`, is not one a record may carry throws
+  /// [IngestDecodeFailure] naming the field, before any write; an event
+  /// parsed with [StoredEvent.fromMap] was already refused there.
+  // Implements: EVS-DEV-event-record/A+C
+  // both ingest entry points refuse a malformed client timestamp or
+  //   received_at as a decode failure naming the field, before any write.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
     try {
-      incoming.requireRecordTimestamp();
+      incoming.requireRecordTimestamps();
     } on FormatException catch (e) {
       throw IngestDecodeFailure('event ${incoming.eventId}: ${e.message}');
     }

@@ -195,6 +195,15 @@ created by an earlier release is dropped and provisioned again with
   `StoredEvent.fromMap`, and `IngestDecodeFailure` from `ingestBatch`
   and `ingestEvent`, before any write. `appendEvent` on both backends
   refuses an event built with a `clientTimestamp` outside those years.
+- A provenance entry's `received_at` must take the same form, read by
+  `parseIso8601Instant` from the `provenance` package (which also reads
+  `client_timestamp`): `ProvenanceEntry.fromJson` refuses a `received_at`
+  with a year outside 0000-9999 or a field `DateTime.parse` would roll
+  over, as it refuses one without an offset. A record whose provenance
+  carries such a `received_at` is a `FormatException` naming the field
+  from `StoredEvent.fromMap`, and `IngestDecodeFailure` from `ingestBatch`
+  and `ingestEvent`, before any write; `appendEvent` on both backends
+  refuses it too.
 - The event store writes every time it stamps (an event's
   `client_timestamp`, a provenance entry's `received_at`) in UTC, whatever
   zone an injected `clock` returns, and `StoredEvent.toMap` writes the
