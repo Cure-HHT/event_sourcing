@@ -18,7 +18,7 @@ names, frozen semantics).
   drainer's wake-up, pooling, SQL-native view rows, additional backends, a
   run-time barrier on internal storage members, a browser tab whose
   database handle cannot commit, verifying the inputs the generation
-  guard and the drain lock trust.
+  guard and the drain lock trust, keeping or removing `readEventsReverse`.
 - `permissions.md` — permission-model extensions.
 - `projections.md` — projection/materializer primitives; views that
   catch up with the log whatever their interest; snapshot promotion and
@@ -30,3 +30,6 @@ names, frozen semantics).
   version on every event, projection specifications in the data
   generation, reading an older data-format major.
 - `authentication.md` — substrate-level authentication closure.
+- `tooling.md` — tooling, tests and examples: Dart doc references as
+  links, a real browser's page visibility in the drain-lock tests, owner
+  and runtime roles in the Postgres example deployment.

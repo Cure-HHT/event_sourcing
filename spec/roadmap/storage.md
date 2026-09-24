@@ -164,3 +164,15 @@ the remaining step is documenting the browsers the library is tested
 against. For the Sembast file: a lock file or an operating-system file
 lock taken when the database opens, refusing a second opener, where the
 platform offers one.
+
+## Keeping or removing `readEventsReverse`
+
+**Baseline.** `StorageBackend.readEventsReverse` streams the log newest
+first, optionally filtered by event type. The library itself reads the
+log in reverse only through `readEventsReverseInTxn`, inside a
+transaction; the non-transactional form has no library caller and is
+part of the contract every backend implements.
+
+**Remaining.** Decide whether it stays a supported read for consumers,
+with its own conformance cases, or leaves the contract, which would be a
+breaking change to every backend implementation.
