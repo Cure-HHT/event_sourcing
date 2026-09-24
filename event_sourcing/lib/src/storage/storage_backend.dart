@@ -130,8 +130,17 @@ abstract class StorageBackend {
   /// [nextSequenceNumber] in the same transaction, and [appendEvent]
   /// simply persists the event under that reservation. See
   /// [nextSequenceNumber] for the reservation contract.
+  ///
+  /// [event] is stored as [StoredEvent.toMap] writes it, every key that
+  /// record carries included, and reads back the same. An event whose
+  /// client timestamp is not one a record may carry
+  /// ([StoredEvent.requireRecordTimestamp]) throws [FormatException] and
+  /// nothing is written.
   // Implements: EVS-PRD-event-log/A
   // append to the append-only, immutable log.
+  // Implements: EVS-DEV-event-record/A+B
+  // the append refuses a client timestamp a record may not carry, and
+  //   stores every key of the record, returning it unchanged on read.
   // Implements: EVS-PRD-event-log/B
   // stable total order via sequence counter.
   @internal

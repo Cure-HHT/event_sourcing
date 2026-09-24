@@ -86,6 +86,27 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-event-record/B
+    test('fromJson reads a map with a key it does not know by its major and '
+        'minor', () {
+      expect(
+        EntryTypeVersion.fromJson(<String, Object?>{
+          'major': 1,
+          'minor': 2,
+          'patch': 0,
+        }),
+        const EntryTypeVersion(1, 2),
+      );
+      expect(
+        DataFormatVersion.fromJson(<String, Object?>{
+          'major': 2,
+          'minor': 0,
+          'patch': 1,
+        }),
+        const DataFormatVersion(2, 0),
+      );
+    });
+
     // Verifies: EVS-DEV-version-compatibility/A
     test('fromJson refuses malformed values, naming the key', () {
       final cases = <String, (Object?, String)>{
@@ -97,10 +118,6 @@ void main() {
         'negative minor': (<String, Object?>{'major': 1, 'minor': -1}, 'minor'),
         'zero major': (<String, Object?>{'major': 0, 'minor': 0}, 'major'),
         'not a map': (1, 'major'),
-        'an extra key': (
-          <String, Object?>{'major': 1, 'minor': 0, 'patch': 0},
-          'patch',
-        ),
       };
       for (final entry in cases.entries) {
         final (value, key) = entry.value;
@@ -176,10 +193,6 @@ void main() {
         'negative minor': (<String, Object?>{'major': 2, 'minor': -3}, 'minor'),
         'zero major': (<String, Object?>{'major': 0, 'minor': 1}, 'major'),
         'integer': (2, 'major'),
-        'an extra key': (
-          <String, Object?>{'major': 2, 'minor': 0, 'patch': 1},
-          'patch',
-        ),
       };
       for (final entry in cases.entries) {
         final (value, key) = entry.value;

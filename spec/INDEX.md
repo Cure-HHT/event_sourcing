@@ -43,6 +43,7 @@
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | ee97c1d7 |
+| EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | f24e0c04 |
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 27133475 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 45a08e62 |

@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS events (
     CHECK (lib_format_version_major >= 1),
   lib_format_version_minor  INTEGER  NOT NULL
     CHECK (lib_format_version_minor >= 0),
+  entry_type_version_json  JSONB    NOT NULL,
+  lib_format_version_json  JSONB    NOT NULL,
   event_type           TEXT         NOT NULL,
   data                 JSONB        NOT NULL,
   metadata             JSONB        NOT NULL,
@@ -107,7 +109,8 @@ CREATE TABLE IF NOT EXISTS events (
   client_timestamp_text  TEXT       NOT NULL,
   event_hash           TEXT         NOT NULL,
   flow_token           TEXT,
-  previous_event_hash  TEXT
+  previous_event_hash  TEXT,
+  unknown_fields       JSONB        NOT NULL
 )
 ''';
 

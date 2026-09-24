@@ -109,6 +109,84 @@ void main() {
     });
   });
 
+  group('a later release of this data-format major on sembast', () {
+    // Verifies: EVS-DEV-event-record/B
+    test('version maps with a key this build does not read, in the '
+        'library-version events, the view targets and the boot check, open '
+        'and read back unchanged', () async {
+      final factory = newDatabaseFactoryMemory();
+      const name = 'boot-later-minor.db';
+      final firstDb = await factory.openDatabase(name);
+      final first = await openBootStoreForTest(
+        _SembastBootDatabase(firstDb),
+        SembastBackend(database: firstDb),
+      );
+      await first.close();
+      final db = await factory.openDatabase(name);
+      addTearDown(db.close);
+      final bootDb = _SembastBootDatabase(db);
+
+      // What a later release of this data-format major writes: each version
+      // map carries a key this build does not read.
+      Map<String, Object?> later(Object? version) => <String, Object?>{
+        ...(version! as Map).cast<String, Object?>(),
+        'patch': 1,
+      };
+      final events = intMapStoreFactory.store('events');
+      final rewritten = <String>[];
+      for (final record in await events.find(db)) {
+        final value = Map<String, Object?>.from(record.value);
+        final data = Map<String, Object?>.from(value['data']! as Map);
+        final key = data.containsKey('data_format')
+            ? 'data_format'
+            : data.containsKey('toDataFormat')
+            ? 'toDataFormat'
+            : null;
+        if (key == null) continue;
+        data[key] = later(data[key]);
+        value['data'] = data;
+        value['lib_format_version'] = later(value['lib_format_version']);
+        value['entry_type_version'] = later(value['entry_type_version']);
+        value['event_hash'] = canonicalEventHash(value);
+        await events.record(record.key).put(db, value);
+        rewritten.add(value['event_id']! as String);
+      }
+      expect(rewritten, isNotEmpty);
+      final targets = stringMapStoreFactory.store('view_target_versions');
+      final targetRecords = await targets.find(db);
+      expect(targetRecords, isNotEmpty);
+      for (final record in targetRecords) {
+        await targets.record(record.key).put(db, <String, Object?>{
+          ...record.value,
+          'target_version': later(record.value['target_version']),
+        });
+      }
+      final bootCheck = StoreRef<String, Object?>(
+        'backend_state',
+      ).record('boot_check');
+      final check = Map<String, Object?>.from(
+        (await bootCheck.get(db))! as Map,
+      );
+      await bootCheck.put(db, <String, Object?>{
+        ...check,
+        'data_format': later(check['data_format']),
+      });
+
+      final backend = SembastBackend(database: db);
+      final readCheck = await backend.transaction(backend.readBootCheckTxn);
+      expect(readCheck!.dataFormat, LibVersion.dataFormat);
+      final reopened = await openBootStoreForTest(bootDb, backend);
+      addTearDown(reopened.close);
+      for (final id in rewritten) {
+        final event = (await backend.findEventById(id))!;
+        final map = event.toMap();
+        expect((map['lib_format_version']! as Map)['patch'], 1);
+        expect((map['entry_type_version']! as Map)['patch'], 1);
+        expect(canonicalEventHash(map), event.eventHash);
+      }
+    });
+  });
+
   group('the boot body on a backend that re-runs it', () {
     // Verifies: EVS-PRD-event-log/G
     // Verifies: EVS-DEV-event-store-open/E

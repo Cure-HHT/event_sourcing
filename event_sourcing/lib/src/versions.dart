@@ -32,7 +32,7 @@ final class EntryTypeVersion implements Comparable<EntryTypeVersion> {
   ///
   /// Throws [FormatException] naming the key when [json] is not a map, a
   /// component is missing or not an integer, the major is below 1, or the
-  /// minor is below 0.
+  /// minor is below 0. Any other key is ignored.
   factory EntryTypeVersion.fromJson(Object? json) {
     final (major, minor) = _parseComponents(json, 'EntryTypeVersion');
     return EntryTypeVersion(major, minor);
@@ -113,7 +113,7 @@ final class DataFormatVersion implements Comparable<DataFormatVersion> {
   ///
   /// Throws [FormatException] naming the key when [json] is not a map, a
   /// component is missing or not an integer, the major is below 1, or the
-  /// minor is below 0.
+  /// minor is below 0. Any other key is ignored.
   factory DataFormatVersion.fromJson(Object? json) {
     final (major, minor) = _parseComponents(json, 'DataFormatVersion');
     return DataFormatVersion(major, minor);
@@ -183,12 +183,8 @@ final class DataFormatVersion implements Comparable<DataFormatVersion> {
   if (minor < 0) {
     throw FormatException('$typeName: "minor" must be >= 0, got $minor');
   }
-  // A version is exactly its two numbers, so its `toJson` reproduces the
-  // map it was read from; an event's hash covers that map.
-  for (final key in json.keys) {
-    if (key != 'major' && key != 'minor') {
-      throw FormatException('$typeName: unexpected key "$key"');
-    }
-  }
+  // Another key is one a later release of this data-format major may add;
+  // it is not part of the version. A record that carries the map keeps it
+  // whole (`StoredEvent.fromMap`), so the hash over it is unchanged.
   return (major, minor);
 }

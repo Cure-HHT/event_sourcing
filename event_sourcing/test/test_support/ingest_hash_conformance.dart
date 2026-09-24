@@ -109,21 +109,29 @@ Uint8List _batchOf(List<StoredEvent> events) => BatchEnvelope(
 ).encode();
 
 /// A record as a hand-built sender seals it, with an origin provenance
-/// entry, [clientTimestamp] and [initiator] spelled as given, a `null`
-/// member in its data and its metadata, and an `event_hash` that is the
-/// canonical hash of the record as it stands.
+/// entry received at [receivedAt] (by default [clientTimestamp]),
+/// [clientTimestamp], [initiator] and the version maps spelled as given,
+/// the top-level [extraFields] beside its own, a `null` member in its data
+/// and its metadata, and an `event_hash` that is the canonical hash of the
+/// record as it stands.
 Map<String, Object?> _spelledRecord({
   required String clientTimestamp,
   required Map<String, Object?> initiator,
+  String? receivedAt,
+  Map<String, Object?>? entryTypeVersion,
+  Map<String, Object?>? libFormatVersion,
+  Map<String, Object?> extraFields = const <String, Object?>{},
 }) {
   _built += 1;
   final record = <String, Object?>{
+    ...extraFields,
     'event_id': 'hash-spelled-$_built-${DateTime.now().microsecondsSinceEpoch}',
     'aggregate_id': 'hash-spelled-aggregate-$_built',
     'aggregate_type': 'note',
     'entry_type': _noteType,
-    'entry_type_version': _noteDef.registeredVersion.toJson(),
-    'lib_format_version': LibVersion.dataFormat.toJson(),
+    'entry_type_version':
+        entryTypeVersion ?? _noteDef.registeredVersion.toJson(),
+    'lib_format_version': libFormatVersion ?? LibVersion.dataFormat.toJson(),
     'event_type': 'finalized',
     'sequence_number': 8000 + _built,
     'data': <String, Object?>{'title': 'spelled $_built', 'note': null},
@@ -132,7 +140,7 @@ Map<String, Object?> _spelledRecord({
       'provenance': <Map<String, Object?>>[
         <String, Object?>{
           'hop': _peerSource.hopId,
-          'received_at': clientTimestamp,
+          'received_at': receivedAt ?? clientTimestamp,
           'identifier': _peerSource.identifier,
           'software_version': _peerSource.softwareVersion,
         },
@@ -147,31 +155,88 @@ Map<String, Object?> _spelledRecord({
   return record;
 }
 
-/// Sender spellings of the hashed fields that a parse-and-reserialize would
-/// rewrite: each is `(client_timestamp, initiator)`.
-const Map<String, (String, Map<String, Object?>)> _spellings =
-    <String, (String, Map<String, Object?>)>{
-      'a client timestamp without a fraction': (
-        '2026-09-01T12:00:00Z',
-        <String, Object?>{'type': 'user', 'user_id': 'peer-user'},
-      ),
-      'a client timestamp with a +00:00 offset': (
-        '2026-09-01T12:00:00+00:00',
-        <String, Object?>{'type': 'user', 'user_id': 'peer-user'},
-      ),
-      'an initiator with a key this build does not read': (
-        '2026-09-01T12:00:00.000Z',
-        <String, Object?>{
-          'type': 'user',
-          'user_id': 'peer-user',
-          'display_name': 'Peer User',
-        },
-      ),
-      'an automation initiator without its optional key': (
-        '2026-09-01T12:00:00.000Z',
-        <String, Object?>{'type': 'automation', 'service': 'peer-service'},
-      ),
-    };
+/// Sender spellings of a record that a parse-and-reserialize would
+/// rewrite: the hashed `client_timestamp`, `initiator` and version maps,
+/// and top-level keys this build does not read.
+typedef _Spelling = ({
+  String timestamp,
+  Map<String, Object?> initiator,
+  Map<String, Object?>? entryTypeVersion,
+  Map<String, Object?>? libFormatVersion,
+  Map<String, Object?> extraFields,
+});
+
+const Map<String, Object?> _peerUser = <String, Object?>{
+  'type': 'user',
+  'user_id': 'peer-user',
+};
+
+_Spelling _spelling({
+  String timestamp = '2026-09-01T12:00:00.000Z',
+  Map<String, Object?> initiator = _peerUser,
+  Map<String, Object?>? entryTypeVersion,
+  Map<String, Object?>? libFormatVersion,
+  Map<String, Object?> extraFields = const <String, Object?>{},
+}) => (
+  timestamp: timestamp,
+  initiator: initiator,
+  entryTypeVersion: entryTypeVersion,
+  libFormatVersion: libFormatVersion,
+  extraFields: extraFields,
+);
+
+final Map<String, _Spelling> _spellings = <String, _Spelling>{
+  'a client timestamp without a fraction': _spelling(
+    timestamp: '2026-09-01T12:00:00Z',
+  ),
+  'a client timestamp with a +00:00 offset': _spelling(
+    timestamp: '2026-09-01T12:00:00+00:00',
+  ),
+  'a client timestamp with a -05:30 offset': _spelling(
+    timestamp: '2026-09-01T06:30:00.25-05:30',
+  ),
+  'an initiator with a key this build does not read': _spelling(
+    initiator: <String, Object?>{
+      'type': 'user',
+      'user_id': 'peer-user',
+      'display_name': 'Peer User',
+    },
+  ),
+  'an automation initiator without its optional key': _spelling(
+    initiator: <String, Object?>{
+      'type': 'automation',
+      'service': 'peer-service',
+    },
+  ),
+  'an entry-type version with a key this build does not read': _spelling(
+    entryTypeVersion: <String, Object?>{
+      ..._noteDef.registeredVersion.toJson(),
+      'patch': 3,
+    },
+  ),
+  'a data-format version with a key this build does not read': _spelling(
+    libFormatVersion: <String, Object?>{
+      ...LibVersion.dataFormat.toJson(),
+      'label': 'later',
+    },
+  ),
+  'a top-level key this build does not read': _spelling(
+    extraFields: <String, Object?>{
+      'later_field': <String, Object?>{'note': 'kept'},
+    },
+  ),
+};
+
+/// Client timestamps a record may not carry, each refused as a malformed
+/// record naming `client_timestamp`.
+const Map<String, String> _malformedTimestamps = <String, String>{
+  'no offset': '2026-09-01T12:00:00',
+  'no offset, with a fraction': '2026-09-01T12:00:00.000',
+  'a five-digit year': '10000-01-01T00:00:00Z',
+  'a negative year': '-0001-01-01T00:00:00Z',
+  '30 February': '2026-02-30T00:00:00Z',
+  'hour 24': '2026-09-01T24:00:00Z',
+};
 
 /// Changes to one hashed field of a [_spelledRecord] each, the `event_hash`
 /// kept.
@@ -213,6 +278,20 @@ _tampers = <String, Map<String, Object?> Function(Map<String, Object?>)>{
       r['client_timestamp']! as String,
     ).add(const Duration(seconds: 1)).toUtc().toIso8601String(),
   },
+  'an entry-type version key this build does not read': (r) =>
+      <String, Object?>{
+        'entry_type_version': <String, Object?>{
+          ...(r['entry_type_version']! as Map<String, Object?>),
+          'patch': 1,
+        },
+      },
+  'a data-format version key this build does not read': (r) =>
+      <String, Object?>{
+        'lib_format_version': <String, Object?>{
+          ...(r['lib_format_version']! as Map<String, Object?>),
+          'patch': 1,
+        },
+      },
   'client_timestamp respelled at the same instant': (r) => <String, Object?>{
     'client_timestamp': DateTime.parse(
       r['client_timestamp']! as String,
@@ -411,23 +490,34 @@ void runIngestHashScenarios(
         for (final spelling in _spellings.entries) {
           // Verifies: EVS-PRD-ingest/B+D
           // Verifies: EVS-PRD-hash-chain-integrity/A+D
+          // Verifies: EVS-DEV-event-record/A+B
           test('admits an event with ${spelling.key}, stores the record as '
               'it arrived, and a downstream store admits the copy it '
               'forwards', () async {
             if (!available) return;
-            final (timestamp, initiator) = spelling.value;
+            final spelled = spelling.value;
             final record = _spelledRecord(
-              clientTimestamp: timestamp,
-              initiator: initiator,
+              clientTimestamp: spelled.timestamp,
+              initiator: spelled.initiator,
+              entryTypeVersion: spelled.entryTypeVersion,
+              libFormatVersion: spelled.libFormatVersion,
+              extraFields: spelled.extraFields,
             );
             await path.value(store, <Map<String, Object?>>[record]);
             final stored = (await backend.findEventById(
               record['event_id']! as String,
             ))!;
             final storedMap = stored.toMap();
-            expect(storedMap['client_timestamp'], timestamp);
-            expect(storedMap['initiator'], initiator);
-            expect(storedMap['data'], record['data']);
+            for (final key in <String>[
+              'client_timestamp',
+              'initiator',
+              'entry_type_version',
+              'lib_format_version',
+              'data',
+              ...spelled.extraFields.keys,
+            ]) {
+              expect(storedMap[key], record[key], reason: key);
+            }
             expect(canonicalEventHash(storedMap), stored.eventHash);
             final provenance = stored.metadata['provenance']! as List;
             expect(
@@ -442,6 +532,47 @@ void runIngestHashScenarios(
             ))!;
             expect((forwarded.metadata['provenance']! as List).length, 3);
             expect((await next.verifyEventChain(forwarded)).isValid, isTrue);
+            final forwardedMap = forwarded.toMap();
+            for (final key in <String>[
+              'entry_type_version',
+              'lib_format_version',
+              ...spelled.extraFields.keys,
+            ]) {
+              expect(forwardedMap[key], record[key], reason: key);
+            }
+          });
+        }
+
+        for (final malformed in _malformedTimestamps.entries) {
+          // Verifies: EVS-DEV-event-record/A
+          test('refuses an event whose client timestamp has '
+              '${malformed.key} as a malformed record naming the field, '
+              'writing nothing', () async {
+            if (!available) return;
+            final record = _spelledRecord(
+              clientTimestamp: malformed.value,
+              receivedAt: '2026-09-01T12:00:00Z',
+              initiator: _peerUser,
+            );
+            final before = await snapshot();
+            await expectLater(
+              path.value(store, <Map<String, Object?>>[record]),
+              throwsA(
+                anyOf(
+                  isA<IngestDecodeFailure>().having(
+                    (e) => e.message,
+                    'message',
+                    contains('"client_timestamp"'),
+                  ),
+                  isA<FormatException>().having(
+                    (e) => e.message,
+                    'message',
+                    contains('"client_timestamp"'),
+                  ),
+                ),
+              ),
+            );
+            expect(await snapshot(), before);
           });
         }
 
@@ -521,6 +652,44 @@ void runIngestHashScenarios(
         });
       });
     }
+
+    // Verifies: EVS-DEV-event-record/A
+    test('ingestEvent refuses an event built with a client timestamp outside '
+        'the four-digit years as a decode failure naming the field, writing '
+        'nothing', () async {
+      if (!available) return;
+      final event = StoredEvent.synthetic(
+        eventId: 'hash-far-future',
+        aggregateId: 'hash-far-future',
+        aggregateType: 'note',
+        entryType: _noteType,
+        initiator: const UserInitiator('peer-user'),
+        clientTimestamp: DateTime.utc(10000),
+        eventHash: 'unsealed',
+        metadata: <String, dynamic>{
+          'provenance': <Map<String, Object?>>[
+            ProvenanceEntry(
+              hop: _peerSource.hopId,
+              receivedAt: DateTime.utc(2026, 9, 1, 12),
+              identifier: _peerSource.identifier,
+              softwareVersion: _peerSource.softwareVersion,
+            ).toJson(),
+          ],
+        },
+      );
+      final before = await snapshot();
+      await expectLater(
+        store.ingestEvent(event),
+        throwsA(
+          isA<IngestDecodeFailure>().having(
+            (e) => e.message,
+            'message',
+            contains('"client_timestamp"'),
+          ),
+        ),
+      );
+      expect(await snapshot(), before);
+    });
 
     // Verifies: EVS-PRD-ingest/D
     // Verifies: EVS-PRD-hash-chain-integrity/D

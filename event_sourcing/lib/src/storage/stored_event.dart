@@ -1,7 +1,8 @@
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/record_timestamp.dart';
 import 'package:event_sourcing/src/versions.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 
 /// Represents a stored event with all fields populated.
@@ -43,7 +44,10 @@ class StoredEvent {
     this.flowToken,
     this.previousEventHash,
   }) : _clientTimestampText = null,
-       _initiatorJson = null;
+       _initiatorJson = null,
+       _entryTypeVersionJson = null,
+       _libFormatVersionJson = null,
+       _unknownFields = null;
 
   const StoredEvent._parsed({
     required this.key,
@@ -64,18 +68,30 @@ class StoredEvent {
     required this.previousEventHash,
     required String? clientTimestampText,
     required Map<String, Object?>? initiatorJson,
+    required Map<String, Object?>? entryTypeVersionJson,
+    required Map<String, Object?>? libFormatVersionJson,
+    required Map<String, Object?>? unknownFields,
   }) : _clientTimestampText = clientTimestampText,
-       _initiatorJson = initiatorJson;
+       _initiatorJson = initiatorJson,
+       _entryTypeVersionJson = entryTypeVersionJson,
+       _libFormatVersionJson = libFormatVersionJson,
+       _unknownFields = unknownFields;
 
   /// Create from a database record map.
   ///
   /// Every field the event hash covers (`canonicalEventHash`) reads back
   /// from [toMap] as it stands in [map]: `client_timestamp` keeps its
   /// string as written (whatever its fraction digits or offset spelling),
-  /// and `initiator` keeps its map, including keys and absent optional keys
-  /// that [Initiator] does not model. So a record parsed here hashes as it
-  /// did before parsing, and the copy a backend stores and a relay forwards
-  /// still hashes to the `event_hash` it carries.
+  /// and `initiator`, `entry_type_version` and `lib_format_version` keep
+  /// their maps, including keys and absent optional keys that [Initiator]
+  /// and the version types do not model. So a record parsed here hashes as
+  /// it did before parsing, and the copy a backend stores and a relay
+  /// forwards still hashes to the `event_hash` it carries. A top-level key
+  /// this build does not read is kept too, and [toMap] writes it back.
+  ///
+  /// `client_timestamp` must be a date-time with a four-digit year,
+  /// calendar fields within their ranges, and an explicit offset (`Z` or
+  /// `+/-HH[:]MM`); any other value is a [FormatException] naming it.
   ///
   /// Every required field is explicitly type-checked via an `is!` guard and
   /// a thrown [FormatException] naming the offending key. A malformed event
@@ -157,6 +173,18 @@ class StoredEvent {
       initiatorJson: Map<String, Object?>.unmodifiable(
         Map<String, Object?>.from(initiatorRaw),
       ),
+      entryTypeVersionJson: Map<String, Object?>.unmodifiable(
+        Map<String, Object?>.from(map['entry_type_version']! as Map),
+      ),
+      libFormatVersionJson: Map<String, Object?>.unmodifiable(
+        Map<String, Object?>.from(map['lib_format_version']! as Map),
+      ),
+      unknownFields: map.keys.every(recordKeys.contains)
+          ? null
+          : Map<String, Object?>.unmodifiable(<String, Object?>{
+              for (final entry in map.entries)
+                if (!recordKeys.contains(entry.key)) entry.key: entry.value,
+            }),
     );
   }
 
@@ -200,6 +228,26 @@ class StoredEvent {
     eventHash: eventHash,
     previousEventHash: previousEventHash,
   );
+
+  /// The top-level keys of a record that this build reads.
+  @internal
+  static const Set<String> recordKeys = <String>{
+    'event_id',
+    'aggregate_id',
+    'aggregate_type',
+    'entry_type',
+    'entry_type_version',
+    'lib_format_version',
+    'event_type',
+    'sequence_number',
+    'data',
+    'metadata',
+    'initiator',
+    'flow_token',
+    'client_timestamp',
+    'event_hash',
+    'previous_event_hash',
+  };
 
   /// Database key.
   final int key;
@@ -272,13 +320,42 @@ class StoredEvent {
 
   /// The `client_timestamp` string of the record this event was parsed
   /// from; null for an event built with the constructor, whose [toMap]
-  /// writes [clientTimestamp] with `toIso8601String`.
+  /// writes [clientTimestamp] in UTC with `toIso8601String`.
   final String? _clientTimestampText;
 
   /// The `initiator` map of the record this event was parsed from; null for
   /// an event built with the constructor, whose [toMap] writes
   /// [initiator]'s `toJson`.
   final Map<String, Object?>? _initiatorJson;
+
+  /// The `entry_type_version` and `lib_format_version` maps of the record
+  /// this event was parsed from; null for an event built with the
+  /// constructor, whose [toMap] writes the versions' `toJson`.
+  final Map<String, Object?>? _entryTypeVersionJson;
+  final Map<String, Object?>? _libFormatVersionJson;
+
+  /// The top-level keys of the record this event was parsed from that this
+  /// build does not read, with their values; null when there are none.
+  final Map<String, Object?>? _unknownFields;
+
+  /// Throws [FormatException] naming `client_timestamp` when the timestamp
+  /// [toMap] writes is not one a record may carry (see
+  /// [StoredEvent.fromMap]). An event parsed from a record always passes;
+  /// one built with the constructor fails when its [clientTimestamp] lies
+  /// outside the four-digit years.
+  @internal
+  void requireRecordTimestamp() {
+    if (_clientTimestampText != null) return;
+    final text = clientTimestamp.toUtc().toIso8601String();
+    try {
+      parseRecordTimestamp(text);
+    } on FormatException catch (e) {
+      throw FormatException(
+        'StoredEvent: "client_timestamp" is not a timestamp a record may '
+        'carry: ${e.message}',
+      );
+    }
+  }
 
   /// First `ProvenanceEntry` in this event's chain — the originator's hop.
   ///
@@ -333,20 +410,30 @@ class StoredEvent {
       previousEventHash: previousEventHash,
       clientTimestampText: _clientTimestampText,
       initiatorJson: _initiatorJson,
+      entryTypeVersionJson: _entryTypeVersionJson,
+      libFormatVersionJson: _libFormatVersionJson,
+      unknownFields: _unknownFields,
     );
   }
 
   /// Convert to a map for storage/serialization. For an event parsed with
-  /// [StoredEvent.fromMap], `client_timestamp` and `initiator` are written
-  /// as the parsed record held them.
+  /// [StoredEvent.fromMap], `client_timestamp`, `initiator`,
+  /// `entry_type_version` and `lib_format_version` are written as the
+  /// parsed record held them, and so is every top-level key of that record
+  /// this build does not read.
   Map<String, dynamic> toMap() {
     return {
+      ...?_unknownFields,
       'event_id': eventId,
       'aggregate_id': aggregateId,
       'aggregate_type': aggregateType,
       'entry_type': entryType,
-      'entry_type_version': entryTypeVersion.toJson(),
-      'lib_format_version': libFormatVersion.toJson(),
+      'entry_type_version': _entryTypeVersionJson == null
+          ? entryTypeVersion.toJson()
+          : Map<String, Object?>.of(_entryTypeVersionJson),
+      'lib_format_version': _libFormatVersionJson == null
+          ? libFormatVersion.toJson()
+          : Map<String, Object?>.of(_libFormatVersionJson),
       'event_type': eventType,
       'sequence_number': sequenceNumber,
       'data': data,
@@ -356,7 +443,7 @@ class StoredEvent {
           : Map<String, Object?>.of(_initiatorJson),
       'flow_token': flowToken,
       'client_timestamp':
-          _clientTimestampText ?? clientTimestamp.toIso8601String(),
+          _clientTimestampText ?? clientTimestamp.toUtc().toIso8601String(),
       'event_hash': eventHash,
       'previous_event_hash': previousEventHash,
     };
@@ -431,10 +518,11 @@ DateTime _requireDateTime(Map<String, Object?> map, String key) {
     );
   }
   try {
-    return DateTime.parse(value);
+    return parseRecordTimestamp(value);
   } on FormatException catch (e) {
     throw FormatException(
-      'StoredEvent: "$key" is not a valid ISO 8601 string: ${e.message}',
+      'StoredEvent: "$key" is not a timestamp a record may carry: '
+      '${e.message}',
     );
   }
 }

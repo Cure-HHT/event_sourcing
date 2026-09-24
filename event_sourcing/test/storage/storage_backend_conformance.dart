@@ -4140,50 +4140,128 @@ void _registerEventVersionColumnTests(
 
 // -------- Hashed fields as the sender spelled them --------
 //
-// An event's hash covers its `client_timestamp` string and its `initiator`
-// map as they were hashed. A backend that stores an event must read it back
-// with those two fields exactly as it was given them, so that a copy it
-// forwards still hashes to the `event_hash` it carries.
+// An event's hash covers its `client_timestamp` string, its `initiator` map
+// and its two version maps as they were hashed. A backend that stores an
+// event must read it back with those fields exactly as it was given them,
+// so that a copy it forwards still hashes to the `event_hash` it carries,
+// and with every top-level key of its record, so that the copy carries
+// them on.
 void _registerEventSpellingTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
   MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
 ) {
   group('hashed fields as spelled', () {
-    const spellings = <String, (String, Map<String, Object?>)>{
-      'a timestamp without a fraction': (
-        '2026-05-01T12:00:00Z',
-        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
-      ),
-      'a timestamp with a +00:00 offset': (
-        '2026-05-01T12:00:00+00:00',
-        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
-      ),
-      'a timestamp with a +02:00 offset': (
-        '2026-05-01T14:00:00.5+02:00',
-        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
-      ),
-      'a timestamp with microseconds': (
-        '2026-05-01T12:00:00.000001Z',
-        <String, Object?>{'type': 'user', 'user_id': 'u-spelling'},
-      ),
-      'an initiator with a key this build does not read': (
-        '2026-05-01T12:00:00.000Z',
-        <String, Object?>{
-          'type': 'user',
-          'user_id': 'u-spelling',
-          'display_name': 'A. User',
-        },
-      ),
-      'an automation initiator without its optional key': (
-        '2026-05-01T12:00:00.000Z',
-        <String, Object?>{'type': 'automation', 'service': 'svc'},
-      ),
-    };
+    const user = <String, Object?>{'type': 'user', 'user_id': 'u-spelling'};
+    const plain = '2026-05-01T12:00:00.000Z';
+    final entryVersion = const EntryTypeVersion(1, 0).toJson();
+    final dataFormat = LibVersion.dataFormat.toJson();
+    const noExtras = <String, Object?>{};
+    // Each: (client_timestamp, initiator, entry_type_version,
+    // lib_format_version, top-level keys this build does not read).
+    final spellings =
+        <
+          String,
+          (
+            String,
+            Map<String, Object?>,
+            Map<String, Object?>,
+            Map<String, Object?>,
+            Map<String, Object?>,
+          )
+        >{
+          'a timestamp without a fraction': (
+            '2026-05-01T12:00:00Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a +00:00 offset': (
+            '2026-05-01T12:00:00+00:00',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a +02:00 offset': (
+            '2026-05-01T14:00:00.5+02:00',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a -05:30 offset': (
+            '2026-05-01T06:30:00-05:30',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with microseconds': (
+            '2026-05-01T12:00:00.000001Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp in year 0000': (
+            '0000-01-01T00:00:00Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp in year 9999': (
+            '9999-12-31T23:59:59.999999Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'an initiator with a key this build does not read': (
+            plain,
+            <String, Object?>{
+              'type': 'user',
+              'user_id': 'u-spelling',
+              'display_name': 'A. User',
+            },
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'an automation initiator without its optional key': (
+            plain,
+            <String, Object?>{'type': 'automation', 'service': 'svc'},
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'version maps with keys this build does not read': (
+            plain,
+            user,
+            <String, Object?>{...entryVersion, 'patch': 4},
+            <String, Object?>{...dataFormat, 'label': 'later'},
+            noExtras,
+          ),
+          'top-level keys this build does not read': (
+            plain,
+            user,
+            entryVersion,
+            dataFormat,
+            <String, Object?>{
+              'later_field': <String, Object?>{
+                'list': <Object?>[1, 'two', null],
+              },
+              'later_flag': true,
+            },
+          ),
+        };
     var n = 0;
     for (final spelling in spellings.entries) {
       // Verifies: EVS-PRD-hash-chain-integrity/D
       // Verifies: EVS-DEV-postgres-backend/D
+      // Verifies: EVS-DEV-event-record/A+B
       test('an event with ${spelling.key} reads back as it was stored '
           'through every read path, and its hash verifies', () async {
         if (!initializedOf()) return;
@@ -4192,17 +4270,25 @@ void _registerEventSpellingTests(
         final eventId = 'spelled-$n';
         final aggregateId = 'agg-spelled-$n';
         final flowToken = 'flow-spelled-$n';
-        final (timestamp, initiator) = spelling.value;
+        final (
+          timestamp,
+          initiator,
+          entryTypeVersion,
+          libFormatVersion,
+          extras,
+        ) = spelling.value;
         late StoredEvent appended;
+        late Map<String, Object?> record;
         await backend.transaction((txn) async {
           final seq = await backend.nextSequenceNumber(txn);
-          final record = <String, Object?>{
+          record = <String, Object?>{
+            ...extras,
             'event_id': eventId,
             'aggregate_id': aggregateId,
             'aggregate_type': 'note',
             'entry_type': 'spelled_note',
-            'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
-            'lib_format_version': LibVersion.dataFormat.toJson(),
+            'entry_type_version': entryTypeVersion,
+            'lib_format_version': libFormatVersion,
             'event_type': 'finalized',
             'sequence_number': seq,
             'data': <String, Object?>{'title': 's', 'note': null},
@@ -4245,8 +4331,7 @@ void _registerEventSpellingTests(
           final event = read.value;
           expect(event, isNotNull, reason: read.key);
           final map = event!.toMap();
-          expect(map['client_timestamp'], timestamp, reason: read.key);
-          expect(map['initiator'], initiator, reason: read.key);
+          expect(map, record, reason: read.key);
           expect(
             event.clientTimestamp.isAtSameMomentAs(DateTime.parse(timestamp)),
             isTrue,
@@ -4255,8 +4340,96 @@ void _registerEventSpellingTests(
           expect(canonicalEventHash(map), appended.eventHash, reason: read.key);
           expect(event.eventHash, appended.eventHash, reason: read.key);
         }
+        // The instant the timestamp names bounds a window that finds it.
+        final instant = DateTime.parse(timestamp);
+        final windowed = await backend.findAllEvents(
+          clientTimestampStart: instant,
+          clientTimestampEnd: instant.add(const Duration(microseconds: 1)),
+        );
+        expect(windowed.map((e) => e.eventId), contains(eventId));
       });
     }
+
+    // Verifies: EVS-DEV-event-record/A
+    test('a record whose client timestamp has no offset, lies outside the '
+        'four-digit years or rolls a field over does not parse, naming the '
+        'field', () {
+      const malformed = <String>[
+        '2026-05-01T12:00:00',
+        '2026-05-01T12:00:00.000',
+        '10000-01-01T00:00:00Z',
+        '-0001-01-01T00:00:00Z',
+        '2026-02-30T00:00:00Z',
+        '2026-05-01T24:00:00Z',
+      ];
+      for (final timestamp in malformed) {
+        final record = <String, Object?>{
+          'event_id': 'unparsed',
+          'aggregate_id': 'agg-unparsed',
+          'aggregate_type': 'note',
+          'entry_type': 'spelled_note',
+          'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
+          'lib_format_version': LibVersion.dataFormat.toJson(),
+          'event_type': 'finalized',
+          'sequence_number': 1,
+          'data': const <String, Object?>{},
+          'metadata': const <String, Object?>{},
+          'initiator': user,
+          'flow_token': null,
+          'client_timestamp': timestamp,
+          'event_hash': 'h',
+          'previous_event_hash': null,
+        };
+        expect(
+          () => StoredEvent.fromMap(record, 1),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('"client_timestamp"'),
+            ),
+          ),
+          reason: timestamp,
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/A
+    test('appendEvent refuses an event whose client timestamp lies outside '
+        'the four-digit years, writing nothing', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final before = await backend.findAllEvents();
+      await expectLater(
+        backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent.synthetic(
+              key: seq,
+              eventId: 'far-future',
+              aggregateId: 'agg-far-future',
+              entryType: 'spelled_note',
+              sequenceNumber: seq,
+              initiator: const UserInitiator('u-spelling'),
+              clientTimestamp: DateTime.utc(10000),
+              eventHash: 'h',
+            ),
+          );
+        }),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"client_timestamp"'),
+          ),
+        ),
+      );
+      expect(
+        (await backend.findAllEvents()).map((e) => e.eventId),
+        before.map((e) => e.eventId),
+      );
+    });
   });
 }
 

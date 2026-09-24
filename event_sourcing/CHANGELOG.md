@@ -178,13 +178,27 @@ created by an earlier release is dropped and provisioned again with
 - `StoredEvent.fromMap` keeps every field the event hash covers as the
   record spelled it: `toMap` writes back the `client_timestamp` string (a
   timestamp without a fraction, or with a `+00:00` offset, is not
-  rewritten) and the `initiator` map, including keys `Initiator` does not
-  model. Both backends store and return those spellings, so a received
-  record, its stored copy and the copy a relay forwards hash alike. A
-  version map with a key other than `major` and `minor` is malformed.
+  rewritten), the `initiator` map and both version maps, including keys
+  `Initiator` and the version types do not read, and every top-level key
+  of the record it does not read (not hashed). Both backends store and
+  return all of them, so a received record, its stored copy and the copy a
+  relay forwards hash alike, and a record from a later release of data
+  format 2 verifies, stores and relays unchanged. `EntryTypeVersion` and
+  `DataFormatVersion.fromJson` read a map by its `major` and `minor` and
+  ignore other keys, so library-version events, view targets and boot
+  records a later 2.x release writes open too.
+- A record's `client_timestamp` must carry a four-digit year, calendar
+  fields within their ranges and an explicit offset (`Z` or
+  `+/-HH[:]MM`): a timestamp without an offset, a year outside 0000-9999,
+  or a value `DateTime.parse` would roll over (30 February, hour 24, a
+  60th second) is a `FormatException` naming the field from
+  `StoredEvent.fromMap`, and `IngestDecodeFailure` from `ingestBatch`
+  and `ingestEvent`, before any write. `appendEvent` on both backends
+  refuses an event built with a `clientTimestamp` outside those years.
 - The event store writes every time it stamps (an event's
   `client_timestamp`, a provenance entry's `received_at`) in UTC, whatever
-  zone an injected `clock` returns.
+  zone an injected `clock` returns, and `StoredEvent.toMap` writes the
+  `clientTimestamp` of an event built with the constructor in UTC.
 
 ### Versions and the boot
 
@@ -318,9 +332,12 @@ created by an earlier release is dropped and provisioned again with
   sequence counter's table first takes that table's lock.
 - The `events` table stores `client_timestamp_text`, the timestamp's
   string as the event hash covers it, beside the `client_timestamp`
-  instant, and stores `initiator` as the event's record holds it;
+  instant; `entry_type_version_json` and `lib_format_version_json`, the
+  version maps as the record holds them, beside their integer columns;
+  `initiator` as the event's record holds it; and `unknown_fields`, the
+  record's top-level keys the library does not read.
   `queryAudit(initiator:)` matches the fields `Initiator` models. The
-  column is part of schema version 1, so a database provisioned by an
+  columns are part of schema version 1, so a database provisioned by an
   earlier 0.5.0 build is provisioned again.
 - `PostgresIdempotencyStore.over` is `@visibleForTesting`; `forBackend` is
   fenced.

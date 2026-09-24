@@ -269,12 +269,14 @@ void main() {
                 INSERT INTO events (sequence_number, event_id, aggregate_id,
                   aggregate_type, entry_type, entry_type_version_major,
                   entry_type_version_minor, lib_format_version_major,
-                  lib_format_version_minor, event_type, data, metadata,
+                  lib_format_version_minor, entry_type_version_json,
+                  lib_format_version_json, event_type, data, metadata,
                   initiator, client_timestamp, client_timestamp_text,
-                  event_hash)
+                  event_hash, unknown_fields)
                 VALUES (@seq, @id, 'agg', 'note', 'versioned_note', @em,
-                  @en, @lm, @ln, 'finalized', '{}'::jsonb, '{}'::jsonb,
-                  '{}'::jsonb, now(), '2026-09-01T12:00:00.000Z', 'h')
+                  @en, @lm, @ln, '{}'::jsonb, '{}'::jsonb, 'finalized',
+                  '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, now(),
+                  '2026-09-01T12:00:00.000Z', 'h', '{}'::jsonb)
               """),
               parameters: <String, Object?>{
                 'seq': seq,

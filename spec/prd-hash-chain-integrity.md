@@ -27,7 +27,7 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 **What does the hash cover?** An event's hash is derived from its id, aggregate id, entry type, entry-type version, data-format version, event type, sequence number, data, initiator, flow token, client timestamp, the hash of the event before it, and its metadata, provenance included. The two versions are covered because they decide whether a receiver accepts an event and how it promotes it (EVS-DEV-version-compatibility/J).
 
-**Which spelling of a field is hashed?** Each field is hashed as the record holds it: the client timestamp as its string, the initiator as its map with every key it carries. Reading a record keeps those spellings, and every backend stores and returns them unchanged, so a stored copy, and the copy a relay forwards, hashes to the value its sender sealed. The library writes the times it stamps in UTC.
+**Which spelling of a field is hashed?** Each field is hashed as the record holds it: the client timestamp as its string, the initiator and the two version maps as maps with every key they carry. Reading a record keeps those spellings, and every backend stores and returns them unchanged, so a stored copy, and the copy a relay forwards, hashes to the value its sender sealed. The library writes the times it stamps in UTC, and a client timestamp names one instant on every host (EVS-DEV-event-record). A top-level key outside the fields listed above is kept with the record but not hashed.
 
 **What the hash does not establish.** The hash is an unkeyed SHA-256. It detects a change to a hashed field made without recomputing every hash the change affects; it does not detect a forger who recomputes them. The aggregate type is not part of the hash input, so a change to it alone is not detected. At ingest, an incoming event's `previous_event_hash` is not checked against the event before it in the upstream log.
 
@@ -39,6 +39,8 @@ D. Hash and chain values SHALL be reproducible: any two observers running the sa
 
 ## Changelog
 
+- 2026-09-24 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: the version maps are hashed as spelled; a top-level key outside the hashed fields is kept but not hashed
 - 2026-09-24 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale states which spelling is hashed and what the hash does not establish
 - 2026-09-23 | efeb5afb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash

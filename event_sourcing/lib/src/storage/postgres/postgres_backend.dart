@@ -881,23 +881,26 @@ class PostgresBackend extends StorageBackend {
         'create one.',
       );
     }
+    event.requireRecordTimestamp();
     final record = event.toMap();
     await session.execute(
       Sql.named('''
         INSERT INTO events (
           sequence_number, event_id, aggregate_id, aggregate_type, entry_type,
           entry_type_version_major, entry_type_version_minor,
-          lib_format_version_major, lib_format_version_minor, event_type,
+          lib_format_version_major, lib_format_version_minor,
+          entry_type_version_json, lib_format_version_json, event_type,
           data, metadata, initiator,
           client_timestamp, client_timestamp_text,
-          event_hash, flow_token, previous_event_hash
+          event_hash, flow_token, previous_event_hash, unknown_fields
         ) VALUES (
           @seq, @eventId, @aggId, @aggType, @entryType,
           @entryTypeMajor, @entryTypeMinor,
-          @libFmtMajor, @libFmtMinor, @eventType,
+          @libFmtMajor, @libFmtMinor,
+          @entryTypeJson:jsonb, @libFmtJson:jsonb, @eventType,
           @data:jsonb, @metadata:jsonb, @initiator:jsonb,
           @clientTs:timestamptz, @clientTsText,
-          @eventHash, @flowToken, @prevHash
+          @eventHash, @flowToken, @prevHash, @unknown:jsonb
         )
       '''),
       parameters: {
@@ -913,10 +916,19 @@ class PostgresBackend extends StorageBackend {
         'eventType': event.eventType,
         'data': event.data,
         'metadata': event.metadata,
-        // The hash covers `initiator` and `client_timestamp` as the record
-        // spells them, so both are stored in that spelling: the initiator
-        // map whole, and the timestamp's string beside the instant that
-        // filters and orders by it.
+        // The hash covers `initiator`, both version maps and
+        // `client_timestamp` as the record spells them, so each is stored in
+        // that spelling: the initiator and version maps whole (the version
+        // columns beside them hold the numbers), and the timestamp's string
+        // beside the instant that filters and orders by it. The record's
+        // top-level keys this build does not read are stored as they are.
+        'entryTypeJson': record['entry_type_version'],
+        'libFmtJson': record['lib_format_version'],
+        'unknown': <String, Object?>{
+          for (final entry in record.entries)
+            if (!StoredEvent.recordKeys.contains(entry.key))
+              entry.key: entry.value,
+        },
         'initiator': record['initiator'],
         'clientTs': event.clientTimestamp.toUtc(),
         'clientTsText': record['client_timestamp'],
@@ -2922,9 +2934,10 @@ class PostgresBackend extends StorageBackend {
   /// [StoredEvent] expects on its public surface.
   ///
   /// The event is parsed with `StoredEvent.fromMap` from the record the
-  /// row holds, so `client_timestamp` (from `client_timestamp_text`) and
-  /// `initiator` read back in the spelling the event hash covers. The
-  /// versions are read from their columns through the strict parser.
+  /// row holds, so `client_timestamp` (from `client_timestamp_text`),
+  /// `initiator` and the two version maps read back in the spelling the
+  /// event hash covers, and the record's other top-level keys (from
+  /// `unknown_fields`) read back as they were stored.
   StoredEvent _storedEventFromRow(ResultRow row) {
     final m = row.toColumnMap();
     final seq = m['sequence_number'] as int;
@@ -2933,18 +2946,13 @@ class PostgresBackend extends StorageBackend {
     // happens to track sequence_number for the events store. On Postgres
     // there's no separate key surface — sequence_number IS the primary key.
     return StoredEvent.fromMap(<String, Object?>{
+      ..._asJsonMap(m['unknown_fields']),
       'event_id': m['event_id'],
       'aggregate_id': m['aggregate_id'],
       'aggregate_type': m['aggregate_type'],
       'entry_type': m['entry_type'],
-      'entry_type_version': _entryTypeVersionOf(
-        m['entry_type_version_major'],
-        m['entry_type_version_minor'],
-      ).toJson(),
-      'lib_format_version': _dataFormatVersionOf(
-        m['lib_format_version_major'],
-        m['lib_format_version_minor'],
-      ).toJson(),
+      'entry_type_version': _asJsonMap(m['entry_type_version_json']),
+      'lib_format_version': _asJsonMap(m['lib_format_version_json']),
       'event_type': m['event_type'],
       'sequence_number': seq,
       'data': _asJsonMap(m['data']),
@@ -3064,14 +3072,6 @@ class _AuditCursorPoint {
 /// Sembast backend refuses it.
 EntryTypeVersion _entryTypeVersionOf(Object? major, Object? minor) =>
     EntryTypeVersion.fromJson(<String, Object?>{
-      'major': major,
-      'minor': minor,
-    });
-
-/// A data-format version read from its two columns, through the strict
-/// parser.
-DataFormatVersion _dataFormatVersionOf(Object? major, Object? minor) =>
-    DataFormatVersion.fromJson(<String, Object?>{
       'major': major,
       'minor': minor,
     });
