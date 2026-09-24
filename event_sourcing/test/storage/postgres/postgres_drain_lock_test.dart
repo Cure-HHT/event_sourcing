@@ -4,9 +4,12 @@
 // lock session. Covers standby and takeover, fencing of a replaced holder's
 // transactions, re-acquisition after a lost lock session, the lock-session
 // requirements the drain lock rests on, and a fenced backend. Gated on
-// PG_TEST_URL; files that reset the schema run one at a time.
+// PG_TEST_URL; files that reset the schema run one at a time. Each test
+// spawns a second drainer isolate, which on a CI runner can take longer
+// than the default 30-second limit, so the limit is raised.
 
 @TestOn('vm')
+@Timeout(Duration(minutes: 3))
 library;
 
 import 'dart:async';
@@ -433,6 +436,9 @@ void main() {
     test('a check during an uncommitted epoch raise', () async {
       final timers = ManualTimers();
       final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
       final receiver =
           Receiver(id: 'x', entryTypes: const <String>{harnessNoteType})
             ..gate = (() => gate.future)
@@ -625,6 +631,9 @@ void main() {
     test('a replaced holder sends nothing more', () async {
       final timers = ManualTimers();
       final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
       final receivers = <Receiver>[
         for (final id in <String>['w', 'x', 'y', 'z'])
           Receiver(id: id, entryTypes: const <String>{harnessNoteType})
@@ -698,6 +707,9 @@ void main() {
     test('the new holder honours a halt requested during both sends', () async {
       final timers = ManualTimers();
       final gate = Completer<void>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
       final receiver = Receiver(
         id: 'x',
         entryTypes: const <String>{harnessNoteType},
@@ -836,6 +848,9 @@ void main() {
       var probes = 0;
       final raiseHeld = Completer<void>();
       final release = Completer<void>();
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final hooks = DeliveryTestHooks(
         timerFactory: timers.create,
         failNextLockHeartbeat: () {
@@ -1400,6 +1415,9 @@ void main() {
         // and sends r1 again, held at the gate.
         await cycle();
         final gate = Completer<void>();
+        addTearDown(() {
+          if (!gate.isCompleted) gate.complete();
+        });
         receiver.gate = () => gate.future;
         final pass = cycle();
         await until(() => receiver.started.length == 2, reason: 'the resend');
