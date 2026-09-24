@@ -14,11 +14,13 @@ import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -462,6 +464,84 @@ void main() {
       );
       expect(await backend.readFifoHead('fake'), isNull);
       expect(await backend.readFillCursor('fake'), 2);
+    });
+
+    // A reserved system event is enqueued only for a destination whose
+    // filter includes system events; a filter that does not skips it and
+    // the cursor advances past it.
+    test('a system event is enqueued only when the filter includes system '
+        'events', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e-sys',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+        entryType: kDestinationRegisteredEntryType,
+      );
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      final excluding = FakeDestination(id: 'excluding');
+      final including = FakeDestination(
+        id: 'including',
+        filter: const SubscriptionFilter(includeSystemEvents: true),
+      );
+      for (final dest in [excluding, including]) {
+        await fillWithScheduleForTest(
+          dest,
+          backend: backend,
+          schedule: schedule,
+          clock: () => DateTime.utc(2026, 4, 22, 12),
+        );
+      }
+      expect(await backend.readFifoHead('excluding'), isNull);
+      expect(await backend.readFillCursor('excluding'), 1);
+      final head = await backend.readFifoHead('including');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e-sys']);
+      expect(await backend.readFillCursor('including'), 1);
+    });
+
+    // The enqueue and the cursor advance commit together: a fill whose
+    // transaction fails after its writes leaves neither, and the next fill
+    // enqueues the same event.
+    test('a failed fill transaction leaves neither a FIFO row nor a cursor '
+        'advance', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      var failures = 0;
+      await expectLater(
+        runWithDeliveryTestHooks(
+          DeliveryTestHooks(
+            failFillTransaction: (id) {
+              failures++;
+              return true;
+            },
+          ),
+          () => fillWithScheduleForTest(
+            dest,
+            backend: backend,
+            schedule: schedule,
+            clock: () => DateTime.utc(2026, 4, 22, 12),
+          ),
+        ),
+        throwsA(isA<InjectedFailure>()),
+      );
+      expect(failures, 1, reason: 'the fill reached its transaction');
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), -1);
+
+      await fillForTest(
+        dest,
+        backend: backend,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+      expect(await backend.readFillCursor('fake'), 1);
     });
 
     // fillBatch returns without enqueueing any new rows, without calling

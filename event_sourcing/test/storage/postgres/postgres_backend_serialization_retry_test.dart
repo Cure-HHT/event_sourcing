@@ -90,7 +90,9 @@ void main() {
       // losers with 40001 — which the backend's retry loop must absorb. A
       // micro-yield between the reserve and the append widens the conflict
       // window so the race is reliably exercised.
+      var runs = 0;
       Future<int> appendOne(int i) => backend.transaction<int>((txn) async {
+        runs += 1;
         final seq = await backend.nextSequenceNumber(txn);
         await Future<void>.delayed(Duration.zero);
         await backend.appendEvent(txn, _event('e$i-$seq', seq));
@@ -120,6 +122,24 @@ void main() {
       expect(await backend.readSequenceCounter(), equals(concurrency));
       final all = await backend.findAllEvents();
       expect(all, hasLength(concurrency));
+
+      // The race did provoke conflicts, and the backend absorbed them by
+      // re-running the losing bodies: a backend that ran the transactions
+      // one at a time would run each body exactly once.
+      expect(
+        runs,
+        greaterThan(concurrency),
+        reason: 'at least one body must have lost a race and been re-run',
+      );
+
+      // The transactions run at SERIALIZABLE isolation.
+      final isolation = await backend.transaction<Object?>((txn) async {
+        final rows = await (txn as PostgresTxn).session.execute(
+          'SHOW transaction_isolation',
+        );
+        return rows.first[0];
+      });
+      expect(isolation, 'serializable');
     });
   });
 
@@ -588,7 +608,8 @@ void main() {
 }
 
 /// Commits [contender]'s open transaction once another session of this
-/// database waits for a lock, or once [waiter] has completed.
+/// database waits for a lock [contender] holds, or once [waiter] has
+/// completed.
 Future<void> _commitOnceBlocked(
   Connection contender,
   Future<Object?> waiter,
@@ -598,8 +619,9 @@ Future<void> _commitOnceBlocked(
   final deadline = DateTime.now().add(const Duration(seconds: 10));
   while (!done) {
     final waiting = await contender.execute(
-      "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
-      'AND datname = current_database()',
+      'SELECT count(*) FROM pg_stat_activity '
+      'WHERE datname = current_database() '
+      'AND pg_backend_pid() = ANY(pg_blocking_pids(pid))',
     );
     if ((waiting.first[0]! as int) > 0) break;
     if (DateTime.now().isAfter(deadline)) {

@@ -61,6 +61,14 @@ Future<int> _componentKey(Connection c, String component) async {
   return key;
 }
 
+/// Whether the database holds the generation record a boot writes.
+Future<bool> _hasGenerationRecord(Connection c) async {
+  final r = await c.execute(
+    "SELECT count(*) FROM backend_state WHERE key = 'data_generation'",
+  );
+  return r.first[0] != 0;
+}
+
 String _dart() {
   final root = Platform.environment['FLUTTER_ROOT'];
   return root == null || root.isEmpty ? 'dart' : '$root/bin/dart';
@@ -123,7 +131,11 @@ void main() {
     final provisioned = await _server(url, const <String>['--provision']);
     expect(provisioned.exitCode, 0, reason: '${provisioned.stderr}');
     // A live instance of another data-format major: it holds that
-    // component's shared lock, and a boot of its recorded the component.
+    // component's shared lock, and the component's catalog row names the
+    // key. The guard reports a component as live only while its lock is
+    // held, and the database's generation record is never written here, so
+    // the refusal is the live-instance check's: a refusal by the record
+    // would be a DataFormatIncompatibleError, not the guard's exception.
     final other = 'data_format:${LibVersion.dataFormat.major + 1}';
     final live = await _connect(url);
     addTearDown(live.close);
@@ -151,5 +163,6 @@ void main() {
       '${result.stderr}',
       allOf(contains('IncompatibleGenerationException'), contains(other)),
     );
+    expect(await _hasGenerationRecord(live), isFalse);
   }, timeout: const Timeout(Duration(minutes: 5)));
 }

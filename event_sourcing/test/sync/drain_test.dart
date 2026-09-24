@@ -3,12 +3,17 @@
 //   sequence_in_queue order; SendOk advances to the next head; a wedged head
 //   halts the pass; trail rows are never sent ahead of a wedged head)
 // Verifies: EVS-PRD-destinations/D
-// (durable queue — drain reads from
-//   StorageBackend; queued rows survive across drain call boundaries)
+// (durable queue — rows enqueued on a file-backed database survive closing
+//   the backend and are drained, in order, by a backend reopened over the
+//   same file)
 // Verifies: EVS-PRD-destinations/E
 // (pluggable delivery — every test calls
 //   drain() via FakeDestination.send, the application-supplied transport)
+@TestOn('vm')
+library;
+
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
@@ -21,6 +26,7 @@ import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
+import 'package:sembast/sembast_io.dart' show databaseFactoryIo;
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
@@ -620,11 +626,59 @@ void main() {
       await eventStore.record(record.key).delete(db);
 
       final dest = FakeDestination(script: [const SendOk()]);
-      expect(
-        () => drainForTest(dest, registry: registry),
+      await expectLater(
+        drainForTest(dest, registry: registry),
         throwsA(isA<StateError>()),
       );
+      // The drain refused before sending anything and recorded no attempt:
+      // the row is still the pending head with an empty attempt history.
+      expect(dest.sent, isEmpty);
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+      expect(head.attempts, isEmpty);
+      expect(head.finalStatus, isNull);
     });
+  });
+
+  // A queue on a file-backed database outlives the backend that wrote it:
+  // rows enqueued before the backend closes are drained, in order, by a
+  // fresh backend opened over the same file.
+  test('queued rows survive closing and reopening the database', () async {
+    final dir = await Directory.systemTemp.createTemp('drain-restart-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/queue.db';
+
+    final before = SembastBackend(
+      database: await databaseFactoryIo.openDatabase(path),
+    );
+    await buildAuditedRegistryDeps(before);
+    await _enqueueRow(before, 'fake', eventId: 'e1', sequenceNumber: 1);
+    await _enqueueRow(before, 'fake', eventId: 'e2', sequenceNumber: 2);
+    await before.close();
+
+    final after = SembastBackend(
+      database: await databaseFactoryIo.openDatabase(path),
+    );
+    addTearDown(after.close);
+    final deps = await buildAuditedRegistryDeps(after);
+    final registry = DestinationRegistry(eventStore: deps.eventStore);
+
+    final dest = FakeDestination(script: [const SendOk(), const SendOk()]);
+    await drainForTest(dest, registry: registry);
+
+    expect(
+      dest.sent
+          .map(
+            (p) =>
+                (jsonDecode(utf8.decode(p.bytes))
+                        as Map<String, Object?>)['event_id']
+                    as String,
+          )
+          .toList(),
+      ['e1', 'e2'],
+    );
+    expect(await after.readFifoHead('fake'), isNull);
   });
 }
 

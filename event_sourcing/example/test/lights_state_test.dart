@@ -1,6 +1,8 @@
 // Tests for the app-side LightsState fold: the lights are computed from the
 // raw button-press events (replay, then live), not written into a library
 // view table.
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:event_sourcing_demo/lights_state.dart';
@@ -143,22 +145,88 @@ void main() {
     final (bundle, backend) = await _open(factory, 'lights-dispose.db');
     await _press(bundle.eventStore, 'red_button_pressed');
 
+    var disposedMidAttach = 0;
     for (final yields in <int>[0, 1, 2, 3, 5, 8]) {
+      final store = _CountingStore(bundle.eventStore);
       final lights = LightsState();
       var notified = 0;
       lights.addListener(() => notified += 1);
-      final attaching = lights.attach(bundle.eventStore);
+      var attached = false;
+      final attaching = lights.attach(store).then((_) => attached = true);
       for (var i = 0; i < yields; i++) {
         await Future<void>.delayed(Duration.zero);
       }
+      final attachedBeforeDispose = attached;
+      final notifiedBeforeDispose = notified;
       lights.dispose();
       await attaching;
       await _press(bundle.eventStore, 'red_button_pressed');
       await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(notified, lessThanOrEqualTo(1), reason: 'yields=$yields');
+
+      expect(
+        store.activeSubscriptions,
+        0,
+        reason: 'yields=$yields: the live subscription is cancelled',
+      );
+      expect(
+        notified,
+        notifiedBeforeDispose,
+        reason: 'yields=$yields: nothing is applied after dispose',
+      );
+      if (attachedBeforeDispose) {
+        // The replay of the one earlier press completed before dispose.
+        expect(notified, 1, reason: 'yields=$yields');
+      } else {
+        disposedMidAttach += 1;
+        expect(notified, 0, reason: 'yields=$yields: attach applied nothing');
+      }
     }
+    // At least one iteration disposed while attach was still running, so
+    // the case the test is named for was exercised.
+    expect(disposedMidAttach, greaterThan(0));
 
     await bundle.eventStore.close();
     await backend.close();
   });
+}
+
+/// Forwards to a real [EventStore] and counts the `subscribe` streams that
+/// are listened to and not yet cancelled.
+class _CountingStore implements EventStore {
+  _CountingStore(this._inner);
+
+  final EventStore _inner;
+
+  int activeSubscriptions = 0;
+
+  @override
+  StorageBackend get backend => _inner.backend;
+
+  @override
+  Stream<Update<T>> subscribe<T>(
+    SubscriptionFilter filter,
+    SubscriptionMode<T> mode,
+  ) {
+    final source = _inner.subscribe<T>(filter, mode);
+    StreamSubscription<Update<T>>? sub;
+    late final StreamController<Update<T>> controller;
+    controller = StreamController<Update<T>>(
+      onListen: () {
+        activeSubscriptions += 1;
+        sub = source.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+      },
+      onCancel: () async {
+        activeSubscriptions -= 1;
+        await sub?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  @override
+  Object? noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

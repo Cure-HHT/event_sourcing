@@ -7,10 +7,12 @@
 @TestOn('browser')
 library;
 
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
 import 'package:event_sourcing/src/storage/web_locks.dart'
-    show heldBrowserLocks;
+    show browserLockCounts, heldBrowserLocks;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:idb_shim/idb_client_native.dart' show idbFactoryWeb;
@@ -171,19 +173,102 @@ void main() {
   });
 
   // Verifies: EVS-DEV-version-compatibility/G
-  test('of two conflicting tabs opening at once exactly one opens', () async {
+  test('a conflicting tab that opens while another is between inspection '
+      'and registration waits for it and is then refused', () async {
     final name = _freshName();
-    final outcomes = await Future.wait(<Future<Object?>>[
-      _openTab(name).then<Object?>((s) => s, onError: (Object e) => e),
-      _openTab(
-        name,
-        x: const EntryTypeVersion(2, 0),
-      ).then<Object?>((s) => s, onError: (Object e) => e),
-    ]);
-    expect(outcomes.whereType<EventStore>(), hasLength(1));
-    expect(outcomes.whereType<IncompatibleGenerationException>(), hasLength(1));
-    for (final store in outcomes.whereType<EventStore>()) {
-      await store.close();
+    final release = Completer<void>();
+    // Released on failure too, so a held boot cannot keep the lock past
+    // this test.
+    addTearDown(() {
+      if (!release.isCompleted) release.complete();
+    });
+    final heldA = Completer<void>();
+    final openA = runWithDeliveryTestHooks(
+      DeliveryTestHooks(
+        insideBootLock: () {
+          heldA.complete();
+          return release.future;
+        },
+      ),
+      () => _openTab(name),
+    );
+    await heldA.future;
+    // Tab A has inspected and holds only its boot lock: it has registered
+    // no component yet, so a tab that inspected now would see nothing.
+    final heldWhileInside = await heldBrowserLocks(name);
+    expect(
+      heldWhileInside,
+      hasLength(1),
+      reason: 'A holds its boot lock and no component lock yet',
+    );
+    final bootLock = heldWhileInside.single.name;
+
+    Object? outcomeB;
+    var settledB = false;
+    final openB = _openTab(name, x: const EntryTypeVersion(2, 0)).then<void>(
+      (store) {
+        outcomeB = store;
+        settledB = true;
+      },
+      onError: (Object e) {
+        outcomeB = e;
+        settledB = true;
+      },
+    );
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while ((await browserLockCounts(bootLock)).pending != 1) {
+      if (settledB) fail('B settled without waiting: $outcomeB');
+      if (DateTime.now().isAfter(deadline)) {
+        fail('B never requested the boot lock');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(settledB, isFalse, reason: 'B waits while A holds the boot lock');
+
+    release.complete();
+    final storeA = await openA;
+    addTearDown(storeA.close);
+    await openB;
+    if (outcomeB is EventStore) {
+      await (outcomeB! as EventStore).close();
+    }
+    expect(
+      outcomeB,
+      isA<IncompatibleGenerationException>().having(
+        (e) => e.conflictingComponents,
+        'components',
+        ['entry_type:$_kX:1'],
+      ),
+      reason: 'B inspects after A registered, and A conflicts with it',
+    );
+  });
+
+  // Verifies: EVS-DEV-version-compatibility/G
+  test('of two conflicting tabs opening at once exactly one opens, in each '
+      'of 10 rounds', () async {
+    for (var round = 0; round < 10; round++) {
+      final name = _freshName();
+      final outcomes = await Future.wait(<Future<Object?>>[
+        _openTab(name).then<Object?>((s) => s, onError: (Object e) => e),
+        _openTab(
+          name,
+          x: const EntryTypeVersion(2, 0),
+        ).then<Object?>((s) => s, onError: (Object e) => e),
+      ]);
+      for (final store in outcomes.whereType<EventStore>()) {
+        await store.close();
+      }
+      expect(
+        outcomes.whereType<EventStore>(),
+        hasLength(1),
+        reason: 'round $round: $outcomes',
+      );
+      expect(
+        outcomes.whereType<IncompatibleGenerationException>(),
+        hasLength(1),
+        reason: 'round $round: $outcomes',
+      );
     }
   });
 

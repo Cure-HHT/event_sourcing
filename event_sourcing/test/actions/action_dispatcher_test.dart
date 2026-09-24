@@ -9,6 +9,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 // AggregateIdKey and WholePayload are not re-exported from the barrel.
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import 'fixtures/test_actions.dart'
     show
@@ -25,6 +26,158 @@ import 'fixtures/test_actions.dart'
         ScopedPatientEditAction,
         TwoPermissionAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
+
+/// A [SembastBackend] that records the [Transaction] every event append and
+/// every view-row write runs in, so a test can tie the policy's reads, the
+/// execute-result appends and the projection writes to one transaction.
+class _RecordingSembastBackend extends SembastBackend {
+  _RecordingSembastBackend({required super.database});
+
+  /// `(txn, eventType)` for every [appendEvent] call, in call order,
+  /// including appends in transactions that later rolled back.
+  final List<(Transaction, String)> appends = <(Transaction, String)>[];
+
+  /// `(txn, viewName)` for every [upsertViewRowInTxn] call, in call order.
+  final List<(Transaction, String)> viewUpserts = <(Transaction, String)>[];
+
+  @override
+  Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) {
+    appends.add((txn, event.eventType));
+    return super.appendEvent(txn, event);
+  }
+
+  @override
+  Future<void> upsertViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+    Map<String, dynamic> row,
+  ) {
+    viewUpserts.add((txn, viewName));
+    return super.upsertViewRowInTxn(txn, viewName, key, row);
+  }
+
+  /// The transactions of every recorded append of [eventType].
+  List<Transaction> appendTxnsOf(String eventType) => <Transaction>[
+    for (final (txn, type) in appends)
+      if (type == eventType) txn,
+  ];
+}
+
+/// Opens an in-memory [EventStore] over a [_RecordingSembastBackend], with
+/// the same entry types as `bootstrapTestEventStore`.
+Future<(EventStore, _RecordingSembastBackend)> _bootstrapRecordingStore({
+  ProjectionRegistry? projections,
+}) async {
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'dispatcher-recording-${DateTime.now().microsecondsSinceEpoch}.db',
+  );
+  final backend = _RecordingSembastBackend(database: db);
+  final entryTypes = EntryTypeRegistry();
+  for (final definition in kSystemEntryTypes) {
+    entryTypes.register(definition);
+  }
+  entryTypes
+    ..register(
+      const EntryTypeDefinition(
+        id: 'action_denial',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'Action denial',
+      ),
+    )
+    ..register(
+      const EntryTypeDefinition(
+        id: 'greeting',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'Greeting',
+      ),
+    );
+  final store = await EventStore.openForTest(
+    storage: backend,
+    entryTypes: entryTypes,
+    source: const Source(
+      hopId: 'test-server',
+      identifier: 'test-instance-1',
+      softwareVersion: 'event_sourcing_test@0.0.0',
+    ),
+    securityContexts: SembastSecurityContextStore(backend: backend),
+    projections: projections,
+  );
+  return (store, backend);
+}
+
+/// A projection that writes one `greetings_view` row per `hello.said`
+/// aggregate.
+ProjectionRegistry _greetingsProjection() => ProjectionRegistry()
+  ..register(
+    const TableProjectionSpec(
+      viewName: 'greetings_view',
+      interest: SubscriptionFilter(eventTypes: <String>{'hello.said'}),
+      insertEventTypes: <String>{'hello.said'},
+      removeEventTypes: <String>{},
+      rowKey: AggregateIdKey(),
+      rowData: WholePayload(),
+    ),
+  );
+
+/// Returns two drafts from execute: a valid `hello.said` greeting, then a
+/// draft of an entry type the store does not register. The first draft is
+/// appended (and projected) inside the dispatch transaction before the
+/// second draft's append throws, so the dispatch transaction holds a real
+/// write when it fails.
+class _AppendsThenFailsAction extends HelloAction {
+  @override
+  String get name => 'appends_then_fails';
+
+  @override
+  Future<ExecutionResult<String>> execute(
+    Map<String, Object?> input,
+    ActionContext ctx,
+  ) async {
+    return ExecutionResult<String>(
+      result: 'never returned',
+      events: <EventDraft>[
+        EventDraft(
+          aggregateId: 'greeting-${input['who']}',
+          aggregateType: 'greeting',
+          entryType: 'greeting',
+          eventType: 'hello.said',
+          data: <String, dynamic>{'who': input['who']},
+        ),
+        const EventDraft(
+          aggregateId: 'unregistered-agg',
+          aggregateType: 'greeting',
+          entryType: 'entry_type_the_store_does_not_register',
+          eventType: 'hello.unregistered',
+          data: <String, dynamic>{},
+        ),
+      ],
+    );
+  }
+}
+
+/// Records every [Transaction] the dispatcher passes to [isPermitted] and
+/// denies every permission as not granted.
+class _RecordingDenyPolicy extends AuthorizationPolicy {
+  final List<Transaction?> txns = <Transaction?>[];
+
+  @override
+  Future<AuthorizationDecision> isPermitted(
+    Principal principal,
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Transaction? txn,
+  }) async {
+    txns.add(txn);
+    return Deny(permission: permission, reason: DenyReason.notGranted);
+  }
+
+  @override
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Transaction? txn,
+  }) async => EffectiveAuthorization.empty;
+}
 
 ActionContext _ctx() => ActionContext(
   principal: Principal.user(
@@ -971,77 +1124,68 @@ void main() {
       },
     );
 
-    test(
-      'multi-event execute persists all atomically with same action_invocation_id',
-      () async {
-        final result = await allowDispatcher.dispatch(
-          const ActionSubmission(
-            actionName: 'multi_event',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchSuccess<Object?>>());
+    test('multi-event execute appends every event in one transaction with the '
+        'same action_invocation_id', () async {
+      final (store, backend) = await _bootstrapRecordingStore();
+      final d = makeAllowDispatcher(
+        ActionRegistry()..register(MultiEventAction()),
+        store,
+        InMemoryIdempotencyStore(),
+      );
+      final result = await d.dispatch(
+        const ActionSubmission(
+          actionName: 'multi_event',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
-        final greetings = allEvents
-            .where((e) => e.eventType == 'hello.said')
-            .toList();
-        expect(greetings, hasLength(3));
+      final allEvents = await store.backend.findAllEvents();
+      final greetings = allEvents
+          .where((e) => e.eventType == 'hello.said')
+          .toList();
+      expect(greetings, hasLength(3));
 
-        // All three events must carry the same action_invocation_id.
-        final invIds = greetings
-            .map((e) => e.metadata['action_invocation_id'] as String)
-            .toSet();
-        expect(invIds, hasLength(1));
+      // All three appends ran in one storage transaction, so they commit
+      // or roll back together (the rollback half is the
+      // appends_then_fails test in the authorize+execute group).
+      final txns = backend.appendTxnsOf('hello.said');
+      expect(txns, hasLength(3));
+      expect(identical(txns[0], txns[1]), isTrue);
+      expect(identical(txns[0], txns[2]), isTrue);
 
-        // All three must have action_name stamped.
-        for (final e in greetings) {
-          expect(e.metadata['action_name'], 'multi_event');
-        }
-      },
-    );
+      // All three events must carry the same action_invocation_id.
+      final invIds = greetings
+          .map((e) => e.metadata['action_invocation_id'] as String)
+          .toSet();
+      expect(invIds, hasLength(1));
 
-    // Stage 8 rollback-on-persist-failure has no fault-injection test: the
-    // dispatcher has no seam that injects a failure mid-transaction, so the
-    // rollback is verified only by code inspection and the Sembast
-    // transaction contract.
+      // All three must have action_name stamped.
+      for (final e in greetings) {
+        expect(e.metadata['action_name'], 'multi_event');
+      }
+    });
   });
 
   // Stage 8 appends action events via appendInTxn, and the projection
   // interpreter runs inside that same transaction so view rows are
   // materialized atomically with the append.
   group('Stage 8 — projection materialization inside dispatch tx', () {
-    test('view row is present immediately after dispatch returns', () async {
-      // Register a TableProjectionSpec that watches the test action's
-      // `hello.said` events and writes one row per (aggregateId).
-      final projections = ProjectionRegistry()
-        ..register(
-          const TableProjectionSpec(
-            viewName: 'greetings_view',
-            interest: SubscriptionFilter(eventTypes: <String>{'hello.said'}),
-            insertEventTypes: <String>{'hello.said'},
-            removeEventTypes: <String>{},
-            rowKey: AggregateIdKey(),
-            rowData: WholePayload(),
-          ),
-        );
-
-      final store = await bootstrapTestEventStore(projections: projections);
-      final reg = ActionRegistry()..register(HelloAction());
-      final idem = InMemoryIdempotencyStore();
+    test('the view row is written in the transaction that appends the '
+        'event, and is present when dispatch returns', () async {
+      final (store, backend) = await _bootstrapRecordingStore(
+        projections: _greetingsProjection(),
+      );
       final allowDispatcher = ActionDispatcher(
-        registry: reg,
+        registry: ActionRegistry()..register(HelloAction()),
         authorization: const AlwaysAllowPolicy(),
         events: store,
-        idempotency: idem,
+        idempotency: InMemoryIdempotencyStore(),
       );
 
       // HelloAction emits an EventDraft with aggregateId
-      // 'greeting-${who}' (see fixtures/test_actions.dart). After
-      // dispatch returns, the view row for that aggregate MUST already
-      // be present — proving the projection ran inside the dispatch
-      // transaction, not via some post-commit subscriber path.
+      // 'greeting-${who}' (see fixtures/test_actions.dart).
       final result = await allowDispatcher.dispatch(
         const ActionSubmission(
           actionName: 'hello',
@@ -1051,6 +1195,23 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
+      // The greetings_view write ran in the very transaction the
+      // hello.said event was appended in, not in a later one.
+      final appendTxn = backend.appendTxnsOf('hello.said').single;
+      final viewTxns = <Transaction>[
+        for (final (txn, view) in backend.viewUpserts)
+          if (view == 'greetings_view') txn,
+      ];
+      expect(viewTxns, hasLength(1));
+      expect(
+        identical(viewTxns.single, appendTxn),
+        isTrue,
+        reason:
+            'appendInTxn must run the projection interpreter so '
+            'action-emitted events update views inside the dispatch '
+            'transaction',
+      );
+
       final row = await store.backend.transaction(
         (txn) => store.backend.readViewRowInTxn(
           txn,
@@ -1058,14 +1219,7 @@ void main() {
           'greeting-in-tx-world',
         ),
       );
-      expect(
-        row,
-        isNotNull,
-        reason:
-            'appendInTxn must run the projection interpreter so '
-            'action-emitted events update views inside the dispatch '
-            'transaction',
-      );
+      expect(row, isNotNull);
       expect(row!['who'], 'in-tx-world');
     });
   });
@@ -1235,35 +1389,39 @@ void main() {
   // Verifies: EVS-PRD-scoped-permissions/H
   // (authorize-stage policy reads and execute-stage appends share one storage transaction)
   group('Stage 6–8 — authorize+execute share one transaction', () {
-    test(
-      'policy.isPermitted receives a non-null Transaction injected by the dispatcher',
-      () async {
-        final policy = RecordingAllowPolicy();
-        final d = ActionDispatcher(
-          registry: registry,
-          authorization: policy,
-          events: eventStore,
-          idempotency: idempotency,
-        );
-        final result = await d.dispatch(
-          const ActionSubmission(
-            actionName: 'hello',
-            rawInput: <String, Object?>{'who': 'world'},
-          ),
-          _ctx(),
-        );
-        expect(result, isA<DispatchSuccess<Object?>>());
+    test('policy.isPermitted receives the Transaction the execute-result '
+        'event is appended in', () async {
+      final (store, backend) = await _bootstrapRecordingStore();
+      final policy = RecordingAllowPolicy();
+      final d = ActionDispatcher(
+        registry: ActionRegistry()..register(HelloAction()),
+        authorization: policy,
+        events: store,
+        idempotency: InMemoryIdempotencyStore(),
+      );
+      final result = await d.dispatch(
+        const ActionSubmission(
+          actionName: 'hello',
+          rawInput: <String, Object?>{'who': 'world'},
+        ),
+        _ctx(),
+      );
+      expect(result, isA<DispatchSuccess<Object?>>());
 
-        expect(policy.txns, hasLength(1));
-        expect(
+      expect(policy.txns, hasLength(1));
+      expect(policy.txns.single, isNotNull);
+      expect(
+        identical(
           policy.txns.single,
-          isNotNull,
-          reason:
-              'dispatcher must inject its active runTransaction Transaction into '
-              'policy.isPermitted so authorize+execute share a snapshot',
-        );
-      },
-    );
+          backend.appendTxnsOf('hello.said').single,
+        ),
+        isTrue,
+        reason:
+            'dispatcher must inject its active runTransaction Transaction into '
+            'policy.isPermitted and append the execute results in that same '
+            'transaction, so authorize+execute+persist share one transaction',
+      );
+    });
 
     // Verifies: EVS-DEV-transactional-authorize-execute/A (each dispatch opens its own storage transaction)
     // Verifies: EVS-PRD-scoped-permissions/H
@@ -1346,9 +1504,15 @@ void main() {
     test('authorize-stage denial commits the authorization_denied event in '
         'the dispatch tx (success path: tx is committed even though no '
         'execute-result events were appended)', () async {
-      // Default `dispatcher` uses DenyAllAuthorizationPolicy.forTests();
-      // HelloAction declares test.hello which gets denied.
-      final result = await dispatcher.dispatch(
+      final (store, backend) = await _bootstrapRecordingStore();
+      final policy = _RecordingDenyPolicy();
+      final d = ActionDispatcher(
+        registry: ActionRegistry()..register(HelloAction()),
+        authorization: policy,
+        events: store,
+        idempotency: InMemoryIdempotencyStore(),
+      );
+      final result = await d.dispatch(
         const ActionSubmission(
           actionName: 'hello',
           rawInput: <String, Object?>{'who': 'world'},
@@ -1357,9 +1521,22 @@ void main() {
       );
       expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
+      // The denial was appended in the transaction the policy read in.
+      expect(policy.txns, hasLength(1));
+      expect(policy.txns.single, isNotNull);
+      expect(
+        identical(
+          backend.appendTxnsOf('authorization_denied').single,
+          policy.txns.single,
+        ),
+        isTrue,
+        reason: 'the denial must be appended in the dispatch transaction',
+      );
+      expect(backend.appendTxnsOf('hello.said'), isEmpty);
+
       // The denial event must be durably persisted (i.e. the tx was
       // committed with just the denial in it, not rolled back).
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await store.backend.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'authorization_denied')
           .toList();
@@ -1372,33 +1549,70 @@ void main() {
     // (dispatch tx is rolled back on execute failure; separate append for denial event)
     test('execute-stage failure rolls the dispatch tx back, then emits the '
         'execution_failed denial in its own (post-rollback) append', () async {
-      registry.register(BadExecuteAction());
-      final allowDispatcher = ActionDispatcher(
-        registry: registry,
-        authorization: const AlwaysAllowPolicy(),
-        events: eventStore,
-        idempotency: idempotency,
+      final (store, backend) = await _bootstrapRecordingStore(
+        projections: _greetingsProjection(),
       );
-      final result = await allowDispatcher.dispatch(
+      final policy = RecordingAllowPolicy();
+      final d = ActionDispatcher(
+        registry: ActionRegistry()..register(_AppendsThenFailsAction()),
+        authorization: policy,
+        events: store,
+        idempotency: InMemoryIdempotencyStore(),
+      );
+      final result = await d.dispatch(
         const ActionSubmission(
-          actionName: 'bad_execute',
-          rawInput: <String, Object?>{'who': 'world'},
+          actionName: 'appends_then_fails',
+          rawInput: <String, Object?>{'who': 'rolled-back'},
         ),
         _ctx(),
       );
       expect(result, isA<DispatchExecutionFailed<Object?>>());
+      expect(
+        (result as DispatchExecutionFailed<Object?>).error,
+        isA<ArgumentError>(),
+      );
 
-      // The dispatch tx rolled back, so no greeting events; the
-      // execution_failed denial was appended in its own tx.
-      final allEvents = await eventStore.backend.findAllEvents();
-      final greetings = allEvents
-          .where((e) => e.eventType == 'hello.said')
-          .toList();
-      expect(greetings, isEmpty);
+      // The first draft really was appended, and projected, inside the
+      // dispatch transaction before the second draft's append threw, so
+      // the transaction held writes when it failed.
+      final dispatchTxn = policy.txns.single;
+      expect(
+        identical(backend.appendTxnsOf('hello.said').single, dispatchTxn),
+        isTrue,
+      );
+      expect(
+        backend.viewUpserts.where(
+          (u) => u.$2 == 'greetings_view' && identical(u.$1, dispatchTxn),
+        ),
+        hasLength(1),
+      );
+
+      // The dispatch tx rolled back: neither the appended greeting nor its
+      // view row survives.
+      final allEvents = await store.backend.findAllEvents();
+      expect(allEvents.where((e) => e.eventType == 'hello.said'), isEmpty);
+      expect(
+        allEvents.where((e) => e.eventType == 'hello.unregistered'),
+        isEmpty,
+      );
+      final row = await store.backend.transaction(
+        (txn) => store.backend.readViewRowInTxn(
+          txn,
+          'greetings_view',
+          'greeting-rolled-back',
+        ),
+      );
+      expect(row, isNull);
+
+      // The execution_failed denial was appended in its own transaction,
+      // after the rollback, and is the only event the dispatch left.
       final denials = allEvents
           .where((e) => e.eventType == 'execution_failed')
           .toList();
       expect(denials, hasLength(1));
+      expect(denials.single.data['action_name'], 'appends_then_fails');
+      final denialTxn = backend.appendTxnsOf('execution_failed').single;
+      expect(identical(denialTxn, dispatchTxn), isFalse);
     });
   });
 }

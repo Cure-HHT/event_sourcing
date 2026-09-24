@@ -298,15 +298,31 @@ void main() {
         data: const <String, dynamic>{'intensity': 'mild'},
         clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
       );
+      await _appendEvent(
+        store,
+        eventId: 'e2',
+        aggregateId: 'agg-2',
+        entryType: 'sample_event',
+        eventType: 'finalized',
+        data: const <String, dynamic>{'intensity': 'severe'},
+        clientTimestamp: DateTime.parse('2026-04-22T11:00:00Z'),
+      );
       const map = <String, EntryTypeVersion>{
         'sample_event': EntryTypeVersion(1, 0),
       };
+      Future<Map<String, EntryTypeVersion>> targets() =>
+          store.backend.transaction(
+            (txn) =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
       final first = await rebuildView(
         store: store,
         viewName: 'toy_view',
         targetVersionByEntryType: map,
       );
       final firstRows = await store.backend.findViewRows('toy_view');
+      expect(firstRows, hasLength(2));
+      final firstTargets = await targets();
       final second = await rebuildView(
         store: store,
         viewName: 'toy_view',
@@ -314,10 +330,10 @@ void main() {
       );
       final secondRows = await store.backend.findViewRows('toy_view');
       expect(first, second);
-      expect(firstRows.length, secondRows.length);
-      final firstRow = firstRows.single;
-      final secondRow = secondRows.single;
-      expect(firstRow['latestEventId'], equals(secondRow['latestEventId']));
+      // Whole rows, every field, equal across the two rebuilds.
+      expect(secondRows, firstRows);
+      expect(await targets(), firstTargets);
+      expect(firstTargets, map);
       await store.backend.close();
     });
 

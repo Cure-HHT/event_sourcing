@@ -410,6 +410,7 @@ void main() {
       final name = freshWebName('close-handover');
       final f1 = await tab(name);
       final v1 = TestPageVisibility();
+      final logged = <LibraryLogRecord>[];
       final d1 = WebReceiver(id: 'x');
       await f1.register(d1);
       final c1 = await startIn(
@@ -417,13 +418,25 @@ void main() {
         DeliveryTestHooks(
           pageVisibility: v1,
           timerFactory: ManualTimers().create,
+          onLog: logged.add,
         ),
       );
       final gate = Completer<void>();
+      // Released on failure too, so the send in flight cannot outlive the
+      // test and keep the tab's lock.
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete();
+      });
       d1.gate = () => gate.future;
       final n1 = await f1.note('n1');
       await until(() => d1.started.length == 1, reason: 'the send');
       v1.visible = false;
+      // The hand-over has begun before close is called, so close arrives
+      // during it rather than stopping the cycle ahead of it.
+      await until(
+        () => logged.any((r) => r.message.contains('hands the drain lock')),
+        reason: 'the hand-over',
+      );
       var closed = false;
       final closing = c1.close().then((_) => closed = true);
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -435,6 +448,11 @@ void main() {
       final head = await readFresh(name, (b) => b.listFifoEntries('x'));
       expect(head.single.finalStatus, FinalStatus.sent);
       expect(await drainLockCounts(f1), (held: 0, pending: 0));
+      expect(
+        logged.where((r) => r.message.contains('lost the drain lock')),
+        isEmpty,
+        reason: 'the hand-over is not reported as a loss',
+      );
     });
 
     // Verifies: EVS-DEV-destination-drain-lock/C

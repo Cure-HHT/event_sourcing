@@ -155,14 +155,19 @@ void main() {
       );
       expect(await backend.readSchedule('unused'), isNull);
 
-      final ds = await bootstrapEventStore(
-        backend: backend,
-        source: _source,
-        entryTypes: types,
-        destinations: const <Destination>[],
+      // The failed call itself recorded the registry audit, which only the
+      // type step writes and which lists every registered type, before the
+      // destination loop threw: the supplied types were registered first.
+      final audits = await backend.findAllEvents(
+        entryType: kEntryTypeRegistryInitializedEntryType,
       );
-      expect(ds.entryTypes.isRegistered('demo_note'), isTrue);
-      expect(ds.entryTypes.isRegistered('red_button'), isTrue);
+      expect(audits, hasLength(1));
+      final registry = audits.single.data['registry']! as Map;
+      expect(registry['demo_note'], '1.0');
+      expect(registry['red_button'], '1.0');
+      // Nothing of the destination step was written.
+      final all = await backend.findAllEvents();
+      expect(all.last.eventId, audits.single.eventId);
     });
 
     test('duplicate destination id throws', () async {

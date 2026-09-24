@@ -158,7 +158,8 @@ void main() {
 
     // When a pass is in flight (a destination is awaiting a completer), a
     // second call starts nothing beside it: the running call runs one more
-    // pass, and the second call completes when that pass is done.
+    // pass, and the second call completes when that pass is done. Each pass
+    // polls inbound once, so the inbound-poll seam counts the passes.
     test('a reentrant call runs one more pass and waits for it', () async {
       final gate = Completer<void>();
       addTearDown(() {
@@ -173,32 +174,68 @@ void main() {
 
       await _enqueueOne(backend, 'fake', 'e1');
 
-      final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
-      final first = sync.call();
-      // Wait for the first call to reach `send` and block on the gate.
-      final deadline = DateTime.now().add(const Duration(seconds: 10));
-      while (dest.sent.isEmpty) {
-        if (DateTime.now().isAfter(deadline)) break;
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
-      expect(sync.state, SyncCycleState.running);
-      expect(dest.sent, hasLength(1));
+      var passes = 0;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(onInboundPoll: () => passes += 1),
+        () async {
+          final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
+          final first = sync.call();
+          // Wait for the first call to reach `send` and block on the gate.
+          final deadline = DateTime.now().add(const Duration(seconds: 10));
+          while (dest.sent.isEmpty) {
+            if (DateTime.now().isAfter(deadline)) break;
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          expect(sync.state, SyncCycleState.running);
+          expect(dest.sent, hasLength(1));
+          expect(passes, 0);
 
-      // Reentrant call: starts no drain work beside the running pass, and
-      // completes only once the pass it requested has run.
-      var secondDone = false;
-      final second = sync.call().then((_) => secondDone = true);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-      expect(dest.sent, hasLength(1));
-      expect(secondDone, isFalse);
+          // Reentrant call: starts no drain work beside the running pass,
+          // and completes only once the pass it requested has run.
+          int? passesWhenSecondDone;
+          final second = sync.call().then((_) => passesWhenSecondDone = passes);
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          expect(dest.sent, hasLength(1));
+          expect(passesWhenSecondDone, isNull);
+          expect(passes, 0);
 
-      gate.complete();
-      await first;
-      await second;
-      // The rerun found nothing more to send.
-      expect(dest.sent, hasLength(1));
-      expect(await backend.readFifoHead('fake'), isNull);
+          gate.complete();
+          await first;
+          await second;
+          // The blocked pass and exactly one more ran, and the second call
+          // returned only after the extra pass had finished.
+          expect(passes, 2);
+          expect(passesWhenSecondDone, 2);
+          // The rerun found nothing more to send.
+          expect(dest.sent, hasLength(1));
+          expect(await backend.readFifoHead('fake'), isNull);
+        },
+      );
     });
+
+    // A destination registered after a pass completes is included in the
+    // next pass: each pass re-reads the registry.
+    test(
+      'a destination added between passes is drained by the next pass',
+      () async {
+        final first = FakeDestination(id: 'first', script: [const SendOk()]);
+        await registry.addDestination(first, initiator: _testInit);
+        await _enqueueOne(backend, 'first', 'e1');
+
+        final sync = await start(clock: () => DateTime.utc(2026, 4, 22, 10));
+        await sync.call();
+        expect(first.sent, hasLength(1));
+
+        final added = FakeDestination(id: 'late', script: [const SendOk()]);
+        await registry.addDestination(added, initiator: _testInit);
+        await _enqueueOne(backend, 'late', 'e1');
+        await sync.call();
+
+        expect(added.sent, hasLength(1));
+        expect(await backend.readFifoHead('late'), isNull);
+        expect(first.sent, hasLength(1));
+      },
+    );
 
     // After the first cycle completes, a subsequent call drains
     // normally (the guard auto-releases).
@@ -294,8 +331,15 @@ void main() {
     // Defensive: when no destinations are registered, the cycle is a
     // near-no-op (just invokes pollInbound).
     test('empty registry: cycle runs pollInbound and exits', () async {
-      final sync = await start();
-      await sync.call(); // no throw, no error
+      var polls = 0;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(onInboundPoll: () => polls += 1),
+        () async {
+          final sync = await start();
+          await sync.call();
+        },
+      );
+      expect(polls, 1);
     });
   });
 }

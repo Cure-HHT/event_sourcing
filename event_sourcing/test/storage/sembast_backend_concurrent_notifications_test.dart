@@ -1,8 +1,16 @@
 // Verifies: EVS-PRD-subscription/E
-// two transactions in flight at once on one
+// a committed transaction and a rolled-back one started together on one
 //   Sembast backend: the committed one's view change and queue status change
 //   reach their watchers exactly once, the rolled-back one's never, in both
 //   start orders.
+//
+// Sembast serializes transaction bodies, so the two bodies run one after
+// the other in the order they start; only their futures are pending
+// together. The two start orders are what make the test discriminating:
+// committed-first shows a rollback does not withdraw the earlier commit's
+// notification, and rolled-back-first shows the rollback's pending
+// notification is discarded rather than published by the commit that runs
+// after it.
 
 import 'dart:async';
 
@@ -27,8 +35,9 @@ Future<SembastBackend> _openBackend() async {
 
 /// Starts a transaction that writes through [write] on [name] and commits,
 /// and a second that writes on [otherName] and throws after the write,
-/// both in flight at once and in the order [committedFirst] says. Returns
-/// the live emissions each watcher received after its initial snapshot.
+/// both started before either completes, in the order [committedFirst]
+/// says; the backend runs their bodies in that order. Returns the live
+/// emissions each watcher received after its initial snapshot.
 Future<(List<T>, List<T>)> _runPair<T>({
   required SembastBackend backend,
   required Stream<T> Function(String name) watch,
@@ -79,36 +88,39 @@ void main() {
     await backend.close();
   });
 
-  group('SembastBackend.watchView under concurrent transactions', () {
-    Future<void> upsert(Transaction txn, String view) =>
-        backend.upsertViewRowInTxn(txn, view, 'row-1', <String, Object?>{
-          'view': view,
-        });
+  group(
+    'SembastBackend.watchView under a commit and a rollback started together',
+    () {
+      Future<void> upsert(Transaction txn, String view) =>
+          backend.upsertViewRowInTxn(txn, view, 'row-1', <String, Object?>{
+            'view': view,
+          });
 
-    for (final committedFirst in [true, false]) {
-      test(
-        'committed upsert notifies once, rolled-back upsert never '
-        '(committed ${committedFirst ? 'starts first' : 'starts second'})',
-        () async {
-          final (committed, rolledBack) = await _runPair(
-            backend: backend,
-            watch: backend.watchView,
-            write: upsert,
-            name: 'view_a',
-            otherName: 'view_b',
-            committedFirst: committedFirst,
-          );
-          expect(committed, hasLength(1));
-          expect(committed.single.single['view'], 'view_a');
-          expect(rolledBack, isEmpty);
-          expect(await backend.findViewRows('view_b'), isEmpty);
-        },
-      );
-    }
-  });
+      for (final committedFirst in [true, false]) {
+        test(
+          'committed upsert notifies once, rolled-back upsert never '
+          '(committed ${committedFirst ? 'starts first' : 'starts second'})',
+          () async {
+            final (committed, rolledBack) = await _runPair(
+              backend: backend,
+              watch: backend.watchView,
+              write: upsert,
+              name: 'view_a',
+              otherName: 'view_b',
+              committedFirst: committedFirst,
+            );
+            expect(committed, hasLength(1));
+            expect(committed.single.single['view'], 'view_a');
+            expect(rolledBack, isEmpty);
+            expect(await backend.findViewRows('view_b'), isEmpty);
+          },
+        );
+      }
+    },
+  );
 
-  group('SembastBackend.watchFifo status change under concurrent '
-      'transactions', () {
+  group('SembastBackend.watchFifo status change under a commit and a '
+      'rollback started together', () {
     for (final committedFirst in [true, false]) {
       test(
         'committed status change notifies once, rolled-back one never '

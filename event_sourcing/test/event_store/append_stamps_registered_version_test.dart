@@ -3,6 +3,7 @@
 // entryTypeVersion parameter does not appear on the public signatures, so
 // callers cannot override the registry-derived value.
 
+import 'package:analyzer/dart/element/element.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
@@ -11,6 +12,8 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
         kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/surface_scan.dart';
 
 var _dbCounter = 0;
 
@@ -44,7 +47,43 @@ Future<EventStore> _openStore() async {
 
 void main() {
   group('EventStore.append stamps registeredVersion', () {
-    // Verifies: EVS-DEV-append-stamps-registered-version/A+C
+    // Verifies: EVS-DEV-append-stamps-registered-version/C
+    // the resolved public signatures of append and appendInTxn carry no
+    //   parameter through which a caller could choose the entry-type
+    //   version: none is named entryTypeVersion and none is typed
+    //   EntryTypeVersion.
+    test(
+      'append and appendInTxn take no entry-type version parameter',
+      () async {
+        final scanner = SurfaceScanner();
+        final library = await scanner.library('lib/src/event_store.dart');
+        final eventStore = classNamed(<LibraryElement>[library!], 'EventStore');
+        for (final name in const <String>['append', 'appendInTxn']) {
+          final method = eventStore.methods.firstWhere(
+            (m) => m.name == name,
+            orElse: () => throw StateError('EventStore.$name not found'),
+          );
+          expect(method.isPublic, isTrue, reason: name);
+          // The scan sees the resolved parameters: the entry type is one.
+          expect(
+            [for (final p in method.formalParameters) p.name],
+            contains('entryType'),
+            reason: name,
+          );
+          final offending = <String>[
+            for (final p in method.formalParameters)
+              if (p.name == 'entryTypeVersion' ||
+                  p.type.getDisplayString() == 'EntryTypeVersion' ||
+                  p.type.getDisplayString() == 'EntryTypeVersion?')
+                '${p.name}: ${p.type.getDisplayString()}',
+          ];
+          expect(offending, isEmpty, reason: 'EventStore.$name');
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
+
+    // Verifies: EVS-DEV-append-stamps-registered-version/A
     // Verifies: EVS-DEV-version-compatibility/C
     test('append stamps registry version 7.3 and the data format', () async {
       final store = await _openStore();
@@ -62,8 +101,7 @@ void main() {
         const EntryTypeVersion(7, 3),
         reason:
             'append must stamp the registered 7.3 from the registry, '
-            'not a caller-supplied value (the parameter does not exist) '
-            'and not a default.',
+            'not a caller-supplied value and not a default.',
       );
       expect(stored.libFormatVersion, LibVersion.dataFormat);
       final readBack = await store.backend.findEventById(stored.eventId);
@@ -71,7 +109,7 @@ void main() {
       expect(readBack.libFormatVersion, LibVersion.dataFormat);
     });
 
-    // Verifies: EVS-DEV-append-stamps-registered-version/B+C
+    // Verifies: EVS-DEV-append-stamps-registered-version/B
     // Verifies: EVS-DEV-version-compatibility/C
     test(
       'appendInTxn stamps registry version 7.3 and the data format',

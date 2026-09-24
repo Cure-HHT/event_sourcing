@@ -1,11 +1,11 @@
-// Verifies: EVS-PRD-destinations/D
-// verifies atomicity of DestinationRegistry
-// mutations: a failure injected after an operation's last write (through the
-// `failRegistryAuditAppend` test seam) rolls the whole transaction back, so
-// the schedule write or queue retirement never persists without its audit
-// (D — durable queues commit atomically with their audit). Each test asserts
-// the exact end state: every record the operation writes, and the log, as
-// they were before the call.
+// Verifies: EVS-DEV-destination-drain/U
+// each destination-registry operation decides and writes inside one
+// transaction: a failure injected after an operation's audit append
+// (through the `failRegistryAuditAppend` test seam) rolls the whole
+// transaction back, so the schedule write or queue retirement never persists
+// without its audit, nor the audit without them. Each test asserts the exact
+// end state: every record the operation writes, and the log, as they were
+// before the call.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';

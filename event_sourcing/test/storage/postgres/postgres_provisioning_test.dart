@@ -65,6 +65,38 @@ Future<List<String>> _tables(String url) async {
   }
 }
 
+/// Every column of the public schema, as `table.column type`, in order.
+Future<List<String>> _columns(String url) async {
+  final c = await _connect(url);
+  try {
+    final r = await c.execute(
+      'SELECT table_name, column_name, data_type '
+      'FROM information_schema.columns '
+      "WHERE table_schema = 'public' "
+      'ORDER BY table_name, column_name',
+    );
+    return r.map((row) => '${row[0]}.${row[1]} ${row[2]}').toList();
+  } finally {
+    await c.close();
+  }
+}
+
+/// The keys of `backend_state`, in order, each with its value for the
+/// schema-version keys.
+Future<List<String>> _backendState(String url) async {
+  final c = await _connect(url);
+  try {
+    final r = await c.execute(
+      "SELECT key, CASE WHEN key LIKE '%schema_version' "
+      'THEN value::text ELSE NULL END '
+      'FROM backend_state ORDER BY key',
+    );
+    return r.map((row) => '${row[0]}=${row[1]}').toList();
+  } finally {
+    await c.close();
+  }
+}
+
 Future<(int?, int?)> _storedPair(String url) async {
   final c = await _connect(url);
   try {
@@ -246,18 +278,21 @@ void main() {
     // Verifies: EVS-DEV-postgres-backend/G
     // Verifies: EVS-DEV-version-compatibility/G
     test('two provisionings of an empty schema at once both succeed and '
-        'leave one schema version', () async {
+        'leave the schema one provisioning leaves', () async {
       if (url == null) return;
+      // The schema a single provisioning of an empty schema leaves.
+      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      final singleColumns = await _columns(url);
+      final singleState = await _backendState(url);
+      await _resetSchema(url);
+
       await Future.wait(<Future<void>>[
         PostgresBackend.provision(url, sslMode: SslMode.disable),
         PostgresBackend.provision(url, sslMode: SslMode.disable),
       ]);
-      final c = await _connect(url);
-      addTearDown(c.close);
-      final r = await c.execute(
-        "SELECT count(*) FROM backend_state WHERE key = 'schema_version'",
-      );
-      expect(r.first[0], 1);
+      expect(await _storedPair(url), (1, 1));
+      expect(await _columns(url), singleColumns);
+      expect(await _backendState(url), singleState);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G

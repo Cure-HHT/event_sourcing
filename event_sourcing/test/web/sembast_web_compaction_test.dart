@@ -31,8 +31,29 @@ void main() {
   test('a tab behind a compaction fails its write within a bound, and a '
       'reopened handle commits', () async {
     final name = freshWebName('compaction');
-    final f1 = await openWebTab(name);
-    final f2 = await openWebTab(name);
+    // Every tab still open when the test ends, failed or not, is closed.
+    final open = <WebTab>[];
+    addTearDown(() async {
+      for (final tab in open) {
+        await tab.close();
+      }
+    });
+    Future<WebTab> tab() async {
+      final t = await openWebTab(name);
+      open.add(t);
+      return t;
+    }
+
+    Future<void> closeTab(WebTab t) async {
+      open.remove(t);
+      await t.close();
+    }
+
+    final f1 = await tab();
+    final f2 = await tab();
+    // The destination the failing write targets: its schedule is on file,
+    // so a halt request on it is accepted and would write.
+    await f1.register(WebReceiver(id: 'y'), activate: false);
     // A deleted record on file: a destination registered, then deleted.
     await f1.register(WebReceiver(id: 'x'), activate: false);
     await f1.registry.deleteDestination('x', initiator: kWebInit);
@@ -50,6 +71,16 @@ void main() {
             onTimeout: () => 'no outcome within 10 s',
           ),
     );
+    Future<({Object? request, int events})> haltState() => readFresh(
+      name,
+      (b) async => (
+        request: await b.transaction((txn) => b.readHaltRequestTxn(txn, 'y')),
+        events: (await b.findAllEvents(
+          entryType: kDestinationHaltRequestedEntryType,
+        )).length,
+      ),
+    );
+
     final outcome = await attempt('y');
     expect(
       outcome,
@@ -62,21 +93,34 @@ void main() {
     // Four runs holding the write lock shared, four holding it exclusively.
     expect(runs, 4 + TransactionRerunLimitException.maxRuns);
     expect(await heldBrowserWriteLockModes(name), isEmpty);
+    expect(await haltState(), (
+      request: null,
+      events: 0,
+    ), reason: 'the failed write committed nothing');
 
     runs = 0;
-    expect(await attempt('z'), isA<TransactionRerunLimitException>());
+    expect(await attempt('y'), isA<TransactionRerunLimitException>());
     expect(runs, 0, reason: 'a later write on the handle fails at once');
+    expect(await haltState(), (request: null, events: 0));
 
-    await f2.close();
-    final reopened = await openWebTab(name);
+    await closeTab(f2);
+    final reopened = await tab();
     final id = await reopened.note('after-reopen');
     final ids = await readFresh(
       name,
       (b) async => <String>[for (final e in await b.findAllEvents()) e.eventId],
     );
     expect(ids, contains(id));
-    await reopened.close();
-    await f1.close();
+    // The same halt request commits on the reopened handle, so the failed
+    // attempts had a write to make.
+    await reopened.registry.requestHalt(
+      'y',
+      initiator: kWebOperator,
+      purpose: HaltPurpose.pause,
+    );
+    final after = await haltState();
+    expect(after.request, isNotNull);
+    expect(after.events, 1);
   });
 
   // Verifies: EVS-PRD-event-log/E

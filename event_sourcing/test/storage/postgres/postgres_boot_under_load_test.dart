@@ -1,6 +1,7 @@
-// A newer build boots, and promotes a large view, while two instances of
-// the build serving the same Postgres database append in tight loops;
-// gated on PG_TEST_URL.
+// A newer build boots, and promotes a large view, while the build serving
+// the same Postgres database appends in a tight loop; and a boot is not
+// starved by two sessions holding the row every append updates. Gated on
+// PG_TEST_URL.
 
 @TestOn('vm')
 library;
@@ -29,6 +30,19 @@ Future<void> _resetSchema(String url) async {
   await tmp.execute('DROP SCHEMA public CASCADE');
   await tmp.execute('CREATE SCHEMA public');
   await tmp.close();
+}
+
+/// Waits until [reached], failing at once with the error [failure] reports
+/// when the loop the wait depends on has failed.
+Future<void> _waitUntil(
+  bool Function() reached,
+  Object? Function() failure,
+) async {
+  while (!reached()) {
+    final error = failure();
+    if (error != null) fail('the loop the wait depends on failed: $error');
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
 }
 
 Future<EventStore> _open(PostgresBackend backend, EntryTypeVersion version) {
@@ -144,9 +158,7 @@ void main() {
     }();
 
     // Let the loop get going, then boot the newer build beside it.
-    while (appended < 5) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
+    await _waitUntil(() => appended >= 5, () => loopError);
     // The newer build opens its backend and boots while A appends.
     final backendN = await PostgresBackend.open(
       url: url,
@@ -168,9 +180,7 @@ void main() {
     final bootCommittedBy = clock.elapsedMicroseconds;
     // Let A append after the boot committed, then stop the loop.
     final appendedAtBoot = appended;
-    while (appended < appendedAtBoot + 5) {
-      await Future<void>.delayed(const Duration(milliseconds: 5));
-    }
+    await _waitUntil(() => appended >= appendedAtBoot + 5, () => loopError);
     stop = true;
     await loop;
 
@@ -227,15 +237,21 @@ void main() {
     final holders = <Connection>[];
     var stop = false;
     var holds = 0;
+    Object? holdError;
     Future<void> hold(Connection connection) async {
-      while (!stop) {
-        await connection.execute('BEGIN');
-        await connection.execute(
-          "UPDATE backend_state SET value = value WHERE key = 'sequence_counter'",
-        );
-        await connection.execute('SELECT pg_sleep(0.01)');
-        await connection.execute('COMMIT');
-        holds++;
+      try {
+        while (!stop) {
+          await connection.execute('BEGIN');
+          await connection.execute(
+            'UPDATE backend_state SET value = value '
+            "WHERE key = 'sequence_counter'",
+          );
+          await connection.execute('SELECT pg_sleep(0.01)');
+          await connection.execute('COMMIT');
+          holds++;
+        }
+      } on Object catch (e) {
+        holdError = e;
       }
     }
 
@@ -251,9 +267,7 @@ void main() {
     }
     final loops = [for (final connection in holders) hold(connection)];
     try {
-      while (holds < 10) {
-        await Future<void>.delayed(const Duration(milliseconds: 5));
-      }
+      await _waitUntil(() => holds >= 10, () => holdError);
       for (var boot = 0; boot < 5; boot++) {
         var bootRuns = 0;
         await runWithDeliveryTestHooks(
@@ -269,6 +283,7 @@ void main() {
         await connection.close();
       }
     }
+    expect(holdError, isNull, reason: 'every hold of the counter row ran');
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
 

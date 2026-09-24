@@ -162,6 +162,12 @@ void main() {
         held.complete();
         await release.future;
       });
+      // Runs before the holder closes: a failure before the release would
+      // otherwise leave the transaction open and the close waiting on it.
+      addTearDown(() async {
+        if (!release.isCompleted) release.complete();
+        await holding;
+      });
       await held.future;
 
       final first = await _Server.start(url);

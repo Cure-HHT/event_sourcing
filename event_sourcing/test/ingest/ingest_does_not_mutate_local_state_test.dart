@@ -2,11 +2,10 @@
 // ingest path admits events from another
 //   deployment into the local log (system audit events bridged cross-hop)
 // Verifies: EVS-PRD-ingest/B
-// upstream identity preserved; ingested system
-//   audit retains its originator aggregate and event identity
-// Verifies: EVS-PRD-ingest/E
-// ingested events land in the local event log
-//   identically to locally-originated events (stored for observability)
+// upstream identity preserved; the stored copy
+//   of an ingested audit keeps the originator's event id, aggregate,
+//   initiator and provenance entries, and the receiver hop it appends
+//   records the upstream event hash as its arrival hash
 //
 //   path that lands a wire-side audit event in `event_log` and stamps
 //   receiver provenance on it. It SHALL NOT mutate the receiver's
@@ -130,6 +129,43 @@ class _NoopDestination extends Destination {
   }
 }
 
+/// Start [f]'s `shared-dest` destination, append [count] notes and fill
+/// its queue with them, one note per row.
+Future<void> _queueNotes(
+  _Fixture f,
+  String install, {
+  required int count,
+}) async {
+  await f.datastore.destinations.setStartDate(
+    'shared-dest',
+    DateTime.utc(2020, 1, 1),
+    initiator: const AutomationInitiator(service: 'test'),
+  );
+  for (var i = 0; i < count; i++) {
+    await f.datastore.eventStore.append(
+      entryType: 'demo_note',
+      aggregateId: 'agg-$install-$i',
+      aggregateType: 'note',
+      eventType: 'finalized',
+      data: const <String, Object?>{
+        'answers': <String, Object?>{'k': 'v'},
+      },
+      initiator: const UserInitiator('u'),
+    );
+  }
+  await fillWithScheduleForTest(
+    f.datastore.destinations.byId('shared-dest')!,
+    backend: f.backend,
+    schedule: await f.datastore.destinations.scheduleOf('shared-dest'),
+    source: Source(
+      hopId: 'hop',
+      identifier: install,
+      softwareVersion: 'pkg@1.0.0',
+    ),
+    clock: () => DateTime.now().toUtc().add(const Duration(days: 1)),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -232,6 +268,42 @@ void main() {
           reason:
               'bridged audit MUST be stored in the receiver event_log '
               'for cross-hop observability (-F admission)',
+        );
+        final copy = stored.single;
+        expect(copy.eventId, auditEvent.eventId);
+        expect(copy.aggregateId, auditEvent.aggregateId);
+        expect(copy.initiator, auditEvent.initiator);
+        final upstreamProvenance =
+            auditEvent.metadata['provenance'] as List<Object?>;
+        final copyProvenance = copy.metadata['provenance'] as List<Object?>;
+        expect(
+          copyProvenance.take(upstreamProvenance.length).toList(),
+          equals(upstreamProvenance),
+          reason: 'the upstream provenance entries are kept unchanged',
+        );
+        expect(copyProvenance, hasLength(upstreamProvenance.length + 1));
+        final receiverHop = copyProvenance.last as Map<Object?, Object?>;
+        expect(
+          receiverHop['hop'],
+          'control-server',
+          reason: 'the receiver appends its own hop',
+        );
+        expect(
+          receiverHop['arrival_hash'],
+          auditEvent.eventHash,
+          reason: 'the receiver hop records the upstream event hash',
+        );
+
+        // Nothing is persisted for the originator's destination either.
+        expect(
+          await receiver.backend.readSchedule('OriginatorSecondary'),
+          isNull,
+          reason: 'no schedule is persisted for the originator destination',
+        );
+        expect(
+          await receiver.backend.listFifoEntries('OriginatorSecondary'),
+          isEmpty,
+          reason: 'no queue exists for the originator destination',
         );
       } finally {
         await originator.close();
@@ -361,100 +433,79 @@ void main() {
     });
 
     //   `system.destination_wedge_recovered` audit MUST NOT touch the
-    //   receiver's per-destination FIFO state. The wedge recovery the
-    //   audit describes happened on the originator's FIFO; the
-    //   receiver's FIFOs are private state driven by its own
-    //   `fillBatch` / `tombstoneAndRefill` calls. A snapshot of every
-    //   receiver FIFO pre-ingest equals the same snapshot post-ingest.
+    //   receiver's per-destination queue state. The receiver drains a
+    //   destination under the same id the audit names, and its own head is
+    //   wedged, so a library that applied the bridged recovery would have a
+    //   queue to act on: it would retire the receiver's wedged head, clear
+    //   its wedge record or rewind its fill position.
     test('ingesting system.destination_wedge_recovered '
         'does NOT mutate FIFO state on the receiver', () async {
-      // Originator: one destination so `tombstoneAndRefill` has a
-      // FIFO row to operate on. The originator's bootstrap also
-      // emits its own destination_registered audit which we ignore.
+      const init = AutomationInitiator(service: 'test');
       final originator = await _bootstrapDatastore(
         hopId: 'mobile-device',
         identifier: 'install-mobile',
         entryTypes: const <EntryTypeDefinition>[_demoNoteDef],
-        destinations: <Destination>[_NoopDestination(id: 'orig-dest')],
+        destinations: <Destination>[_NoopDestination(id: 'shared-dest')],
       );
       final receiver = await _bootstrapDatastore(
         hopId: 'control-server',
         identifier: 'install-control',
-        destinations: <Destination>[_NoopDestination(id: 'recv-dest')],
+        entryTypes: const <EntryTypeDefinition>[_demoNoteDef],
+        destinations: <Destination>[_NoopDestination(id: 'shared-dest')],
       );
 
       try {
-        // Set up a head FIFO row on the originator so
-        // tombstoneAndRefill has something to wedge-recover. Schedule
-        // the originator destination live and append one user event,
-        // then run fillBatch to enqueue it.
-        await originator.datastore.destinations.setStartDate(
-          'orig-dest',
-          DateTime.utc(2020, 1, 1),
-          initiator: const AutomationInitiator(service: 'test'),
-        );
-        await originator.datastore.eventStore.append(
-          entryType: 'demo_note',
-          aggregateId: 'agg-orig-1',
-          aggregateType: 'note',
-          eventType: 'finalized',
-          data: const <String, Object?>{
-            'answers': <String, Object?>{'k': 'v'},
-          },
-          initiator: const UserInitiator('u-orig'),
-        );
-        final origDest = originator.datastore.destinations.byId('orig-dest')!;
-        final origSchedule = await originator.datastore.destinations.scheduleOf(
-          'orig-dest',
-        );
-        await fillWithScheduleForTest(
-          origDest,
-          backend: originator.backend,
-          schedule: origSchedule,
-          source: const Source(
-            hopId: 'mobile-device',
-            identifier: 'install-mobile',
-            softwareVersion: 'pkg@1.0.0',
-          ),
-          clock: () => DateTime.now().toUtc().add(const Duration(days: 1)),
-        );
-        final origFifo = await originator.backend.listFifoEntries('orig-dest');
-        expect(
-          origFifo,
-          isNotEmpty,
-          reason: 'sanity: originator should have a FIFO head to recover',
-        );
-        final origHeadRowId = origFifo.first.entryId;
+        await _queueNotes(originator, 'install-mobile', count: 1);
+        await _queueNotes(receiver, 'install-control', count: 2);
 
-        // Snapshot every receiver-FIFO pre-ingest. The receiver only
-        // has one destination ('recv-dest') so the snapshot is small.
+        // The receiver's own head is wedged: exactly the state a bridged
+        // recovery would act on if the library applied it.
+        final receiverWedgedRowId = await wedgeHeadForTest(
+          receiver.datastore.destinations,
+          'shared-dest',
+        );
         final preReceiverFifo = await receiver.backend.listFifoEntries(
-          'recv-dest',
+          'shared-dest',
         );
-
-        // Recovery requires a wedged head.
-        await wedgeHeadForTest(originator.datastore.destinations, 'orig-dest');
+        expect(
+          preReceiverFifo,
+          hasLength(2),
+          reason: 'sanity: the receiver queue holds its two notes',
+        );
+        expect(preReceiverFifo.first.entryId, receiverWedgedRowId);
+        expect(preReceiverFifo.first.finalStatus, FinalStatus.wedged);
+        final preWedgeRecord = await receiver.backend.transaction(
+          (txn) => receiver.backend.readWedgeRecordTxn(txn, 'shared-dest'),
+        );
+        expect(
+          preWedgeRecord,
+          isNotNull,
+          reason: 'sanity: the receiver holds a wedge record',
+        );
+        final preFillCursor = await receiver.backend.readFillCursor(
+          'shared-dest',
+        );
+        final preSchedule = await receiver.backend.readSchedule('shared-dest');
 
         // Trigger originator's wedge recovery — emits a real
-        // `system.destination_wedge_recovered` audit naming
-        // 'orig-dest'.
-        await originator.datastore.destinations.tombstoneAndRefill(
-          'orig-dest',
-          origHeadRowId,
-          initiator: const AutomationInitiator(service: 'test'),
+        // `system.destination_wedge_recovered` audit naming 'shared-dest'.
+        final origHeadRowId = await wedgeHeadForTest(
+          originator.datastore.destinations,
+          'shared-dest',
         );
-
-        // Read the just-emitted wedge-recovery audit off the
-        // originator's event log.
-        final originatorEvents = await originator.backend.findAllEvents();
-        final auditEvent = originatorEvents.firstWhere(
-          (e) =>
-              e.entryType == kDestinationWedgeRecoveredEntryType &&
-              e.data['id'] == 'orig-dest',
-          orElse: () => throw StateError(
-            'originator did not emit a destination_wedge_recovered '
-            'audit with data.id="orig-dest"',
-          ),
+        await originator.datastore.destinations.tombstoneAndRefill(
+          'shared-dest',
+          origHeadRowId,
+          initiator: init,
+        );
+        final auditEvent = (await originator.backend.findAllEvents(
+          entryType: kDestinationWedgeRecoveredEntryType,
+        )).single;
+        expect(auditEvent.data['id'], 'shared-dest');
+        expect(
+          auditEvent.data['row_id'],
+          origHeadRowId,
+          reason: 'the recovery audit names the recovered originator row',
         );
 
         // Ingest at receiver.
@@ -463,80 +514,44 @@ void main() {
         );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
 
-        // INVARIANT: receiver's FIFO is byte-identical pre vs post
-        // ingest. Compare entryId + sequenceInQueue + final status to
-        // catch row insertion, deletion, status flip, or re-ordering.
-        final postReceiverFifo = await receiver.backend.listFifoEntries(
-          'recv-dest',
-        );
+        // INVARIANT: the receiver's queue, wedge record, fill position and
+        // schedule are unchanged. FifoEntry equality covers every field, so
+        // row insertion, deletion, status flip, attempt growth or
+        // re-ordering all fail the comparison.
         expect(
-          postReceiverFifo.length,
-          equals(preReceiverFifo.length),
+          await receiver.backend.listFifoEntries('shared-dest'),
+          equals(preReceiverFifo),
           reason:
-              'receiver FIFO row count MUST NOT change on ingest of a '
-              'bridged wedge-recovery audit',
+              'receiver queue MUST NOT change on ingest of a bridged '
+              'wedge-recovery audit',
         );
-        for (var i = 0; i < preReceiverFifo.length; i++) {
-          expect(
-            postReceiverFifo[i].entryId,
-            equals(preReceiverFifo[i].entryId),
-            reason: 'FIFO entryId at index $i must be unchanged',
-          );
-          expect(
-            postReceiverFifo[i].sequenceInQueue,
-            equals(preReceiverFifo[i].sequenceInQueue),
-            reason: 'FIFO sequenceInQueue at index $i must be unchanged',
-          );
-          expect(
-            postReceiverFifo[i].finalStatus,
-            equals(preReceiverFifo[i].finalStatus),
-            reason: 'FIFO finalStatus at index $i must be unchanged',
-          );
-        }
-
-        // Sanity: an originator-side fifoRowId MUST NOT exist on the
-        // receiver's FIFO. (Bridged wedge audits name originator
-        // FIFO row ids in `data.row_id` — this id is
-        // originator-private and has no meaning on the receiver.)
-        final auditRowId = auditEvent.data['row_id'];
         expect(
-          auditRowId,
-          equals(origHeadRowId),
-          reason: 'the recovery audit names the recovered originator row',
+          await receiver.backend.transaction(
+            (txn) => receiver.backend.readWedgeRecordTxn(txn, 'shared-dest'),
+          ),
+          equals(preWedgeRecord),
+          reason: 'the receiver wedge record stays in place',
         );
-        for (final row in postReceiverFifo) {
-          expect(
-            row.entryId,
-            isNot(equals(auditRowId)),
-            reason:
-                'an originator FIFO row id (data.row_id) MUST '
-                'NOT appear in the receiver FIFO just because the '
-                'receiver ingested the audit',
-          );
-        }
-
-        // Sanity: the receiver does not learn about 'orig-dest' as a
-        // local destination just because it ingested the audit.
         expect(
-          receiver.datastore.destinations.byId('orig-dest'),
-          isNull,
-          reason:
-              'wedge-recovery audit naming an originator destination '
-              'MUST NOT register that destination on the receiver '
-              '(-E',
+          await receiver.backend.readFillCursor('shared-dest'),
+          preFillCursor,
+          reason: 'the receiver fill position is not rewound',
+        );
+        expect(
+          await receiver.backend.readSchedule('shared-dest'),
+          equals(preSchedule),
+        );
+        expect(
+          (await receiver.backend.wedgedFifos()).toList(),
+          hasLength(1),
+          reason: 'the receiver destination is still wedged',
         );
 
         // The audit IS stored in the receiver's event_log.
-        final receiverEvents = await receiver.backend.findAllEvents();
-        final stored = receiverEvents
-            .where(
-              (e) =>
-                  e.entryType == kDestinationWedgeRecoveredEntryType &&
-                  e.data['id'] == 'orig-dest',
-            )
-            .toList();
         expect(
-          stored,
+          await receiver.backend.findAllEvents(
+            entryType: kDestinationWedgeRecoveredEntryType,
+          ),
           hasLength(1),
           reason:
               'bridged wedge-recovery audit MUST be stored in the '
@@ -558,7 +573,6 @@ void main() {
     //   wedges its head; a bridged wedge event wedges nothing.
     test('ingesting system.destination_wedged does NOT wedge the receiver '
         'or write its wedge record', () async {
-      const init = AutomationInitiator(service: 'test');
       final originator = await _bootstrapDatastore(
         hopId: 'mobile-device',
         identifier: 'install-mobile',
@@ -572,37 +586,8 @@ void main() {
         destinations: <Destination>[_NoopDestination(id: 'shared-dest')],
       );
       try {
-        Future<void> queueOne(_Fixture f, String install) async {
-          await f.datastore.destinations.setStartDate(
-            'shared-dest',
-            DateTime.utc(2020, 1, 1),
-            initiator: init,
-          );
-          await f.datastore.eventStore.append(
-            entryType: 'demo_note',
-            aggregateId: 'agg-$install',
-            aggregateType: 'note',
-            eventType: 'finalized',
-            data: const <String, Object?>{
-              'answers': <String, Object?>{'k': 'v'},
-            },
-            initiator: const UserInitiator('u'),
-          );
-          await fillWithScheduleForTest(
-            f.datastore.destinations.byId('shared-dest')!,
-            backend: f.backend,
-            schedule: await f.datastore.destinations.scheduleOf('shared-dest'),
-            source: Source(
-              hopId: 'hop',
-              identifier: install,
-              softwareVersion: 'pkg@1.0.0',
-            ),
-            clock: () => DateTime.now().toUtc().add(const Duration(days: 1)),
-          );
-        }
-
-        await queueOne(originator, 'install-mobile');
-        await queueOne(receiver, 'install-control');
+        await _queueNotes(originator, 'install-mobile', count: 1);
+        await _queueNotes(receiver, 'install-control', count: 1);
         await wedgeHeadForTest(
           originator.datastore.destinations,
           'shared-dest',

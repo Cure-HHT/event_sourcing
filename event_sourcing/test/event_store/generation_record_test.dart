@@ -215,7 +215,9 @@ void main() {
       expect(await _contents(path), before);
     });
 
-    // Verifies: EVS-DEV-version-compatibility/I
+    // The log's latest library-version event records the other build's
+    // data format, so this refusal is the log half of the check; the next
+    // test isolates the generation record.
     // Verifies: EVS-DEV-event-store-open/D
     test('after a build of another data-format major opened, the compiled '
         'build is refused', () async {
@@ -232,6 +234,48 @@ void main() {
       await expectLater(
         _open(path),
         throwsA(isA<DataFormatIncompatibleError>()),
+      );
+      expect(await _contents(path), before);
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/I
+    // Verifies: EVS-DEV-event-store-open/D
+    test('a generation record of another data-format major refuses the '
+        'compiled build although the log records its data format', () async {
+      await (await _open(path)).close();
+      // Rewrite only the generation record, to the next data-format major.
+      // The log's library-version events still record the compiled build's
+      // data format, so only the record can refuse the next open.
+      final surgery = SembastBackend(
+        database: await databaseFactoryIo.openDatabase(path),
+      );
+      final int otherMajor;
+      try {
+        final record = await surgery.transaction(surgery.readDataGenerationTxn);
+        expect(record, isNotNull, reason: 'the first open records one');
+        otherMajor = record!.dataFormatMajor + 1;
+        await surgery.transaction(
+          (txn) => surgery.writeDataGenerationTxn(
+            txn,
+            GenerationRecord(
+              dataFormatMajor: otherMajor,
+              entryTypeMajors: record.entryTypeMajors,
+            ),
+          ),
+        );
+      } finally {
+        await surgery.close();
+      }
+      final before = await _contents(path);
+      await expectLater(
+        _open(path),
+        throwsA(
+          isA<DataFormatIncompatibleError>().having(
+            (e) => e.recordedDataFormat.major,
+            'recorded data-format major',
+            otherMajor,
+          ),
+        ),
       );
       expect(await _contents(path), before);
     });

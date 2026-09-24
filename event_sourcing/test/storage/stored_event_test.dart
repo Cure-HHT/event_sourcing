@@ -1,7 +1,7 @@
 // Verifies: EVS-PRD-event-log/A
-// StoredEvent fields are immutable; fromMap/
-//   toMap round-trips preserve every field; malformed records throw
-//   FormatException.
+// fromMap/toMap round-trips preserve every
+//   field of a stored record, so a record read back is the record written;
+//   malformed records throw FormatException.
 // Verifies: EVS-PRD-portability/C
 // toMap/fromMap produce identical results
 //   regardless of platform; pure-Dart serialisation.
@@ -90,6 +90,32 @@ void main() {
     test('fromMap throws FormatException on non-string flow_token', () {
       final map = _minimalMap()..['flow_token'] = 42;
       expect(() => StoredEvent.fromMap(map, 7), throwsFormatException);
+    });
+
+    test('toMap(fromMap(record)) reproduces every field of the record', () {
+      final record = <String, Object?>{
+        ..._validEventMap(),
+        'data': <String, Object?>{
+          'answers': <String, Object?>{'x': 1, 'y': 'two'},
+          'list': <Object?>[1, 'a', null],
+        },
+        'metadata': <String, Object?>{
+          'change_reason': 'initial',
+          'provenance': <Object?>[
+            <String, Object?>{'hop': 'mobile'},
+          ],
+        },
+        'flow_token': 'invite:ABC',
+        'previous_event_hash': 'hash-0',
+        'sequence_number': 9,
+        'client_timestamp': '2026-04-26T12:34:56.789Z',
+        'entry_type_version': <String, Object?>{'major': 3, 'minor': 2},
+        'lib_format_version': <String, Object?>{'major': 2, 'minor': 1},
+      };
+      final ev = StoredEvent.fromMap(record, 5);
+      expect(ev.toMap(), record);
+      expect(StoredEvent.fromMap(ev.toMap(), 5).toMap(), record);
+      expect(ev.key, 5);
     });
 
     test('fromMap accepts AutomationInitiator via JSON', () {
@@ -184,7 +210,13 @@ void main() {
         final m = _validEventMap()..['entry_type_version'] = bad;
         expect(
           () => StoredEvent.fromMap(m, 0),
-          throwsFormatException,
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('"entry_type_version"'),
+            ),
+          ),
           reason: '$bad',
         );
       }

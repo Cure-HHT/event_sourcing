@@ -1,6 +1,4 @@
 // Verifies: EVS-PRD-destinations/E
-// Verifies: EVS-PRD-ingest/D
-// Verifies: EVS-PRD-ingest/D
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -36,12 +34,18 @@ void main() {
   String nextPath() => 'bridge-${++pathCounter}.db';
 
   group('DownstreamBridge.deliver', () {
-    test('valid esd/batch@2 envelope returns SendOk', () async {
+    test('valid esd/batch@2 envelope returns SendOk and the hub admits '
+        'its event', () async {
       final hub = await _bootstrapHub(nextPath());
       final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
+      final eventId = envelope.events.single['event_id']! as String;
+      expect(await hub.eventStore.backend.findEventById(eventId), isNull);
       final result = await bridge.deliver(_wirePayload(envelope.encode()));
       expect(result, isA<SendOk>());
+      final admitted = await hub.eventStore.backend.findEventById(eventId);
+      expect(admitted, isNotNull, reason: 'the hub log holds the event');
+      expect(admitted!.aggregateId, 'remote-aggregate-1');
     });
 
     test('garbage bytes return SendPermanent (decode failure)', () async {

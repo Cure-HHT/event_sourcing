@@ -1,9 +1,6 @@
 // Verifies: EVS-DEV-destination-drain/Q
 // a halt request records one of two purposes, each with its recorded
 //   string, and an unknown string is refused.
-// Verifies: EVS-DEV-destination-drain/N
-// the stored halt request and the send fence round-trip every field in
-//   their persisted form and refuse a malformed record.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 

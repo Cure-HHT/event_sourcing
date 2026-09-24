@@ -364,19 +364,26 @@ void main() {
   });
 
   // Verifies: EVS-DEV-postgres-backend/J
-  test('the advisory key the library computes is the key Postgres lists '
-      'for the lock', () async {
+  test('an open store holds the shared lock of each of its components on '
+      'the lock session, and on no other session', () async {
     if (url == null) return;
-    final scope = await _scope(url);
-    final key = _componentKey(scope, 'entry_type:$_kX:1');
-    final c = await _connect(url);
-    addTearDown(c.close);
-    await c.execute(
-      Sql.named('SELECT pg_advisory_lock_shared(@k)'),
-      parameters: <String, Object?>{'k': key},
+    final backend = await open();
+    await _openStore(
+      backend,
+      types: const {_kX: EntryTypeVersion(1, 0), _kY: EntryTypeVersion(1, 0)},
     );
-    final pid = (await c.execute('SELECT pg_backend_pid()')).first[0]! as int;
-    expect((await _locksByPid(url))[pid], contains((key, 'ShareLock')));
+    final scope = await _scope(url);
+    final keys = <int>[
+      _componentKey(scope, 'data_format:${LibVersion.dataFormat.major}'),
+      _componentKey(scope, 'entry_type:$_kX:1'),
+      _componentKey(scope, 'entry_type:$_kY:1'),
+    ];
+    final pid = (await backend.lockSessionForTest()).pid;
+    final locks = await _locksByPid(url);
+    for (final key in keys) {
+      expect(locks[pid], contains((key, 'ShareLock')));
+      expect(await _holdersOf(url, key), {pid});
+    }
   });
 
   group('live generations', () {
@@ -576,7 +583,6 @@ void main() {
   });
 
   group('bootLockWait bounds the waits of a boot', () {
-    // Verifies: EVS-DEV-version-compatibility/G
     test('an open that waits longer than bootLockWait for the boot lock is '
         'refused, naming the holder', () async {
       if (url == null) return;
@@ -617,7 +623,7 @@ void main() {
       await holder;
     });
 
-    // Verifies: EVS-DEV-event-store-open/E
+    // Verifies: EVS-DEV-version-compatibility/F
     test('a boot transaction whose table lock is held longer than '
         'bootLockWait is refused', () async {
       if (url == null) return;
@@ -843,6 +849,69 @@ void main() {
       final pid = (await backend.lockSessionForTest()).pid;
       expect((await _locksByPid(url))[pid], isNull);
       await _openStore(backend);
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/F
+    // Verifies: EVS-DEV-postgres-backend/J
+    test('when the lock session dies while the open registers', () async {
+      if (url == null) return;
+      final timers = _Timers();
+      final backend = await runWithDeliveryTestHooks(
+        DeliveryTestHooks(timerFactory: timers.create),
+        open,
+      );
+      // A store already open on the backend, which the replacement session
+      // registers again.
+      await _openStore(backend, types: const {_kY: EntryTypeVersion(1, 0)});
+      final scope = await _scope(url);
+      final xKey = _componentKey(scope, 'entry_type:$_kX:1');
+      final yKey = _componentKey(scope, 'entry_type:$_kY:1');
+      final oldPid = (await backend.lockSessionForTest()).pid;
+      expect(await _holdersOf(url, yKey), {oldPid});
+      // The session ends after the open took the boot lock and inspected the
+      // live components, before it took its shared component locks.
+      await expectLater(
+        runWithDeliveryTestHooks(
+          DeliveryTestHooks(
+            timerFactory: timers.create,
+            insideBootLock: () => _terminate(url, oldPid),
+          ),
+          () => _openStore(backend),
+        ),
+        throwsA(isNot(isA<IncompatibleGenerationException>())),
+      );
+      expect((await _locksByPid(url))[oldPid], isNull);
+      timers.fireAll();
+      await _until(() async {
+        if (backend.generationStatus != GenerationStatus.registered) {
+          return false;
+        }
+        final pid = await _pidOf(backend);
+        return pid != null && pid != oldPid;
+      });
+      final newPid = (await backend.lockSessionForTest()).pid;
+      expect(await _holdersOf(url, yKey), {newPid});
+      expect(
+        await _holdersOf(url, xKey),
+        isEmpty,
+        reason: 'the failed open is not registered on the replacement',
+      );
+      // No boot lock of the failed open remains: an open on another backend
+      // passes it at once.
+      final watch = Stopwatch()..start();
+      await _openStore(
+        await open(),
+        types: const {_kZ: EntryTypeVersion(1, 0)},
+      );
+      expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
+      // A retry on the same backend opens and registers on the new session.
+      final store = await _openStore(backend);
+      expect(await _holdersOf(url, xKey), {newPid});
+      await _append(store, _kX);
+      await expectLater(
+        _openStore(await open(), types: const {_kX: EntryTypeVersion(2, 0)}),
+        throwsA(isA<IncompatibleGenerationException>()),
+      );
     });
   });
 
@@ -1242,7 +1311,6 @@ void main() {
       );
     });
 
-    // Verifies: EVS-DEV-version-compatibility/G
     test('a second open on one backend that waits longer than bootLockWait '
         'for the first boot is refused, and the backend opens later', () async {
       if (url == null) return;
@@ -1374,15 +1442,26 @@ void main() {
     });
 
     // Verifies: EVS-DEV-version-compatibility/I
-    test("a transaction that began before a conflicting build's boot either "
-        'fails or commits before it, never folding its event in the old '
-        'shape afterwards', () async {
+    test("a transaction that began before a conflicting build's boot "
+        'commits before the boot, which then folds its event into the new '
+        'shape', () async {
       if (url == null) return;
-      final backendA = await open();
+      // A's probe never runs, so A does not replace its lost session and
+      // register again before B boots.
+      final timers = _Timers();
+      final backendA = await runWithDeliveryTestHooks(
+        DeliveryTestHooks(timerFactory: timers.create),
+        open,
+      );
       final a = await _openStore(backendA, withView: true);
       await _append(a, _kX, const {'title': 'first'}, 'agg-0');
       await _terminate(url, (await backendA.lockSessionForTest()).pid);
       final release = Completer<void>();
+      // Released on failure too, so a held transaction cannot keep
+      // tearDown's close waiting and time out the tests that follow.
+      addTearDown(() {
+        if (!release.isCompleted) release.complete();
+      });
       final appended = Completer<void>();
       final txnA = a
           .runTransaction((txn, collector) async {
@@ -1394,25 +1473,27 @@ void main() {
           })
           .then<Object?>((_) => null, onError: (Object e) => e);
       await appended.future;
-      final openB = _openStore(
-        await open(),
-        types: const {_kX: EntryTypeVersion(2, 0)},
-        promoters: const [_renameX],
-        withView: true,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+      var openedB = false;
+      final openB =
+          _openStore(
+            await open(),
+            types: const {_kX: EntryTypeVersion(2, 0)},
+            promoters: const [_renameX],
+            withView: true,
+          ).then((store) {
+            openedB = true;
+            return store;
+          });
+      // B's boot waits at the table lock A's transaction holds.
+      await _until(() async => await _lockWaiters(url) > 0);
+      expect(openedB, isFalse, reason: "B's boot waits for A's transaction");
       release.complete();
-      final outcome = await txnA;
+      expect(await txnA, isNull, reason: "A's transaction commits");
       final b = await openB;
       final rows = await b.backend.findViewRows(_kView);
-      if (outcome == null) {
-        final late = rows.singleWhere((r) => r['aggregateId'] == 'agg-1');
-        expect(late['heading'], 'late');
-        expect(late.containsKey('title'), isFalse);
-      } else {
-        expect(outcome, isA<GenerationFencedException>());
-        expect(rows.where((r) => r['aggregateId'] == 'agg-1'), isEmpty);
-      }
+      final late = rows.singleWhere((r) => r['aggregateId'] == 'agg-1');
+      expect(late['heading'], 'late');
+      expect(late.containsKey('title'), isFalse);
     });
 
     // Verifies: EVS-DEV-version-compatibility/I

@@ -8,9 +8,10 @@
 // - an implementation-plan label: a package label (a capital P, digits and
 //   an optional capital letter) or a decision label (a capital D and
 //   digits), as whole words;
-// - a ticket identifier (the tracker prefix, a dash and digits), except on a
-//   requirement's Changelog line, which records the history of that
-//   requirement, and on the lines listed in [_allowedTicketLines];
+// - a ticket identifier (one of the tracker prefixes in use, a dash and
+//   digits), except on a requirement's Changelog line, which records the
+//   history of that requirement, and on the lines listed in
+//   [_allowedTicketLines];
 // - in documentation and in code comments, the name of a hosting product:
 //   deployment requirements are stated as properties, so that they hold
 //   wherever the library runs.
@@ -86,7 +87,10 @@ const Set<String> _scannedExtensions = <String>{
 const String _self = 'event_sourcing/test/docs/plan_label_scan_test.dart';
 
 final RegExp _planLabel = RegExp(r'\b(?:P[0-9]+[A-Z]?|D[0-9]+)\b');
-final RegExp _ticketId = RegExp(r'\bCUR-[0-9]+');
+
+/// A ticket identifier under any tracker prefix the repository's work is
+/// tracked under.
+final RegExp _ticketId = RegExp(r'\b(?:CUR|TOOL)-[0-9]+');
 
 /// A requirement's Changelog line: `- <date> | <hash or -> | ...`.
 final RegExp _changelogLine = RegExp(r'^\s*- \d{4}-\d{2}-\d{2} \|');
@@ -283,6 +287,15 @@ void main() {
       final hits = scanFile(
         'reaction_widgets/lib/src/view/view_builder.dart',
         '// Follow-up tracked in CUR-1234.\nclass ViewBuilder {}\n',
+      );
+      expect(hits.map((h) => h.kind), <String>['ticket id']);
+    });
+
+    test('a ticket id of the second tracker prefix in a synthetic '
+        'lib comment', () {
+      final hits = scanFile(
+        'event_sourcing/lib/src/sync/sync_cycle.dart',
+        '// See TOOL-112 for the fold.\nfinal class SyncCycle {}\n',
       );
       expect(hits.map((h) => h.kind), <String>['ticket id']);
     });

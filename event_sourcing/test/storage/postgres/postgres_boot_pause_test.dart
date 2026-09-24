@@ -121,11 +121,14 @@ Future<void> _append(
   collector: collector,
 );
 
-/// What one boot beside the appending instance measured.
+/// What one boot beside the appending instance measured. An append counts
+/// in `appendsWithinBoot` only when it both started and committed inside
+/// the boot, so an append the boot blocked for its whole duration does not.
 typedef _Measure = ({
   Duration boot,
   Duration longestAppend,
-  int appendsDuringBoot,
+  int appendsWithinBoot,
+  EventStore serving,
 });
 
 void main() {
@@ -195,42 +198,51 @@ void main() {
         loopError = e;
       }
     }();
-    while (appended < 20) {
+    while (appended < 20 && loopError == null) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
+    expect(loopError, isNull, reason: 'the serving loop runs before the boot');
     final canaryBackend = await openBackend();
     final bootStart = clock.elapsedMicroseconds;
     await boot(canaryBackend);
     final bootEnd = clock.elapsedMicroseconds;
     final atBoot = appended;
-    while (appended < atBoot + 20) {
+    while (appended < atBoot + 20 && loopError == null) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     stop = true;
     await loop;
     expect(loopError, isNull, reason: 'every serving append succeeds');
     var longest = 0;
-    var during = 0;
+    var within = 0;
     for (final (start, end) in latencies) {
       if (end < bootStart || start > bootEnd) continue;
-      during++;
       if (end - start > longest) longest = end - start;
+      if (start >= bootStart && end <= bootEnd) within++;
     }
     final result = (
       boot: Duration(microseconds: bootEnd - bootStart),
       longestAppend: Duration(microseconds: longest),
-      appendsDuringBoot: during,
+      appendsWithinBoot: within,
+      serving: serving,
     );
     // ignore: avoid_print, the measurement is the point of this file
-    print('boot pause measurement: $result');
+    print(
+      'boot pause measurement: boot ${result.boot}, longest append '
+      '${result.longestAppend}, appends within the boot $within',
+    );
     return result;
   }
 
   // Verifies: EVS-DEV-version-compatibility/L
   // a canary that adds a view over events already in the log re-derives it
   //   in its boot, while the serving instance keeps appending: at the open
-  //   the view holds a row per aggregate and carries no catch-up mark, and
-  //   every serving append commits.
+  //   the view holds a row per aggregate and carries no catch-up mark, every
+  //   serving append commits, and serving appends start and commit while
+  //   the boot runs. The serving appends are of an entry type outside the
+  //   view's interest; afterwards a serving append of the view's entry type,
+  //   from the instance that does not register the view, marks the view
+  //   behind the log.
   test('a canary that adds a view over the log re-derives it in its boot '
       'while the serving instance appends', () async {
     if (url == null) return;
@@ -244,7 +256,27 @@ void main() {
       ),
       isFalse,
     );
-    expect(m.appendsDuringBoot, greaterThan(0));
+    expect(
+      m.appendsWithinBoot,
+      greaterThan(0),
+      reason: 'the serving instance appends while the canary boots',
+    );
+
+    await m.serving.append(
+      entryType: _kNote,
+      aggregateId: 'agg-after-boot',
+      aggregateType: 'note',
+      eventType: 'finalized',
+      data: const <String, Object?>{'title': 'after'},
+      initiator: const UserInitiator('pause-user'),
+    );
+    expect(
+      await canary.transaction(
+        (txn) => canary.readViewTargetBehindInTxn(txn, _kAddedView, _kNote),
+      ),
+      isTrue,
+      reason: 'a fold by an instance without the view marks it behind',
+    );
   }, timeout: const Timeout(Duration(minutes: 5)));
 
   // A measurement only: the serving appends wait for a boot that promotes
@@ -252,12 +284,13 @@ void main() {
   test('a canary that promotes a view: the pause of the serving appends is '
       'measured', () async {
     if (url == null) return;
-    final m = await measure(
+    await measure(
       (backend) => _open(backend, noteVersion: const EntryTypeVersion(1, 1)),
     );
     final rows = await backends.last.findViewRows(_kView);
     expect(rows, hasLength(_kAggregates));
     expect(rows.every((r) => r['b'] == 0), isTrue);
-    expect(m.appendsDuringBoot, greaterThan(0));
+    // The serving appends may wait for the whole promotion, so none need
+    // commit inside it; the pause is printed, not bounded.
   }, timeout: const Timeout(Duration(minutes: 5)));
 }

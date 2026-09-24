@@ -311,7 +311,7 @@ List<String> forbiddenExportsRule(
 /// a parameter or return type of a function type in it, is, or is a subtype
 /// of, a raw handle to the database or to a transaction's underlying engine
 /// transaction (so a `Future<Database>`, a `Stream<Transaction>`, a
-/// `List<Pool>` or a `(Session, int)` each count).
+/// `DatabaseClient`, a `List<Pool>` or a `(Session, int)` each count).
 bool isRawHandleType(DartType type) {
   final t = type;
   if (t is RecordType) {
@@ -333,7 +333,9 @@ bool isRawHandleType(DartType type) {
   for (final c in candidates) {
     final uri = c.library.uri.toString();
     if (uri.startsWith('package:sembast/') &&
-        (c.name == 'Database' || c.name == 'Transaction')) {
+        (c.name == 'Database' ||
+            c.name == 'Transaction' ||
+            c.name == 'DatabaseClient')) {
       return true;
     }
     if (uri.startsWith('package:postgres/') &&
@@ -344,6 +346,17 @@ bool isRawHandleType(DartType type) {
   return false;
 }
 
+/// Whether a parameter of [member], a method, is a callback that the
+/// method hands a raw handle to: a function-typed parameter one of whose
+/// own parameters is a raw handle type.
+bool _passesRawHandleToCallback(Element member) =>
+    member is MethodElement &&
+    member.formalParameters.any((p) {
+      final t = p.type;
+      return t is FunctionType &&
+          t.formalParameters.any((q) => isRawHandleType(q.type));
+    });
+
 DartType? _exposedType(Element member) => switch (member) {
   FieldElement(:final type) => type,
   GetterElement(:final returnType) => returnType,
@@ -352,7 +365,8 @@ DartType? _exposedType(Element member) => switch (member) {
 };
 
 /// No public member of [owners] exposes a raw handle (as a return type, a
-/// field type or a setter's parameter type) unless it is one of
+/// field type, a setter's parameter type or a parameter of a callback a
+/// method takes) unless it is one of
 /// [sanctioned] (qualified `Owner.member`) and carries `@internal`; no
 /// public field or setter of [functionTypedOwners] has a function type.
 List<String> rawHandleRule({
@@ -381,11 +395,23 @@ List<String> rawHandleRule({
       final exposed = member is SetterElement
           ? member.formalParameters.firstOrNull?.type
           : _exposedType(member);
-      if (exposed == null || !isRawHandleType(exposed)) continue;
+      final String how;
+      if (exposed != null && isRawHandleType(exposed)) {
+        how = 'returns a raw';
+      } else if (_passesRawHandleToCallback(member)) {
+        how = 'passes a raw';
+      } else {
+        continue;
+      }
       if (!sanctioned.contains(key)) {
-        violations.add('$key returns a raw database or transaction handle');
+        violations.add(
+          how == 'returns a raw'
+              ? '$key returns a raw database or transaction handle'
+              : '$key passes a raw database or transaction handle to a '
+                    'callback',
+        );
       } else if (!isInternal(member)) {
-        violations.add('$key returns a raw handle and lacks @internal');
+        violations.add('$key $how handle and lacks @internal');
       }
     }
   }

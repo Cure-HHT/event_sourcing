@@ -403,7 +403,22 @@ void runReconfigureScenarios(
       ))!.sequenceNumber;
       expect((await guard('x'))?.refillThrough, cursorBefore);
       expect(cursorBefore, greaterThanOrEqualTo(lastSeq));
+      final rewoundTo = (await recoveryEvent()).data['rewound_to']! as int;
+      final refillThrough = (await guard('x'))!.refillThrough;
       await cc();
+      // The pass refilled part of the rewound range, not all of it: one
+      // item past the tombstoned head, a fill position above the rewind
+      // target and below the position the recovery rewound from, and the
+      // guard still in place.
+      final refilled = <FifoEntry>[
+        for (final r in await w.backend.listFifoEntries('x'))
+          if (r.finalStatus != FinalStatus.tombstoned) r,
+      ];
+      expect(refilled, hasLength(1), reason: 'one item refilled');
+      expect(refilled.single.eventIds, <String>[notes.first]);
+      final cursorMid = await w.backend.readFillCursor('x');
+      expect(cursorMid, greaterThan(rewoundTo));
+      expect(cursorMid, lessThan(refillThrough));
       expect(await guard('x'), isNotNull, reason: 'one of three refilled');
       await cc.close();
 

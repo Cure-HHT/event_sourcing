@@ -1,3 +1,4 @@
+// Verifies: EVS-PRD-destinations/B
 // Verifies: EVS-PRD-destinations/C
 // Verifies: EVS-PRD-destinations/E
 // Verifies: EVS-PRD-ingest/A+E
@@ -38,6 +39,12 @@ Future<_Pane> _mkPane({
   required String dbName,
   required Source source,
   DownstreamBridge? bridge,
+  Set<String> nativeUserEntryTypes = const <String>{
+    'demo_note',
+    'red_button_pressed',
+    'green_button_pressed',
+    'blue_button_pressed',
+  },
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(dbName);
   final backend = SembastBackend(database: db);
@@ -71,14 +78,7 @@ Future<_Pane> _mkPane({
   // `includeSystemEvents: true`. Both feed the same downstream bridge.
   final nativeUser = NativeDemoDestination(
     id: 'NativeUser',
-    filter: const SubscriptionFilter(
-      entryTypes: <String>{
-        'demo_note',
-        'red_button_pressed',
-        'green_button_pressed',
-        'blue_button_pressed',
-      },
-    ),
+    filter: SubscriptionFilter(entryTypes: nativeUserEntryTypes),
     bridge: bridge,
   );
   final nativeAudit = NativeDemoDestination(
@@ -139,6 +139,21 @@ Future<void> _appendDemoNote(_Pane pane, String aggregateId) async {
     data: const <String, Object?>{
       'answers': <String, Object?>{'title': 't', 'body': 'b'},
     },
+    initiator: const UserInitiator('demo-user-1'),
+  );
+}
+
+Future<void> _appendEvent(
+  _Pane pane, {
+  required String entryType,
+  required String aggregateId,
+}) async {
+  await pane.datastore.eventStore.append(
+    entryType: entryType,
+    aggregateId: aggregateId,
+    aggregateType: demoAggregateTypeByEntryTypeId[entryType]!,
+    eventType: 'finalized',
+    data: const <String, Object?>{},
     initiator: const UserInitiator('demo-user-1'),
   );
 }
@@ -226,16 +241,8 @@ void main() {
       }
     });
 
-    test('events appended locally on hub do not flow back to mobile', () async {
-      final hub = await _mkPane(
-        dbName: 'hub-oneway.db',
-        source: const Source(
-          hopId: 'hub-server',
-          identifier: '11111111-1111-4111-8111-111111111111',
-          softwareVersion: 'test',
-        ),
-      );
-      final bridge = DownstreamBridge(hub.datastore.eventStore);
+    test("hub events outside the reverse link's filter do not reach mobile, "
+        'while events inside it do', () async {
       final mobile = await _mkPane(
         dbName: 'mobile-oneway.db',
         source: const Source(
@@ -243,23 +250,47 @@ void main() {
           identifier: '22222222-2222-4222-8222-222222222222',
           softwareVersion: 'test',
         ),
-        bridge: bridge,
+      );
+      // The hub has a live link back to mobile: its NativeUser destination
+      // ingests into mobile's store. Only the filter keeps demo_note off it,
+      // so a library that ignored the filter would deliver the note.
+      final hub = await _mkPane(
+        dbName: 'hub-oneway.db',
+        source: const Source(
+          hopId: 'hub-server',
+          identifier: '11111111-1111-4111-8111-111111111111',
+          softwareVersion: 'test',
+        ),
+        bridge: DownstreamBridge(mobile.datastore.eventStore),
+        nativeUserEntryTypes: const <String>{'blue_button_pressed'},
       );
 
       await _appendDemoNote(hub, 'agg-hub-only');
+      await _appendEvent(
+        hub,
+        entryType: 'blue_button_pressed',
+        aggregateId: 'agg-hub-blue',
+      );
       await hub.tick();
-      await mobile.tick();
 
-      // Filter out mobile's own bootstrap-emitted system audit
-      // events  so this assertion stays focused on
-      // whether hub-originated user payloads leaked back.
+      // Filter out mobile's own bootstrap-emitted system audit events so the
+      // assertion stays focused on hub-originated user payloads.
       final mobileEvents = (await mobile.backend.findAllEvents())
           .where((e) => !kReservedSystemEntryTypeIds.contains(e.entryType))
           .toList();
       expect(
-        mobileEvents,
-        isEmpty,
-        reason: 'mobile must not receive events from hub (one-way sync)',
+        mobileEvents.map((e) => e.entryType).toList(),
+        <String>['blue_button_pressed'],
+        reason:
+            'the reverse link carries the filtered-in blue press and never '
+            'the filtered-out demo_note',
+      );
+      expect(mobileEvents.single.aggregateId, 'agg-hub-blue');
+      final hubUserFifo = await hub.backend.listFifoEntries('NativeUser');
+      expect(
+        hubUserFifo.expand((row) => row.eventIds),
+        hasLength(1),
+        reason: "only the blue press is queued on the hub's reverse link",
       );
     });
 
@@ -310,9 +341,20 @@ void main() {
         final mobileFifo = await mobile.backend.listFifoEntries('NativeUser');
         expect(
           mobileFifo,
-          isNotEmpty,
+          hasLength(1),
+          reason: 'the single demo_note fills one NativeUser row',
+        );
+        final head = mobileFifo.single;
+        expect(
+          head.finalStatus,
+          isNull,
           reason:
               'broken link must keep mobile.NativeUser FIFO row pending for retry',
+        );
+        expect(
+          head.attempts.map((a) => a.outcome).toList(),
+          <String>['transient'],
+          reason: 'the one send against the broken link is a transient attempt',
         );
       },
     );

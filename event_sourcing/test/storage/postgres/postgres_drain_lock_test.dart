@@ -621,20 +621,24 @@ void main() {
     // after a takeover the replaced holder's pass sends nothing on any of
     //   its destinations.
     // Verifies: EVS-PRD-destinations/J
-    // its blocked send's late outcome writes nothing.
+    // its blocked sends' late outcomes write nothing.
     test('a replaced holder sends nothing more', () async {
       final timers = ManualTimers();
       final gate = Completer<void>();
       final receivers = <Receiver>[
         for (final id in <String>['w', 'x', 'y', 'z'])
-          Receiver(id: id, entryTypes: const <String>{harnessNoteType}),
+          Receiver(id: id, entryTypes: const <String>{harnessNoteType})
+            ..gate = (() => gate.future),
       ];
-      receivers.first.gate = () => gate.future;
       final a = await process(
         hooks: DeliveryTestHooks(timerFactory: timers.create),
         destinations: receivers,
       );
+      // Two items per destination, one event each: the pass's fill queues
+      // both, and every first send blocks, so each destination still has a
+      // send pending in the pass in flight when the lock is taken over.
       await note(a.store, 'first');
+      await note(a.store, 'first-b');
       final b = await spawn();
       await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
@@ -643,27 +647,45 @@ void main() {
           await b.reaches('standby');
           final pass = cycleA();
           await until(
-            () => receivers.first.started.isNotEmpty,
-            reason: 'the blocked send',
+            () => receivers.every((r) => r.started.isNotEmpty),
+            reason: "every destination's blocked first send",
           );
+          for (final r in receivers) {
+            expect(r.started, hasLength(1), reason: '${r.id} sends one item');
+            expect(
+              await a.backend.listFifoEntries(r.id),
+              hasLength(2),
+              reason: '${r.id} has a second item pending',
+            );
+          }
           await _terminate(url, (await a.backend.lockSessionForTest()).pid);
           await b.next('epoch');
-          final startedBefore = <int>[
-            for (final r in receivers.skip(1)) r.started.length,
-          ];
           await note(a.store, 'second');
           gate.complete();
           await pass;
+          expect(
+            <int>[for (final r in receivers) r.started.length],
+            <int>[1, 1, 1, 1],
+            reason: 'the pass in flight sends nothing after the takeover',
+          );
           await cycleA();
           expect(
-            <int>[for (final r in receivers.skip(1)) r.started.length],
-            startedBefore,
-            reason: 'no send after the takeover',
+            <int>[for (final r in receivers) r.started.length],
+            <int>[1, 1, 1, 1],
+            reason: 'the next pass sends nothing',
           );
         },
       );
-      final wRows = await a.backend.listFifoEntries('w');
-      expect(wRows.first.attempts, isEmpty, reason: "A's outcome is lost");
+      // B serves only x, so any attempt on w, y or z would be A's; on x at
+      // most B's one attempt is recorded.
+      for (final r in receivers) {
+        final rows = await a.backend.listFifoEntries(r.id);
+        expect(
+          rows.first.attempts,
+          r.id == 'x' ? hasLength(lessThanOrEqualTo(1)) : isEmpty,
+          reason: "A's outcome on ${r.id} is lost",
+        );
+      }
     });
   });
 

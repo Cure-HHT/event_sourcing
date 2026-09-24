@@ -1,9 +1,7 @@
-// Verifies: EVS-DEV-destination-drain-lock/F
-// the log-observing seam only observes: a
-//   seam that throws does not reach the code that logged, which carries on
-//   as if no seam were installed. Library log lines also reach the
-//   `package:logging` logger of the same name, an observation route that
-//   is not a test seam.
+// The log-observing seam only observes: a seam that throws does not reach
+// the code that logged, which carries on as if no seam were installed.
+// Library log lines also reach the `package:logging` logger of the same
+// name, an observation route that is not a test seam.
 
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';

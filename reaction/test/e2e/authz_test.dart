@@ -1,24 +1,27 @@
 // reaction/test/e2e/authz_test.dart
 // Verifies: EVS-PRD-cross-process-event-transport/E
 // (per-sub authz)
-// + mid-session permission-change handling (force-logout + stale_data).
-// Verifies: EVS-DEV-authz-watcher/A+B+C+D
-// end-to-end coverage of the
-//   mid-session permission-change envelope-routing behavior the
-//   AuthorizationWatcher implements (force-logout on role_unassigned /
-//   permission_revoked; stale_data on role_assigned / permission_granted;
-//   containment opt-in via watchContainment).
+// + mid-session permission-change handling (force-logout).
+// Verifies: EVS-DEV-authz-watcher/A
+// end-to-end: a role_unassigned for a connected user closes that user's WS
+//   with close code 4003 and reason permissions_changed, which the client
+//   observes on its socket and surfaces as an expired auth session.
 //
-// Two scenarios are active:
-//   1) view-level deny at subscribe time, and
-//   2) role_unassigned mid-subscription → server closes WS with 4003 →
-//      client RemoteAuthSession flips to Expired.
-// Remaining scenarios are kept as skipped scaffolds pending known future work:
+// Active scenarios:
+//   1) view-level deny at subscribe time;
+//   2) role_unassigned mid-subscription closes the WS with 4003
+//      permissions_changed and the client's RemoteAuthSession flips to
+//      Expired;
+//   3) a consumer-registered force-logout trigger does the same;
+//   4) after a force-logout, a re-login's submit is denied by the
+//      substrate's membership check.
+// The remaining scenarios are skipped scaffolds; the server-level tests of
+// the AuthorizationWatcher cover permission_revoked, stale_data and
+// containment. The scaffolds wait on:
 //   - row-level scope narrowing requires scoped-permission fixtures
 //     (role scopes seeded on the harness), which the harness lacks;
-//   - permission_revoked closing-all-affected-users is identical
-//     server-side to role_unassigned (same _forceLogout path) but
-//     requires policy fixtures to seed the right (role, perm) state;
+//   - permission_revoked closing-all-affected-users requires policy
+//     fixtures to seed the right (role, perm) state;
 //   - stale_data scenarios (role_assigned, permission_granted,
 //     containment) require client-side stale_data envelope handling
 //     not yet wired through the RemoteScope.
@@ -26,7 +29,35 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reaction/reaction.dart';
 
+import 'package:web_socket_channel/web_socket_channel.dart';
+
 import 'test_support/reaction_remote_test_harness.dart';
+
+/// A client scope over [h]'s server that records every WS channel it opens,
+/// so a test reads the close code and reason the client received.
+({RemoteScope scope, List<WebSocketChannel> channels}) _recordingScope(
+  ReactionRemoteTestHarness h,
+) {
+  final channels = <WebSocketChannel>[];
+  final scope = RemoteScope(
+    baseUrl: Uri.parse('http://127.0.0.1:${h.httpServer.port}'),
+    wsFactory: (uri) {
+      final channel = WebSocketChannel.connect(uri);
+      channels.add(channel);
+      return channel;
+    },
+  );
+  addTearDown(scope.dispose);
+  return (scope: scope, channels: channels);
+}
+
+/// Asserts the last WS channel of [channels] was closed by the server with
+/// 4003 permissions_changed.
+void _expectPermissionsChangedClose(List<WebSocketChannel> channels) {
+  expect(channels, isNotEmpty, reason: 'the client opened a WS');
+  expect(channels.last.closeCode, 4003);
+  expect(channels.last.closeReason, 'permissions_changed');
+}
 
 void main() {
   // --- Subscribe-time authorization ---
@@ -84,6 +115,7 @@ void main() {
   test('role_unassigned mid-subscription closes WS with 4003', () async {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);
+    final (scope: client, channels: channels) = _recordingScope(h);
 
     // Seed view perm + role membership + authenticate. The substrate
     // requires a `user_role_scopes` row for (alice, install) before any
@@ -97,13 +129,13 @@ void main() {
       role: 'install',
       scope: const BoundScope(class_: 'site', value: 'A'),
     );
-    h.scope.authSession.setCredential('alice');
-    await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+    client.authSession.setCredential('alice');
+    await client.authSession.stream.firstWhere((s) => s is Authenticated);
 
     // Open subscription and await EOR — this round-trips through the
     // WS handler and registers alice's connection in the
     // WsConnectionRegistry so the AuthorizationWatcher can find it later.
-    final stream = h.scope.viewSource.watch<Map<String, Object?>>(
+    final stream = client.viewSource.watch<Map<String, Object?>>(
       viewName: 'notes_today',
       mapper: (m) => m,
     );
@@ -141,7 +173,7 @@ void main() {
     // Wait for the WS close-frame to arrive on the client and for the
     // RemoteConnection.onAuthClose callback (wired in RemoteScope) to
     // flip RemoteAuthSession to Expired.
-    await h.scope.authSession.stream
+    await client.authSession.stream
         .firstWhere((s) => s is Expired)
         .timeout(const Duration(seconds: 2));
     // The error-out-subs loop inside _onWsClosed delivers
@@ -152,7 +184,8 @@ void main() {
       reason: 'the subscription errored',
     );
 
-    expect(h.scope.authSession.current, isA<Expired>());
+    expect(client.authSession.current, isA<Expired>());
+    _expectPermissionsChangedClose(channels);
     // Subscription is wire-errored by the same _onWsClosed path.
     expect(
       errors.any((e) => e.toString().contains('wire_disconnected')),
@@ -170,6 +203,7 @@ void main() {
   test('watchForceLogout closes the WS on a consumer narrowing event', () async {
     final h = await ReactionRemoteTestHarness.open();
     addTearDown(h.close);
+    final (scope: client, channels: channels) = _recordingScope(h);
 
     // Opt in: an `account_disabled` event on the `account` aggregate
     // force-logs-out the aggregate-id user (the account-level analogue of
@@ -187,10 +221,10 @@ void main() {
       role: 'install',
       scope: const BoundScope(class_: 'site', value: 'A'),
     );
-    h.scope.authSession.setCredential('alice');
-    await h.scope.authSession.stream.firstWhere((s) => s is Authenticated);
+    client.authSession.setCredential('alice');
+    await client.authSession.stream.firstWhere((s) => s is Authenticated);
 
-    final stream = h.scope.viewSource.watch<Map<String, Object?>>(
+    final stream = client.viewSource.watch<Map<String, Object?>>(
       viewName: 'notes_today',
       mapper: (m) => m,
     );
@@ -213,7 +247,7 @@ void main() {
     );
 
     // The watcher closes alice's WS with 4003; RemoteAuthSession flips Expired.
-    await h.scope.authSession.stream
+    await client.authSession.stream
         .firstWhere((s) => s is Expired)
         .timeout(const Duration(seconds: 2));
     await until(
@@ -221,7 +255,8 @@ void main() {
       reason: 'the subscription errored',
     );
 
-    expect(h.scope.authSession.current, isA<Expired>());
+    expect(client.authSession.current, isA<Expired>());
+    _expectPermissionsChangedClose(channels);
     // Subscription is wire-errored by the same _onWsClosed path.
     expect(
       errors.any((e) => e.toString().contains('wire_disconnected')),

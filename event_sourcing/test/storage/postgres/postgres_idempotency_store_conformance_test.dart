@@ -43,6 +43,8 @@ void main() {
         sslMode: SslMode.disable,
       ),
     );
+    // The caller owns the pool: it is closed when the test ends.
+    addTearDown(pool.close);
     return PostgresIdempotencyStore.over(pool);
   }, label: 'postgres');
 

@@ -126,7 +126,10 @@ void main() {
         const EntryTypeVersion(1, 2),
         _event(1, const EntryTypeVersion(1, 2)),
       );
+      expect(row, isNotNull, reason: 'the event folds into a row');
+      expect(row!['title'], 't');
       expect(row, isNot(contains('x')));
+      expect(row, isNot(contains('y')));
     });
 
     // Verifies: EVS-DEV-ingest-promotes-before-fold/A
@@ -365,6 +368,8 @@ void main() {
       );
       expect(promoted!['x'], 'dx');
       expect(promoted['y'], 'dy');
+      expect(unchanged, isNotNull, reason: 'the 1.3 event folds into a row');
+      expect(unchanged!['title'], 't');
       expect(unchanged, isNot(contains('x')));
       expect(unchanged, isNot(contains('y')));
     });

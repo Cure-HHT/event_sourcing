@@ -485,13 +485,14 @@ void main() {
     // and the fresh re-promotion rows coexist even when they cover the
     // same event_ids — their identifiers never collide.
     //
-    // Setup: 9 events on the event log. Enqueue three contiguous
-    // 3-event batches — the first wedged (events 1-3, head), then
-    // two null (events 4-6 and 7-9, trail).
+    // Setup: 9 events e1..e9 on the event log, after the registry's own
+    // audit events. Enqueue three contiguous 3-event batches — the first
+    // wedged (e1-e3, head), then two null (e4-e6 and e7-e9, trail).
     //
     // Contract:
-    //  - fill_cursor rewinds to target.first_seq - 1 = 0;
-    //  - events 1-9 are re-promoted into fresh FIFO rows starting from
+    //  - fill_cursor rewinds to target.first_seq - 1, the sequence number
+    //    just below e1;
+    //  - e1..e9 are re-promoted into fresh FIFO rows starting from
     //    the rewound cursor;
     //  - the tombstoned audit row survives alongside the fresh rows;
     //  - every fresh row has a new UUID entryId distinct from the
@@ -511,10 +512,20 @@ void main() {
         initiator: _testInit,
       );
       // Seed 9 events on the event log.
+      // The registry's audit events precede them on the log, so the
+      // batches below select e1..e9 by the sequence numbers the appends
+      // returned, not by position.
       final clientTs = DateTime.utc(2026, 4, 22, 10);
+      final seqOf = <int>[];
       for (var i = 1; i <= 9; i++) {
-        await _appendEvent(backend, eventId: 'e$i', clientTimestamp: clientTs);
+        final event = await _appendEvent(
+          backend,
+          eventId: 'e$i',
+          clientTimestamp: clientTs,
+        );
+        seqOf.add(event.sequenceNumber);
       }
+      expect(seqOf.first, greaterThan(1), reason: 'audits precede e1');
 
       // Directly enqueue three 3-event batches. These land at
       // sequence_in_queue 1, 2, 3 because the FIFO is empty.
@@ -535,12 +546,21 @@ void main() {
         });
       }
 
-      await enqueueBatch([1, 2, 3]);
-      await enqueueBatch([4, 5, 6]);
-      await enqueueBatch([7, 8, 9]);
+      await enqueueBatch(seqOf.sublist(0, 3));
+      await enqueueBatch(seqOf.sublist(3, 6));
+      await enqueueBatch(seqOf.sublist(6, 9));
       // Wedge the head batch row.
       final rows0 = await _readAllFifoRows(backend, destination.id);
       expect(rows0.length, 3);
+      expect(
+        [for (final r in rows0) (r['event_ids']! as List).cast<String>()],
+        [
+          ['e1', 'e2', 'e3'],
+          ['e4', 'e5', 'e6'],
+          ['e7', 'e8', 'e9'],
+        ],
+        reason: 'the head holds e1-e3 and the trail e4-e9',
+      );
       final headEntryId = rows0.first['entry_id']! as String;
       await appendAttemptForTest(
         backend,
@@ -559,9 +579,9 @@ void main() {
         headEntryId,
         FinalStatus.wedged,
       );
-      // fill_cursor at 9 (last enqueued seq) so the rewind is
+      // fill_cursor at e9 (last enqueued seq) so the rewind is
       // observable.
-      await writeFillCursorForTest(backend, destination.id, 9);
+      await writeFillCursorForTest(backend, destination.id, seqOf.last);
 
       // Act: tombstone + refill.
       final result = await registry.tombstoneAndRefill(
@@ -570,8 +590,8 @@ void main() {
         initiator: _testInit,
       );
       expect(result.deletedTrailCount, 2);
-      // This positions fillBatch to walk events 1..9 again.
-      expect(result.rewoundTo, 0);
+      // This positions fillBatch to walk e1..e9 again.
+      expect(result.rewoundTo, seqOf.first - 1);
 
       // Run fillBatch enough times to drain all events. With
       // batchCapacity=3, three calls cover events 1-3, 4-6, 7-9.
@@ -593,8 +613,13 @@ void main() {
       expect(tombstoned.single['entry_id'], headEntryId);
 
       final fresh = rows1.where((r) => r['final_status'] == null).toList();
-      // three 3-event batches at the destination's batchCapacity.
+      // three 3-event batches at the destination's batchCapacity, holding
+      // exactly e1..e9 in log order.
       expect(fresh.length, 3);
+      expect(
+        [for (final r in fresh) ...(r['event_ids']! as List).cast<String>()],
+        [for (var i = 1; i <= 9; i++) 'e$i'],
+      );
       final coveredIds = <String>{};
       for (final r in fresh) {
         coveredIds.addAll((r['event_ids']! as List).cast<String>());

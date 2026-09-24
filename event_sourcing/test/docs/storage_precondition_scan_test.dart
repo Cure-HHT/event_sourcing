@@ -73,6 +73,22 @@ String? preconditionProblem(
       'the reserved system events';
 }
 
+/// A statement naming every kind of persisted state, without the clause on
+/// reserved system events.
+const _stateStatement =
+    'Its persisted state (destination queues, the views it materializes, the '
+    'records it keeps beside them, such as fill positions, schedules, replay '
+    'requests, wedge records, halt requests, send fences, refill guards, the '
+    'registry check record, the database identity, the generation records, '
+    'the view catch-up marks, the fencing epoch and the declared '
+    'configuration, and the security context it stores beside each event) '
+    "changes only through the library's operations";
+
+/// The full statement of the precondition, which the matcher accepts.
+const _fullStatement =
+    '$_stateStatement, and reserved system events are appended only by the '
+    "library's own operations.";
+
 String _between(String text, String start, String end) {
   final from = text.indexOf(start);
   if (from < 0) throw StateError('"$start" not found');
@@ -116,6 +132,13 @@ void main() {
     });
   });
 
+  group('the matcher accepts', () {
+    test('the full statement, from which each rejected precondition below '
+        'differs in one place', () {
+      expect(preconditionProblem(_fullStatement), isNull);
+    });
+  });
+
   group('the matcher rejects', () {
     test('a document without the precondition', () {
       expect(
@@ -145,21 +168,17 @@ void main() {
     });
 
     test('a precondition that omits a kind of state the list names', () {
+      for (final kind in stateKinds.keys) {
+        final text = _fullStatement.replaceAll(kind, '');
+        expect(text, isNot(contains(kind)));
+        expect(preconditionProblem(text), isNotNull, reason: 'without $kind');
+      }
+    });
+
+    test('a precondition that does not name a kind the list adds', () {
       expect(
         preconditionProblem(
-          'Its persisted state (destination queues, the views it '
-          'materializes, and the records it keeps beside them, such as fill '
-          "positions and schedules) changes only through the library's "
-          'operations.',
-        ),
-        isNotNull,
-      );
-      expect(
-        preconditionProblem(
-          'Its persisted state (destination queues, the views it '
-          'materializes, the records it keeps beside them, such as fill '
-          'positions and schedules, and the security context it stores) '
-          "changes only through the library's operations.",
+          _fullStatement,
           kinds: const <String, String>{
             ...stateKinds,
             'retention tallies': 'retention tallies',
@@ -170,45 +189,16 @@ void main() {
     });
 
     test('a precondition that omits the reserved system events', () {
-      expect(
-        preconditionProblem(
-          'Its persisted state (destination queues, the views it '
-          'materializes, the records it keeps beside them, such as fill '
-          'positions, schedules, replay requests, wedge records, halt '
-          'requests, send fences, the registry check record, the database '
-          'identity, the generation records and the view catch-up marks, '
-          'and the security context it '
-          "stores beside each event) changes only through the library's "
-          'operations.',
-        ),
-        isNotNull,
-      );
-      expect(
-        preconditionProblem(
-          'Its persisted state (destination queues, the views it '
-          'materializes, the records it keeps beside them, such as fill '
-          'positions, schedules, replay requests, wedge records, halt '
-          'requests, send fences, refill guards, the registry check record, '
-          'the database identity, the generation records, the view catch-up '
-          'marks, the fencing epoch and the declared configuration, and the '
-          'security context it '
-          "stores beside each event) changes only through the library's "
-          'operations, and reserved system events are appended only by '
-          "the library's own operations.",
-        ),
-        isNull,
-      );
+      expect(preconditionProblem('$_stateStatement.'), isNotNull);
     });
 
     test('a precondition split across paragraphs', () {
-      expect(
-        preconditionProblem(
-          'It keeps destination queues, views, and the records it keeps '
-          "beside them.\n\nIts state changes only through the library's "
-          'operations.',
-        ),
-        isNotNull,
+      final split = _fullStatement.replaceFirst(
+        ') changes only',
+        ').\n\nIts state changes only',
       );
+      expect(split, isNot(_fullStatement));
+      expect(preconditionProblem(split), isNotNull);
     });
   });
 }

@@ -131,10 +131,28 @@ Future<void> _until(
   expect(condition(), isTrue, reason: 'waiting for $what');
 }
 
+/// Like [_until], for a [condition] read from the pane's database.
+Future<void> _untilAsync(
+  WidgetTester tester,
+  Future<bool> Function() condition,
+  String what,
+) async {
+  var holds = false;
+  for (var i = 0; i < 500 && !holds; i++) {
+    await tester.runAsync(() async {
+      holds = await condition();
+      if (!holds) await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+  }
+  expect(holds, isTrue, reason: 'waiting for $what');
+}
+
 bool _shown(Finder finder) => finder.evaluate().isNotEmpty;
 
-/// Presses the button labelled [label] and runs its handler to completion
-/// in the real asynchronous zone the pane's database runs in.
+/// Presses the button labelled [label] in the real asynchronous zone the
+/// pane's database runs in, and lets that zone run briefly. The handler is
+/// not awaited: a caller that depends on its effect waits for that effect.
 Future<void> _press(WidgetTester tester, String label) async {
   final button = find.ancestor(
     of: find.text(label),
@@ -561,13 +579,27 @@ void main() {
     expect(find.textContaining('Use [Halt]'), findsOneWidget);
     expect(pane.state.deletedDestinationIds, isEmpty);
 
+    // The request wakes the pane's delivery cycle, which honours it by
+    // wedging the head; wait for that effect rather than for time.
     await _press(tester, '[Halt]');
-    await tester.runAsync(pane.cycle);
-    late FifoEntry? head;
+    await _untilAsync(
+      tester,
+      () async =>
+          (await pane.backend.readFifoHead('Primary'))?.finalStatus ==
+          FinalStatus.wedged,
+      'the halted head to wedge',
+    );
+    late List<StoredEvent> wedges;
     await tester.runAsync(() async {
-      head = await pane.backend.readFifoHead('Primary');
+      wedges = await pane.backend.findAllEvents(
+        entryType: kDestinationWedgedEntryType,
+      );
     });
-    expect(head?.finalStatus, FinalStatus.wedged);
+    expect(
+      wedges.map((e) => e.data['cause']).toList(),
+      <Object?>['operator_halt'],
+      reason: 'the head wedged for the operator halt, not a send failure',
+    );
 
     await _press(tester, '[Delete destination]');
     await _until(

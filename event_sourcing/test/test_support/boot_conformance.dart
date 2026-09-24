@@ -491,11 +491,15 @@ void runBootScenarios(
       });
 
       // Verifies: EVS-DEV-event-store-open/E
-      test('the boot runs its body once per run the backend makes', () async {
+      // With no concurrent writer the backend makes exactly one run of the
+      // boot transaction, so the body runs exactly once. A backend that
+      // re-runs the transaction is covered by the rerunning-backend test of
+      // the Sembast suite.
+      test('an uncontended boot runs its body exactly once', () async {
         if (db == null) return;
         var runs = 0;
         await _open(db!, await db!.openBackend(), onBootBodyRun: () => runs++);
-        expect(runs, greaterThanOrEqualTo(1));
+        expect(runs, 1);
       });
     });
 
@@ -807,9 +811,17 @@ void runBootScenarios(
         );
         expect(audits, hasLength(1));
         final all = await newer.backend.findAllEvents();
+        final changeIndex = all.indexWhere(
+          (e) => e.eventId == changes.single.eventId,
+        );
+        final auditIndex = all.indexWhere(
+          (e) => e.eventId == audits.single.eventId,
+        );
+        expect(changeIndex, greaterThanOrEqualTo(0));
+        expect(auditIndex, greaterThanOrEqualTo(0));
         expect(
-          all.indexOf(changes.single),
-          lessThan(all.indexWhere((e) => e.eventId == audits.single.eventId)),
+          changeIndex,
+          lessThan(auditIndex),
           reason: 'the version change precedes the promotion it causes',
         );
         await expectReservedShapes(newer);

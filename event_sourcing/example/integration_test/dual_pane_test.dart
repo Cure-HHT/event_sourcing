@@ -175,6 +175,16 @@ Future<({_PaneHandle mobile, _PaneHandle hub, Widget app})> _setupDualApp({
 Finder _paneByLabel(String label) =>
     find.ancestor(of: find.text(label), matching: find.byType(DemoPane));
 
+/// The event-stream row in [pane] for an event of aggregate type
+/// GreenButtonPressed whose hop badge is [badge] (`[L]` or `[R]`). A row
+/// reads `<badge> #<seq> <eventType> <aggregateType> <aggregate tail>`.
+Finder _greenRow(Finder pane, String badge) => find.descendant(
+  of: pane,
+  matching: find.textContaining(
+    RegExp('^${RegExp.escape(badge)} #\\d+ \\S+ GreenButtonPressed '),
+  ),
+);
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -303,6 +313,7 @@ void main() {
       of: _paneByLabel('MOBILE'),
       matching: find.widgetWithText(TextButton, 'GREEN'),
     );
+    expect(greenInMobile, findsOneWidget);
     await tester.tap(greenInMobile, warnIfMissed: false);
     await tester.pumpAndSettle();
 
@@ -310,14 +321,44 @@ void main() {
     await setup.hub.tick();
     await tester.pumpAndSettle();
 
-    // Broken link must not deliver to hub.
-    expect(
-      find.descendant(
-        of: _paneByLabel('HUB'),
-        matching: find.textContaining('GreenButtonPressed'),
-      ),
-      findsNothing,
+    // The press was recorded on mobile and is queued for NativeUser, unsent.
+    final greenEvents = await setup.mobile.backend.findAllEvents(
+      entryType: 'green_button_pressed',
     );
+    expect(greenEvents, hasLength(1));
+    final nativeHead = await setup.mobile.backend.readFifoHead('NativeUser');
+    expect(nativeHead, isNotNull);
+    expect(nativeHead!.eventIds, contains(greenEvents.single.eventId));
+    expect(nativeHead.sentAt, isNull);
+    expect(_greenRow(_paneByLabel('MOBILE'), '[L]'), findsOneWidget);
+
+    // Broken link must not deliver to hub.
+    final greenInHub = find.descendant(
+      of: _paneByLabel('HUB'),
+      matching: find.textContaining('GreenButtonPressed'),
+    );
+    expect(greenInHub, findsNothing);
+
+    // Restoring the connection delivers the queued press on a later pass,
+    // once its retry backoff (one second under the demo policy) elapses.
+    for (final n
+        in setup.mobile.datastore.destinations
+            .all()
+            .whereType<NativeDemoDestination>()) {
+      n.connection.value = Connection.ok;
+    }
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (true) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 250)),
+      );
+      await setup.mobile.tick();
+      await setup.hub.tick();
+      await tester.pumpAndSettle();
+      if (greenInHub.evaluate().isNotEmpty) break;
+      if (DateTime.now().isAfter(deadline)) break;
+    }
+    expect(_greenRow(_paneByLabel('HUB'), '[R]'), findsOneWidget);
   });
 
   // Mobile records a GREEN press locally. After sync, that event lives on
@@ -350,30 +391,26 @@ void main() {
     await setup.hub.tick();
     await tester.pumpAndSettle();
 
-    // Mobile pane: at least one `[L]` row (the locally-recorded GREEN).
+    // Mobile pane: the GREEN row carries `[L]`, since mobile originated it.
     expect(
-      find.descendant(
-        of: _paneByLabel('MOBILE'),
-        matching: find.textContaining('[L] '),
-      ),
-      findsAtLeastNWidgets(1),
+      _greenRow(_paneByLabel('MOBILE'), '[L]'),
+      findsOneWidget,
       reason:
-          'mobile pane must render at least one [L] row for the GREEN '
-          'event it originated locally',
+          'mobile pane must render the GREEN event it originated locally '
+          'with an [L] badge',
     );
+    expect(_greenRow(_paneByLabel('MOBILE'), '[R]'), findsNothing);
 
-    // Hub pane: at least one `[R]` row (the GREEN ingested from
-    // mobile via the downstream bridge).
+    // Hub pane: the GREEN row carries `[R]`, since the hub ingested it from
+    // mobile via the downstream bridge.
     expect(
-      find.descendant(
-        of: _paneByLabel('HUB'),
-        matching: find.textContaining('[R] '),
-      ),
-      findsAtLeastNWidgets(1),
+      _greenRow(_paneByLabel('HUB'), '[R]'),
+      findsOneWidget,
       reason:
-          'hub pane must render at least one [R] row for the GREEN '
-          'event it ingested from mobile',
+          'hub pane must render the GREEN event it ingested from mobile '
+          'with an [R] badge',
     );
+    expect(_greenRow(_paneByLabel('HUB'), '[L]'), findsNothing);
   });
 
   // A halt and a recovery through the panes' controls: the mobile pane's

@@ -280,9 +280,14 @@ void runQueueRegistryScenarios(
     tearDown(() async {
       if (!available) return;
       // Every scenario ends with the default destination-wedges view in
-      // agreement with the queue.
-      await expectWedgesViewMatchesQueue(w.store);
-      await w.db.close();
+      // agreement with the queue. The database closes whether or not the
+      // check holds, so a failing scenario does not leak its backends into
+      // the next one.
+      try {
+        await expectWedgesViewMatchesQueue(w.store);
+      } finally {
+        await w.db.close();
+      }
     });
 
     /// Register [d] on [w.registry], activate it at [start] and fill.
@@ -977,6 +982,13 @@ void runQueueRegistryScenarios(
             kDestinationHaltCancelledEntryType:
                 kDestinationHaltCancelledEventType,
           };
+          // No two kinds share an event type.
+          expect(
+            eventTypeOf.values.toSet(),
+            hasLength(eventTypeOf.length),
+            reason: 'each kind has an event type no other kind uses',
+          );
+          final storedTypesOf = <String, Set<String>>{};
           for (final kind in eventTypeOf.entries) {
             final audits = await w.audits(kind.key);
             expect(audits, isNotEmpty, reason: '${kind.key} was appended');
@@ -984,7 +996,21 @@ void runQueueRegistryScenarios(
               expect(audit.eventType, kind.value, reason: kind.key);
               expect(audit.aggregateType, 'system_destination');
             }
+            storedTypesOf[kind.key] = {for (final a in audits) a.eventType};
           }
+          // The stored audits themselves carry one event type per kind, and
+          // no stored event type appears under two kinds.
+          for (final kind in storedTypesOf.entries) {
+            expect(kind.value, hasLength(1), reason: kind.key);
+          }
+          final storedTypes = [
+            for (final types in storedTypesOf.values) ...types,
+          ];
+          expect(
+            storedTypes.toSet(),
+            hasLength(storedTypes.length),
+            reason: 'stored audits of different kinds share an event type',
+          );
           expect(
             await w.audits(kDestinationEndDateSetEntryType),
             hasLength(2),

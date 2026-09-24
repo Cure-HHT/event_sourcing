@@ -198,6 +198,13 @@ Map<String, Object?>? _rowOf(List<Map<String, Object?>> rows, String id) {
   return null;
 }
 
+/// Asserts [row] exists, holds `a` equal to [a], and holds no `b`.
+void _expectRowWithoutDefault(Map<String, Object?>? row, Object? a) {
+  expect(row, isNotNull);
+  expect(row!['a'], a);
+  expect(row, isNot(contains('b')));
+}
+
 Future<EntryTypeVersion?> _storedTarget(EventStore store) =>
     store.backend.transaction(
       (txn) => store.backend.readViewTargetVersionInTxn(txn, _kView, _kType),
@@ -250,7 +257,7 @@ void runVersionCompatibilityScenarios(
         // of its major, and leaves the target as it is until it folds.
         expect(await _storedTarget(older), const EntryTypeVersion(1, 1));
         await _appendNote(older, 'agg-o', <String, Object?>{'a': 2});
-        expect(await _row(older, 'agg-o'), isNot(contains('b')));
+        _expectRowWithoutDefault(await _row(older, 'agg-o'), 2);
         expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
 
         final reopened = await _openNewer(db!);
@@ -276,7 +283,7 @@ void runVersionCompatibilityScenarios(
 
         // The older build is still serving and folds after the promotion.
         await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
-        expect(await _row(older, 'agg-2'), isNot(contains('b')));
+        _expectRowWithoutDefault(await _row(older, 'agg-2'), 2);
         expect(await _storedTarget(older), const EntryTypeVersion(1, 0));
 
         final auditsBefore = await _promotionAudits(older);
@@ -344,6 +351,8 @@ void runVersionCompatibilityScenarios(
         await _openNewer(db!);
         final older = await _openOlder(db!);
         final eventsBefore = await older.backend.findAllEvents();
+        EntryTypeVersion? targetInFold;
+        Map<String, Object?>? rowInFold;
         await expectLater(
           older.runTransaction<void>((txn, collector) async {
             await older.appendInTxn(
@@ -362,10 +371,24 @@ void runVersionCompatibilityScenarios(
               data: const <String, Object?>{'a': 1},
               initiator: const UserInitiator('versions-user'),
             );
+            // The fold lowers the target inside its own transaction.
+            targetInFold = await older.backend.readViewTargetVersionInTxn(
+              txn,
+              _kView,
+              _kType,
+            );
+            rowInFold = await older.backend.readViewRowInTxn(
+              txn,
+              _kView,
+              'agg-1',
+            );
             throw StateError('injected failure after the fold');
           }),
           throwsStateError,
         );
+        expect(targetInFold, const EntryTypeVersion(1, 0));
+        expect(rowInFold, isNotNull);
+        expect(rowInFold!['a'], 1);
         expect(await _storedTarget(older), const EntryTypeVersion(1, 1));
         expect(await _row(older, 'agg-1'), isNull);
         expect(
@@ -390,7 +413,7 @@ void runVersionCompatibilityScenarios(
         final rows = await _expectRebuildMatches(reopened, <String>[
           _kView,
         ], const EntryTypeVersion(1, 1));
-        expect(_rowOf(rows[_kView]!, 'agg-n'), isNot(contains('b')));
+        _expectRowWithoutDefault(_rowOf(rows[_kView]!, 'agg-n'), 1);
         expect(_rowOf(rows[_kView]!, 'agg-o')!['b'], 0);
       });
 
@@ -420,7 +443,7 @@ void runVersionCompatibilityScenarios(
         await _appendNote(newer, 'agg-m', <String, Object?>{'a': 1});
         final older = await _openOlder(db!);
         await _appendNote(older, 'agg-m', <String, Object?>{'a': 2});
-        expect(await _row(older, 'agg-m'), isNot(contains('b')));
+        _expectRowWithoutDefault(await _row(older, 'agg-m'), 2);
 
         final reopened = await _openNewer(db!);
         final rows = await _expectRebuildMatches(reopened, <String>[
@@ -450,8 +473,7 @@ void runVersionCompatibilityScenarios(
         final rows = await _expectRebuildMatches(reopened, <String>[
           _kView,
         ], const EntryTypeVersion(1, 1));
-        expect(_rowOf(rows[_kView]!, 'agg-t')!['a'], 2);
-        expect(_rowOf(rows[_kView]!, 'agg-t'), isNot(contains('b')));
+        _expectRowWithoutDefault(_rowOf(rows[_kView]!, 'agg-t'), 2);
       });
 
       // Verifies: EVS-DEV-snapshot-promotion-on-open/A+B+D
@@ -494,10 +516,16 @@ void runVersionCompatibilityScenarios(
         ], const EntryTypeVersion(1, 1));
         final items = rows[_kItemsView]!;
         expect(_rowOf(items, 'l1|i1')!['b'], 0);
-        expect(_rowOf(items, 'l1|i2'), isNot(contains('b')));
+        _expectRowWithoutDefault(_rowOf(items, 'l1|i2'), 2);
         expect(_rowOf(items, 'l2|i1')!['b'], 0);
         expect(_rowOf(items, 'l2|i2'), isNull);
-        for (final row in rows[_kTitlesView]!) {
+        final titles = rows[_kTitlesView]!;
+        expect(titles.map((r) => r['aggregateId']).toSet(), <String>{
+          'agg-1',
+          'agg-2',
+          'agg-3',
+        });
+        for (final row in titles) {
           expect(row, isNot(contains('b')));
         }
         for (final view in <String>[_kView, _kItemsView, _kTitlesView]) {

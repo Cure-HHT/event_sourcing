@@ -16,14 +16,15 @@
 //   promotes every view row whose stored target version lags registeredVersion.
 // Verifies: EVS-DEV-snapshot-promotion-on-open/B
 // only view rows are
-//   mutated; events in the log are unchanged.
+//   mutated; events in the log are unchanged (compared before and after
+//   promoteViewSnapshots and across a promoting boot).
 // Verifies: EVS-DEV-snapshot-promotion-on-open/C
 // exactly one audit
 //   callback fires per promoted (viewName, entryType) pair.
 // Verifies: EVS-DEV-snapshot-promotion-on-open/D
 // boot integration test
-//   confirms that snapshot-promoting a row from v1→v2 yields the same state
-//   as replaying the v1 event through the v1→v2 promoter chain (equivalence).
+//   confirms that snapshot-promoting a row from v1→v2 yields the same rows
+//   as rebuilding the view by replaying the log under the v2 registry.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
@@ -344,6 +345,18 @@ void main() {
               'sequence': 1,
             },
           );
+          // A row of an aggregate holding no event of the lagging entry
+          // type: promotion does not touch it.
+          await backend.upsertViewRowInTxn(
+            txn,
+            'notes',
+            'agg-2',
+            const <String, dynamic>{
+              'aggregateId': 'agg-2',
+              'body': 'untouched',
+              'sequence': 0,
+            },
+          );
           final seq = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
@@ -354,6 +367,11 @@ void main() {
             ),
           );
         });
+
+        final logBefore = <Map<String, Object?>>[
+          for (final e in await backend.findAllEvents()) e.toMap(),
+        ];
+        expect(logBefore, hasLength(1));
 
         await backend.transaction((txn) async {
           await promoteViewSnapshots(
@@ -366,10 +384,24 @@ void main() {
           );
         });
 
+        // The log is unchanged: the stored v1 event keeps its v1 data and
+        // version.
+        expect(<Map<String, Object?>>[
+          for (final e in await backend.findAllEvents()) e.toMap(),
+        ], logBefore);
+
         await backend.transaction((txn) async {
           final row = await backend.readViewRowInTxn(txn, 'notes', 'agg-1');
           expect(row!['note_body'], 'hello');
           expect(row.containsKey('body'), isFalse);
+          expect(
+            await backend.readViewRowInTxn(txn, 'notes', 'agg-2'),
+            const <String, dynamic>{
+              'aggregateId': 'agg-2',
+              'body': 'untouched',
+              'sequence': 0,
+            },
+          );
           expect(
             await backend.readViewTargetVersionInTxn(txn, 'notes', 'note'),
             const EntryTypeVersion(2, 0),
@@ -616,6 +648,10 @@ void main() {
         );
       }
 
+      final logBeforeBoot = <Map<String, Object?>>[
+        for (final e in await backend.findAllEvents()) e.toMap(),
+      ];
+
       // Second boot against the same backend: register note at v2 plus
       // a v1->v2 promoter (rename body -> note_body).
       {
@@ -643,7 +679,7 @@ void main() {
               ],
             ),
           );
-        await EventStore.open(
+        final store = await EventStore.open(
           storage: backend,
           entryTypes: entryTypes,
           source: const Source(
@@ -655,6 +691,29 @@ void main() {
           projections: projections,
           promoters: promoters,
         );
+
+        // The boot appended only after the existing log, which it left
+        // unchanged: the v1 note keeps its v1 data and version.
+        final logAfterBoot = await backend.findAllEvents();
+        expect(<Map<String, Object?>>[
+          for (final e in logAfterBoot.take(logBeforeBoot.length)) e.toMap(),
+        ], logBeforeBoot);
+        final note = logAfterBoot.singleWhere((e) => e.entryType == 'note');
+        expect(note.data, const <String, Object?>{'body': 'hello'});
+        expect(note.entryTypeVersion, const EntryTypeVersion(1, 0));
+
+        // The promoted rows equal the rows a replay of the log under the
+        // v2 registry derives.
+        final promoted = await backend.findViewRows('notes');
+        expect(promoted, hasLength(1));
+        await rebuildView(
+          store: store,
+          viewName: 'notes',
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            'note': EntryTypeVersion(2, 0),
+          },
+        );
+        expect(await backend.findViewRows('notes'), promoted);
 
         // View row was promoted.
         await backend.transaction((txn) async {

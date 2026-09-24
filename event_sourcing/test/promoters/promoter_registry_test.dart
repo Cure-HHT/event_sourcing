@@ -1,5 +1,3 @@
-// Verifies: EVS-DEV-ingest-promotes-before-fold/C
-// Verifies: EVS-DEV-snapshot-promotion-on-open/B
 import 'package:event_sourcing/src/promoters/primitives/transform.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/promoters/promoter_spec.dart';
@@ -62,7 +60,14 @@ void main() {
         ),
         _argumentErrorNaming('minor step is compatible by definition'),
       );
-      expect(() => _chain(reg, (1, 0), (2, 0)), throwsStateError);
+      // The refused step was not stored: the chain treats 1.0 -> 1.1 as
+      // the identity, and the valid step registers without a duplicate
+      // refusal.
+      expect(_chain(reg, (1, 0), (1, 1)), isEmpty);
+      reg.register(_spec((1, 0), (1, 1)));
+      final chain = _chain(reg, (1, 0), (1, 1));
+      expect(_steps(chain), <String>['1.0->1.1']);
+      expect(chain.single.transforms, const <TransformPrimitive>[_default]);
     });
 
     // Verifies: EVS-DEV-version-compatibility/B
@@ -253,6 +258,46 @@ void main() {
       expect(gap(reg, (1, 3), (2, 0)), contains('past the major step'));
       expect(gap(PromoterRegistry(), (1, 0), (2, 0)), contains('major 1'));
       expect(gap(reg, (3, 0), (2, 0)), contains('lower major'));
+    });
+  });
+
+  group('per-view chains', () {
+    // Verifies: EVS-DEV-ingest-promotes-before-fold/C
+    test('two views of one entry type register different chains, each '
+        'returned for its own view', () {
+      const defaultG = DefaultField(fieldName: 'g', defaultValue: 'x');
+      final reg = PromoterRegistry()
+        ..register(
+          const PromoterSpec(
+            viewName: 'left',
+            entryType: 't',
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
+            transforms: <TransformPrimitive>[_rename],
+          ),
+        )
+        ..register(
+          const PromoterSpec(
+            viewName: 'right',
+            entryType: 't',
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
+            transforms: <TransformPrimitive>[_drop, defaultG],
+          ),
+        );
+      List<PromoterSpec> chainOf(String view) => reg.chain(
+        viewName: view,
+        entryType: 't',
+        fromVersion: const EntryTypeVersion(1, 0),
+        toVersion: const EntryTypeVersion(2, 0),
+      );
+      expect(chainOf('left').single.transforms, const <TransformPrimitive>[
+        _rename,
+      ]);
+      expect(chainOf('right').single.transforms, const <TransformPrimitive>[
+        _drop,
+        defaultG,
+      ]);
     });
   });
 }

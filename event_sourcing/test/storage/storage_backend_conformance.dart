@@ -145,6 +145,7 @@ StoredEvent _eventWithProvenance({
   String identifier = 'install-A',
   String eventId = '',
   String eventType = 'finalized',
+  List<Map<String, Object?>> laterHops = const <Map<String, Object?>>[],
 }) => StoredEvent(
   key: 0,
   eventId: eventId.isEmpty ? 'e$seq' : eventId,
@@ -165,6 +166,7 @@ StoredEvent _eventWithProvenance({
         'identifier': identifier,
         'software_version': 'app@1.0.0',
       },
+      ...laterHops,
     ],
   },
   initiator: const UserInitiator('u1'),
@@ -193,8 +195,7 @@ Future<StoredEvent> _appendBuilt(
 // successful body commits all writes
 //   atomically; thrown exception rolls back all writes; Transaction handle is
 //   invalidated when body returns or throws; a Transaction from one backend
-//   instance is rejected by another (defense-in-depth on the type-and-
-//   identity check).
+//   instance is rejected by another, even while it is live.
 void _registerTransactionTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
@@ -253,10 +254,9 @@ void _registerTransactionTests(
       await backend.transaction((txn) async {
         escaped = txn;
       });
-      await expectLater(
-        backend.appendEvent(escaped, _event('ev-late', 1)),
-        throwsStateError,
-      );
+      // A read has no precondition of its own, so only the handle check
+      // can raise.
+      await expectLater(backend.readLatestEventHash(escaped), throwsStateError);
     });
 
     test('Transaction cannot be used after body throws', () async {
@@ -270,10 +270,7 @@ void _registerTransactionTests(
         }),
         throwsStateError,
       );
-      await expectLater(
-        backend.appendEvent(escaped, _event('ev-late', 1)),
-        throwsStateError,
-      );
+      await expectLater(backend.readLatestEventHash(escaped), throwsStateError);
     });
 
     test(
@@ -294,10 +291,10 @@ void _registerTransactionTests(
       },
     );
 
-    // Defense-in-depth: a Transaction handed out by a *different* backend
-    // instance must be rejected when re-used against this one. The
-    // type-and-identity check guards against accidentally feeding one
-    // backend's transaction into another's state.
+    // A Transaction handed out by a *different* backend instance is
+    // refused by this one even while it is still live in its own body:
+    // the handle belongs to the other backend's database, so a type check
+    // and a validity check alone do not catch it.
     test(
       'foreign Transaction (from a different backend) is rejected',
       () async {
@@ -308,20 +305,15 @@ void _registerTransactionTests(
           markTestSkipped('factory returned null on second invocation');
           return;
         }
-        late Transaction foreignTxn;
-        await other.transaction((txn) async {
-          foreignTxn = txn;
+        addTearDown(other.close);
+        await other.transaction((foreignTxn) async {
+          // A read has no precondition of its own, so only the handle's
+          // ownership check can raise.
+          await expectLater(
+            backend.readLatestEventHash(foreignTxn),
+            throwsStateError,
+          );
         });
-        await other.close();
-
-        // The foreign Transaction is already invalidated by its own backend's
-        // end-of-body invalidation, so the validity check fires first.
-        // Even if it were still valid, the type-and-identity check would
-        // catch it.
-        await expectLater(
-          backend.appendEvent(foreignTxn, _event('ev-foreign', 1)),
-          throwsStateError,
-        );
       },
     );
   });
@@ -926,14 +918,14 @@ void _registerFindAllEventsFilterTests(
 // -------- Originator filters --------
 //
 // originatorHopId and
-//   originatorIdentifier filters; each filters on provenance[0]; AND'd when
-//   both supplied.
+//   originatorIdentifier filters; each filters on provenance[0] only, never
+//   a later hop; AND'd when both supplied.
 void _registerOriginatorFilterTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
   group('findAllEvents originator filters', () {
-    Future<void> seedThreeOrigins(StorageBackend backend) async {
+    Future<void> seedOrigins(StorageBackend backend) async {
       await backend.transaction((txn) async {
         final s1 = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(
@@ -974,24 +966,66 @@ void _registerOriginatorFilterTests(
             eventId: 'ev-controlP',
           ),
         );
+        // install-A's identifier under another hop: the identifier filter
+        // alone matches it, the hop filter does not.
+        final s4 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: s4,
+            entryType: 'epistaxis_event',
+            clientTimestamp: DateTime.utc(2026, 4, 26),
+            aggregateId: 'agg-ev-controlA',
+            hopId: 'control-server',
+            identifier: 'install-A',
+            eventId: 'ev-controlA',
+          ),
+        );
+        // Originated elsewhere and later relayed through mobile-device /
+        // install-A: only the first hop is the originator.
+        final s5 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: s5,
+            entryType: 'epistaxis_event',
+            clientTimestamp: DateTime.utc(2026, 4, 26),
+            aggregateId: 'agg-ev-relayed',
+            hopId: 'relay-server',
+            identifier: 'install-R',
+            eventId: 'ev-relayed',
+            laterHops: const <Map<String, Object?>>[
+              <String, Object?>{
+                'hop': 'mobile-device',
+                'received_at': '2026-04-26T00:00:01.000Z',
+                'identifier': 'install-A',
+                'software_version': 'app@1.0.0',
+              },
+            ],
+          ),
+        );
       });
     }
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/C
-    test('originatorIdentifier alone — install-A returns 1 event', () async {
+    test('originatorIdentifier alone — install-A as the first hop returns '
+        '2 events', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorIdentifier: 'install-A',
       );
-      expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
+      expect(result.map((e) => e.eventId), <String>[
+        'ev-mobileA',
+        'ev-controlA',
+      ]);
     });
 
     test('originatorHopId alone — mobile-device returns 2 events', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorHopId: 'mobile-device',
       );
@@ -1004,7 +1038,7 @@ void _registerOriginatorFilterTests(
     test('both filters AND — mobile-device + install-A returns 1', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorHopId: 'mobile-device',
         originatorIdentifier: 'install-A',
@@ -3475,7 +3509,9 @@ void _registerBackendStateTests(
 
     // Verifies: EVS-DEV-version-compatibility/F
     // a registration completes its boot and is released, after which the
-    //   same generation registers again.
+    //   same generation registers again; on a backend whose live
+    //   registration refuses a conflicting generation, the release ends
+    //   that refusal.
     test('a generation registers, completes its boot, is released, and '
         'registers again', () async {
       if (!initializedOf()) return;
@@ -3487,11 +3523,34 @@ void _registerBackendStateTests(
           'a': EntryTypeVersion(1, 0),
         },
       );
+      final conflicting = GenerationDescriptor(
+        packageVersion: '0.6.0',
+        dataFormat: const DataFormatVersion(2, 0),
+        entryTypes: const <String, EntryTypeVersion>{
+          'a': EntryTypeVersion(2, 0),
+        },
+      );
       final first = await backend.registerGeneration(descriptor);
       expect(first.isLost, isFalse);
       await first.completeBoot();
+      // A backend used by one process holds nothing for a registration, so
+      // it admits the conflicting generation; one that guards the database
+      // refuses it while the first registration is live.
+      var guarded = false;
+      try {
+        final probe = await backend.registerGeneration(conflicting);
+        await probe.completeBoot();
+        await probe.release();
+      } on IncompatibleGenerationException {
+        guarded = true;
+      }
       await first.release();
       await first.release();
+      if (guarded) {
+        final afterRelease = await backend.registerGeneration(conflicting);
+        await afterRelease.completeBoot();
+        await afterRelease.release();
+      }
       final second = await backend.registerGeneration(descriptor);
       await second.completeBoot();
       await second.release();
@@ -3710,7 +3769,16 @@ void _registerDrainLockTests(
       await request.cancel();
       expect(await request.granted, isNull);
       await holder.release();
+      // Several retry intervals pass with the lock free: a cancelled
+      // request that kept retrying would take it and raise the epoch.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        await epoch(backend),
+        holder.epoch,
+        reason: 'no acquisition after the cancellation',
+      );
       final later = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(later.epoch, greaterThan(holder.epoch));
       await later.release();
     });
 

@@ -1,9 +1,8 @@
-// Verifies: EVS-PRD-destinations/A+D
-// verifies that every DestinationRegistry
-// mutation (addDestination, setStartDate, setEndDate, deactivateDestination,
-// deleteDestination, tombstoneAndRefill) emits a system audit event in the
-// same transaction as the mutation (D), and that the audit carries the
-// correct configuration fields (A).
+// Verifies: EVS-PRD-destinations/A
+// every DestinationRegistry mutation (addDestination, setStartDate,
+//   setEndDate, deactivateDestination, deleteDestination,
+//   tombstoneAndRefill) that configures a destination emits a system audit
+//   event carrying the configuration it applied.
 // Verifies: EVS-DEV-destination-drain/H
 // every kind of destination audit carries its
 //   own event type, distinct from every other kind's and never the generic
