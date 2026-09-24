@@ -40,7 +40,7 @@
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
 | EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | b11e2693 |
-| EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | 0013aba5 |
+| EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | ee97c1d7 |
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 5a6583c3 |

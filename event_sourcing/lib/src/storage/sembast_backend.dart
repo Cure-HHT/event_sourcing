@@ -22,6 +22,7 @@ import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
 import 'package:event_sourcing/src/storage/web_locks_stub.dart'
     if (dart.library.js_interop) 'package:event_sourcing/src/storage/web_locks.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
@@ -152,6 +153,9 @@ class SembastBackend extends StorageBackend {
   @override
   Future<void> close() async {
     _closed = true;
+    if (!_gone.isCompleted) {
+      _gone.complete(const DrainLockBackendClosedException());
+    }
     await _drainLock?.release();
     _drainLock = null;
     await _eventsController.close();
@@ -200,20 +204,76 @@ class SembastBackend extends StorageBackend {
   //   another tab committed first; each run gets a fresh handle, and only the
   //   run that committed (the last one) has its queue fired. A body that
   //   throws commits nothing and fires nothing.
+  /// On the web a transaction takes the database's write lock shared, so
+  /// the tabs' transactions run side by side and a body whose commit
+  /// another tab preceded runs again. After [_sharedRuns] such runs the
+  /// transaction runs again holding the write lock exclusively, where no
+  /// other tab's write can come between, so contention between tabs delays
+  /// a transaction but never fails it. A handle that cannot commit even
+  /// then fails with [TransactionRerunLimitException], and so does every
+  /// later transaction on it.
   @override
-  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) =>
-      _bootHoldsWriteLock
-      ? _transaction(body)
-      : runHoldingBrowserWriteLock(
-          _database().path,
-          exclusive: false,
-          body: () => _transaction(body),
-        );
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
+    if (_bootHoldsWriteLock) return _transaction(body, exclusive: true);
+    try {
+      return await runHoldingBrowserWriteLock(
+        _database().path,
+        exclusive: false,
+        body: () => _transaction(body, exclusive: false),
+      );
+    } on _RunsLostToOtherWriters {
+      return runHoldingBrowserWriteLock(
+        _database().path,
+        exclusive: true,
+        timeout: _bootLockWait,
+        timeoutError: (name, wait) => TimeoutException(
+          "a transaction that lost $_sharedRuns runs to other tabs' commits "
+          'waited longer than $wait for the write lock $name, which another '
+          'tab holds',
+          wait,
+        ),
+        body: () => _transaction(body, exclusive: true),
+      );
+    }
+  }
 
-  Future<T> _transaction<T>(Future<T> Function(Transaction txn) body) async {
+  /// The runs of a body, holding the write lock shared, after which the
+  /// transaction runs again holding it exclusively.
+  static const int _sharedRuns = 4;
+
+  /// Set once a transaction found that this handle cannot commit; every
+  /// later transaction fails with it at once.
+  TransactionRerunLimitException? _handleFault;
+
+  /// Completes with the error that ends every drain-lock request through
+  /// this backend: its close, or a handle that cannot commit.
+  final Completer<Exception> _gone = Completer<Exception>();
+
+  // Implements: EVS-PRD-event-log/E
+  // sembast re-runs a body whose commit found another tab's commit first;
+  //   a body that keeps losing runs again with every other tab's writes held
+  //   back, and a handle that fails even then is reported as unable to
+  //   commit (another opener compacted the database past its revision).
+  Future<T> _transaction<T>(
+    Future<T> Function(Transaction txn) body, {
+    required bool exclusive,
+  }) async {
+    final fault = _handleFault;
+    if (fault != null) throw fault;
     final db = _database();
     late _SembastTxn committedRun;
+    final bound = exclusive
+        ? TransactionRerunLimitException.maxRuns
+        : _sharedRuns;
+    var runs = 0;
     final result = await db.transaction((sembastTxn) async {
+      if (runs == bound) {
+        if (!exclusive) throw const _RunsLostToOtherWriters();
+        final fault = _handleFault ??= TransactionRerunLimitException(runs);
+        if (!_gone.isCompleted) _gone.complete(fault);
+        throw fault;
+      }
+      runs++;
       final txn = _SembastTxn._(sembastTxn);
       committedRun = txn;
       try {
@@ -1109,15 +1169,33 @@ class SembastBackend extends StorageBackend {
 
   // Implements: EVS-DEV-destination-drain-lock/A
   // Sembast: an isolate-local registry keyed by the identity of the wrapped
-  //   database handle; every acquisition raises the drain epoch.
+  //   database handle, and in the browser the Web Lock of the database;
+  //   every acquisition raises the drain epoch.
+  /// Outside the browser the isolate registry is the whole lock. In the
+  /// browser the acquisition also takes the database's Web Lock after the
+  /// registry entry and before the epoch raise; it is refused
+  /// ([DrainLockUnavailableException]) while another tab holds that lock or
+  /// while the page is hidden, and throws [DrainLockConfigurationException]
+  /// on a page without a lock manager.
   @override
   @internal
   Future<DrainLock> tryAcquireDrainLock({required String databaseId}) async {
     if (_closed) throw const DrainLockBackendClosedException();
-    refuseBrowserDrainLock();
+    return _acquireDrainLock(
+      obtainExclusion: () => tryBrowserDrainExclusion(
+        path: _database().path,
+        databaseId: databaseId,
+      ),
+    );
+  }
+
+  Future<DrainLock> _acquireDrainLock({
+    required Future<DrainExclusionHold?> Function() obtainExclusion,
+  }) async {
     final lock = await acquireIsolateDrainLock(
       backend: this,
       handle: _db,
+      obtainExclusion: obtainExclusion,
       bumpEpoch: (insideBump) => transaction((txn) async {
         final t = _requireValidTxn(txn);
         final record = _backendStateStore.record(_drainEpochKey);
@@ -1128,6 +1206,12 @@ class SembastBackend extends StorageBackend {
         return next;
       }),
     );
+    // A close that ran while the acquisition was in flight released the
+    // lock it knew of, not this one.
+    if (_closed) {
+      await lock.release();
+      throw const DrainLockBackendClosedException();
+    }
     _drainLock = lock;
     return lock;
   }
@@ -1139,16 +1223,33 @@ class SembastBackend extends StorageBackend {
   /// Set by [close]: the backend grants no drain lock afterwards.
   bool _closed = false;
 
+  /// In the browser the request waits for the database's Web Lock while the
+  /// page is visible and withdraws while it is hidden, and ends at once when
+  /// the backend is closed or its handle cannot commit; elsewhere it
+  /// retries the isolate registry every [retryInterval] and when this
+  /// handle's lock is released.
   @override
   @internal
   DrainLockRequest requestDrainLock({
     required String databaseId,
     required Duration retryInterval,
-  }) => RetryingDrainLockRequest(
-    attempt: () => tryAcquireDrainLock(databaseId: databaseId),
-    retryInterval: retryInterval,
-    wake: () => isolateDrainLockReleased(_db),
-  );
+  }) =>
+      requestBrowserDrainLock(
+        path: _database().path,
+        databaseId: databaseId,
+        acquireHolding: (exclusion) async {
+          if (_closed) throw const DrainLockBackendClosedException();
+          return _acquireDrainLock(obtainExclusion: () async => exclusion);
+        },
+        retryInterval: retryInterval,
+        wake: () => isolateDrainLockReleased(_db),
+        ended: _gone.future,
+      ) ??
+      RetryingDrainLockRequest(
+        attempt: () => tryAcquireDrainLock(databaseId: databaseId),
+        retryInterval: retryInterval,
+        wake: () => isolateDrainLockReleased(_db),
+      );
 
   @override
   @internal
@@ -2397,4 +2498,10 @@ class _AuditCursorPoint {
     final raw = '${recordedAt.toUtc().toIso8601String()}|$eventId';
     return base64Url.encode(utf8.encode(raw));
   }
+}
+
+/// A transaction body lost its runs holding the write lock shared; the
+/// transaction runs again holding it exclusively.
+final class _RunsLostToOtherWriters implements Exception {
+  const _RunsLostToOtherWriters();
 }

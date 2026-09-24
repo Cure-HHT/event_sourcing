@@ -68,6 +68,7 @@ import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -359,6 +360,10 @@ Future<void> drain(
         // The check is the transaction's first step: nothing committed,
         // and a drainer that lost the lock records nothing more.
         rethrow;
+      } on TransactionRerunLimitException {
+        // The handle cannot commit: nothing committed, and the delivery
+        // cycle stops.
+        rethrow;
       } on Object catch (e, st) {
         // Logged first, so the failure is on record whatever the fallback
         // does. A transaction that reports failure may still have
@@ -504,6 +509,9 @@ Future<HaltHonour?> _honourHalt(
     }
   } on DrainLockLostException {
     rethrow;
+  } on TransactionRerunLimitException {
+    // The handle cannot commit: the delivery cycle stops.
+    rethrow;
   } on Object catch (e, st) {
     libraryLog(
       'drain',
@@ -602,6 +610,9 @@ Future<void> _wedgeFromAttempts(
     _logDiscardedHaltRequest(destinationId, discarded);
     _injectAfterWedgeTransaction(destinationId);
   } on DrainLockLostException {
+    rethrow;
+  } on TransactionRerunLimitException {
+    // The handle cannot commit: the delivery cycle stops.
     rethrow;
   } on Object catch (e, st) {
     libraryLog(

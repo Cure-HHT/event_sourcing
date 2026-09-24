@@ -461,6 +461,32 @@ major -- when its event store opens, and an open is refused
 of a conflicting build holds a different major; builds that differ only in
 minors, or in which entry types they register, run side by side.
 
+In the browser the tabs of an origin share one IndexedDB database. The
+generation guard and the delivery cycle's drain lock both use the
+browser's lock manager (Web Locks), which exists only in a secure context
+(HTTPS or localhost): on a page without it `EventStore.open` throws
+`GenerationGuardConfigurationException` and `SyncCycle.start` throws
+`DrainLockConfigurationException`. The drain lock follows the visible tab:
+a tab whose page becomes hidden finishes its sends in flight (waiting at
+most one cadence for a send that does not return, whose item the next
+drainer sends again), hands the lock over and stands by, so nothing
+drains while no tab of the origin is visible (`EVS-PRD-destinations/V`).
+A page the browser freezes before its hand-over completes keeps the lock
+until it is resumed or discarded, and the visible tab stands by until
+then: a liveness limit, not a safety one. Every tab registers the same
+destinations, because delivery uses the destinations of the tab that
+drains.
+
+Tabs write to the database side by side; a write that keeps losing its
+commit to other tabs' writes runs again with them held back, so
+contention delays a write but never fails it. A sembast_web handle that
+another tab's open compacted past the commits it has seen cannot commit
+again, even alone: its writes fail with `TransactionRerunLimitException`
+at once, and a delivery cycle over it stops, releases the drain lock to
+another tab, and reports the exception as `SyncCycle.stopCause` once
+`SyncCycle.stopped` completes. The application closes the database, opens
+it again and starts a new cycle.
+
 The backend is trusted for persistence, atomicity, and durability, and a
 backend shared by several processes or tabs for running the generation
 guard; the lock-session path above, the browser's lock manager on the web,

@@ -130,9 +130,12 @@ const _functionTyped = <String, String>{
 
 /// Every test seam on `DeliveryTestHooks`, by kind. An observing seam sees
 /// a step; a failure injection makes an operation fail; an interleaving
-/// seam runs other operations at a named point; an input substitution
-/// replaces an input the library decides on, so what it decides changes
-/// (the release probe covers each). A new seam is classified here, or the
+/// seam runs other operations at a named point; an environment signal
+/// narrows a signal of the runtime (the page's visibility can be made to
+/// read hidden, never visible), which can only make the library release a
+/// lock or hold back a request, never grant one; an input
+/// substitution replaces an input the library decides on, so what it
+/// decides changes (the release probe covers each). A new seam is classified here, or the
 /// scan fails.
 const _seamKinds = <String, String>{
   'onLog': 'observe',
@@ -177,6 +180,7 @@ const _seamKinds = <String, String>{
   'holdDrainKeyOutsideLibrary': 'failure injection',
   'failNextHeartbeat': 'failure injection',
   'afterCommitBeforePublish': 'interleave',
+  'pageVisibility': 'environment signal',
 };
 
 const _seamKindNames = <String>{
@@ -185,6 +189,7 @@ const _seamKindNames = <String>{
   'interleave',
   'input substitution',
   'timer replacement',
+  'environment signal',
 };
 
 /// Words a seam's name must not contain: a seam may observe, delay, fail or

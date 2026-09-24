@@ -253,11 +253,12 @@ The currently-trusted inputs are:
   guards. Every backend is also trusted to exclude drainers through its
   drain lock (`EVS-DEV-destination-drain-lock/A`): on Postgres a session
   advisory lock on the lock session below, on Sembast outside the
-  browser an isolate-local registry per open database handle; one that
-  admits two drainers of a database lets both send and record outcomes.
-  In the browser a Sembast database grants no drain lock (the tabs of an
-  origin are not excluded from one another), so a delivery cycle there
-  refuses to start. Precondition
+  browser an isolate-local registry per open database handle, and in the
+  browser a Web Lock on the lock manager below, requested only while a
+  tab's page is visible and released once a hidden page's sends in
+  flight have their outcomes committed (or one cadence has passed); one
+  that admits two drainers of a database lets both send and record
+  outcomes. Precondition
   (`EVS-PRD-destinations/L`):
   the library's delivery guarantees, its views and its security-context
   records hold only while its persisted state (destination queues, the
@@ -289,11 +290,12 @@ The currently-trusted inputs are:
   (`EVS-DEV-postgres-backend/J`). An unaudited boundary with no
   pluggable interface.
 - **The browser's lock manager (Web Locks).** On the web the
-  incompatible-generation guard runs on `navigator.locks`, trusted to
-  grant a lock name exclusively or shared as requested, to report held
-  locks when queried, and to release every lock of a closed or
-  discarded page (`EVS-DEV-version-compatibility/H`). An unaudited
-  boundary with no pluggable interface; a page without it is refused.
+  incompatible-generation guard and the drain lock run on
+  `navigator.locks`, trusted to grant a lock name exclusively or shared
+  as requested, to report held locks when queried, and to release every
+  lock of a closed or discarded page (`EVS-DEV-version-compatibility/H`,
+  `EVS-DEV-destination-drain-lock/A`). An unaudited boundary with no
+  pluggable interface; a page without it is refused.
 - **One opener of a Sembast database file outside the browser.** On io
   a `SembastBackend` registers nothing with the generation guard: the
   database file is trusted to be opened by one isolate of one process

@@ -229,8 +229,10 @@ is what keeps allow/deny outcomes reproducible from the log.
 transaction atomicity, durability). Two reference impls ship and pass the
 same conformance harness:
 
-- **`SembastBackend`** — client-side (file / IndexedDB), for mobile and
-  desktop.
+- **`SembastBackend`** — client-side (file / IndexedDB), for mobile,
+  desktop and the browser. In the browser the tabs of an origin share one
+  IndexedDB database: the delivery cycle of one visible tab drains it,
+  holding a Web Lock, and the others stand by (`EVS-PRD-destinations/V`).
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
   a `view_rows(view_name, row_key, row_data, …)` table. The schema is
   provisioned once per deployment with `PostgresBackend.provision` (or
@@ -252,16 +254,19 @@ A backend several processes or tabs share is trusted to run this guard;
 the two reference backends do. Every backend is also trusted to exclude
 drainers through its drain lock: on Postgres an advisory lock on the lock
 session, on Sembast outside the browser one holder per open database
-handle in an isolate. In the browser a Sembast database grants no drain
-lock, since the tabs of an origin would not exclude one another, so a
-delivery cycle there refuses to start. Three inputs of the guard are trusted
-without a pluggable interface: the Postgres lock-session path (`lockUrl`,
+handle in an isolate, and in the browser a Web Lock that only a visible tab
+of the origin requests (a tab whose page becomes hidden finishes its sends
+in flight, waiting at most one cadence, and hands it over; a page without Web Locks, which exist only in a
+secure context, refuses to start a delivery cycle). Three inputs of the
+guard are trusted without a pluggable interface: the Postgres
+lock-session path (`lockUrl`,
 or the pool's URL), trusted to be one server session reaching the pool's
 server, database and schema -- a direct connection or a session-mode
 proxy, never a transaction-mode pooler -- with keepalives and a role that
 may end its own sessions, which the backend checks where it can when it
 opens; the browser's lock manager, trusted to grant, report and release
-locks as the Web Locks API specifies; and, outside the browser, a Sembast
+locks as the Web Locks API specifies, on which the drain lock of a
+browser database rests too; and, outside the browser, a Sembast
 database file opened by one isolate of one process.
 
 The trust in the storage seam has a precondition: the library's delivery

@@ -96,3 +96,25 @@ is invisible to the library.
 backend handle that the library keeps and the consumer never receives,
 exposing to the consumer only the reads, `transaction` and `close`, and a
 Sembast construction path in which the library opens the database itself.
+
+## A browser tab whose database handle cannot commit
+
+**Baseline (what exists).** sembast_web compacts a database when a
+handle that may write opens it while a deleted record is on file. A
+handle in another tab that has not seen the commits up to the compaction
+then fails every commit: its reload after a failed commit keeps its
+stale revision, and sembast re-runs the transaction body without end.
+A transaction that keeps losing its commit to other tabs runs again
+holding the database's write lock exclusively, so contention alone never
+fails it; a handle that still cannot commit there throws
+`TransactionRerunLimitException`, which names closing and reopening the
+database as the recovery (`EVS-PRD-event-log/E`), and every later
+transaction on the handle fails at once. A delivery cycle over that
+handle stops, releases the drain lock so another tab drains, and reports
+the exception as `SyncCycle.stopCause`; the application reopens.
+
+**Remaining.** Recover without the application. The defect lies in
+sembast's reload, which updates a handle's revision after a delta reload
+but not after a full one; once it is fixed upstream the bound only
+guards. The library cannot reopen the database itself, because the
+application opens it and hands the library the handle.

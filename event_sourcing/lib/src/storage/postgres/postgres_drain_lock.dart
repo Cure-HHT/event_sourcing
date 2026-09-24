@@ -338,4 +338,12 @@ final class PostgresDrainLock implements DrainLock {
 
   @override
   Future<void> get lost => _lost.future;
+
+  /// Never completes: a server process has no visibility to follow. The
+  /// future is this lock's own, so the listeners a holder attaches to it
+  /// are collected with the lock.
+  @override
+  Future<void> get handOverRequested => _noHandOver.future;
+
+  final Completer<void> _noHandOver = Completer<void>();
 }

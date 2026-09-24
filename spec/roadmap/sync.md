@@ -43,24 +43,3 @@ over a fixed probe batch, or require destinations to declare a code
 version the library checks against a registry of released builds. Either
 changes what a destination must supply and is a new primitive under the
 Append-Only Primitives discipline.
-
-## A drain lock across the tabs of a browser origin
-
-**Baseline (what exists).** A Sembast database in the browser grants no
-drain lock (`EVS-DEV-destination-drain-lock/A`): the tabs of an origin
-share one IndexedDB database, each tab in its own isolate, and the
-isolate-local drain-lock registry excludes none of them from another. A
-`SyncCycle.start` in the browser therefore throws
-`DrainLockConfigurationException`, and no delivery cycle runs there. The
-browser's lock manager already carries the incompatible-generation guard
-across tabs (`EVS-DEV-version-compatibility/H`).
-
-**Remaining.** Take the drain lock through the browser's lock manager,
-named for the IndexedDB database and its identity, so the tabs of an
-origin exclude one another as Postgres sessions do: one tab drains, the
-others stand by, and a closed or discarded tab's lock passes to a waiting
-one. Hand the lock to the visible tab: a tab that becomes hidden finishes
-the outcomes of its sends in flight, releases the lock and does not
-request it while hidden. A page without a lock manager (not a secure
-context) refuses to start a cycle, as it refuses to open a shared
-database today.

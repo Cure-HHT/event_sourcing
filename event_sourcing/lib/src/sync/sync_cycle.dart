@@ -43,6 +43,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/declared_configuration.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
@@ -60,7 +61,7 @@ enum SyncCycleState {
   running,
 
   /// Closed, or stopped for good because its storage backend was fenced or
-  /// closed.
+  /// closed, or its database handle cannot commit.
   stopped,
 }
 
@@ -94,15 +95,23 @@ enum SyncCycleState {
 /// database in any mix; a major step is deployed stop-then-start, and the
 /// incompatible-generation guard refuses an overlap.
 ///
-/// In the browser a Sembast database grants no drain lock (the tabs of an
-/// origin share the database and are not excluded from one another), so
-/// [start] throws [DrainLockConfigurationException] there.
+/// In the browser the tabs of an origin share the database, and the drain
+/// lock is a Web Lock that follows the visible tab: a cycle whose page
+/// becomes hidden finishes its sends in flight (waiting at most one
+/// `cadence` for them), releases the lock and stands by without requesting
+/// it; one whose page is visible requests it. While no tab of the origin is
+/// visible nothing drains. Web Locks exist only in a secure context (HTTPS
+/// or localhost): on a page without them [start] throws
+/// [DrainLockConfigurationException].
 ///
 /// A cycle whose storage backend can no longer take the lock -- the
 /// backend was fenced (a conflicting build registered while its lock
-/// session was lost) or closed -- stops for good, with one error line, and
-/// gives up its registration in this isolate, so a cycle over a reopened
-/// backend may start.
+/// session was lost) or closed, or its database handle cannot commit
+/// ([TransactionRerunLimitException], a browser tab whose handle another
+/// tab's open compacted past) -- stops for good, with one error line,
+/// releases the lock so that another process or tab takes over, and gives
+/// up its registration in this isolate, so a cycle over a reopened backend
+/// may start. [stopped] completes and [stopCause] names the error.
 ///
 /// Per pass: a transaction that checks the drain lock, writes the heartbeat
 /// record and persists the drainer's declaration; then, per destination,
@@ -158,7 +167,7 @@ final class SyncCycle {
   /// the lock every [cadence] in the background, so `start` never fails
   /// for contention or for a transient database error. A
   /// [DrainLockConfigurationException] (the drain lock cannot be granted
-  /// with the backend's configuration, or the database is in the browser),
+  /// with the backend's configuration, or the page has no lock manager),
   /// a [DrainLockBackendClosedException] and an [Error] are thrown, and
   /// nothing stays started.
   ///
@@ -277,9 +286,17 @@ final class SyncCycle {
   SyncCycleState get state => _state;
 
   /// Completes when the cycle is stopped: closed, or stopped for good
-  /// because its storage backend was fenced or closed. A stopped cycle
-  /// holds no registration in this isolate.
+  /// because its storage backend was fenced or closed, or its database
+  /// handle cannot commit. A stopped cycle holds no registration in this
+  /// isolate.
   Future<void> get stopped => _stopped.future;
+
+  /// The error that stopped the cycle for good; null while it runs or
+  /// stands by, and after [close]. An application that sees a
+  /// [TransactionRerunLimitException] here closes its database and opens it
+  /// again, then starts a new cycle.
+  Object? get stopCause => _stopCause;
+  Object? _stopCause;
 
   /// The destinations the latest pass did not serve, and why: those the
   /// database knows and this cycle's registry does not hold, those the
@@ -306,10 +323,12 @@ final class SyncCycle {
       _state = SyncCycleState.standby;
       _requestLock();
     } on Object catch (e, st) {
-      // A misconfiguration, a closed backend and a defect fail loudly at
-      // start; anything else is taken as transient.
+      // A misconfiguration, a closed backend, a handle that cannot commit
+      // and a defect fail loudly at start; anything else is taken as
+      // transient.
       if (e is DrainLockConfigurationException ||
           e is DrainLockBackendClosedException ||
+          e is TransactionRerunLimitException ||
           e is Error) {
         rethrow;
       }
@@ -370,10 +389,15 @@ final class SyncCycle {
         if (identical(_lock, held)) _lockLost(held, 'the backend detected it');
       }),
     );
+    unawaited(
+      lock.handOverRequested.then((_) {
+        if (identical(_lock, held)) _handOver(held);
+      }),
+    );
   }
 
   void _requestLock() {
-    if (_stopping) return;
+    if (_stopping || _request != null) return;
     final request = _registry.backend.requestDrainLock(
       databaseId: _registry.eventStore.databaseId,
       retryInterval: _cadence,
@@ -382,9 +406,12 @@ final class SyncCycle {
     unawaited(
       request.granted.then(
         (lock) async {
-          if (identical(_request, request)) _request = null;
+          final current = identical(_request, request);
+          if (current) _request = null;
           if (lock == null) return;
-          if (_stopping) {
+          // A request the cycle withdrew (close, or a later request) holds
+          // no lock the cycle keeps.
+          if (_stopping || !current || _lock != null) {
             await lock.release();
             return;
           }
@@ -406,7 +433,7 @@ final class SyncCycle {
             error: e,
             stackTrace: st,
           );
-          _stopForGood();
+          _stopForGood(e);
         },
       ),
     );
@@ -415,8 +442,10 @@ final class SyncCycle {
   /// Stops the cycle for good, because its storage backend can no longer
   /// take the drain lock: cancels its timers and any request, gives up the
   /// trigger slot and the in-isolate registration (so a new cycle may start
-  /// over the database), and releases a lock it still holds.
-  void _stopForGood() {
+  /// over the database), and releases a lock it still holds. [cause] is
+  /// kept as [stopCause].
+  void _stopForGood(Object cause) {
+    _stopCause ??= cause;
     _stopping = true;
     _cadenceTimer?.cancel();
     _heartbeatTimer?.cancel();
@@ -446,13 +475,32 @@ final class SyncCycle {
     }());
   }
 
+  /// Stops the cycle for good because a transaction found its database
+  /// handle unable to commit: every later transaction on the handle fails
+  /// the same way, so the cycle can neither drain nor keep the lock. The
+  /// lock is released, so another process or tab takes over.
+  void _handleCannotCommit(TransactionRerunLimitException e, StackTrace st) {
+    if (_stopping) return;
+    libraryLog(
+      'sync_cycle',
+      'the delivery cycle stops and releases the drain lock: its database '
+          'handle cannot commit; the application closes the database and '
+          'opens it again',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+    _stopForGood(e);
+  }
+
   /// Handles the loss of [held]: stops every further queue change through
   /// it, waits for the sends in flight to settle, releases it, and stands by
   /// requesting the lock again. Never stops the cycle for good.
   void _lockLost(_CycleLock held, String how) {
     if (held.lostByCycle) return;
     held.lostByCycle = true;
-    if (_stopping) return;
+    // A hand-over in progress releases the lock and stands by itself.
+    if (_stopping || held.handingOver) return;
     libraryLog(
       'sync_cycle',
       'the delivery cycle lost the drain lock (epoch ${held.epoch}; $how); '
@@ -469,6 +517,57 @@ final class SyncCycle {
           // The pass's own failure is logged where it happened.
         }
       }
+      if (_stopping) return;
+      if (identical(_lock, held)) _lock = null;
+      await held.release();
+      if (_stopping) return;
+      _state = SyncCycleState.standby;
+      _requestLock();
+    }();
+  }
+
+  /// Hands [held] over because the runtime asked for it (in the browser, the
+  /// page became hidden): starts no further send or fill, waits for the
+  /// passes in flight (the outcomes of their sends commit, since the lock is
+  /// still held), releases the lock, and stands by. The request it then
+  /// makes waits until the runtime allows it (in the browser, until the page
+  /// is visible). The release is the cycle's own, never a loss.
+  void _handOver(_CycleLock held) {
+    if (held.lostByCycle || held.handingOver || _stopping) return;
+    held.handingOver = true;
+    libraryLog(
+      'sync_cycle',
+      'the delivery cycle hands the drain lock over (epoch ${held.epoch}; '
+          'the page is hidden): it finishes its sends in flight, releases '
+          'the lock and stands by',
+    );
+    _lossHandling = () async {
+      // A call that arrives meanwhile starts no work, but may briefly hold
+      // the running slot.
+      final settled = () async {
+        for (var running = _running; running != null; running = _running) {
+          try {
+            await running;
+          } on Object catch (_) {
+            // The pass's own failure is logged where it happened.
+          }
+        }
+      }();
+      // A send that does not return within a cadence does not keep the lock
+      // from the visible tab: once the lock is released its outcome commits
+      // nothing, and the next drainer sends the item again.
+      await settled.timeout(
+        _cadence,
+        onTimeout: () {
+          libraryLog(
+            'sync_cycle',
+            'a send in flight did not return within $_cadence of the page '
+                'becoming hidden; the delivery cycle releases the drain lock '
+                'without its outcome, and the next drainer sends it again',
+            level: LibraryLogLevel.warning,
+          );
+        },
+      );
       if (_stopping) return;
       if (identical(_lock, held)) _lock = null;
       await held.release();
@@ -636,7 +735,7 @@ final class SyncCycle {
       do {
         await _passes(force);
         force = false;
-      } while (_rerun && !_stopping && !(_lock?.lostByCycle ?? true));
+      } while (_rerun && !_stopping && !(_lock?.stopsWork ?? true));
     } finally {
       _running = null;
     }
@@ -648,7 +747,7 @@ final class SyncCycle {
       _rerun = false;
       _rerunForce = false;
       final held = _lock;
-      if (_stopping || held == null || held.lostByCycle) return;
+      if (_stopping || held == null || held.stopsWork) return;
       if (held.inner.isReleased) {
         _lockLost(held, 'its storage backend released it');
         return;
@@ -682,6 +781,9 @@ final class SyncCycle {
       plan = await _passStart(held);
     } on DrainLockLostException catch (e) {
       _lockLost(held, e.message);
+      return;
+    } on TransactionRerunLimitException catch (e, st) {
+      _handleCannotCommit(e, st);
       return;
     } on Object catch (e, st) {
       if (held.inner.isReleased) {
@@ -841,6 +943,8 @@ final class SyncCycle {
       await honourHaltById(destinationId, registry: _registry, lock: held);
     } on DrainLockLostException catch (e) {
       _lockLost(held, e.message);
+    } on TransactionRerunLimitException catch (e, st) {
+      _handleCannotCommit(e, st);
     } on Object catch (e, st) {
       libraryLog(
         'sync_cycle',
@@ -863,7 +967,7 @@ final class SyncCycle {
     // destination's queue, after performing any replay a registry operation
     // requested. The fill reads the persisted schedule and refill guard
     // itself.
-    if (_stopping || held.lostByCycle) return;
+    if (_stopping || held.stopsWork) return;
     try {
       await fillBatch(
         destination,
@@ -877,6 +981,9 @@ final class SyncCycle {
       );
     } on DrainLockLostException catch (e) {
       _lockLost(held, e.message);
+      return;
+    } on TransactionRerunLimitException catch (e, st) {
+      _handleCannotCommit(e, st);
       return;
     } on Object catch (e, st) {
       // One destination's fill failure must not cancel another's drain. The
@@ -907,10 +1014,12 @@ final class SyncCycle {
                 configuration: declared.configuration,
                 fingerprint: declared.fingerprint,
               ),
-        stopRequested: () => _stopping || held.lostByCycle,
+        stopRequested: () => _stopping || held.stopsWork,
       );
     } on DrainLockLostException catch (e) {
       _lockLost(held, e.message);
+    } on TransactionRerunLimitException catch (e, st) {
+      _handleCannotCommit(e, st);
     } on Object catch (e, st) {
       // A send's own failure never reaches here: drain records it as the
       // attempt's outcome, and a wedge that reports failure is followed by
@@ -987,6 +1096,13 @@ final class _CycleLock implements DrainLock {
   /// Set when the cycle detected the loss.
   bool lostByCycle = false;
 
+  /// Set when the cycle hands the lock over. Unlike a loss it does not fail
+  /// the lock check: the outcomes of the sends in flight still commit.
+  bool handingOver = false;
+
+  /// No further send, fill or pass starts through this lock.
+  bool get stopsWork => lostByCycle || handingOver;
+
   @override
   int get epoch => inner.epoch;
 
@@ -1015,4 +1131,7 @@ final class _CycleLock implements DrainLock {
 
   @override
   Future<void> get lost => inner.lost;
+
+  @override
+  Future<void> get handOverRequested => inner.handOverRequested;
 }

@@ -3619,6 +3619,26 @@ void _registerDrainLockTests(
       await second.release();
     });
 
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // a backend without a visibility signal never asks the holder to hand
+    //   the lock over: not while it is held and used, nor after its release.
+    test('no hand-over is requested outside the browser', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final lock = await backend.tryAcquireDrainLock(databaseId: id);
+      var requested = false;
+      unawaited(lock.handOverRequested.then((_) => requested = true));
+      await lock.heartbeat();
+      await lock.assertHeld();
+      await backend.transaction(lock.assertHeldInTxn);
+      await pumpEventQueue();
+      expect(requested, isFalse, reason: 'while held');
+      await lock.release();
+      await pumpEventQueue();
+      expect(requested, isFalse, reason: 'after the release');
+    });
+
     // Verifies: EVS-DEV-destination-drain-lock/B
     // the check a queue-changing transaction runs passes while the lock is
     //   held and current, and refuses once it is released, whatever the

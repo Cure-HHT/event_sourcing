@@ -48,7 +48,10 @@ final Object _zoneKey = Object();
 /// [stallLockHeartbeatPastQueryTimeout], [failOldSessionTermination],
 /// [failLostSessionClose], [failProvisioningBeforeVersionWrite],
 /// [webLocksUnavailable]), or make the lock session's check fail the way a
-/// transaction-mode pooler would ([splitLockSessionStatements]). Two seams
+/// transaction-mode pooler would ([splitLockSessionStatements]). One seam is
+/// an environment signal: [pageVisibility] narrows the page visibility the
+/// browser's drain lock follows (it can make a visible page count as hidden,
+/// never a hidden one as visible). Two seams
 /// are input substitutions: [buildDeclaration] replaces the package and
 /// data-format versions the boot decides with and records, and
 /// [schemaDeclaration] replaces the Postgres migration list (and so the
@@ -109,6 +112,7 @@ class DeliveryTestHooks {
     this.holdDrainKeyOutsideLibrary,
     this.failNextHeartbeat,
     this.afterCommitBeforePublish,
+    this.pageVisibility,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -347,6 +351,16 @@ class DeliveryTestHooks {
   /// late would wait.
   final Future<void> Function()? afterCommitBeforePublish;
 
+  /// Environment signal: narrows the visibility of the page
+  /// (`document.visibilityState`, `pagehide`, `freeze`) for the drain locks
+  /// acquired and requested in the zone: the page counts as visible only
+  /// when both this seam and the page itself say so. Two tab models in one
+  /// page share one document, and a test cannot set the document's
+  /// visibility. Read only by the browser's drain lock; a hidden page makes
+  /// a holder hand the lock over and a request wait, and the lock itself is
+  /// still granted only by the browser's lock manager.
+  final TestPageVisibility? pageVisibility;
+
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.
   static DeliveryTestHooks? get current {
@@ -357,6 +371,30 @@ class DeliveryTestHooks {
     }(), 'reads the installed test seams');
     return hooks;
   }
+}
+
+/// A page visibility a test sets, for the [DeliveryTestHooks.pageVisibility]
+/// seam.
+@internal
+final class TestPageVisibility {
+  @internal
+  TestPageVisibility({bool visible = true}) : _visible = visible;
+
+  bool _visible;
+  final StreamController<void> _changes = StreamController<void>.broadcast();
+
+  /// Whether the page is visible.
+  bool get visible => _visible;
+
+  /// Sets the page's visibility; a change is announced on [changes].
+  set visible(bool value) {
+    if (value == _visible) return;
+    _visible = value;
+    _changes.add(null);
+  }
+
+  /// An event after each change of [visible].
+  Stream<void> get changes => _changes.stream;
 }
 
 /// Runs [body] with [hooks] installed as the test seams of its zone.

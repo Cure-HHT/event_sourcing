@@ -7,6 +7,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:event_sourcing/src/storage/storage_exception.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart';
 
@@ -32,6 +33,20 @@ void main() {
       expect(result, isA<StorageTransientException>());
       expect(identical(result.cause, error), isTrue);
       expect(identical(result.stackTrace, stack), isTrue);
+    });
+
+    // A browser handle that cannot commit even with every other tab's
+    // writes held back cannot commit on retry either: permanent, carrying
+    // the reopen advice. Contention between tabs never raises it.
+    test('TransactionRerunLimitException classifies as permanent', () {
+      final stack = StackTrace.current;
+      const error = TransactionRerunLimitException(
+        TransactionRerunLimitException.maxRuns,
+      );
+      final result = classifyStorageException(error, stack);
+      expect(result, isA<StoragePermanentException>());
+      expect(result.message, contains('open it again'));
+      expect(identical(result.cause, error), isTrue);
     });
 
     // classifies as StorageCorruptException.

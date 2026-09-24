@@ -57,10 +57,9 @@ class DrainLockLostException implements Exception {
 /// The drain lock cannot be granted with the backend's configuration: on
 /// Postgres, the lock session holds the drain key through something other
 /// than the library, the database identity does not match, or the pool does
-/// not see the lock the lock session took; in the browser, a Sembast
-/// database grants no drain lock, because the library does not exclude the
-/// drainers of several tabs. A deterministic misconfiguration, not
-/// contention.
+/// not see the lock the lock session took; in the browser, the page has no
+/// lock manager (Web Locks exist only in a secure context). A deterministic
+/// misconfiguration, not contention.
 class DrainLockConfigurationException implements Exception {
   const DrainLockConfigurationException(this.message);
 
@@ -117,6 +116,13 @@ abstract class DrainLock {
   /// Completes when the backend detects that the lock is gone, unless the
   /// holder released it first.
   Future<void> get lost;
+
+  /// Completes when the runtime asks the holder to hand the lock over: in
+  /// the browser, when the page becomes hidden (the drain lock follows the
+  /// visible tab). The lock is still held and current; the holder starts no
+  /// further send, lets the outcomes of its sends in flight commit, and
+  /// releases it. Never completes on a backend without such a signal.
+  Future<void> get handOverRequested;
 }
 
 /// A pending acquisition of the drain lock.

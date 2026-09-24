@@ -401,6 +401,8 @@ export 'src/storage/storage_exception.dart'
         classifyStorageException;
 export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/transaction.dart' show Transaction;
+export 'src/storage/transaction_rerun_limit.dart'
+    show TransactionRerunLimitException;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 
 // Subscriptions — live-update stream primitives returned by
