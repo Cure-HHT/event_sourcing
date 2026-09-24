@@ -2,8 +2,13 @@
 // scenarios' assertions are cited on their own tests in
 // test_support/boot_progress_conformance.dart; the Postgres-only tests
 // below cite theirs.
+//
+// Each observer scenario seeds and boots a promotion twice; a CI runner
+// takes several times longer than a workstation, so the per-test limit is
+// raised from the default.
 
 @TestOn('vm')
+@Timeout(Duration(minutes: 3))
 library;
 
 import 'dart:async';

@@ -226,11 +226,13 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
       fired.add('afterWedgeTransaction $destinationId');
       return true;
     },
-    // The first fill's transaction fails; the second pass fills, sends and
-    // then fails the delivery's outcome transaction.
+    // The healthy destination's first fill transaction fails; its second
+    // pass fills, sends and then fails the delivery's outcome transaction.
+    // Keyed to the healthy destination because a pass fills its
+    // destinations concurrently, so "the first fill" is not deterministic.
     failFillTransaction: (destinationId) {
       fired.add('failFillTransaction $destinationId');
-      return fillFailures++ == 0;
+      return destinationId == healthy.id && fillFailures++ == 0;
     },
     failOutcomeTransaction: (destinationId, outcome) {
       fired.add('failOutcomeTransaction $destinationId $outcome');
