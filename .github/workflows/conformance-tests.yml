@@ -168,6 +168,12 @@ jobs:
       - name: Drain lock across processes on Postgres
         run: flutter test test/storage/postgres/postgres_drain_lock_test.dart
         working-directory: event_sourcing
+      - name: Queue-table guard on Postgres
+        run: flutter test test/storage/postgres/postgres_fifo_guard_test.dart
+        working-directory: event_sourcing
+      - name: Runtime role privileges on Postgres
+        run: flutter test test/storage/postgres/postgres_runtime_role_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

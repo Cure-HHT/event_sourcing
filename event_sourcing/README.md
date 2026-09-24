@@ -236,11 +236,18 @@ same conformance harness:
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
   a `view_rows(view_name, row_key, row_data, …)` table. The schema is
   provisioned once per deployment with `PostgresBackend.provision` (or
-  `open(provisionSchema: true)` in development); `open` performs no DDL
-  and refuses a schema its build does not support. Several processes may
-  share one database: one delivery cycle drains it, holding the drain lock
-  on the backend's lock session, and the others stand by
-  (`EVS-PRD-destinations/V`).
+  `open(provisionSchema: true)` in development), as the role that owns the
+  schema; `open` performs no DDL and refuses a schema its build does not
+  support. Instances run as a runtime role that neither owns nor can
+  create the tables and holds exactly the privileges of
+  `postgresRuntimeRoleGrants`, under which every library operation but
+  provisioning works (`EVS-DEV-postgres-backend/K`). The queue table
+  carries a database guard that refuses every change outside the shapes of
+  the library's own writes, whatever role makes it
+  (`EVS-DEV-destination-drain/S`).
+  Several processes may share one database: one delivery cycle drains it,
+  holding the drain lock on the backend's lock session, and the others
+  stand by (`EVS-PRD-destinations/V`).
 
 Builds that share one database register their data generation (the
 data-format major and each entry type's major) with an

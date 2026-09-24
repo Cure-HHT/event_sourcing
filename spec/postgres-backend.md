@@ -89,19 +89,19 @@ sembast store the reference impl uses today; the contents are the same
 `StoredEvent` / view-row / FIFO-entry / KV shapes the substrate already
 operates on. The tables are:
 
-- **`events`** — the append-only event log. Columns include `sequence`
-  (BIGINT PRIMARY KEY), `entry_type` (TEXT), the entry-type version and
-  the data-format version as major and minor `INTEGER` columns
+- **`events`** — the append-only event log. Columns: `sequence_number`
+  (BIGINT PRIMARY KEY), `event_id` (TEXT UNIQUE), `aggregate_id`,
+  `aggregate_type`, `entry_type`, `event_type` (TEXT), the entry-type
+  version and the data-format version as major and minor `INTEGER` columns
   (`entry_type_version_major`, `entry_type_version_minor`,
-  `lib_format_version_major`, `lib_format_version_minor`), `aggregate_id`
-  (TEXT), `event_id` (TEXT UNIQUE),
-  `payload` (JSONB), `prev_hash` (TEXT), `hash` (TEXT),
-  `client_timestamp` (TIMESTAMPTZ), `originator_hop_id` (TEXT),
-  `originator_identifier` (TEXT), and a `metadata` JSONB column for the
-  remainder of `StoredEvent`'s fields. Secondary indexes on
-  `aggregate_id`, `entry_type`, and `client_timestamp` support the
+  `lib_format_version_major`, `lib_format_version_minor`), `data`,
+  `metadata` and `initiator` (JSONB), `client_timestamp` (TIMESTAMPTZ),
+  `event_hash` and `previous_event_hash` (TEXT), and `flow_token` (TEXT).
+  Secondary indexes on `(aggregate_id, sequence_number)`,
+  `client_timestamp` and `(event_type, sequence_number)` support the
   filter combinations enumerated in
-  `EVS-DEV-find-all-events-extended-filters`.
+  `EVS-DEV-find-all-events-extended-filters` and the boot's read of the
+  library-version events.
 - **`view_rows`** — single table for every materialized view, keyed by
   `(view_name TEXT, row_key TEXT)` with `row_data JSONB` payload and an
   `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
@@ -114,11 +114,31 @@ operates on. The tables are:
   behind the log for that entry type), keyed by
   `(view_name, entry_type)`.
 - **`fifo_entries`** — single table for every outbound FIFO queue,
-  keyed by `(destination_id TEXT, sequence_in_queue BIGINT)` with the
-  queued event reference and delivery bookkeeping columns
-  (`event_sequence BIGINT`, `enqueued_at TIMESTAMPTZ`,
-  `last_attempt_at TIMESTAMPTZ NULL`, `attempt_count INTEGER`,
-  `state TEXT`).
+  keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
+  one queue item: `entry_id` (TEXT UNIQUE), the events it carries
+  (`event_ids` JSONB, `event_id_first_seq`, `event_id_last_seq`), how it
+  was built (`wire_format`, `transform_version`, `wire_payload`,
+  `envelope_metadata`), `enqueued_at`, and its delivery bookkeeping:
+  `attempts` (a JSONB array of recorded attempts), `final_status` (null
+  while pending, then `sent`, `wedged` or `tombstoned`) and `sent_at`.
+  The table is guarded (EVS-DEV-destination-drain/S): a CHECK
+  (`fifo_entries_final_status_check`) constrains `final_status`, and the
+  trigger `fifo_entries_guard` refuses every change outside the shapes of
+  the library's own writes: any insert of an item that is not pending with
+  no attempts and no `sent_at`; any status change but pending to sent,
+  pending to wedged and wedged to tombstoned; any change to a column the
+  item was enqueued with; any change to `attempts` but appending one
+  attempt while pending (in the change that keeps it pending or marks it
+  sent or wedged); any change to `sent_at` outside the change that marks
+  the item sent; and the deletion of a terminal item. A statement trigger,
+  `fifo_entries_truncate_guard`, refuses every truncation. Both triggers
+  are enabled `ALWAYS`, so they fire in every session replication role.
+  The guard checks the shape of a change, not who makes it: a hand-written
+  change of a legal shape (wedging, marking sent or deleting a pending
+  item, tombstoning a wedged one, inserting a pending one) passes, and
+  rests on the storage precondition. The guard catches defects and
+  hand-written SQL of any other shape; the role that owns the table can
+  drop it, which the runtime role cannot (see "Roles and privileges").
 - **`backend_state`** — the substrate's general-purpose KV bookkeeping
   area (library-version watermark, current sequence counter, last-hash
   cache, originator identity, the provisioned schema version pair, the
@@ -161,6 +181,82 @@ orientation; the DDL file is the source of truth.
   transaction that wrote nothing to `backend_state` takes no lock, so a
   read-only role needs only `SELECT`. While the lock is held every other
   write to `backend_state`, and so every append, waits.
+
+## Roles and privileges
+
+The library assumes three kinds of database role, and the deployment
+creates them (EVS-DEV-postgres-backend/K):
+
+- **Owner.** Owns the schema and the tables. Provisioning
+  (`PostgresBackend.provision`, or `open(provisionSchema: true)` in
+  development) runs as this role, in its own deployment step; it is the
+  one library operation the runtime role cannot perform. No process serves
+  traffic as the owner: the owner can disable or drop the queue table's
+  guard and rewrite the log.
+- **Runtime.** The role an application's `PostgresBackend` opens its pool
+  and, unless `lockUrl` names another role, its lock session as. It holds
+  `USAGE` on the schema and exactly the table privileges below (exported
+  as `postgresRuntimeRoleGrants`), and every library operation other than
+  provisioning works under them. The log is append-only for it. For a
+  lock session opened as another role, `USAGE` on the schema and the
+  runtime role's privileges on `backend_state` suffice; every lock role
+  must be allowed to end its own sessions, as the role that owns them is.
+- **Read-only.** Reporting and inspection hold `SELECT` only. No person
+  holds write access.
+
+The split holds only if neither the runtime role nor any lock role can
+become the owner or create objects in the schema. Each of them:
+
+- does not own the schema or any table in it, and is not a member of the
+  owning role;
+- holds neither `SUPERUSER` nor `CREATEROLE`, and is not a member of any
+  role that carries them (a hosting platform's administrative role
+  included), so it cannot grant itself the owner's membership. Create it
+  with plain SQL or as a platform identity that carries no such
+  membership, and check its attributes and memberships on the platform's
+  server;
+- holds no `CREATE` on the schema: the schema grants `CREATE` to no role
+  but the owner. A server's default `public` schema grants `CREATE` to
+  every role on Postgres majors before 15, so a deployment on `public`
+  runs `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner
+  creates grants nothing to `PUBLIC`.
+
+The order of a deployment is: create the schema for the owner and grant
+the runtime and lock roles `USAGE` on it; provision as the owner; grant
+the runtime role the privileges below (and a lock role its
+`backend_state` privileges); then start the new build's instances.
+Provisioning commits its DDL on its own, before the grants, so an instance
+of the new build started before the grants fails with a permission error
+on a table the provisioning added.
+
+The library is built and tested against PostgreSQL 16; that is the
+supported server major.
+
+Grants cannot separate the library from the application that embeds it
+(they share one process and one connection); they separate the process
+from the schema. The library's delivery guarantees still rest on the
+storage precondition (EVS-PRD-destinations/L). The queue table carries a
+database guard (above) that refuses changes outside the shapes of the
+library's writes; `backend_state`, which holds the fill positions,
+schedules, replay requests, wedge records, halt requests, send fences,
+refill guards, the drain epoch, the drainer's declaration and heartbeat,
+the generation records and the database identity, has none.
+
+### Runtime role privileges
+
+| Table | Privileges |
+| --- | --- |
+| `events` | SELECT, INSERT |
+| `view_rows` | SELECT, INSERT, UPDATE, DELETE |
+| `view_target_versions` | SELECT, INSERT, UPDATE, DELETE |
+| `fifo_entries` | SELECT, INSERT, UPDATE, DELETE |
+| `backend_state` | SELECT, INSERT, UPDATE, DELETE |
+| `security_context` | SELECT, INSERT, UPDATE, DELETE |
+| `idempotency` | SELECT, INSERT, UPDATE, DELETE |
+
+Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on
+`backend_state` also covers the table lock a re-run transaction takes and
+the share lock the drain-epoch read takes (see "Transactional model").
 
 ## What's the same as sembast
 

@@ -438,6 +438,28 @@ boots, and refuses to raise the minimum above what a live instance needs.
 The deployment creates the schema itself (the first schema on the role's
 search path) and its grants; `provision` creates the tables.
 
+Run provisioning as the role that owns the schema, and the instances as a
+separate runtime role that neither owns nor can create the tables: grant
+it `USAGE` on the schema and, after each provisioning, exactly the table
+privileges `postgresRuntimeRoleGrants` lists (the table in
+`spec/postgres-backend.md`, "Roles and privileges"; `SELECT` and `INSERT`
+only on `events`). Every library operation other than provisioning works
+under those privileges (`EVS-DEV-postgres-backend/K`). Provision, then
+grant, then start the new build's instances: provisioning commits its DDL
+before the grants exist. The runtime role, and any role `lockUrl` names,
+must not be able to become the owner: it owns nothing in the schema, is not
+a member of the owning role, holds neither `SUPERUSER` nor `CREATEROLE`
+nor membership in a role that carries them (a hosting platform's
+administrative role included), and has no `CREATE` on the schema (revoke
+it from `PUBLIC` on a `public` schema of a Postgres major before 15). The
+library is tested against PostgreSQL 16. The queue table's guard
+(`EVS-DEV-destination-drain/S`) refuses every change to a queue item
+outside the shapes of the library's own writes, from any role; it cannot
+tell a hand-written change of a legal shape from the library's own, and
+only the owner can drop it, which is why no serving process runs as the
+owner and no person writes as the runtime role. Reporting uses a
+read-only role.
+
 Each `PostgresBackend` also holds one dedicated connection for its
 lifetime, the lock session, to `lockUrl` when given and to `url`
 otherwise. The library keeps its generation locks there, so it must be one

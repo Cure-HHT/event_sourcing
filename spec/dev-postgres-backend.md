@@ -11,7 +11,9 @@ persistence contract is backend-agnostic, and provides the storage layer for
 server-side deployments. Its schema is provisioned in a separate step, which
 serializes with booting instances; opening a backend verifies the provisioned
 schema, and each backend holds the incompatible-generation guard's locks on a
-dedicated lock session.
+dedicated lock session. Outside provisioning, the backend runs as a role that
+neither owns nor can create its tables, holding only the documented table
+privileges.
 
 ## Assertions
 
@@ -65,6 +67,8 @@ J. `PostgresBackend` SHALL hold its generation locks and the drain lock
    it declares that session lost it SHALL close it and, before registering
    or acquiring anything again, end the old server session if that session
    still holds a library lock.
+
+K. The library SHALL document the privileges its Postgres runtime role needs on each table, and every library operation other than schema provisioning, which the role that owns the schema runs, SHALL work for a role that holds exactly those privileges and usage of the schema, and neither owns nor can create the tables.
 
 ## Rationale
 
@@ -154,8 +158,12 @@ anything; when it cannot (the lock role may not end its own sessions), it
 registers nothing, reports the requirement, and retries. The lock role must
 be allowed to end its own sessions, which the role that owns them is.
 
+**Why a runtime role that owns nothing (assertion K)?** Postgres grants cannot separate the library from the application that embeds it: they share one process and one connection. What grants can separate is the process from the schema. The role that owns the tables can do anything to them, including disabling or dropping the queue table's guard (`EVS-DEV-destination-drain/S`) and rewriting the log, so the process runs as a role that neither owns nor can create them and holds only the table privileges the library's operations use: `SELECT` and `INSERT` on the log, which is therefore append-only for it, and `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the other tables. Provisioning creates the tables and so runs as the owning role, in its own deployment step (assertion G); it is the one library operation the runtime role cannot perform. The separation holds only if the runtime role cannot become the owner or create objects in the schema: it does not own the schema, is not a member of the owning role, holds neither `SUPERUSER` nor `CREATEROLE` nor membership in any role that carries them, and the schema grants `CREATE` to no role but the owner (a server's default `public` schema grants it to every role on some Postgres majors, so the deployment revokes it). The grants are a separate step from provisioning, which commits its DDL on its own, so a deployment provisions, then grants, and only then starts the instances of the new build. Reporting uses a read-only role holding `SELECT`, and no person holds write access. This split is a deployment concern: the library states the privileges once, as `postgresRuntimeRoleGrants` and in `spec/postgres-backend.md`, and every library operation other than provisioning is exercised under exactly those privileges, in a schema set up as the documentation describes. The lock session runs as the runtime role unless the deployment gives it another; for another role, `USAGE` on the schema and the runtime role's privileges on `backend_state` suffice, with the right to end its own sessions (assertion J), which it has as their owner.
+
 ## Changelog
 
+- 2026-09-23 | 98f15f7c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add K: the documented runtime-role privileges suffice for every library operation other than provisioning, which the owning role runs
 - 2026-09-23 | 1f8d49d6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | J: the drain lock is held on the lock session beside the generation locks
 - 2026-09-23 | 546da053 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -163,4 +171,4 @@ be allowed to end its own sessions, which the role that owns them is.
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 1f8d49d6
+*End* *Postgres backend reference impl* | **Hash**: 98f15f7c

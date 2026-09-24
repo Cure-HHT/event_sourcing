@@ -56,6 +56,8 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_drain_lock.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_generation_guard.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_grants.dart'
+    show postgresRuntimeRoleGrants;
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
@@ -189,8 +191,9 @@ class PostgresBackend extends StorageBackend {
   /// compatible schema version is above it. A newer schema whose minimum
   /// this build meets opens, so a serving revision keeps opening while a
   /// canary has provisioned ahead of it. [provisionSchema] provisions first
-  /// (for development and tests); a deployment runs [provision] once, as a
-  /// separate step, before its instances open the database.
+  /// (for development and tests), and so needs the role that owns the
+  /// schema; a deployment runs [provision] once, as a separate step and as
+  /// the owner, before its instances open the database as the runtime role.
   ///
   /// Besides its connection pool, the backend opens one dedicated
   /// connection for its lifetime, the lock session, on which it holds the
@@ -320,6 +323,18 @@ class PostgresBackend extends StorageBackend {
   /// compatible schema version. A database already at this build's version,
   /// or above it, is left untouched: provisioning never lowers the stored
   /// pair.
+  ///
+  /// Provisioning runs as the role that owns the schema; it is the one
+  /// library operation the runtime role cannot perform. The instances run
+  /// as a runtime role that neither owns nor can create the tables; after
+  /// each provisioning, and before the new build's instances start, the
+  /// owner grants it `USAGE` on the schema and the table privileges of
+  /// [postgresRuntimeRoleGrants], under which every other library operation
+  /// works. The provisioned tables include the queue table's guard, which
+  /// refuses every change to a queue item outside the shapes of the
+  /// library's own writes, whatever role makes it; it cannot tell a
+  /// hand-written change of a legal shape from the library's own, and only
+  /// the owner can drop it.
   ///
   /// The deployment creates the schema (the first schema on the connecting
   /// role's search path) and its grants; `provision` creates the tables,
@@ -1849,9 +1864,9 @@ class PostgresBackend extends StorageBackend {
           final enqueuedAt = (row[3] as DateTime).toUtc();
           final attemptsRaw = row[4] as List;
           final hasAttempts = attemptsRaw.isNotEmpty;
-          // A wedged row with no attempts is not produced by the drain,
-          // but the summary still surfaces enqueued_at + a placeholder
-          // error string so operators can identify such a row.
+          // A head the drainer wedged for an operator halt before any send
+          // carries no attempts; its summary surfaces enqueued_at and a
+          // placeholder error string.
           final DateTime wedgedAt;
           final String lastError;
           if (hasAttempts) {
