@@ -1,10 +1,11 @@
 # Conformance tests — runs the sembast and Postgres conformance + integration
 # test suites on every PR and push to main.
 #
-# Two jobs:
+# Three jobs:
 #   sembast  — SembastBackend conformance + in-memory IdempotencyStore
 #              conformance. No external services required.
-#   postgres — every Postgres-gated test file, each in its own step: the
+#   postgres_storage, postgres_delivery — every Postgres-gated test file,
+#              split across two parallel jobs, each file in its own step: the
 #              PostgresBackend schema, conformance and serialization-retry
 #              tests, IdempotencyStore conformance, and the
 #              example_action_permissions bootstrap, routes, state-projection
@@ -57,15 +58,13 @@ jobs:
         run: flutter test test/actions/idempotency_store_test.dart
         working-directory: event_sourcing
 
-  postgres:
-    name: Postgres conformance + integration
+  postgres_storage:
+    name: Postgres conformance (storage, versions, boot)
     runs-on: ubuntu-latest
-    # Measured locally, one file at a time: about 9 minutes of event_sourcing
-    # files (the runtime-role file 2:20, boot progress 1:15, boot pause 0:55)
-    # and under a minute of example files; a runner with setup is estimated at
-    # about 15 minutes, not yet measured there.
-    # The required Validation Summary check waits at most 30 minutes for every
-    # other check, so a longer limit here would not help.
+    # The Postgres files are split across two jobs that run in parallel.
+    # Together they take close to half an hour on a runner, and the required
+    # Validation Summary check waits at most 30 minutes for every other
+    # check, so one job with a longer limit would not help.
     timeout-minutes: 30
     services:
       postgres:
@@ -159,6 +158,65 @@ jobs:
       - name: Boot progress reports on Postgres
         run: flutter test test/storage/postgres/postgres_boot_progress_test.dart
         working-directory: event_sourcing
+
+  postgres_delivery:
+    name: Postgres conformance (provisioning, delivery, examples)
+    runs-on: ubuntu-latest
+    # The Postgres files are split across two jobs that run in parallel.
+    # Together they take close to half an hour on a runner, and the required
+    # Validation Summary check waits at most 30 minutes for every other
+    # check, so one job with a longer limit would not help.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+      # A second server whose database and schema have the same names, for
+      # the check that a lock session reaches the pool's server.
+      postgres_other:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (example_action_permissions)
+        run: flutter pub get
+        working-directory: event_sourcing/example_action_permissions
       - name: Schema provisioning on Postgres
         run: flutter test test/storage/postgres/postgres_provisioning_test.dart
         working-directory: event_sourcing
