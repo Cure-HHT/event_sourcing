@@ -172,6 +172,14 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
             'PostgresBackend.transaction(); received ${txn.runtimeType}',
       );
     }
+    // Implements: EVS-DEV-postgres-backend/L
+    // a transaction handle is honoured only by the backend that minted it.
+    if (!identical(txn.owner, backend)) {
+      throw StateError(
+        'PostgresSecurityContextStore: Transaction was produced by a '
+        'different PostgresBackend instance; refusing to apply it.',
+      );
+    }
     return txn.session;
   }
 

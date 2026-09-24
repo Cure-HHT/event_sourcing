@@ -39,4 +39,35 @@ void main() {
     securityStoreOf: (backend) =>
         PostgresSecurityContextStore(backend: backend as PostgresBackend),
   );
+
+  // Verifies: EVS-DEV-postgres-backend/L
+  test('a security-context store refuses a transaction from another '
+      'backend and accepts one from its own backend', () async {
+    if (url == null) {
+      markTestSkipped('PG_TEST_URL is not set');
+      return;
+    }
+    final own = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+      provisionSchema: true,
+    );
+    addTearDown(own.close);
+    final other = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+    );
+    addTearDown(other.close);
+    final store = PostgresSecurityContextStore(backend: own);
+    await other.transaction((foreignTxn) async {
+      await expectLater(
+        store.readInTxn(foreignTxn, 'no-such-event'),
+        throwsStateError,
+      );
+    });
+    final found = await own.transaction(
+      (txn) => store.readInTxn(txn, 'no-such-event'),
+    );
+    expect(found, isNull);
+  });
 }
