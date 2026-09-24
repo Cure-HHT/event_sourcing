@@ -626,15 +626,22 @@ class _ZoneAndLogVisitor extends RecursiveAstVisitor<void> {
 }
 
 /// No library in [units] (path to resolved syntax trees) other than the
-/// seam file indexes a `Zone`, however the zone is reached.
-List<String> zoneReadRule(Map<String, List<CompilationUnit>> units) {
+/// seam file indexes a `Zone`, however the zone is reached, except the
+/// exact reads [allowedReads] names for a path (each a production guard
+/// that can only refuse a call, never a seam).
+List<String> zoneReadRule(
+  Map<String, List<CompilationUnit>> units, {
+  Map<String, Set<String>> allowedReads = const <String, Set<String>>{},
+}) {
   final violations = <String>[];
   units.forEach((path, trees) {
     if (path.endsWith('src/testing/delivery_test_hooks.dart')) return;
+    final allowed = allowedReads[path] ?? const <String>{};
     for (final tree in trees) {
       final visitor = _ZoneAndLogVisitor();
       tree.accept(visitor);
       for (final read in visitor.zoneReads) {
+        if (allowed.contains(read)) continue;
         violations.add('$path reads a zone value: $read');
       }
     }

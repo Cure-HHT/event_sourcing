@@ -150,6 +150,9 @@ jobs:
       - name: Boot pause beside a serving revision on Postgres
         run: flutter test test/storage/postgres/postgres_boot_pause_test.dart
         working-directory: event_sourcing
+      - name: Boot progress reports on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_progress_test.dart
+        working-directory: event_sourcing
       - name: Schema provisioning on Postgres
         run: flutter test test/storage/postgres/postgres_provisioning_test.dart
         working-directory: event_sourcing

@@ -65,6 +65,10 @@ const _functionTyped = <String, String>{
   'AggregateMode.new(mapper)':
       "maps a view row to the subscriber's type after the read; decides "
       'nothing the library derives',
+  'bootstrapEventStore(onBootProgress)':
+      'observes the boot of the EventStore.open it runs: never awaited, what '
+      'it throws is logged, and a call from it into an event store or a '
+      'shipped backend during the boot is refused',
   'ContainmentResolver.findRowsInTxn (field)':
       'known unenumerated input: reads the containment rows an '
       'authorization decision uses',
@@ -74,8 +78,16 @@ const _functionTyped = <String, String>{
   'EventStore.open(clock)':
       'stamps the client timestamp the log records as event data; decides '
       'nothing the library derives',
+  'EventStore.open(onBootProgress)':
+      'observes the boot: never awaited, what it throws is logged, and a call '
+      'from it into an event store or a shipped backend during the boot is '
+      'refused',
   'EventStore.openForTest(clock)':
       'stamps the client timestamp the log records as event data',
+  'EventStore.openForTest(onBootProgress)':
+      'observes the boot: never awaited, what it throws is logged, and a call '
+      'from it into an event store or a shipped backend during the boot is '
+      'refused',
   'EventStore.runTransaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'EventStore.deliveryTrigger (getter)':
@@ -126,6 +138,17 @@ const _functionTyped = <String, String>{
   'TableBackedAuthorizationPolicy.transactionProvider (field)':
       'known unenumerated input: opens the transaction the authorization '
       'policy reads in',
+};
+
+/// The zone reads outside the seam file, by path, each exact. The boot
+/// progress observer's scope marker is read only to refuse a call from the
+/// observer, or from work it started, into an event store or a shipped
+/// backend while the boot runs; it can make a call fail, never succeed, and
+/// is not assertion-gated because the refusal holds in every build.
+const _productionZoneReads = <String, Set<String>>{
+  'lib/src/lifecycle/boot_progress.dart': <String>{
+    'Zone.current[_observerScopeKey]',
+  },
 };
 
 /// Every test seam on `DeliveryTestHooks`, by kind. An observing seam sees
@@ -769,7 +792,7 @@ void main() {
       );
       final units = await _unitsUnderLib(scanner);
       expect(units.keys, contains('lib/src/testing/delivery_test_hooks.dart'));
-      expect(zoneReadRule(units), isEmpty);
+      expect(zoneReadRule(units, allowedReads: _productionZoneReads), isEmpty);
     });
 
     test('(e) the library logs only through its internal logger', () async {
@@ -1027,6 +1050,33 @@ void main() {
         contains('z[#key]'),
         contains('Zone.current[#key]'),
       ]);
+    });
+
+    test('(d) an allowed zone read exempts only that exact read in that '
+        'file', () {
+      expect(
+        zoneReadRule(
+          zoneUnits,
+          allowedReads: const <String, Set<String>>{
+            'lib/src/sync/scan_fixture_zone.dart': <String>{
+              'Zone.current[#key]',
+            },
+          },
+        ),
+        <Matcher>[contains('z[#key]')],
+      );
+      expect(
+        zoneReadRule(
+          zoneUnits,
+          allowedReads: const <String, Set<String>>{
+            'lib/src/sync/other_file.dart': <String>{'Zone.current[#key]'},
+            'lib/src/sync/scan_fixture_zone.dart': <String>{
+              'Zone.current[#other]',
+            },
+          },
+        ),
+        <Matcher>[contains('z[#key]'), contains('Zone.current[#key]')],
+      );
     });
 
     test('(e) a direct print or developer log fails', () {

@@ -200,6 +200,7 @@ export 'src/lifecycle/boot_errors.dart'
         DatabaseIdentityMismatchError,
         DatabaseResetRequiredError,
         DataFormatIncompatibleError;
+export 'src/lifecycle/boot_progress.dart' show BootPhase, BootProgress;
 export 'src/lifecycle/lib_version.dart' show LibVersion;
 
 export 'src/permissions/authorization_bootstrap_result.dart'

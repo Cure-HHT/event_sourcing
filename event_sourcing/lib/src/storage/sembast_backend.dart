@@ -6,6 +6,7 @@ import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -176,20 +177,22 @@ class SembastBackend extends StorageBackend {
   /// wait for that lock is bounded by the constructor's `bootLockWait`.
   @override
   @internal
-  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) =>
-      runHoldingBrowserWriteLock(
-        _database().path,
-        exclusive: true,
-        timeout: _bootLockWait,
-        body: () async {
-          _bootHoldsWriteLock = true;
-          try {
-            return await transaction(body);
-          } finally {
-            _bootHoldsWriteLock = false;
-          }
-        },
-      );
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) {
+    refuseCallFromBootProgressObserver('SembastBackend.bootTransaction');
+    return runHoldingBrowserWriteLock(
+      _database().path,
+      exclusive: true,
+      timeout: _bootLockWait,
+      body: () async {
+        _bootHoldsWriteLock = true;
+        try {
+          return await transaction(body);
+        } finally {
+          _bootHoldsWriteLock = false;
+        }
+      },
+    );
+  }
 
   /// True while a boot holds this backend's write lock exclusively. The
   /// boot's own transaction then runs without asking for the lock again,
@@ -204,6 +207,9 @@ class SembastBackend extends StorageBackend {
   //   another tab committed first; each run gets a fresh handle, and only the
   //   run that committed (the last one) has its queue fired. A body that
   //   throws commits nothing and fires nothing.
+  // Implements: EVS-DEV-event-store-open/M
+  // a transaction the boot progress observer, or work it started, asks for
+  //   while the boot runs is refused.
   /// On the web a transaction takes the database's write lock shared, so
   /// the tabs' transactions run side by side and a body whose commit
   /// another tab preceded runs again. After [_sharedRuns] such runs the
@@ -214,6 +220,7 @@ class SembastBackend extends StorageBackend {
   /// later transaction on it.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
+    refuseCallFromBootProgressObserver('SembastBackend.transaction');
     if (_bootHoldsWriteLock) return _transaction(body, exclusive: true);
     try {
       return await runHoldingBrowserWriteLock(

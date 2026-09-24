@@ -42,6 +42,7 @@ import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -658,8 +659,12 @@ class PostgresBackend extends StorageBackend {
   // a transaction that lost a serialization race is re-run behind the
   //   writes it lost to, so concurrent appends from several instances do
   //   not exhaust the retry bound.
+  // Implements: EVS-DEV-event-store-open/M
+  // a transaction the boot progress observer, or work it started, asks for
+  //   while the boot runs is refused.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
+    refuseCallFromBootProgressObserver('PostgresBackend.transaction');
     _checkOpen();
     var wroteState = false;
     for (var attempt = 1; ; attempt++) {
@@ -748,6 +753,7 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) async {
+    refuseCallFromBootProgressObserver('PostgresBackend.bootTransaction');
     _checkOpen();
     final giveUpAt = DateTime.now().add(_bootLockWait);
     final random = Random();

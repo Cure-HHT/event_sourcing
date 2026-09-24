@@ -43,7 +43,7 @@
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | ee97c1d7 |
-| EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 5a6583c3 |
+| EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 27133475 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 45a08e62 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                                   | dev-ingest-promotes-before-fold.md      | 6e8f0c6d |

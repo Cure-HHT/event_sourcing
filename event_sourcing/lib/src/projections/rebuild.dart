@@ -12,6 +12,7 @@
 //   fully specified and auditable; rebuild does not silently shrink the set
 //   of entry types the view covers.
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -62,6 +63,7 @@ Future<int> rebuildView({
   required String viewName,
   required Map<String, EntryTypeVersion> targetVersionByEntryType,
 }) async {
+  refuseCallFromBootProgressObserver('rebuildView');
   final spec = store.projections.lookup(viewName);
   if (spec == null) {
     throw StateError(

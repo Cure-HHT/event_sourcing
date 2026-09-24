@@ -11,6 +11,7 @@ import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/security/postgres_security_context_store.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -96,12 +97,24 @@ class EventStoreBundle {
 /// major, or one that raises an entry-type major, is deployed
 /// stop-then-start, and recovery after it is a restore from a backup taken
 /// before the switch, or a roll-forward.
+///
+/// [onBootProgress] observes the boot of that open, as
+/// [EventStore.open] documents: the progress of a long boot can be served
+/// by a readiness endpoint while the open runs, and the observer must not
+/// call back into an event store while the boot runs. Its
+/// [BootPhase.complete] means the store opened, not that this function
+/// finished: the registry audit and the destination registration run after
+/// it and can still fail, so a readiness endpoint turns ready when this
+/// function returns.
+// Implements: EVS-DEV-event-store-open/G
+// bootstrapEventStore passes its boot-progress observer to EventStore.open.
 Future<EventStoreBundle> bootstrapEventStore({
   required StorageBackend backend,
   required Source source,
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
   ProjectionRegistry? projections,
+  void Function(BootProgress progress)? onBootProgress,
 }) async {
   final typeRegistry = EntryTypeRegistry();
   for (final definition in entryTypes) {
@@ -134,6 +147,7 @@ Future<EventStoreBundle> bootstrapEventStore({
     source: source,
     securityContexts: securityContexts,
     projections: projections,
+    onBootProgress: onBootProgress,
   );
 
   final destinationRegistry = DestinationRegistry(eventStore: eventStore);

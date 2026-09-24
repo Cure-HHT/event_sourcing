@@ -75,6 +75,7 @@ import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/logging.dart';
@@ -410,9 +411,46 @@ class EventStore {
   /// release that promotes a large view, or adds a view over a long log,
   /// pauses the serving revision's appends for as long; measure the boot on
   /// a copy of production data before such a rollout.
+  ///
+  /// Progress. [onBootProgress], when given, observes the boot: it receives
+  /// a [BootProgress] when the open starts its checks ([BootPhase.checks]),
+  /// when snapshot promotion and view catch-up each start, after each chunk
+  /// of their work and when each ends ([BootPhase.promotion],
+  /// [BootPhase.catchUp]; a phase with nothing to re-derive reports
+  /// nothing), and once the boot has committed, just before the open
+  /// returns ([BootPhase.complete]). A refused open reports no completion. A
+  /// boot transaction the backend runs again reports its phases again from
+  /// [BootPhase.checks] when the new run starts; until then the discarded
+  /// run's last report stands.
+  ///
+  /// The observer only observes: nothing it does changes what the boot
+  /// decides or writes. The boot calls it synchronously and does not await
+  /// a future it returns, so its synchronous work extends the boot -- on
+  /// Postgres, the time every append to the database is held back -- and it
+  /// must return quickly: record the progress (for a readiness endpoint,
+  /// say) and act on it after the open returns. It runs in an error zone the
+  /// library owns: what it throws, at once or from work it started, is
+  /// logged and the boot continues. That zone outlives the boot, so an error
+  /// the observer's later work raises is logged by the library rather than
+  /// reaching the caller's zone, and a future created there that fails does
+  /// not complete an await in another error zone.
+  ///
+  /// While the boot runs, a call from the observer, or from work it started
+  /// in its zone, that opens an event store, runs a transaction of an event
+  /// store (its writes, [runTransaction], ingest, [logRejectedBatch], and
+  /// `rebuildView`) or starts a transaction on a storage backend the library
+  /// ships throws [StateError], whichever database it is over. A callback
+  /// the observer hands to code registered outside its zone (a stream
+  /// listener subscribed elsewhere, say), a read a backend serves outside a
+  /// transaction, and a transaction an application-supplied backend starts
+  /// are not recognised.
   // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
   // the sole production constructor; the whole boot, refusals first, runs
   //   in one storage transaction (see _runBoot).
+  // Implements: EVS-DEV-event-store-open/G+I+M
+  // the boot reports its phases to an optional observer that decides nothing;
+  //   the completion is reported after the boot committed; an open the
+  //   observer calls while the boot runs is refused.
   static Future<EventStore> open({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -422,30 +460,43 @@ class EventStore {
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
+    void Function(BootProgress progress)? onBootProgress,
   }) async {
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    _registerLibraryDefinitions(entryTypes, effectiveProjections);
-    effectiveProjections.seal();
-    final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    final (:databaseId, :registration) = await _guardedBoot(
-      storage: storage,
-      entryTypes: entryTypes,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      recordVersion: true,
-    );
-    return EventStore._(
-      backend: storage,
-      entryTypes: entryTypes,
-      source: source,
-      securityContexts: securityContexts,
-      databaseId: databaseId,
-      registration: registration,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      clock: clock,
-      uuid: uuid,
-    );
+    refuseCallFromBootProgressObserver('EventStore.open');
+    final progress = BootProgressReporter(onBootProgress);
+    try {
+      progress.report(BootPhase.checks, 0, 0);
+      final effectiveProjections = projections ?? ProjectionRegistry();
+      _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      effectiveProjections.seal();
+      final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
+      final (:databaseId, :registration) = await _guardedBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        recordVersion: true,
+        progress: progress,
+      );
+      final store = EventStore._(
+        backend: storage,
+        entryTypes: entryTypes,
+        source: source,
+        securityContexts: securityContexts,
+        databaseId: databaseId,
+        registration: registration,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        clock: clock,
+        uuid: uuid,
+      );
+      progress
+        ..bootFinished()
+        ..report(BootPhase.complete, 0, 0);
+      return store;
+    } finally {
+      progress.bootFinished();
+    }
   }
 
   /// Opens an [EventStore] for a test: the boot of [open], refusals
@@ -462,7 +513,8 @@ class EventStore {
   /// so sequence numbers stay predictable, and at a first open it mints the
   /// database identity without a log record; a later [open] adopts that
   /// identity. The guarantee that the log records every version that opened
-  /// the database holds for [open] only.
+  /// the database holds for [open] only. [onBootProgress] observes the boot
+  /// as it does for [open].
   // Implements: EVS-DEV-event-store-open/A
   // the test-only constructor: visible for testing, so the analyzer reports
   //   a call from production code; the refusals of open; no library-version
@@ -477,30 +529,43 @@ class EventStore {
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
+    void Function(BootProgress progress)? onBootProgress,
   }) async {
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    _registerLibraryDefinitions(entryTypes, effectiveProjections);
-    effectiveProjections.seal();
-    final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-    final (:databaseId, :registration) = await _guardedBoot(
-      storage: storage,
-      entryTypes: entryTypes,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      recordVersion: false,
-    );
-    return EventStore._(
-      backend: storage,
-      entryTypes: entryTypes,
-      source: source,
-      securityContexts: securityContexts,
-      databaseId: databaseId,
-      registration: registration,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      clock: clock,
-      uuid: uuid,
-    );
+    refuseCallFromBootProgressObserver('EventStore.openForTest');
+    final progress = BootProgressReporter(onBootProgress);
+    try {
+      progress.report(BootPhase.checks, 0, 0);
+      final effectiveProjections = projections ?? ProjectionRegistry();
+      _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      effectiveProjections.seal();
+      final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
+      final (:databaseId, :registration) = await _guardedBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        recordVersion: false,
+        progress: progress,
+      );
+      final store = EventStore._(
+        backend: storage,
+        entryTypes: entryTypes,
+        source: source,
+        securityContexts: securityContexts,
+        databaseId: databaseId,
+        registration: registration,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        clock: clock,
+        uuid: uuid,
+      );
+      progress
+        ..bootFinished()
+        ..report(BootPhase.complete, 0, 0);
+      return store;
+    } finally {
+      progress.bootFinished();
+    }
   }
 
   /// Registers, in the caller's registries, every reserved system entry
@@ -590,6 +655,7 @@ class EventStore {
     required ProjectionRegistry projections,
     required PromoterRegistry promoters,
     required bool recordVersion,
+    required BootProgressReporter progress,
   }) async {
     final build = _build();
     final descriptor = GenerationDescriptor(
@@ -610,6 +676,7 @@ class EventStore {
         recordVersion: recordVersion,
         descriptor: descriptor,
         registration: registration,
+        progress: progress,
       );
       await registration.completeBoot();
       return (databaseId: databaseId, registration: registration);
@@ -658,11 +725,13 @@ class EventStore {
     required bool recordVersion,
     required GenerationDescriptor descriptor,
     required GenerationRegistration registration,
+    required BootProgressReporter progress,
   }) {
     final hooks = DeliveryTestHooks.current;
     final build = _build();
     return storage.bootTransaction<String>((txn) async {
       _observeBootBodyRun(hooks);
+      progress.beginBodyRun();
 
       // -------- Decide: nothing below writes until every refusal ran.
       await _refuseEarlierFormatEvents(storage, txn);
@@ -817,6 +886,7 @@ class EventStore {
                 rowsPromoted: rowsPromoted,
               );
             },
+        progress: progress,
       );
       await catchUpViews(
         txn: txn,
@@ -825,6 +895,7 @@ class EventStore {
         promoters: promoters,
         entryTypes: entryTypes,
         seeded: seeded,
+        progress: progress,
       );
       final merged = record == null
           ? GenerationRecord.of(descriptor)
@@ -997,6 +1068,7 @@ class EventStore {
   Future<T> _runInTxnWithPublish<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
+    refuseCallFromBootProgressObserver('An EventStore transaction');
     late PublishCollector collector;
     var runInProgress = false;
     int? heldSequence;
@@ -2384,6 +2456,7 @@ class EventStore {
     String? failedEventId,
     String? errorDetail,
   }) async {
+    refuseCallFromBootProgressObserver('EventStore.logRejectedBatch');
     await backend.transaction((txn) async {
       final now = _now();
       final wireBytesHash = sha256.convert(bytes).toString();

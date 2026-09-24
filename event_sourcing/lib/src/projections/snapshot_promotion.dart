@@ -59,6 +59,7 @@
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show EntryTypeVersionDowngradeError;
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -140,6 +141,11 @@ Future<List<(String, String)>> seedViewTargetVersions({
 /// interpreter and `rebuildView` share, each entry type under its
 /// registered version, so the rows equal a replay's.
 ///
+/// Every behind view is found, and its units counted (the aggregates an
+/// aggregate view re-derives, the events of the log a table view's refold
+/// reads), before any is re-derived; the phase then reports to [progress]
+/// as [BootPhase.catchUp].
+///
 /// Runs inside the boot transaction, after [promoteViewSnapshots]. Returns
 /// the names of the views it re-derived.
 @internal
@@ -150,11 +156,14 @@ Future<List<String>> catchUpViews({
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
   required List<(String, String)> seeded,
+  BootProgressReporter? progress,
 }) async {
-  final caughtUp = <String>[];
+  final plans = <_ViewWork>[];
+  int? head;
   for (final spec in projections.all()) {
     final behind = <String>[];
     final marked = <String>[];
+    final eventsByType = <String, List<StoredEvent>>{};
     for (final entryType in _interestEntryTypes(spec.interest)) {
       if (await backend.readViewTargetBehindInTxn(
         txn,
@@ -170,45 +179,122 @@ Future<List<String>> catchUpViews({
         txn,
         entryType: entryType,
       );
-      if (events.any(spec.interest.matches)) behind.add(entryType);
+      if (events.any(spec.interest.matches)) {
+        behind.add(entryType);
+        eventsByType[entryType] = events;
+      }
     }
     if (behind.isEmpty) continue;
     switch (spec) {
       case AggregateProjectionSpec():
         final affected = <String>{};
         for (final entryType in behind) {
-          final events = await backend.findAllEventsInTxn(
-            txn,
-            entryType: entryType,
-          );
+          final events =
+              eventsByType[entryType] ??
+              await backend.findAllEventsInTxn(txn, entryType: entryType);
           affected.addAll(<String>[
             for (final e in events)
               if (spec.interest.matches(e)) e.aggregateId,
           ]);
         }
+        plans.add(
+          _ViewWork(
+            spec: spec,
+            marked: marked,
+            aggregateIds: affected,
+            units: affected.length,
+          ),
+        );
+      case TableProjectionSpec():
+        head ??= await _logHead(backend, txn);
+        plans.add(_ViewWork(spec: spec, marked: marked, units: head));
+    }
+  }
+
+  final phase = progress?.startPhase(
+    BootPhase.catchUp,
+    plans.fold<int>(0, (sum, plan) => sum + plan.units),
+  );
+  final caughtUp = <String>[];
+  for (final plan in plans) {
+    switch (plan.spec) {
+      case final AggregateProjectionSpec spec:
         await _refoldAggregates(
           txn: txn,
           backend: backend,
           spec: spec,
           promoters: promoters,
           entryTypes: entryTypes,
-          aggregateIds: affected,
+          aggregateIds: plan.aggregateIds!,
+          progress: phase,
         );
-      case TableProjectionSpec():
+      case final TableProjectionSpec spec:
         await _refoldWholeTable(
           txn: txn,
           backend: backend,
           spec: spec,
           promoters: promoters,
           entryTypes: entryTypes,
+          counted: plan.units,
+          progress: phase,
         );
     }
-    for (final entryType in marked) {
-      await backend.clearViewTargetBehindInTxn(txn, spec.viewName, entryType);
+    for (final entryType in plan.marked) {
+      await backend.clearViewTargetBehindInTxn(
+        txn,
+        plan.spec.viewName,
+        entryType,
+      );
     }
-    caughtUp.add(spec.viewName);
+    caughtUp.add(plan.spec.viewName);
   }
+  phase?.end();
   return caughtUp;
+}
+
+/// One view a boot phase re-derives, found and counted before the phase's
+/// work starts.
+class _ViewWork {
+  _ViewWork({
+    required this.spec,
+    required this.units,
+    this.marked = const <String>[],
+    this.lagging = const <(String, EntryTypeVersion, EntryTypeVersion)>[],
+    this.aggregateIds,
+    this.aggregateIdsByEntryType,
+  });
+
+  final ProjectionSpec spec;
+
+  /// The units the view's re-derivation counts: its aggregates for an
+  /// aggregate view, the events of the log at the phase's start for a table
+  /// view.
+  final int units;
+
+  /// Catch-up: the entry types whose catch-up marks the re-derivation
+  /// clears.
+  final List<String> marked;
+
+  /// Promotion: each lagging entry type with its stored and registered
+  /// versions.
+  final List<(String, EntryTypeVersion, EntryTypeVersion)> lagging;
+
+  /// The aggregates an aggregate view re-derives.
+  final Set<String>? aggregateIds;
+
+  /// Promotion of an aggregate view: the aggregates each lagging entry type
+  /// affects.
+  final Map<String, Set<String>>? aggregateIdsByEntryType;
+}
+
+/// The sequence number of the latest event in the log (0 for an empty
+/// log): the number of events in it, since sequence numbers are gap-free
+/// from 1.
+Future<int> _logHead(StorageBackend backend, Transaction txn) async {
+  await for (final event in backend.readEventsReverseInTxn(txn)) {
+    return event.sequenceNumber;
+  }
+  return 0;
 }
 
 /// Refuse the boot if any registered entry type's major is below the major
@@ -274,6 +360,13 @@ Future<void> verifyNoEntryTypeDowngrade({
 /// row is keyed by what its row key extracts from an event, which need not
 /// be the aggregate, so a table view with a lagging pair is refolded whole.
 ///
+/// Every lagging view is found, and its units counted (the aggregates an
+/// aggregate view re-derives, the events of the log a table view's refold
+/// reads), before any is re-derived; the phase then reports to [progress]
+/// as [BootPhase.promotion]. The audit events appended for one view are in
+/// the log a later table view's refold reads, but not in the units counted
+/// for it.
+///
 /// Runs THIRD (after [verifyNoEntryTypeDowngrade] and
 /// [seedViewTargetVersions]) inside the caller's transaction.
 @internal
@@ -284,7 +377,10 @@ Future<void> promoteViewSnapshots({
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
   required AuditEmitter emitAudit,
+  BootProgressReporter? progress,
 }) async {
+  final plans = <_ViewWork>[];
+  int? head;
   for (final spec in projections.all()) {
     final lagging = <(String, EntryTypeVersion, EntryTypeVersion)>[];
     for (final entryType in _interestEntryTypes(spec.interest)) {
@@ -300,37 +396,69 @@ Future<void> promoteViewSnapshots({
       lagging.add((entryType, stored, def.registeredVersion));
     }
     if (lagging.isEmpty) continue;
+    switch (spec) {
+      case AggregateProjectionSpec():
+        final byEntryType = await _affectedAggregates(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          lagging: lagging,
+        );
+        final affected = <String>{for (final ids in byEntryType.values) ...ids};
+        plans.add(
+          _ViewWork(
+            spec: spec,
+            lagging: lagging,
+            aggregateIds: affected,
+            aggregateIdsByEntryType: byEntryType,
+            units: affected.length,
+          ),
+        );
+      case TableProjectionSpec():
+        head ??= await _logHead(backend, txn);
+        plans.add(_ViewWork(spec: spec, lagging: lagging, units: head));
+    }
+  }
 
-    final rowsByEntryType = switch (spec) {
-      AggregateProjectionSpec() => await _rederiveAggregates(
+  final phase = progress?.startPhase(
+    BootPhase.promotion,
+    plans.fold<int>(0, (sum, plan) => sum + plan.units),
+  );
+  for (final plan in plans) {
+    final rowsByEntryType = switch (plan.spec) {
+      final AggregateProjectionSpec spec => await _rederiveAggregates(
         txn: txn,
         backend: backend,
         spec: spec,
         promoters: promoters,
         entryTypes: entryTypes,
-        lagging: lagging,
+        affected: plan.aggregateIds!,
+        affectedByEntryType: plan.aggregateIdsByEntryType!,
+        progress: phase,
       ),
-      TableProjectionSpec() => await _refoldTable(
+      final TableProjectionSpec spec => await _refoldTable(
         txn: txn,
         backend: backend,
         spec: spec,
         promoters: promoters,
         entryTypes: entryTypes,
-        lagging: lagging,
+        lagging: plan.lagging,
+        counted: plan.units,
+        progress: phase,
       ),
     };
 
-    for (final (entryType, stored, registered) in lagging) {
+    for (final (entryType, stored, registered) in plan.lagging) {
       await backend.writeViewTargetVersionInTxn(
         txn,
-        spec.viewName,
+        plan.spec.viewName,
         entryType,
         registered,
       );
       // Emit the audit via the caller-supplied callback, which appends
       // a `view_snapshot_promoted` audit event via raw-internal-append.
       await emitAudit(
-        viewName: spec.viewName,
+        viewName: plan.spec.viewName,
         entryType: entryType,
         fromVersion: stored,
         toVersion: registered,
@@ -338,6 +466,7 @@ Future<void> promoteViewSnapshots({
       );
     }
   }
+  phase?.end();
 }
 
 /// The version the fold folds [event]'s entry type under: its registered
@@ -350,30 +479,40 @@ EntryTypeVersion _foldVersion(
     entryTypes.byId(event.entryType)?.registeredVersion ??
     event.entryTypeVersion;
 
-/// Re-derives the rows of the aggregates holding an event of a lagging
-/// entry type below its registered version. Returns, per lagging entry
-/// type, the number of its affected aggregates that have a row afterwards.
+/// The aggregates holding an event of each lagging entry type below its
+/// registered version that the view's interest matches.
+Future<Map<String, Set<String>>> _affectedAggregates({
+  required Transaction txn,
+  required StorageBackend backend,
+  required AggregateProjectionSpec spec,
+  required List<(String, EntryTypeVersion, EntryTypeVersion)> lagging,
+}) async {
+  final affectedByEntryType = <String, Set<String>>{};
+  for (final (entryType, _, registered) in lagging) {
+    final events = await backend.findAllEventsInTxn(txn, entryType: entryType);
+    affectedByEntryType[entryType] = <String>{
+      for (final e in events)
+        if (e.entryTypeVersion < registered && spec.interest.matches(e))
+          e.aggregateId,
+    };
+  }
+  return affectedByEntryType;
+}
+
+/// Re-derives the rows of [affected], the aggregates holding an event of a
+/// lagging entry type below its registered version. Returns, per lagging
+/// entry type, the number of its affected aggregates that have a row
+/// afterwards.
 Future<Map<String, int>> _rederiveAggregates({
   required Transaction txn,
   required StorageBackend backend,
   required AggregateProjectionSpec spec,
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
-  required List<(String, EntryTypeVersion, EntryTypeVersion)> lagging,
+  required Set<String> affected,
+  required Map<String, Set<String>> affectedByEntryType,
+  BootPhaseProgress? progress,
 }) async {
-  final affectedByEntryType = <String, Set<String>>{};
-  final affected = <String>{};
-  for (final (entryType, _, registered) in lagging) {
-    final events = await backend.findAllEventsInTxn(txn, entryType: entryType);
-    final ids = <String>{
-      for (final e in events)
-        if (e.entryTypeVersion < registered && spec.interest.matches(e))
-          e.aggregateId,
-    };
-    affectedByEntryType[entryType] = ids;
-    affected.addAll(ids);
-  }
-
   final present = await _refoldAggregates(
     txn: txn,
     backend: backend,
@@ -381,6 +520,7 @@ Future<Map<String, int>> _rederiveAggregates({
     promoters: promoters,
     entryTypes: entryTypes,
     aggregateIds: affected,
+    progress: progress,
   );
   return <String, int>{
     for (final entry in affectedByEntryType.entries)
@@ -398,6 +538,7 @@ Future<Set<String>> _refoldAggregates({
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
   required Set<String> aggregateIds,
+  BootPhaseProgress? progress,
 }) async {
   final present = <String>{};
   for (final aggregateId in aggregateIds.toList()..sort()) {
@@ -416,6 +557,7 @@ Future<Set<String>> _refoldAggregates({
     }
     final row = await backend.readViewRowInTxn(txn, spec.viewName, aggregateId);
     if (row != null) present.add(aggregateId);
+    progress?.add(1);
   }
   return present;
 }
@@ -434,6 +576,8 @@ Future<Map<String, int>> _refoldTable({
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
   required List<(String, EntryTypeVersion, EntryTypeVersion)> lagging,
+  required int counted,
+  BootPhaseProgress? progress,
 }) async {
   await _refoldWholeTable(
     txn: txn,
@@ -441,6 +585,8 @@ Future<Map<String, int>> _refoldTable({
     spec: spec,
     promoters: promoters,
     entryTypes: entryTypes,
+    counted: counted,
+    progress: progress,
   );
   final rows = (await backend.findViewRowsInTxn(txn, spec.viewName)).length;
   return <String, int>{
@@ -449,15 +595,20 @@ Future<Map<String, int>> _refoldTable({
 }
 
 /// Clears the table view of [spec] and folds every event its interest
-/// matches again.
+/// matches again. Records in [progress] the events it reads up to sequence
+/// number [counted] (the log's head when the phase started), one chunk at a
+/// time, and all [counted] of them by the time it returns.
 Future<void> _refoldWholeTable({
   required Transaction txn,
   required StorageBackend backend,
   required TableProjectionSpec spec,
   required PromoterRegistry promoters,
   required EntryTypeRegistry entryTypes,
+  required int counted,
+  BootPhaseProgress? progress,
 }) async {
   await backend.clearViewInTxn(txn, spec.viewName);
+  var reached = 0;
   int? lastSeq;
   while (true) {
     final chunk = await backend.findAllEventsInTxn(
@@ -477,9 +628,17 @@ Future<void> _refoldWholeTable({
         version: _foldVersion(entryTypes, event),
       );
     }
+    final at = chunk.last.sequenceNumber < counted
+        ? chunk.last.sequenceNumber
+        : counted;
+    if (at > reached) {
+      progress?.add(at - reached);
+      reached = at;
+    }
     if (chunk.length < _refoldChunkSize) break;
     lastSeq = chunk.last.sequenceNumber;
   }
+  progress?.add(counted - reached);
 }
 
 /// Returns the entry-type ids the [interest] filter names explicitly.
