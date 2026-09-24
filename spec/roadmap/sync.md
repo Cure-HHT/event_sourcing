@@ -43,3 +43,37 @@ over a fixed probe batch, or require destinations to declare a code
 version the library checks against a registry of released builds. Either
 changes what a destination must supply and is a new primitive under the
 Append-Only Primitives discipline.
+
+## Recovery that skips the wedged item
+
+**Baseline (what exists).** `DestinationRegistry.tombstoneAndRefill`
+recovers a wedged queue head by tombstoning it, deleting the pending items
+behind it and rewinding the fill position below every event they carried,
+so the drainer's next fill enqueues the same events again under the
+destination's current configuration. A receiver that refused an item
+permanently refuses its events again, and the destination wedges again,
+unless something changed first: the receiver, the transform or the
+filter.
+
+**Remaining.** A second recovery that skips the wedged item's events:
+it advances the fill position past them instead of rewinding below them,
+and appends its own reserved event, distinct from the rebuilding
+recovery's, so the log says which recovery happened and which events a
+destination never received. It is a new registry operation and a new
+reserved entry type, under the Append-Only Primitives discipline.
+
+## Rebuilding a destination in one call
+
+**Baseline (what exists).** Rebuilding a healthy destination's pending
+items is two operator steps: request a halt (`requestHalt`), then, once the
+drainer has wedged the head, recover it (`tombstoneAndRefill`). Doing them
+in the wrong order fails loudly: a recovery of a pending head is refused,
+naming the halt that must come first, and a recovery of a halt for
+reconfiguration is refused until the drainer declares a changed
+configuration.
+
+**Remaining.** One call that requests the halt, waits for the wedge event
+the drainer appends when it honours it, and recovers. It cannot be one
+transaction, because it waits out any send in flight; it needs a bound on
+the wait, and a defined outcome when the destination has no head (the
+request stays open) or another operator acts in between.

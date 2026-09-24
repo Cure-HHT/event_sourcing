@@ -242,12 +242,13 @@ same conformance harness:
   create the tables and holds exactly the privileges of
   `postgresRuntimeRoleGrants`, under which every library operation but
   provisioning works (`EVS-DEV-postgres-backend/K`). The queue table
-  carries a database guard that refuses every change outside the shapes of
-  the library's own writes, whatever role makes it
-  (`EVS-DEV-destination-drain/S`).
-  Several processes may share one database: one delivery cycle drains it,
-  holding the drain lock on the backend's lock session, and the others
-  stand by (`EVS-PRD-destinations/V`).
+  carries a database guard that, while it is in place (the schema owner
+  can remove it), refuses every change outside the shapes of the library's
+  own writes, whatever role makes it (`EVS-DEV-destination-drain/S`).
+  Several processes may share one database: one delivery cycle commits its
+  queue changes, holding the drain lock on the backend's lock session, and
+  the others stand by (`EVS-PRD-destinations/V`); the lock reaches as far
+  as that session is one server session of the database.
 
 Builds that share one database register their data generation (the
 data-format major and each entry type's major) with an
@@ -274,7 +275,8 @@ may end its own sessions, which the backend checks where it can when it
 opens; the browser's lock manager, trusted to grant, report and release
 locks as the Web Locks API specifies, on which the drain lock of a
 browser database rests too; and, outside the browser, a Sembast
-database file opened by one isolate of one process.
+database file opened by one isolate of one process
+(`spec/roadmap/storage.md` records how each could be checked).
 
 The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
@@ -371,14 +373,23 @@ For browser/desktop clients talking to a server that owns the log, the
 sibling **`reaction`** package bridges the wire (HTTP + WebSocket) while
 keeping consumer code source-identical to the in-process case. See the
 guide's "Cross-process client/server deployments" chapter and
-`spec/reaction-remote.md`.
+`spec/reaction-remote.md`. Several server processes may share one
+database; the guide's "Several processes sharing one database" covers
+delivery (one drainer, the others stand by), deployment requirements,
+versions, start-up probes, and halting, recovering and rebuilding a
+destination.
 
 ## Examples
 
 - `example_action_permissions/` — a `shelf` HTTP server + Flutter client
   exercising the full action/permission/scope/idempotency surface; the
-  canonical wiring reference (`lib/server/bootstrap.dart`).
-- `example/` — a dual-pane sync/ingest demo.
+  canonical wiring reference (`lib/server/bootstrap.dart`). On Postgres it
+  provisions the schema as a separate step, listens before its event store
+  opens (`/livez`, `/health`), starts a delivery cycle to a demo
+  destination, serves operator routes to halt, cancel and recover
+  delivery, and runs as several instances on one database.
+- `example/` — a dual-pane sync/ingest demo, with the wedged-state view,
+  operator halts, recovery and a drainer reconfiguration.
 
 ## Running tests
 

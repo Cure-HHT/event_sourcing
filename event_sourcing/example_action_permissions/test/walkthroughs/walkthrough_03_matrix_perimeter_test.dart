@@ -103,8 +103,8 @@ void main() {
     test(
       'Admin trying RequestHelp -> authorization_denied (Admin lacks help.ask)',
       () async {
-        // Admin only has users.provision in our seed. help.ask is granted
-        // only to GreenTeam and BlueTeam.
+        // Admin has users.provision and delivery.operate in our seed;
+        // help.ask is granted only to GreenTeam and BlueTeam.
         final resp = await harness.dispatch(
           actionName: 'RequestHelpAction',
           rawInput: <String, Object?>{'message': 'help me'},

@@ -67,7 +67,7 @@ void main() {
             isEmpty,
           );
           // Seed events ARE present: matrix grants + user provisioned + system bootstrap.
-          expect(s2.matrixGrants, hasLength(9));
+          expect(s2.matrixGrants, hasLength(10));
           expect(s2.directory, hasLength(4));
           // Idempotency cache empty.
           expect(s2.idempotency, isEmpty);

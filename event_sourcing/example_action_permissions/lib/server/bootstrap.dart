@@ -5,6 +5,7 @@
 //   every dispatch denies.
 
 import 'package:action_permissions_demo/server/action_catalog.dart';
+import 'package:action_permissions_demo/server/log_destination.dart';
 import 'package:action_permissions_demo/server/user_directory.dart';
 import 'package:action_permissions_demo/server/user_directory_materializer.dart';
 import 'package:action_permissions_demo/server/user_directory_seed_applier.dart';
@@ -18,6 +19,7 @@ class DemoServerComponents {
     required this.dispatcher,
     required this.eventStore,
     required this.destinations,
+    required this.deliveryDestination,
     required this.directory,
     required this.policy,
     required this.idempotencyStore,
@@ -32,6 +34,12 @@ class DemoServerComponents {
   /// database, and a server whose cycle cannot take the drain lock stands
   /// by until it can.
   final DestinationRegistry destinations;
+
+  /// The demo destination every instance registers: it delivers batches to
+  /// the server log. Every process that may drain registers the same
+  /// destinations, because delivery uses the destinations registered in the
+  /// process that drains.
+  final LogDestination deliveryDestination;
   final UserDirectory directory;
   final AuthorizationPolicy policy;
 
@@ -50,6 +58,17 @@ class DemoServerComponents {
   final List<String> policyErrors;
 }
 
+/// The permission the operator routes under `/demo/delivery/` require. It is
+/// granted in the permissions seed like every other demo permission, so the
+/// grant is an event in the log, and the routes ask the authorization policy
+/// for it.
+const Permission deliveryOperatePermission = Permission('delivery.operate');
+
+/// The start date the demo destination is activated with. Every instance
+/// sets the same date when the database has none, so two instances booting
+/// together agree on it.
+final DateTime logDestinationStartDate = DateTime.utc(2026, 1, 1);
+
 /// Bootstrap a fresh demo server over a caller-supplied [backend] and
 /// [idempotencyStore]. The caller decides which concrete persistence
 /// layer to use (Sembast in-memory / on-disk, Postgres, etc.) and owns
@@ -59,12 +78,26 @@ class DemoServerComponents {
 /// `metadata.provenance[0]` of every appended event (see
 /// `Source.identifier`). Production callers persist a UUIDv4 across boots;
 /// tests can pass any UUID-shaped string.
+///
+/// [deliveryLog] receives one line per batch the demo destination delivers
+/// (the server passes its standard output). [onBootProgress] observes the
+/// boot of the event store (see `EventStore.open`): it must only record.
+/// [entryTypeVersions] replaces the registered version of the named demo
+/// entry types; a test uses it to play a build that raises a major.
+/// [deliveryDestination] replaces the demo destination (a test passes one
+/// whose sends it controls); [deliveryLog] is then unused.
 Future<DemoServerComponents> bootstrapDemoServer({
   required StorageBackend backend,
   required IdempotencyStore idempotencyStore,
   required String permissionsYaml,
   required String usersYaml,
   required String installIdentifier,
+  void Function(String line)? deliveryLog,
+  void Function(BootProgress progress)? onBootProgress,
+  @visibleForTesting
+  Map<String, EntryTypeVersion> entryTypeVersions =
+      const <String, EntryTypeVersion>{},
+  @visibleForTesting LogDestination? deliveryDestination,
 }) async {
   // 1. Build the action registry up front so we can pass its declared
   //    permissions to the seed validator. The directory the
@@ -92,6 +125,8 @@ Future<DemoServerComponents> bootstrapDemoServer({
     classes: const <ScopeClassSpec>[ScopeClassSpec(name: 'site')],
     projectionLookup: (_) => null,
   );
+  final destination =
+      deliveryDestination ?? LogDestination(sink: deliveryLog ?? (_) {});
   final datastore = await bootstrapEventStore(
     backend: backend,
     source: Source(
@@ -99,11 +134,32 @@ Future<DemoServerComponents> bootstrapDemoServer({
       identifier: installIdentifier,
       softwareVersion: '0.1.0+1',
     ),
-    entryTypes: _demoEntryTypes,
-    destinations: const <Destination>[],
+    entryTypes: <EntryTypeDefinition>[
+      for (final d in _demoEntryTypes)
+        entryTypeVersions.containsKey(d.id)
+            ? EntryTypeDefinition(
+                id: d.id,
+                registeredVersion: entryTypeVersions[d.id]!,
+                name: d.name,
+              )
+            : d,
+    ],
+    destinations: <Destination>[destination],
     projections: demoProjections,
+    onBootProgress: onBootProgress,
   );
   final eventStore = datastore.eventStore;
+
+  // 2c. Activate the demo destination once: the first instance to boot on a
+  //     database records the start date, and every later boot finds it.
+  final schedule = await datastore.destinations.scheduleOf(logDestinationId);
+  if (schedule.startDate == null) {
+    await datastore.destinations.setStartDate(
+      logDestinationId,
+      logDestinationStartDate,
+      initiator: const AutomationInitiator(service: 'demo_server_bootstrap'),
+    );
+  }
 
   // 2b. Wire the in-memory UserDirectory to the substrate's reactive stream.
   //     The subscribe<StoredEvent> call delivers a Delta for every
@@ -141,7 +197,10 @@ Future<DemoServerComponents> bootstrapDemoServer({
   //    permission references a registered scopeClass.
   final policyBootstrap = await bootstrapActionPermissions(
     eventStore: eventStore,
-    declaredPermissions: registry.allDeclaredPermissions,
+    declaredPermissions: <Permission>{
+      ...registry.allDeclaredPermissions,
+      deliveryOperatePermission,
+    },
     scopeClassRegistry: scopeClassRegistry,
     yamlSource: permissionsYaml,
   );
@@ -211,6 +270,7 @@ Future<DemoServerComponents> bootstrapDemoServer({
     dispatcher: dispatcher,
     eventStore: eventStore,
     destinations: datastore.destinations,
+    deliveryDestination: destination,
     directory: directory,
     policy: policyBootstrap.policy,
     idempotencyStore: idempotencyStore,

@@ -14,13 +14,19 @@ names, frozen semantics).
   canonicalization (the headline roadmap item).
 - `reaction.md` — reaction layer: reconnect optimizations,
   observability, pagination, validators, adapters.
-- `storage.md` — storage backends: reactive Postgres subscribe,
-  pooling, SQL-native view rows, additional backends, a run-time barrier
-  on internal storage members, a browser tab whose database handle
-  cannot commit.
+- `storage.md` — storage backends: reactive Postgres subscribe and the
+  drainer's wake-up, pooling, SQL-native view rows, additional backends, a
+  run-time barrier on internal storage members, a browser tab whose
+  database handle cannot commit, verifying the inputs the generation
+  guard and the drain lock trust.
 - `permissions.md` — permission-model extensions.
 - `projections.md` — projection/materializer primitives; views that
-  catch up with the log whatever their interest.
+  catch up with the log whatever their interest; snapshot promotion and
+  view catch-up outside the boot transaction.
 - `sync.md` — sync/destination layer: inbound tombstone propagation,
-  detecting undeclared delivery-configuration changes.
+  detecting undeclared delivery-configuration changes, a recovery that
+  skips the wedged item, rebuilding a destination in one call.
+- `versions.md` — versions and the data generation: the appending library
+  version on every event, projection specifications in the data
+  generation, reading an older data-format major.
 - `authentication.md` — substrate-level authentication closure.

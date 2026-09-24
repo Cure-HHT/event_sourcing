@@ -3,6 +3,10 @@
 //   the conformance harness alongside the sembast flavor in
 //   demo_routes_test.dart.
 //
+// The operator routes under /demo/delivery/ (delivery_routes_test.dart) run
+// here against Postgres too: status, halt, cancellation, recovery, the 409
+// refusals and the 403 with nothing written.
+//
 // Gated on PG_TEST_URL. Drops + recreates the `public` schema in the
 // per-test factory so each call returns a deterministic empty database
 // — same discipline as `postgres_integration_test.dart` and the
@@ -17,6 +21,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:postgres/postgres.dart';
 
+import 'delivery_routes_test.dart' show runDeliveryRoutesTests;
 import 'demo_routes_test.dart' show runDemoRoutesTests;
 import 'support/demo_bootstrap.dart';
 
@@ -52,4 +57,5 @@ void main() {
   }
 
   runDemoRoutesTests(factory, label: 'postgres');
+  runDeliveryRoutesTests(factory, label: 'postgres');
 }

@@ -31,6 +31,12 @@ scenario, mirrored by an integration test under `test/walkthroughs/`.
   cache invalidation on identity change.
 - Identity decoupling: switching the active `userId` changes the
   effective permission set without restarting the server.
+- Delivery to a destination: the server starts a delivery cycle, and a
+  demo destination writes every batch it delivers to the server log.
+  Operator routes halt, cancel and recover delivery, and several servers
+  on one Postgres database share it: one drains, the others stand by.
+- Start-up probes: the server listens before its event store opens, and
+  answers `/livez` and `/health` during a long boot.
 
 ## Architecture
 
@@ -77,9 +83,12 @@ example_action_permissions/
     server/
       actions/                      # 7 demo actions
       action_catalog.dart
+      boot_health.dart              # /livez and /health during the boot
       bootstrap.dart                # wires the in-memory pipeline
       demo_idempotency_store.dart
-      demo_routes.dart              # HTTP route table
+      demo_routes.dart              # HTTP route table, operator routes
+      demo_server_host.dart         # listens before the event store opens
+      log_destination.dart          # demo destination: delivers to the log
       demo_state_projection.dart
       inspect_snapshot.dart
       user_directory.dart
@@ -99,6 +108,7 @@ example_action_permissions/
     shared/
       wire_types.dart               # request/response/snapshot shapes
   tool/
+    provision.dart                  # provision the Postgres schema
     run_demo.sh                     # start server + client
     stop_demo.sh                    # graceful shutdown
     permissions.yaml                # demo matrix seed
@@ -110,7 +120,9 @@ example_action_permissions/
       test_support/
         demo_server_harness.dart
       walkthrough_01..10_*.dart
+    boot_health_test.dart           # probes across a boot
     bootstrap_test.dart
+    delivery_routes_test.dart       # operator routes
     demo_routes_test.dart
     demo_state_projection_test.dart
     user_directory_*_test.dart
@@ -223,6 +235,13 @@ For production deployments against a managed Postgres, omit
 `--postgres-ssl-mode` to use the secure-by-default `require` setting, or
 pass `--postgres-ssl-mode=verifyFull` for full certificate validation.
 
+The compose file creates one role, `evs`, a superuser that both provisions
+the schema and serves: a development setup only. A deployment provisions as
+the role that owns the schema and runs its servers as a runtime role that
+neither owns nor can create the tables and holds exactly the privileges of
+`postgresRuntimeRoleGrants` (see the library guide, "Open a storage
+backend", and `spec/postgres-backend.md`, "Roles and privileges").
+
 Each server holds the library's generation locks on one dedicated lock
 connection. It opens it to `--postgres-lock-url` when given, and to
 `--postgres-url` otherwise; it must be a real server session -- a direct
@@ -231,6 +250,134 @@ servers may share the database. A server whose build is of another
 data-format major, or registers another major of an entry type, than a
 server already running exits with the guard's message: such a build is
 deployed stop-then-start.
+
+## Start-up probes
+
+The server binds its port before it opens the event store, then boots:
+
+- `GET /livez` answers 200 as soon as the process listens.
+- `GET /health` answers 503 with `{status, phase, percent, eta_s,
+  elapsed_s}` while the event store boots (`phase` is `checks`,
+  `promotion`, `catchUp` or `complete`, from the boot's progress reports;
+  `percent` and `eta_s` are null while a phase counts no units), and 200
+  with `{"status": "ready"}` once the bootstrap has returned and the routes
+  are served. Every other route answers 503 until then.
+
+Point a platform's startup and liveness probes at `/livez` and its
+readiness probe at `/health`. A boot that promotes a large view or
+re-derives one over a long log can take minutes, and a boot killed part-way
+rolls back and pauses the database's writes again when it restarts; the
+liveness probe keeps it alive, and the readiness probe keeps traffic away
+until it is done. During `checks`, which also covers the wait for another
+instance's boot, `elapsed_s` comes from the server's own clock.
+
+Readiness also drops when the instance can no longer commit to its
+database. A Postgres backend whose generation is no longer admitted (its
+lock session was lost and a build of another major registered meanwhile) is
+fenced: every transaction throws `GenerationFencedException`, and the
+delivery cycle stops for good. The server then marks itself failed (any
+probe still answered reads 503), stops listening and exits with status 1,
+so the platform's probes fail, traffic stops reaching it and the platform
+replaces it. A boot the library refuses ends the same way.
+
+## Delivery: the demo destination and the operator routes
+
+The server registers one destination, `server_log`, which writes every
+batch it delivers to the server's standard output (`delivery: server_log
+<- {...}`), and starts a delivery cycle over it. It receives the demo's
+own events and the library's system events, so an operator action shows up
+in the log as the halt, wedge and recovery events the library appends. The
+server logs its delivery cycle's state (`running`, `standby`, `stopped`)
+at start and then as sampled every 500 ms, so a lock lost and re-acquired
+within one sample can go unlogged; the drain epoch in the status route's
+`heartbeat` counts every acquisition.
+Set `DEMO_CONFIGURATION_VERSION` to the deployment's revision identifier:
+the cycle records it as part of the configuration it declares, which is
+what lets a halt for reconfiguration be recovered once a revision with
+another identifier drains.
+
+Operator routes under `/demo/delivery/` require the `delivery.operate`
+permission, which the permissions seed grants to `Admin`: the grant is an
+event in the log, and each route asks the authorization policy for it for
+the caller's `userId` (a query parameter for `GET`, a body field for
+`POST`). A caller without it gets 403 and nothing is written; a registry
+refusal comes back as 409 with the registry's message, and a body that is
+not a JSON object, or a field of the wrong type, as 400. The caller is
+recorded as the initiator of the halt, cancellation and recovery events.
+
+| Route | Body | Does |
+| --- | --- | --- |
+| `GET /demo/delivery/status?userId=` | | The persisted delivery status (the drainer's declaration and heartbeat, each destination's schedule, open halt request, wedge, refill guard and unserved reason) and the rows of the default destination-wedges view. The two are separate reads, so an operation that commits between them can show in one and not the other. |
+| `POST /demo/delivery/halt` | `userId`, `destinationId`, `purpose` (`pause` or `reconfigure`) | Requests a halt; the drainer honours it by wedging the queue head. |
+| `POST /demo/delivery/cancel-halt` | `userId`, `destinationId` | Cancels an open halt request. |
+| `POST /demo/delivery/recover` | `userId`, `destinationId`, `rowId` | Recovers the wedged head (`tombstoneAndRefill`); refused for a pending head. |
+| `POST /demo/delivery/refuse-next` | `userId` | Demo fault injection, not an operator control: simulates a receiver refusal of the next send of this process's demo destination, which wedges the head with cause `permanent_refusal` and names no operator. Only the draining process accepts it; any other answers 409 and arms nothing. An operator who wants a wedge attributed to them requests a halt. |
+
+A walkthrough, with the server on port 8080:
+
+```text
+curl -s 'localhost:8080/demo/delivery/status?userId=admin-user'
+curl -s -X POST localhost:8080/demo/delivery/halt \
+  -d '{"userId":"admin-user","destinationId":"server_log","purpose":"pause"}'
+# the next event wedges the head; its row appears under "wedges"
+curl -s 'localhost:8080/demo/delivery/status?userId=admin-user'
+curl -s -X POST localhost:8080/demo/delivery/recover \
+  -d '{"userId":"admin-user","destinationId":"server_log","rowId":"<row_id>"}'
+```
+
+## Several servers on one database
+
+Start two servers against the same provisioned database, on two ports:
+
+```text
+dart run bin/server.dart --backend=postgres \
+  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-ssl-mode=disable --port=8080
+dart run bin/server.dart --backend=postgres \
+  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-ssl-mode=disable --port=8081
+```
+
+The first logs `delivery cycle: running` and delivers; the second logs
+`delivery cycle: standby`. At most one delivery cycle commits queue changes
+for a database at a time, as far as the drain lock on each server's lock
+connection reaches: the lock rests on that connection being one server
+session of the database, a deployment property the library checks where it
+can. Both serve every route: a halt requested through the second
+server (`POST localhost:8081/demo/delivery/halt`) is honoured by the first,
+the wedge shows in either server's status, and a recovery through either
+server rewinds the queue, which the drainer then refills and delivers. Stop the first server (`Ctrl+C`): it closes its
+delivery cycle, which releases the lock, and the second logs `delivery
+cycle: running` and delivers from then on, without a restart.
+
+What a deployment of such servers needs, stated as properties:
+
+- Every process that starts a delivery cycle has CPU while it has no
+  requests to serve: the cycle's cadence and heartbeat are timers in that
+  process, and the events and halt requests other processes commit reach the
+  drainer at its next pass. At least one such process runs at all times.
+- A process that receives no traffic (a canary) either starts no delivery
+  cycle, or may become the drainer and fill the queues under the
+  configuration it declares.
+- Every instance registers the same destinations, because delivery uses the
+  destinations registered in the process that drains.
+- The lock connection is a direct connection or a session-mode proxy, never
+  a transaction-mode pooler.
+- Revisions with the same data-format major and the same entry-type majors
+  run side by side and can be rolled back to. A major bump is deployed
+  stop-then-start: a server of a conflicting build exits at boot with the
+  guard's message (`IncompatibleGenerationException`) while another runs,
+  and opens once every server of the old build has stopped.
+
+`test/drain_lock_postgres_test.dart` runs two server bootstraps in two
+isolates on one database (one drains, one stands by, a halt and a recovery
+through the standing-by one, the hand-over when the drainer closes), and
+`test/generation_guard_postgres_test.dart` plays the stop-then-start step of
+a major bump. `test/server_process_postgres_test.dart` runs the server
+itself: the probes while its boot waits, then a second server standing by
+and taking over when the first gets SIGTERM.
+
+## The Postgres integration test
 
 The integration test under `test/postgres_integration_test.dart` is the
 canonical end-to-end check: it boots the demo server in-process against

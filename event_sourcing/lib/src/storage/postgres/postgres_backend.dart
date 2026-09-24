@@ -200,8 +200,11 @@ class PostgresBackend extends StorageBackend {
   /// connection for its lifetime, the lock session, on which it holds the
   /// incompatible-generation guard's locks and, while a delivery cycle over
   /// one of its event stores drains, the drain lock of the database: at
-  /// most one process drains a database, and a delivery cycle in any other
-  /// process stands by (`SyncCycle.start`). The deployment requirements this
+  /// most one process's delivery cycle commits queue changes for a
+  /// database, as far as the lock session is one server session of it, and
+  /// a delivery cycle in any other process stands by (`SyncCycle.start`,
+  /// `EVS-PRD-destinations/V`). The
+  /// deployment requirements this
   /// sets: a process that starts a delivery cycle needs CPU while it has no
   /// requests to serve (the cycle's cadence and heartbeat are timers in
   /// that process), and a deployment keeps at least one such process
@@ -333,9 +336,9 @@ class PostgresBackend extends StorageBackend {
   /// [postgresRuntimeRoleGrants], under which every other library operation
   /// works. The provisioned tables include the queue table's guard, which
   /// refuses every change to a queue item outside the shapes of the
-  /// library's own writes, whatever role makes it; it cannot tell a
-  /// hand-written change of a legal shape from the library's own, and only
-  /// the owner can drop it.
+  /// library's own writes, whatever role makes it, while it is in place; it
+  /// cannot tell a hand-written change of a legal shape from the library's
+  /// own, and the schema owner can remove it.
   ///
   /// The deployment creates the schema (the first schema on the connecting
   /// role's search path) and its grants; `provision` creates the tables,
@@ -346,7 +349,9 @@ class PostgresBackend extends StorageBackend {
   ///
   /// Provisioning takes the same exclusive boot lock as `EventStore.open`,
   /// on a lock session opened and checked as [open] checks its own (so
-  /// [lockUrl] carries the same requirement), and holds it for its whole
+  /// [lockUrl] carries the same requirement: the instances hold the
+  /// generation locks and the drain lock on that session, and the one-drainer
+  /// rule, `EVS-PRD-destinations/V`, rests on it), and holds it for its whole
   /// run: provisionings and booting instances of one database run one at a
   /// time, and a second provisioning finds the schema at its version and
   /// writes nothing. It refuses, writing nothing, with

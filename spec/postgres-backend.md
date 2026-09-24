@@ -6,7 +6,7 @@ The substrate's persistence contract is exposed behind the abstract
 `StorageBackend` interface. Two reference implementations ship in-tree:
 
 - `SembastBackend` — mobile / Flutter deployments (sembast-on-disk).
-- `PostgresBackend` — server-side deployments (Cloud SQL / managed Postgres).
+- `PostgresBackend` — server-side deployments (self-managed or managed Postgres).
 
 Both pass the same backend-agnostic conformance harness. This document is
 the cross-system narrative for the `PostgresBackend` design: the choices
@@ -26,8 +26,8 @@ serves three purposes:
   Dart-supported runtime. Postgres is the first concrete server-side
   backend to prove this for server deployments.
 - **Unblocks server-side deployment of the full substrate.** A
-  server-side deployment needs a backend it can actually deploy on
-  Cloud SQL. Sembast on a server is technically possible but
+  server-side deployment needs a backend it can actually deploy on a
+  managed Postgres service. Sembast on a server is technically possible but
   operationally awkward.
 - **Hardens the `StorageBackend` contract.** Having two impls that both
   pass the conformance harness verifies that the abstraction boundary

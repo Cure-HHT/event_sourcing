@@ -30,6 +30,7 @@ roles:
 grants:
   Admin:
     - users.provision
+    - delivery.operate
   GreenTeam:
     - help.ask
     - notes.write.green

@@ -32,8 +32,8 @@ void runDemoStateProjectionTests(
         final projection = PollingDemoStateProjection(components: components);
         final snap = await projection.snapshot();
 
-        // Matrix has 9 grants (1 Admin + 4 Green + 4 Blue).
-        expect(snap.matrixGrants, hasLength(9));
+        // Matrix has 10 grants (2 Admin + 4 Green + 4 Blue).
+        expect(snap.matrixGrants, hasLength(10));
         expect(
           snap.matrixGrants.map((g) => '${g.role}:${g.permission}').toSet(),
           contains('GreenTeam:help.ask'),

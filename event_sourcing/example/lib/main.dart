@@ -160,6 +160,7 @@ Future<_PaneRuntime> _bootstrapPane({
   final appState = AppState(
     registry: datastore.destinations,
     policyNotifier: policyNotifier,
+    eventStore: datastore.eventStore,
   );
 
   try {

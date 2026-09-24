@@ -476,12 +476,23 @@ configure. The lock role must be allowed to end its own sessions (as the
 role that owns them is): when the library declares a lock session lost, it
 ends the old server session before registering again.
 
-Several server processes may share one database. Each registers its build's
+Several server processes may share one database. Only one of them drains
+its destinations: each starts a delivery cycle, one holds the database's
+drain lock on its lock session and delivers, and the others stand by and
+take over when it stops (`EVS-PRD-destinations/V`; see "Several processes
+sharing one database" under "Cross-process client/server deployments").
+Each registers its build's
 data generation -- its data-format major and each registered entry type's
 major -- when its event store opens, and an open is refused
 (`IncompatibleGenerationException`, nothing written) while a live instance
 of a conflicting build holds a different major; builds that differ only in
 minors, or in which entry types they register, run side by side.
+
+A Sembast database file outside the browser is opened by one isolate of
+one process: the generation guard has nothing to guard there, and the
+drain lock excludes a second delivery cycle over the same open database
+handle in that isolate. Two processes, or two isolates, that open one file
+are outside what the library supports.
 
 In the browser the tabs of an origin share one IndexedDB database. The
 generation guard and the delivery cycle's drain lock both use the
@@ -569,7 +580,7 @@ register them. Then add your own.
 ### 5. Open the event store
 
 ```dart
-final datastore = await bootstrapAppendOnlyDatastore(
+final datastore = await bootstrapEventStore(
   backend: backend,
   source: Source(
     hopId: 'server-1',
@@ -581,18 +592,18 @@ final datastore = await bootstrapAppendOnlyDatastore(
       id: 'role_permission_grant',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'Role-permission grant',
-      materialize: false,
     ),
     EntryTypeDefinition(
       id: 'user_role_scope',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'User-role-scope assignment',
-      materialize: false,
     ),
     // ... your app's entry types
   ],
-  destinations: const <Destination>[],
+  destinations: <Destination>[myAppOutboundDestination],
   projections: projections,
+  onBootProgress: bootHealth.record,   // optional: see "Start-up and
+                                       // readiness probes"
 );
 final eventStore = datastore.eventStore;
 ```
@@ -607,6 +618,17 @@ definition). The
 stamped on every event of that type; raising it later signals a schema
 change (a minor to add a field with a default, a major to rename or drop
 one).
+
+`onBootProgress` is optional (`bootHealth` above stands for the server's
+own health tracker). The open reports its boot to it -- the
+phase (`BootPhase.checks`, `promotion`, `catchUp`, `complete`), the units
+of the phase done and its total, and the time since the open began -- so a
+server can answer a health probe while a long boot runs (see "Start-up and
+readiness probes" below). The observer runs synchronously inside the boot,
+and on Postgres the boot holds every instance's appends back while it runs,
+so it must only record: its future is not awaited, what it throws is
+logged, and a call from it into an event store while the boot runs throws
+`StateError`.
 
 ### 6. Apply the permissions seed
 
@@ -667,6 +689,26 @@ final dispatcher = bootstrapAuditedActions(
 You hand the dispatcher to whatever takes input from outside — your
 HTTP routes, your CLI, your test harness. It's the single entry point
 for any code that mutates state.
+
+### 9. Start the delivery cycle
+
+```dart
+final cycle = await SyncCycle.start(
+  registry: datastore.destinations,
+  configurationVersion: revisionId,    // the deployment's revision
+);
+// ... serve ...
+await cycle.close();
+```
+
+The delivery cycle fills each registered destination's queue from the log
+and sends it, in log order. At most one cycle drains a database: a second
+`start` over the same database in one isolate throws `StateError`, and a
+cycle in another process or tab stands by until the drain lock is free
+(`EVS-PRD-destinations/V`). Every append and every committed registry
+operation wakes it, and it runs a pass at least every `cadence` (15 s by
+default). "Several processes sharing one database" below covers
+deployment, halts and recovery.
 
 ## Defining an action
 
@@ -1257,8 +1299,8 @@ design:
 
 - A `Destination` is the outbound transport for forwarding events to
   another installation. You register destinations at composition time
-  by passing them to `bootstrapAppendOnlyDatastore`; the substrate
-  enqueues outbound events through them.
+  by passing them to `bootstrapEventStore`; the delivery cycle enqueues
+  outbound events through them.
 - On the receiving side, the substrate exposes an ingest entry point
   that accepts a `BatchEnvelope` of events from a peer, verifies the
   hash chain against what's stored, extends the provenance chain, and
@@ -1713,6 +1755,268 @@ policy queries are sub-millisecond and subscribe messages are
 infrequent. Instead the watcher reacts to permission events and sends
 the appropriate wire signal; it does not keep a live copy of each
 Principal's `EffectiveAuthorization`.
+
+### Several processes sharing one database
+
+A server deployment often runs several processes against one Postgres
+database: instances behind a load balancer, a canary beside the serving
+revision, a replacement starting while the old instance stops. Each opens
+its own backend and event store and serves requests. Delivery to
+destinations is different: at most one delivery cycle commits queue
+changes for a database at a time (`EVS-PRD-destinations/V`), within what
+the backend's drain lock supports. The drain lock rests on deployment
+properties the library does not audit: on Postgres, a lock session that is
+one server session of the database (below); in the browser, Web Locks;
+outside the browser, one opener of a Sembast file. A send already in
+flight when a drainer loses its lock can still arrive (see "Fencing, and
+the late duplicate").
+
+#### One drains, the others stand by
+
+Every process may start a delivery cycle with `SyncCycle.start`. The
+backend grants the database's drain lock to one of them, which runs
+(`SyncCycleState.running`); every other cycle stands by
+(`SyncCycleState.standby`), requests the lock again every cadence, and
+takes over when it is released -- when the drainer closes its cycle,
+stops, or loses its lock -- without a restart. `start` never fails because
+another process drains, nor because the database is briefly unreachable:
+such a cycle starts in standby. A lock connection that is misconfigured
+fails `start` with `DrainLockConfigurationException`. A second cycle over
+the same database in one isolate is a programming error and throws
+`StateError`.
+
+On Postgres the drain lock is a session advisory lock whose key derives
+from the database, the schema and the database identity, held on the
+backend's lock session: the dedicated connection each `PostgresBackend`
+keeps for its lifetime, to `lockUrl` when given and to `url` otherwise.
+That connection must be one real server session: a direct connection, or
+a session-mode proxy that resets sessions on release. A transaction-mode
+pooler is not supported for it (the pool's own connections may use one).
+`open` checks the session: it sets a random setting and reads it back with
+the server process id in three separate statements, compares the database
+and schema the session reaches with the pool's, and checks that the
+session sees an advisory lock a pool connection takes, so both reach one
+server; a mismatch throws `LockSessionConfigurationException`. The check
+can miss a pooler that happens to return the same server connection every
+time, so the requirement stands on its own. The library sets server-side
+TCP keepalives and no idle-session timeout on the lock session; those
+cover only the server's side of the connection, and a proxy between the
+process and the database has client-side timeouts of its own for the
+deployment to configure. Every statement on the lock session is bounded
+by `lockQueryTimeout`, and the backend probes it every `lockHeartbeat`: a
+failed probe declares the session lost, the backend opens a replacement,
+ends the old server session if it still holds a library lock (so the lock
+role must be allowed to end its own sessions), and registers its build's
+generation again; a delivery cycle whose lock was lost returns to standby
+and takes the lock again.
+
+#### Fencing, and the late duplicate
+
+Each acquisition raises the database's drain epoch, and every transaction
+of the drainer that changes a queue -- the pass start, the fill, a halt
+honour, the fence before a send and every outcome -- first checks that its
+epoch is still the current one, and commits nothing otherwise. A drainer
+that lost its lock without knowing it (its lock session was ended while
+its process ran on) therefore records nothing more, and starts no further
+send once it detects the loss. What it cannot stop is a send already on
+the wire: that item may arrive at the receiver after the new drainer sent
+it again. Delivery is at-least-once, and a receiver deduplicates.
+
+#### What the other processes do
+
+A process whose cycle stands by, or that starts none, keeps its event
+store and registry and does everything but drain: it appends, sets
+destination dates, requests and cancels halts, recovers a wedged head and
+deletes a destination. Every registry operation acts on the persisted
+state of the database, whichever process runs it, and none enqueues:
+only the drainer's fill does. Its events and halt requests wake the
+drainer only through the drainer's cadence (15 s by default), and the
+cadence timer is armed again when a pass ends: they wait at most one
+cadence after the drainer's current pass ends, and a pass that sends a
+large backlog, or a send that hangs, holds them off for as long as it
+runs. A halt request that the drainer has seen is honoured before its next
+send. An append in the drainer's own process, and every registry
+operation there, wake it at once.
+
+Every process that may drain registers the same destinations, because
+delivery uses the destinations registered in the process that drains. A
+destination that the drainer does not register, that storage no longer
+knows, that another process registered again under the same id, or that
+a refill guard holds (below) is not filled or sent; its halt requests are
+still honoured. The drainer reports each such gap: `SyncCycle.unserved` in
+its own process, and `DestinationRegistry.readDeliveryStatus()` from any
+process, which also shows the drainer's declared configuration and
+heartbeat and each destination's open halt request, wedge and refill
+guard. The default destination-wedges view shows wedges only, not these
+gaps. Each registration appends a `destination_registered` event recording
+the configuration the registering process declared, and the latest
+registration's hard-delete opt-in is the one in effect.
+
+#### Deployment requirements
+
+Stated as properties, so that they hold wherever the processes run:
+
+- A process that starts a delivery cycle has CPU while it has no requests
+  to serve: the cycle's cadence and heartbeat are timers in that process.
+- At least one such process runs at all times; otherwise nothing drains
+  until one starts.
+- Every process registers the same destinations.
+- The lock connection is direct or a session-mode proxy, and the lock role
+  may end its own sessions.
+- A process that receives no traffic (a canary) either starts no delivery
+  cycle, or may become the drainer and fill the queues under the
+  configuration it declares; its configuration must then be acceptable to
+  fill with.
+
+At a switchover the new revision's processes stand by until the old
+revision's drainer stops and its lock frees; then one of them takes over.
+Provisioning a schema change for the new revision while the old one serves
+is safe (it takes the boot lock and refuses a minimum a live instance does
+not meet), and the schema changes of one release stay compatible with the
+revision beside it.
+
+#### Browser tabs
+
+In the browser the tabs of an origin share one IndexedDB database, and the
+same rule holds. The page must be a secure context (HTTPS or localhost),
+or `EventStore.open` and `SyncCycle.start` refuse. A tab of a conflicting
+build refuses to open while an older tab is open. One tab drains and the
+rest stand by; the drain lock follows the visible tab, so nothing drains
+while no tab of the origin is visible, and a page the browser freezes
+before it hands the lock over holds it until it is resumed or discarded
+(a liveness limit, not a safety one). Every tab registers the same
+destinations. "Open a storage backend" above has the details.
+
+#### Versions and deployment
+
+A build carries three kinds of version, and each decides something
+different:
+
+- The package version (`LibVersion.version`) is recorded in the log at
+  every open by a different build (`lib_version_changed`), for audit; it
+  decides nothing.
+- The data-format version (`LibVersion.dataFormat`, major.minor) is what
+  the library stores and sends. Builds of the same data-format major are
+  compatible: a newer or older one opens the database and the open is
+  recorded. Another major is refused (`DataFormatIncompatibleError`).
+- Each entry type's registered version (major.minor) decides how its
+  events fold. A minor step adds optional fields (its promoters may only be
+  `DefaultField`, or none); a rename or drop is a major step.
+
+Evolve compatibly: add an optional field as a minor step, and make a real
+reshape a new entry type that you append instead of the old one. Revisions
+whose data-format majors and entry-type majors agree can be canaried beside
+the serving revision, scaled, and rolled back to freely, and each open is
+recorded. A major bump -- a data-format major, or a rename or drop in an
+entry type -- is deployed stop-then-start, and the incompatible-generation
+guard enforces it: a new revision's open is refused
+(`IncompatibleGenerationException`, nothing written) while an instance of a
+conflicting build is connected, and once the new revision has booted, the
+old revision's next open is refused. Recovery after a major bump is a
+restore from a backup taken before the switch, or a roll-forward. A
+deployment pipeline can compare the new build's `LibVersion.dataFormat`
+major with the serving one's before it starts a canary. The lock-session
+requirement covers the guard's locks as well as the drain lock.
+
+A boot that promotes view rows or re-derives a view pauses every
+instance's appends while it runs, and `bootLockWait` must exceed the
+longest boot: "The library records its own version in the log" above has
+the details, and "Start-up and readiness probes" below keeps such a boot
+from being killed. After a restore from a backup, never forward the
+restored database's own events back to it; the same section says what a
+peer that does is refused with and how to recover its destination.
+
+#### Start-up and readiness probes
+
+A boot that promotes or re-derives views can take minutes, and a boot
+killed part-way rolls back and pauses the database's appends again when it
+restarts. A server therefore listens before it opens its event store and
+answers two probes, as the Postgres example server does
+(`event_sourcing/example_action_permissions/lib/server/boot_health.dart`):
+
+- `/livez` answers 200 as soon as the process listens. Point the
+  platform's startup and liveness probes at it, so a long boot is never
+  killed.
+- `/health` answers 503 with the boot's phase, the percentage of the phase
+  done and an estimate of the time left, from the reports of
+  `onBootProgress`, and 200 once the event store is open and the server
+  serves. Point the readiness probe at it, so no traffic arrives before
+  then. Readiness is the return of the bootstrap, not the boot's
+  `complete` report, which means only that the store opened.
+
+During `checks`, which also covers the wait for another instance's boot
+lock, no further report arrives, so the endpoint reads elapsed time from
+its own clock. The percentage and the estimate are approximate when a
+phase re-derives both aggregate and table views. The observer only
+records: it runs synchronously inside the boot (its own work delays the
+boot and, on Postgres, every instance's appends), and a call from it into
+an event store while the boot runs throws `StateError`.
+
+#### Halting, recovering and rebuilding a destination
+
+The drainer wedges a queue head when the receiver refuses it permanently
+or its retry budget runs out, and appends a `system.destination_wedged`
+event in the same transaction, recording the destination, the item, the
+cause and the attempt count (a fact in the log). Every event store folds
+the library's default destination-wedges view from the wedge events and
+the events that end a wedge: its default interpretation of which
+destinations are wedged now. A wedged head halts delivery on that
+destination until an operator recovers it.
+
+An operator halts a healthy destination with
+`DestinationRegistry.requestHalt(id, initiator: ..., purpose: ...)`. The
+request is an event naming the initiator; the drainer honours it before its next send by wedging the head
+itself (cause operator halt), so a head is never wedged while it is in
+delivery. A request on an empty queue stays open until a head exists; any
+wedge consumes an open request; `cancelHalt` withdraws one the drainer has
+not honoured yet.
+
+`tombstoneAndRefill(id, rowId, initiator: ...)` recovers a wedged head,
+recording the initiator on the recovery event: it tombstones the
+head, deletes the pending items behind it and rewinds the fill position
+below every event they carried, so the drainer's next fill enqueues those
+events again under the configuration it registers. It is refused on a
+pending head, which may be in delivery.
+
+To rebuild a destination's pending items under a new delivery
+configuration (a changed filter or transform):
+
+- The new configuration is still to be deployed: request a halt with
+  purpose `reconfigure`, deploy the new revision, then recover. The
+  recovery is refused while the drainer still declares the configuration
+  recorded when it honoured the halt, so the refill cannot run under the
+  old one. Once accepted, it leaves a refill guard: a drainer that declares
+  the halted configuration (an instance of the old revision taking the lock
+  during the rollout) does not fill the destination until one with another
+  configuration has refilled the rewound range, which removes the guard.
+  If the rollout is rolled back, so that every instance declares the halted
+  configuration again, restart the drainer with a changed
+  `configurationVersion`, or delete the destination.
+- The new configuration is already deployed: request a halt with purpose
+  `pause`, then recover.
+
+The drainer declares, per destination, the configuration the library can
+read (identifier, wire format, accumulation window, filter sets, whether
+the filter has a predicate) and `SyncCycle.start`'s `configurationVersion`.
+Change `configurationVersion` whenever code the library cannot read
+changes (transform, predicate or batching code); a deployment can pass its
+build or revision identifier. It is recorded in every wedge and recovery
+event, so it is an identifier, not free text.
+
+Moving a destination's start date earlier is refused while its head is
+wedged: recover first.
+
+Deleting a destination is refused while its queue head is pending, because
+it may be in delivery: halt first, and delete once the drainer has wedged
+the head. The deletion tombstones the wedged head, deletes the pending
+items and keeps every delivered, wedged and recovered item as the delivery
+record. The same id registered again starts a new registration.
+
+Delivery is at-least-once. A receiver sees an event again when a recovery
+rewinds below events that `sent` items above the rewind point already
+delivered, when a destination deleted and registered again refills events
+the earlier registration delivered, and when a send's outcome did not
+commit (the drainer lost its lock or stopped before recording it).
 
 ### Reading order from here
 

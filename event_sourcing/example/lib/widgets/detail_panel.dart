@@ -35,7 +35,7 @@ class _DetailPanelState extends State<DetailPanel> {
   @override
   void initState() {
     super.initState();
-    widget.appState.addListener(_onChange);
+    widget.appState.addListener(_onAppState);
     widget.policyNotifier.addListener(_onChange);
     _eventsSub = widget.backend.watchEvents().listen((_) {
       if (!mounted) return;
@@ -47,7 +47,7 @@ class _DetailPanelState extends State<DetailPanel> {
   @override
   void dispose() {
     _eventsSub?.cancel();
-    widget.appState.removeListener(_onChange);
+    widget.appState.removeListener(_onAppState);
     widget.policyNotifier.removeListener(_onChange);
     super.dispose();
   }
@@ -55,6 +55,14 @@ class _DetailPanelState extends State<DetailPanel> {
   void _onChange() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  void _onAppState() {
+    _onChange();
+    if (!mounted) return;
+    // A registry operation, or a restarted delivery cycle, changes the
+    // delivery status without always appending an event.
+    unawaited(_refresh());
   }
 
   Future<void> _refresh() async {
@@ -85,6 +93,24 @@ class _DetailPanelState extends State<DetailPanel> {
         }
       }
       final aggCount = events.map((e) => e.aggregateId).toSet().length;
+      // The pane's delivery cycle, and the database's persisted delivery
+      // status, which any process can read, draining or not.
+      final cycle = widget.appState.cycle;
+      final status = await widget.appState.readDeliveryStatus();
+      final drainer = status.drainer;
+      final heartbeat = status.heartbeat;
+      final unserved = <String>[
+        for (final e
+            in (cycle?.unserved ?? const <String, UnservedReason>{}).entries)
+          '${e.key} (${e.value.wire})',
+      ];
+      final drainerLine = drainer == null
+          ? 'none declared'
+          : 'epoch ${drainer.epoch}, '
+                'version ${drainer.configurationVersion ?? '-'}';
+      final heartbeatLine = heartbeat == null
+          ? 'none'
+          : 'epoch ${heartbeat.epoch} pass ${heartbeat.pass}';
       final text = <String>[
         'events:     ${events.length}',
         'aggregates: $aggCount',
@@ -93,12 +119,29 @@ class _DetailPanelState extends State<DetailPanel> {
           'wedged dst: ${wedged.map((s) => s.destinationId).join(", ")}',
         'wedges view (this database): ${_listOrNone(local)}',
         'wedges view (peers):         ${_listOrNone(peers)}',
+        '',
+        'delivery cycle: ${cycle?.state.name ?? 'not started'}',
+        'unserved: ${_listOrNone(unserved)}',
+        'drainer: $drainerLine',
+        'heartbeat: $heartbeatLine',
+        for (final e in status.destinations.entries) _destinationLine(e),
       ].join('\n');
       if (!mounted) return;
       setState(() => _summary = text);
     } catch (_) {
       // Non-fatal.
     }
+  }
+
+  static String _destinationLine(
+    MapEntry<String, DestinationDeliveryStatus> e,
+  ) {
+    final s = e.value;
+    final halt = s.openHaltRequest?.purpose.wire ?? '-';
+    final wedge = s.wedge?.cause.wire ?? '-';
+    final guard = s.refillGuard == null ? '-' : 'set';
+    return '  ${e.key}: halt $halt, wedge $wedge, refill guard $guard, '
+        'unserved ${s.unserved?.wire ?? '-'}';
   }
 
   static String _listOrNone(List<String> items) =>

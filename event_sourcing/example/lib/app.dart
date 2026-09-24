@@ -14,6 +14,7 @@ import 'package:event_sourcing_demo/widgets/materialized_panel.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:event_sourcing_demo/widgets/sync_policy_bar.dart';
 import 'package:event_sourcing_demo/widgets/top_action_bar.dart';
+import 'package:event_sourcing_demo/widgets/wedges_panel.dart';
 import 'package:flutter/material.dart';
 
 const double _kMinColumnWidth = 80;
@@ -23,6 +24,7 @@ const Map<String, double> _kDefaultColumnWidths = <String, double>{
   'materialized': 200,
   'events': 280,
   'audit': 320,
+  'wedged': 300,
 };
 const double _kDefaultFifoColumnWidth = 260;
 
@@ -232,6 +234,15 @@ class _DemoPaneState extends State<DemoPane> {
         ),
       ),
       _divider('audit', fallback: 320),
+      SizedBox(
+        width: _widthOf('wedged', fallback: 300),
+        child: WedgesPanel(
+          backend: widget.backend,
+          databaseId: widget.datastore.eventStore.databaseId,
+          appState: widget.appState,
+        ),
+      ),
+      _divider('wedged', fallback: 300),
       for (final dest in widget.appState.destinations) ...<Widget>[
         SizedBox(
           width: _widthOf(

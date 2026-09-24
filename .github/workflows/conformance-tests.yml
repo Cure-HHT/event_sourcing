@@ -60,6 +60,12 @@ jobs:
   postgres:
     name: Postgres conformance + integration
     runs-on: ubuntu-latest
+    # Measured locally, one file at a time: about 9 minutes of event_sourcing
+    # files (the runtime-role file 2:20, boot progress 1:15, boot pause 0:55)
+    # and under a minute of example files; a runner with setup is estimated at
+    # about 15 minutes, not yet measured there.
+    # The required Validation Summary check waits at most 30 minutes for every
+    # other check, so a longer limit here would not help.
     timeout-minutes: 30
     services:
       postgres:
@@ -191,4 +197,13 @@ jobs:
         working-directory: event_sourcing/example_action_permissions
       - name: action_permissions_demo server provisioning on Postgres
         run: flutter test test/server_provision_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server instances sharing one database
+        run: flutter test test/drain_lock_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo incompatible build refused while one serves
+        run: flutter test test/generation_guard_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server process boot probes and hand-over
+        run: flutter test test/server_process_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

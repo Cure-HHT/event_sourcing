@@ -270,7 +270,12 @@ The currently-trusted inputs are:
   stores beside each event) changes only through the library's
   operations, and reserved system events are appended only by the
   library's own operations. At most one drainer per database: the
-  requirement is `EVS-PRD-destinations/V`.
+  requirement is `EVS-PRD-destinations/V`. On Postgres the queue table's
+  guard (`EVS-DEV-destination-drain/S`), while it is in place (the schema
+  owner can remove it), refuses every change to a queue item outside the
+  shapes of the library's own writes, from any role; it
+  cannot tell a hand-written change of a legal shape from the library's
+  own, so it is a safety net and adds no trusted input.
   Every `StorageBackend` member that writes, and the event store's
   reserved append operations, are `@internal`, which the analyzer
   enforces but nothing enforces at run time: the consumer
@@ -288,20 +293,22 @@ The currently-trusted inputs are:
   database and schema, and a lock the pool takes visible to the lock
   session, so the same server) and documents the rest
   (`EVS-DEV-postgres-backend/J`). An unaudited boundary with no
-  pluggable interface.
+  pluggable interface (`spec/roadmap/storage.md`).
 - **The browser's lock manager (Web Locks).** On the web the
   incompatible-generation guard and the drain lock run on
   `navigator.locks`, trusted to grant a lock name exclusively or shared
   as requested, to report held locks when queried, and to release every
   lock of a closed or discarded page (`EVS-DEV-version-compatibility/H`,
   `EVS-DEV-destination-drain-lock/A`). An unaudited boundary with no
-  pluggable interface; a page without it is refused.
+  pluggable interface; a page without it is refused
+  (`spec/roadmap/storage.md`).
 - **One opener of a Sembast database file outside the browser.** On io
   a `SembastBackend` registers nothing with the generation guard: the
   database file is trusted to be opened by one isolate of one process
   (a second process, or a second isolate such as a mobile background
   isolate, sees no lock of the first) (`EVS-DEV-version-compatibility/H`).
-  An unaudited deployment assumption with no pluggable interface.
+  An unaudited deployment assumption with no pluggable interface
+  (`spec/roadmap/storage.md`).
 - **`Destination` outbound transport and delivery configuration.**
   Per-destination delivery transport (HTTP, WebSocket, file, etc.)
   supplied by the app at composition time. Trusted for transport-layer

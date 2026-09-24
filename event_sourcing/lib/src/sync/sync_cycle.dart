@@ -25,7 +25,7 @@
 //   destinations registered in the draining process)
 // Implements: EVS-PRD-destinations/V
 // (at most one delivery cycle per database
-//   drains at a time: a second cycle for one database within one isolate is
+//   commits queue changes at a time: a second cycle for one database within one isolate is
 //   refused, and a cycle that cannot take the drain lock stands by and takes
 //   over when it is released)
 // Implements: EVS-DEV-destination-drain-lock/C+D+E
@@ -68,8 +68,10 @@ enum SyncCycleState {
 /// The delivery cycle of one database: fills each registered destination's
 /// queue from the event log and drains it through the destination.
 ///
-/// At most one delivery cycle drains a database at a time. [start] is the
-/// only entry point; it refuses a second cycle for the same database in one
+/// At most one delivery cycle commits queue changes for a database at a
+/// time (`EVS-PRD-destinations/V`), within what its storage backend's drain
+/// lock supports. [start] is the only entry point: it refuses
+/// a second cycle for the same database in one
 /// isolate (on Postgres, the same database and schema; on Sembast, the same
 /// open database handle), throwing [StateError]. Across processes and
 /// sessions the storage backend's drain lock decides: a cycle that cannot

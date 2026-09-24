@@ -84,7 +84,7 @@ Two Layer 1 properties carry the regulatory weight in a way they wouldn't for,
 say, a multiplayer game.
 
 **Hash-chain integrity over the cryptographic trail.** When an FDA inspector
-or a sponsor's GCP auditor asks "prove no one has altered this patient's diary
+or a sponsor's Good Clinical Practice (GCP) auditor asks "prove no one has altered this patient's diary
 entries after the fact," the answer cannot be procedural ("we have access
 controls"); it has to be structural. The substrate's
 `event_hash`/`previous_event_hash` chain plus the operational obligation in

@@ -593,7 +593,8 @@ class DestinationRegistry {
   /// Refused (`StateError`, nothing written but the registry check record)
   /// unless the persisted hard-delete opt-in in effect is true, and while the
   /// queue head is pending: a pending head may be in delivery in the process
-  /// that drains, and deleting it would lose the record of a delivery the
+  /// that drains (at most one commits queue changes for the database,
+  /// `EVS-PRD-destinations/V`), and deleting it would lose the record of a delivery the
   /// receiver may have accepted. Request a halt ([requestHalt]), wait for the
   /// drainer to wedge the head, then delete; the refusal message says
   /// whether a halt request is already open and not yet honoured. An empty
@@ -947,9 +948,11 @@ class DestinationRegistry {
   });
 
   /// Read the persisted delivery status of this registry's database: the
-  /// current drainer's declaration (its drain epoch, the configuration it
-  /// declares for each destination it serves, and the destinations it does
-  /// not serve, as of its latest pass) and its latest heartbeat, and for
+  /// declaration of the current drainer, the one delivery cycle that
+  /// commits queue changes for the database (`EVS-PRD-destinations/V`): its
+  /// drain epoch, the configuration it declares for each destination it
+  /// serves, and the destinations it does not serve, as of its latest pass.
+  /// Also its latest heartbeat, and for
   /// each persisted destination its schedule, open halt request, wedge
   /// record, refill guard and unserved reason. All of it is read in one
   /// transaction, from persisted state only, so any process can read it,

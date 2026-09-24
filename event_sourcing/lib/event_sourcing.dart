@@ -44,12 +44,31 @@
 ///     tombstoneEventTypes: {'invoice_cancelled'},
 ///   ));
 ///
-/// // Open the store (runs lib-version boot check).
+/// // Open the store: the boot checks the database and registers the
+/// // library's reserved entry types and its default views.
 /// final db = await databaseFactoryIo.openDatabase('data.db');
-/// final store = await EventStore.open(
-///   storage: SembastBackend(db),
+/// final bundle = await bootstrapEventStore(
+///   backend: SembastBackend(database: db),
+///   source: const Source(
+///     hopId: 'mobile-device',
+///     identifier: '00000000-0000-4000-8000-000000000001',
+///     softwareVersion: 'my-app@1.0.0',
+///   ),
+///   entryTypes: const [
+///     EntryTypeDefinition(
+///       id: 'invoice_created',
+///       registeredVersion: EntryTypeVersion(1, 0),
+///       name: 'Invoice created',
+///     ),
+///   ],
+///   destinations: const [],
 ///   projections: projections,
 /// );
+/// final store = bundle.eventStore;
+///
+/// // Deliver to the registered destinations: the delivery cycle fills and
+/// // drains their queues (one cycle per database drains; others stand by).
+/// final cycle = await SyncCycle.start(registry: bundle.destinations);
 ///
 /// // Append an event. The substrate stamps entry_type_version from
 /// // the registry's registeredVersion for 'invoice_created'.
@@ -81,6 +100,7 @@
 ///   }
 /// }
 ///
+/// await cycle.close();
 /// await store.close();
 /// ```
 ///

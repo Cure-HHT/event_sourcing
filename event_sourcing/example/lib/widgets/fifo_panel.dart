@@ -7,12 +7,17 @@ import 'package:event_sourcing/event_sourcing.dart'
         Destination,
         DestinationSchedule,
         FifoEntry,
+        HaltPurpose,
+        HaltRequest,
         SembastBackend,
         SetEndDateResult,
+        StoredEvent,
         UserInitiator;
 import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
+import 'package:event_sourcing_demo/widgets/wedges_panel.dart' show refusalText;
 import 'package:flutter/material.dart';
 
 class FifoPanel extends StatefulWidget {
@@ -44,7 +49,9 @@ class _FifoPanelState extends State<FifoPanel> {
   DestinationSchedule? _schedule;
   bool _opsOpen = false;
   String? _banner;
+  HaltRequest? _openHalt;
   StreamSubscription<List<FifoEntry>>? _fifoSub;
+  StreamSubscription<StoredEvent>? _eventsSub;
   Timer? _bannerTimer;
 
   final TextEditingController _startCtrl = TextEditingController();
@@ -76,11 +83,31 @@ class _FifoPanelState extends State<FifoPanel> {
       if (!mounted) return;
       _onFifoSnapshot(rows);
     });
+    // A halt request and its cancellation are events, not queue changes.
+    _eventsSub = widget.backend.watchEvents().listen((_) {
+      if (!mounted) return;
+      unawaited(_reloadHalt());
+    });
+    unawaited(_reloadHalt());
+  }
+
+  /// Reads whether a halt request is open for this destination, from the
+  /// persisted delivery status.
+  Future<void> _reloadHalt() async {
+    try {
+      final status = await widget.appState.readDeliveryStatus();
+      final open = status.destinations[widget.destination.id]?.openHaltRequest;
+      if (!mounted) return;
+      setState(() => _openHalt = open);
+    } catch (_) {
+      // Non-fatal.
+    }
   }
 
   @override
   void dispose() {
     _fifoSub?.cancel();
+    _eventsSub?.cancel();
     _bannerTimer?.cancel();
     final demo = _demo;
     if (demo != null) {
@@ -210,6 +237,15 @@ class _FifoPanelState extends State<FifoPanel> {
                     fontSize: 14,
                   ),
                 ),
+                if (_openHalt != null)
+                  Text(
+                    'HALT REQUESTED (${_openHalt!.purpose.wire})',
+                    style: const TextStyle(
+                      color: DemoColors.wedged,
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                    ),
+                  ),
                 if (showStartEditor) _startDateEditor(),
                 _endDateEditor(),
                 if (demo != null) _connectionDropdown(demo),
@@ -438,6 +474,36 @@ class _FifoPanelState extends State<FifoPanel> {
         if (_opsOpen)
           Wrap(
             children: <Widget>[
+              TextButton(
+                onPressed: () => _halt(HaltPurpose.pause),
+                child: const Text(
+                  '[Halt]',
+                  style: TextStyle(color: DemoColors.accent),
+                ),
+              ),
+              TextButton(
+                onPressed: () => _halt(HaltPurpose.reconfigure),
+                child: const Text(
+                  '[Halt to reconfigure]',
+                  style: TextStyle(color: DemoColors.accent),
+                ),
+              ),
+              TextButton(
+                onPressed: _cancelHalt,
+                child: const Text(
+                  '[Cancel halt]',
+                  style: TextStyle(color: DemoColors.accent),
+                ),
+              ),
+              if (widget.destination is DemoDestination &&
+                  narrowFilter(widget.destination.filter) != null)
+                TextButton(
+                  onPressed: _reconfigureDrainer,
+                  child: const Text(
+                    '[Reconfigure drainer]',
+                    style: TextStyle(color: DemoColors.accent),
+                  ),
+                ),
               if (widget.destination.allowHardDelete)
                 TextButton(
                   onPressed: () async {
@@ -451,7 +517,9 @@ class _FifoPanelState extends State<FifoPanel> {
                       // pending and may be in delivery) names its reason.
                       _flashBanner(
                         e is StateError
-                            ? 'delete refused: ${e.message}'
+                            ? 'delete refused: ${e.message} Use [Halt]: '
+                                  'the drainer wedges the head, and the '
+                                  'deletion is accepted then.'
                             : 'delete err: $e',
                       );
                     }
@@ -465,6 +533,41 @@ class _FifoPanelState extends State<FifoPanel> {
           ),
       ],
     );
+  }
+
+  Future<void> _halt(HaltPurpose purpose) async {
+    try {
+      await widget.appState.requestHalt(widget.destination.id, purpose);
+      _flashBanner('halt requested (${purpose.wire})');
+    } catch (e) {
+      _flashBanner('halt refused: ${refusalText(e)}');
+    }
+    await _reloadHalt();
+  }
+
+  Future<void> _cancelHalt() async {
+    try {
+      await widget.appState.cancelHalt(widget.destination.id);
+      _flashBanner('halt cancelled');
+    } catch (e) {
+      _flashBanner('cancel refused: ${refusalText(e)}');
+    }
+    await _reloadHalt();
+  }
+
+  /// Plays a deployment of a new configuration of this destination: the
+  /// pane's drainer restarts with the destination's filter narrowed.
+  Future<void> _reconfigureDrainer() async {
+    final narrowed = narrowFilter(widget.destination.filter);
+    if (narrowed == null) return;
+    try {
+      await widget.appState.reconfigureDrainer(widget.destination.id, narrowed);
+      _flashBanner(
+        'drainer reconfigured: ${narrowed.entryTypes!.join(', ')} only',
+      );
+    } catch (e) {
+      _flashBanner('reconfigure failed: ${refusalText(e)}');
+    }
   }
 
   Widget _rowList() {
@@ -488,16 +591,15 @@ class _FifoPanelState extends State<FifoPanel> {
         backend: widget.backend,
         onTombstoneAndRefill: () async {
           try {
-            await widget.appState.registry.tombstoneAndRefill(
+            await widget.appState.recover(
               widget.destination.id,
               display[i].entryId,
-              initiator: const UserInitiator('demo-user-1'),
             );
             _flashBanner('tombstoned & refilled');
             // FIFO mutation: watchFifo emits a fresh snapshot which
             // _onFifoSnapshot consumes — no explicit refresh needed.
           } catch (e) {
-            _flashBanner('err: $e');
+            _flashBanner('recovery refused: ${refusalText(e)}');
           }
         },
       ),

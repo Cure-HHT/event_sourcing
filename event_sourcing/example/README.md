@@ -26,10 +26,10 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 ```text
 +-------------------------------------------------------+
 |  MOBILE pane                                          |
-|  +-----------+----------+----------+----+----+----+   |
-|  | MATERIAL- | EVENTS   | AUDIT    | P  | S  | NU |   |
-|  | IZED      | (watch)  |          | FIFO   ...   |   |
-|  +-----------+----------+----------+----+----+----+   |
+|  +-----------+----------+-------+--------+----+----+  |
+|  | MATERIAL- | EVENTS   | AUDIT | WEDGED | P  | S  |  |
+|  | IZED      | (watch)  |       |        | FIFO ...|  |
+|  +-----------+----------+-------+--------+----+----+  |
 |                                                       |
 |  AppendOnlyDatastore A (hopId='mobile-device')        |
 |  Source.identifier = MOBILE.install.uuid              |
@@ -39,10 +39,10 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 |         v                                             |
 +---------v---------------------------------------------+
 |  HUB pane                                             |
-|  +-----------+----------+----------+----+----+----+   |
-|  | MATERIAL- | EVENTS   | AUDIT    | FIFO panels  |   |
-|  | IZED      | (watch)  |          |              |   |
-|  +-----------+----------+----------+----+----+----+   |
+|  +-----------+----------+-------+--------+----+----+  |
+|  | MATERIAL- | EVENTS   | AUDIT | WEDGED | FIFO    |  |
+|  | IZED      | (watch)  |       |        | panels  |  |
+|  +-----------+----------+-------+--------+----+----+  |
 |                                                       |
 |  AppendOnlyDatastore B (hopId='hub-server')           |
 |  Source.identifier = HUB.install.uuid                 |
@@ -296,6 +296,41 @@ dropdowns):
 - **Batch size** — upper bound on `canAddToBatch` length.
 - **Accumulate** — `maxAccumulateTime` hold for single-event batches.
 
+Each destination panel's **ops** drawer holds the operator controls:
+
+- **[Halt]** and **[Halt to reconfigure]** request a halt
+  (`DestinationRegistry.requestHalt`, purpose `pause` or `reconfigure`).
+  The panel shows `HALT REQUESTED (<purpose>)` while the request is open.
+  The drainer honours it before its next send by wedging the queue head
+  itself (cause `operator_halt`); on an empty queue the request waits, and
+  the first item enqueued is wedged.
+- **[Cancel halt]** cancels an open request.
+- **[Reconfigure drainer]** plays the deployment of a new delivery
+  configuration of a `DemoDestination`: it closes the pane's delivery cycle
+  and starts one over a new registry that registers the destination with
+  its filter narrowed to one entry type, so the configuration the drainer
+  declares changes.
+- **[Delete destination]** (destinations that opt into hard deletion).
+
+The WEDGED column lists the rows of the library's default
+destination-wedges view (`default_destination_wedges`), one per wedged
+destination, with its cause, attempt count and who requested the halt
+it consumed, and below them the latest delivery events (wedges, halt
+requests and cancellations, recoveries, deletions). A row whose
+`database_id` is the pane's own database is one of the pane's own
+wedges and has a **Recover** button (`tombstoneAndRefill`); any other row
+is a peer's wedge, forwarded with the peer's system events, labelled with
+its origin database, with no action: a registry operation acts only on
+its own database, and the pane's destination of the same id is a
+different queue. A wedged row in a FIFO column has a **Tombstone &
+Refill** button that does the same as Recover.
+
+With nothing selected, the DETAIL column shows the pane's delivery cycle
+(`SyncCycle.state`, `SyncCycle.unserved`) and the database's persisted
+delivery status (`DestinationRegistry.readDeliveryStatus()`: the
+drainer's declaration and heartbeat, and per destination the open halt
+request, the wedge, the refill guard and the unserved reason).
+
 The `SyncPolicyBar` above the columns exposes per-pane `SyncPolicy`
 knobs (`initialBackoff`, `backoffMultiplier`, `maxBackoff`,
 `jitterFraction`, `maxAttempts`) that flow into the drain loop on each
@@ -376,11 +411,11 @@ rows of the library's default destination-wedges view
 database identity, folded from the `destination_wedged` event; the two
 name the same destinations. Each is read as its own snapshot, one after
 the other, so while the drainer runs they can differ until the next
-refresh. To recover, click the wedged row, then
-**Tombstone & Refill** in the detail panel — Secondary's wedged row
-flips to `tombstoned`, the trail of pending rows is swept, fresh rows
-enqueue and drain on the next tick, and the recovery event removes the
-view's row.
+refresh. The WEDGED column shows Secondary's row with a **Recover**
+button. Flip Secondary back to `ok` and click **Recover** (or **Tombstone
+& Refill** on the wedged row) — Secondary's wedged row flips to
+`tombstoned`, the trail of pending rows is swept, fresh rows enqueue and
+drain on the next tick, and the recovery event removes the view's row.
 
 ### A peer's wedge in the hub
 
@@ -388,13 +423,44 @@ To see how the default destination-wedges view differs from
 `wedgedFifos()`: in the mobile pane, flip Primary to `rejecting` and
 click Red. Mobile's Primary wedges, and NativeAudit forwards mobile's
 system events, the `destination_wedged` event among them, to the hub.
-The hub's detail panel then lists the wedge under `wedges view (peers)`,
-labelled with mobile's database identity, while its `any wedged` reads
-false and `wedges view (this database)` reads none: the hub's own Primary
-queue is not wedged. The view is folded from the log, so it holds the wedges a
+The hub's WEDGED column then shows the wedge as a peer row labelled with
+mobile's database identity, with no Recover button, and its detail panel
+lists it under `wedges view (peers)`, while its `any wedged` reads false
+and `wedges view (this database)` reads none: the hub's own Primary queue
+is not wedged. Click **Recover** in the mobile pane's WEDGED column: once
+NativeAudit forwards the recovery event, the hub's peer row goes. The view is folded from the log, so it holds the wedges a
 peer forwarded; `wedgedFifos()` reads only the pane's own queues. A peer
 row shows what the forwarding pane asserts, and it is removed only when
 that pane forwards the recovery or deletion that ends the wedge.
+
+### Halt and recover
+
+To stop delivery on a healthy destination: open Primary's **ops**
+drawer and click **[Halt]**. The panel shows `HALT REQUESTED (pause)`.
+Click Red: the drainer enqueues the event and, before sending it, wedges
+the head for the halt, appending a `destination_wedged` event with cause
+`operator_halt` that names the halt request and who made it. The
+indicator goes (the wedge consumed the request), and the WEDGED column
+shows `Primary: operator_halt, halt by demo-user-1`. Click **Recover**:
+the head is tombstoned and refilled, and delivery resumes. **[Cancel
+halt]** withdraws a request the drainer has not honoured yet.
+
+To see a halt wait for a head: halt a destination whose queue is empty.
+The request stays open through every pass, and the first event the
+destination's filter admits is enqueued and wedged at once, never sent.
+
+### Rebuild after a reconfiguration
+
+To rebuild a destination's pending items under a new configuration: click
+**[Halt to reconfigure]** on Primary, then Red and a new note. The
+drainer wedges the head for the halt. Click **Recover**: it is refused,
+and the banner says why — the drainer still declares the configuration
+it recorded when it honoured the halt, so a refill now would rebuild the
+items under the old configuration. Click **[Reconfigure drainer]**: the
+pane's drainer restarts with Primary's filter narrowed to notes. Click
+**Recover** again: it is accepted, and the refill enqueues the note and
+no longer the Red press. A halt for `pause` is recoverable at any time;
+use it when the new configuration is already running.
 
 ### Transient disconnect and recovery
 
@@ -452,13 +518,13 @@ keeps that tick busy for about 30 s before the rows all show `sent`.
 
 To see deletion: open Backup's **ops** drawer and click **Delete
 destination**. While Backup's head row is pending (it may be in
-delivery) the delete is refused and the panel's banner names the
-reason. Set Backup's connection to `rejecting` so the head wedges,
-then delete: Backup's live column disappears and a read-only
-`Backup (deleted)` column appears, listing the rows the deletion
-kept — every `sent` row, and the wedged head, now `tombstoned`. The
-pending rows behind the head are gone. Adding `Backup` again starts
-a new registration.
+delivery) the delete is refused, and the panel's banner names the
+reason and points at **[Halt]**. Click **[Halt]**: the drainer wedges the
+head at its next pass. Then delete: Backup's live column disappears and
+a read-only `Backup (deleted)` column appears, listing the rows the
+deletion kept — every `sent` row, and the wedged head, now
+`tombstoned`. The pending rows behind the head are gone. Adding `Backup`
+again starts a new registration.
 
 ### setEndDate semantics
 

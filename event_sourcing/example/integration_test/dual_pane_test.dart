@@ -114,6 +114,7 @@ Future<_PaneHandle> _mkPane({
   final appState = AppState(
     registry: datastore.destinations,
     policyNotifier: policyNotifier,
+    eventStore: datastore.eventStore,
     cadence: const Duration(hours: 1),
   );
   await appState.startDelivery();
@@ -373,5 +374,98 @@ void main() {
           'hub pane must render at least one [R] row for the GREEN '
           'event it ingested from mobile',
     );
+  });
+
+  // A halt and a recovery through the panes' controls: the mobile pane's
+  // Halt is honoured by its drainer at the next GREEN press, the wedge shows
+  // in mobile's WEDGED column with a Recover button and, once forwarded, in
+  // the hub's as a peer row; Recover ends it in both.
+  testWidgets('a halt and a recovery through the mobile pane', (tester) async {
+    final setup = await _setupDualApp(testId: 'halt-recover');
+    tester.view.physicalSize = const Size(4000, 2800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(setup.app);
+    await tester.pumpAndSettle();
+
+    final mobile = _paneByLabel('MOBILE');
+    final hub = _paneByLabel('HUB');
+    final mobilePrimary = find.descendant(
+      of: mobile,
+      matching: find.byKey(const ValueKey<String>('Primary')),
+    );
+    await tester.tap(
+      find.descendant(of: mobilePrimary, matching: find.text('ops ▸')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: mobilePrimary, matching: find.text('[Halt]')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: mobilePrimary,
+        matching: find.text('HALT REQUESTED (pause)'),
+      ),
+      findsOneWidget,
+    );
+
+    // The next GREEN press is enqueued, and the drainer wedges it.
+    await tester.tap(
+      find.descendant(
+        of: mobile,
+        matching: find.widgetWithText(TextButton, 'GREEN'),
+      ),
+      warnIfMissed: false,
+    );
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 3; i++) {
+      await setup.mobile.tick();
+    }
+    await setup.hub.tick();
+    await tester.pumpAndSettle();
+
+    final mobileWedge = find.descendant(
+      of: mobile,
+      matching: find.textContaining('Primary: operator_halt'),
+    );
+    expect(mobileWedge, findsOneWidget);
+    expect(
+      find.descendant(
+        of: hub,
+        matching: find.textContaining('Primary: operator_halt'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: hub, matching: find.textContaining('-- peer')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: hub, matching: find.text('Recover')),
+      findsNothing,
+    );
+
+    await tester.tap(
+      find.descendant(of: mobile, matching: find.text('Recover')),
+    );
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 3; i++) {
+      await setup.mobile.tick();
+    }
+    await setup.hub.tick();
+    await tester.pumpAndSettle();
+    expect(mobileWedge, findsNothing);
+    expect(
+      find.descendant(
+        of: hub,
+        matching: find.textContaining('Primary: operator_halt'),
+      ),
+      findsNothing,
+    );
+    // Let the panels' banner timers run out.
+    await tester.pump(const Duration(seconds: 3));
   });
 }
