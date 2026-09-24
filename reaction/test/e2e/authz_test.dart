@@ -142,9 +142,11 @@ void main() {
     final updates = <Update<Map<String, Object?>>>[];
     final errors = <Object>[];
     final sub = stream.listen(updates.add, onError: errors.add);
+    // The subscription is live once its end-of-replay arrives: the client
+    // holds it open, so the forced close below errors it.
     await until(
-      () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
-      reason: "alice's connection registered",
+      () => updates.any((u) => u is EndOfReplay),
+      reason: 'the subscription is live',
     );
 
     // Append role_unassigned for alice. AuthorizationWatcher matches on
@@ -228,11 +230,14 @@ void main() {
       viewName: 'notes_today',
       mapper: (m) => m,
     );
+    final updates = <Update<Map<String, Object?>>>[];
     final errors = <Object>[];
-    final sub = stream.listen((_) {}, onError: errors.add);
+    final sub = stream.listen(updates.add, onError: errors.add);
+    // The subscription is live once its end-of-replay arrives: the client
+    // holds it open, so the forced close below errors it.
     await until(
-      () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
-      reason: "alice's connection registered",
+      () => updates.any((u) => u is EndOfReplay),
+      reason: 'the subscription is live',
     );
 
     // Disable alice's account: an account-aggregate event whose aggregateId IS
@@ -308,10 +313,11 @@ void main() {
         viewName: 'notes_today',
         mapper: (m) => m,
       );
-      final sub = stream.listen((_) {}, onError: (_) {});
+      final updates = <Update<Map<String, Object?>>>[];
+      final sub = stream.listen(updates.add, onError: (_) {});
       await until(
-        () => h.reaction.connectionRegistry.channelsFor('alice').isNotEmpty,
-        reason: "alice's connection registered",
+        () => updates.any((u) => u is EndOfReplay),
+        reason: 'the subscription is live',
       );
 
       // Revoke alice's role via the substrate, mirroring what an
