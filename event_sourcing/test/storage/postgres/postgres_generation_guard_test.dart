@@ -972,11 +972,15 @@ void main() {
       final oldPid = (await backend.lockSessionForTest()).pid;
       stall = true;
       timers.fireAll();
-      await _until(
-        () async =>
-            backend.generationStatus == GenerationStatus.registered &&
-            await _pidOf(backend) != oldPid,
-      );
+      // `_pidOf` is null while the replacement is not yet current, so the
+      // wait is for a pid that exists and differs from the old one.
+      await _until(() async {
+        if (backend.generationStatus != GenerationStatus.registered) {
+          return false;
+        }
+        final pid = await _pidOf(backend);
+        return pid != null && pid != oldPid;
+      });
       stall = false;
       await _until(() async => (await _locksByPid(url))[oldPid] == null);
       final newPid = (await backend.lockSessionForTest()).pid;
