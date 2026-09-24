@@ -281,7 +281,7 @@ class SembastBackend extends StorageBackend {
         throw fault;
       }
       runs++;
-      final txn = _SembastTxn._(sembastTxn);
+      final txn = _SembastTxn._(sembastTxn, this);
       committedRun = txn;
       try {
         return await body(txn);
@@ -304,9 +304,16 @@ class SembastBackend extends StorageBackend {
     return result;
   }
 
+  // Implements: EVS-DEV-postgres-backend/L
+  // a handle another backend instance produced is refused.
   _SembastTxn _requireValidTxn(Transaction txn) {
     if (txn is! _SembastTxn) {
       throw StateError('Transaction is not a SembastBackend Transaction');
+    }
+    if (!identical(txn._owner, this)) {
+      throw StateError(
+        'Transaction was produced by a different SembastBackend instance',
+      );
     }
     if (!txn._isValid) {
       throw StateError('Transaction used outside its transaction() body');
@@ -628,11 +635,16 @@ class SembastBackend extends StorageBackend {
   //   1. `scheduleMicrotask(startReplay)` defers the replay so the caller's
   //      `listen()` returns before any emission, ensuring no replayed event
   //      is missed.
-  //   2. Replay reads `findAllEvents(afterSequence: lowerBound)` and
-  //      forwards each event, advancing `lastReplayed`.
-  //   3. After replay completes, attach to `_eventsController` and filter
-  //      `e.sequenceNumber > lastReplayed` to close the race where an event
-  //      commits between the replay snapshot read and the live attach.
+  //   2. The live listener on `_eventsController` attaches before the replay
+  //      reads the log, and buffers what it receives until the replay has
+  //      been forwarded, so an event that commits while the replay reads is
+  //      not lost.
+  //   3. Replay reads `findAllEvents(afterSequence: lowerBound)` and
+  //      forwards each event, advancing `lastForwarded`; the buffer is then
+  //      drained and the listener forwards directly. Every live event is
+  //      forwarded only when its sequence number is above `lastForwarded`,
+  //      so an event both read by the replay and notified live is delivered
+  //      once.
   // Close on `_eventsController` propagates via `onDone`.
   // Not on the StorageBackend abstract surface — SembastBackend-specific.
   Stream<StoredEvent> watchEvents({int? afterSequence}) {
@@ -643,29 +655,43 @@ class SembastBackend extends StorageBackend {
     }
     final lowerBound = afterSequence ?? 0;
     final controller = StreamController<StoredEvent>.broadcast();
-    var lastReplayed = lowerBound;
     StreamSubscription<StoredEvent>? liveSub;
     var started = false;
+    // Advanced by every first listen and every last cancel, so a pipeline
+    // started for an earlier listen forwards nothing once it was cancelled.
+    var pipeline = 0;
 
-    Future<void> startReplay() async {
-      try {
-        final replay = await findAllEvents(afterSequence: lowerBound);
-        for (final e in replay) {
-          if (controller.isClosed) return;
-          controller.add(e);
-          lastReplayed = e.sequenceNumber;
-        }
-      } catch (err, st) {
-        if (!controller.isClosed) controller.addError(err, st);
+    Future<void> startReplay(int current) async {
+      bool stale() => current != pipeline || controller.isClosed;
+      if (stale()) return;
+      var lastForwarded = lowerBound;
+      var replayDone = false;
+      final buffer = <StoredEvent>[];
+      void forward(StoredEvent e) {
+        if (stale() || e.sequenceNumber <= lastForwarded) return;
+        controller.add(e);
+        lastForwarded = e.sequenceNumber;
       }
-      if (controller.isClosed) return;
+
       liveSub = _eventsController.stream.listen(
-        (e) {
-          if (e.sequenceNumber > lastReplayed) controller.add(e);
-        },
+        (e) => replayDone ? forward(e) : buffer.add(e),
         onError: controller.addError,
         onDone: controller.close,
       );
+      try {
+        for (final e in await findAllEvents(afterSequence: lowerBound)) {
+          forward(e);
+        }
+      } catch (err, st) {
+        if (!stale()) controller.addError(err, st);
+      }
+      // The replay may have been cancelled while it read.
+      if (stale()) return;
+      for (final e in buffer) {
+        forward(e);
+      }
+      buffer.clear();
+      replayDone = true;
     }
 
     controller
@@ -677,7 +703,8 @@ class SembastBackend extends StorageBackend {
         // pipeline.
         if (started) return;
         started = true;
-        scheduleMicrotask(startReplay);
+        final current = ++pipeline;
+        scheduleMicrotask(() => startReplay(current));
       }
       ..onCancel = () async {
         // Broadcast `onCancel` fires when the LAST subscriber cancels;
@@ -685,9 +712,11 @@ class SembastBackend extends StorageBackend {
         // controller does not leak after all subscribers detach. The
         // controller stays open so a later listener can re-attach
         // (broadcast semantics).
-        await liveSub?.cancel();
-        liveSub = null;
+        pipeline++;
         started = false;
+        final cancelled = liveSub?.cancel();
+        liveSub = null;
+        await cancelled;
       };
     return controller.stream;
   }
@@ -2462,8 +2491,11 @@ class SembastBackend extends StorageBackend {
 }
 
 class _SembastTxn extends Transaction {
-  _SembastTxn._(this._sembastTxn);
+  _SembastTxn._(this._sembastTxn, this._owner);
   final sembast.Transaction _sembastTxn;
+
+  /// The backend whose `transaction()` produced this handle.
+  final SembastBackend _owner;
 
   /// Notifications to fire if this run of the transaction body commits.
   /// Write paths push `() => controller.add(...)` here after their in-txn

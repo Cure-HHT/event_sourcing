@@ -3,8 +3,8 @@
 // Installs every test seam an in-memory Sembast database on io reaches,
 // each recording that it fired and each failure injection set to fail, and
 // substitutes another build's versions for the boot, then opens the event
-// store, runs a registry operation and two
-// delivery passes (one destination delivers, one refuses and wedges) over an
+// store, runs a registry operation, two delivery passes (one destination
+// delivers, one refuses and wedges) and a heartbeat of a drain lock over an
 // in-memory Sembast database. Run without assertions (`dart run --no-enable-asserts`,
 // or a `dart compile exe` executable) it must print an empty list of fired
 // seams and a completed delivery, and exit 0. Run with assertions enabled
@@ -270,6 +270,14 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
       fired.add('failAfterExclusionObtained');
       return false;
     },
+    beforeGrantDelivered: () async {
+      fired.add('beforeGrantDelivered');
+    },
+    // Fails the heartbeat the probe runs after the passes.
+    failNextHeartbeat: () {
+      fired.add('failNextHeartbeat');
+      return true;
+    },
     onInboundPoll: () => fired.add('onInboundPoll'),
     beforeQueueWrites: (destinationId) async {
       fired.add('beforeQueueWrites $destinationId');
@@ -317,6 +325,22 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     await cycle();
     await cycle();
     await cycle.close();
+    // The cycle took the free lock directly and beats it on its cadence,
+    // which the probe does not wait for; the probe requests a drain lock of
+    // its own, as a waiting cycle does, and beats it.
+    final lock = (await backend
+        .requestDrainLock(
+          databaseId: bundle.eventStore.databaseId,
+          retryInterval: const Duration(milliseconds: 10),
+        )
+        .granted)!;
+    try {
+      await lock.heartbeat();
+    } on Object catch (e) {
+      fired.add('drain lock heartbeat failed: $e');
+    } finally {
+      await lock.release();
+    }
   });
   final sentItems = (await backend.listFifoEntries(
     healthy.id,

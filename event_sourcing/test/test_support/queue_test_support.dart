@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:event_sourcing/src/sync/fill_batch.dart';
@@ -138,9 +139,62 @@ Future<void> cycleOnce(
 final Map<Object, _SharedLock> _sharedLocks = <Object, _SharedLock>{};
 
 final class _SharedLock {
-  _SharedLock(this.lock);
+  _SharedLock(this.lock, this.backend);
   final Future<DrainLock> lock;
+
+  /// The backend the lock was taken through.
+  final StorageBackend backend;
   int users = 0;
+}
+
+/// A shared harness lock as a caller on another backend instance over the
+/// same database sees it: a backend refuses a transaction another instance
+/// produced, so the check reads the drain epoch through the caller's own
+/// backend.
+final class _BoundLock implements DrainLock {
+  _BoundLock(this._inner, this._backend);
+
+  final DrainLock _inner;
+  final StorageBackend _backend;
+
+  @override
+  int get epoch => _inner.epoch;
+
+  @override
+  bool get isReleased => _inner.isReleased;
+
+  @override
+  Future<void> assertHeldInTxn(Transaction txn) async {
+    if (_inner.isReleased) {
+      throw const DrainLockLostException(
+        DrainLockLossReason.released,
+        'the drain lock was released',
+      );
+    }
+    final stored = await _backend.readDrainEpochTxn(txn);
+    if (stored != epoch) {
+      throw DrainLockLostException(
+        DrainLockLossReason.epochChanged,
+        'the database stores drain epoch $stored; this holder acquired '
+        '$epoch',
+      );
+    }
+  }
+
+  @override
+  Future<void> assertHeld() => _backend.transaction(assertHeldInTxn);
+
+  @override
+  Future<void> heartbeat() => _inner.heartbeat();
+
+  @override
+  Future<void> release() => _inner.release();
+
+  @override
+  Future<void> get lost => _inner.lost;
+
+  @override
+  Future<void> get handOverRequested => _inner.handOverRequested;
 }
 
 /// The database identity a harness drain lock is taken for: the stored one,
@@ -169,10 +223,13 @@ Future<T> withTestDrainLock<T>(
   await pauseTestCycles(key);
   final shared = _sharedLocks.putIfAbsent(
     key,
-    () => _SharedLock(backend.tryAcquireDrainLock(databaseId: id)),
+    () => _SharedLock(backend.tryAcquireDrainLock(databaseId: id), backend),
   )..users += 1;
   try {
-    return await body(await shared.lock);
+    final lock = await shared.lock;
+    return await body(
+      identical(shared.backend, backend) ? lock : _BoundLock(lock, backend),
+    );
   } finally {
     shared.users -= 1;
     if (shared.users == 0 && identical(_sharedLocks[key], shared)) {

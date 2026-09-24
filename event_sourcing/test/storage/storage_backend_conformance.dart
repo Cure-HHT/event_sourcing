@@ -295,6 +295,7 @@ void _registerTransactionTests(
     // refused by this one even while it is still live in its own body:
     // the handle belongs to the other backend's database, so a type check
     // and a validity check alone do not catch it.
+    // Verifies: EVS-DEV-postgres-backend/L
     test(
       'foreign Transaction (from a different backend) is rejected',
       () async {

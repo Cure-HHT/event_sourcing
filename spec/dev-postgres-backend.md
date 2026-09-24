@@ -70,6 +70,8 @@ J. `PostgresBackend` SHALL hold its generation locks and the drain lock
 
 K. The library SHALL document the privileges its Postgres runtime role needs on each table, and every library operation other than schema provisioning, which the role that owns the schema runs, SHALL work for a role that holds exactly those privileges and usage of the schema, and neither owns nor can create the tables.
 
+L. `PostgresBackend` and `SembastBackend` SHALL refuse with `StateError` a `Transaction` handle that a different backend instance produced, including one still live within its own `transaction()` body.
+
 ## Rationale
 
 **Why JSONB-blob for view rows?** Closest fit to sembast semantics;
@@ -87,6 +89,16 @@ calls cannot both read the same value and stamp two events with the same
 sequence number. The substrate is single-writer-per-source by design
 but the storage layer should not assume the caller has external
 synchronization.
+
+**Why refuse another backend's live handle (assertion L)?** A
+`Transaction` handle carries the underlying database's own transaction.
+Applied to a different backend, a live handle would read or write another
+database, or another connection to the same database, outside the
+transaction the caller holds on this one: its writes would escape this
+backend's commit, rollback and post-commit publication. A type check and a
+validity check do not catch it, since the foreign handle has the right type
+and is still valid; each backend therefore records which instance produced
+a handle and refuses any other.
 
 **Why is provisioning a separate step (assertions G and H)?** Opening a
 database is what every instance does, many at once and while others serve;
@@ -162,6 +174,8 @@ be allowed to end its own sessions, which the role that owns them is.
 
 ## Changelog
 
+- 2026-09-24 | 793c6039 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add L: each backend refuses a Transaction handle another backend instance produced
 - 2026-09-23 | 98f15f7c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add K: the documented runtime-role privileges suffice for every library operation other than provisioning, which the owning role runs
 - 2026-09-23 | 1f8d49d6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -171,4 +185,4 @@ be allowed to end its own sessions, which the role that owns them is.
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 98f15f7c
+*End* *Postgres backend reference impl* | **Hash**: 793c6039

@@ -346,7 +346,9 @@ const _mustBeInternal = <String, String>{
 /// Raw-handle members; each must be internal.
 const _sanctionedRawHandles = <String>{
   'PostgresBackend.pool',
+  'PostgresGenerationGuard.runOnSession',
   'PostgresLockSession.connection',
+  'PostgresLockSession.run',
   'PostgresTxn.session',
   'SembastBackend.unwrapSembastTxn',
   'SembastBackendTestSupport.databaseForTesting',
@@ -486,6 +488,8 @@ class ScanFixtureRawBackend extends SembastBackend {
   set rawDatabase(Database db) {}
   void Function(String)? traceLog;
   set onTrace(void Function(String) f) {}
+  Future<T> runRaw<T>(Future<T> Function(Session s) op) =>
+      throw UnimplementedError();
 }
 
 class ScanFixtureSembastConcrete extends SembastBackend {
@@ -508,6 +512,7 @@ class ScanFixtureIdempotencyStore {
 
 class ScanFixtureSanctioned {
   Database get db => throw UnimplementedError();
+  void withDb(void Function(Database db) op) {}
 }
 ''';
 
@@ -988,7 +993,10 @@ void main() {
           fixtureClass('ScanFixtureIdempotencyStore'),
           fixtureClass('ScanFixtureSanctioned'),
         ],
-        sanctioned: const <String>{'ScanFixtureSanctioned.db'},
+        sanctioned: const <String>{
+          'ScanFixtureSanctioned.db',
+          'ScanFixtureSanctioned.withDb',
+        },
         functionTypedOwners: <InstanceElement>[raw],
       );
       expect(
@@ -1001,6 +1009,10 @@ void main() {
           contains('ScanFixtureRawBackend.paired returns a raw'),
           contains('ScanFixtureRawBackend.rawDatabase= returns a raw'),
           contains(
+            'ScanFixtureRawBackend.runRaw passes a raw database or '
+            'transaction handle to a callback',
+          ),
+          contains(
             'ScanFixtureRawBackend.traceLog is a public field of '
             'function type',
           ),
@@ -1012,6 +1024,10 @@ void main() {
           contains('ScanFixtureIdempotencyStore.pool returns a raw'),
           contains(
             'ScanFixtureSanctioned.db returns a raw handle and lacks '
+            '@internal',
+          ),
+          contains(
+            'ScanFixtureSanctioned.withDb passes a raw handle and lacks '
             '@internal',
           ),
         ]),

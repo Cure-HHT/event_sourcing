@@ -397,6 +397,7 @@ final class PostgresGenerationGuard {
   /// replaced the current session is the lost one, and [op] fails: a
   /// replacement session becomes current only once every generation is
   /// registered on it again.
+  @internal
   Future<T> runOnSession<T>(Future<T> Function(Connection c) op) =>
       _session.run(op);
 

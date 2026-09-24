@@ -676,7 +676,7 @@ class PostgresBackend extends StorageBackend {
       try {
         return await _pool.runTx<T>(
           (tx) async {
-            final wrapper = PostgresTxn(tx);
+            final wrapper = PostgresTxn(tx, owner: this);
             try {
               if (wroteState) {
                 await tx.execute(
@@ -766,7 +766,7 @@ class PostgresBackend extends StorageBackend {
       try {
         return await _pool.runTx<T>(
           (tx) async {
-            final wrapper = PostgresTxn(tx);
+            final wrapper = PostgresTxn(tx, owner: this);
             try {
               final remaining = giveUpAt
                   .difference(DateTime.now())
@@ -2874,9 +2874,10 @@ class PostgresBackend extends StorageBackend {
       'fifo_seq_counter_$destinationId';
 
   /// Downcast a [Transaction] handed to this backend's StorageBackend methods
-  /// into the concrete [PostgresTxn]. Any other concrete subtype indicates
-  /// the caller mixed two different backends' Transaction handles — that's a bug,
-  /// not a recoverable state, so we surface it as `StateError`.
+  /// into the concrete [PostgresTxn]. Any other concrete subtype, or a
+  /// [PostgresTxn] another backend instance produced, indicates the caller
+  /// mixed two backends' Transaction handles — that's a bug, not a
+  /// recoverable state, so we surface it as `StateError`.
   ///
   /// The `session` getter on a valid [PostgresTxn] in turn throws
   /// `StateError` when the surrounding transaction body has already
@@ -2884,11 +2885,19 @@ class PostgresBackend extends StorageBackend {
   /// the same outward shape, which matches the conformance harness'
   /// `throwsStateError` expectations for both "foreign Transaction" and
   /// "post-body escape" cases.
+  // Implements: EVS-DEV-postgres-backend/L
+  // a handle another backend instance produced is refused.
   PostgresTxn _asPgTxn(Transaction txn) {
     if (txn is! PostgresTxn) {
       throw StateError(
         'PostgresBackend: Transaction was produced by a different StorageBackend '
         'implementation; refusing to apply it. Got ${txn.runtimeType}.',
+      );
+    }
+    if (!identical(txn.owner, this)) {
+      throw StateError(
+        'PostgresBackend: Transaction was produced by a different '
+        'PostgresBackend instance; refusing to apply it.',
       );
     }
     return txn;

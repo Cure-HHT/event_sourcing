@@ -13,9 +13,14 @@ import 'package:postgres/postgres.dart';
 /// surfaces loudly instead of silently writing against a closed
 /// transaction.
 class PostgresTxn extends Transaction {
-  PostgresTxn(this._session);
+  PostgresTxn(this._session, {required this.owner});
 
   final TxSession _session;
+
+  /// The backend whose `transaction()` produced this handle. A backend
+  /// refuses a handle another backend instance produced.
+  @internal
+  final Object owner;
   bool _valid = true;
 
   /// Set when the body issued a write to the `backend_state` table (the

@@ -295,6 +295,7 @@ final class PostgresLockSession {
   /// A connection failure or a timeout declares the session lost and is
   /// rethrown; a statement the server refused (a SQL error) is rethrown
   /// without declaring it.
+  @internal
   Future<T> run<T>(Future<T> Function(Connection connection) op) {
     final result = _tail.then((_) async {
       if (_lost) {

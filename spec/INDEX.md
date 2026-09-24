@@ -47,7 +47,7 @@
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 45a08e62 |
 | EVS-DEV-ingest-promotes-before-fold        | Ingest-time promoter chain                                   | dev-ingest-promotes-before-fold.md      | 6e8f0c6d |
-| EVS-DEV-postgres-backend                   | Postgres backend reference impl                              | dev-postgres-backend.md                 | 98f15f7c |
+| EVS-DEV-postgres-backend                   | Postgres backend reference impl                              | dev-postgres-backend.md                 | 793c6039 |
 | EVS-DEV-role-assignment-aggregate-id       | Canonical-JSON aggregate id for role assignments             | scoped-permissions.md                   | bec821d0 |
 | EVS-DEV-scope-class-registry-validation    | Composition-time scope-class registry validation             | scoped-permissions.md                   | 010a6b1f |
 | EVS-DEV-scope-descendant-expander          | Downward containment expansion for read-path scope narrowing | scoped-permissions.md                   | 8a0979c9 |

@@ -4,19 +4,16 @@
 // `tool/hooks_release_probe.dart` installs the seams listed in the
 // assertions-on test below (observers, awaited interleaving seams and
 // failure injections that an in-memory Sembast database on io reaches),
-// then runs a registry operation and two delivery passes, after an open
-// under another build's substituted versions. Run without assertions
+// then runs a registry operation, two delivery passes and a drain-lock
+// heartbeat, after an open under another build's substituted versions. Run without assertions
 // (`dart run --no-enable-asserts`, and as a `dart compile exe` executable)
 // no installed seam fires, the passes deliver, the send's outcome commits
 // and the initialization records the compiled versions; run in-process
 // under `flutter test` (assertions on) every installed seam fires and the
 // initialization records the substituted versions.
 //
-// The probe does not install every seam. `beforeGrantDelivered` (read on
-// the drain-lock request loop, which the probe's passes reach on io
-// Sembast) and `failNextHeartbeat` (read by the isolate drain lock's
-// heartbeat, which the probe does not wait for) are not installed, and
-// neither are the seams only a Postgres backend or a browser reaches. All of them are read through the same
+// The probe does not install the seams only a Postgres backend or a
+// browser reaches. They are read through the same
 // `DeliveryTestHooks.current` gate, which the probe shows is closed
 // without assertions; that shared gate is their only coverage here.
 @Timeout(Duration(minutes: 5))
@@ -157,6 +154,9 @@ void main() {
           equals('afterBootVersionEvent'),
           equals('failLockAcquisition'),
           equals('failAfterExclusionObtained'),
+          equals('beforeGrantDelivered'),
+          equals('failNextHeartbeat'),
+          startsWith('drain lock heartbeat failed'),
           equals('onInboundPoll'),
           startsWith('beforeQueueWrites'),
           startsWith('afterSendBeforeOutcome'),
