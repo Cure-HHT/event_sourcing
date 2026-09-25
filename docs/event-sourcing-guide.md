@@ -1328,7 +1328,8 @@ design:
   the aggregate type and event types the library appends it with (fixed
   within a data-format major), and a destination audit only with a
   destination identifier and the appending database's identity, each a
-  non-empty string without `|`. Ingest stores no event for anything else,
+  non-empty string without `|`, the identity being that of the database
+  its originator entry names. Ingest stores no event for anything else,
   nor for a record without a causal record or a library version in every
   provenance entry, nor one whose data has a top-level key starting with
   `$`: it keeps the record in full in a security finding naming the

@@ -18,7 +18,7 @@
 | EVS-PRD-destinations                  | Destinations                              | prd-destinations.md                  | e2539084 |
 | EVS-PRD-event-log                     | Event Log                                 | prd-event-log.md                     | 28294145 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity                      | prd-hash-chain-integrity.md          | 2dbb9020 |
-| EVS-PRD-ingest                        | Ingest Path                               | prd-ingest.md                        | f878fb3d |
+| EVS-PRD-ingest                        | Ingest Path                               | prd-ingest.md                        | d60bdba5 |
 | EVS-PRD-library-charter               | Library Charter                           | prd-library-charter.md               | 0021ec08 |
 | EVS-PRD-materializer                  | Materializer                              | prd-materializer.md                  | 88f90336 |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization             | prd-multi-source-canonicalization.md | ccf88a3b |
@@ -43,14 +43,14 @@
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-branch-conflicts                   | Conflict records, conflicted rows and reconciliation         | branch-conflicts.md                     | dde3f2e5 |
 | EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | aeb5731f |
-| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | ef03515e |
-| EVS-DEV-channel-findings                   | Channel findings and re-anchoring                            | delivery-continuity.md                  | 57efe00e |
+| EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 84414096 |
+| EVS-DEV-channel-findings                   | Channel findings and re-anchoring                            | delivery-continuity.md                  | 3d2bc8f3 |
 | EVS-DEV-containment-resolver               | Containment-chain walk via TableProjections                  | scoped-permissions.md                   | aa0359a8 |
 | EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | ce6623ff |
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | f5ac34be |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | d6e1707c |
 | EVS-DEV-delivery-resume                    | Channel check-in and resume                                  | delivery-continuity.md                  | 2bbafa9b |
-| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | 2542efc7 |
+| EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | adc8909c |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 06ca2ff3 |
@@ -67,7 +67,7 @@
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable           | scoped-permissions.md                   | 2cfc7054 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
-| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 00d7dc1d |
+| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 4fe21ce3 |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | 3905d868 |
 | EVS-DEV-snapshot-promotion-on-open         | Snapshot promotion after EventStore.open                     | dev-snapshot-promotion-on-open.md       | b58c11e9 |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |

@@ -25,7 +25,7 @@ F. The ingest path SHALL be idempotent: re-presenting an event already admitted 
 
 G. The ingest path SHALL admit an event only as part of a delivery on a channel that admits that delivery, SHALL admit every event of such a delivery, whatever the outcome of this requirement's integrity verifications, the event's content or the age of its client-authored timestamps, other than a record it cannot store as an event, which it SHALL keep in full in a security finding, and the library SHALL expose no public ingest entry point that admits an event outside a delivery.
 
-H. Every ingest entry point SHALL record a security finding for an event whose originator provenance entry names the receiving database's identity, whether or not the receiving database holds it, and SHALL store such an event only when it does not hold it.
+H. Every ingest entry point SHALL record a security finding for an event whose originator provenance entry names the receiving database's identity, whether or not the receiving database holds it, and SHALL store such an event as received when it does not hold it.
 
 I. The ingest path SHALL record a security finding for an event whose predecessor hash names a held event that the event's originating database did not author, or that its originating database authored at a later position.
 
@@ -53,7 +53,7 @@ L. The ingest path SHALL record a security finding for an event its delivery rec
 
 **Why does the ingest path admit unconditionally?** Rejecting a verifiable event before admission is silent data loss with no audit trail. Selection, exclusion, and canonicalization are post-admission concerns — resolved by projections, canonicalization rules, and analysis — where an exclusion is itself observable and auditable rather than invisible. Offline-first sources legitimately deliver events days or weeks after authoring; the provenance model's distinction between client-authored timestamps and receiving-hop timestamps exists precisely so faithful recording and selective consumption can coexist, rather than forcing ingest to police timestamp age as a proxy for validity.
 
-**Why a finding for a database's own events at ingest (assertion H)?** A database's own events enter its log by its appends, and a channel carries only what its sender authored, so one of its own events arriving through ingest is a clone's or a tamperer's: it may duplicate an event the database holds, or re-enter at an origin position an event appended since reuses. Ingest records it as a finding, held or not, and stores it when it is not held. A sender that lost its own events after a restore gets them back through a separate path, open only to its drainer while it resumes a delivery channel, which checks each event against the deliveries the channel carried and records the recovery in a skip event (EVS-PRD-delivery-channel).
+**Why a finding for a database's own events at ingest (assertion H)?** A database's own events enter its log by its appends, and a channel carries only what its sender authored, so one of its own events arriving through ingest is a clone's or a tamperer's: it may duplicate an event the database holds, or re-enter at an origin position an event appended since reuses. Ingest records it as a finding, held or not, and stores it as received when it is not held, like any other event whose integrity it cannot vouch for. Storing it gives it no authority over the database's own destinations: the default destination-wedges view folds no event of the database's own identity that it does not hold as authored (`EVS-PRD-destinations/S`). A sender that lost its own events after a restore gets them back through a separate path, open only to its drainer while it resumes a delivery channel, which checks each event against the deliveries the channel carried and records the recovery in a skip event (EVS-PRD-delivery-channel).
 
 **Why only deliveries the channel admits (assertion G)?** Admission is unconditional about content, age and integrity, not about order or form. A record the library cannot store as an event (malformed, or a reserved event it does not admit) is kept in full in a finding instead, so the log holds it and the rest of its delivery is admitted. As for order, a delivery that does not follow the receiver's record of its channel is refused whole, with the record, so the sender delivers again what the receiver lacks, recovers what it lacks itself, or re-anchors the channel (EVS-PRD-delivery-channel). The refusal loses nothing: the events stay in the sender's queue. An entry point that admitted a single event outside a delivery would let an event reach the log with no channel record, so a receiver's record would no longer describe everything it received from a sender; the library's own tests of the per-event checks reach them through library-internal code, not a public entry point.
 
@@ -63,6 +63,8 @@ L. The ingest path SHALL record a security finding for an event its delivery rec
 
 ## Changelog
 
+- 2026-09-25 | d60bdba5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | H: an event of the receiver's own identity that the receiver does not hold is stored as received, whatever its entry type. No code or test references H
 - 2026-09-25 | f878fb3d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | G: a record ingest cannot store as an event is kept in full in a security finding and the rest of its delivery is admitted. H: an event of the receiver's own identity is stored only when not held. No code or test references G or H
 - 2026-09-25 | cf78842f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -83,4 +85,4 @@ L. The ingest path SHALL record a security finding for an event its delivery rec
 - 2026-08-06 | a8814731 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-07-02 | 92f2bd91 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Ingest Path* | **Hash**: f878fb3d
+*End* *Ingest Path* | **Hash**: d60bdba5
