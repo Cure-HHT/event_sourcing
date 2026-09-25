@@ -32,7 +32,10 @@ Future<List<Map<String, dynamic>>> _bootAndRead({
   final backend = SembastBackend(database: db);
   try {
     await bootstrapEventStore(
-      backend: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       source: _source,
       entryTypes: const <EntryTypeDefinition>[],
       destinations: const <Destination>[],

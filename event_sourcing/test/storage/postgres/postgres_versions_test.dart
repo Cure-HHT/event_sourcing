@@ -8,56 +8,12 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import '../../test_support/version_compatibility_conformance.dart';
+import 'postgres_scenario_database.dart';
 import 'test_postgres_url.dart';
-
-class _PostgresVersionDatabase implements VersionTestDatabase {
-  _PostgresVersionDatabase(this._url);
-
-  final String _url;
-  final List<PostgresBackend> _backends = <PostgresBackend>[];
-
-  @override
-  Future<StorageBackend> openBackend() async {
-    final backend = await PostgresBackend.open(
-      url: _url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
-    _backends.add(backend);
-    return backend;
-  }
-
-  @override
-  MutableSecurityContextStore securityFor(StorageBackend backend) =>
-      PostgresSecurityContextStore(backend: backend as PostgresBackend);
-
-  @override
-  Future<void> stop(EventStore store) => store.close();
-
-  @override
-  Future<void> close() async {
-    for (final backend in _backends) {
-      await backend.close();
-    }
-  }
-}
-
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
-
-Future<void> _resetSchema(String url) async {
-  final tmp = await _connect(url);
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-}
 
 const _kType = 'versioned_note';
 const _kView = 'versioned_notes';
@@ -94,14 +50,16 @@ Future<EventStore> _openStore(
     );
   }
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      PostgresSecurityContextStore(backend: backend),
+    ),
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'versions-hop',
       identifier: 'versions-install',
       softwareVersion: 'versions-test',
     ),
-    securityContexts: PostgresSecurityContextStore(backend: backend),
     projections: ProjectionRegistry()
       ..register(
         const AggregateProjectionSpec(
@@ -120,22 +78,22 @@ Future<EntryTypeVersion?> _storedTarget(StorageBackend backend) =>
     );
 
 void main() {
-  final url = testPostgresUrl();
-  runVersionCompatibilityScenarios(() async {
-    if (url == null) return null;
-    await _resetSchema(url);
-    return _PostgresVersionDatabase(url);
-  }, backendLabel: 'postgres');
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
+  runVersionCompatibilityScenarios(
+    () => PostgresScenarioDatabase.fresh(db),
+    backendLabel: 'postgres',
+  );
 
   group('a canary overlap on postgres', () {
     final backends = <PostgresBackend>[];
 
     setUp(() async {
-      if (url == null) {
+      if (db == null) {
         markTestSkipped('PG_TEST_URL unset');
         return;
       }
-      await _resetSchema(url);
+      await db.reset();
     });
 
     tearDown(() async {
@@ -146,11 +104,7 @@ void main() {
     });
 
     Future<PostgresBackend> openBackend() async {
-      final backend = await PostgresBackend.open(
-        url: url!,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      final backend = await db!.open(provision: true);
       backends.add(backend);
       return backend;
     }
@@ -160,7 +114,7 @@ void main() {
     test("the older build's fold overlapping the newer build's boot "
         'promotion ends with a lowered target or a promoted row, and one '
         'event', () async {
-      if (url == null) return;
+      if (db == null) return;
       final older = await _openStore(
         await openBackend(),
         const EntryTypeVersion(1, 0),
@@ -181,7 +135,7 @@ void main() {
       var runs = 0;
       final folding = older.runTransaction<void>((txn, collector) async {
         runs += 1;
-        await older.backend.readViewTargetVersionInTxn(txn, _kView, _kType);
+        await older.reader.readViewTargetVersionInTxn(txn, _kView, _kType);
         if (!snapshotTaken.isCompleted) snapshotTaken.complete();
         await resume.future;
         await older.appendInTxn(
@@ -234,24 +188,20 @@ void main() {
 
   group('stored versions out of range on postgres', () {
     setUp(() async {
-      if (url == null) {
+      if (db == null) {
         markTestSkipped('PG_TEST_URL unset');
         return;
       }
-      await _resetSchema(url);
+      await db.reset();
     });
 
     // Verifies: EVS-DEV-version-compatibility/A+C
     test('the schema refuses a major below 1 or a minor below 0 in events '
         'and in view target versions', () async {
-      if (url == null) return;
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      if (db == null) return;
+      final backend = await db.open(provision: true);
       await backend.close();
-      final conn = await _connect(url);
+      final conn = await db.connectAdmin();
       try {
         final eventColumns = <String, (int, int, int, int)>{
           'entry_type_version_major': (0, 0, 2, 0),

@@ -23,6 +23,7 @@ import 'package:sembast/sembast_memory.dart';
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/test_backends.dart';
 
 const _installUUID = 'aaaa1111-2222-3333-4444-555566667777';
 const _source = Source(
@@ -39,13 +40,18 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-Future<EventStoreBundle> _bootstrap(SembastBackend backend) {
-  return bootstrapEventStore(
-    backend: backend,
+Future<EventStoreBundle> _bootstrap(SembastBackend backend) async {
+  final opened = await bootstrapEventStore(
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
     destinations: const <Destination>[],
   );
+  trackTestBackend(opened.eventStore, backend);
+  return opened;
 }
 
 Future<List<StoredEvent>> _eventsOfType(

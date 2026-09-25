@@ -216,8 +216,12 @@ void main() {
           ),
         ),
       );
-      expect(f1.store.deliveryTrigger, isNull);
-      await f1.note('n1');
+      final wakes = <bool>[];
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(onDeliveryWake: wakes.add),
+        () => f1.note('n1'),
+      );
+      expect(wakes, <bool>[false], reason: 'the trigger slot is empty');
       await Future<void>.delayed(const Duration(milliseconds: 100));
       expect(d.started, isEmpty, reason: 'no pass ran');
       expect(await drainLockCounts(f1), (held: 0, pending: 0));

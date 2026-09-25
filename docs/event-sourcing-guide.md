@@ -94,7 +94,7 @@ Two shapes ship:
 A view is the materialized output of a projection. It lives in the
 storage backend (a Sembast store, a Postgres table) and you read it via
 `eventStore.subscribe<T>(...)` for live updates, or directly via
-`backend.findViewRows(...)` for one-off queries inside tests and admin
+`eventStore.reader.findViewRows(...)` for one-off queries inside tests and admin
 tools.
 
 ### Action
@@ -412,27 +412,51 @@ helpers. The canonical example lives at
 `event_sourcing/example_action_permissions/lib/server/bootstrap.dart`.
 Here is what it does, with the parts that always look the same.
 
-### 1. Open a storage backend
+### 1. Describe the storage
+
+The library opens the storage itself from a description, holds it, and
+closes it when the event store closes (and when an open fails after it
+opened it). A Sembast description names where the database lives:
 
 ```dart
-final db = await databaseFactoryMemory.openDatabase('demo');
-final backend = SembastBackend(database: db);
+const storage = SembastStorage.file('/path/to/events.db'); // native runtimes
+// SembastStorage.browser('events')  -- an IndexedDB database on the web
+// SembastStorage.memory('events')   -- an in-memory database of the isolate
 ```
+
+The library selects the Sembast factory for the description itself.
+`deleteSembastDatabase(storage)` deletes the database a description names,
+once no event store of the isolate holds it open: this is how an
+application resets a database an earlier data format wrote.
 
 Or, for server-side, provision the schema once per deployment (a step
-of its own, before any instance starts), then open:
+of its own, before any instance starts), then describe the database the
+instances open:
 
 ```dart
+// As the role that owns the schema, declaring the roles instances connect
+// as (a lock session opened without lockUrl runs as the runtime role).
 await PostgresBackend.provision(
   'postgres://evs:evs@localhost:5432/evs_demo',
+  schema: 'demo',
+  runtimeRoles: {'evs_runtime'},
+  lockRoles: {'evs_runtime'},
   sslMode: SslMode.disable,
 );
 
-final backend = await PostgresBackend.open(
-  url: 'postgres://evs:evs@localhost:5432/evs_demo',
+// As the runtime role, after the grants.
+const storage = PostgresStorage(
+  url: 'postgres://evs_runtime:evs@localhost:5432/evs_demo',
+  schema: 'demo',
   sslMode: SslMode.disable,
 );
 ```
+
+The library opens a `PostgresStorage` with `PostgresBackend.open`. A
+backend the application constructs itself (its own `StorageBackend`
+implementation, say) enters only as
+`ApplicationSuppliedStorage(backend, securityContexts)`; the application
+holds that backend and closes it, and the event store over it does not.
 
 `open` runs no DDL: it verifies the provisioned schema version and
 refuses, naming `provision`, a database that was never provisioned or
@@ -465,7 +489,31 @@ a member of the owning role, holds neither `SUPERUSER` nor `CREATEROLE`
 nor membership in a role that carries them (a hosting platform's
 administrative role included), and has no `CREATE` on the schema (revoke
 it from `PUBLIC` on a `public` schema of a Postgres major before 15). The
-library is tested against PostgreSQL 16. The queue table's guard
+library is tested against PostgreSQL 16.
+
+Provisioning records the runtime and lock roles the deployment declares,
+in a table of the schema only the owner writes, and each provisioning
+replaces the set. `open` refuses, naming the role and the privilege
+(`PostgresRoleRefusedException`), before it registers a generation: a pool
+role not declared as a runtime role, or a lock role not declared as a lock
+role; a pool or lock role that owns the schema or a table in it, can
+inherit or set the owner, or holds `SUPERUSER` or `CREATEROLE` directly or
+through a role it can inherit or set; and a database on which a role
+other than the owner and the declared roles holds a write privilege on a
+library table, a column of one or a sequence in the schema, or can inherit
+or set `pg_write_all_data`, the owner or a declared role, on which `PUBLIC`
+holds any privilege on a library table, or on which a role other than the
+owner holds `CREATE` on the schema. `SELECT` is admitted, so a reporting
+role keeps working, and so is a membership held with the admin option
+alone. Several declared runtime roles open side by side, so a canary, a
+rotated credential or a separate delivery process runs under a role of its
+own. An application that keeps tables of its own in the database puts them
+in a schema of its own, under a role of its own that holds no privilege on
+a library table beyond `SELECT` and no membership through which it can act
+as a declared role, the owner or `pg_write_all_data` (the doc comment of
+`postgresRuntimeRoleGrants`, "An application's own tables").
+
+The queue table's guard
 (`EVS-DEV-destination-drain/S`) refuses every change to a queue item
 outside the shapes of the library's own writes, from any role; it cannot
 tell a hand-written change of a legal shape from the library's own, and
@@ -594,7 +642,7 @@ register them. Then add your own.
 
 ```dart
 final datastore = await bootstrapEventStore(
-  backend: backend,
+  storage: storage,
   source: Source(
     hopId: 'server-1',
     identifier: installId,             // UUIDv4, persisted across boots
@@ -1907,7 +1955,7 @@ rest stand by; the drain lock follows the visible tab, so nothing drains
 while no tab of the origin is visible, and a page the browser freezes
 before it hands the lock over holds it until it is resumed or discarded
 (a liveness limit, not a safety one). Every tab registers the same
-destinations. "Open a storage backend" above has the details.
+destinations. "Describe the storage" above has the details.
 
 #### Versions and deployment
 

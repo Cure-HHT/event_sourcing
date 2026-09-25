@@ -12,7 +12,10 @@
 // seams only a Postgres backend or a browser reaches (the generation
 // guard's lock session, provisioning, Web Locks) are read through the same
 // `DeliveryTestHooks.current` gate this probe exercises, which is null
-// without assertions for every seam alike.
+// without assertions for every seam alike. The probe also calls the
+// test-only `EventStore.openForTest` over a fresh in-memory database: without
+// assertions it must refuse with `StateError` and leave that database
+// untouched.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -35,6 +38,8 @@ class ProbeOutcome {
     required this.wedgeEvents,
     required this.recordedVersion,
     required this.recordedDataFormat,
+    required this.openForTest,
+    required this.openForTestWrites,
   });
 
   /// Seams that fired, in order.
@@ -71,10 +76,21 @@ class ProbeOutcome {
   /// The data format the database's `lib_version_initialized` records.
   final DataFormatVersion? recordedDataFormat;
 
-  /// True when no seam fired, the passes delivered the one event, its
-  /// outcome committed, and the refusing destination's wedge committed.
+  /// What the test-only open did over a fresh database: `refused` (it threw
+  /// `StateError`) or `opened`.
+  final String openForTest;
+
+  /// The records the fresh database held after the test-only open: its
+  /// bookkeeping records and its events.
+  final int openForTestWrites;
+
+  /// True when no seam fired, the test-only open refused and wrote nothing,
+  /// the passes delivered the one event, its outcome committed, and the
+  /// refusing destination's wedge committed.
   bool get passed =>
       firedSeams.isEmpty &&
+      openForTest == 'refused' &&
+      openForTestWrites == 0 &&
       delivered == 1 &&
       sentItems == 1 &&
       wedgeEvents == 1 &&
@@ -92,6 +108,8 @@ class ProbeOutcome {
     'wedge_events': wedgeEvents,
     'recorded_version': recordedVersion,
     'recorded_data_format': recordedDataFormat?.toString(),
+    'open_for_test': openForTest,
+    'open_for_test_writes': openForTestWrites,
     'passed': passed,
   };
 }
@@ -147,9 +165,44 @@ class _ProbeDestination extends Destination {
   }
 }
 
-/// Runs the probe body: seams installed around a registry operation and a
-/// delivery pass.
+/// Calls the test-only open over a fresh in-memory database; returns what it
+/// did and how many records the database then holds.
+Future<({String outcome, int writes})> _probeOpenForTest() async {
+  final db = await newDatabaseFactoryMemory().openDatabase('untouched.db');
+  final backend = SembastBackend(database: db);
+  String outcome;
+  try {
+    // The probe calls the test-only open as production code would, to show
+    // that a build without assertions refuses it.
+    // ignore: invalid_use_of_visible_for_testing_member
+    final store = await EventStore.openForTest(
+      storage: backend,
+      entryTypes: EntryTypeRegistry(),
+      source: const Source(
+        hopId: 'probe',
+        identifier: 'probe-untouched',
+        softwareVersion: 'probe@1',
+      ),
+      securityContexts: SembastSecurityContextStore(backend: backend),
+    );
+    outcome = 'opened';
+    await store.close();
+    // The refusal the probe checks for is a StateError.
+    // ignore: avoid_catching_errors
+  } on StateError {
+    outcome = 'refused';
+  }
+  final writes =
+      await StoreRef<String, Object?>('backend_state').count(db) +
+      (await backend.findAllEvents()).length;
+  await backend.close();
+  return (outcome: outcome, writes: writes);
+}
+
+/// Runs the probe body: the test-only open over a fresh database, then
+/// seams installed around a registry operation and a delivery pass.
 Future<ProbeOutcome> runHooksReleaseProbe() async {
+  final openForTest = await _probeOpenForTest();
   final db = await newDatabaseFactoryMemory().openDatabase('probe.db');
   final backend = SembastBackend(database: db);
   final healthy = _ProbeDestination('probe_healthy');
@@ -172,7 +225,10 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
   final bundle = await runWithDeliveryTestHooks(
     bootHooks,
     () => bootstrapEventStore(
-      backend: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       source: const Source(
         hopId: 'probe',
         identifier: 'probe-install',
@@ -292,6 +348,7 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     afterCommitBeforePublish: () async {
       fired.add('afterCommitBeforePublish');
     },
+    onDeliveryWake: (cycleWoken) => fired.add('onDeliveryWake $cycleWoken'),
   );
   late final String? storedEndDate;
   late final String? registryEndDate;
@@ -325,6 +382,15 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     await cycle();
     await cycle();
     await cycle.close();
+    // An append after the close wakes no cycle; the wake is observed.
+    await bundle.eventStore.append(
+      entryType: 'probe_event',
+      aggregateId: 'probe-2',
+      aggregateType: 'Probe',
+      eventType: 'finalized',
+      data: const <String, Object?>{'n': 2},
+      initiator: initiator,
+    );
     // The cycle took the free lock directly and beats it on its cadence,
     // which the probe does not wait for; the probe requests a drain lock of
     // its own, as a waiting cycle does, and beats it.
@@ -362,6 +428,8 @@ Future<ProbeOutcome> runHooksReleaseProbe() async {
     recordedDataFormat: DataFormatVersion.fromJson(
       initialized.data['data_format'],
     ),
+    openForTest: openForTest.outcome,
+    openForTestWrites: openForTest.writes,
   );
 }
 

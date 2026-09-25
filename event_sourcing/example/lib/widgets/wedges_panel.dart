@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
@@ -18,13 +19,13 @@ import 'package:flutter/material.dart';
 /// a different queue.
 class WedgesPanel extends StatefulWidget {
   const WedgesPanel({
-    required this.backend,
+    required this.watch,
     required this.databaseId,
     required this.appState,
     super.key,
   });
 
-  final SembastBackend backend;
+  final StorageWatch watch;
 
   /// The pane's database identity (`EventStore.databaseId`).
   final String databaseId;
@@ -63,7 +64,7 @@ class _WedgesPanelState extends State<WedgesPanel> {
   @override
   void initState() {
     super.initState();
-    _eventsSub = widget.backend.watchEvents().listen((_) {
+    _eventsSub = widget.watch.events().listen((_) {
       if (!mounted) return;
       unawaited(_refresh());
     });
@@ -79,12 +80,12 @@ class _WedgesPanelState extends State<WedgesPanel> {
   Future<void> _refresh() async {
     final refresh = ++_refreshes;
     try {
-      final rows = await widget.backend.findViewRows(
+      final rows = await widget.watch.reader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
       );
       final log = <StoredEvent>[
         for (final type in _deliveryEvents.keys)
-          ...await widget.backend.findAllEvents(entryType: type),
+          ...await widget.watch.reader.findAllEvents(entryType: type),
       ]..sort((a, b) => b.sequenceNumber.compareTo(a.sequenceNumber));
       if (!mounted || refresh != _refreshes) return;
       setState(() {

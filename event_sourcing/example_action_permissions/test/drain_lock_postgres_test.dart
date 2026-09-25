@@ -11,45 +11,34 @@
 //   destination-wedges view and its delivery status, and its recovery
 //   removes the row; delivery resumes on the draining instance.
 //
-// Gated on PG_TEST_URL. Drops and recreates the `public` schema, so it runs
-// one file at a time like every Postgres test.
+// Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
+// step, so it runs one file at a time like every Postgres test; the
+// instances connect as the declared runtime role.
 
 @TestOn('vm')
 library;
 
 import 'dart:async';
-import 'dart:io';
 import 'dart:isolate';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/log_destination.dart';
+import 'package:action_permissions_demo/server/postgres_setup.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postgres/postgres.dart';
 
 import 'support/demo_bootstrap.dart';
+import 'support/demo_postgres.dart';
 
 const Duration _cadence = Duration(milliseconds: 200);
 const Duration _patience = Duration(seconds: 30);
-
-Future<void> _resetAndProvision(String url) async {
-  final tmp = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-  await PostgresBackend.provision(url, sslMode: SslMode.disable);
-}
 
 Future<DemoServerComponents> _boot(
   PostgresBackend backend,
   String installIdentifier,
   LogDestination destination,
 ) => bootstrapDemoServer(
-  backend: backend,
-  idempotencyStore: PostgresIdempotencyStore.forBackend(backend),
+  storage: demoStorageOver(backend),
   permissionsYaml: validPermissionsYaml,
   usersYaml: validUsersYaml,
   installIdentifier: installIdentifier,
@@ -77,6 +66,7 @@ Future<void> _instanceB(List<Object?> args) async {
   final commands = ReceivePort();
   final backend = await PostgresBackend.open(
     url: url,
+    schema: demoPostgresSchema,
     sslMode: SslMode.disable,
   );
   final destination = LogDestination(
@@ -199,8 +189,8 @@ class _B {
 }
 
 void main() {
-  final url = Platform.environment['PG_TEST_URL'];
-  if (url == null || url.isEmpty) {
+  final db = DemoPostgres.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping the two-instance tests');
     });
@@ -210,12 +200,10 @@ void main() {
   test('one instance drains and the other stands by; a halt and a recovery '
       'issued through the standing-by instance are honoured by the drainer; '
       'closing the drainer hands delivery over', () async {
-    await _resetAndProvision(url);
+    await db.reset();
+    final url = db.runtimeUrl;
     final deliveredA = <String>[];
-    final backendA = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-    );
+    final backendA = await db.open();
     final a = await _boot(
       backendA,
       'aaaa0002-0000-4000-8000-0000000000a2',

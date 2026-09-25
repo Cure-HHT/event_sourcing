@@ -47,7 +47,7 @@ void runDemoRoutesTests(DemoBackendFactory factory, {required String label}) {
   Future<DemoRoutes> makeRoutes(String installId) async {
     final backends = await factory();
     final components = await bootstrapDemoServer(
-      backend: backends.backend,
+      storage: backends.storage,
       idempotencyStore: backends.idempotencyStore,
       permissionsYaml: validPermissionsYaml,
       usersYaml: validUsersYaml,

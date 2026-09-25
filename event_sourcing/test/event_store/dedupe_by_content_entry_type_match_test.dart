@@ -33,7 +33,10 @@ Future<EventStore> _bootstrap() async {
   );
   final backend = SembastBackend(database: db);
   final ds = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: _source,
     entryTypes: const <EntryTypeDefinition>[
       EntryTypeDefinition(

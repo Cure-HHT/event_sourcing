@@ -467,7 +467,7 @@ void runIngestHashScenarios(
         initiator: _init,
       ))!;
       await relay.ingestEvent(origin);
-      final relayed = await relay.backend.findEventById(origin.eventId);
+      final relayed = await relay.reader.findEventById(origin.eventId);
       expect(
         (relayed!.metadata['provenance']! as List).length,
         2,
@@ -528,7 +528,7 @@ void runIngestHashScenarios(
 
             final next = await downstream();
             await next.ingestEvent(stored);
-            final forwarded = (await next.backend.findEventById(
+            final forwarded = (await next.reader.findEventById(
               stored.eventId,
             ))!;
             expect((forwarded.metadata['provenance']! as List).length, 3);
@@ -794,7 +794,7 @@ void runIngestHashScenarios(
 
       final receiver = await downstream();
       await receiver.ingestEvent(stored);
-      expect(await receiver.backend.findEventById(stored.eventId), isNotNull);
+      expect(await receiver.reader.findEventById(stored.eventId), isNotNull);
     });
 
     // Verifies: EVS-PRD-ingest/D
@@ -810,7 +810,7 @@ void runIngestHashScenarios(
       );
       final next = await downstream();
       await next.ingestEvent(stored);
-      expect(await next.backend.findEventById(stored.eventId), isNotNull);
+      expect(await next.reader.findEventById(stored.eventId), isNotNull);
     });
 
     // A change confined to the last hop's own provenance entry, or to the

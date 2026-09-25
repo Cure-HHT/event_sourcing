@@ -37,12 +37,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' show Random, min;
 
+import 'package:event_sourcing/src/actions/idempotency.dart';
+import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
@@ -54,14 +57,14 @@ import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_drain_lock.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_generation_guard.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_grants.dart'
     show postgresRuntimeRoleGrants;
+import 'package:event_sourcing/src/storage/postgres/postgres_library_roles.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_schema.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_search_path.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -72,6 +75,17 @@ import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
+
+// Implements: EVS-DEV-storage-capability/F
+// the transaction handle, the drain lock, the generation guard, the
+//   idempotency store and the security-context store share the backend's
+//   Dart library, and reach a handle's session only through members private
+//   to it.
+part 'postgres_txn.dart';
+part 'postgres_drain_lock.dart';
+part 'postgres_generation_guard.dart';
+part 'postgres_idempotency_store.dart';
+part '../../security/postgres_security_context_store.dart';
 
 /// Module-private v4 UUID generator used by [PostgresBackend.enqueueFifoTxn]
 /// to mint each FIFO row's [FifoEntry.entryId]. Held at file scope so every
@@ -157,12 +171,26 @@ class TransactionRetryExhaustedException implements Exception {
 class PostgresBackend extends StorageBackend {
   PostgresBackend._(
     this._pool, {
+    required String schema,
     required Duration bootLockWait,
     required PostgresGenerationGuard guard,
-  }) : _bootLockWait = bootLockWait,
+  }) : _schema = schema,
+       _bootLockWait = bootLockWait,
        _guard = guard;
 
   final Pool<void> _pool;
+
+  /// The schema holding the library's tables, which every library
+  /// transaction puts first on its search path.
+  final String _schema;
+
+  /// Runs [body], a read outside a caller's transaction, in a library
+  /// transaction on the pool.
+  // Implements: EVS-DEV-postgres-backend/Q
+  // every read on the pool runs in a transaction that pins the search path
+  //   first.
+  Future<T> _read<T>(Future<T> Function(TxSession s) body) =>
+      runLibraryTransaction(_pool, _schema, body);
 
   /// The incompatible-generation guard: the lock session, the active set
   /// of registered generations, and the transaction fence.
@@ -180,10 +208,23 @@ class PostgresBackend extends StorageBackend {
   //   conformance harness' close subgroup.
   bool _closed = false;
 
-  /// Opens a backend over the database at [url] and returns it ready for
-  /// use. Callers MUST call [close] to release its connections.
+  /// Opens a backend over the database at [url], whose library tables are
+  /// in [schema], and returns it ready for use. Callers MUST call [close] to
+  /// release its connections.
   ///
   /// Example: `postgres://user:pass@host:5432/db`.
+  ///
+  /// Every statement the backend runs, on its pool and on its lock
+  /// session, runs in a transaction whose first statement sets the search
+  /// path, for that transaction only, to exactly [schema], `pg_catalog` and
+  /// `pg_temp`: no other schema, whoever may create one, decides what the
+  /// library's SQL resolves to, and the connecting role's own search path
+  /// plays no part. Because the setting travels with each transaction, the
+  /// pool's connections may run through a transaction-mode pooler. `open`
+  /// reads the current schema back inside such a transaction and refuses,
+  /// with [PostgresSchemaMismatchException] naming both schemas and before
+  /// it registers a generation, when it is not [schema] (the schema does
+  /// not exist, or the role cannot use it).
   ///
   /// `open` performs no DDL. It verifies the schema version pair stored in
   /// the database and refuses, with [PostgresSchemaIncompatibleException]
@@ -191,10 +232,32 @@ class PostgresBackend extends StorageBackend {
   /// schema version is below [postgresSchemaVersion], or one whose minimum
   /// compatible schema version is above it. A newer schema whose minimum
   /// this build meets opens, so a serving revision keeps opening while a
-  /// canary has provisioned ahead of it. [provisionSchema] provisions first
-  /// (for development and tests), and so needs the role that owns the
-  /// schema; a deployment runs [provision] once, as a separate step and as
-  /// the owner, before its instances open the database as the runtime role.
+  /// canary has provisioned ahead of it. A deployment runs [provision] once,
+  /// as a separate step and as the owner, before its instances open the
+  /// database as a runtime role.
+  ///
+  /// `open` then reads the grants and memberships the server records, and
+  /// refuses the database with [PostgresRoleRefusedException], naming each
+  /// role and the privilege or attribute, before it registers a generation:
+  /// when the role the pool or the lock session connects as is not a runtime
+  /// or lock role [provision] declared (a lock session opened without
+  /// [lockUrl] connects as the pool's role, which is then declared as a lock
+  /// role too); when that role owns the schema or one of its tables, can
+  /// inherit the privileges of or set its role to the owner of the library's
+  /// tables, or holds `SUPERUSER` or `CREATEROLE` directly or through a role
+  /// it can inherit or set; when a role other than the owner and the declared
+  /// roles holds a write privilege on a table of [schema] or a column of one
+  /// (`INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `TRIGGER` or `REFERENCES`),
+  /// `USAGE` or `UPDATE` on a sequence in it, or a membership through which
+  /// it can inherit or set `pg_write_all_data`, the owner or a declared role;
+  /// when a role other than the owner holds a write privilege on the declared
+  /// roles' table; when `PUBLIC` holds any privilege on a table of [schema];
+  /// and when a role other than the owner, `PUBLIC` included, holds `CREATE`
+  /// on [schema]. `SELECT` held by a role other than `PUBLIC` is admitted,
+  /// and so is a membership held with the admin option alone. The check runs
+  /// at every open, so a grant made while instances run is refused at the
+  /// next open of any of them; a deployment grants only in its deployment
+  /// step (see [postgresRuntimeRoleGrants]).
   ///
   /// Besides its connection pool, the backend opens one dedicated
   /// connection for its lifetime, the lock session, on which it holds the
@@ -266,53 +329,77 @@ class PostgresBackend extends StorageBackend {
   //   support.
   // Implements: EVS-DEV-postgres-backend/J
   // open opens and checks the dedicated lock session and starts its probe.
+  // Implements: EVS-DEV-postgres-backend/M+N+P
+  // open reads the pool's and the lock session's roles and refuses, before
+  //   a generation is registered, an undeclared role, a role that could
+  //   change the schema, or a foreign write privilege or membership.
+  // Implements: EVS-PRD-storage-barrier/F
+  // open refuses a database on which a role outside the owner and the
+  //   declared roles may write a library table or act as one of those roles.
   static Future<PostgresBackend> open({
     required String url,
+    required String schema,
     String? lockUrl,
     SslMode sslMode = SslMode.require,
     Duration lockQueryTimeout = const Duration(seconds: 5),
     Duration lockHeartbeat = const Duration(seconds: 5),
     Duration bootLockWait = const Duration(seconds: 60),
-    bool provisionSchema = false,
   }) async {
-    if (provisionSchema) {
-      await provision(
-        url,
-        lockUrl: lockUrl,
-        sslMode: sslMode,
-        bootLockWait: bootLockWait,
-        lockQueryTimeout: lockQueryTimeout,
-      );
-    }
+    quotePostgresIdentifier(schema);
     final schemaVersion = effectivePostgresMigrations().last.toVersion;
     final endpoint = endpointFromUrl(url);
     final lockEndpoint = lockUrl == null ? endpoint : endpointFromUrl(lockUrl);
-    final pool = Pool<void>.withEndpoints([
-      endpoint,
-    ], settings: PoolSettings(maxConnectionCount: 4, sslMode: sslMode));
+    final pool = Pool<void>.withEndpoints(
+      [endpoint],
+      settings: PoolSettings(
+        maxConnectionCount: _poolConnections,
+        sslMode: sslMode,
+      ),
+    );
     PostgresLockSession? session;
     try {
-      final scope = await PostgresScope.read(pool);
+      final scope = await _readDescribedScope(pool, schema);
       session = await PostgresLockSession.open(
         endpoint: lockEndpoint,
+        schema: schema,
         sslMode: sslMode,
         queryTimeout: lockQueryTimeout,
         expectedScope: scope,
       );
-      await verifyLockSessionServer(pool, session);
-      refuseUnsupportedSchema(await readStoredSchemaPair(pool), schemaVersion);
-      final guard = PostgresGenerationGuard(
+      await verifyLockSessionServer(pool, schema, session);
+      refuseUnsupportedSchema(
+        await runLibraryTransaction(pool, schema, readStoredSchemaPair),
+        schemaVersion,
+      );
+      final lockRoles = await session.run(readSessionRoles);
+      final refusals = await runLibraryTransaction(
+        pool,
+        schema,
+        (tx) async => findLibraryRoleRefusals(
+          tx,
+          poolRoles: await readSessionRoles(tx),
+          lockRoles: lockRoles,
+        ),
+      );
+      if (refusals.isNotEmpty) throw PostgresRoleRefusedException(refusals);
+      final guard = PostgresGenerationGuard._(
         lockEndpoint: lockEndpoint,
         sslMode: sslMode,
         lockQueryTimeout: lockQueryTimeout,
         lockHeartbeat: lockHeartbeat,
         bootLockWait: bootLockWait,
         scope: scope,
+        schema: schema,
         schemaVersion: schemaVersion,
         pool: pool,
         session: session,
       )..start();
-      return PostgresBackend._(pool, bootLockWait: bootLockWait, guard: guard);
+      return PostgresBackend._(
+        pool,
+        schema: schema,
+        bootLockWait: bootLockWait,
+        guard: guard,
+      );
     } catch (_) {
       await session?.close();
       await pool.close();
@@ -320,13 +407,13 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  /// Brings the schema of the database at [url] to this build's
-  /// [postgresSchemaVersion]: reads the stored schema version (none is 0)
-  /// and, in one transaction, applies every migration step above it in
+  /// Brings the library schema [schema] of the database at [url] to this
+  /// build's [postgresSchemaVersion]: reads the stored schema version (none
+  /// is 0) and, in one transaction, applies every migration step above it in
   /// order, then records the resulting schema version and minimum
-  /// compatible schema version. A database already at this build's version,
-  /// or above it, is left untouched: provisioning never lowers the stored
-  /// pair.
+  /// compatible schema version. The schema of a database already at this
+  /// build's version, or above it, is left untouched: provisioning never
+  /// lowers the stored pair.
   ///
   /// Provisioning runs as the role that owns the schema; it is the one
   /// library operation the runtime role cannot perform. The instances run
@@ -334,18 +421,40 @@ class PostgresBackend extends StorageBackend {
   /// each provisioning, and before the new build's instances start, the
   /// owner grants it `USAGE` on the schema and the table privileges of
   /// [postgresRuntimeRoleGrants], under which every other library operation
-  /// works. The provisioned tables include the queue table's guard, which
-  /// refuses every change to a queue item outside the shapes of the
-  /// library's own writes, whatever role makes it, while it is in place; it
-  /// cannot tell a hand-written change of a legal shape from the library's
-  /// own, and the schema owner can remove it.
+  /// works.
   ///
-  /// The deployment creates the schema (the first schema on the connecting
-  /// role's search path) and its grants; `provision` creates the tables,
-  /// and refuses with [PostgresSchemaIncompatibleException] when the
-  /// connection reaches no schema, or when the schema already holds library
-  /// tables but records no schema version (tables provisioning did not
-  /// create, whose shape it cannot vouch for; the schema must be reset).
+  /// Every provisioning records the roles the deployment declares, replacing
+  /// those an earlier provisioning recorded: [runtimeRoles], the roles a
+  /// backend's pool may connect as, and [lockRoles], the roles its lock
+  /// session may connect as. A backend opened without a lock URL runs its
+  /// lock session as its pool's role, which is then named in both. Neither
+  /// set has a default, since the provisioning role itself is never one [open]
+  /// admits, and an empty set throws [ArgumentError]. The roles are recorded
+  /// in a table of the schema only the owner writes, and [open] refuses a
+  /// pool or lock role not declared as one of its kind, so instances under
+  /// several declared roles (a canary, a rotated credential, a separate
+  /// delivery process) open side by side. A role rotation declares the new
+  /// role beside the old, deploys it, and provisions again without the old
+  /// role once no instance uses it. The declared roles are recorded on a
+  /// schema at or above this build's version too, whose tables and version
+  /// pair are left untouched.
+  ///
+  /// The provisioned tables include the queue table's guard, which refuses
+  /// every change to a queue item outside the shapes of the library's own
+  /// writes, whatever role makes it, while it is in place; it cannot tell a
+  /// hand-written change of a legal shape from the library's own, and the
+  /// schema owner can remove it.
+  ///
+  /// The deployment creates [schema], owned by the role that provisions it,
+  /// and its grants; `provision` creates the tables in it, running every
+  /// statement in a transaction whose search path is [schema], `pg_catalog`
+  /// and `pg_temp` (see [open]). It refuses with
+  /// [PostgresSchemaMismatchException], naming both schemas, when the
+  /// current schema inside that transaction is not [schema], and with
+  /// [PostgresSchemaIncompatibleException] when the schema already holds
+  /// library tables but records no schema version (tables provisioning did
+  /// not create, whose shape it cannot vouch for; the schema must be
+  /// reset).
   ///
   /// Provisioning takes the same exclusive boot lock as `EventStore.open`,
   /// on a lock session opened and checked as [open] checks its own (so
@@ -368,6 +477,9 @@ class PostgresBackend extends StorageBackend {
   // provisioning applies every migration step above the stored version in
   //   one transaction, records the resulting pair, leaves a database at or
   //   above the build's version untouched, and runs under the boot lock.
+  // Implements: EVS-DEV-postgres-backend/P
+  // provisioning takes the declared runtime and lock roles, with no default,
+  //   and records them in the same transaction.
   // Implements: EVS-DEV-postgres-backend/I
   // provisioning refuses, writing nothing, a minimum a live instance does
   //   not meet.
@@ -375,11 +487,16 @@ class PostgresBackend extends StorageBackend {
   // provisioning takes the boot lock the booting instances take.
   static Future<void> provision(
     String url, {
+    required String schema,
+    required Set<String> runtimeRoles,
+    required Set<String> lockRoles,
     String? lockUrl,
     SslMode sslMode = SslMode.require,
     Duration bootLockWait = const Duration(seconds: 60),
     Duration lockQueryTimeout = const Duration(seconds: 5),
   }) async {
+    quotePostgresIdentifier(schema);
+    checkDeclaredLibraryRoles(runtimeRoles, lockRoles);
     final hooks = DeliveryTestHooks.current;
     final migrations = effectivePostgresMigrations();
     final target = migrations.last;
@@ -390,98 +507,133 @@ class PostgresBackend extends StorageBackend {
     );
     PostgresLockSession? session;
     try {
-      final scope = await PostgresScope.read(connection);
-      if (scope.schema == null) {
-        throw PostgresSchemaIncompatibleException(
-          reason:
-              'the connection reaches no schema (current_schema() is null): '
-              "the deployment creates the schema on the role's search path, "
-              'and its grants, before provisioning creates the tables',
-          storedSchemaVersion: null,
-          storedMinCompatibleSchemaVersion: null,
-          buildSchemaVersion: target.toVersion,
-        );
-      }
+      final scope = await _readDescribedScope(connection, schema);
       final lock = session = await PostgresLockSession.open(
         endpoint: lockUrl == null ? endpoint : endpointFromUrl(lockUrl),
+        schema: schema,
         sslMode: sslMode,
         queryTimeout: lockQueryTimeout,
         expectedScope: scope,
       );
-      await verifyLockSessionServer(connection, lock);
+      await verifyLockSessionServer(connection, schema, lock);
       final bootKey = await lock.run(
-        (c) => takePostgresBootLock(c, scope, bootLockWait),
+        (tx) => takePostgresBootLock(tx, scope, bootLockWait),
       );
       try {
-        await connection.runTx<void>((tx) async {
+        await runLibraryTransaction<void>(connection, schema, (tx) async {
           final stored = await readStoredSchemaPair(tx);
           final storedVersion = stored.version ?? 0;
-          if (storedVersion >= target.toVersion) return;
-          if (stored.version == null) {
-            final existing = <String>[
-              for (final table in postgresLibraryTables)
-                if ((await tx.execute(
-                      Sql.named('SELECT to_regclass(@t) IS NOT NULL'),
-                      parameters: <String, Object?>{'t': table},
-                    )).first[0] ==
-                    true)
-                  table,
-            ];
-            if (existing.isNotEmpty) {
-              throw PostgresSchemaIncompatibleException(
-                reason:
-                    'the schema holds library tables '
-                    '(${existing.join(', ')}) but records no '
-                    'schema version, so provisioning did not create them and '
-                    'cannot vouch for their shape; reset the schema (drop '
-                    'those tables) and provision it',
-                storedSchemaVersion: null,
-                storedMinCompatibleSchemaVersion: null,
-                buildSchemaVersion: target.toVersion,
-              );
-            }
+          if (storedVersion < target.toVersion) {
+            await _migrate(tx, stored, target, migrations, scope, hooks);
           }
-          final blocking = <String>{
-            for (final live in await readLiveComponents(tx, scope))
-              if (live.kind == 'schema' &&
-                  live.value < target.minCompatibleVersion)
-                generationComponent(kind: 'schema', id: '', value: live.value),
-          };
-          if (blocking.isNotEmpty) {
-            throw IncompatibleGenerationException(
-              conflictingComponents: blocking.toList()..sort(),
-              descriptor: null,
-            );
-          }
-          for (final step in migrations) {
-            if (step.toVersion <= storedVersion) continue;
-            for (final statement in step.ddl) {
-              await tx.execute(statement);
-            }
-          }
-          if (hooks?.failProvisioningBeforeVersionWrite?.call() ?? false) {
-            throw const InjectedFailure('failProvisioningBeforeVersionWrite');
-          }
-          for (final (key, value) in <(String, int)>[
-            (schemaVersionKey, target.toVersion),
-            (minCompatibleSchemaVersionKey, target.minCompatibleVersion),
-          ]) {
-            await tx.execute(
-              Sql.named(
-                'INSERT INTO backend_state (key, value) VALUES (@k, @v:jsonb) '
-                'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
-              ),
-              parameters: <String, Object?>{'k': key, 'v': value},
-            );
-          }
+          await recordDeclaredLibraryRoles(
+            tx,
+            runtimeRoles: runtimeRoles,
+            lockRoles: lockRoles,
+          );
         });
       } finally {
-        await lock.run((c) => releasePostgresBootLock(c, bootKey));
+        await lock.run((tx) => releasePostgresBootLock(tx, bootKey));
       }
     } finally {
       await session?.close();
       await connection.close();
     }
+  }
+
+  /// Applies, in the provisioning transaction [tx], every step of
+  /// [migrations] above the [stored] version, and records [target]'s schema
+  /// version pair.
+  static Future<void> _migrate(
+    Session tx,
+    StoredSchemaPair stored,
+    PostgresMigrationStep target,
+    List<PostgresMigrationStep> migrations,
+    PostgresScope scope,
+    DeliveryTestHooks? hooks,
+  ) async {
+    final storedVersion = stored.version ?? 0;
+    if (stored.version == null) {
+      final existing = <String>[
+        for (final table in postgresLibraryTables)
+          if ((await tx.execute(
+                Sql.named('SELECT to_regclass(@t) IS NOT NULL'),
+                parameters: <String, Object?>{'t': table},
+              )).first[0] ==
+              true)
+            table,
+      ];
+      if (existing.isNotEmpty) {
+        throw PostgresSchemaIncompatibleException(
+          reason:
+              'the schema holds library tables '
+              '(${existing.join(', ')}) but records no '
+              'schema version, so provisioning did not create them and '
+              'cannot vouch for their shape; reset the schema (drop '
+              'those tables) and provision it',
+          storedSchemaVersion: null,
+          storedMinCompatibleSchemaVersion: null,
+          buildSchemaVersion: target.toVersion,
+        );
+      }
+    }
+    final blocking = <String>{
+      for (final live in await readLiveComponents(tx, scope))
+        if (live.kind == 'schema' && live.value < target.minCompatibleVersion)
+          generationComponent(kind: 'schema', id: '', value: live.value),
+    };
+    if (blocking.isNotEmpty) {
+      throw IncompatibleGenerationException(
+        conflictingComponents: blocking.toList()..sort(),
+        descriptor: null,
+      );
+    }
+    for (final step in migrations) {
+      if (step.toVersion <= storedVersion) continue;
+      for (final statement in step.ddl) {
+        await tx.execute(statement);
+      }
+    }
+    if (hooks?.failProvisioningBeforeVersionWrite?.call() ?? false) {
+      throw const InjectedFailure('failProvisioningBeforeVersionWrite');
+    }
+    for (final (key, value) in <(String, int)>[
+      (schemaVersionKey, target.toVersion),
+      (minCompatibleSchemaVersionKey, target.minCompatibleVersion),
+    ]) {
+      await tx.execute(
+        Sql.named(
+          'INSERT INTO backend_state (key, value) VALUES (@k, @v:jsonb) '
+          'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+        ),
+        parameters: <String, Object?>{'k': key, 'v': value},
+      );
+    }
+  }
+
+  /// Reads, inside a library transaction of [executor], the scope it
+  /// reaches, and throws [PostgresSchemaMismatchException] unless its
+  /// current schema is [schema].
+  // Implements: EVS-DEV-postgres-backend/R
+  // open and provisioning read the current schema back inside a library
+  //   transaction and refuse, naming both schemas, one that is not the
+  //   named schema, before anything registers a generation.
+  static Future<PostgresScope> _readDescribedScope(
+    SessionExecutor executor,
+    String schema,
+  ) async {
+    final scope = await runLibraryTransaction(
+      executor,
+      schema,
+      PostgresScope.read,
+    );
+    if (scope.schema != schema) {
+      throw PostgresSchemaMismatchException(
+        describedSchema: schema,
+        currentSchema: scope.schema,
+      );
+    }
+    return scope;
   }
 
   @visibleForTesting
@@ -535,6 +687,32 @@ class PostgresBackend extends StorageBackend {
   /// transaction; the instance must be stopped.
   GenerationStatus get generationStatus => _guard.status;
 
+  /// An idempotency store whose lookups, records and sweeps run in this
+  /// backend's transactions: the event store over this backend builds its
+  /// `idempotencyStore` with it.
+  // Implements: EVS-DEV-storage-capability/I
+  // the idempotency store over a backend is built by the library, through
+  //   the backend, never by a public constructor.
+  @internal
+  IdempotencyStore idempotencyStoreOverThis() =>
+      PostgresIdempotencyStore._forBackend(this);
+
+  /// The rows [query] returns when run inside [txn], a transaction of this
+  /// backend (its reader's included), with [parameters] bound as the
+  /// `postgres` package binds them. Throws [StateError] for a transaction of
+  /// another backend.
+  @visibleForTesting
+  Future<List<List<Object?>>> queryInTxnForTest(
+    Transaction txn,
+    Object query, {
+    Object? parameters,
+  }) async => <List<Object?>>[
+    for (final row in await _asPgTxn(
+      txn,
+    )._session.execute(query, parameters: parameters))
+      List<Object?>.of(row),
+  ];
+
   /// The lock session's server process id and the settings it runs with,
   /// read on the lock session itself.
   @visibleForTesting
@@ -553,6 +731,47 @@ class PostgresBackend extends StorageBackend {
         final pid = await c.execute('SELECT pg_backend_pid()');
         return (pid: pid.first[0]! as int, settings: settings);
       });
+
+  /// The search path in effect inside a transaction of [transaction], in a
+  /// read outside one, and in an operation on the lock session.
+  @visibleForTesting
+  Future<({String transaction, String read, String lockSession})>
+  searchPathsForTest() async {
+    const sql = "SELECT current_setting('search_path')";
+    final inTransaction = await transaction(
+      (txn) async =>
+          (await (txn as _PostgresTxn)._session.execute(sql)).first[0]!
+              as String,
+    );
+    final read = (await _read((s) => s.execute(sql))).first[0]! as String;
+    final lockSession = await _guard.runOnSession(
+      (c) async => (await c.execute(sql)).first[0]! as String,
+    );
+    return (transaction: inTransaction, read: read, lockSession: lockSession);
+  }
+
+  /// `SHOW search_path` on every connection of the pool and on the lock
+  /// session, each outside any library transaction: the session's own
+  /// setting, which no library transaction changes.
+  @visibleForTesting
+  Future<({Set<String> pool, String lockSession})>
+  sessionSearchPathsForTest() async {
+    final pool = await Future.wait(<Future<String>>[
+      for (var i = 0; i < _poolConnections; i++)
+        _pool.withConnection((c) async {
+          // Holding each connection a moment makes the pool hand every
+          // request its own connection.
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          return (await c.execute('SHOW search_path')).first[0]! as String;
+        }),
+    ]);
+    final lockSession = await _guard.currentSession
+        .runOutsideTransactionForTest(
+          (c) async =>
+              (await c.execute('SHOW search_path')).first[0]! as String,
+        );
+    return (pool: pool.toSet(), lockSession: lockSession);
+  }
 
   // -------- Data generation --------
 
@@ -613,6 +832,9 @@ class PostgresBackend extends StorageBackend {
   /// catchError backstop logs it instead of crashing).
   static const int _maxTransactionAttempts = 8;
 
+  /// The size of the connection pool.
+  static const int _poolConnections = 4;
+
   // Implements: EVS-PRD-event-log/A
   // successful body commits atomically;
   //   thrown exception rolls back. Postgres SERIALIZABLE isolation prevents
@@ -639,7 +861,9 @@ class PostgresBackend extends StorageBackend {
   /// Runs [body] in one `SERIALIZABLE` transaction, re-running it after a
   /// serialization or deadlock failure (see the contract).
   ///
-  /// The transaction's first statement is the fence: it reads the
+  /// The transaction's first statement sets its search path to the
+  /// library's schema, `pg_catalog` and `pg_temp`, for the transaction
+  /// only. Its first query is the fence: it reads the
   /// database's generation record and stored schema pair, and throws
   /// [GenerationFencedException], committing nothing, when the record no
   /// longer admits a generation an event store open on this backend
@@ -647,8 +871,8 @@ class PostgresBackend extends StorageBackend {
   /// when the backend is fenced ([generationStatus]).
   ///
   /// A re-run of a body whose earlier run wrote the `backend_state` table
-  /// first locks that table in `SHARE ROW EXCLUSIVE` mode, before the fence
-  /// takes the transaction's snapshot. Every append updates the sequence
+  /// locks that table in `SHARE ROW EXCLUSIVE` mode before the fence takes
+  /// the transaction's snapshot. Every append updates the sequence
   /// counter row in that table, so an append whose first run lost a race to
   /// another instance's append waits, in its re-run, for every write to the
   /// table in flight to commit, and then takes a snapshot that includes
@@ -667,6 +891,9 @@ class PostgresBackend extends StorageBackend {
   // Implements: EVS-DEV-event-store-open/M
   // a transaction the boot progress observer, or work it started, asks for
   //   while the boot runs is refused.
+  // Implements: EVS-DEV-postgres-backend/Q
+  // the transaction's first statement pins the search path, for the
+  //   transaction only, to the library's schema, pg_catalog and pg_temp.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
     refuseCallFromBootProgressObserver('PostgresBackend.transaction');
@@ -676,8 +903,9 @@ class PostgresBackend extends StorageBackend {
       try {
         return await _pool.runTx<T>(
           (tx) async {
-            final wrapper = PostgresTxn(tx, owner: this);
+            final wrapper = _PostgresTxn(tx, owner: this);
             try {
+              await tx.execute(postgresSearchPathStatement(_schema));
               if (wroteState) {
                 await tx.execute(
                   'LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE',
@@ -686,8 +914,8 @@ class PostgresBackend extends StorageBackend {
               await _guard.fence(tx);
               return await body(wrapper);
             } finally {
-              wrapper.invalidate();
-              if (wrapper.wroteBackendState) wroteState = true;
+              wrapper._invalidate();
+              if (wrapper._wroteBackendState) wroteState = true;
             }
           },
           settings: TransactionSettings(
@@ -718,15 +946,66 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  /// Runs `EventStore.open`'s boot as one `SERIALIZABLE` transaction whose
-  /// first statement locks the `backend_state` table in `SHARE ROW
-  /// EXCLUSIVE` mode.
+  /// Runs [body] in one `SERIALIZABLE READ ONLY` transaction, not deferrable,
+  /// re-running it after a serialization or deadlock failure as
+  /// [transaction] does. Its first statement sets the search path as
+  /// [transaction]'s does. It takes no part in the generation fence, which
+  /// guards writes, and the server refuses any write in it with SQLSTATE
+  /// `25006`, whatever path reached its session.
+  // Implements: EVS-DEV-storage-capability/H
+  // the storage reader's transactions run READ ONLY at the database, not
+  //   deferrable, outside the generation fence.
+  // Implements: EVS-DEV-postgres-backend/Q
+  // the read-only transaction's first statement pins the search path, for
+  //   the transaction only, to the library's schema, pg_catalog and pg_temp.
+  @override
+  @internal
+  Future<T> readOnlyTransaction<T>(
+    Future<T> Function(Transaction txn) body,
+  ) async {
+    refuseCallFromBootProgressObserver('PostgresBackend.readOnlyTransaction');
+    _checkOpen();
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _pool.runTx<T>(
+          (tx) async {
+            final wrapper = _PostgresTxn(tx, owner: this);
+            try {
+              await tx.execute(postgresSearchPathStatement(_schema));
+              return await body(wrapper);
+            } finally {
+              wrapper._invalidate();
+            }
+          },
+          settings: TransactionSettings(
+            isolationLevel: IsolationLevel.serializable,
+            accessMode: AccessMode.readOnly,
+          ),
+        );
+      } on ServerException catch (e, st) {
+        final retryable = e.code == '40001' || e.code == '40P01';
+        if (!retryable) rethrow;
+        if (attempt >= _maxTransactionAttempts) {
+          Error.throwWithStackTrace(
+            TransactionRetryExhaustedException(attempts: attempt, lastError: e),
+            st,
+          );
+        }
+        await Future<void>.delayed(Duration(milliseconds: 5 * attempt));
+      }
+    }
+  }
+
+  /// Runs `EventStore.open`'s boot as one `SERIALIZABLE` transaction that,
+  /// after setting its search path (see [transaction]) and before its first
+  /// query, locks the `backend_state` table in `SHARE ROW EXCLUSIVE` mode.
   ///
   /// Every append updates the sequence counter row in `backend_state`, so
   /// the lock waits for the appends that hold it to commit and then keeps
-  /// every later append out until the boot commits. `LOCK TABLE` takes no
-  /// snapshot: the transaction's snapshot is taken by the statement after
-  /// it, so it already includes every append the lock waited for, and those
+  /// every later append out until the boot commits. Neither `SET LOCAL` nor
+  /// `LOCK TABLE` takes a snapshot: the transaction's snapshot is taken by
+  /// the first query after them, so it already includes every append the
+  /// lock waited for, and those
   /// appends cannot abort the boot. An append that started before the boot
   /// committed fails once with a serialization failure afterwards, which
   /// its own retry absorbs. So the appends of a revision serving the same
@@ -752,9 +1031,9 @@ class PostgresBackend extends StorageBackend {
   /// [DatabaseResetRequiredError], and the transaction fence runs (see
   /// [transaction]).
   // Implements: EVS-DEV-event-store-open/E
-  // the boot transaction's first statement locks the table holding the
-  //   sequence counter, so a serving revision's appends queue behind the
-  //   boot instead of aborting it.
+  // the boot transaction locks the table holding the sequence counter
+  //   before its first query, so a serving revision's appends queue behind
+  //   the boot instead of aborting it.
   @override
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) async {
@@ -766,8 +1045,9 @@ class PostgresBackend extends StorageBackend {
       try {
         return await _pool.runTx<T>(
           (tx) async {
-            final wrapper = PostgresTxn(tx, owner: this);
+            final wrapper = _PostgresTxn(tx, owner: this);
             try {
+              await tx.execute(postgresSearchPathStatement(_schema));
               final remaining = giveUpAt
                   .difference(DateTime.now())
                   .inMilliseconds;
@@ -791,7 +1071,7 @@ class PostgresBackend extends StorageBackend {
               await _guard.fence(tx);
               return await body(wrapper);
             } finally {
-              wrapper.invalidate();
+              wrapper._invalidate();
             }
           },
           settings: TransactionSettings(
@@ -858,7 +1138,7 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     // Validate the reservation: the persisted counter must equal the seq
     // the caller is consuming. Reading the counter inside the same txn
     // sees the value staged by nextSequenceNumber.
@@ -950,12 +1230,14 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named(
-        'SELECT * FROM events WHERE aggregate_id = @aggId '
-        'ORDER BY sequence_number ASC',
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named(
+          'SELECT * FROM events WHERE aggregate_id = @aggId '
+          'ORDER BY sequence_number ASC',
+        ),
+        parameters: {'aggId': aggregateId},
       ),
-      parameters: {'aggId': aggregateId},
     );
     return result.map(_storedEventFromRow).toList(growable: false);
   }
@@ -968,7 +1250,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String aggregateId,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named(
         'SELECT * FROM events WHERE aggregate_id = @aggId '
@@ -1024,7 +1306,7 @@ class PostgresBackend extends StorageBackend {
   // same
   //   three filters with same AND-composition semantics; shared helper.
   //
-  // `async` (not arrow) so that the synchronous `_asPgTxn(txn).session`
+  // `async` (not arrow) so that the synchronous `_asPgTxn(txn)._session`
   // check — which throws StateError on a post-body escape or a foreign
   // Transaction — completes the returned Future with the error rather than
   // throwing synchronously past the caller's `await`. The conformance
@@ -1039,7 +1321,7 @@ class PostgresBackend extends StorageBackend {
     DateTime? clientTimestampStart,
     DateTime? clientTimestampEnd,
   }) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     return _findAllEventsComposed(
       session: session,
       afterSequence: afterSequence,
@@ -1108,8 +1390,9 @@ class PostgresBackend extends StorageBackend {
     final sql =
         'SELECT * FROM events $whereClause '
         'ORDER BY sequence_number ASC $limitClause';
-    final exec = session ?? _pool;
-    final result = await exec.execute(Sql.named(sql), parameters: params);
+    final result = session == null
+        ? await _read((s) => s.execute(Sql.named(sql), parameters: params))
+        : await session.execute(Sql.named(sql), parameters: params);
     return result.map(_storedEventFromRow).toList(growable: false);
   }
 
@@ -1120,7 +1403,7 @@ class PostgresBackend extends StorageBackend {
   //   uses it.
   @override
   Future<String?> readLatestEventHash(Transaction txn) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       'SELECT event_hash FROM events '
       'ORDER BY sequence_number DESC LIMIT 1',
@@ -1145,8 +1428,8 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<int> nextSequenceNumber(Transaction txn) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -1173,9 +1456,13 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<int> readSequenceCounter() async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
-      parameters: {'k': _sequenceCounterKey},
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named(
+          'SELECT value::numeric::int FROM backend_state WHERE key = @k',
+        ),
+        parameters: {'k': _sequenceCounterKey},
+      ),
     );
     return result.isEmpty ? 0 : result.first[0] as int;
   }
@@ -1188,7 +1475,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String eventId,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('SELECT * FROM events WHERE event_id = @id LIMIT 1'),
       parameters: {'id': eventId},
@@ -1202,9 +1489,11 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<StoredEvent?> findEventById(String eventId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named('SELECT * FROM events WHERE event_id = @id LIMIT 1'),
-      parameters: {'id': eventId},
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('SELECT * FROM events WHERE event_id = @id LIMIT 1'),
+        parameters: {'id': eventId},
+      ),
     );
     return result.isEmpty ? null : _storedEventFromRow(result.first);
   }
@@ -1220,7 +1509,7 @@ class PostgresBackend extends StorageBackend {
     String viewName,
     String key,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT row_data FROM view_rows
@@ -1244,7 +1533,7 @@ class PostgresBackend extends StorageBackend {
     String key,
     Map<String, dynamic> row,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('''
         INSERT INTO view_rows (view_name, row_key, row_data, updated_at)
@@ -1266,7 +1555,7 @@ class PostgresBackend extends StorageBackend {
     String viewName,
     String key,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('DELETE FROM view_rows WHERE view_name = @v AND row_key = @k'),
       parameters: {'v': viewName, 'k': key},
@@ -1285,14 +1574,16 @@ class PostgresBackend extends StorageBackend {
     _checkOpen();
     final limitClause = limit == null ? '' : 'LIMIT $limit';
     final offsetClause = offset == null ? '' : 'OFFSET $offset';
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('''
         SELECT row_data FROM view_rows
         WHERE view_name = @v
         ORDER BY row_key ASC
         $limitClause $offsetClause
       '''),
-      parameters: {'v': viewName},
+        parameters: {'v': viewName},
+      ),
     );
     return result.map((r) => _asJsonMap(r[0])).toList();
   }
@@ -1310,12 +1601,14 @@ class PostgresBackend extends StorageBackend {
   ) async {
     _checkOpen();
     if (keys.isEmpty) return const <String, Map<String, dynamic>>{};
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('''
         SELECT row_key, row_data FROM view_rows
         WHERE view_name = @v AND row_key = ANY(@keys)
       '''),
-      parameters: {'v': viewName, 'keys': keys.toList()},
+        parameters: {'v': viewName, 'keys': keys.toList()},
+      ),
     );
     return <String, Map<String, dynamic>>{
       for (final r in result) r[0] as String: _asJsonMap(r[1]),
@@ -1342,7 +1635,7 @@ class PostgresBackend extends StorageBackend {
     int? limit,
     int? offset,
   }) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final params = <String, Object?>{'v': viewName};
     final whereClauses = <String>['view_name = @v'];
     if (where != null) {
@@ -1376,7 +1669,7 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('DELETE FROM view_rows WHERE view_name = @v'),
       parameters: {'v': viewName},
@@ -1397,7 +1690,7 @@ class PostgresBackend extends StorageBackend {
     String viewName,
     String entryType,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT target_major, target_minor FROM view_target_versions
@@ -1424,7 +1717,7 @@ class PostgresBackend extends StorageBackend {
     String entryType,
     EntryTypeVersion targetVersion,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('''
         INSERT INTO view_target_versions
@@ -1452,7 +1745,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String viewName,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT entry_type, target_major, target_minor
@@ -1477,7 +1770,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String viewName,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('DELETE FROM view_target_versions WHERE view_name = @v'),
       parameters: {'v': viewName},
@@ -1489,7 +1782,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String entryType,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT view_name, target_major, target_minor
@@ -1518,7 +1811,7 @@ class PostgresBackend extends StorageBackend {
     String viewName,
     String entryType,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT behind FROM view_target_versions
@@ -1543,7 +1836,7 @@ class PostgresBackend extends StorageBackend {
     String entryType, {
     required bool behind,
   }) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     // Only a row whose mark differs is updated, so a repeated mark writes
     // nothing.
     await session.execute(
@@ -1613,7 +1906,7 @@ class PostgresBackend extends StorageBackend {
         'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
       );
     }
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
 
     // Resolve payload columns from the chosen shape. Native rows carry
     // envelope_metadata + null wire_payload; 3rd-party rows decode the
@@ -1658,7 +1951,7 @@ class PostgresBackend extends StorageBackend {
     // RETURNING. The counter is NEVER reset — even when rows are
     // deleted by trail sweep, the vacated slot is not reused.
     final counterKey = _fifoSeqCounterKey(destinationId);
-    _asPgTxn(txn).wroteBackendState = true;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -1741,9 +2034,11 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named(_fifoHeadSql),
-      parameters: {'dest': destinationId},
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named(_fifoHeadSql),
+        parameters: {'dest': destinationId},
+      ),
     );
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
@@ -1754,7 +2049,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String destinationId,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named(_fifoHeadSql),
       parameters: {'dest': destinationId},
@@ -1792,7 +2087,9 @@ class PostgresBackend extends StorageBackend {
     final sql =
         'SELECT * FROM fifo_entries ${_composeWhere(wheres)} '
         'ORDER BY sequence_in_queue ASC $limitClause';
-    final result = await _pool.execute(Sql.named(sql), parameters: params);
+    final result = await _read(
+      (s) => s.execute(Sql.named(sql), parameters: params),
+    );
     return result.map(_fifoEntryFromRow).toList(growable: false);
   }
 
@@ -1806,7 +2103,7 @@ class PostgresBackend extends StorageBackend {
     String entryId,
     AttemptResult attempt,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final existing = await session.execute(
       Sql.named('''
         SELECT final_status FROM fifo_entries
@@ -1850,7 +2147,8 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<bool> hasFifoWedged() async {
     _checkOpen();
-    final result = await _pool.execute('''
+    final result = await _read(
+      (s) => s.execute('''
       SELECT EXISTS (
         SELECT 1 FROM (
           SELECT DISTINCT ON (destination_id) destination_id, final_status
@@ -1860,7 +2158,8 @@ class PostgresBackend extends StorageBackend {
         ) heads
         WHERE heads.final_status = 'wedged'
       )
-    ''');
+    '''),
+    );
     return result.first[0] as bool;
   }
 
@@ -1873,7 +2172,8 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<List<WedgedFifoSummary>> wedgedFifos() async {
     _checkOpen();
-    final result = await _pool.execute('''
+    final result = await _read(
+      (s) => s.execute('''
       SELECT destination_id, entry_id, event_ids,
              enqueued_at, attempts, final_status
       FROM (
@@ -1886,7 +2186,8 @@ class PostgresBackend extends StorageBackend {
       ) heads
       WHERE heads.final_status = 'wedged'
       ORDER BY destination_id
-    ''');
+    '''),
+    );
     return result
         .map((row) {
           final destinationId = row[0] as String;
@@ -1930,13 +2231,15 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<FifoEntry?> readFifoRow(String destinationId, String entryId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('''
         SELECT * FROM fifo_entries
         WHERE destination_id = @dest AND entry_id = @e
         LIMIT 1
       '''),
-      parameters: {'dest': destinationId, 'e': entryId},
+        parameters: {'dest': destinationId, 'e': entryId},
+      ),
     );
     return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
@@ -1954,7 +2257,7 @@ class PostgresBackend extends StorageBackend {
     String entryId,
     FinalStatus status,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final existing = await session.execute(
       Sql.named('''
         SELECT final_status FROM fifo_entries
@@ -2020,7 +2323,7 @@ class PostgresBackend extends StorageBackend {
     String destinationId,
     int afterSequenceInQueue,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         DELETE FROM fifo_entries
@@ -2054,7 +2357,7 @@ class PostgresBackend extends StorageBackend {
     Transaction txn,
     String destinationId,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final head = await readFifoHeadTxn(txn, destinationId);
     if (head != null && head.finalStatus == null) {
       throw StateError(
@@ -2079,7 +2382,7 @@ class PostgresBackend extends StorageBackend {
       '''),
       parameters: {'dest': destinationId},
     );
-    _asPgTxn(txn).wroteBackendState = true;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': 'fill_cursor_$destinationId'},
@@ -2364,8 +2667,8 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<String> readOrCreateDatabaseIdTxn(Transaction txn) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2398,7 +2701,7 @@ class PostgresBackend extends StorageBackend {
   static const String _databaseIdKey = 'database_id';
 
   Future<Object?> _readStateTxn(Transaction txn, String key) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('SELECT value FROM backend_state WHERE key = @k'),
       parameters: {'k': key},
@@ -2411,8 +2714,8 @@ class PostgresBackend extends StorageBackend {
     String key,
     Map<String, Object?> value,
   ) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2424,8 +2727,8 @@ class PostgresBackend extends StorageBackend {
   }
 
   Future<void> _deleteStateTxn(Transaction txn, String key) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': key},
@@ -2444,8 +2747,10 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<int> readSchemaVersion() async {
     _checkOpen();
-    final result = await _pool.execute(
-      "SELECT value::numeric::int FROM backend_state WHERE key = 'schema_version'",
+    final result = await _read(
+      (s) => s.execute(
+        "SELECT value::numeric::int FROM backend_state WHERE key = 'schema_version'",
+      ),
     );
     return result.isEmpty ? 0 : result.first[0] as int;
   }
@@ -2454,8 +2759,8 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<void> writeSchemaVersion(Transaction txn, int version) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2471,9 +2776,13 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<int> readFillCursor(String destinationId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
-      parameters: {'k': 'fill_cursor_$destinationId'},
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named(
+          'SELECT value::numeric::int FROM backend_state WHERE key = @k',
+        ),
+        parameters: {'k': 'fill_cursor_$destinationId'},
+      ),
     );
     return result.isEmpty ? -1 : result.first[0] as int;
   }
@@ -2482,7 +2791,7 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<int> readFillCursorTxn(Transaction txn, String destinationId) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('SELECT value::numeric::int FROM backend_state WHERE key = @k'),
       parameters: {'k': 'fill_cursor_$destinationId'},
@@ -2500,8 +2809,8 @@ class PostgresBackend extends StorageBackend {
     int sequenceNumber,
   ) async {
     _validateFillCursorValue(sequenceNumber);
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2517,9 +2826,11 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<DestinationSchedule?> readSchedule(String destinationId) async {
     _checkOpen();
-    final result = await _pool.execute(
-      Sql.named('SELECT value FROM backend_state WHERE key = @k'),
-      parameters: {'k': 'schedule_$destinationId'},
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('SELECT value FROM backend_state WHERE key = @k'),
+        parameters: {'k': 'schedule_$destinationId'},
+      ),
     );
     if (result.isEmpty) return null;
     return DestinationSchedule.fromJson(_asJsonMap(result.first[0]));
@@ -2547,7 +2858,7 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<Map<String, DestinationSchedule>> listSchedules() async {
     _checkOpen();
-    final result = await _pool.execute(_listSchedulesSql);
+    final result = await _read((s) => s.execute(_listSchedulesSql));
     return _schedulesFrom(result);
   }
 
@@ -2556,7 +2867,7 @@ class PostgresBackend extends StorageBackend {
   Future<Map<String, DestinationSchedule>> listSchedulesTxn(
     Transaction txn,
   ) async {
-    final session = _asPgTxn(txn).session;
+    final session = _asPgTxn(txn)._session;
     return _schedulesFrom(await session.execute(_listSchedulesSql));
   }
 
@@ -2575,8 +2886,8 @@ class PostgresBackend extends StorageBackend {
     String destinationId,
     DestinationSchedule schedule,
   ) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('''
         INSERT INTO backend_state (key, value)
@@ -2591,8 +2902,8 @@ class PostgresBackend extends StorageBackend {
   @override
   @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
-    final session = _asPgTxn(txn).session;
-    _asPgTxn(txn).wroteBackendState = true;
+    final session = _asPgTxn(txn)._session;
+    _asPgTxn(txn)._wroteBackendState = true;
     await session.execute(
       Sql.named('DELETE FROM backend_state WHERE key = @k'),
       parameters: {'k': 'schedule_$destinationId'},
@@ -2634,13 +2945,15 @@ class PostgresBackend extends StorageBackend {
         params['types'] = eventTypes.toList();
       }
       final whereClause = _composeWhere(wheres);
-      final result = await _pool.execute(
-        Sql.named(
-          'SELECT * FROM events $whereClause '
-          'ORDER BY sequence_number DESC '
-          'LIMIT $_reverseScanPageSize',
+      final result = await _read(
+        (s) => s.execute(
+          Sql.named(
+            'SELECT * FROM events $whereClause '
+            'ORDER BY sequence_number DESC '
+            'LIMIT $_reverseScanPageSize',
+          ),
+          parameters: params,
         ),
-        parameters: params,
       );
       if (result.isEmpty) return;
       for (final row in result) {
@@ -2667,7 +2980,7 @@ class PostgresBackend extends StorageBackend {
     int? lastSeenSequence;
     var pageSize = 16;
     while (true) {
-      final session = _asPgTxn(txn).session;
+      final session = _asPgTxn(txn)._session;
       final wheres = <String>[];
       final params = <String, dynamic>{};
       if (lastSeenSequence != null) {
@@ -2819,8 +3132,9 @@ class PostgresBackend extends StorageBackend {
     // COUNT(*); the extra row, if present, is dropped from the page and
     // its predecessor's (recorded_at, event_id) tuple is encoded into
     // nextCursor.
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _read(
+      (s) => s.execute(
+        Sql.named('''
         SELECT events.*, security_context.payload AS security_payload
         FROM events
         INNER JOIN security_context
@@ -2829,7 +3143,8 @@ class PostgresBackend extends StorageBackend {
         ORDER BY security_context.recorded_at DESC, events.event_id DESC
         LIMIT ${limit + 1}
       '''),
-      parameters: params,
+        parameters: params,
+      ),
     );
 
     final rows = <AuditRow>[];
@@ -2897,12 +3212,12 @@ class PostgresBackend extends StorageBackend {
       'fifo_seq_counter_$destinationId';
 
   /// Downcast a [Transaction] handed to this backend's StorageBackend methods
-  /// into the concrete [PostgresTxn]. Any other concrete subtype, or a
-  /// [PostgresTxn] another backend instance produced, indicates the caller
+  /// into the concrete [_PostgresTxn]. Any other concrete subtype, or a
+  /// [_PostgresTxn] another backend instance produced, indicates the caller
   /// mixed two backends' Transaction handles — that's a bug, not a
   /// recoverable state, so we surface it as `StateError`.
   ///
-  /// The `session` getter on a valid [PostgresTxn] in turn throws
+  /// The `session` getter on a valid [_PostgresTxn] in turn throws
   /// `StateError` when the surrounding transaction body has already
   /// returned (the handle was invalidated). Either failure mode produces
   /// the same outward shape, which matches the conformance harness'
@@ -2910,14 +3225,14 @@ class PostgresBackend extends StorageBackend {
   /// "post-body escape" cases.
   // Implements: EVS-DEV-postgres-backend/L
   // a handle another backend instance produced is refused.
-  PostgresTxn _asPgTxn(Transaction txn) {
-    if (txn is! PostgresTxn) {
+  _PostgresTxn _asPgTxn(Transaction txn) {
+    if (txn is! _PostgresTxn) {
       throw StateError(
         'PostgresBackend: Transaction was produced by a different StorageBackend '
         'implementation; refusing to apply it. Got ${txn.runtimeType}.',
       );
     }
-    if (!identical(txn.owner, this)) {
+    if (!identical(txn._owner, this)) {
       throw StateError(
         'PostgresBackend: Transaction was produced by a different '
         'PostgresBackend instance; refusing to apply it.',

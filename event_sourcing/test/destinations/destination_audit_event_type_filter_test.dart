@@ -12,6 +12,7 @@ import 'package:sembast/sembast_memory.dart';
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/test_backends.dart';
 
 const _automation = AutomationInitiator(service: 'test-bootstrap');
 const _source = Source(
@@ -45,11 +46,15 @@ void main() {
       );
       backend = SembastBackend(database: db);
       ds = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
         destinations: const <Destination>[],
       );
+      trackTestBackend(ds.eventStore, backend);
     });
 
     tearDown(() async {

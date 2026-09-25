@@ -200,31 +200,44 @@ directory (`--data-dir`, by default `~/.local/share/action_permissions_demo`):
 delete it to reset a database an earlier build wrote, or run with
 `--ephemeral`.
 
-Provision the schema once, before the first server starts (and again
-after upgrading to a build with a newer schema): `--provision` creates or
-migrates the tables and exits without serving. A server never changes the
-schema itself, and one started against a database that was never
-provisioned exits naming `--provision`. Provisioning refuses a database
-whose tables an earlier build created without provisioning them; reset it
-as above (`docker compose down -v`) and provision again.
+The compose file creates two roles: `evs`, the image's superuser, which
+owns the demo's schema and provisions it, and `evs_runtime` (from
+`postgres-init.sql`, run when the volume is first initialized), the
+runtime role the servers connect as. The library refuses to serve as the
+owner, as a superuser or as any role the provisioning did not declare.
+
+Run the deployment step once, before the first server starts (and again
+after upgrading to a build with a newer schema): `--provision`, as the
+owner, creates the `demo` schema (`--postgres-schema`), creates or
+migrates the tables declaring the runtime and lock roles the servers
+connect as, grants those roles their privileges
+(`postgresRuntimeRoleGrants`), and exits without serving. A server never
+changes the schema itself, and one started against a database that was
+never provisioned exits naming `--provision`. Provisioning refuses a
+database whose tables an earlier build created without provisioning them;
+reset it as above (`docker compose down -v`) and provision again.
 
 ```text
 dart run bin/server.dart \
   --backend=postgres \
   --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
   --postgres-ssl-mode=disable \
-  --provision
+  --provision \
+  --postgres-runtime-role=evs_runtime \
+  --postgres-lock-role=evs_runtime
 ```
 
-(`dart run tool/provision.dart --postgres-url=... --postgres-ssl-mode=disable`
-does the same.)
+(`dart run tool/provision.dart --postgres-url=... --postgres-ssl-mode=disable
+--postgres-runtime-role=... --postgres-lock-role=...` does the same.) The
+servers here hold their lock connection as the runtime role, so it is
+declared as a lock role too.
 
-Then start the demo server pointed at it:
+Then start the demo server as the runtime role:
 
 ```text
 dart run bin/server.dart \
   --backend=postgres \
-  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-url=postgres://evs_runtime:evs@localhost:5432/evs_demo \
   --postgres-ssl-mode=disable \
   --port=8080 \
   --permissions-yaml=tool/permissions.yaml \
@@ -235,12 +248,14 @@ For production deployments against a managed Postgres, omit
 `--postgres-ssl-mode` to use the secure-by-default `require` setting, or
 pass `--postgres-ssl-mode=verifyFull` for full certificate validation.
 
-The compose file creates one role, `evs`, a superuser that both provisions
-the schema and serves: a development setup only. A deployment provisions as
-the role that owns the schema and runs its servers as a runtime role that
-neither owns nor can create the tables and holds exactly the privileges of
-`postgresRuntimeRoleGrants` (see the library guide, "Open a storage
-backend", and `spec/postgres-backend.md`, "Roles and privileges").
+A deployment likewise provisions as the role that owns the schema and runs
+its servers as a declared runtime role that neither owns nor can create the
+tables and holds exactly the privileges of `postgresRuntimeRoleGrants`.
+A server refuses to start, naming the role and the privilege, when its
+role is undeclared or could become the owner, or when a role outside the
+owner and the declared roles may write the library's tables (see the
+library README, "Storage backends", and `spec/postgres-backend.md`,
+"Roles and privileges").
 
 Each server holds the library's generation locks on one dedicated lock
 connection. It opens it to `--postgres-lock-url` when given, and to
@@ -331,10 +346,10 @@ Start two servers against the same provisioned database, on two ports:
 
 ```text
 dart run bin/server.dart --backend=postgres \
-  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-url=postgres://evs_runtime:evs@localhost:5432/evs_demo \
   --postgres-ssl-mode=disable --port=8080
 dart run bin/server.dart --backend=postgres \
-  --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+  --postgres-url=postgres://evs_runtime:evs@localhost:5432/evs_demo \
   --postgres-ssl-mode=disable --port=8081
 ```
 
@@ -381,10 +396,12 @@ and taking over when the first gets SIGTERM.
 
 The integration test under `test/postgres_integration_test.dart` is the
 canonical end-to-end check: it boots the demo server in-process against
-the docker-compose Postgres (drops + recreates the `public` schema for
-isolation), dispatches actions over HTTP, and verifies the events land
+the docker-compose Postgres (drops the `demo` schema and runs the
+deployment step for isolation, then serves as the runtime role), dispatches
+actions over HTTP, and verifies the events land
 in the `events` table and the role-permission view rows land in
-`view_rows`. Gated on `PG_TEST_URL`:
+`view_rows`. Gated on `PG_TEST_URL`, whose role provisions (and creates
+the runtime role when it is missing):
 
 ```text
 PG_TEST_URL=postgres://evs:evs@localhost:5432/evs_demo \

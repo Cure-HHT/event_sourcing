@@ -1,14 +1,23 @@
 # Local-dev Postgres for the event_sourcing demo and Postgres conformance
 # tests. Bring up with `docker compose up -d --wait` so the next command
 # sees a healthy container; the healthcheck below allows ~40s to ready.
-# Provision the demo's schema before serving it:
+#
+# Two roles: `evs`, the image's superuser, owns the demo's schema and
+# provisions it; `evs_runtime`, created by postgres-init.sql when the volume
+# is first initialized, is the runtime role the servers connect as (the
+# library refuses to serve as the owner or as a superuser). The script runs
+# only on an empty volume; a volume without the role is recreated with
+# `docker compose down -v`. Run the deployment step as `evs`, declaring the
+# runtime role, then serve as it:
 #   dart run bin/server.dart --backend=postgres \
 #     --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
-#     --postgres-ssl-mode=disable --provision
-# The one role here, `evs`, is a superuser that both provisions and serves:
-# a development setup only. A deployment provisions as the role that owns
-# the schema and serves as a runtime role holding exactly the privileges of
-# `postgresRuntimeRoleGrants` (see the README, "Running on Postgres").
+#     --postgres-ssl-mode=disable --provision \
+#     --postgres-runtime-role=evs_runtime --postgres-lock-role=evs_runtime
+#   dart run bin/server.dart --backend=postgres \
+#     --postgres-url=postgres://evs_runtime:evs@localhost:5432/evs_demo \
+#     --postgres-ssl-mode=disable
+# The tests create the runtime role themselves when it is missing, so they
+# run against any Postgres whose PG_TEST_URL role can create roles.
 services:
   postgres:
     image: postgres:16
@@ -18,6 +27,8 @@ services:
       POSTGRES_DB: evs_demo
     ports:
       - "5432:5432"
+    volumes:
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/10-runtime-role.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U evs -d evs_demo"]
       interval: 2s

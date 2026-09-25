@@ -119,6 +119,16 @@ abstract class StorageBackend {
   /// breaks the delivery guarantees.
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body);
 
+  /// Execute [body] inside a single transaction for reads only: the
+  /// transaction the storage reader runs. It follows the [transaction]
+  /// contract, re-runs included, and a backend whose engine can run a
+  /// transaction read-only runs it so, making the engine refuse any write
+  /// in it. This default runs [transaction]; `PostgresBackend` runs a
+  /// `READ ONLY` transaction outside its generation fence.
+  @internal
+  Future<T> readOnlyTransaction<T>(Future<T> Function(Transaction txn) body) =>
+      transaction(body);
+
   // -------- Events --------
 
   /// Append [event] to the event log inside [txn]. Returns an

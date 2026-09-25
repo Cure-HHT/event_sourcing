@@ -1,9 +1,9 @@
 // Implements: EVS-PRD-event-log/A
 // all mutations accept a caller-supplied
 //   `Transaction` so they commit atomically with the event-log row they describe.
-//   Postgres-side, the [Transaction] passed in is a [PostgresTxn] holding the
+//   Postgres-side, the [Transaction] passed in is a [_PostgresTxn] holding the
 //   `TxSession` opened by [PostgresBackend.transaction]; writes routed
-//   through `txn.session` therefore live inside the same transaction as
+//   through `txn._session` therefore live inside the same transaction as
 //   the `events` row produced by [PostgresBackend.appendEvent].
 // Implements: EVS-PRD-regulatory-alignment
 // `findUnredactedOlderThanInTxn`
@@ -15,14 +15,7 @@
 //   the substrate's full action-dispatch path. `PostgresBackend.provision`
 //   creates the `security_context` table with the rest of the schema.
 
-import 'package:event_sourcing/src/security/event_security_context.dart';
-import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart';
+part of '../storage/postgres/postgres_backend.dart';
 
 /// Postgres-backed `SecurityContextStore`. Persists one row per event in
 /// the `security_context` table; `payload` is the full
@@ -31,16 +24,20 @@ import 'package:postgres/postgres.dart';
 ///
 /// Cross-store reads (the security_context + events join) live on the
 /// backend via [PostgresBackend.queryAudit]; this store's [queryAudit]
-/// is a thin delegator. Mutations live here so they can share a
-/// [PostgresTxn] with the matching [PostgresBackend.appendEvent].
+/// is a thin delegator. Mutations live here so they can run in the same
+/// transaction as the matching [PostgresBackend.appendEvent].
 class PostgresSecurityContextStore extends MutableSecurityContextStore {
-  PostgresSecurityContextStore({required this.backend});
+  /// A store over [backend]: the event store builds one over the storage
+  /// it opens, and an application builds one for a backend it constructed
+  /// and names as application-supplied storage.
+  PostgresSecurityContextStore({required PostgresBackend backend})
+    : _backend = backend;
 
-  final PostgresBackend backend;
+  final PostgresBackend _backend;
 
   @override
   Future<EventSecurityContext?> read(String eventId) {
-    return backend.transaction((txn) => readInTxn(txn, eventId));
+    return _backend.transaction((txn) => readInTxn(txn, eventId));
   }
 
   @override
@@ -153,7 +150,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     DateTime? to,
     int limit = 50,
     String? cursor,
-  }) => backend.queryAudit(
+  }) => _backend.queryAudit(
     initiator: initiator,
     flowToken: flowToken,
     ipAddress: ipAddress,
@@ -164,23 +161,23 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
   );
 
   TxSession _session(Transaction txn) {
-    if (txn is! PostgresTxn) {
+    if (txn is! _PostgresTxn) {
       throw ArgumentError.value(
         txn,
         'txn',
-        'PostgresSecurityContextStore requires a PostgresTxn produced by '
+        'PostgresSecurityContextStore requires a _PostgresTxn produced by '
             'PostgresBackend.transaction(); received ${txn.runtimeType}',
       );
     }
     // Implements: EVS-DEV-postgres-backend/L
     // a transaction handle is honoured only by the backend that minted it.
-    if (!identical(txn.owner, backend)) {
+    if (!identical(txn._owner, _backend)) {
       throw StateError(
         'PostgresSecurityContextStore: Transaction was produced by a '
         'different PostgresBackend instance; refusing to apply it.',
       );
     }
-    return txn.session;
+    return txn._session;
   }
 
   Map<String, Object?> _asJsonMap(Object? value) {

@@ -8,11 +8,30 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// Backend pair handed to each runner per-test. The factory produces a
 /// fresh pair for every `setUp` invocation so tests do not share state.
 class DemoBackends {
-  const DemoBackends({required this.backend, required this.idempotencyStore});
+  const DemoBackends({required this.backend, this.idempotencyStore});
 
+  /// The backend the test opened; the test keeps and closes it.
   final StorageBackend backend;
-  final IdempotencyStore idempotencyStore;
+
+  /// The storage a demo server boots over: [backend], supplied by the test.
+  StorageDescription get storage => demoStorageOver(backend);
+
+  /// The idempotency store to bootstrap with; null bootstraps with the
+  /// event store's own (Postgres).
+  final IdempotencyStore? idempotencyStore;
 }
+
+/// [backend], opened by a test, as the storage a demo server boots over.
+/// The test keeps the backend and closes it; the event store does not.
+StorageDescription demoStorageOver(
+  StorageBackend backend,
+) => ApplicationSuppliedStorage(backend, switch (backend) {
+  final PostgresBackend postgres => PostgresSecurityContextStore(
+    backend: postgres,
+  ),
+  final SembastBackend sembast => SembastSecurityContextStore(backend: sembast),
+  _ => throw ArgumentError.value(backend, 'backend', 'not a shipped backend'),
+});
 
 /// Per-flavor factory. Each test file's `main()` provides a sembast
 /// implementation; companion `*_postgres_test.dart` files supply a postgres

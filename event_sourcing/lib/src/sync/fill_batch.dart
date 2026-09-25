@@ -30,20 +30,8 @@
 // (every transaction of the fill checks
 //   the drain lock first and commits nothing when the drainer no longer
 //   holds it)
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_schedule.dart';
-import 'package:event_sourcing/src/storage/drain_lock.dart';
-import 'package:event_sourcing/src/storage/drain_records.dart';
-import 'package:event_sourcing/src/storage/final_status.dart';
-import 'package:event_sourcing/src/storage/queue_records.dart';
-import 'package:event_sourcing/src/storage/source.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/historical_replay.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
+
+part of '../event_store.dart';
 
 /// The persisted state a fill computes from, read before its consumer code
 /// and its log walk run, and compared again inside the transaction that
@@ -54,6 +42,7 @@ import 'package:meta/meta.dart' show internal;
 /// meantime does not change what the fill may write. A deletion changes
 /// the schedule and a recovery lowers the fill position, so both are seen
 /// without the head's identity.
+
 class _FillState {
   const _FillState({
     required this.schedule,

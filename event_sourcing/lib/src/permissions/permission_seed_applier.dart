@@ -44,9 +44,7 @@ class PermissionSeedApplier {
     // Read current grants in view. Reconstruct the '<role>:<permName>'
     // pair-id (matching the events' aggregateId) from the row payload —
     // the row itself does not carry the storage key.
-    final rows = await eventStore.backend.findViewRows(
-      'role_permission_grants',
-    );
+    final rows = await eventStore.reader.findViewRows('role_permission_grants');
     final inView = <String>{
       for (final r in rows) '${r['role']}:${r['permissionName']}',
     };

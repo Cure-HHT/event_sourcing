@@ -14,7 +14,10 @@ Future<EventStore> _bootstrap() async {
   );
   final backend = SembastBackend(database: db);
   final ds = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: const Source(
       hopId: 'mobile-device',
       identifier: 'demo-device',

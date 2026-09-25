@@ -22,16 +22,6 @@ const _kType = 'load_note';
 const _kView = 'load_notes';
 const _kRows = 2000;
 
-Future<void> _resetSchema(String url) async {
-  final tmp = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-}
-
 /// Waits until [reached], failing at once with the error [failure] reports
 /// when the loop the wait depends on has failed.
 Future<void> _waitUntil(
@@ -68,14 +58,16 @@ Future<EventStore> _open(PostgresBackend backend, EntryTypeVersion version) {
     );
   }
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      PostgresSecurityContextStore(backend: backend),
+    ),
     entryTypes: registry,
     source: const Source(
       hopId: 'load-hop',
       identifier: 'load-install',
       softwareVersion: 'load-test',
     ),
-    securityContexts: PostgresSecurityContextStore(backend: backend),
     projections: ProjectionRegistry()
       ..register(
         const AggregateProjectionSpec(
@@ -89,15 +81,16 @@ Future<EventStore> _open(PostgresBackend backend, EntryTypeVersion version) {
 }
 
 void main() {
-  final url = testPostgresUrl();
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
   setUp(() async {
-    if (url == null) {
+    if (db == null) {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await _resetSchema(url);
+    await db.reset();
   });
 
   tearDown(() async {
@@ -111,12 +104,8 @@ void main() {
   // Verifies: EVS-DEV-event-store-open/E
   test("the serving build's appends wait for the boot instead of failing, "
       'and the boot promotes every row', () async {
-    if (url == null) return;
-    final backendA = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    if (db == null) return;
+    final backendA = await db.open(provision: true);
     backends.add(backendA);
     final a = await _open(backendA, const EntryTypeVersion(1, 0));
 
@@ -160,11 +149,7 @@ void main() {
     // Let the loop get going, then boot the newer build beside it.
     await _waitUntil(() => appended >= 5, () => loopError);
     // The newer build opens its backend and boots while A appends.
-    final backendN = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    final backendN = await db.open(provision: true);
     backends.add(backendN);
     var bootRuns = 0;
     final n = await runWithDeliveryTestHooks(
@@ -221,12 +206,10 @@ void main() {
   // Verifies: EVS-DEV-event-store-open/E
   test('the boot is not starved by other instances holding the row every '
       'append updates', () async {
-    if (url == null) return;
-    final backend = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
+    if (db == null) return;
+    final backend = await db.open(
+      provision: true,
       bootLockWait: const Duration(seconds: 10),
-      provisionSchema: true,
     );
     backends.add(backend);
 
@@ -258,12 +241,7 @@ void main() {
     // The row exists before the holders start.
     await _open(backend, const EntryTypeVersion(1, 0));
     for (var i = 0; i < 2; i++) {
-      holders.add(
-        await Connection.open(
-          PostgresBackend.endpointFromUrl(url),
-          settings: const ConnectionSettings(sslMode: SslMode.disable),
-        ),
-      );
+      holders.add(await db.connectAdmin());
     }
     final loops = [for (final connection in holders) hold(connection)];
     try {

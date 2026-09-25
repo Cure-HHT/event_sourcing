@@ -21,9 +21,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:example_clinical_scopes/server/clinical_projections.dart';
 import 'package:example_clinical_scopes/server/role_aware_auth_validator.dart';
 import 'package:reaction/reaction.dart';
-import 'package:sembast/sembast_memory.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:uuid/uuid.dart';
 
 /// Bundle returned by [bootstrap]: the composed top-level shelf router
 /// (ready for `shelf_io.serve`) and a `dispose` callback that tears down
@@ -131,11 +131,9 @@ const List<_Participant> _participants = <_Participant>[
 /// participant hierarchy, seed sites + participants + role grants + role
 /// assignments, then compose the reaction HTTP+WS pipeline.
 Future<BootstrapResult> bootstrap() async {
-  // --- Storage: in-memory sembast (ephemeral). ---
-  final db = await newDatabaseFactoryMemory().openDatabase(
-    'clinical-scopes.db',
-  );
-  final backend = SembastBackend(database: db);
+  // --- Storage: an in-memory Sembast database of its own, which the
+  //     library opens and which dispose deletes (ephemeral). ---
+  final storage = SembastStorage.memory('clinical-scopes-${const Uuid().v4()}');
 
   // --- Entry types ---
   // EventStore.open registers the library's reserved system entry types.
@@ -185,19 +183,15 @@ Future<BootstrapResult> bootstrap() async {
     ..register(participantSiteIndex)
     ..register(siteRegionIndex);
 
-  // --- Security context store ---
-  final securityContexts = SembastSecurityContextStore(backend: backend);
-
   // --- EventStore (production .open — appends a lib_version event). ---
   final eventStore = await EventStore.open(
-    storage: backend,
+    storage: storage,
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'clinical-scopes-example',
       identifier: 'clinical-scopes-install-1',
       softwareVersion: 'example_clinical_scopes@0.1.0',
     ),
-    securityContexts: securityContexts,
     projections: projections,
   );
 
@@ -242,9 +236,8 @@ Future<BootstrapResult> bootstrap() async {
   );
 
   final policy = TableBackedAuthorizationPolicy(
-    backend: backend,
+    reader: eventStore.reader,
     scopeClassRegistry: scopeClassRegistry,
-    transactionProvider: <T>(fn) => backend.transaction<T>(fn),
   );
 
   // --- Action dispatcher (participants are read-only; no domain actions). ---
@@ -347,7 +340,7 @@ Future<BootstrapResult> bootstrap() async {
 
   // --- Reaction handlers. Passing scopeClassRegistry activates the
   //     production ScopeDescendantExpander on the subscription read path. ---
-  final validator = RoleAwareTrustingValidator(backend: backend);
+  final validator = RoleAwareTrustingValidator(reader: eventStore.reader);
   final reactionHandlers = ReactionHandlers(
     eventStore: eventStore,
     dispatcher: dispatcher,
@@ -372,6 +365,7 @@ Future<BootstrapResult> bootstrap() async {
   Future<void> dispose() async {
     await reactionHandlers.dispose();
     await eventStore.close();
+    await deleteSembastDatabase(storage);
   }
 
   return BootstrapResult(router: topRouter, dispose: dispose);

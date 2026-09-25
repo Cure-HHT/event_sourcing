@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'dart:math' show Random;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show wedgeHeadInTxnForTest;
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,7 @@ import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart'
     show TestCycle, drainForTest, fillForTest, wedgeHeadForTest;
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'wedge-scenarios');
@@ -76,7 +78,7 @@ Future<List<StoredEvent>> _destinationAudits(
   EventStore store,
   String destinationId,
 ) async => <StoredEvent>[
-  for (final e in await store.backend.findAllEvents())
+  for (final e in await store.reader.findAllEvents())
     if (e.aggregateType == 'system_destination' &&
         e.aggregateId == store.source.identifier &&
         e.data['id'] == destinationId)
@@ -100,7 +102,7 @@ Future<void> _expectWedgeRecordMatchesLog(
   EventStore store,
   String destinationId,
 ) async {
-  final backend = store.backend;
+  final backend = testBackendOf(store);
   StoredEvent? open;
   for (final audit in await _destinationAudits(store, destinationId)) {
     switch (audit.eventType) {
@@ -165,7 +167,9 @@ Future<void> expectChainIntact(StorageBackend backend) async {
 }
 
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -1242,7 +1246,8 @@ void runDrainWedgeScenarios(
           final before = await w.snapshot(destId);
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: destId,
@@ -1355,7 +1360,8 @@ void runDrainWedgeScenarios(
           final before = await w.snapshot('x');
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: 'x',
@@ -1398,6 +1404,7 @@ void runDrainWedgeScenarios(
             source: _source,
             securityContexts: w.db.securityFor(backend),
           );
+          trackTestBackend(store, backend);
           expect(
             identical(
               store.entryTypes.byId(kDestinationWedgedEntryType),

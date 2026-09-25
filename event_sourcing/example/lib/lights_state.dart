@@ -94,7 +94,7 @@ class LightsState extends ValueNotifier<Map<String, LightState>> {
     _live = live;
     final history = <StoredEvent>[
       for (final entryType in colorByEntryType.keys)
-        ...await store.backend.findAllEvents(entryType: entryType),
+        ...await store.reader.findAllEvents(entryType: entryType),
     ];
     if (generation != _generation) {
       await live.cancel();

@@ -11,19 +11,16 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show
-        kEntryTypeRegistryInitializedEventType,
-        kRegistryAuditAggregateType,
-        kSystemEntryTypes;
-import 'package:event_sourcing/src/sync/fill_batch.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'hand_driven_cycle.dart';
 import 'manual_timers.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart' show fillForTest, wedgeHeadForTest;
+import 'test_backends.dart';
 
 const Initiator _init = AutomationInitiator(service: 'cycle-scenarios');
 const Initiator _operator = UserInitiator('operator-1');
@@ -186,6 +183,7 @@ class CycleWorld {
       securityContexts: db.securityFor(backend),
       clock: () => DateTime.utc(2026, 3, 1),
     );
+    trackTestBackend(store, backend);
     return CycleProcess(backend, store, DestinationRegistry(eventStore: store));
   }
 
@@ -209,15 +207,18 @@ class CycleWorld {
     return event!.eventId;
   }
 
-  /// Starts a delivery cycle over [on] (default [registry]).
+  /// Starts a delivery cycle over [on] (default [registry]). A
+  /// [handDriven] cycle runs a pass only when the test calls it: no append
+  /// or registry operation wakes it (see [startCycle]).
   Future<SyncCycle> start({
     DestinationRegistry? on,
     Duration cadence = const Duration(hours: 1),
     SyncPolicy? policy = _policy,
     SyncPolicy? Function()? policyResolver,
     String? configurationVersion,
+    bool handDriven = false,
   }) async {
-    final cycle = await SyncCycle.start(
+    Future<SyncCycle> begin() => SyncCycle.start(
       registry: on ?? registry,
       clock: _fillNow,
       cadence: cadence,
@@ -225,6 +226,7 @@ class CycleWorld {
       policyResolver: policyResolver,
       configurationVersion: configurationVersion,
     );
+    final cycle = await startCycle(begin, handDriven: handDriven);
     cycles.add(cycle);
     return cycle;
   }
@@ -367,8 +369,12 @@ void runDeliveryCycleScenarios(
         );
         final cycle = await w.start(cadence: const Duration(milliseconds: 100));
         expect(cycle.state, SyncCycleState.standby);
-        expect(w.store.deliveryTrigger, isNotNull);
-        final id = await w.note('n1');
+        final wakes = <bool>[];
+        final id = await runWithDeliveryTestHooks(
+          DeliveryTestHooks(onDeliveryWake: wakes.add),
+          () => w.note('n1'),
+        );
+        expect(wakes, <bool>[true], reason: 'the cycle holds the slot');
         await cycle();
         await Future<void>.delayed(const Duration(milliseconds: 300));
         expect(d.started, isEmpty, reason: 'no work while standing by');
@@ -457,18 +463,21 @@ void runDeliveryCycleScenarios(
         final timers = ManualTimers();
         var failing = true;
         final log = <LibraryLogRecord>[];
+        final wakes = <bool>[];
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
             failLockAcquisition: () => failing,
             timerFactory: timers.create,
             onLog: log.add,
+            onDeliveryWake: wakes.add,
           ),
           () async {
             final cycle = await w.start(
               cadence: const Duration(milliseconds: 20),
             );
             expect(cycle.state, SyncCycleState.standby);
-            expect(w.store.deliveryTrigger, isNotNull);
+            await w.note('slot');
+            expect(wakes, <bool>[true], reason: 'the cycle holds the slot');
             expect(
               log.where(
                 (r) =>
@@ -556,8 +565,7 @@ void runDeliveryCycleScenarios(
         }
         final gate = Completer<void>();
         d.gate = () => gate.future;
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         final pass = cycle();
         await until(() => d.started.isNotEmpty, reason: 'the first send');
         var closed = false;
@@ -592,8 +600,7 @@ void runDeliveryCycleScenarios(
         final id = await w.note('n1');
         final gate = Completer<void>();
         d.gate = () => gate.future;
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         final pass = cycle();
         await until(() => d.started.isNotEmpty, reason: 'the send');
         final watch = Stopwatch()..start();
@@ -667,6 +674,7 @@ void runDeliveryCycleScenarios(
           var failHeartbeat = false;
           await runWithDeliveryTestHooks(
             DeliveryTestHooks(
+              handDrivenCycle: true,
               timerFactory: timers.create,
               failNextHeartbeat: () {
                 if (!failHeartbeat) return false;
@@ -677,8 +685,8 @@ void runDeliveryCycleScenarios(
             () async {
               final cycle = await w.start(
                 cadence: const Duration(milliseconds: 20),
+                handDriven: true,
               );
-              w.store.deliveryTrigger = null;
               final pass = cycle();
               await until(() => d.started.isNotEmpty, reason: 'the send');
               failHeartbeat = true;
@@ -725,8 +733,7 @@ void runDeliveryCycleScenarios(
         final d = Receiver(id: 'x');
         await w.activate(d);
         final id = await w.note('n1');
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         var failing = true;
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
@@ -753,8 +760,7 @@ void runDeliveryCycleScenarios(
           ..outcome = (_) => const SendPermanent(error: 'no');
         await w.activate(d);
         final id = await w.note('n1');
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
             failOutcomeTransaction: (_, outcome) => outcome == 'permanent',
@@ -785,18 +791,6 @@ void runDeliveryCycleScenarios(
         final ops = <String, Future<void> Function()>{
           'append': () async {
             await w.note('t');
-          },
-          'appendReserved': () async {
-            await w.store.appendReserved(
-              entryType: kEntryTypeRegistryInitializedEntryType,
-              aggregateId: 'reg',
-              aggregateType: kRegistryAuditAggregateType,
-              eventType: kEntryTypeRegistryInitializedEventType,
-              data: <String, Object?>{
-                'registry': <String, Object?>{'n': DateTime.now().toString()},
-              },
-              initiator: _init,
-            );
           },
           'clearSecurityContext': () async {
             final event = await w.store.append(
@@ -850,7 +844,7 @@ void runDeliveryCycleScenarios(
           },
         };
         // Every call site of the trigger in lib/ is covered: the event
-        // store's four append paths and the registry's one operation
+        // store's three append paths and the registry's one operation
         // runner, through which every registry operation commits.
         final sites = <String, int>{};
         for (final f in Directory('lib').listSync(recursive: true)) {
@@ -861,9 +855,9 @@ void runDeliveryCycleScenarios(
           if (n > 0) sites[f.path.replaceAll(r'\', '/')] = n;
         }
         expect(sites, <String, int>{
-          // append, appendReserved, clearSecurityContext, applyRetentionPolicy
-          // and the method's own declaration.
-          'lib/src/event_store.dart': 5,
+          // append, clearSecurityContext, applyRetentionPolicy and the
+          // method's own declaration.
+          'lib/src/event_store.dart': 4,
           'lib/src/destinations/destination_registry.dart': 1,
           // action dispatch; its row is in test/actions/
           // action_dispatcher_test.dart.
@@ -931,15 +925,19 @@ void runDeliveryCycleScenarios(
         final errors = <Object>[];
         await runZonedGuarded(
           () => runWithDeliveryTestHooks(
-            DeliveryTestHooks(timerFactory: timers.create, onLog: log.add),
+            DeliveryTestHooks(
+              handDrivenCycle: true,
+              timerFactory: timers.create,
+              onLog: log.add,
+            ),
             () async {
               await w.start(
                 policyResolver: () {
                   if (throwing) throw StateError('resolver');
                   return _policy;
                 },
+                handDriven: true,
               );
-              w.store.deliveryTrigger = null;
               await timers.fire();
               expect(d.started, isEmpty);
               expect(
@@ -1011,6 +1009,7 @@ void runDeliveryCycleScenarios(
         var heartbeats = 0;
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
+            handDrivenCycle: true,
             timerFactory: timers.create,
             failNextHeartbeat: () {
               heartbeats += 1;
@@ -1018,8 +1017,7 @@ void runDeliveryCycleScenarios(
             },
           ),
           () async {
-            final cycle = await w.start();
-            w.store.deliveryTrigger = null;
+            final cycle = await w.start(handDriven: true);
             final pass = cycle();
             await until(() => d.started.isNotEmpty, reason: 'the send');
             await timers.fire();
@@ -1043,12 +1041,12 @@ void runDeliveryCycleScenarios(
         var passes = 0;
         await runWithDeliveryTestHooks(
           DeliveryTestHooks(
+            handDrivenCycle: true,
             timerFactory: neverFiringTimer,
             onInboundPoll: () => passes += 1,
           ),
           () async {
-            final cycle = await w.start();
-            w.store.deliveryTrigger = null;
+            final cycle = await w.start(handDriven: true);
             final pass = cycle();
             await until(() => d.started.isNotEmpty, reason: 'the send');
             final id = await w.note('n2');
@@ -1074,8 +1072,7 @@ void runDeliveryCycleScenarios(
           var passes = 0;
           Future<void>? lateCall;
           var lateDone = false;
-          final cycle = await w.start();
-          w.store.deliveryTrigger = null;
+          final cycle = await w.start(handDriven: true);
           await runWithDeliveryTestHooks(
             DeliveryTestHooks(
               timerFactory: neverFiringTimer,
@@ -1165,8 +1162,7 @@ void runDeliveryCycleScenarios(
       //   record under the lock's epoch.
       test('each pass writes the heartbeat record', () async {
         if (!available) return;
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         await cycle();
         final first = (await w.backend.transaction(
           w.backend.readDrainHeartbeatTxn,
@@ -1187,8 +1183,7 @@ void runDeliveryCycleScenarios(
         if (!available) return;
         final d = Receiver(id: 'x');
         await w.activate(d);
-        final cycle = await w.start();
-        w.store.deliveryTrigger = null;
+        final cycle = await w.start(handDriven: true);
         await cycle();
         final before = await w.backend.transaction(
           w.backend.readDrainHeartbeatTxn,
@@ -1227,6 +1222,7 @@ void runDeliveryCycleScenarios(
           final releaseFence = Completer<void>();
           await runWithDeliveryTestHooks(
             DeliveryTestHooks(
+              handDrivenCycle: true,
               timerFactory: timers.create,
               failNextHeartbeat: () {
                 if (!failNext) return false;
@@ -1241,8 +1237,7 @@ void runDeliveryCycleScenarios(
               },
             ),
             () async {
-              final cycle = await w.start();
-              w.store.deliveryTrigger = null;
+              final cycle = await w.start(handDriven: true);
               final epoch = await w.epoch();
               d.gate = () async => first.add(await w.epoch());
               final pass = cycle();
@@ -1321,8 +1316,12 @@ void runDeliveryCycleScenarios(
       test('an append through a bootstrapped store drives the cycle', () async {
         if (!available) return;
         final d = Receiver(id: 'boot');
+        final backend = await w.db.openBackend();
         final bundle = await bootstrapEventStore(
-          backend: await w.db.openBackend(),
+          storage: ApplicationSuppliedStorage(
+            backend,
+            w.db.securityFor(backend),
+          ),
           source: _source,
           entryTypes: const <EntryTypeDefinition>[
             EntryTypeDefinition(
@@ -1333,6 +1332,7 @@ void runDeliveryCycleScenarios(
           ],
           destinations: <Destination>[d],
         );
+        trackTestBackend(bundle.eventStore, backend);
         await bundle.destinations.setStartDate(
           'boot',
           DateTime.utc(2000, 1, 1),

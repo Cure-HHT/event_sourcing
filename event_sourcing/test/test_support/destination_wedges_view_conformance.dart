@@ -25,6 +25,7 @@ import 'package:sembast/sembast_memory.dart';
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'wedges-view-scenarios');
@@ -50,7 +51,9 @@ DateTime _fillNow() => DateTime.utc(2027, 1, 1);
 
 /// One event store over a backend, with its registry.
 class _Store {
-  _Store(this.backend, this.store, this.registry);
+  _Store(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -1101,14 +1104,21 @@ void runDestinationWedgesViewScenarios(
             identifier: 'bootstrap-install',
             softwareVersion: 'test@1.0.0',
           );
-          Future<EventStoreBundle> boot() async => bootstrapEventStore(
-            backend: await db.openBackend(),
-            source: source,
-            entryTypes: const <EntryTypeDefinition>[_noteDef],
-            destinations: const <Destination>[],
-          );
+          Future<EventStoreBundle> boot() async {
+            final backend = await db.openBackend();
+            return bootstrapEventStore(
+              storage: ApplicationSuppliedStorage(
+                backend,
+                db.securityFor(backend),
+              ),
+              source: source,
+              entryTypes: const <EntryTypeDefinition>[_noteDef],
+              destinations: const <Destination>[],
+            );
+          }
+
           final first = await boot();
-          Future<List<StoredEvent>> audits() => first.eventStore.backend
+          Future<List<StoredEvent>> audits() => first.eventStore.reader
               .findAllEvents(entryType: kEntryTypeRegistryInitializedEntryType);
           expect(await audits(), hasLength(1));
           await first.destinations.addDestination(
@@ -1122,7 +1132,7 @@ void runDestinationWedgesViewScenarios(
           );
           final registryAudit = (await audits()).single;
           final after = <StoredEvent>[
-            for (final e in await first.eventStore.backend.findAllEvents())
+            for (final e in await first.eventStore.reader.findAllEvents())
               if (e.aggregateId == source.identifier &&
                   e.sequenceNumber > registryAudit.sequenceNumber)
                 e,
@@ -1148,8 +1158,9 @@ void runDestinationWedgesViewScenarios(
       //   carries its own event type.
       test('every emitter appends a declared shape', () async {
         if (!available) return;
+        final backend = await db.openBackend();
         final bundle = await bootstrapEventStore(
-          backend: await db.openBackend(),
+          storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
           source: const Source(
             hopId: 'server',
             identifier: 'emitters-install',
@@ -1159,7 +1170,7 @@ void runDestinationWedgesViewScenarios(
           destinations: const <Destination>[],
         );
         final store = bundle.eventStore;
-        final s = _Store(store.backend, store, bundle.destinations);
+        final s = _Store(backend, store, bundle.destinations);
         final d = FakeDestination(id: 'e', allowHardDelete: true);
         await s.queued(d);
         await s.registry.requestHalt(
@@ -1207,14 +1218,8 @@ void runDestinationWedgesViewScenarios(
         final peerNote = await p.note('peer-note');
         await store.ingestEvent(peerNote);
         await store.ingestEvent(peerNote);
-        final bytes = _batchOf(<StoredEvent>[peerNote]);
-        await store.logRejectedBatch(
-          bytes,
-          wireFormat: BatchEnvelope.wireFormat,
-          reason: 'test',
-        );
         final kinds = <String>{
-          for (final e in await store.backend.findAllEvents())
+          for (final e in await store.reader.findAllEvents())
             if (kReservedSystemEntryTypeIds.contains(e.entryType)) e.entryType,
         };
         expect(
@@ -1238,7 +1243,7 @@ void runDestinationWedgesViewScenarios(
           kSecurityContextPurgedEntryType: kSecurityContextPurgedEventType,
         }.entries) {
           expect(
-            (await store.backend.findAllEvents(
+            (await store.reader.findAllEvents(
               entryType: pair.key,
             )).map((e) => e.eventType).toSet(),
             <String>{pair.value},

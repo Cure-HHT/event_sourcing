@@ -29,9 +29,11 @@ import 'package:event_sourcing/src/storage/web_locks_stub.dart'
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
-import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
+import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:uuid/uuid.dart';
+
+part '../security/sembast_security_context_store.dart';
 
 part 'sembast_test_support.dart';
 
@@ -326,9 +328,7 @@ class SembastBackend extends StorageBackend {
   /// that need to commit writes atomically with this backend's
   /// transaction. NOT part of the abstract `StorageBackend` contract —
   /// only sembast-side code should reach for this.
-  // ignore: library_private_types_in_public_api
-  @internal
-  sembast.Transaction unwrapSembastTxn(Transaction txn) =>
+  sembast.Transaction _unwrapSembastTxn(Transaction txn) =>
       _requireValidTxn(txn)._sembastTxn;
 
   // -------- Events --------

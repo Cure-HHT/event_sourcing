@@ -68,8 +68,31 @@ import 'dart:typed_data';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/actions/action_context.dart';
+import 'package:event_sourcing/src/actions/action_registry.dart';
+import 'package:event_sourcing/src/actions/action_submission.dart';
+import 'package:event_sourcing/src/actions/authorization_decision.dart'
+    show Deny, DenyReason;
+import 'package:event_sourcing/src/actions/authorization_policy.dart';
+import 'package:event_sourcing/src/actions/denial_events.dart';
+import 'package:event_sourcing/src/actions/dispatch_result.dart';
+import 'package:event_sourcing/src/actions/execution_result.dart';
+import 'package:event_sourcing/src/actions/idempotency.dart';
+import 'package:event_sourcing/src/actions/idempotency_errors.dart';
+import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
+import 'package:event_sourcing/src/actions/scope_value.dart';
+import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
+import 'package:event_sourcing/src/destinations/destination.dart';
+import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/destinations/halt_purpose.dart';
+import 'package:event_sourcing/src/destinations/wedge_cause.dart';
+import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
+import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
@@ -82,6 +105,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
+import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
@@ -90,23 +114,62 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
+import 'package:event_sourcing/src/storage/fifo_entry.dart';
+import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
+import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/storage_description.dart';
+import 'package:event_sourcing/src/storage/storage_reader.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/sync/declared_configuration.dart';
+import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
+
+// Implements: EVS-DEV-storage-capability/C
+// the library's writers that take a handed-out object -- the bootstrap, the
+//   destination registry, the delivery cycle and its fill and drain, the
+//   view rebuild and the action dispatcher -- share the event store's Dart
+//   library, so the backend, the reserved append, the trigger slot, the
+//   wake and the collector's publish stay private to it.
+// Implements: EVS-PRD-storage-barrier/B
+// no handed-out object carries a member that writes the library's state
+//   outside its public operations; those members are library-private.
+// Implements: EVS-PRD-storage-barrier/E
+// no handed-out object yields the storage backend or a handle under it.
+// Implements: EVS-DEV-storage-capability/D
+// the members of the handed-out types that are accessible outside their
+//   declaring Dart library are pinned, by name and signature, in a list
+//   committed with the library's tests; the members declared here and in
+//   its parts are the event store's side of that surface.
+part 'bootstrap.dart';
+part 'destinations/destination_registry.dart';
+part 'sync/sync_cycle.dart';
+part 'sync/drain.dart';
+part 'sync/fill_batch.dart';
+part 'sync/historical_replay.dart';
+part 'projections/rebuild.dart';
+part 'actions/action_dispatcher.dart';
 
 /// The delivery cycle's trigger, held in an event store's trigger slot.
 typedef _DeliveryTrigger = Future<void> Function();
@@ -135,15 +198,15 @@ class PublishCollector {
   final List<StoredEvent> _events = <StoredEvent>[];
   final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
 
-  @internal
-  void add(StoredEvent event) {
+  // Implements: EVS-PRD-storage-barrier/D
+  // publishing to live subscribers is private to the event store's library.
+  void _add(StoredEvent event) {
     _checkOpen();
     if (_events.isEmpty) _onFirstEvent(event.sequenceNumber);
     _events.add(event);
   }
 
-  @internal
-  void addRowChanges(Iterable<AggregateFoldChange> changes) {
+  void _addRowChanges(Iterable<AggregateFoldChange> changes) {
     _checkOpen();
     _rowChanges.addAll(changes);
   }
@@ -232,53 +295,93 @@ class EntryTypeVersionDowngradeError extends Error {
 /// handlers server-side).
 class EventStore {
   EventStore._({
-    required this.backend,
+    required StorageBackend backend,
     required this.entryTypes,
     required this.source,
-    required this.securityContexts,
+    required MutableSecurityContextStore securityContexts,
+    required OpenedStorage? storage,
     required this.databaseId,
     required GenerationRegistration registration,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
-  }) : _interpreter = ProjectionInterpreter(
+  }) : _backend = backend,
+       _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
          promoters: promoters ?? PromoterRegistry(),
          entryTypes: entryTypes,
        ),
        _promoters = promoters ?? PromoterRegistry(),
+       _securityContexts = securityContexts,
+       securityContexts = _SecurityContextReader(securityContexts),
+       _storage = storage,
        _registration = registration,
        _clock = clock,
        _uuid = uuid ?? const Uuid();
 
-  final StorageBackend backend;
+  /// The storage this store appends to and reads from. It is private to
+  /// the event store's Dart library: the library's own writers (the
+  /// destination registry, the delivery cycle, the view rebuild, the
+  /// bootstrap) share that library and read it directly.
+  // Implements: EVS-DEV-storage-capability/C
+  // the backend is reachable only inside the event store's Dart library.
+  final StorageBackend _backend;
   final EntryTypeRegistry entryTypes;
   final Source source;
-  final MutableSecurityContextStore securityContexts;
+
+  /// The security contexts stored beside this store's events, for reading:
+  /// an object of its own that declares no writing member. The event
+  /// store's own operations (append, redaction, retention) write them.
+  // Implements: EVS-DEV-storage-capability/E
+  // the security-context store handed to the application is a separate
+  //   object declaring only the reads.
+  final SecurityContextStore securityContexts;
+
+  /// The writing store over the same contexts, private to the event store.
+  final MutableSecurityContextStore _securityContexts;
+
+  /// Reads of this store's storage: an object of its own that declares no
+  /// writing member. Its transactions run for reads only (`READ ONLY` on
+  /// Postgres), and its `...InTxn` reads accept the handles it issued and
+  /// those [runTransaction] issued, each while its body runs.
+  // Implements: EVS-DEV-storage-capability/E
+  // the storage reader handed to the application is a separate object
+  //   delegating only the backend's reads.
+  late final StorageReader reader = _StorageReader(this);
+
+  /// The idempotency store over this store's storage, for an action
+  /// dispatcher, when it runs on Postgres: its outcomes persist in the
+  /// database's `idempotency` table, and every lookup, record and sweep runs
+  /// in the backend's fenced transactions. Null on any other backend, where
+  /// the application supplies an idempotency store of its own.
+  // Implements: EVS-DEV-storage-capability/I
+  // the library builds the idempotency store over the storage it opened.
+  late final IdempotencyStore? idempotencyStore = switch (_backend) {
+    final PostgresBackend postgres => postgres.idempotencyStoreOverThis(),
+    _ => null,
+  };
+
+  /// The transaction handles this store has issued whose body is running.
+  final Set<Transaction> _liveHandles = Set<Transaction>.identity();
+
+  /// The storage [open] opened from its description, which [close] closes
+  /// when the library opened it; null for [openForTest], whose backend the
+  /// caller keeps.
+  final OpenedStorage? _storage;
 
   /// The trigger slot: the trigger of the one started, not yet closed
   /// delivery cycle over this store, or null.
   _DeliveryTrigger? _deliveryTrigger;
-
-  /// The trigger of the delivery cycle that holds this store's trigger
-  /// slot, or null. Only `SyncCycle` sets it: when it starts, and back to
-  /// null when it closes.
-  @internal
-  Future<void> Function()? get deliveryTrigger => _deliveryTrigger;
-
-  @internal
-  set deliveryTrigger(Future<void> Function()? trigger) =>
-      _deliveryTrigger = trigger;
 
   /// Wakes the delivery cycle that holds the trigger slot, if any, without
   /// waiting for it. Nothing it raises reaches the caller: a trigger that
   /// throws, synchronously or through its future, is logged.
   // Implements: EVS-DEV-destination-drain-lock/D
   // a delivery-cycle trigger never raises into the operation that fires it.
-  @internal
-  void wakeDeliveryCycle() {
+  void _wakeDeliveryCycle() {
     final trigger = _deliveryTrigger;
+    _observeDeliveryWake(cycleWoken: trigger != null);
     if (trigger == null) return;
     void report(Object e, StackTrace st) => libraryLog(
       'event_store',
@@ -291,6 +394,22 @@ class EventStore {
       unawaited(trigger().then((_) {}, onError: report));
     } on Object catch (e, st) {
       report(e, st);
+    }
+  }
+
+  static void _observeDeliveryWake({required bool cycleWoken}) {
+    final seam = DeliveryTestHooks.current?.onDeliveryWake;
+    if (seam == null) return;
+    try {
+      seam(cycleWoken);
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the onDeliveryWake test seam threw',
+        level: LibraryLogLevel.severe,
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
@@ -320,10 +439,19 @@ class EventStore {
   final Uuid _uuid;
   final SubscriptionEngine _subs = SubscriptionEngine();
 
-  /// Opens an [EventStore] against [storage]: the single production entry
-  /// point. All required collaborators ([entryTypes], [source],
-  /// [securityContexts]) must be supplied; the returned store is fully
-  /// configured and ready for use.
+  /// Opens an [EventStore] over the storage [storage] describes: the single
+  /// production entry point. The returned store is fully configured and
+  /// ready for use.
+  ///
+  /// For a [SembastStorage] or [PostgresStorage] description the library
+  /// opens the storage itself, with the Sembast factory it selects for the
+  /// description or with `PostgresBackend.open`, builds the security-context
+  /// store over it, and holds both: [close] closes that storage, and an open
+  /// that fails after the storage opened closes it before the error reaches
+  /// the caller. An [ApplicationSuppliedStorage] carries a backend the
+  /// application constructed, with its security-context store; the
+  /// application keeps it and closes it, and neither [close] nor a failed
+  /// open does.
   ///
   /// The open first registers, in [entryTypes] and [projections], every
   /// reserved system entry type ([kSystemEntryTypes]) and the library's
@@ -437,8 +565,7 @@ class EventStore {
   ///
   /// While the boot runs, a call from the observer, or from work it started
   /// in its zone, that opens an event store, runs a transaction of an event
-  /// store (its writes, [runTransaction], ingest, [logRejectedBatch], and
-  /// `rebuildView`) or starts a transaction on a storage backend the library
+  /// store (its writes, [runTransaction], ingest, and `rebuildView`) or starts a transaction on a storage backend the library
   /// ships throws [StateError], whichever database it is over. A callback
   /// the observer hands to code registered outside its zone (a stream
   /// listener subscribed elsewhere, say), a read a backend serves outside a
@@ -451,11 +578,13 @@ class EventStore {
   // the boot reports its phases to an optional observer that decides nothing;
   //   the completion is reported after the boot committed; an open the
   //   observer calls while the boot runs is refused.
+  // Implements: EVS-PRD-storage-barrier/I
+  // an open that fails after the library opened its storage closes that
+  //   storage before the failure reaches the caller.
   static Future<EventStore> open({
-    required StorageBackend storage,
+    required StorageDescription storage,
     required EntryTypeRegistry entryTypes,
     required Source source,
-    required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
@@ -470,26 +599,34 @@ class EventStore {
       _registerLibraryDefinitions(entryTypes, effectiveProjections);
       effectiveProjections.seal();
       final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-      final (:databaseId, :registration) = await _guardedBoot(
-        storage: storage,
-        entryTypes: entryTypes,
-        projections: effectiveProjections,
-        promoters: effectivePromoters,
-        recordVersion: true,
-        progress: progress,
-      );
-      final store = EventStore._(
-        backend: storage,
-        entryTypes: entryTypes,
-        source: source,
-        securityContexts: securityContexts,
-        databaseId: databaseId,
-        registration: registration,
-        projections: effectiveProjections,
-        promoters: effectivePromoters,
-        clock: clock,
-        uuid: uuid,
-      );
+      final opened = await openDescribedStorage(storage);
+      final EventStore store;
+      try {
+        final (:databaseId, :registration) = await _guardedBoot(
+          storage: opened.backend,
+          entryTypes: entryTypes,
+          projections: effectiveProjections,
+          promoters: effectivePromoters,
+          recordVersion: true,
+          progress: progress,
+        );
+        store = EventStore._(
+          backend: opened.backend,
+          entryTypes: entryTypes,
+          source: source,
+          securityContexts: opened.securityContexts,
+          storage: opened,
+          databaseId: databaseId,
+          registration: registration,
+          projections: effectiveProjections,
+          promoters: effectivePromoters,
+          clock: clock,
+          uuid: uuid,
+        );
+      } catch (_) {
+        await opened.close();
+        rethrow;
+      }
       progress
         ..bootFinished()
         ..report(BootPhase.complete, 0, 0);
@@ -515,10 +652,19 @@ class EventStore {
   /// identity. The guarantee that the log records every version that opened
   /// the database holds for [open] only. [onBootProgress] observes the boot
   /// as it does for [open].
+  ///
+  /// The caller keeps [storage]: [close] does not close it, so several
+  /// stores may run over one backend. In a build with assertions disabled
+  /// it throws [StateError] before it touches [storage].
   // Implements: EVS-DEV-event-store-open/A
   // the test-only constructor: visible for testing, so the analyzer reports
   //   a call from production code; the refusals of open; no library-version
   //   event.
+  // Implements: EVS-DEV-storage-capability/K
+  // in a build with assertions disabled the test-only open refuses with
+  //   StateError before it touches the backend.
+  // Implements: EVS-PRD-storage-barrier/J
+  // without assertions the test-only entry point admits no backend.
   @visibleForTesting
   static Future<EventStore> openForTest({
     required StorageBackend storage,
@@ -531,6 +677,17 @@ class EventStore {
     Uuid? uuid,
     void Function(BootProgress progress)? onBootProgress,
   }) async {
+    var assertionsEnabled = false;
+    assert(() {
+      assertionsEnabled = true;
+      return true;
+    }(), 'admits the test-only open');
+    if (!assertionsEnabled) {
+      throw StateError(
+        'EventStore.openForTest runs only in a build with assertions '
+        'enabled; open an event store with EventStore.open',
+      );
+    }
     refuseCallFromBootProgressObserver('EventStore.openForTest');
     final progress = BootProgressReporter(onBootProgress);
     try {
@@ -552,6 +709,7 @@ class EventStore {
         entryTypes: entryTypes,
         source: source,
         securityContexts: securityContexts,
+        storage: null,
         databaseId: databaseId,
         registration: registration,
         projections: effectiveProjections,
@@ -952,15 +1110,20 @@ class EventStore {
     }
   }
 
-  /// Close the backend and subscription engine, releasing all resources.
-  /// Not safe to call concurrently with in-flight work.
+  /// Closes the subscription engine and the storage the library opened for
+  /// this store, releasing their resources. A backend the application
+  /// supplied ([ApplicationSuppliedStorage]), or handed to [openForTest],
+  /// stays open: its holder closes it. Not safe to call concurrently with
+  /// in-flight work.
   ///
   /// The generation registration is released last, once the store and the
   /// backend have stopped writing, so no write of this store runs after a
   /// conflicting build could register.
+  // Implements: EVS-PRD-storage-barrier/H
+  // closing the event store closes the storage the library opened for it.
   Future<void> close() async {
     await _subs.close();
-    await backend.close();
+    await _storage?.close();
     await _registration.release();
   }
 
@@ -1081,7 +1244,7 @@ class EventStore {
 
     final T result;
     try {
-      result = await backend.transaction<T>((txn) async {
+      result = await _backend.transaction<T>((txn) async {
         if (runInProgress) {
           throw StateError(
             'StorageBackend.transaction started a run of the body while an '
@@ -1097,9 +1260,11 @@ class EventStore {
           _holdSequence(sequenceNumber);
         });
         collector = runCollector;
+        _liveHandles.add(txn);
         try {
           return await body(txn, runCollector);
         } finally {
+          _liveHandles.remove(txn);
           runCollector._open = false;
           runInProgress = false;
         }
@@ -1194,7 +1359,7 @@ class EventStore {
       // Snapshot read
       final aggregateIds = mode.aggregates;
       if (aggregateIds == null) {
-        final rows = await backend.findViewRows(mode.viewName);
+        final rows = await _backend.findViewRows(mode.viewName);
         for (final row in rows) {
           if (controller.isClosed) return;
           final seq = (row['sequence'] as int?) ?? 0;
@@ -1210,7 +1375,7 @@ class EventStore {
         // database. Each requested id emits a Snapshot, with a null value for
         // an absent row, so a tombstoned or absent row is still signalled
         // per id.
-        final byKey = await backend.readViewRowsByKeys(
+        final byKey = await _backend.readViewRowsByKeys(
           mode.viewName,
           aggregateIds,
         );
@@ -1344,7 +1509,7 @@ class EventStore {
     });
 
     if (event == null) return null;
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
     return event;
   }
 
@@ -1364,86 +1529,6 @@ class EventStore {
     }
   }
 
-  /// Throws [ArgumentError] unless [entryType] is a reserved system entry
-  /// type appended in a shape the library declares for it and, for a
-  /// destination audit, with data ingest admits
-  /// ([isWellFormedDestinationAuditData]).
-  // Implements: EVS-DEV-destination-drain/K
-  // every destination audit event the library appends carries a destination
-  //   identifier and the appending database's identity, each non-empty and
-  //   without '|'.
-  static void _checkReservedAppend({
-    required String entryType,
-    required String aggregateType,
-    required String eventType,
-    required Map<String, Object?> data,
-  }) {
-    checkReservedEventShape(
-      entryType: entryType,
-      aggregateType: aggregateType,
-      eventType: eventType,
-    );
-    if (kDestinationAuditEntryTypes.contains(entryType) &&
-        !isWellFormedDestinationAuditData(data)) {
-      throw ArgumentError.value(
-        data,
-        'data',
-        'a destination audit event carries a destination identifier (id) '
-            'and a database identity (database_id), each a non-empty string '
-            "without '|'",
-      );
-    }
-  }
-
-  /// Append a reserved system event in its own transaction: the library's
-  /// counterpart of [append] for the entry types [append] refuses.
-  ///
-  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
-  /// reserved system entry type, when [aggregateType] and [eventType] are
-  /// not a shape the library declares for [entryType], or when a destination
-  /// audit's [data] lacks a destination identifier or a database identity
-  /// that ingest admits. Otherwise behaves as [append]: stamps the registered version, dedupes by content when
-  /// [dedupeByContent] is true (returning null), publishes after the commit
-  /// and triggers the sync cycle.
-  @internal
-  Future<StoredEvent?> appendReserved({
-    required String entryType,
-    required String aggregateId,
-    required String aggregateType,
-    required String eventType,
-    required Map<String, Object?> data,
-    required Initiator initiator,
-    bool dedupeByContent = false,
-  }) async {
-    _checkReservedAppend(
-      entryType: entryType,
-      aggregateType: aggregateType,
-      eventType: eventType,
-      data: data,
-    );
-    final event = await _runInTxnWithPublish<StoredEvent?>(
-      (txn, collector) => _appendInTxn(
-        txn,
-        collector: collector,
-        entryType: entryType,
-        aggregateId: aggregateId,
-        aggregateType: aggregateType,
-        eventType: eventType,
-        data: data,
-        initiator: initiator,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: dedupeByContent,
-      ),
-    );
-    if (event == null) return null;
-    wakeDeliveryCycle();
-    return event;
-  }
-
   /// Append a reserved system event inside the transaction of a
   /// [runTransaction] body: the library's counterpart of [appendInTxn] for
   /// the entry types [appendInTxn] refuses.
@@ -1456,8 +1541,10 @@ class EventStore {
   /// [appendInTxn] does for a collector of another run. Returns null only
   /// when [dedupeByContent] is true and the content matches the latest event
   /// of [entryType] in the aggregate.
-  @internal
-  Future<StoredEvent?> appendReservedInTxn(
+  // Implements: EVS-PRD-storage-barrier/C
+  // the reserved append is private to the event store's library; only its
+  //   public operations append reserved events.
+  Future<StoredEvent?> _appendReservedInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String entryType,
@@ -1468,7 +1555,7 @@ class EventStore {
     required Initiator initiator,
     bool dedupeByContent = false,
   }) {
-    _checkReservedAppend(
+    checkReservedAppend(
       entryType: entryType,
       aggregateType: aggregateType,
       eventType: eventType,
@@ -1518,7 +1605,7 @@ class EventStore {
     required Initiator redactedBy,
   }) async {
     await _runInTxnWithPublish<void>((txn, collector) async {
-      final existing = await securityContexts.readInTxn(txn, eventId);
+      final existing = await _securityContexts.readInTxn(txn, eventId);
       if (existing == null) {
         throw ArgumentError.value(
           eventId,
@@ -1526,12 +1613,12 @@ class EventStore {
           'no security context row for event',
         );
       }
-      await securityContexts.deleteInTxn(txn, eventId);
+      await _securityContexts.deleteInTxn(txn, eventId);
       // Emit the redaction audit event. The install UUID is the aggregate;
       // the redaction subject moves into `data.subject_event_id` so callers
       // can query "all redactions of event X" by filtering on entry_type
       // AND data.subject_event_id.
-      await appendReservedInTxn(
+      await _appendReservedInTxn(
         txn,
         collector,
         entryType: kSecurityContextRedactedEntryType,
@@ -1542,7 +1629,7 @@ class EventStore {
         initiator: redactedBy,
       );
     });
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
   }
 
   /// Apply [policy] (or [SecurityRetentionPolicy.defaults]) to the
@@ -1568,22 +1655,22 @@ class EventStore {
       txn,
       collector,
     ) async {
-      final compactCandidates = await securityContexts
+      final compactCandidates = await _securityContexts
           .findUnredactedOlderThanInTxn(txn, compactCutoff);
       for (final row in compactCandidates) {
-        await securityContexts.upsertInTxn(txn, row.applyTruncation(p));
+        await _securityContexts.upsertInTxn(txn, row.applyTruncation(p));
       }
 
-      final purgeCandidates = await securityContexts.findOlderThanInTxn(
+      final purgeCandidates = await _securityContexts.findOlderThanInTxn(
         txn,
         purgeCutoff,
       );
       for (final row in purgeCandidates) {
-        await securityContexts.deleteInTxn(txn, row.eventId);
+        await _securityContexts.deleteInTxn(txn, row.eventId);
       }
 
       if (compactCandidates.isNotEmpty) {
-        await appendReservedInTxn(
+        await _appendReservedInTxn(
           txn,
           collector,
           entryType: kSecurityContextCompactedEntryType,
@@ -1599,7 +1686,7 @@ class EventStore {
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        await appendReservedInTxn(
+        await _appendReservedInTxn(
           txn,
           collector,
           entryType: kSecurityContextPurgedEntryType,
@@ -1615,7 +1702,7 @@ class EventStore {
       }
       // Always emit the policy-applied audit event, even when both sweeps
       // were empty, so operators have a continuous retention timeline.
-      await appendReservedInTxn(
+      await _appendReservedInTxn(
         txn,
         collector,
         entryType: kRetentionPolicyAppliedEntryType,
@@ -1637,7 +1724,7 @@ class EventStore {
         purgedCount: purgeCandidates.length,
       );
     });
-    wakeDeliveryCycle();
+    _wakeDeliveryCycle();
     return result;
   }
 
@@ -1722,6 +1809,25 @@ class EventStore {
     );
   }
 
+  /// Throws [StateError] unless [txn] is a handle this store's
+  /// [runTransaction] issued and whose body is still running: a handle of
+  /// another event store, of a storage reader, or carried past its body is
+  /// refused before anything is written.
+  // Implements: EVS-DEV-storage-capability/G
+  // a transaction handle used in an operation of an event store other than
+  //   the one that issued it, or after its body returned, is refused with
+  //   StateError before any write.
+  void _refuseForeignHandle(Transaction txn, String operation) {
+    if (!_liveHandles.contains(txn)) {
+      throw StateError(
+        'EventStore.$operation: the transaction handle was not issued by '
+        "this event store's runTransaction, or its body has returned. Pass "
+        'the handle a runTransaction body of this store received, while '
+        'that body runs.',
+      );
+    }
+  }
+
   /// The append every append operation shares, reserved and user entry
   /// types alike.
   // Implements: EVS-PRD-destinations/K
@@ -1750,6 +1856,7 @@ class EventStore {
         'runTransaction body received, while that body runs.',
       );
     }
+    _refuseForeignHandle(txn, 'appendInTxn');
     _validateAppendInputs(
       entryType: entryType,
       aggregateType: aggregateType,
@@ -1778,7 +1885,7 @@ class EventStore {
     // per entry_type so each emission stream is treated independently.
     StoredEvent? prior;
     if (dedupeByContent) {
-      final aggregateHistory = await backend.findEventsForAggregateInTxn(
+      final aggregateHistory = await _backend.findEventsForAggregateInTxn(
         txn,
         aggregateId,
       );
@@ -1810,8 +1917,8 @@ class EventStore {
     // every appended event carries the
     //   hash of the one before it in its chain, read inside the same
     //   transaction so the link cannot straddle a concurrent append.
-    final previousHash = await backend.readLatestEventHash(txn);
-    final sequenceNumber = await backend.nextSequenceNumber(txn);
+    final previousHash = await _backend.readLatestEventHash(txn);
+    final sequenceNumber = await _backend.nextSequenceNumber(txn);
     final eventId = _uuid.v4();
 
     final dataMap = <String, Object?>{
@@ -1844,7 +1951,7 @@ class EventStore {
     recordMap['event_hash'] = eventHash;
     final event = StoredEvent.fromMap(recordMap, 0);
 
-    await backend.appendEvent(txn, event);
+    await _backend.appendEvent(txn, event);
 
     if (security != null) {
       final row = EventSecurityContext(
@@ -1857,10 +1964,10 @@ class EventStore {
         geoRegion: security.geoRegion,
         requestId: security.requestId,
       );
-      await securityContexts.writeInTxn(txn, row);
+      await _securityContexts.writeInTxn(txn, row);
     }
 
-    collector.add(event);
+    collector._add(event);
 
     // Run the projection interpreter inside the same transaction so views
     // materialize atomically with the append. Action-emitted events (via
@@ -1868,11 +1975,11 @@ class EventStore {
     // dispatches in the same flow read the new view rows.
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
-      backend: backend,
+      backend: _backend,
       event: event,
     );
     if (rowChanges.isNotEmpty) {
-      collector.addRowChanges(rowChanges);
+      collector._addRowChanges(rowChanges);
     }
     return event;
   }
@@ -2094,7 +2201,7 @@ class EventStore {
     }
 
     // 2. Idempotency check by event_id.
-    final existing = await backend.findEventByIdInTxn(txn, incoming.eventId);
+    final existing = await _backend.findEventByIdInTxn(txn, incoming.eventId);
     if (existing != null) {
       // Event already present — compare arrival_hash for identity check.
       final existingProv = (existing.metadata['provenance'] as List<Object?>)
@@ -2145,8 +2252,8 @@ class EventStore {
     //    is the local sequence_number; the previous-ingest tail hash is
     //    the prior event in this destination's log.
     final originSeq = incoming.sequenceNumber;
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
+    final localSeq = await _backend.nextSequenceNumber(txn);
+    final previousTailHash = await _backend.readLatestEventHash(txn);
     final receiverEntry = ProvenanceEntry(
       hop: source.hopId,
       receivedAt: _now(),
@@ -2168,8 +2275,8 @@ class EventStore {
     );
 
     // 5. Persist via the same path as origin appends.
-    await backend.appendEvent(txn, updatedEvent);
-    collector?.add(updatedEvent);
+    await _backend.appendEvent(txn, updatedEvent);
+    collector?._add(updatedEvent);
 
     // 6. Fire the projection interpreter symmetric with the local-append path.
     //    The interpreter runs inside the same transaction as `appendEvent`,
@@ -2178,11 +2285,11 @@ class EventStore {
     //    transaction (all-or-nothing batch atomicity).
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
-      backend: backend,
+      backend: _backend,
       event: updatedEvent,
     );
     if (collector != null && rowChanges.isNotEmpty) {
-      collector.addRowChanges(rowChanges);
+      collector._addRowChanges(rowChanges);
     }
 
     return PerEventIngestOutcome(
@@ -2260,7 +2367,7 @@ class EventStore {
     int fromSequenceNumber = 0,
     int? toSequenceNumber,
   }) async {
-    final allEvents = await backend.findAllEvents();
+    final allEvents = await _backend.findAllEvents();
     final ingestStamped = <StoredEvent>[];
     for (final event in allEvents) {
       final ingestSeq = _ingestSeqOf(event);
@@ -2507,78 +2614,6 @@ class EventStore {
     return _eventHash(recordMap);
   }
 
-  /// Caller-composed rejection audit. See design spec §2.7.
-  ///
-  /// Opens its own transaction and records one `ingest.batch_rejected` event
-  /// under the `ingest-audit:{hopId}` aggregate with Chain 2 fields stamped on
-  /// `provenance[0]`.  `batch_context` is null because no decoded batch is
-  /// associated — the batch failed before or during decoding.
-  ///
-  /// Typical call site:
-  /// ```dart
-  /// try {
-  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@2');
-  /// } on IngestIdentityMismatch catch (e) {
-  ///   await store.logRejectedBatch(
-  ///     bytes,
-  ///     wireFormat: 'esd/batch@2',
-  ///     reason: 'identityMismatch',
-  ///     failedEventId: e.eventId,
-  ///     errorDetail: e.toString(),
-  ///   );
-  /// }
-  /// ```
-  Future<void> logRejectedBatch(
-    Uint8List bytes, {
-    required String wireFormat,
-    required String reason,
-    String? failedEventId,
-    String? errorDetail,
-  }) async {
-    refuseCallFromBootProgressObserver('EventStore.logRejectedBatch');
-    await backend.transaction((txn) async {
-      final now = _now();
-      final wireBytesHash = sha256.convert(bytes).toString();
-      final localSeq = await backend.nextSequenceNumber(txn);
-      final previousTailHash = await backend.readLatestEventHash(txn);
-      final provenance0 = ProvenanceEntry(
-        hop: source.hopId,
-        receivedAt: now,
-        identifier: source.identifier,
-        softwareVersion: source.softwareVersion,
-        arrivalHash: null,
-        previousIngestHash: previousTailHash,
-        ingestSequenceNumber: localSeq,
-        batchContext: null,
-      );
-      await _appendRawInternalEventInTxn(
-        txn,
-        backend,
-        aggregateId: 'ingest-audit:${source.hopId}',
-        aggregateType: kIngestAuditAggregateType,
-        entryType: kIngestAuditEntryType,
-        entryTypeVersion: entryTypes
-            .byId(kIngestAuditEntryType)!
-            .registeredVersion,
-        eventType: kIngestBatchRejectedEventType,
-        data: <String, Object?>{
-          'wire_bytes': base64Encode(bytes),
-          'wire_format': wireFormat,
-          'byte_length': bytes.length,
-          'wire_bytes_hash': wireBytesHash,
-          'reason': reason,
-          'failed_event_id': failedEventId,
-          'error_detail': errorDetail,
-        },
-        initiator: const AutomationInitiator(service: 'ingest'),
-        provenance0: provenance0,
-        localSeq: localSeq,
-        previousTailHash: previousTailHash,
-        uuid: _uuid,
-      );
-    });
-  }
-
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
   /// inside [txn]. Stamped with Chain 2 fields on `provenance[0]`.
   Future<void> _emitDuplicateReceivedInTxn(
@@ -2591,8 +2626,8 @@ class EventStore {
     final now = _now();
     // Reserve a fresh local sequence_number; under the unified store this
     // value is also the receiver-hop's ingest_sequence_number for Chain 2.
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
+    final localSeq = await _backend.nextSequenceNumber(txn);
+    final previousTailHash = await _backend.readLatestEventHash(txn);
     final provenance0 = ProvenanceEntry(
       hop: source.hopId,
       receivedAt: now,
@@ -2605,7 +2640,7 @@ class EventStore {
     );
     await _appendRawInternalEventInTxn(
       txn,
-      backend,
+      _backend,
       aggregateId: 'ingest-audit:${source.hopId}',
       aggregateType: kIngestAuditAggregateType,
       entryType: kIngestAuditEntryType,
@@ -2641,14 +2676,13 @@ String _canonicalEventHash(Map<String, Object?> recordMap) =>
 
 /// Build and append one substrate-internal event to [backend] inside [txn].
 ///
-/// Encapsulates the ~25-line boilerplate shared by [EventStore.logRejectedBatch],
-/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventInTxn]:
-/// assemble the 14-key record map, hash it with [_canonicalEventHash], call
-/// [StorageBackend.appendEvent], and optionally record the event into [collector].
+/// Assembles the record map shared by [EventStore._emitDuplicateReceivedInTxn]
+/// and [_appendLibVersionEventInTxn], hashes it with [_canonicalEventHash],
+/// calls [StorageBackend.appendEvent], and records the event into
+/// [collector] when one is given.
 ///
-/// [provenance0] and [localSeq] / [previousTailHash] must be reserved by the
-/// caller before this function is invoked, so that the caller can incorporate
-/// them into provenance entries (e.g. Chain 2 fields) before passing them here.
+/// The caller reserves [localSeq] and [previousTailHash] before this runs,
+/// so that [provenance0] can carry them.
 Future<StoredEvent> _appendRawInternalEventInTxn(
   Transaction txn,
   StorageBackend backend, {
@@ -2697,7 +2731,7 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   recordMap['event_hash'] = eventHash;
   final event = StoredEvent.fromMap(recordMap, localSeq);
   await backend.appendEvent(txn, event);
-  collector?.add(event);
+  collector?._add(event);
   return event;
 }
 
@@ -2804,5 +2838,269 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
     localSeq: localSeq,
     previousTailHash: previousTailHash,
     uuid: uuid,
+  );
+}
+
+/// The security-context store an event store hands out: a separate object
+/// that declares the reads alone and delegates them, so neither a downcast
+/// nor a dynamic call reaches a writing member.
+final class _SecurityContextReader implements SecurityContextStore {
+  _SecurityContextReader(this._store);
+
+  final SecurityContextStore _store;
+
+  @override
+  Future<EventSecurityContext?> read(String eventId) => _store.read(eventId);
+
+  @override
+  Future<PagedAudit> queryAudit({
+    Initiator? initiator,
+    String? flowToken,
+    String? ipAddress,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    String? cursor,
+  }) => _store.queryAudit(
+    initiator: initiator,
+    flowToken: flowToken,
+    ipAddress: ipAddress,
+    from: from,
+    to: to,
+    limit: limit,
+    cursor: cursor,
+  );
+}
+
+/// The storage reader an [EventStore] hands out: it delegates the reads of
+/// the store's backend, and nothing else.
+final class _StorageReader implements StorageReader {
+  _StorageReader(this._store);
+
+  final EventStore _store;
+
+  StorageBackend get _backend => _store._backend;
+
+  /// The handles [transaction] has issued whose body is running.
+  final Set<Transaction> _liveHandles = Set<Transaction>.identity();
+
+  /// Returns [txn] when this reader, or its event store, issued it and its
+  /// body is running; throws [StateError] otherwise.
+  // Implements: EVS-DEV-storage-capability/G
+  // a transaction handle used in a read of a storage reader other than the
+  //   one that issued it (or its event store), or after its body returned,
+  //   is refused with StateError.
+  Transaction _issued(Transaction txn) {
+    if (_liveHandles.contains(txn) || _store._liveHandles.contains(txn)) {
+      return txn;
+    }
+    throw StateError(
+      'StorageReader: the transaction handle was not issued by this reader '
+      'or its event store, or its body has returned. Pass the handle a '
+      'transaction body of this reader or of its event store received, '
+      'while that body runs.',
+    );
+  }
+
+  @override
+  Future<T> transaction<T>(Future<T> Function(Transaction txn) body) {
+    refuseCallFromBootProgressObserver('StorageReader.transaction');
+    return _backend.readOnlyTransaction<T>((txn) async {
+      _liveHandles.add(txn);
+      try {
+        return await body(txn);
+      } finally {
+        _liveHandles.remove(txn);
+      }
+    });
+  }
+
+  @override
+  Future<List<StoredEvent>> findEventsForAggregate(String aggregateId) =>
+      _backend.findEventsForAggregate(aggregateId);
+
+  @override
+  Future<List<StoredEvent>> findEventsForAggregateInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async => _backend.findEventsForAggregateInTxn(_issued(txn), aggregateId);
+
+  @override
+  Future<List<StoredEvent>> findAllEvents({
+    int? afterSequence,
+    int? limit,
+    String? originatorHopId,
+    String? originatorIdentifier,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) => _backend.findAllEvents(
+    afterSequence: afterSequence,
+    limit: limit,
+    originatorHopId: originatorHopId,
+    originatorIdentifier: originatorIdentifier,
+    entryType: entryType,
+    clientTimestampStart: clientTimestampStart,
+    clientTimestampEnd: clientTimestampEnd,
+  );
+
+  @override
+  Future<List<StoredEvent>> findAllEventsInTxn(
+    Transaction txn, {
+    int? afterSequence,
+    int? limit,
+    String? entryType,
+    DateTime? clientTimestampStart,
+    DateTime? clientTimestampEnd,
+  }) async => _backend.findAllEventsInTxn(
+    _issued(txn),
+    afterSequence: afterSequence,
+    limit: limit,
+    entryType: entryType,
+    clientTimestampStart: clientTimestampStart,
+    clientTimestampEnd: clientTimestampEnd,
+  );
+
+  @override
+  Future<String?> readLatestEventHash(Transaction txn) async =>
+      _backend.readLatestEventHash(_issued(txn));
+
+  @override
+  Future<int> readSequenceCounter() => _backend.readSequenceCounter();
+
+  @override
+  Future<StoredEvent?> findEventById(String eventId) =>
+      _backend.findEventById(eventId);
+
+  @override
+  Future<StoredEvent?> findEventByIdInTxn(
+    Transaction txn,
+    String eventId,
+  ) async => _backend.findEventByIdInTxn(_issued(txn), eventId);
+
+  @override
+  Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
+      _backend.readEventsReverse(eventTypes: eventTypes);
+
+  @override
+  Future<Map<String, dynamic>?> readViewRowInTxn(
+    Transaction txn,
+    String viewName,
+    String key,
+  ) async => _backend.readViewRowInTxn(_issued(txn), viewName, key);
+
+  @override
+  Future<List<Map<String, dynamic>>> findViewRows(
+    String viewName, {
+    int? limit,
+    int? offset,
+  }) => _backend.findViewRows(viewName, limit: limit, offset: offset);
+
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+    String viewName,
+    Set<String> keys,
+  ) => _backend.readViewRowsByKeys(viewName, keys);
+
+  @override
+  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+    Transaction txn,
+    String viewName, {
+    Map<String, Object?>? where,
+    int? limit,
+    int? offset,
+  }) async => _backend.findViewRowsInTxn(
+    _issued(txn),
+    viewName,
+    where: where,
+    limit: limit,
+    offset: offset,
+  );
+
+  @override
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async =>
+      _backend.readViewTargetVersionInTxn(_issued(txn), viewName, entryType);
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
+    Transaction txn,
+    String viewName,
+  ) async => _backend.readAllViewTargetVersionsInTxn(_issued(txn), viewName);
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) async => _backend.readViewTargetsForEntryTypeInTxn(_issued(txn), entryType);
+
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async =>
+      _backend.readViewTargetBehindInTxn(_issued(txn), viewName, entryType);
+
+  @override
+  Future<FifoEntry?> readFifoHead(String destinationId) =>
+      _backend.readFifoHead(destinationId);
+
+  @override
+  Future<List<FifoEntry>> listFifoEntries(
+    String destinationId, {
+    int? afterSequenceInQueue,
+    int? limit,
+  }) => _backend.listFifoEntries(
+    destinationId,
+    afterSequenceInQueue: afterSequenceInQueue,
+    limit: limit,
+  );
+
+  @override
+  Future<FifoEntry?> readFifoRow(String destinationId, String entryId) =>
+      _backend.readFifoRow(destinationId, entryId);
+
+  @override
+  Future<bool> hasFifoWedged() => _backend.hasFifoWedged();
+
+  @override
+  Future<List<WedgedFifoSummary>> wedgedFifos() => _backend.wedgedFifos();
+
+  @override
+  Future<int> readSchemaVersion() => _backend.readSchemaVersion();
+
+  @override
+  Future<int> readFillCursor(String destinationId) =>
+      _backend.readFillCursor(destinationId);
+
+  @override
+  Future<DestinationSchedule?> readSchedule(String destinationId) =>
+      _backend.readSchedule(destinationId);
+
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      _backend.listSchedules();
+
+  @override
+  Future<PagedAudit> queryAudit({
+    Initiator? initiator,
+    String? flowToken,
+    String? ipAddress,
+    DateTime? from,
+    DateTime? to,
+    int limit = 50,
+    String? cursor,
+  }) => _backend.queryAudit(
+    initiator: initiator,
+    flowToken: flowToken,
+    ipAddress: ipAddress,
+    from: from,
+    to: to,
+    limit: limit,
+    cursor: cursor,
   );
 }

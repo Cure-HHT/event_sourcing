@@ -7,6 +7,7 @@
 // etc.).
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 // AggregateIdKey and WholePayload are not re-exported from the barrel.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
@@ -230,7 +231,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'unknown_action')
           .toList();
@@ -248,7 +249,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denial = allEvents.firstWhere(
         (e) => e.eventType == 'unknown_action',
       );
@@ -271,7 +272,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final ids = allEvents
           .where((e) => e.eventType == 'unknown_action')
           .map((e) => e.metadata['action_invocation_id'] as String)
@@ -304,7 +305,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'parse_denied')
           .toList();
@@ -347,7 +348,7 @@ void main() {
           ),
           _ctx(),
         );
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'parse_denied')
             .toList();
@@ -375,7 +376,7 @@ void main() {
         );
 
         final eventCountBefore =
-            (await eventStore.backend.findAllEvents()).length;
+            (await eventStore.reader.findAllEvents()).length;
 
         final result = await dispatcher.dispatch(
           const ActionSubmission(
@@ -392,7 +393,7 @@ void main() {
 
         // No new events must have been appended.
         final eventCountAfter =
-            (await eventStore.backend.findAllEvents()).length;
+            (await eventStore.reader.findAllEvents()).length;
         expect(eventCountAfter, equals(eventCountBefore));
       },
     );
@@ -414,7 +415,7 @@ void main() {
         );
 
         final eventCountBefore =
-            (await eventStore.backend.findAllEvents()).length;
+            (await eventStore.reader.findAllEvents()).length;
 
         final result = await dispatcher.dispatch(
           const ActionSubmission(
@@ -430,7 +431,7 @@ void main() {
         expect(hit.priorEmittedEventIds, contains('prior-event-id-1'));
 
         // No idempotency_mismatch event emitted.
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         expect(
           allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
           isEmpty,
@@ -477,7 +478,7 @@ void main() {
         );
 
         // Exactly one idempotency_mismatch denial event was appended.
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'idempotency_mismatch')
             .toList();
@@ -552,7 +553,7 @@ void main() {
       );
 
       expect(result, isA<DispatchIdempotencyHit<Object?>>());
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       expect(
         allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
         isEmpty,
@@ -587,7 +588,7 @@ void main() {
           _ctx(),
         );
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         expect(
           allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
           isEmpty,
@@ -622,7 +623,7 @@ void main() {
           _ctx(),
         );
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         expect(
           allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
           isEmpty,
@@ -654,7 +655,7 @@ void main() {
           _ctx(),
         );
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         expect(
           allEvents.where((e) => e.eventType == 'idempotency_mismatch'),
           isEmpty,
@@ -711,7 +712,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'validation_denied')
           .toList();
@@ -759,7 +760,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'authorization_denied')
           .toList();
@@ -780,7 +781,7 @@ void main() {
           ),
           _ctx(),
         );
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'authorization_denied')
             .toList();
@@ -822,21 +823,39 @@ void main() {
         events: eventStore,
         idempotency: idempotency,
       );
-      var wakes = 0;
-      eventStore.deliveryTrigger = () async {
-        wakes += 1;
-        throw StateError('the cycle failed');
-      };
-      final result = await allowDispatcher.dispatch(
-        const ActionSubmission(
-          actionName: 'hello',
-          rawInput: <String, Object?>{'who': 'world'},
+      // A started cycle whose every pass throws: its trigger fails.
+      final cycle = await SyncCycle.start(
+        registry: DestinationRegistry(eventStore: eventStore),
+        cadence: const Duration(hours: 1),
+        policyResolver: () => throw StateError('the cycle failed'),
+      );
+      addTearDown(cycle.close);
+      final wakes = <bool>[];
+      final log = <String>[];
+      final result = await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          onDeliveryWake: wakes.add,
+          onLog: (record) => log.add(record.message),
         ),
-        _ctx(),
+        () async {
+          final dispatched = await allowDispatcher.dispatch(
+            const ActionSubmission(
+              actionName: 'hello',
+              rawInput: <String, Object?>{'who': 'world'},
+            ),
+            _ctx(),
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          return dispatched;
+        },
       );
       expect(result, isA<DispatchSuccess<Object?>>());
-      expect(wakes, 1);
-      eventStore.deliveryTrigger = null;
+      expect(wakes, <bool>[true], reason: 'the dispatch woke the cycle');
+      expect(
+        log,
+        contains('the delivery cycle trigger failed'),
+        reason: 'the trigger failed without reaching the dispatch',
+      );
     });
   });
 
@@ -893,7 +912,7 @@ void main() {
       );
       expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'authorization_denied')
           .toList();
@@ -931,7 +950,7 @@ void main() {
         );
         expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'authorization_denied')
             .toList();
@@ -971,7 +990,7 @@ void main() {
         );
         expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'authorization_denied')
             .toList();
@@ -1007,7 +1026,7 @@ void main() {
         );
         expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final denials = allEvents
             .where((e) => e.eventType == 'authorization_denied')
             .toList();
@@ -1050,7 +1069,7 @@ void main() {
         ),
         _ctx(),
       );
-      final allEvents = await eventStore.backend.findAllEvents();
+      final allEvents = await eventStore.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'execution_failed')
           .toList();
@@ -1074,7 +1093,7 @@ void main() {
         );
         expect(result, isA<DispatchSuccess<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final greetings = allEvents
             .where((e) => e.eventType == 'hello.said')
             .toList();
@@ -1104,7 +1123,7 @@ void main() {
         );
         expect(result, isA<DispatchSuccess<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final greetings = allEvents
             .where((e) => e.eventType == 'hello.said')
             .toList();
@@ -1141,7 +1160,7 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
-      final allEvents = await store.backend.findAllEvents();
+      final allEvents = await store.reader.findAllEvents();
       final greetings = allEvents
           .where((e) => e.eventType == 'hello.said')
           .toList();
@@ -1212,8 +1231,8 @@ void main() {
             'transaction',
       );
 
-      final row = await store.backend.transaction(
-        (txn) => store.backend.readViewRowInTxn(
+      final row = await store.reader.transaction(
+        (txn) => store.reader.readViewRowInTxn(
           txn,
           'greetings_view',
           'greeting-in-tx-world',
@@ -1341,7 +1360,7 @@ void main() {
       expect(first, isA<DispatchSuccess<Object?>>());
       final firstSuccess = first as DispatchSuccess<Object?>;
 
-      final eventsBefore = (await eventStore.backend.findAllEvents()).length;
+      final eventsBefore = (await eventStore.reader.findAllEvents()).length;
 
       // Re-submit identically; expect cache hit, no new events.
       final second = await allowDispatcher.dispatch(
@@ -1358,7 +1377,7 @@ void main() {
       final hit = second as DispatchIdempotencyHit<Object?>;
       expect(hit.priorEmittedEventIds, firstSuccess.emittedEventIds);
 
-      final eventsAfter = (await eventStore.backend.findAllEvents()).length;
+      final eventsAfter = (await eventStore.reader.findAllEvents()).length;
       expect(eventsAfter, eventsBefore);
     });
 
@@ -1536,7 +1555,7 @@ void main() {
 
       // The denial event must be durably persisted (i.e. the tx was
       // committed with just the denial in it, not rolled back).
-      final allEvents = await store.backend.findAllEvents();
+      final allEvents = await store.reader.findAllEvents();
       final denials = allEvents
           .where((e) => e.eventType == 'authorization_denied')
           .toList();
@@ -1589,14 +1608,14 @@ void main() {
 
       // The dispatch tx rolled back: neither the appended greeting nor its
       // view row survives.
-      final allEvents = await store.backend.findAllEvents();
+      final allEvents = await store.reader.findAllEvents();
       expect(allEvents.where((e) => e.eventType == 'hello.said'), isEmpty);
       expect(
         allEvents.where((e) => e.eventType == 'hello.unregistered'),
         isEmpty,
       );
-      final row = await store.backend.transaction(
-        (txn) => store.backend.readViewRowInTxn(
+      final row = await store.reader.transaction(
+        (txn) => store.reader.readViewRowInTxn(
           txn,
           'greetings_view',
           'greeting-rolled-back',

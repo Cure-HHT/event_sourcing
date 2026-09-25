@@ -8,9 +8,9 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/storage/storage_description.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -31,10 +31,12 @@ Future<SembastBackend> _openBackend() async {
 }
 
 Future<EventStore> _open(SembastBackend backend) => EventStore.open(
-  storage: backend,
+  storage: ApplicationSuppliedStorage(
+    backend,
+    SembastSecurityContextStore(backend: backend),
+  ),
   entryTypes: EntryTypeRegistry(),
   source: _kTestSource,
-  securityContexts: SembastSecurityContextStore(backend: backend),
 );
 
 Future<RecordedLibVersion?> _latest(SembastBackend backend) async =>

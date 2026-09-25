@@ -172,7 +172,7 @@ void main() {
         expect(success.emittedEventIds, hasLength(1));
 
         // Find the persisted 'invited' event in the store.
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final invited = allEvents
             .where((e) => e.eventType == 'invited')
             .toList();
@@ -225,7 +225,7 @@ void main() {
         expect(first, isA<DispatchSuccess<Object?>>());
 
         final eventCountAfterFirst =
-            (await eventStore.backend.findAllEvents()).length;
+            (await eventStore.reader.findAllEvents()).length;
 
         // Second dispatch with the same key — must short-circuit.
         final second = await dispatcher.dispatch(
@@ -246,7 +246,7 @@ void main() {
 
         // No new events must have been appended.
         final eventCountAfterSecond =
-            (await eventStore.backend.findAllEvents()).length;
+            (await eventStore.reader.findAllEvents()).length;
         expect(eventCountAfterSecond, equals(eventCountAfterFirst));
       },
     );
@@ -277,7 +277,7 @@ void main() {
 
         expect(result, isA<DispatchParseDenied<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final parseDenied = allEvents
             .where((e) => e.eventType == 'parse_denied')
             .toList();
@@ -317,7 +317,7 @@ void main() {
 
         expect(result, isA<DispatchValidationDenied<Object?>>());
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final validationDenied = allEvents
             .where((e) => e.eventType == 'validation_denied')
             .toList();
@@ -354,7 +354,7 @@ void main() {
         final denied = result as DispatchAuthorizationDenied<Object?>;
         expect(denied.permission.name, 'user.invite');
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final authDenied = allEvents
             .where((e) => e.eventType == 'authorization_denied')
             .toList();
@@ -394,7 +394,7 @@ void main() {
         expect(parseDenied.error, isA<MissingIdempotencyKeyError>());
         expect(parseDenied.error.toString(), contains('idempotency'));
 
-        final allEvents = await eventStore.backend.findAllEvents();
+        final allEvents = await eventStore.reader.findAllEvents();
         final parseDeniedEvents = allEvents
             .where((e) => e.eventType == 'parse_denied')
             .toList();

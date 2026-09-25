@@ -10,9 +10,9 @@
 // (durable queue — enqueue and cursor
 //   advance run inside one transaction; idempotent repeat calls do not
 //   double-enqueue; post-tombstoneAndRefill recovery re-promotes in one pass)
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';

@@ -6,7 +6,6 @@
 //   findUnredactedOlderThanInTxn correctly select rows for compact/purge sweeps,
 //   exercising the retention-window query paths required for ALCOA+ Enduring.
 import 'package:event_sourcing/src/security/event_security_context.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

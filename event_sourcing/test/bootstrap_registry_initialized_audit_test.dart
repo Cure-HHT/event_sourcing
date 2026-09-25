@@ -69,7 +69,10 @@ void main() {
         final factory = newDatabaseFactoryMemory();
         final backend = await _openMemoryBackend(factory, 'fresh.db');
         final ds = await bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
           destinations: const <Destination>[],
@@ -120,7 +123,10 @@ void main() {
       const path = 'reboot-same.db';
       final backendA = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendA,
+        storage: ApplicationSuppliedStorage(
+          backendA,
+          SembastSecurityContextStore(backend: backendA),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
@@ -137,7 +143,10 @@ void main() {
       // content and returns null without writing.
       final backendB = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendB,
+        storage: ApplicationSuppliedStorage(
+          backendB,
+          SembastSecurityContextStore(backend: backendB),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
@@ -158,7 +167,10 @@ void main() {
       const path = 'add-type.db';
       final backendA = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendA,
+        storage: ApplicationSuppliedStorage(
+          backendA,
+          SembastSecurityContextStore(backend: backendA),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA()],
         destinations: const <Destination>[],
@@ -168,7 +180,10 @@ void main() {
       // changes, dedupe breaks, a new audit lands.
       final backendB = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendB,
+        storage: ApplicationSuppliedStorage(
+          backendB,
+          SembastSecurityContextStore(backend: backendB),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
@@ -192,7 +207,10 @@ void main() {
       const path = 'bump-minor.db';
       final backendA = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendA,
+        storage: ApplicationSuppliedStorage(
+          backendA,
+          SembastSecurityContextStore(backend: backendA),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA(), _typeB()],
         destinations: const <Destination>[],
@@ -202,7 +220,10 @@ void main() {
       // demo_note changes from 1.0 to 1.1, so a new audit lands.
       final backendB = await _openMemoryBackend(factory, path);
       final ds = await bootstrapEventStore(
-        backend: backendB,
+        storage: ApplicationSuppliedStorage(
+          backendB,
+          SembastSecurityContextStore(backend: backendB),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[
           _typeA(version: const EntryTypeVersion(1, 1)),
@@ -238,7 +259,10 @@ void main() {
       const path = 'bump-major.db';
       final backendA = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendA,
+        storage: ApplicationSuppliedStorage(
+          backendA,
+          SembastSecurityContextStore(backend: backendA),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[_typeA()],
         destinations: const <Destination>[],
@@ -246,7 +270,10 @@ void main() {
 
       final backendB = await _openMemoryBackend(factory, path);
       await bootstrapEventStore(
-        backend: backendB,
+        storage: ApplicationSuppliedStorage(
+          backendB,
+          SembastSecurityContextStore(backend: backendB),
+        ),
         source: _source,
         entryTypes: <EntryTypeDefinition>[
           _typeA(version: const EntryTypeVersion(2, 0)),

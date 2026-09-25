@@ -35,18 +35,6 @@ const _kY = 'guard_y';
 const _kZ = 'guard_z';
 const _kView = 'guard_x_notes';
 
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
-
-Future<void> _resetSchema(String url) async {
-  final c = await _connect(url);
-  await c.execute('DROP SCHEMA public CASCADE');
-  await c.execute('CREATE SCHEMA public');
-  await c.close();
-}
-
 /// A timer the test fires by hand.
 class _ManualTimer implements Timer {
   _ManualTimer(this._callback);
@@ -90,8 +78,10 @@ class _Timers {
 }
 
 /// The advisory locks every session holds on the current database, by pid.
-Future<Map<int, Set<(int, String)>>> _locksByPid(String url) async {
-  final c = await _connect(url);
+Future<Map<int, Set<(int, String)>>> _locksByPid(
+  PostgresTestDatabase db,
+) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute('''
       SELECT pid, (classid::bigint << 32) | objid::bigint, mode
@@ -114,14 +104,14 @@ Future<Map<int, Set<(int, String)>>> _locksByPid(String url) async {
 }
 
 /// The pids that hold the advisory lock [key].
-Future<Set<int>> _holdersOf(String url, int key) async => <int>{
-  for (final e in (await _locksByPid(url)).entries)
+Future<Set<int>> _holdersOf(PostgresTestDatabase db, int key) async => <int>{
+  for (final e in (await _locksByPid(db)).entries)
     if (e.value.any((lock) => lock.$1 == key)) e.key,
 };
 
 /// The number of sessions on the current database waiting for a lock.
-Future<int> _lockWaiters(String url) async {
-  final c = await _connect(url);
+Future<int> _lockWaiters(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute(
       "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
@@ -140,8 +130,8 @@ String? _otherServerUrl() {
   return other == null || other.isEmpty ? null : other;
 }
 
-Future<PostgresScope> _scope(String url) async {
-  final c = await _connect(url);
+Future<PostgresScope> _scope(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     return await PostgresScope.read(c);
   } finally {
@@ -162,8 +152,8 @@ int _componentKey(PostgresScope scope, String component) =>
     postgresAdvisoryKey('event_sourcing.generation', scope, component);
 
 /// Row counts and a hash of every library table's rows, ordered.
-Future<Map<String, String>> _snapshot(String url) async {
-  final c = await _connect(url);
+Future<Map<String, String>> _snapshot(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final tables = await c.execute(
       'SELECT table_name FROM information_schema.tables '
@@ -184,8 +174,8 @@ Future<Map<String, String>> _snapshot(String url) async {
   }
 }
 
-Future<void> _terminate(String url, int pid) async {
-  final c = await _connect(url);
+Future<void> _terminate(PostgresTestDatabase db, int pid) async {
+  final c = await db.connectAdmin();
   try {
     await c.execute(
       Sql.named('SELECT pg_terminate_backend(@p)'),
@@ -283,10 +273,9 @@ Future<EventStore> _openStore(
           promoters: promoterRegistry,
         )
       : EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(backend, security),
           entryTypes: registry,
           source: source,
-          securityContexts: security,
           projections: projections,
           promoters: promoterRegistry,
         );
@@ -327,17 +316,20 @@ Future<void> _appendIn(
 );
 
 void main() {
-  final url = testPostgresUrl();
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
   Future<PostgresBackend> open({
     Duration lockHeartbeat = const Duration(seconds: 5),
     Duration lockQueryTimeout = const Duration(seconds: 5),
     String? lockUrl,
-    String? atUrl,
+    PostgresTestDatabase? at,
   }) async {
+    final database = at ?? db!;
     final backend = await PostgresBackend.open(
-      url: atUrl ?? url!,
+      url: database.runtimeUrl,
+      schema: database.schema,
       lockUrl: lockUrl,
       sslMode: SslMode.disable,
       lockHeartbeat: lockHeartbeat,
@@ -348,12 +340,11 @@ void main() {
   }
 
   setUp(() async {
-    if (url == null) {
+    if (db == null) {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await _resetSchema(url);
-    await PostgresBackend.provision(url, sslMode: SslMode.disable);
+    await db.reset(provision: true);
   });
 
   tearDown(() async {
@@ -366,23 +357,23 @@ void main() {
   // Verifies: EVS-DEV-postgres-backend/J
   test('an open store holds the shared lock of each of its components on '
       'the lock session, and on no other session', () async {
-    if (url == null) return;
+    if (db == null) return;
     final backend = await open();
     await _openStore(
       backend,
       types: const {_kX: EntryTypeVersion(1, 0), _kY: EntryTypeVersion(1, 0)},
     );
-    final scope = await _scope(url);
+    final scope = await _scope(db);
     final keys = <int>[
       _componentKey(scope, 'data_format:${LibVersion.dataFormat.major}'),
       _componentKey(scope, 'entry_type:$_kX:1'),
       _componentKey(scope, 'entry_type:$_kY:1'),
     ];
     final pid = (await backend.lockSessionForTest()).pid;
-    final locks = await _locksByPid(url);
+    final locks = await _locksByPid(db);
     for (final key in keys) {
       expect(locks[pid], contains((key, 'ShareLock')));
-      expect(await _holdersOf(url, key), {pid});
+      expect(await _holdersOf(db, key), {pid});
     }
   });
 
@@ -390,7 +381,7 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/F
     test('a compatible canary opens beside the serving instance, and both '
         'hold the shared lock of the major they share', () async {
-      if (url == null) return;
+      if (db == null) return;
       final backendA = await open();
       final a = await _openStore(
         backendA,
@@ -410,9 +401,9 @@ void main() {
       );
       await _append(a, _kX);
       await _append(b, _kZ);
-      expect(await b.backend.findAllEvents(entryType: _kX), hasLength(1));
-      final key = _componentKey(await _scope(url), 'entry_type:$_kX:1');
-      final locks = await _locksByPid(url);
+      expect(await b.reader.findAllEvents(entryType: _kX), hasLength(1));
+      final key = _componentKey(await _scope(db), 'entry_type:$_kX:1');
+      final locks = await _locksByPid(db);
       final pidA = (await backendA.lockSessionForTest()).pid;
       final pidB = (await backendB.lockSessionForTest()).pid;
       expect(locks[pidA], contains((key, 'ShareLock')));
@@ -422,10 +413,10 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/F
     test('an incompatible canary is refused, naming the component, and the '
         'database is untouched', () async {
-      if (url == null) return;
+      if (db == null) return;
       final a = await _openStore(await open(), withView: true);
       await _append(a, _kX);
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       final backendB = await open();
       await expectLater(
         _openStore(
@@ -442,18 +433,18 @@ void main() {
           ),
         ),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
       final pidB = (await backendB.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pidB], isNull);
+      expect((await _locksByPid(db))[pidB], isNull);
       await _append(a, _kX);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('a build of another data-format major is refused while an instance '
         'is live', () async {
-      if (url == null) return;
+      if (db == null) return;
       await _openStore(await open());
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         runWithDeliveryTestHooks(
           const DeliveryTestHooks(
@@ -472,26 +463,26 @@ void main() {
           ),
         ),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('a second open on the same backend with a conflicting registry is '
         'refused and writes nothing', () async {
-      if (url == null) return;
+      if (db == null) return;
       final backend = await open();
       await _openStore(backend);
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         _openStore(backend, types: const {_kX: EntryTypeVersion(2, 0)}),
         throwsA(isA<IncompatibleGenerationException>()),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('openForTest runs the guard', () async {
-      if (url == null) return;
+      if (db == null) return;
       await _openStore(await open());
       await expectLater(
         _openStore(
@@ -507,7 +498,7 @@ void main() {
   group('boots serialize on the boot lock', () {
     // Verifies: EVS-DEV-version-compatibility/G
     test('an open waits while another holds the boot lock', () async {
-      if (url == null) return;
+      if (db == null) return;
       final release = Completer<void>();
       // Released on failure too, so a held boot cannot keep tearDown's
       // close waiting and time out the tests that follow.
@@ -555,10 +546,9 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/G
     test('of two conflicting opens at once exactly one opens, in each of 20 '
         'rounds', () async {
-      if (url == null) return;
+      if (db == null) return;
       for (var round = 0; round < 20; round++) {
-        await _resetSchema(url);
-        await PostgresBackend.provision(url, sslMode: SslMode.disable);
+        await db.reset(provision: true);
         final a = await open();
         final b = await open();
         final outcomes = await Future.wait(<Future<Object?>>[
@@ -585,7 +575,7 @@ void main() {
   group('bootLockWait bounds the waits of a boot', () {
     test('an open that waits longer than bootLockWait for the boot lock is '
         'refused, naming the holder', () async {
-      if (url == null) return;
+      if (db == null) return;
       final release = Completer<void>();
       // Released on failure too, so a held boot cannot keep tearDown's
       // close waiting and time out the tests that follow.
@@ -603,9 +593,7 @@ void main() {
         () async => _openStore(await open()),
       );
       await held.future;
-      final waiter = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
+      final waiter = await db.open(
         bootLockWait: const Duration(milliseconds: 500),
       );
       backends.add(waiter);
@@ -626,14 +614,12 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/F
     test('a boot transaction whose table lock is held longer than '
         'bootLockWait is refused', () async {
-      if (url == null) return;
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
+      if (db == null) return;
+      final backend = await db.open(
         bootLockWait: const Duration(milliseconds: 500),
       );
       backends.add(backend);
-      final blocker = await _connect(url);
+      final blocker = await db.connectAdmin();
       addTearDown(blocker.close);
       await blocker.execute('BEGIN');
       await blocker.execute(
@@ -654,7 +640,7 @@ void main() {
         await blocker.execute('ROLLBACK');
       }
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
       await _openStore(backend);
     });
   });
@@ -665,7 +651,7 @@ void main() {
     // Verifies: EVS-DEV-event-store-open/D
     test('a major bump runs after the old build stops; the old build is then '
         'refused although no view names the entry type', () async {
-      if (url == null) return;
+      if (db == null) return;
       final v1 = await _openStore(await open());
       await _append(v1, _kX);
       await v1.close();
@@ -673,7 +659,7 @@ void main() {
         await open(),
         types: const {_kX: EntryTypeVersion(2, 0)},
       );
-      final c = await _connect(url);
+      final c = await db.connectAdmin();
       final recorded = await c.execute(
         "SELECT value FROM backend_state WHERE key = 'data_generation'",
       );
@@ -683,7 +669,7 @@ void main() {
         containsPair(_kX, 2),
       );
       await v2.close();
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         _openStore(await open(), types: const {_kX: EntryTypeVersion(1, 3)}),
         throwsA(
@@ -692,14 +678,14 @@ void main() {
               .having((e) => e.recordedByOpen, 'recordedByOpen', isTrue),
         ),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
     });
 
     // Verifies: EVS-DEV-version-compatibility/I
     // Verifies: EVS-DEV-event-store-open/D
     test('after a build of another data-format major opened, the compiled '
         'build is refused', () async {
-      if (url == null) return;
+      if (db == null) return;
       await runWithDeliveryTestHooks(
         const DeliveryTestHooks(
           buildDeclaration: (
@@ -709,12 +695,12 @@ void main() {
         ),
         () async => (await _openStore(await open())).close(),
       );
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         _openStore(await open()),
         throwsA(isA<DataFormatIncompatibleError>()),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
     });
   });
 
@@ -724,7 +710,7 @@ void main() {
     /// same durable check).
     Future<void> expectReleased(PostgresBackend backend) async {
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url!))[pid], isNull);
+      expect((await _locksByPid(db!))[pid], isNull);
       final other = await open();
       try {
         await _openStore(other, types: const {_kX: EntryTypeVersion(2, 0)});
@@ -736,7 +722,7 @@ void main() {
     }
 
     Future<Object?> backendState() async {
-      final c = await _connect(url!);
+      final c = await db!.connectAdmin();
       try {
         final r = await c.execute(
           'SELECT key, value FROM backend_state ORDER BY key',
@@ -749,9 +735,9 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the open is refused for its identity', () async {
-      if (url == null) return;
+      if (db == null) return;
       await (await _openStore(await open())).close();
-      final c = await _connect(url);
+      final c = await db.connectAdmin();
       await c.execute("DELETE FROM backend_state WHERE key = 'database_id'");
       await c.close();
       final before = await backendState();
@@ -766,7 +752,7 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the open is refused as a pre-format database', () async {
-      if (url == null) return;
+      if (db == null) return;
       final seeder = await open();
       await seedLibVersionEventForTest(
         seeder,
@@ -782,12 +768,12 @@ void main() {
       );
       expect(await backendState(), before);
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the open is refused for its data format', () async {
-      if (url == null) return;
+      if (db == null) return;
       final seeder = await open();
       await seedLibVersionEventForTest(
         seeder,
@@ -802,12 +788,12 @@ void main() {
       );
       expect(await backendState(), before);
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the boot fails after its library-version event', () async {
-      if (url == null) return;
+      if (db == null) return;
       final before = await backendState();
       final backend = await open();
       await expectLater(
@@ -823,21 +809,21 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the store closes', () async {
-      if (url == null) return;
+      if (db == null) return;
       final backend = await open();
       final store = await _openStore(backend);
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNotEmpty);
+      expect((await _locksByPid(db))[pid], isNotEmpty);
       await store.close();
       backends.remove(backend);
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
       final other = await open();
       await _openStore(other, types: const {_kX: EntryTypeVersion(2, 0)});
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     test('when the registration itself fails part way', () async {
-      if (url == null) return;
+      if (db == null) return;
       final backend = await open();
       await expectLater(
         runWithDeliveryTestHooks(
@@ -847,14 +833,14 @@ void main() {
         throwsA(isA<InjectedFailure>()),
       );
       final pid = (await backend.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
       await _openStore(backend);
     });
 
     // Verifies: EVS-DEV-version-compatibility/F
     // Verifies: EVS-DEV-postgres-backend/J
     test('when the lock session dies while the open registers', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backend = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
@@ -863,24 +849,24 @@ void main() {
       // A store already open on the backend, which the replacement session
       // registers again.
       await _openStore(backend, types: const {_kY: EntryTypeVersion(1, 0)});
-      final scope = await _scope(url);
+      final scope = await _scope(db);
       final xKey = _componentKey(scope, 'entry_type:$_kX:1');
       final yKey = _componentKey(scope, 'entry_type:$_kY:1');
       final oldPid = (await backend.lockSessionForTest()).pid;
-      expect(await _holdersOf(url, yKey), {oldPid});
+      expect(await _holdersOf(db, yKey), {oldPid});
       // The session ends after the open took the boot lock and inspected the
       // live components, before it took its shared component locks.
       await expectLater(
         runWithDeliveryTestHooks(
           DeliveryTestHooks(
             timerFactory: timers.create,
-            insideBootLock: () => _terminate(url, oldPid),
+            insideBootLock: () => _terminate(db, oldPid),
           ),
           () => _openStore(backend),
         ),
         throwsA(isNot(isA<IncompatibleGenerationException>())),
       );
-      expect((await _locksByPid(url))[oldPid], isNull);
+      expect((await _locksByPid(db))[oldPid], isNull);
       timers.fireAll();
       await _until(() async {
         if (backend.generationStatus != GenerationStatus.registered) {
@@ -890,9 +876,9 @@ void main() {
         return pid != null && pid != oldPid;
       });
       final newPid = (await backend.lockSessionForTest()).pid;
-      expect(await _holdersOf(url, yKey), {newPid});
+      expect(await _holdersOf(db, yKey), {newPid});
       expect(
-        await _holdersOf(url, xKey),
+        await _holdersOf(db, xKey),
         isEmpty,
         reason: 'the failed open is not registered on the replacement',
       );
@@ -906,7 +892,7 @@ void main() {
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
       // A retry on the same backend opens and registers on the new session.
       final store = await _openStore(backend);
-      expect(await _holdersOf(url, xKey), {newPid});
+      expect(await _holdersOf(db, xKey), {newPid});
       await _append(store, _kX);
       await expectLater(
         _openStore(await open(), types: const {_kX: EntryTypeVersion(2, 0)}),
@@ -918,7 +904,7 @@ void main() {
   group('the lock session', () {
     // Verifies: EVS-DEV-postgres-backend/J
     test('carries keepalives and no idle-session timeout', () async {
-      if (url == null) return;
+      if (db == null) return;
       final session = await (await open()).lockSessionForTest();
       expect(session.settings['idle_session_timeout'], '0');
       // The test database is reached over TCP, where the settings apply.
@@ -931,8 +917,8 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/H
     test('a lock connection that does not stay one server session is '
         'refused, and no lock is taken', () async {
-      if (url == null) return;
-      final before = await _locksByPid(url);
+      if (db == null) return;
+      final before = await _locksByPid(db);
       await expectLater(
         runWithDeliveryTestHooks(
           const DeliveryTestHooks(splitLockSessionStatements: true),
@@ -940,20 +926,22 @@ void main() {
         ),
         throwsA(isA<LockSessionConfigurationException>()),
       );
-      expect(await _locksByPid(url), before);
+      expect(await _locksByPid(db), before);
     });
 
     // Verifies: EVS-DEV-postgres-backend/J
     test('a lock connection to another database is refused', () async {
-      if (url == null) return;
-      final admin = await _connect(url);
+      if (db == null) return;
+      final admin = await db.connectAdmin();
       addTearDown(() async {
         await admin.execute('DROP DATABASE IF EXISTS evs_guard_other');
         await admin.close();
       });
       await admin.execute('DROP DATABASE IF EXISTS evs_guard_other');
       await admin.execute('CREATE DATABASE evs_guard_other');
-      final other = Uri.parse(url).replace(path: '/evs_guard_other').toString();
+      final other = Uri.parse(
+        db.runtimeUrl,
+      ).replace(path: '/evs_guard_other').toString();
       await expectLater(
         open(lockUrl: other),
         throwsA(isA<LockSessionConfigurationException>()),
@@ -965,11 +953,25 @@ void main() {
     test('a lock connection to another server, whose database and schema '
         'have the same names, is refused', () async {
       final other = _otherServerUrl();
-      if (url == null) return;
+      if (db == null) return;
       if (other == null) {
         markTestSkipped('PG_TEST_URL_OTHER_SERVER unset');
         return;
       }
+      // The other server holds a schema of the library schema's name.
+      Future<void> onOther(String sql) async {
+        final c = await connectPostgres(other);
+        try {
+          await c.execute(sql);
+        } finally {
+          await c.close();
+        }
+      }
+
+      final schema = quoteIdent(db.schema);
+      await onOther('DROP SCHEMA IF EXISTS $schema CASCADE');
+      await onOther('CREATE SCHEMA $schema');
+      addTearDown(() => onOther('DROP SCHEMA IF EXISTS $schema CASCADE'));
       await expectLater(
         open(lockUrl: other),
         throwsA(
@@ -982,7 +984,10 @@ void main() {
       );
       await expectLater(
         PostgresBackend.provision(
-          url,
+          db.ownerUrl,
+          schema: db.schema,
+          runtimeRoles: <String>{db.runtime},
+          lockRoles: <String>{db.runtime},
           lockUrl: other,
           sslMode: SslMode.disable,
         ),
@@ -991,30 +996,23 @@ void main() {
     });
 
     // Verifies: EVS-DEV-postgres-backend/J
-    test('a lock role whose search path reaches another schema is '
-        'refused', () async {
-      if (url == null) return;
-      final admin = await _connect(url);
+    test('a lock role that cannot use the library schema, and so reaches '
+        'another, is refused', () async {
+      if (db == null) return;
+      final role = 'evs_guard_lock_$pid';
+      final admin = await db.connectAdmin();
       addTearDown(() async {
         await admin.execute('DROP SCHEMA IF EXISTS guard_other CASCADE');
-        await admin.execute('DROP ROLE IF EXISTS evs_guard_lock');
+        await admin.execute('DROP ROLE IF EXISTS $role');
         await admin.close();
       });
       await admin.execute('DROP SCHEMA IF EXISTS guard_other CASCADE');
-      await admin.execute('DROP ROLE IF EXISTS evs_guard_lock');
-      await admin.execute("CREATE ROLE evs_guard_lock LOGIN PASSWORD 'evs'");
+      await admin.execute('DROP ROLE IF EXISTS $role');
+      await admin.execute("CREATE ROLE $role LOGIN PASSWORD 'evs'");
       await admin.execute('CREATE SCHEMA guard_other');
-      await admin.execute(
-        'GRANT USAGE ON SCHEMA guard_other TO evs_guard_lock',
-      );
-      await admin.execute(
-        'ALTER ROLE evs_guard_lock SET search_path = guard_other',
-      );
-      final lockUrl = Uri.parse(
-        url,
-      ).replace(userInfo: 'evs_guard_lock:evs').toString();
+      await admin.execute('GRANT USAGE ON SCHEMA guard_other TO $role');
       await expectLater(
-        open(lockUrl: lockUrl),
+        open(lockUrl: postgresUrlAsRole(db.adminUrl, role)),
         throwsA(isA<LockSessionConfigurationException>()),
       );
     });
@@ -1023,7 +1021,7 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/I
     test('a terminated lock session is replaced and the generation '
         'registered again', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backend = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
@@ -1031,26 +1029,26 @@ void main() {
       );
       final store = await _openStore(backend);
       final oldPid = (await backend.lockSessionForTest()).pid;
-      final held = (await _locksByPid(url))[oldPid]!;
-      await _terminate(url, oldPid);
+      final held = (await _locksByPid(db))[oldPid]!;
+      await _terminate(db, oldPid);
       timers.fireAll();
       await _until(
         () async =>
             backend.generationStatus == GenerationStatus.registered &&
             (await _locksByPid(
-              url,
+              db,
             )).entries.any((e) => e.key != oldPid && e.value.containsAll(held)),
       );
       final newPid = (await backend.lockSessionForTest()).pid;
       expect(newPid, isNot(oldPid));
-      expect((await _locksByPid(url))[newPid], containsAll(held));
+      expect((await _locksByPid(db))[newPid], containsAll(held));
       await _append(store, _kX);
     });
 
     // Verifies: EVS-DEV-postgres-backend/J
     test('a probe that outlasts the query timeout declares the session lost; '
         'the replacement ends the old server session', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       var stall = false;
       final backend = await runWithDeliveryTestHooks(
@@ -1075,10 +1073,10 @@ void main() {
         return pid != null && pid != oldPid;
       });
       stall = false;
-      await _until(() async => (await _locksByPid(url))[oldPid] == null);
+      await _until(() async => (await _locksByPid(db))[oldPid] == null);
       final newPid = (await backend.lockSessionForTest()).pid;
       expect(newPid, isNot(oldPid));
-      expect((await _locksByPid(url))[newPid], isNotEmpty);
+      expect((await _locksByPid(db))[newPid], isNotEmpty);
       final watch = Stopwatch()..start();
       await _openStore(await open());
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
@@ -1088,7 +1086,7 @@ void main() {
     // Verifies: EVS-DEV-postgres-backend/J
     test('while the old server session cannot be ended nothing is registered '
         'on the new one; once it can, the next retry registers', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       var stall = false;
       var refuse = true;
@@ -1107,13 +1105,13 @@ void main() {
       );
       await _openStore(backend);
       final oldPid = (await backend.lockSessionForTest()).pid;
-      final held = (await _locksByPid(url))[oldPid]!;
+      final held = (await _locksByPid(db))[oldPid]!;
       stall = true;
       timers.fireAll();
       await _until(() => errors.isNotEmpty);
       stall = false;
       expect(errors.first.message, contains('EVS-DEV-postgres-backend/J'));
-      final locks = await _locksByPid(url);
+      final locks = await _locksByPid(db);
       expect(
         locks.entries.where(
           (e) => e.key != oldPid && e.value.containsAll(held),
@@ -1128,13 +1126,13 @@ void main() {
       await _until(
         () => backend.generationStatus == GenerationStatus.registered,
       );
-      expect((await _locksByPid(url))[oldPid], isNull);
+      expect((await _locksByPid(db))[oldPid], isNull);
     });
 
     // Verifies: EVS-DEV-postgres-backend/J
     test('one operation at a time: no probe runs while a registration holds '
         'the session', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       var probes = 0;
       final release = Completer<void>();
@@ -1183,16 +1181,16 @@ void main() {
     test('a lock session lost during a boot is replaced with that boot '
         'registered on the new session, and a conflicting open is then '
         'refused', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backendA = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
         open,
       );
-      final scope = await _scope(url);
+      final scope = await _scope(db);
       final xKey = _componentKey(scope, 'entry_type:$_kX:1');
       // Holds A's boot transaction at its table lock, after A registered.
-      final blocker = await _connect(url);
+      final blocker = await db.connectAdmin();
       addTearDown(blocker.close);
       await blocker.execute('BEGIN');
       await blocker.execute(
@@ -1206,21 +1204,21 @@ void main() {
       // the boot reaches the blocker only once the registration is done.
       await _until(
         () async =>
-            (await _holdersOf(url, xKey)).isNotEmpty &&
-            await _lockWaiters(url) > 0,
+            (await _holdersOf(db, xKey)).isNotEmpty &&
+            await _lockWaiters(db) > 0,
       );
-      final oldPid = (await _holdersOf(url, xKey)).single;
-      await _terminate(url, oldPid);
+      final oldPid = (await _holdersOf(db, xKey)).single;
+      await _terminate(db, oldPid);
       timers.fireAll();
       await _until(() async {
-        final holders = await _holdersOf(url, xKey);
+        final holders = await _holdersOf(db, xKey);
         return holders.isNotEmpty && !holders.contains(oldPid);
       });
       await blocker.execute('ROLLBACK');
       final a = await opening;
       expect(backendA.generationStatus, GenerationStatus.registered);
       final newPid = (await backendA.lockSessionForTest()).pid;
-      expect(await _holdersOf(url, xKey), {newPid});
+      expect(await _holdersOf(db, xKey), {newPid});
       // The boot lock the replacement took for the boot was released when
       // the boot completed: a compatible open passes it at once.
       final watch = Stopwatch()..start();
@@ -1236,7 +1234,7 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/I
     test('a replacement the generation record refuses fences the backend '
         'holding no lock, so the newer generation keeps opening', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backendA = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
@@ -1248,10 +1246,10 @@ void main() {
         backendA,
         types: const {_kX: EntryTypeVersion(1, 0), _kY: EntryTypeVersion(1, 0)},
       );
-      final scope = await _scope(url);
+      final scope = await _scope(db);
       final x1 = _componentKey(scope, 'entry_type:$_kX:1');
       final y1 = _componentKey(scope, 'entry_type:$_kY:1');
-      await _terminate(url, (await backendA.lockSessionForTest()).pid);
+      await _terminate(db, (await backendA.lockSessionForTest()).pid);
       // B raises the record to X:2 while A is not registered, then stops.
       final backendB = await open();
       final b = await _openStore(
@@ -1265,11 +1263,11 @@ void main() {
       // The fenced backend gives its locks up after it reports the fence.
       await _until(
         () async =>
-            (await _holdersOf(url, x1)).isEmpty &&
-            (await _holdersOf(url, y1)).isEmpty,
+            (await _holdersOf(db, x1)).isEmpty &&
+            (await _holdersOf(db, y1)).isEmpty,
       );
-      expect(await _holdersOf(url, x1), isEmpty);
-      expect(await _holdersOf(url, y1), isEmpty);
+      expect(await _holdersOf(db, x1), isEmpty);
+      expect(await _holdersOf(db, y1), isEmpty);
       await _openStore(
         await open(),
         types: const {_kX: EntryTypeVersion(2, 0)},
@@ -1279,15 +1277,15 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/I
     test('a transaction the generation record refuses fences the backend, '
         'which then gives up every lock it held', () async {
-      if (url == null) return;
+      if (db == null) return;
       final backendA = await open();
       final a = await _openStore(backendA);
-      final scope = await _scope(url);
+      final scope = await _scope(db);
       final x1 = _componentKey(scope, 'entry_type:$_kX:1');
       final pidA = (await backendA.lockSessionForTest()).pid;
-      expect(await _holdersOf(url, x1), {pidA});
+      expect(await _holdersOf(db, x1), {pidA});
       // The record as a boot of X 2.0 elsewhere leaves it.
-      final c = await _connect(url);
+      final c = await db.connectAdmin();
       await c.execute(
         Sql.named('UPDATE backend_state SET value = @v:jsonb WHERE key = @k'),
         parameters: <String, Object?>{
@@ -1304,7 +1302,7 @@ void main() {
         throwsA(isA<GenerationFencedException>()),
       );
       expect(backendA.generationStatus, GenerationStatus.fenced);
-      await _until(() async => (await _holdersOf(url, x1)).isEmpty);
+      await _until(() async => (await _holdersOf(db, x1)).isEmpty);
       await expectLater(
         _append(a, _kX),
         throwsA(isA<GenerationFencedException>()),
@@ -1313,10 +1311,8 @@ void main() {
 
     test('a second open on one backend that waits longer than bootLockWait '
         'for the first boot is refused, and the backend opens later', () async {
-      if (url == null) return;
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
+      if (db == null) return;
+      final backend = await db.open(
         bootLockWait: const Duration(milliseconds: 500),
       );
       backends.add(backend);
@@ -1350,7 +1346,7 @@ void main() {
     test(
       'two conflicting opens at once on one backend: exactly one opens',
       () async {
-        if (url == null) return;
+        if (db == null) return;
         final backend = await open();
         final outcomes = await Future.wait(<Future<Object>>[
           for (final major in <int>[1, 2])
@@ -1372,14 +1368,14 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/I
     test('an instance whose lock session ended while a conflicting build '
         'booted commits nothing and is fenced', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backendA = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
         open,
       );
       final a = await _openStore(backendA);
-      await _terminate(url, (await backendA.lockSessionForTest()).pid);
+      await _terminate(db, (await backendA.lockSessionForTest()).pid);
       final watch = Stopwatch()..start();
       await _openStore(
         await open(),
@@ -1399,14 +1395,13 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/I
     test('the idempotency store of a fenced backend refuses and changes '
         'nothing', () async {
-      if (url == null) return;
+      if (db == null) return;
       final timers = _Timers();
       final backendA = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
         open,
       );
-      await _openStore(backendA);
-      final idempotency = PostgresIdempotencyStore.forBackend(backendA);
+      final idempotency = (await _openStore(backendA)).idempotencyStore!;
       await idempotency.record(
         actionName: 'a',
         principalId: 'p',
@@ -1415,14 +1410,14 @@ void main() {
         emittedEventIds: const <String>[],
         expiresAt: DateTime.utc(2000),
       );
-      await _terminate(url, (await backendA.lockSessionForTest()).pid);
+      await _terminate(db, (await backendA.lockSessionForTest()).pid);
       await _openStore(
         await open(),
         types: const {_kX: EntryTypeVersion(2, 0)},
       );
       timers.fireAll();
       await _until(() => backendA.generationStatus == GenerationStatus.fenced);
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         idempotency.sweepExpired(),
         throwsA(isA<GenerationFencedException>()),
@@ -1438,14 +1433,14 @@ void main() {
         ),
         throwsA(isA<GenerationFencedException>()),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
     });
 
     // Verifies: EVS-DEV-version-compatibility/I
     test("a transaction that began before a conflicting build's boot "
         'commits before the boot, which then folds its event into the new '
         'shape', () async {
-      if (url == null) return;
+      if (db == null) return;
       // A's probe never runs, so A does not replace its lost session and
       // register again before B boots.
       final timers = _Timers();
@@ -1455,7 +1450,7 @@ void main() {
       );
       final a = await _openStore(backendA, withView: true);
       await _append(a, _kX, const {'title': 'first'}, 'agg-0');
-      await _terminate(url, (await backendA.lockSessionForTest()).pid);
+      await _terminate(db, (await backendA.lockSessionForTest()).pid);
       final release = Completer<void>();
       // Released on failure too, so a held transaction cannot keep
       // tearDown's close waiting and time out the tests that follow.
@@ -1485,12 +1480,12 @@ void main() {
             return store;
           });
       // B's boot waits at the table lock A's transaction holds.
-      await _until(() async => await _lockWaiters(url) > 0);
+      await _until(() async => await _lockWaiters(db) > 0);
       expect(openedB, isFalse, reason: "B's boot waits for A's transaction");
       release.complete();
       expect(await txnA, isNull, reason: "A's transaction commits");
       final b = await openB;
-      final rows = await b.backend.findViewRows(_kView);
+      final rows = await b.reader.findViewRows(_kView);
       final late = rows.singleWhere((r) => r['aggregateId'] == 'agg-1');
       expect(late['heading'], 'late');
       expect(late.containsKey('title'), isFalse);
@@ -1502,42 +1497,41 @@ void main() {
     test('the schema pair is re-checked under the boot lock, and a '
         'provisioning during a lost-session window fences the '
         'instance', () async {
-      if (url == null) return;
+      if (db == null) return;
       final steps = <PostgresMigrationStep>[
-        postgresMigrations.single,
+        ...postgresMigrations,
         const PostgresMigrationStep(
-          toVersion: 2,
-          minCompatibleVersion: 2,
+          toVersion: postgresSchemaVersion + 1,
+          minCompatibleVersion: postgresSchemaVersion + 1,
           ddl: <String>['CREATE TABLE schema_upgrade_probe (id INTEGER)'],
         ),
       ];
       Future<void> provisionAhead() => runWithDeliveryTestHooks(
         DeliveryTestHooks(schemaDeclaration: steps),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
+        db.provision,
       );
 
       // Provisioned ahead between this backend's open and its store's open.
       final early = await open();
       await provisionAhead();
-      final before = await _snapshot(url);
+      final before = await _snapshot(db);
       await expectLater(
         _openStore(early),
         throwsA(isA<PostgresSchemaIncompatibleException>()),
       );
-      expect(await _snapshot(url), before);
+      expect(await _snapshot(db), before);
       final pid = (await early.lockSessionForTest()).pid;
-      expect((await _locksByPid(url))[pid], isNull);
+      expect((await _locksByPid(db))[pid], isNull);
 
       // Loss window.
-      await _resetSchema(url);
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      await db.reset(provision: true);
       final timers = _Timers();
       final backend = await runWithDeliveryTestHooks(
         DeliveryTestHooks(timerFactory: timers.create),
         open,
       );
       final store = await _openStore(backend);
-      await _terminate(url, (await backend.lockSessionForTest()).pid);
+      await _terminate(db, (await backend.lockSessionForTest()).pid);
       await provisionAhead();
       await expectLater(
         _append(store, _kX),
@@ -1552,29 +1546,18 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/H
     test('conflicting generations in two schemas of one database open side '
         'by side', () async {
-      if (url == null) return;
-      final admin = await _connect(url);
-      addTearDown(() async {
-        for (final n in ['1', '2']) {
-          await admin.execute('DROP SCHEMA IF EXISTS s$n CASCADE');
-          await admin.execute('DROP ROLE IF EXISTS evs_s$n');
-        }
-        await admin.close();
-      });
-      final urls = <String>[];
-      for (final n in ['1', '2']) {
-        await admin.execute('DROP SCHEMA IF EXISTS s$n CASCADE');
-        await admin.execute('DROP ROLE IF EXISTS evs_s$n');
-        await admin.execute("CREATE ROLE evs_s$n LOGIN PASSWORD 'evs'");
-        await admin.execute('CREATE SCHEMA s$n AUTHORIZATION evs_s$n');
-        await admin.execute('ALTER ROLE evs_s$n SET search_path = s$n');
-        final u = Uri.parse(url).replace(userInfo: 'evs_s$n:evs').toString();
-        await PostgresBackend.provision(u, sslMode: SslMode.disable);
-        urls.add(u);
+      if (db == null) return;
+      final schemas = <PostgresTestDatabase>[
+        for (final n in ['1', '2'])
+          PostgresTestDatabase(db.adminUrl, tag: 'gg$n'),
+      ];
+      for (final schema in schemas) {
+        addTearDown(schema.drop);
+        await schema.reset(provision: true);
       }
-      await _openStore(await open(atUrl: urls[0]));
+      await _openStore(await open(at: schemas[0]));
       await _openStore(
-        await open(atUrl: urls[1]),
+        await open(at: schemas[1]),
         types: const {_kX: EntryTypeVersion(2, 0)},
       );
     });
@@ -1584,11 +1567,12 @@ void main() {
     // Verifies: EVS-DEV-version-compatibility/F
     test('the locks of an instance whose process is killed are released by '
         'the server', () async {
-      if (url == null) return;
+      if (db == null) return;
       final process = await Process.start(sdkTool('dart'), <String>[
         'run',
         'tool/generation_guard_instance.dart',
-        url,
+        db.runtimeUrl,
+        db.schema,
       ]);
       addTearDown(() => process.kill(ProcessSignal.sigkill));
       final lines = process.stdout

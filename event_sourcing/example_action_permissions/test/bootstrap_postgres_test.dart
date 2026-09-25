@@ -8,29 +8,28 @@
 //   and the other stands by; once the draining instance closes its cycle,
 //   another instance's cycle drains.
 //
-// Gated on PG_TEST_URL. Drops + recreates the `public` schema in the
-// per-test factory so each call returns a deterministic empty database
-// — same discipline as `postgres_integration_test.dart` and the
-// StorageBackend conformance harness.
+// Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
+// step in the per-test factory, so each call returns a deterministic empty
+// database opened as the declared runtime role.
 
 @TestOn('vm')
 library;
 
-import 'dart:io';
 import 'dart:isolate';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postgres/postgres.dart';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
+import 'package:action_permissions_demo/server/postgres_setup.dart';
 
 import 'bootstrap_test.dart' show runBootstrapTests;
 import 'support/demo_bootstrap.dart';
+import 'support/demo_postgres.dart';
 
 void main() {
-  final url = Platform.environment['PG_TEST_URL'];
-  if (url == null || url.isEmpty) {
+  final db = DemoPostgres.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped(
         'PG_TEST_URL unset; skipping postgres demo bootstrap tests',
@@ -38,34 +37,16 @@ void main() {
     });
     return;
   }
+  final url = db.runtimeUrl;
 
   Future<DemoBackends> factory() async {
-    // Drop + recreate `public` schema for per-test isolation. Split
-    // into two execute calls because postgres v3.5 rejects multi-
-    // statement strings in Session.execute (same discipline as the
-    // StorageBackend conformance harness).
-    final endpoint = PostgresBackend.endpointFromUrl(url);
-    final tmp = await Connection.open(
-      endpoint,
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
-    );
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-
-    final pg = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    await db.reset();
+    final pg = await db.open();
     // Close on test exit regardless of whether the test body cleaned
     // up. `close()` is idempotent (PostgresBackend `_closed` flag) so
     // a double-close from the test body and tearDown is safe.
     addTearDown(pg.close);
-    return DemoBackends(
-      backend: pg,
-      idempotencyStore: PostgresIdempotencyStore.forBackend(pg),
-    );
+    return DemoBackends(backend: pg);
   }
 
   runBootstrapTests(factory, label: 'postgres');
@@ -95,10 +76,7 @@ Future<DemoServerComponents> _boot(
   StorageBackend backend,
   String installIdentifier,
 ) => bootstrapDemoServer(
-  backend: backend,
-  idempotencyStore: PostgresIdempotencyStore.forBackend(
-    backend as PostgresBackend,
-  ),
+  storage: demoStorageOver(backend),
   permissionsYaml: validPermissionsYaml,
   usersYaml: validUsersYaml,
   installIdentifier: installIdentifier,
@@ -109,6 +87,7 @@ Future<DemoServerComponents> _boot(
 Future<String> _otherInstanceCycleState(String url) async {
   final backend = await PostgresBackend.open(
     url: url,
+    schema: demoPostgresSchema,
     sslMode: SslMode.disable,
   );
   final b = await _boot(backend, 'aaaa0001-0000-4000-8000-0000000000b1');

@@ -6,74 +6,35 @@
 // bootstrapEventStore opens through EventStore.open, whose whole boot runs
 //   in one storage transaction.
 
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
-import 'package:event_sourcing/src/entry_type_definition.dart';
-import 'package:event_sourcing/src/entry_type_registry.dart';
-import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
-import 'package:event_sourcing/src/projections/projection_registry.dart';
-import 'package:event_sourcing/src/security/postgres_security_context_store.dart';
-import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
-import 'package:event_sourcing/src/storage/sembast_backend.dart';
-import 'package:event_sourcing/src/storage/source.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/versions.dart';
-import 'package:meta/meta.dart' show internal;
+part of 'event_store.dart';
 
 /// Facade returned by `bootstrapEventStore`. Exposes the four
 /// collaborators an app reads through after startup: the write API
 /// (`eventStore`), the registries (`entryTypes`, `destinations`), and the
-/// security-context sidecar surface (`securityContexts`). Also exposes
-/// `setViewTargetVersion` for post-bootstrap registration of new entry
-/// types into a materializer's `view_target_versions`.
+/// security-context sidecar surface (`securityContexts`).
 class EventStoreBundle {
   const EventStoreBundle({
     required this.eventStore,
     required this.entryTypes,
     required this.destinations,
     required this.securityContexts,
-    required StorageBackend backend,
-  }) : _backend = backend;
+  });
 
   final EventStore eventStore;
   final EntryTypeRegistry entryTypes;
   final DestinationRegistry destinations;
   final SecurityContextStore securityContexts;
-  final StorageBackend _backend;
-
-  /// Library-internal write of one (`viewName`, `entryType`) → `version`
-  /// entry in the persisted `view_target_versions`, outside the boot
-  /// seeding. The library's own tests use it to stage stored targets.
-  ///
-  /// An application does not write view target versions: it registers
-  /// every entry type before `EventStore.open`, which seeds and promotes
-  /// the targets, or replays a view at the registered versions with
-  /// `rebuildView`.
-  @internal
-  Future<void> setViewTargetVersion(
-    String viewName,
-    String entryType,
-    EntryTypeVersion version,
-  ) {
-    return _backend.transaction((txn) async {
-      await _backend.writeViewTargetVersionInTxn(
-        txn,
-        viewName,
-        entryType,
-        version,
-      );
-    });
-  }
 }
 
-/// Wire the storage backend, the `EntryTypeRegistry`, the initial set of
-/// `Destination`s, the security-context store, and the `EventStore`. Returns
-/// an `EventStoreBundle` facade the rest of the app reads through.
+/// Open the `EventStore` over the storage [storage] describes, with the
+/// `EntryTypeRegistry` and the initial set of `Destination`s. Returns an
+/// `EventStoreBundle` facade the rest of the app reads through.
+///
+/// [storage] is opened as [EventStore.open] opens it, and the bundle's
+/// security-context store is the event store's read-only one. When the
+/// registry audit or a destination registration fails after the open, the
+/// event store is closed, closing the storage the library opened, before
+/// the error reaches the caller.
 ///
 /// [entryTypes] lists the application's own entry types. `EventStore.open`
 /// registers the reserved system entry types ([kSystemEntryTypes]) and the
@@ -108,8 +69,12 @@ class EventStoreBundle {
 /// function returns.
 // Implements: EVS-DEV-event-store-open/G
 // bootstrapEventStore passes its boot-progress observer to EventStore.open.
+// Implements: EVS-PRD-storage-barrier/I
+// a failure after the open (the registry audit, a destination registration)
+//   closes the event store, and with it the storage the library opened,
+//   before it reaches the caller.
 Future<EventStoreBundle> bootstrapEventStore({
-  required StorageBackend backend,
+  required StorageDescription storage,
   required Source source,
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
@@ -121,35 +86,34 @@ Future<EventStoreBundle> bootstrapEventStore({
     typeRegistry.register(definition);
   }
 
-  // The security-context sidecar is backend-specific. We pick the matching
-  // concrete store by the runtime type of [backend]. Adding a new backend
-  // means shipping a paired SecurityContextStore impl and extending this
-  // dispatch — the substrate refuses to bootstrap on a StorageBackend it
-  // does not know how to pair.
-  final MutableSecurityContextStore securityContexts;
-  if (backend is SembastBackend) {
-    securityContexts = SembastSecurityContextStore(backend: backend);
-  } else if (backend is PostgresBackend) {
-    securityContexts = PostgresSecurityContextStore(backend: backend);
-  } else {
-    throw ArgumentError.value(
-      backend,
-      'backend',
-      'bootstrapEventStore has no SecurityContextStore paired '
-          'with ${backend.runtimeType}; supply a SembastBackend or '
-          'PostgresBackend, or extend bootstrap to dispatch on a new '
-          'concrete backend type.',
-    );
-  }
   final eventStore = await EventStore.open(
-    storage: backend,
+    storage: storage,
     entryTypes: typeRegistry,
     source: source,
-    securityContexts: securityContexts,
     projections: projections,
     onBootProgress: onBootProgress,
   );
+  try {
+    return await _completeBootstrap(
+      eventStore,
+      typeRegistry,
+      source,
+      destinations,
+    );
+  } catch (_) {
+    await eventStore.close();
+    rethrow;
+  }
+}
 
+/// The part of [bootstrapEventStore] after the open: the registry audit and
+/// the destination registration.
+Future<EventStoreBundle> _completeBootstrap(
+  EventStore eventStore,
+  EntryTypeRegistry typeRegistry,
+  Source source,
+  List<Destination> destinations,
+) async {
   final destinationRegistry = DestinationRegistry(eventStore: eventStore);
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
@@ -159,7 +123,8 @@ Future<EventStoreBundle> bootstrapEventStore({
   // entry type, or a raised major or minor) emits a new event. Each install uses
   // source.identifier as its aggregate, so there is a single per-installation
   // hash-chained system aggregate spanning bootstrap, destination registry,
-  // and retention/redaction audits.
+  // and retention/redaction audits. No delivery cycle can hold the store's
+  // trigger slot yet (its registry is built here), so the audit wakes none.
   // Implements: EVS-DEV-version-compatibility/K
   // the registry audit records every registered entry type's major and minor
   //   as `M.m`; a changed set, major or minor changes the content, so a new
@@ -168,14 +133,18 @@ Future<EventStoreBundle> bootstrapEventStore({
   for (final definition in typeRegistry.all()) {
     registryStateMap[definition.id] = definition.registeredVersion.toString();
   }
-  await eventStore.appendReserved(
-    entryType: kEntryTypeRegistryInitializedEntryType,
-    aggregateId: source.identifier,
-    aggregateType: kRegistryAuditAggregateType,
-    eventType: kEntryTypeRegistryInitializedEventType,
-    data: <String, Object?>{'registry': registryStateMap},
-    initiator: bootstrapInitiator,
-    dedupeByContent: true,
+  await eventStore.runTransaction(
+    (txn, collector) => eventStore._appendReservedInTxn(
+      txn,
+      collector,
+      entryType: kEntryTypeRegistryInitializedEntryType,
+      aggregateId: source.identifier,
+      aggregateType: kRegistryAuditAggregateType,
+      eventType: kEntryTypeRegistryInitializedEventType,
+      data: <String, Object?>{'registry': registryStateMap},
+      initiator: bootstrapInitiator,
+      dedupeByContent: true,
+    ),
   );
 
   for (final destination in destinations) {
@@ -189,7 +158,6 @@ Future<EventStoreBundle> bootstrapEventStore({
     eventStore: eventStore,
     entryTypes: typeRegistry,
     destinations: destinationRegistry,
-    securityContexts: securityContexts,
-    backend: backend,
+    securityContexts: eventStore.securityContexts,
   );
 }

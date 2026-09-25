@@ -2,7 +2,7 @@
 // IMPLEMENTS REQUIREMENTS:
 //   inspector snapshot.
 //
-// Pure-ish helpers: each takes a backend / directory / store and emits a
+// Pure-ish helpers: each takes a directory / store and emits a
 // list of wire-shape summaries. No HTTP, no JSON encoding here — that
 // happens at the route boundary.
 
@@ -15,7 +15,7 @@ Future<List<StoredEventSummary>> collectEventSummaries(
   UserDirectory directory, {
   required int limit,
 }) async {
-  final events = await store.backend.findAllEvents(limit: limit);
+  final events = await store.reader.findAllEvents(limit: limit);
   return events.map((e) {
     final initiator = e.initiator;
     final initiatorUserId = switch (initiator) {
@@ -48,7 +48,7 @@ String _roleFor(String userId, UserDirectory directory) {
 }
 
 Future<List<MatrixGrant>> collectMatrixGrants(EventStore store) async {
-  final rows = await store.backend.findViewRows('role_permission_grants');
+  final rows = await store.reader.findViewRows('role_permission_grants');
   return rows
       .map(
         (r) => MatrixGrant(

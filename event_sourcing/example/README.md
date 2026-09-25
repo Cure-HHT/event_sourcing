@@ -55,7 +55,7 @@ on-disk database. Mobile's two `NativeDemoDestination` instances
 deliver via an in-process `DownstreamBridge` straight into hub's
 `EventStore.ingestBatch`. Hub sees the events with mobile's
 provenance entry stamped at hop 0 and a hub-stamped receiver entry
-at hop 1. Materializer rows appear on hub as ingest commits, not
+at hop 1. View rows appear on hub as ingest commits, not
 on a separate code path.
 
 The single MaterialApp hosts the two panes split by a draggable
@@ -136,9 +136,6 @@ Future<_PaneRuntime> _bootstrapPane({
   required Source source,
   DownstreamBridge? bridge,
 }) async {
-  final db = await databaseFactoryIo.openDatabase(dbPath);
-  final backend = SembastBackend(database: db);
-
   // Four destinations: two lossy 3rd-party, two native-wire.
   final primary = DemoDestination(id: 'Primary', filter: ...);
   final secondary = DemoDestination(id: 'Secondary', ...);
@@ -147,22 +144,33 @@ Future<_PaneRuntime> _bootstrapPane({
   final nativeAudit = NativeDemoDestination(id: 'NativeAudit',
                                             bridge: bridge, ...);
 
-  final datastore = await bootstrapAppendOnlyDatastore(
-    backend: backend,
+  // The library opens the database file, and closes it when the event
+  // store closes or when the open fails.
+  final datastore = await bootstrapEventStore(
+    storage: SembastStorage.file(dbPath),
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    materializers: const <Materializer>[
-      DiaryEntriesMaterializer(promoter: identityPromoter),
-    ],
-    initialViewTargetVersions: const <String, Map<String, int>>{
-      'diary_entries': <String, int>{'demo_note': 1},
-    },
+    projections: ProjectionRegistry()
+      ..register(
+        const AggregateProjectionSpec(
+          viewName: 'notes',
+          interest: SubscriptionFilter(entryTypes: <String>{'demo_note'}),
+          tombstoneEventTypes: <String>{'tombstone'},
+        ),
+      ),
   );
 
-  // ... per-destination start_date set, sync tick, AppState.
+  // ... per-destination start_date set, AppState, delivery cycle.
 }
 ```
+
+The panels read the pane's storage through what the event store hands
+the application: `StorageWatch` (`lib/storage_watch.dart`) wraps
+`eventStore.reader` (the reads) and `eventStore.subscribe(..., Events())`
+(each committed event), and re-reads a destination's queue on each event
+and on a short poll, since a drain records its outcomes without appending
+an event. No panel holds the storage backend.
 
 The mobile pane passes `bridge: <bridge>`; the hub pane passes
 `bridge: null` so hub's native destinations are no-op simulators.
@@ -192,13 +200,11 @@ const EntryTypeDefinition blueButtonType  = EntryTypeDefinition(
   id: 'blue_button_pressed',  /* ... */ );
 ```
 
-`demo_note` is the diary-shaped entry type — it routes through the
-`DiaryEntriesMaterializer` because its events are appended with
-`aggregateType: 'DiaryEntry'`. The three button types use distinct
-aggregate types (`RedButtonPressed`, `GreenButtonPressed`,
-`BlueButtonPressed`) and therefore never reach the diary materializer
-— they appear in the EVENTS panel and FIFOs but not in the
-MATERIALIZED panel. That is the CQRS discriminator demo.
+`demo_note` is the entry type the `notes` projection's interest names,
+so its events fold into the `notes` view. The three button types are
+outside that interest and therefore never reach the view — they appear
+in the EVENTS panel and FIFOs but not in the MATERIALIZED panel. That is
+the CQRS discriminator demo.
 
 System entry types (the ten reserved ids covered in the lib README's
 "Event Types" section) are emitted automatically by lib operations
@@ -209,25 +215,21 @@ on the wire to hub.
 
 ## 5. Views
 
-The demo wires one materializer:
+The demo registers one projection, the `notes` view: an
+`AggregateProjectionSpec` over `demo_note` whose `tombstone` event deletes
+the row.
 
-```dart
-materializers: const <Materializer>[
-  DiaryEntriesMaterializer(promoter: identityPromoter),
-],
-```
-
-The `MaterializedPanel` reads from `backend.findEntries(...)` and
-re-renders on every `watchView('diary_entries')` snapshot. That panel
+The `MaterializedPanel` reads the view through the event store's reader
+(`reader.findViewRows('notes')`) and refreshes on a short poll. That panel
 appears on BOTH panes. When mobile appends a `demo_note` event:
 
-- Mobile's local `applyInTxn` upserts a row in mobile's
-  `diary_entries` view; mobile's `MaterializedPanel` re-renders on the
-  emitted snapshot.
+- Mobile's append folds it into mobile's `notes` view in the append's
+  transaction; mobile's `MaterializedPanel` shows the row on its next
+  refresh.
 - The same event flows through `NativeUser` to hub via the bridge.
-- Hub's `EventStore.ingestBatch` runs the SAME materializer code
-  path on the SAME event; hub's `diary_entries` view gets its own
-  row; hub's `MaterializedPanel` re-renders on hub's snapshot.
+- Hub's `EventStore.ingestBatch` folds the SAME event through the SAME
+  projection; hub's `notes` view gets its own row; hub's
+  `MaterializedPanel` shows it.
 
 Same code, two independent stores, two independently observable view
 states. The materialize-on-ingest behavior is what the receiver-side
@@ -359,8 +361,8 @@ Walk-through to see the badge shift across the bridge:
    UUID, the comparison returns false.
 
 The system-event AUDIT panel shows receiver-stamped audit rows
-(`ingest.batch_rejected` / `ingest.duplicate_received`) on the panel
-that did the receiving. Because hub's NativeAudit destination has
+(`ingest.duplicate_received`) on the panel that did the receiving.
+Because hub's NativeAudit destination has
 `bridge: null`, those audit events stop at hub — the demo does not
 chain a third hop.
 

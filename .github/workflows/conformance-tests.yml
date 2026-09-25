@@ -244,6 +244,24 @@ jobs:
       - name: Runtime role privileges on Postgres
         run: flutter test test/storage/postgres/postgres_runtime_role_test.dart
         working-directory: event_sourcing
+      - name: Search path pinned in every Postgres transaction
+        run: flutter test test/storage/postgres/postgres_search_path_test.dart
+        working-directory: event_sourcing
+      - name: Declared library roles and foreign-privilege refusals on Postgres
+        run: flutter test test/storage/postgres/postgres_library_roles_test.dart
+        working-directory: event_sourcing
+      - name: Storage descriptions opened and closed by the library on Postgres
+        run: flutter test test/storage/postgres/postgres_storage_description_test.dart
+        working-directory: event_sourcing
+      - name: Storage reader and issuer-bound transaction handles on Postgres
+        run: flutter test test/storage/postgres/postgres_storage_reader_test.dart
+        working-directory: event_sourcing
+      - name: Storage reader transactions run read-only on Postgres
+        run: flutter test test/storage/postgres/postgres_reader_read_only_test.dart
+        working-directory: event_sourcing
+      - name: Run-time storage barrier on Postgres
+        run: flutter test test/storage/postgres/postgres_run_time_barrier_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

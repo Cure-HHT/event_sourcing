@@ -13,13 +13,9 @@ import 'package:test/test.dart';
 
 import '../../test_support/fake_destination.dart';
 import '../../test_support/queue_test_support.dart';
+import '../../test_support/test_backends.dart';
 import '../../test_support/wedges_view_invariant.dart';
 import 'test_postgres_url.dart';
-
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
 
 /// The statuses a queue item can hold; null is pending.
 const List<String?> _statuses = <String?>[null, 'sent', 'wedged', 'tombstoned'];
@@ -64,24 +60,21 @@ final Matcher _refusedByGuard = throwsA(
 );
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   late Connection c;
   var nextSeq = 0;
 
   setUp(() async {
-    final admin = await _connect(url);
-    await admin.execute('DROP SCHEMA public CASCADE');
-    await admin.execute('CREATE SCHEMA public');
-    await admin.close();
-    await PostgresBackend.provision(url, sslMode: SslMode.disable);
-    c = await _connect(url);
+    await db.reset(provision: true);
+    c = await db.connectAdmin();
     nextSeq = 0;
   });
 
@@ -587,10 +580,7 @@ void main() {
       );
       expect(await count(), 0, reason: why);
     }
-    final backend = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-    );
+    final backend = await db.open();
     addTearDown(backend.close);
     expect(await backend.hasFifoWedged(), isFalse);
     expect(await backend.wedgedFifos(), isEmpty);
@@ -599,7 +589,7 @@ void main() {
   // Verifies: EVS-DEV-destination-drain/S
   // the library's own enqueue, attempt, delivery and wedge pass the guard.
   test("the library's own fill and drain pass the guard", () async {
-    final w = await _World.open(url);
+    final w = await _World.open(db);
     addTearDown(w.close);
     final d = FakeDestination(id: 'x');
     await w.activate(d);
@@ -649,7 +639,7 @@ void main() {
   // the deletion tombstones the wedged head and deletes only the pending
   //   items.
   test('deletion under the guard retains the terminal items', () async {
-    final w = await _World.open(url);
+    final w = await _World.open(db);
     addTearDown(w.close);
     final d = FakeDestination(id: 'x', allowHardDelete: true);
     await w.activate(d);
@@ -702,17 +692,16 @@ const Source _source = Source(
 /// One process over the test database: a backend, an event store and a
 /// destination registry.
 class _World {
-  _World(this.backend, this.store, this.registry);
+  _World(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
 
   final PostgresBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
 
-  static Future<_World> open(String url) async {
-    final backend = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-    );
+  static Future<_World> open(PostgresTestDatabase db) async {
+    final backend = await db.open();
     final entryTypes = EntryTypeRegistry();
     for (final d in kSystemEntryTypes) {
       entryTypes.register(d);

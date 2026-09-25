@@ -4,9 +4,9 @@
 //   writes an event into the `events` table and the role-permission
 //   matrix view rows into `view_rows` on a Postgres instance.
 //
-// Gated on PG_TEST_URL. Drops + recreates the `public` schema in setUp
-// so each test runs against a deterministic empty database — matches
-// the discipline used by the StorageBackend conformance harness.
+// Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
+// step in setUp, so each test runs against a deterministic empty database
+// opened as the declared runtime role.
 
 @TestOn('vm')
 library;
@@ -20,14 +20,10 @@ import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postgres/postgres.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 
-String? _pgTestUrl() {
-  final url = Platform.environment['PG_TEST_URL'];
-  if (url == null || url.isEmpty) return null;
-  return url;
-}
+import 'support/demo_bootstrap.dart';
+import 'support/demo_postgres.dart';
 
 const String _permissionsYaml = '''
 roles:
@@ -63,8 +59,8 @@ users:
 ''';
 
 void main() {
-  final url = _pgTestUrl();
-  if (url == null) {
+  final db = DemoPostgres.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping postgres integration test');
     });
@@ -73,35 +69,15 @@ void main() {
 
   group('action_permissions_demo on Postgres', () {
     late PostgresBackend backend;
-    late PostgresIdempotencyStore idempotencyStore;
     late DemoServerComponents components;
     late HttpServer server;
     late Uri baseUri;
 
     setUp(() async {
-      // Drop+recreate `public` schema for fresh test isolation. Split
-      // into two execute calls because postgres v3.5 rejects multi-
-      // statement strings in Session.execute (same discipline as the
-      // StorageBackend conformance harness).
-      final endpoint = PostgresBackend.endpointFromUrl(url);
-      final tmp = await Connection.open(
-        endpoint,
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await tmp.execute('DROP SCHEMA public CASCADE');
-      await tmp.execute('CREATE SCHEMA public');
-      await tmp.close();
-
-      backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
-      idempotencyStore = PostgresIdempotencyStore.forBackend(backend);
-
+      await db.reset();
+      backend = await db.open();
       components = await bootstrapDemoServer(
-        backend: backend,
-        idempotencyStore: idempotencyStore,
+        storage: demoStorageOver(backend),
         permissionsYaml: _permissionsYaml,
         usersYaml: _usersYaml,
         installIdentifier: '00000000-0000-4000-8000-0000000000aa',
@@ -478,31 +454,13 @@ void main() {
   group('action_permissions_demo on Postgres — restart durability', () {
     test('persistence across backend close+reopen: events and view rows '
         'survive on the same Postgres database', () async {
-      // Helper to drop+recreate the public schema. Mirrors setUp() above.
-      Future<void> resetSchema() async {
-        final endpoint = PostgresBackend.endpointFromUrl(url);
-        final tmp = await Connection.open(
-          endpoint,
-          settings: const ConnectionSettings(sslMode: SslMode.disable),
-        );
-        await tmp.execute('DROP SCHEMA public CASCADE');
-        await tmp.execute('CREATE SCHEMA public');
-        await tmp.close();
-      }
-
       // Start clean.
-      await resetSchema();
+      await db.reset();
 
       // --- Phase 1: open backend, dispatch some actions, snapshot state.
-      final backend1 = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
-      final idem1 = PostgresIdempotencyStore.forBackend(backend1);
+      final backend1 = await db.open();
       final components1 = await bootstrapDemoServer(
-        backend: backend1,
-        idempotencyStore: idem1,
+        storage: demoStorageOver(backend1),
         permissionsYaml: _permissionsYaml,
         usersYaml: _usersYaml,
         installIdentifier: '00000000-0000-4000-8000-0000000000aa',
@@ -551,7 +509,7 @@ void main() {
       final viewRowsPhase1 = await backend1.findViewRows(
         'role_permission_grants',
       );
-      final idemPhase1 = await idem1.listEntries();
+      final idemPhase1 = await components1.idempotencyStore.listEntries();
 
       // We expect at least 4 dispatched events on top of bootstrap seeds.
       // The seed appends ~12 events (9 role grants + 3 user_provisioned),
@@ -575,20 +533,25 @@ void main() {
 
       // --- Phase 2: open a FRESH PostgresBackend against the SAME URL.
       //   No schema reset. State must survive.
-      final backend2 = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      final backend2 = await db.open();
       addTearDown(backend2.close);
-      final idem2 = PostgresIdempotencyStore.forBackend(backend2);
 
       // Read events + view rows from the NEW backend instance.
       final eventsPhase2 = await backend2.findAllEvents();
       final viewRowsPhase2 = await backend2.findViewRows(
         'role_permission_grants',
       );
-      final idemPhase2 = await idem2.listEntries();
+
+      // Boot a server over the new backend, as a restarted instance does,
+      // and read the idempotency entries through its event store's store.
+      final components2 = await bootstrapDemoServer(
+        storage: demoStorageOver(backend2),
+        permissionsYaml: _permissionsYaml,
+        usersYaml: _usersYaml,
+        installIdentifier: '00000000-0000-4000-8000-0000000000aa',
+      );
+      addTearDown(components2.eventStore.close);
+      final idemPhase2 = await components2.idempotencyStore.listEntries();
 
       // Same number of events.
       expect(

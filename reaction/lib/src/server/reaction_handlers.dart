@@ -95,10 +95,10 @@ class ReactionHandlers {
     if (registry != null) {
       final expander = ScopeDescendantExpander(
         registry: registry,
-        findRowsInTxn: eventStore.backend.findViewRowsInTxn,
+        findRowsInTxn: eventStore.reader.findViewRowsInTxn,
       );
       _expandDescendants = (assignment, targetClass) =>
-          eventStore.backend.transaction(
+          eventStore.reader.transaction(
             (txn) => expander.expand(
               txn: txn,
               assignment: assignment,

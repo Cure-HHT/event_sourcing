@@ -117,14 +117,16 @@ class PolicyHarness {
 
     final sourceId = 'policy-harness-${DateTime.now().microsecondsSinceEpoch}';
     final eventStore = await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: typeRegistry,
       source: Source(
         hopId: 'test-server',
         identifier: sourceId,
         softwareVersion: 'event_sourcing_test@0.0.0',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
     );
 
@@ -201,9 +203,8 @@ class PolicyHarness {
     );
 
     final policy = TableBackedAuthorizationPolicy(
-      backend: backend,
+      reader: eventStore.reader,
       scopeClassRegistry: scopeClassRegistry,
-      transactionProvider: <T>(fn) => backend.transaction<T>(fn),
     );
 
     return PolicyHarness._(

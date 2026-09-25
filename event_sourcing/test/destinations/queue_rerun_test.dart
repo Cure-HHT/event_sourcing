@@ -11,10 +11,12 @@ import 'package:flutter_test/flutter_test.dart';
 import '../test_support/drain_wedge_conformance.dart'
     show expectWedgeRecordMatchesLog;
 import '../test_support/fake_destination.dart';
+import '../test_support/hand_driven_cycle.dart';
 import '../test_support/operator_halt_conformance.dart'
     show expectHaltLogInvariant, expectHaltRequestMatchesLog;
 import '../test_support/queue_test_support.dart';
 import '../test_support/rerunning_sembast_backend.dart';
+import '../test_support/test_backends.dart';
 import '../test_support/wedges_view_invariant.dart';
 
 const _init = AutomationInitiator(service: 'rerun');
@@ -52,6 +54,7 @@ void main() {
       securityContexts: SembastSecurityContextStore(backend: backend),
       clock: () => DateTime.utc(2026, 3, 1),
     );
+    trackTestBackend(store, backend);
     registry = DestinationRegistry(eventStore: store);
     backend.rerunEnabled = true;
   });
@@ -422,12 +425,14 @@ void main() {
   // each pass writes one heartbeat record, numbered by pass.
   test("the pass start records the committed run's heartbeat", () async {
     await registry.addDestination(FakeDestination(id: 'x'), initiator: _init);
-    final cycle = await SyncCycle.start(
-      registry: registry,
-      cadence: const Duration(hours: 1),
+    final cycle = await startCycle(
+      () => SyncCycle.start(
+        registry: registry,
+        cadence: const Duration(hours: 1),
+      ),
+      handDriven: true,
     );
     addTearDown(cycle.close);
-    store.deliveryTrigger = null;
     await cycle();
     await cycle();
     final heartbeat = await backend.transaction(backend.readDrainHeartbeatTxn);
@@ -456,25 +461,29 @@ void main() {
       purpose: HaltPurpose.reconfigure,
     );
     await note('n1');
-    final first = await SyncCycle.start(
-      registry: registry,
-      clock: _fillNow,
-      cadence: const Duration(hours: 1),
-      configurationVersion: 'v1',
+    final first = await startCycle(
+      () => SyncCycle.start(
+        registry: registry,
+        clock: _fillNow,
+        cadence: const Duration(hours: 1),
+        configurationVersion: 'v1',
+      ),
+      handDriven: true,
     );
-    store.deliveryTrigger = null;
     await first();
     await first.close();
     final head = (await backend.readFifoHead('x'))!;
     expect(head.finalStatus, FinalStatus.wedged);
-    final second = await SyncCycle.start(
-      registry: registry,
-      clock: _fillNow,
-      cadence: const Duration(hours: 1),
-      configurationVersion: 'v2',
+    final second = await startCycle(
+      () => SyncCycle.start(
+        registry: registry,
+        clock: _fillNow,
+        cadence: const Duration(hours: 1),
+        configurationVersion: 'v2',
+      ),
+      handDriven: true,
     );
     addTearDown(second.close);
-    store.deliveryTrigger = null;
     await second();
     await registry.tombstoneAndRefill('x', head.entryId, initiator: _init);
     final recovered = await audits(kDestinationWedgeRecoveredEntryType);

@@ -34,7 +34,7 @@ class _World {
   final SyncCycle cycle;
   final GatedLogDestination destination;
 
-  StorageBackend get backend => components.eventStore.backend;
+  StorageReader get reader => components.eventStore.reader;
 
   Future<Response> post(String route, Map<String, Object?> body) =>
       postRaw(route, jsonEncode(body));
@@ -91,9 +91,9 @@ class _World {
   /// Everything a refused or forbidden call must leave as it was: the log
   /// and the persisted delivery status.
   Future<String> snapshot() async {
-    final events = await backend.findAllEvents();
+    final events = await reader.findAllEvents();
     final status = await components.destinations.readDeliveryStatus();
-    final rows = await backend.listFifoEntries(logDestinationId);
+    final rows = await reader.listFifoEntries(logDestinationId);
     return <Object?>[
       <String>[for (final e in events) e.eventId],
       '$status',
@@ -117,7 +117,7 @@ void runDeliveryRoutesTests(
       final backends = await factory();
       final destination = GatedLogDestination();
       final components = await bootstrapDemoServer(
-        backend: backends.backend,
+        storage: backends.storage,
         idempotencyStore: backends.idempotencyStore,
         permissionsYaml: validPermissionsYaml,
         usersYaml: validUsersYaml,
@@ -173,7 +173,7 @@ void runDeliveryRoutesTests(
       expect(halted.statusCode, 200);
       final requestEventId =
           (await _json(halted))['halt_request_event_id']! as String;
-      final request = (await w.backend.findAllEvents(
+      final request = (await w.reader.findAllEvents(
         entryType: kDestinationHaltRequestedEntryType,
       )).single;
       expect(request.eventId, requestEventId);
@@ -194,7 +194,7 @@ void runDeliveryRoutesTests(
 
       await w.note('n1');
       await w.cycle();
-      final head = (await w.backend.readFifoHead(logDestinationId))!;
+      final head = (await w.reader.readFifoHead(logDestinationId))!;
       expect(head.finalStatus, FinalStatus.wedged);
 
       final status = await _json(await w.status(_admin));
@@ -217,7 +217,7 @@ void runDeliveryRoutesTests(
       });
       expect(recovered.statusCode, 200);
       expect((await _json(recovered))['row_id'], head.entryId);
-      final recovery = (await w.backend.findAllEvents(
+      final recovery = (await w.reader.findAllEvents(
         entryType: kDestinationWedgeRecoveredEntryType,
       )).single;
       expect(recovery.initiator, const UserInitiator(_admin));
@@ -240,7 +240,7 @@ void runDeliveryRoutesTests(
         'destinationId': logDestinationId,
       });
       expect(cancelled.statusCode, 200);
-      final cancellation = (await w.backend.findAllEvents(
+      final cancellation = (await w.reader.findAllEvents(
         entryType: kDestinationHaltCancelledEntryType,
       )).single;
       expect(cancellation.initiator, const UserInitiator(_admin));
@@ -262,7 +262,7 @@ void runDeliveryRoutesTests(
       await w.note('held');
       final pass = w.cycle();
       await w.destination.sendStarted;
-      final head = (await w.backend.readFifoHead(logDestinationId))!;
+      final head = (await w.reader.readFifoHead(logDestinationId))!;
       expect(head.finalStatus, isNull);
 
       final before = await w.snapshot();

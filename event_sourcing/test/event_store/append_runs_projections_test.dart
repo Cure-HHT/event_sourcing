@@ -10,10 +10,10 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/storage/storage_description.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -47,14 +47,16 @@ void main() {
       );
 
     final store = await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: entryTypes,
       source: const Source(
         hopId: 'test',
         identifier: 'test-instance',
         softwareVersion: '0.0.0-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
     );
 

@@ -110,8 +110,10 @@ void main() {
     // The observer records every report; the probe body is read at each.
     final seen = <Map<String, Object?>>[];
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('boot.db'),
+      storage: demoStorageOver(
+        SembastBackend(
+          database: await newDatabaseFactoryMemory().openDatabase('boot.db'),
+        ),
       ),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,
@@ -150,10 +152,11 @@ void main() {
     final client = HttpClient();
     addTearDown(client.close);
     final port = host.http.port;
+    final backend = SembastBackend(
+      database: await newDatabaseFactoryMemory().openDatabase('fatal.db'),
+    );
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('fatal.db'),
-      ),
+      storage: demoStorageOver(backend),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,
       usersYaml: validUsersYaml,
@@ -184,6 +187,7 @@ void main() {
     // The cycle's storage backend goes away under it (a fenced Postgres
     // backend takes the same path): the cycle stops for good.
     await components.eventStore.close();
+    await backend.close();
     await cycle.stopped.timeout(const Duration(seconds: 10));
     expect(cycle.stopCause, isNotNull);
     await Future<void>.delayed(Duration.zero);
@@ -201,8 +205,10 @@ void main() {
     final host = await DemoServerHost.listen(port: 0);
     addTearDown(host.close);
     final components = await bootstrapDemoServer(
-      backend: SembastBackend(
-        database: await newDatabaseFactoryMemory().openDatabase('closed.db'),
+      storage: demoStorageOver(
+        SembastBackend(
+          database: await newDatabaseFactoryMemory().openDatabase('closed.db'),
+        ),
       ),
       idempotencyStore: DemoIdempotencyStore(),
       permissionsYaml: validPermissionsYaml,

@@ -54,7 +54,10 @@ Future<_Fixture> _openDatastore({
   final effectiveProjections =
       projections ?? (ProjectionRegistry()..register(_kToyViewSpec));
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: Source(
       hopId: hopId,
       identifier: identifier,

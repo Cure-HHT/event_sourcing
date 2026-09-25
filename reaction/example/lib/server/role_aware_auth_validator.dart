@@ -32,16 +32,16 @@ const List<String> _rolePriority = <String>['admin', 'editor', 'viewer'];
 /// signature). The example uses this to teach how a real consumer's
 /// validator would consult the substrate's event log for role data.
 class RoleAwareTrustingValidator implements PrincipalAuthValidator {
-  RoleAwareTrustingValidator({required this.backend});
+  RoleAwareTrustingValidator({required this.reader});
 
-  final StorageBackend backend;
+  final StorageReader reader;
 
   @override
   Future<Principal> authenticate(String credential) async {
     if (credential.isEmpty) {
       throw const AuthenticationDenied('empty credential');
     }
-    final rows = await backend.findViewRows('user_role_scopes');
+    final rows = await reader.findViewRows('user_role_scopes');
     final userRoles = <String>{
       for (final row in rows)
         if (row['user_id'] == credential) row['role']! as String,

@@ -40,6 +40,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/queue_test_support.dart';
+import '../test_support/test_backends.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -73,7 +74,10 @@ Future<_Fixture> _bootstrapDatastore({
   );
   final backend = SembastBackend(database: db);
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: Source(
       hopId: hopId,
       identifier: identifier,
@@ -82,6 +86,7 @@ Future<_Fixture> _bootstrapDatastore({
     entryTypes: entryTypes,
     destinations: destinations,
   );
+  trackTestBackend(datastore.eventStore, backend);
   return _Fixture(datastore: datastore, backend: backend);
 }
 

@@ -29,7 +29,10 @@ Future<SembastBackend> _openBackend(String path) async {
 
 Future<EventStoreBundle> _bootstrap(SembastBackend backend) {
   return bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: _source,
     entryTypes: const <EntryTypeDefinition>[],
     destinations: const <Destination>[],

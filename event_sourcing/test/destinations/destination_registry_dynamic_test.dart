@@ -3,8 +3,8 @@
 // of DestinationRegistry: dormant-seed on add (A), schedule persistence and
 // cold-restart recovery (D), and monotonic-backward setStartDate + gap-replay
 // semantics supporting dynamic re-configuration (F).
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';

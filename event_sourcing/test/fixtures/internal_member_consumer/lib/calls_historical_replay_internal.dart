@@ -1,4 +1,4 @@
-import 'package:event_sourcing/src/sync/historical_replay.dart';
+import 'package:event_sourcing/src/event_store.dart';
 
 /// Reaches the replay builders and the queue writer the fill commits them
 /// through, through a `src/` import.

@@ -94,14 +94,16 @@ Future<EventStore> _openTab(
   }
   try {
     return await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: registry,
       source: const Source(
         hopId: 'web-hop',
         identifier: 'web-install',
         softwareVersion: 'web-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
       projections: projections,
       promoters: promoters,
     );

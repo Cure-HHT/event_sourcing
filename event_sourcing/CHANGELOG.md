@@ -187,6 +187,12 @@ created by an earlier release is dropped and provisioned again with
   `DataFormatVersion.fromJson` read a map by its `major` and `minor` and
   ignore other keys, so library-version events, view targets and boot
   records a later 2.x release writes open too.
+- `EventStore.logRejectedBatch` is removed: it appended a reserved
+  `ingest.batch_rejected` audit whose content the caller chose. Ingest
+  appends only the reserved events of the deliveries it accepts; a
+  refused batch is reported by the exception `ingestBatch` throws. Ingest
+  still admits an `ingest.batch_rejected` event another build of data
+  format 2 appended.
 - A record's `client_timestamp` must carry a four-digit year, calendar
   fields within their ranges and an explicit offset (`Z` or
   `+/-HH[:]MM`): a timestamp without an offset, a year outside 0000-9999,
@@ -308,14 +314,38 @@ created by an earlier release is dropped and provisioned again with
   (`findOlderThanInTxn`, `findUnredactedOlderThanInTxn`) and `queryAudit`'s
   `from` and `to`.
 - `EventStore.appendInTxn` requires the `PublishCollector` its
-  `runTransaction` body received.
+  `runTransaction` body received, and refuses with `StateError`, writing
+  nothing, a transaction handle this store's `runTransaction` did not issue
+  or whose body has returned.
+- `EventStore.reader` is a `StorageReader`: an object of its own, not the
+  storage backend, carrying the backend's reads and a `transaction(body)`
+  for reads only (`READ ONLY` on Postgres). Its `...InTxn` reads accept the
+  handles it or its event store issued, while their body runs, and refuse
+  any other with `StateError`.
+- `TableBackedAuthorizationPolicy({reader, scopeClassRegistry})` reads
+  through a `StorageReader`; its `backend` and `transactionProvider`
+  parameters are gone. `bootstrapActionPermissions`,
+  `bootstrapRoleAssignments` and the permission seed read through
+  `EventStore.reader`.
+- `EventStore.idempotencyStore` is the Postgres idempotency store over the
+  event store's own storage (null on other backends).
 - `debugLogSink` is removed; library log lines go to `dart:developer` and
   to `package:logging` loggers named `event_sourcing.<component>`.
-- Internal: `PostgresBackend.pool` (use
-  `PostgresIdempotencyStore.forBackend`), `SembastBackend.unwrapSembastTxn`,
-  `PublishCollector.add` and `addRowChanges`, `SembastBackendTestSupport`
-  (no longer exported), the security-context store mutators,
-  `EventStoreBundle.setViewTargetVersion`.
+- Internal: `PostgresBackend.pool` (use `EventStore.idempotencyStore`),
+  `SembastBackendTestSupport` (no longer exported), the security-context
+  store mutators.
+- No object the library hands out yields its storage, appends a reserved
+  event outside a public operation, or publishes: these members are private
+  to the library and callable neither statically nor dynamically.
+  `EventStore.backend`, `deliveryTrigger`, `wakeDeliveryCycle` and
+  `appendReservedInTxn`; `DestinationRegistry.backend`, `wedgeHeadInTxn`
+  and `honourHaltInTxn`; `EventStoreBundle`'s `backend` constructor
+  parameter and `setViewTargetVersion`; `PublishCollector.add` and
+  `addRowChanges`; the `backend` field of `SembastSecurityContextStore` and
+  `PostgresSecurityContextStore`; `SembastBackend.unwrapSembastTxn`; and
+  the Postgres transaction handle's type, `PostgresTxn`, with its
+  `session`. A transaction handle is opaque outside its backend. Stage
+  view target versions in tests through the backend a test built.
 
 ### Postgres
 
@@ -348,8 +378,10 @@ created by an earlier release is dropped and provisioned again with
   `queryAudit(initiator:)` matches the fields `Initiator` models. The
   columns are part of schema version 1, so a database provisioned by an
   earlier 0.5.0 build is provisioned again.
-- `PostgresIdempotencyStore.over` is `@visibleForTesting`; `forBackend` is
-  fenced.
+- `PostgresIdempotencyStore.forBackend` is removed: the event store builds
+  its fenced idempotency store as `EventStore.idempotencyStore`;
+  `PostgresIdempotencyStore.over(pool)` takes a pool the application
+  opened.
 
 ### Trust
 

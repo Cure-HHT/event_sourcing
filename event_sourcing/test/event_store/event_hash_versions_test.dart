@@ -81,7 +81,7 @@ void main() {
       final origin = await _openStore('origin');
       final event = await _appendAt(origin);
       expect(_recomputedHash(event), event.eventHash);
-      final readBack = await origin.backend.findEventById(event.eventId);
+      final readBack = await origin.reader.findEventById(event.eventId);
       expect(_recomputedHash(readBack!), event.eventHash);
     });
 
@@ -112,7 +112,7 @@ void main() {
       final receiver = await _openStore('receiver');
       final event = await _appendAt(origin);
       await relay.ingestEvent(event);
-      final forwarded = (await relay.backend.findEventById(event.eventId))!;
+      final forwarded = (await relay.reader.findEventById(event.eventId))!;
 
       final tampered = <String, StoredEvent>{
         'entry type version': _withVersions(
@@ -127,14 +127,14 @@ void main() {
       for (final entry in tampered.entries) {
         final verdict = await receiver.verifyEventChain(entry.value);
         expect(verdict.isValid, isFalse, reason: entry.key);
-        final eventsBefore = (await receiver.backend.findAllEvents()).length;
+        final eventsBefore = (await receiver.reader.findAllEvents()).length;
         await expectLater(
           receiver.ingestEvent(entry.value),
           throwsA(isA<IngestChainBroken>()),
           reason: entry.key,
         );
         expect(
-          (await receiver.backend.findAllEvents()).length,
+          (await receiver.reader.findAllEvents()).length,
           eventsBefore,
           reason: entry.key,
         );
@@ -143,7 +143,7 @@ void main() {
       // The untampered copy verifies and ingests.
       expect((await receiver.verifyEventChain(forwarded)).isValid, isTrue);
       await receiver.ingestEvent(forwarded);
-      final stored = await receiver.backend.findEventById(event.eventId);
+      final stored = await receiver.reader.findEventById(event.eventId);
       expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 2));
       expect(_recomputedHash(stored), stored.eventHash);
     });

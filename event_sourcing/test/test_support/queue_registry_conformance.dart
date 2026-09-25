@@ -21,6 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'fake_destination.dart';
 import 'fifo_entry_helpers.dart';
 import 'queue_test_support.dart';
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 /// One test database for the scenarios.
@@ -81,7 +82,9 @@ class _TaggedDestination extends FakeDestination {
 /// One process in a scenario: a backend, an event store over it and a
 /// registry.
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;

@@ -104,7 +104,7 @@ void main() {
         expect(promotion.first.total, kProgressScenarioAggregates);
         expect(promotion.last.done, kProgressScenarioAggregates);
       }
-      final rows = await newer.backend.findViewRows('progress_notes');
+      final rows = await newer.reader.findViewRows('progress_notes');
       expect(rows.every((row) => row['b'] == 0), isTrue);
       await database.close();
     });
@@ -115,8 +115,12 @@ void main() {
     test('bootstrapEventStore reports the boot of the open it runs', () async {
       final db = await _memoryDatabase();
       final reports = <BootProgress>[];
+      final backend = SembastBackend(database: db);
       await bootstrapEventStore(
-        backend: SembastBackend(database: db),
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: const Source(
           hopId: 'progress-hop',
           identifier: 'progress-install',

@@ -6,7 +6,6 @@
 //
 // Traceability lives on the individual tests below.
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
@@ -108,10 +107,9 @@ Future<EventStore> openProgressStore(
     registry.register(spec);
   }
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
     entryTypes: entryTypes,
     source: _kSource,
-    securityContexts: db.securityFor(backend),
     projections: registry,
     promoters: promoters,
     onBootProgress: onBootProgress,
@@ -203,7 +201,7 @@ const _kMintedRowFields = <String>{
 /// and aggregate (and its payload, other than a library-version event's),
 /// every view's rows, and the stored view targets.
 Future<Map<String, Object?>> bootOutcome(EventStore store) async {
-  final events = await store.backend.findAllEvents();
+  final events = await store.reader.findAllEvents();
   final views = <String>[
     _kAggregateView,
     _kTableView,
@@ -214,15 +212,15 @@ Future<Map<String, Object?>> bootOutcome(EventStore store) async {
   final targets = <String, Object?>{};
   for (final view in views) {
     final held = <Map<String, Object?>>[
-      for (final row in await store.backend.findViewRows(view))
+      for (final row in await store.reader.findViewRows(view))
         <String, Object?>{
           for (final field in row.entries)
             if (!_kMintedRowFields.contains(field.key)) field.key: field.value,
         },
     ]..sort((x, y) => '$x'.compareTo('$y'));
     rows[view] = held;
-    targets[view] = await store.backend.transaction(
-      (txn) async => (await store.backend.readViewTargetVersionInTxn(
+    targets[view] = await store.reader.transaction(
+      (txn) async => (await store.reader.readViewTargetVersionInTxn(
         txn,
         view,
         _kType,
@@ -284,7 +282,7 @@ void runBootProgressScenarios(
         projections: projections,
       );
       await seedProgressNotes(older, kProgressScenarioAggregates);
-      final count = (await older.backend.findAllEvents()).length;
+      final count = (await older.reader.findAllEvents()).length;
       await db!.stop(older);
       return count;
     }
@@ -359,7 +357,7 @@ void runBootProgressScenarios(
         reason: 'a phase over more than one chunk reports between chunks',
       );
       // The promotion happened: every row carries the minor's default.
-      final rows = await newer.backend.findViewRows(_kAggregateView);
+      final rows = await newer.reader.findViewRows(_kAggregateView);
       expect(rows, hasLength(kProgressScenarioAggregates));
       expect(rows.every((row) => row['b'] == 0), isTrue);
     });
@@ -388,11 +386,11 @@ void runBootProgressScenarios(
       expect(catchUp.first.total, kProgressScenarioAggregates + eventsBefore);
       expect(catchUp.where((r) => r.done > 0 && r.done < r.total), isNotEmpty);
       expect(
-        await newer.backend.findViewRows(_kNewAggregateView),
+        await newer.reader.findViewRows(_kNewAggregateView),
         hasLength(kProgressScenarioAggregates),
       );
       expect(
-        await newer.backend.findViewRows(_kNewTableView),
+        await newer.reader.findViewRows(_kNewTableView),
         hasLength(kProgressScenarioAggregates),
       );
     });
@@ -559,7 +557,7 @@ void runBootProgressScenarios(
           registered: const EntryTypeVersion(1, 0),
           projections: const <ProjectionSpec>[_kAggregateSpec, _kTableSpec],
         );
-        final stored = (await other.backend.findAllEvents(
+        final stored = (await other.reader.findAllEvents(
           entryType: _kType,
         )).first;
         final registry = DestinationRegistry(eventStore: other);
@@ -621,13 +619,6 @@ void runBootProgressScenarios(
               );
               unawaited(other.ingestEvent(stored));
               unawaited(
-                other.logRejectedBatch(
-                  Uint8List.fromList(const <int>[1, 2, 3]),
-                  wireFormat: 'reentrant',
-                  reason: 'reentrant',
-                ),
-              );
-              unawaited(
                 rebuildView(
                   store: other,
                   viewName: _kAggregateView,
@@ -637,10 +628,14 @@ void runBootProgressScenarios(
                 ),
               );
               unawaited(registry.readDeliveryStatus());
+              // The reader refuses synchronously; Future.sync delivers the
+              // refusal to the observer's zone as the other calls' do.
               unawaited(
-                other.backend.transaction<void>((txn) async {
-                  ranDuringBoot.add('backend.transaction');
-                }),
+                Future<void>.sync(
+                  () => other.reader.transaction<void>((txn) async {
+                    ranDuringBoot.add('reader.transaction');
+                  }),
+                ),
               );
               // Work the observer started that runs while the boot still
               // runs, each refused.
@@ -656,9 +651,11 @@ void runBootProgressScenarios(
               );
               unawaited(
                 release.future.then(
-                  (_) => other.backend.transaction<void>((txn) async {
-                    ranDuringBoot.add('released backend.transaction');
-                  }),
+                  (_) => Future<void>.sync(
+                    () => other.reader.transaction<void>((txn) async {
+                      ranDuringBoot.add('released reader.transaction');
+                    }),
+                  ),
                 ),
               );
               // A call the observer starts that runs once the boot has
@@ -692,11 +689,10 @@ void runBootProgressScenarios(
             'Bad state: An EventStore transaction',
             'Bad state: An EventStore transaction',
             'Bad state: An EventStore transaction',
-            'Bad state: EventStore.logRejectedBatch',
             'Bad state: EventStore.open',
-            'Bad state: ${_backendName(other.backend)}.transaction',
-            'Bad state: ${_backendName(other.backend)}.transaction',
-            'Bad state: ${_backendName(other.backend)}.transaction',
+            'Bad state: ${_backendName(backend)}.transaction',
+            'Bad state: StorageReader.transaction',
+            'Bad state: StorageReader.transaction',
             'Bad state: rebuildView',
           ]..sort(),
           reason: '$logged',
@@ -713,7 +709,7 @@ void runBootProgressScenarios(
 
         bootDone.complete();
         await afterBoot.future.timeout(const Duration(seconds: 10));
-        final notes = await other.backend.findAllEvents(entryType: _kType);
+        final notes = await other.reader.findAllEvents(entryType: _kType);
         expect(notes.map((e) => e.aggregateId), contains('after-boot'));
         expect(
           notes.map((e) => e.aggregateId).where((id) => id.startsWith('re')),

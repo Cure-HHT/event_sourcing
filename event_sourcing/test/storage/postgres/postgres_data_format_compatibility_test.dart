@@ -16,37 +16,26 @@ import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import '../../test_support/boot_conformance.dart';
+import '../../test_support/test_backends.dart';
 import 'test_postgres_url.dart';
-
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
 
 /// A Postgres database the boot scenarios share: the `public` schema of
 /// the test database, dropped and created again for each test.
 class PostgresBootDatabase implements BootTestDatabase {
-  PostgresBootDatabase._(this._url);
+  PostgresBootDatabase._(this._db);
 
   /// Resets the schema and returns the database.
-  static Future<PostgresBootDatabase> reset(String url) async {
-    final tmp = await _connect(url);
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-    return PostgresBootDatabase._(url);
+  static Future<PostgresBootDatabase> reset(PostgresTestDatabase db) async {
+    await db.reset();
+    return PostgresBootDatabase._(db);
   }
 
-  final String _url;
+  final PostgresTestDatabase _db;
   final List<PostgresBackend> _backends = <PostgresBackend>[];
 
   @override
   Future<StorageBackend> openBackend() async {
-    final backend = await PostgresBackend.open(
-      url: _url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    final backend = await _db.open(provision: true);
     _backends.add(backend);
     return backend;
   }
@@ -57,7 +46,7 @@ class PostgresBootDatabase implements BootTestDatabase {
 
   @override
   Future<void> rewriteStoredDatabaseId(String? value) async {
-    final conn = await _connect(_url);
+    final conn = await _db.connectAdmin();
     try {
       if (value == null) {
         await conn.execute(
@@ -81,8 +70,8 @@ class PostgresBootDatabase implements BootTestDatabase {
   @override
   Future<void> writeEarlierFormatShape() async {
     // The tables as an earlier data format created them: one integer column
-    // for each version.
-    final conn = await _connect(_url);
+    // for each version. The owner creates them, as provisioning would.
+    final conn = await _db.connectOwner();
     try {
       await conn.execute('''
         CREATE TABLE events (
@@ -115,17 +104,39 @@ class PostgresBootDatabase implements BootTestDatabase {
       // refuses a schema whose library tables carry no schema version, so
       // this plays one whose version record claims the current schema while
       // its version columns keep the earlier shape, which the open refuses.
-      for (final statement in postgresMigrations.last.ddl) {
-        await conn.execute(statement);
+      for (final step in postgresMigrations) {
+        for (final statement in step.ddl) {
+          await conn.execute(statement);
+        }
       }
       await conn.execute(
-        'INSERT INTO backend_state (key, value) VALUES '
-        "('schema_version', '1'), ('min_compatible_schema_version', '1') "
-        'ON CONFLICT (key) DO NOTHING',
+        Sql.named(
+          'INSERT INTO backend_state (key, value) VALUES '
+          "('schema_version', @v:jsonb), "
+          "('min_compatible_schema_version', @m:jsonb) "
+          'ON CONFLICT (key) DO NOTHING',
+        ),
+        parameters: <String, Object?>{
+          'v': postgresSchemaVersion,
+          'm': postgresMinCompatibleSchemaVersion,
+        },
       );
+      for (final (role, kind) in <(String, String)>[
+        (_db.runtime, 'runtime'),
+        (_db.runtime, 'lock'),
+        (_db.lock, 'lock'),
+      ]) {
+        await conn.execute(
+          Sql.named(
+            'INSERT INTO library_roles (role_name, kind) VALUES (@r, @k)',
+          ),
+          parameters: <String, Object?>{'r': role, 'k': kind},
+        );
+      }
     } finally {
       await conn.close();
     }
+    await _db.grant();
   }
 
   @override
@@ -141,21 +152,22 @@ class PostgresBootDatabase implements BootTestDatabase {
 }
 
 void main() {
-  final url = testPostgresUrl();
+  final pg = PostgresTestDatabase.fromEnvironment();
+  if (pg != null) tearDownAll(pg.drop);
   runBootScenarios(() async {
-    if (url == null) return null;
-    return PostgresBootDatabase.reset(url);
+    if (pg == null) return null;
+    return PostgresBootDatabase.reset(pg);
   }, backendLabel: 'postgres');
 
   group('rollback between two builds of one data-format major (postgres)', () {
     PostgresBootDatabase? db;
 
     setUp(() async {
-      if (url == null) {
+      if (pg == null) {
         markTestSkipped('PG_TEST_URL unset');
         return;
       }
-      db = await PostgresBootDatabase.reset(url);
+      db = await PostgresBootDatabase.reset(pg);
     });
 
     tearDown(() async {
@@ -196,7 +208,7 @@ void main() {
                 : e.data['toVersion'],
           ),
       ];
-      expect(transitions(await libVersionEventsForTest(n2.backend)), [
+      expect(transitions(await libVersionEventsForTest(testBackendOf(n2))), [
         (LibVersionEvents.initialized, LibVersion.version),
         (LibVersionEvents.changed, newerBuildVersionForTest),
         (LibVersionEvents.changed, LibVersion.version),
@@ -205,20 +217,20 @@ void main() {
       for (final store in <EventStore>[o1, n1, o2, n2]) {
         expect(store.databaseId, o1.databaseId);
       }
-      expect(await n2.backend.findViewRows('boot_notes'), hasLength(4));
+      expect(await n2.reader.findViewRows('boot_notes'), hasLength(4));
 
       final concurrent = await Future.wait(<Future<EventStore>>[
         d.openBackend().then((b) => openBootStoreForTest(d, b)),
         d.openBackend().then((b) => openBootStoreForTest(d, b)),
       ]);
       final after = transitions(
-        await libVersionEventsForTest(concurrent.first.backend),
+        await libVersionEventsForTest(testBackendOf(concurrent.first)),
       );
       expect(after, hasLength(5));
       expect(after.last, (LibVersionEvents.changed, LibVersion.version));
       await appendBootNoteForTest(concurrent.last, 'o3');
       expect(
-        await concurrent.first.backend.findViewRows('boot_notes'),
+        await concurrent.first.reader.findViewRows('boot_notes'),
         hasLength(5),
       );
     });

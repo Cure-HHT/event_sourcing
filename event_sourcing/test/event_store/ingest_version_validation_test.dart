@@ -80,7 +80,10 @@ Future<EventStoreBundle> _bootstrapWithRegistry({
   );
   final backend = SembastBackend(database: db);
   return bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: const Source(
       hopId: 'control-server',
       identifier: 'demo-control',
@@ -104,9 +107,9 @@ void main() {
       final ds = await _bootstrapWithRegistry(
         registeredVersion: const EntryTypeVersion(1, 0),
       );
-      final backend = ds.eventStore.backend;
-      final eventsBefore = (await backend.findAllEvents()).length;
-      final counterBefore = await backend.readSequenceCounter();
+      final reader = ds.eventStore.reader;
+      final eventsBefore = (await reader.findAllEvents()).length;
+      final counterBefore = await reader.readSequenceCounter();
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(1, 0),
@@ -116,8 +119,8 @@ void main() {
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
         throwsA(isA<IngestDataFormatIncompatible>()),
       );
-      expect((await backend.findAllEvents()).length, eventsBefore);
-      expect(await backend.readSequenceCounter(), counterBefore);
+      expect((await reader.findAllEvents()).length, eventsBefore);
+      expect(await reader.readSequenceCounter(), counterBefore);
     });
   });
 
@@ -127,9 +130,9 @@ void main() {
       final ds = await _bootstrapWithRegistry(
         registeredVersion: const EntryTypeVersion(2, 0),
       );
-      final backend = ds.eventStore.backend;
-      final eventsBefore = (await backend.findAllEvents()).length;
-      final counterBefore = await backend.readSequenceCounter();
+      final reader = ds.eventStore.reader;
+      final eventsBefore = (await reader.findAllEvents()).length;
+      final counterBefore = await reader.readSequenceCounter();
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(5, 0),
@@ -139,8 +142,8 @@ void main() {
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
         throwsA(isA<IngestEntryTypeVersionAhead>()),
       );
-      expect((await backend.findAllEvents()).length, eventsBefore);
-      expect(await backend.readSequenceCounter(), counterBefore);
+      expect((await reader.findAllEvents()).length, eventsBefore);
+      expect(await reader.readSequenceCounter(), counterBefore);
     });
   });
 

@@ -81,10 +81,11 @@ Future<AuthorizationBootstrapResult> bootstrapActionPermissions({
   final registry =
       scopeClassRegistry ??
       ScopeClassRegistry(classes: const [], projectionLookup: (_) => null);
+  // Implements: EVS-DEV-storage-capability/I
+  // the bootstrapped policy reads through the event store's storage reader.
   final policy = TableBackedAuthorizationPolicy(
-    backend: eventStore.backend,
+    reader: eventStore.reader,
     scopeClassRegistry: registry,
-    transactionProvider: <T>(fn) => eventStore.backend.transaction<T>(fn),
   );
   return PolicyReady(policy);
 }

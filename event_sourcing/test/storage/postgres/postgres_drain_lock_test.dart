@@ -17,7 +17,7 @@ import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_drain_lock.dart'
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart'
     show postgresDrainKey;
 import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart'
     show PostgresScope;
@@ -28,26 +28,15 @@ import 'package:test/test.dart';
 import '../../test_support/delivery_cycle_conformance.dart'
     show Receiver, until;
 import '../../test_support/drain_isolate_harness.dart';
+import '../../test_support/hand_driven_cycle.dart';
 import '../../test_support/manual_timers.dart';
 import 'test_postgres_url.dart';
 
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
-
-Future<void> _reset(String url) async {
-  final c = await _connect(url);
-  await c.execute('DROP SCHEMA public CASCADE');
-  await c.execute('CREATE SCHEMA public');
-  await c.close();
-}
-
 Future<T> _withConnection<T>(
-  String url,
+  PostgresTestDatabase db,
   Future<T> Function(Connection c) body,
 ) async {
-  final c = await _connect(url);
+  final c = await db.connectAdmin();
   try {
     return await body(c);
   } finally {
@@ -56,24 +45,25 @@ Future<T> _withConnection<T>(
 }
 
 /// Ends the server session [pid] and waits until it is gone.
-Future<void> _terminate(String url, int pid) => _withConnection(url, (c) async {
-  await c.execute(
-    Sql.named('SELECT pg_terminate_backend(@p)'),
-    parameters: <String, Object?>{'p': pid},
-  );
-  for (var i = 0; i < 200; i++) {
-    final r = await c.execute(
-      Sql.named('SELECT count(*) FROM pg_stat_activity WHERE pid = @p'),
-      parameters: <String, Object?>{'p': pid},
-    );
-    if (r.first[0] == 0) return;
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-  }
-});
+Future<void> _terminate(PostgresTestDatabase db, int pid) =>
+    _withConnection(db, (c) async {
+      await c.execute(
+        Sql.named('SELECT pg_terminate_backend(@p)'),
+        parameters: <String, Object?>{'p': pid},
+      );
+      for (var i = 0; i < 200; i++) {
+        final r = await c.execute(
+          Sql.named('SELECT count(*) FROM pg_stat_activity WHERE pid = @p'),
+          parameters: <String, Object?>{'p': pid},
+        );
+        if (r.first[0] == 0) return;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+    });
 
 /// The pids that hold the advisory lock [key] in the current database.
-Future<Set<int>> _holdersOf(String url, int key) =>
-    _withConnection(url, (c) async {
+Future<Set<int>> _holdersOf(PostgresTestDatabase db, int key) =>
+    _withConnection(db, (c) async {
       final r = await c.execute(
         Sql.named('''
           SELECT pid FROM pg_locks
@@ -89,21 +79,21 @@ Future<Set<int>> _holdersOf(String url, int key) =>
 
 /// The number of sessions of the current database waiting on a lock while
 /// running a statement that contains [fragment].
-Future<int> _lockWaitersRunning(String url, String fragment) => _withConnection(
-  url,
-  (c) async {
-    final r = await c.execute(
-      Sql.named(
-        "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
-        'AND datname = current_database() AND position(@f in query) > 0',
-      ),
-      parameters: <String, Object?>{'f': fragment},
-    );
-    return r.first[0]! as int;
-  },
-);
+Future<int> _lockWaitersRunning(
+  PostgresTestDatabase db,
+  String fragment,
+) => _withConnection(db, (c) async {
+  final r = await c.execute(
+    Sql.named(
+      "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
+      'AND datname = current_database() AND position(@f in query) > 0',
+    ),
+    parameters: <String, Object?>{'f': fragment},
+  );
+  return r.first[0]! as int;
+});
 
-Future<int?> _epoch(String url) => _withConnection(url, (c) async {
+Future<int?> _epoch(PostgresTestDatabase db) => _withConnection(db, (c) async {
   final r = await c.execute(
     "SELECT (value #>> '{}')::bigint FROM backend_state "
     "WHERE key = 'drain_epoch'",
@@ -203,21 +193,21 @@ final class _Process {
 }
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   final backends = <PostgresBackend>[];
   final drainers = <SpawnedDrainer>[];
   final cycles = <SyncCycle>[];
 
   setUp(() async {
-    await _reset(url);
-    await PostgresBackend.provision(url, sslMode: SslMode.disable);
+    await db.reset(provision: true);
   });
 
   tearDown(() async {
@@ -241,11 +231,13 @@ void main() {
     DeliveryTestHooks? hooks,
     Duration lockHeartbeat = const Duration(hours: 1),
     Duration lockQueryTimeout = const Duration(seconds: 5),
-    String? atUrl,
+    PostgresTestDatabase? at,
     String? lockUrl,
   }) async {
+    final database = at ?? db;
     Future<PostgresBackend> open() => PostgresBackend.open(
-      url: atUrl ?? url,
+      url: database.runtimeUrl,
+      schema: database.schema,
       lockUrl: lockUrl,
       sslMode: SslMode.disable,
       lockHeartbeat: lockHeartbeat,
@@ -263,14 +255,14 @@ void main() {
     Duration lockHeartbeat = const Duration(hours: 1),
     Duration lockQueryTimeout = const Duration(seconds: 5),
     List<Destination> destinations = const <Destination>[],
-    String? atUrl,
+    PostgresTestDatabase? at,
     String? lockUrl,
   }) async {
     final backend = await openBackend(
       hooks: hooks,
       lockHeartbeat: lockHeartbeat,
       lockQueryTimeout: lockQueryTimeout,
-      atUrl: atUrl,
+      at: at,
       lockUrl: lockUrl,
     );
     final store = await EventStore.openForTest(
@@ -303,8 +295,10 @@ void main() {
     Duration cadence = const Duration(hours: 1),
     bool handDriven = true,
   }) async {
-    final cycle = await SyncCycle.start(registry: p.registry, cadence: cadence);
-    if (handDriven) p.store.deliveryTrigger = null;
+    final cycle = await startCycle(
+      () => SyncCycle.start(registry: p.registry, cadence: cadence),
+      handDriven: handDriven,
+    );
     cycles.add(cycle);
     return cycle;
   }
@@ -322,13 +316,18 @@ void main() {
     Duration cadence = const Duration(milliseconds: 100),
     Set<String> hooks = const <String>{},
   }) async {
-    final d = await SpawnedDrainer.spawn(url, cadence: cadence, hooks: hooks);
+    final d = await SpawnedDrainer.spawn(
+      db.runtimeUrl,
+      schema: db.schema,
+      cadence: cadence,
+      hooks: hooks,
+    );
     drainers.add(d);
     return d;
   }
 
   Future<int> drainKey(_Process p) async {
-    final scope = await _withConnection(url, PostgresScope.read);
+    final scope = await _withConnection(db, PostgresScope.read);
     return postgresDrainKey(scope, p.store.databaseId);
   }
 
@@ -383,11 +382,12 @@ void main() {
       String? headId;
       await runWithDeliveryTestHooks(
         DeliveryTestHooks(
+          handDrivenCycle: true,
           timerFactory: timers.create,
           onLog: log.add,
           afterSendBeforeOutcome: (_) async {
             headId = (await a.backend.readFifoHead('x'))!.entryId;
-            await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+            await _terminate(db, (await a.backend.lockSessionForTest()).pid);
             await b.next('epoch');
             expect(a.backend.generationStatus, GenerationStatus.registered);
           },
@@ -423,7 +423,7 @@ void main() {
         reason: "only B's attempt; A's refusal was never recorded",
       );
       expect(
-        await _holdersOf(url, await drainKey(a)),
+        await _holdersOf(db, await drainKey(a)),
         <int>{b.pid!},
         reason: "B's lock session is the one that took the lock",
       );
@@ -450,7 +450,11 @@ void main() {
       final id = await note(a.store, 'r');
       final log = <LibraryLogRecord>[];
       await runWithDeliveryTestHooks(
-        DeliveryTestHooks(timerFactory: timers.create, onLog: log.add),
+        DeliveryTestHooks(
+          handDrivenCycle: true,
+          timerFactory: timers.create,
+          onLog: log.add,
+        ),
         () async {
           final cycleA = await start(a);
           final b = await spawn(hooks: const <String>{'holdFirstBump'});
@@ -458,11 +462,11 @@ void main() {
           final pass = cycleA();
           await until(() => receiver.started.isNotEmpty, reason: 'A sends');
           final headId = (await a.backend.readFifoHead('x'))!.entryId;
-          await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+          await _terminate(db, (await a.backend.lockSessionForTest()).pid);
           await b.next('bumpPending');
           gate.complete();
           await until(
-            () async => await _lockWaitersRunning(url, 'FOR SHARE') > 0,
+            () async => await _lockWaitersRunning(db, 'FOR SHARE') > 0,
             reason: "A's outcome check waits on the raise",
           );
           b.commitBump();
@@ -504,7 +508,7 @@ void main() {
           );
           await b.next('epoch');
           expect(
-            await _holdersOf(url, await drainKey(a)),
+            await _holdersOf(db, await drainKey(a)),
             <int>{b.pid!},
             reason: "B's lock session is the one that took the lock",
           );
@@ -531,15 +535,16 @@ void main() {
       var armed = false;
       await runWithDeliveryTestHooks(
         DeliveryTestHooks(
+          handDrivenCycle: true,
           timerFactory: timers.create,
           afterSendBeforeOutcome: (_) async => armed = true,
           beforeQueueWrites: (_) async {
             if (!armed) return;
             armed = false;
-            await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+            await _terminate(db, (await a.backend.lockSessionForTest()).pid);
             await until(
               () async =>
-                  await _lockWaitersRunning(url, 'INSERT INTO backend_state') >
+                  await _lockWaitersRunning(db, 'INSERT INTO backend_state') >
                   0,
               reason: "B's raise waits on A's check",
             );
@@ -564,7 +569,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 500));
       expect(b.sent, isNot(contains(id)), reason: 'B sends past no wedge');
       expect(
-        await _holdersOf(url, await drainKey(a)),
+        await _holdersOf(db, await drainKey(a)),
         <int>{b.pid!},
         reason: "B's lock session is the one that took the lock",
       );
@@ -585,14 +590,14 @@ void main() {
         destinations: <Destination>[receiver],
       );
       await runWithDeliveryTestHooks(
-        DeliveryTestHooks(timerFactory: timers.create),
+        DeliveryTestHooks(handDrivenCycle: true, timerFactory: timers.create),
         () async {
           final cycleA = await start(a);
           await cycleA();
-          final epochA = (await _epoch(url))!;
+          final epochA = (await _epoch(db))!;
           final b = await spawn(cadence: const Duration(hours: 1));
           await b.reaches('standby');
-          await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+          await _terminate(db, (await a.backend.lockSessionForTest()).pid);
           // B's first attempt at its start found the key held; it acquires
           // at its next retry, which the test cannot fire in its isolate, so
           // it closes and a new drainer starts and takes the lock at once.
@@ -650,7 +655,7 @@ void main() {
       await note(a.store, 'first-b');
       final b = await spawn();
       await runWithDeliveryTestHooks(
-        DeliveryTestHooks(timerFactory: timers.create),
+        DeliveryTestHooks(handDrivenCycle: true, timerFactory: timers.create),
         () async {
           final cycleA = await start(a);
           await b.reaches('standby');
@@ -667,7 +672,7 @@ void main() {
               reason: '${r.id} has a second item pending',
             );
           }
-          await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+          await _terminate(db, (await a.backend.lockSessionForTest()).pid);
           await b.next('epoch');
           await note(a.store, 'second');
           gate.complete();
@@ -722,13 +727,13 @@ void main() {
       final next = await note(a.store, 'next');
       final b = await spawn(hooks: const <String>{'gateSends'});
       await runWithDeliveryTestHooks(
-        DeliveryTestHooks(timerFactory: timers.create),
+        DeliveryTestHooks(handDrivenCycle: true, timerFactory: timers.create),
         () async {
           final cycleA = await start(a);
           await b.reaches('standby');
           final pass = cycleA();
           await until(() => receiver.started.isNotEmpty, reason: 'A sends R');
-          await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+          await _terminate(db, (await a.backend.lockSessionForTest()).pid);
           await until(() => b.sent.contains(r), reason: 'B sends R');
           final third = await process();
           await third.registry.requestHalt(
@@ -778,12 +783,12 @@ void main() {
         cadence: const Duration(milliseconds: 200),
         handDriven: false,
       );
-      final first = (await _epoch(url))!;
-      await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+      final first = (await _epoch(db))!;
+      await _terminate(db, (await a.backend.lockSessionForTest()).pid);
       await until(
         () async =>
             cycle.state == SyncCycleState.running &&
-            ((await _epoch(url)) ?? 0) > first,
+            ((await _epoch(db)) ?? 0) > first,
         bound: const Duration(seconds: 20),
         reason: 're-acquisition',
       );
@@ -804,6 +809,7 @@ void main() {
       );
       var stall = false;
       final hooks = DeliveryTestHooks(
+        handDrivenCycle: true,
         stallLockHeartbeatPastQueryTimeout: () {
           if (!stall) return false;
           stall = false;
@@ -822,16 +828,16 @@ void main() {
       );
       final key = await drainKey(a);
       final oldPid = (await a.backend.lockSessionForTest()).pid;
-      final first = (await _epoch(url))!;
+      final first = (await _epoch(db))!;
       stall = true;
       await until(
         () async =>
             cycle.state == SyncCycleState.running &&
-            ((await _epoch(url)) ?? 0) > first,
+            ((await _epoch(db)) ?? 0) > first,
         bound: const Duration(seconds: 20),
         reason: 're-acquisition',
       );
-      expect(await _holdersOf(url, key), isNot(contains(oldPid)));
+      expect(await _holdersOf(db, key), isNot(contains(oldPid)));
       final id = await note(a.store, 'after');
       await runWithDeliveryTestHooks(hooks, cycle.call);
       expect(receiver.sentIds, contains(id));
@@ -852,6 +858,7 @@ void main() {
         if (!release.isCompleted) release.complete();
       });
       final hooks = DeliveryTestHooks(
+        handDrivenCycle: true,
         timerFactory: timers.create,
         failNextLockHeartbeat: () {
           probes += 1;
@@ -872,7 +879,7 @@ void main() {
       release.complete();
       final cycle = await starting;
       expect(cycle.state, SyncCycleState.running);
-      expect(await _epoch(url), isNotNull);
+      expect(await _epoch(db), isNotNull);
     });
   });
 
@@ -884,7 +891,7 @@ void main() {
     //   server session, which still holds the drain key, and the drainer
     //   takes the lock again with a higher epoch and delivers.
     test('a frozen lock connection: loss, then re-acquisition', () async {
-      final forwarder = _Forwarder(Uri.parse(url));
+      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final receiver = Receiver(
@@ -892,7 +899,7 @@ void main() {
         entryTypes: const <String>{harnessNoteType},
       );
       final a = await process(
-        lockUrl: forwarder.route(url),
+        lockUrl: forwarder.route(db.runtimeUrl),
         lockHeartbeat: const Duration(milliseconds: 200),
         lockQueryTimeout: const Duration(seconds: 1),
         destinations: <Destination>[receiver],
@@ -902,9 +909,9 @@ void main() {
         cadence: const Duration(milliseconds: 200),
         handDriven: false,
       );
-      final first = (await _epoch(url))!;
+      final first = (await _epoch(db))!;
       final key = await drainKey(a);
-      final oldHolders = await _holdersOf(url, key);
+      final oldHolders = await _holdersOf(db, key);
       expect(oldHolders, hasLength(1));
       forwarder
         ..freeze()
@@ -921,16 +928,16 @@ void main() {
       );
       // The old server session is alive behind the frozen connection and
       // still holds the key.
-      expect(await _holdersOf(url, key), oldHolders);
+      expect(await _holdersOf(db, key), oldHolders);
       forwarder.freezeNew = false;
       await until(
         () async =>
             cycle.state == SyncCycleState.running &&
-            ((await _epoch(url)) ?? 0) > first,
+            ((await _epoch(db)) ?? 0) > first,
         bound: const Duration(seconds: 15),
         reason: 're-acquisition',
       );
-      expect(await _holdersOf(url, key), isNot(oldHolders));
+      expect(await _holdersOf(db, key), isNot(oldHolders));
       final id = await note(a.store, 'after');
       await until(
         () => receiver.sentIds.contains(id),
@@ -944,11 +951,11 @@ void main() {
     //   within the query timeout plus a second, and no epoch is raised
     //   afterwards.
     test('close while the lock connection is frozen', () async {
-      final forwarder = _Forwarder(Uri.parse(url));
+      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(
-        lockUrl: forwarder.route(url),
+        lockUrl: forwarder.route(db.runtimeUrl),
         lockHeartbeat: const Duration(milliseconds: 200),
         lockQueryTimeout: const Duration(seconds: 1),
       );
@@ -964,9 +971,9 @@ void main() {
       final watch = Stopwatch()..start();
       await cycle.close();
       expect(watch.elapsed, lessThan(const Duration(seconds: 2)));
-      final epoch = await _epoch(url);
+      final epoch = await _epoch(db);
       await Future<void>.delayed(const Duration(milliseconds: 600));
-      expect(await _epoch(url), epoch);
+      expect(await _epoch(db), epoch);
     });
 
     // Verifies: EVS-DEV-destination-drain-lock/C
@@ -975,11 +982,11 @@ void main() {
     //   timeout plus a second, and makes no connection attempt after its
     //   backend closed.
     test('close while the lock session reconnects into a black hole', () async {
-      final forwarder = _Forwarder(Uri.parse(url));
+      final forwarder = _Forwarder(Uri.parse(db.adminUrl));
       await forwarder.start();
       addTearDown(forwarder.close);
       final a = await process(
-        lockUrl: forwarder.route(url),
+        lockUrl: forwarder.route(db.runtimeUrl),
         lockHeartbeat: const Duration(milliseconds: 200),
         lockQueryTimeout: const Duration(seconds: 1),
       );
@@ -989,7 +996,7 @@ void main() {
         handDriven: false,
       );
       forwarder.freezeNew = true;
-      await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+      await _terminate(db, (await a.backend.lockSessionForTest()).pid);
       await until(
         () => cycle.state == SyncCycleState.standby,
         reason: 'the loss',
@@ -1019,16 +1026,16 @@ void main() {
       );
       expect(
         await _holdersOf(
-          url,
+          db,
           postgresDrainKey(
-            await _withConnection(url, PostgresScope.read),
+            await _withConnection(db, PostgresScope.read),
             'another-database',
           ),
         ),
         isEmpty,
       );
-      expect(await _holdersOf(url, key), isEmpty);
-      expect(await _epoch(url), isNull);
+      expect(await _holdersOf(db, key), isEmpty);
+      expect(await _epoch(db), isNull);
     });
 
     // Verifies: EVS-DEV-destination-drain-lock/A
@@ -1045,7 +1052,7 @@ void main() {
           throwsA(isA<DrainLockConfigurationException>()),
         ),
       );
-      expect(await _epoch(url), isNull);
+      expect(await _epoch(db), isNull);
       // Closing the backend ends its lock session and frees the key.
       await a.backend.close();
       final b = await process();
@@ -1078,15 +1085,22 @@ void main() {
           throwsA(isA<DrainLockConfigurationException>()),
         ),
       );
-      expect(a.store.deliveryTrigger, isNull);
       final errors = <Object>[];
-      await runZonedGuarded(() async {
-        await note(a.store, 'n');
-        await Future<void>.delayed(const Duration(milliseconds: 50));
-      }, (e, _) => errors.add(e));
+      final wakes = <bool>[];
+      await runZonedGuarded(
+        () => runWithDeliveryTestHooks(
+          DeliveryTestHooks(onDeliveryWake: wakes.add),
+          () async {
+            await note(a.store, 'n');
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          },
+        ),
+        (e, _) => errors.add(e),
+      );
+      expect(wakes, <bool>[false], reason: 'the trigger slot is empty');
       expect(errors, isEmpty);
       expect(receiver.started, isEmpty);
-      expect(await _holdersOf(url, key), isEmpty);
+      expect(await _holdersOf(db, key), isEmpty);
       final cycle = await start(a);
       expect(cycle.state, SyncCycleState.running);
     });
@@ -1117,9 +1131,9 @@ void main() {
         () => start(a, cadence: const Duration(seconds: 1), handDriven: false),
       );
       expect(cycle.state, SyncCycleState.standby);
-      expect(await _epoch(url), isNull);
+      expect(await _epoch(db), isNull);
       await until(
-        () async => (await _holdersOf(url, key)).isEmpty,
+        () async => (await _holdersOf(db, key)).isEmpty,
         bound: const Duration(seconds: 15),
         reason: 'the key is free',
       );
@@ -1147,10 +1161,11 @@ void main() {
       late _Process a;
       var armed = true;
       final hooks = DeliveryTestHooks(
+        handDrivenCycle: true,
         afterLockAcquireBeforeEpochBump: () async {
           if (!armed) return;
           armed = false;
-          await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+          await _terminate(db, (await a.backend.lockSessionForTest()).pid);
         },
       );
       a = await process(
@@ -1163,13 +1178,13 @@ void main() {
         () => start(a, cadence: const Duration(milliseconds: 200)),
       );
       expect(cycle.state, SyncCycleState.standby);
-      expect(await _epoch(url), isNull, reason: 'no epoch recorded');
+      expect(await _epoch(db), isNull, reason: 'no epoch recorded');
       await until(
         () => cycle.state == SyncCycleState.running,
         bound: const Duration(seconds: 20),
         reason: 'the retry after re-registration',
       );
-      expect(await _epoch(url), 1);
+      expect(await _epoch(db), 1);
       var runs = 0;
       await expectLater(
         a.backend.transaction<void>((txn) async {
@@ -1191,34 +1206,26 @@ void main() {
     //   run a drainer, even when one schema's records, database identity
     //   included, are a copy of the other's: the key includes the scope.
     test('two schemas, one copied identity, two drainers', () async {
-      final admin = await _connect(url);
-      addTearDown(() async {
-        for (final n in ['1', '2']) {
-          await admin.execute('DROP SCHEMA IF EXISTS s$n CASCADE');
-          await admin.execute('DROP ROLE IF EXISTS evs_s$n');
-        }
-        await admin.close();
-      });
-      final urls = <String>[];
-      for (final n in ['1', '2']) {
-        await admin.execute('DROP SCHEMA IF EXISTS s$n CASCADE');
-        await admin.execute('DROP ROLE IF EXISTS evs_s$n');
-        await admin.execute("CREATE ROLE evs_s$n LOGIN PASSWORD 'evs'");
-        await admin.execute('CREATE SCHEMA s$n AUTHORIZATION evs_s$n');
-        await admin.execute('ALTER ROLE evs_s$n SET search_path = s$n');
-        final u = Uri.parse(url).replace(userInfo: 'evs_s$n:evs').toString();
-        await PostgresBackend.provision(u, sslMode: SslMode.disable);
-        urls.add(u);
+      final schemas = <PostgresTestDatabase>[
+        for (final n in ['1', '2'])
+          PostgresTestDatabase(db.adminUrl, tag: 'dl$n'),
+      ];
+      for (final schema in schemas) {
+        addTearDown(schema.drop);
+        await schema.reset(provision: true);
       }
       final r1 = Receiver(id: 'x', entryTypes: const <String>{harnessNoteType});
-      final p1 = await process(atUrl: urls[0], destinations: <Destination>[r1]);
+      final p1 = await process(at: schemas[0], destinations: <Destination>[r1]);
       // Schema s2 starts as a copy of s1's records, the identity included.
-      await admin.execute(
-        'INSERT INTO s2.backend_state SELECT * FROM s1.backend_state '
-        'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+      await db.asAdmin(
+        (admin) => admin.execute(
+          'INSERT INTO ${quoteIdent(schemas[1].schema)}.backend_state '
+          'SELECT * FROM ${quoteIdent(schemas[0].schema)}.backend_state '
+          'ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+        ),
       );
       final r2 = Receiver(id: 'x', entryTypes: const <String>{harnessNoteType});
-      final p2 = await process(atUrl: urls[1], destinations: <Destination>[r2]);
+      final p2 = await process(at: schemas[1], destinations: <Destination>[r2]);
       expect(p2.store.databaseId, p1.store.databaseId);
       final c1 = await start(p1);
       final c2 = await start(p2);
@@ -1281,12 +1288,16 @@ void main() {
       );
       final log = <LibraryLogRecord>[];
       final cycle = await runWithDeliveryTestHooks(
-        DeliveryTestHooks(timerFactory: timers.create, onLog: log.add),
+        DeliveryTestHooks(
+          handDrivenCycle: true,
+          timerFactory: timers.create,
+          onLog: log.add,
+        ),
         () => start(a),
       );
       // An event the drainer would fill and send at its next pass.
       await note(a.store, 'pending');
-      await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+      await _terminate(db, (await a.backend.lockSessionForTest()).pid);
       // A conflicting build (the note type at major 2) opens and closes.
       final conflicting = await openBackend();
       final registry = EntryTypeRegistry();
@@ -1391,7 +1402,7 @@ void main() {
           destinations: <Destination>[receiver],
         );
         final cycle = await runWithDeliveryTestHooks(
-          DeliveryTestHooks(timerFactory: timers.create),
+          DeliveryTestHooks(handDrivenCycle: true, timerFactory: timers.create),
           () async {
             final c = await SyncCycle.start(
               registry: a.registry,
@@ -1404,7 +1415,6 @@ void main() {
                 maxAttempts: 5,
               ),
             );
-            a.store.deliveryTrigger = null;
             cycles.add(c);
             return c;
           },
@@ -1427,7 +1437,7 @@ void main() {
             .where((e) => e.aggregateType == 'system_destination')
             .length;
 
-        await _terminate(url, (await a.backend.lockSessionForTest()).pid);
+        await _terminate(db, (await a.backend.lockSessionForTest()).pid);
         await openConflictingBuild();
         await until(() async {
           await timers.fire();
@@ -1437,7 +1447,7 @@ void main() {
         gate.complete();
         await pass;
 
-        final after = await _withConnection(url, (c) async {
+        final after = await _withConnection(db, (c) async {
           final r = await c.execute(
             Sql.named(
               'SELECT entry_id, final_status, jsonb_array_length(attempts) '
@@ -1452,7 +1462,7 @@ void main() {
           <Object?>[rows[0].entryId, null, 1],
           <Object?>[rows[1].entryId, null, 0],
         ], reason: 'the outcome of the send in flight committed nothing');
-        final destinationEvents = await _withConnection(url, (c) async {
+        final destinationEvents = await _withConnection(db, (c) async {
           final r = await c.execute(
             'SELECT count(*) FROM events WHERE aggregate_type = '
             "'system_destination'",

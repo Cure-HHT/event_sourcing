@@ -11,6 +11,8 @@
 /// ## Key types
 ///
 /// - `EventStore` — open, append, subscribe, close.
+/// - `StorageDescription` — sealed: `SembastStorage`, `PostgresStorage`
+///   (storage the library opens and closes) or `ApplicationSuppliedStorage`.
 /// - `EventDraft` — input value returned by `Action.execute`.
 /// - `StoredEvent` — immutable event record with hash-chain fields.
 /// - `ProjectionRegistry` — declarative view specs registered before open.
@@ -34,7 +36,6 @@
 ///
 /// ```dart
 /// import 'package:event_sourcing/event_sourcing.dart';
-/// import 'package:sembast/sembast_io.dart';
 ///
 /// // Build a projection registry before opening the store.
 /// final projections = ProjectionRegistry()
@@ -44,11 +45,11 @@
 ///     tombstoneEventTypes: {'invoice_cancelled'},
 ///   ));
 ///
-/// // Open the store: the boot checks the database and registers the
-/// // library's reserved entry types and its default views.
-/// final db = await databaseFactoryIo.openDatabase('data.db');
+/// // Open the store: the library opens the database the description
+/// // names, the boot checks it and registers the library's reserved entry
+/// // types and its default views.
 /// final bundle = await bootstrapEventStore(
-///   backend: SembastBackend(database: db),
+///   storage: const SembastStorage.file('data.db'),
 ///   source: const Source(
 ///     hopId: 'mobile-device',
 ///     identifier: '00000000-0000-4000-8000-000000000001',
@@ -114,7 +115,6 @@ export 'package:provenance/provenance.dart' show BatchContext, ProvenanceEntry;
 // Actions module — trusted-boundary command/intent layer.
 export 'src/actions/action.dart' show Action;
 export 'src/actions/action_context.dart' show ActionContext;
-export 'src/actions/action_dispatcher.dart' show ActionDispatcher;
 export 'src/actions/action_registry.dart' show ActionRegistry;
 export 'src/actions/action_submission.dart' show ActionSubmission;
 export 'src/actions/authorization_decision.dart'
@@ -159,7 +159,6 @@ export 'src/actions/scope_value.dart'
 // bootstrapEventStore — single entry point for app main() to wire
 // the storage backend, EntryTypeRegistry, destinations, security context
 // store, and EventStore. Returns an EventStoreBundle facade.
-export 'src/bootstrap.dart' show EventStoreBundle, bootstrapEventStore;
 
 // Core configuration
 export 'src/core/config/event_store_config.dart';
@@ -176,7 +175,6 @@ export 'src/destinations/batch_envelope_metadata.dart'
 export 'src/destinations/default_destination_wedges_spec.dart'
     show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
-export 'src/destinations/destination_registry.dart' show DestinationRegistry;
 export 'src/destinations/destination_schedule.dart'
     show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
 export 'src/destinations/halt_purpose.dart' show HaltPurpose;
@@ -194,7 +192,17 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 // appendWithSecurity call.
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
-    show EntryTypeVersionDowngradeError, EventStore, RetentionResult;
+    show
+        ActionDispatcher,
+        DestinationRegistry,
+        EntryTypeVersionDowngradeError,
+        EventStore,
+        EventStoreBundle,
+        RetentionResult,
+        SyncCycle,
+        SyncCycleState,
+        bootstrapEventStore,
+        rebuildView;
 
 // Ingest types — error types, result types, and chain verdict.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
@@ -293,7 +301,6 @@ export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 // bootstrapEventStore or directly to EventStore.
 export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
-export 'src/projections/rebuild.dart' show rebuildView;
 
 // Promoters — entry-type version promotion chains for schema migration.
 export 'src/promoters/primitives/transform.dart'
@@ -311,15 +318,11 @@ export 'src/promoters/promoter_spec.dart' show PromoterSpec;
 // surface, concrete impls, and reserved system entry types for
 // redaction/compact/purge audit events.
 export 'src/security/event_security_context.dart' show EventSecurityContext;
-export 'src/security/postgres_security_context_store.dart'
-    show PostgresSecurityContextStore;
 export 'src/security/security_context_store.dart'
     show AuditRow, PagedAudit, SecurityContextStore;
 export 'src/security/security_details.dart' show SecurityDetails;
 export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
-export 'src/security/sembast_security_context_store.dart'
-    show SembastSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
         // Security-context lifecycle audits: entry types, their aggregate
@@ -409,11 +412,19 @@ export 'src/storage/queue_records.dart'
         SendFence,
         TrailSweepResult,
         WedgeRecord;
-export 'src/storage/sembast_backend.dart' show SembastBackend;
+export 'src/storage/sembast_backend.dart'
+    show SembastBackend, SembastSecurityContextStore;
 export 'src/storage/send_result.dart'
     show SendResult, SendOk, SendTransient, SendPermanent;
 export 'src/storage/source.dart' show Source;
 export 'src/storage/storage_backend.dart' show StorageBackend;
+export 'src/storage/storage_description.dart'
+    show
+        ApplicationSuppliedStorage,
+        PostgresStorage,
+        SembastStorage,
+        StorageDescription,
+        deleteSembastDatabase;
 export 'src/storage/storage_exception.dart'
     show
         StorageCorruptException,
@@ -421,6 +432,7 @@ export 'src/storage/storage_exception.dart'
         StoragePermanentException,
         StorageTransientException,
         classifyStorageException;
+export 'src/storage/storage_reader.dart' show StorageReader;
 export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/transaction.dart' show Transaction;
 export 'src/storage/transaction_rerun_limit.dart'
@@ -442,7 +454,6 @@ export 'src/subscriptions/update.dart'
 export 'src/sync/clock.dart' show Clock;
 export 'src/sync/declared_configuration.dart'
     show configurationFingerprint, declaredConfiguration;
-export 'src/sync/sync_cycle.dart' show SyncCycle, SyncCycleState;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
 
 // Versions — entry-type versions and the library's data-format version.

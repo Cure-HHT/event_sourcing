@@ -20,6 +20,7 @@ import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:event_sourcing_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/deleted_fifo_panel.dart';
 import 'package:event_sourcing_demo/widgets/detail_panel.dart';
 import 'package:event_sourcing_demo/widgets/fifo_panel.dart';
@@ -58,7 +59,10 @@ Future<_Pane> _mkPane(
   );
   final backend = SembastBackend(database: db);
   final datastore = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: Source(hopId: hop, identifier: identifier, softwareVersion: 'test'),
     entryTypes: allDemoEntryTypes,
     destinations: destinations,
@@ -183,7 +187,7 @@ Future<void> _mount(WidgetTester tester, _Pane pane) async {
               SizedBox(
                 width: 600,
                 child: WedgesPanel(
-                  backend: pane.backend,
+                  watch: StorageWatch(pane.store),
                   databaseId: pane.store.databaseId,
                   appState: pane.state,
                 ),
@@ -191,7 +195,7 @@ Future<void> _mount(WidgetTester tester, _Pane pane) async {
               SizedBox(
                 width: 600,
                 child: DetailPanel(
-                  backend: pane.backend,
+                  watch: StorageWatch(pane.store),
                   databaseId: pane.store.databaseId,
                   appState: pane.state,
                   policyNotifier: pane.state.policyNotifier,
@@ -202,7 +206,7 @@ Future<void> _mount(WidgetTester tester, _Pane pane) async {
                   width: 600,
                   child: FifoPanel(
                     destination: d,
-                    backend: pane.backend,
+                    watch: StorageWatch(pane.store),
                     appState: pane.state,
                   ),
                 ),
@@ -615,7 +619,7 @@ void main() {
               height: 400,
               child: DeletedFifoPanel(
                 destinationId: 'Primary',
-                backend: pane.backend,
+                watch: StorageWatch(pane.store),
               ),
             ),
           ),

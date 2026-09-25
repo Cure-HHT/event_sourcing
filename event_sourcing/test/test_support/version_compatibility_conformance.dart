@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
+import 'test_backends.dart';
 
 /// One database the scenarios open several backends over, as several
 /// builds of the library would.
@@ -100,14 +101,15 @@ Future<EventStore> _openStore(
   for (final spec in projections) {
     projectionRegistry.register(spec);
   }
-  return EventStore.open(
-    storage: backend,
+  final store = await EventStore.open(
+    storage: ApplicationSuppliedStorage(backend, db.securityFor(backend)),
     entryTypes: entryTypes,
     source: _kSource,
-    securityContexts: db.securityFor(backend),
     projections: projectionRegistry,
     promoters: promoterRegistry,
   );
+  trackTestBackend(store, backend);
+  return store;
 }
 
 /// The `1.0 -> 1.1` step adding `b` with the default `0` to [viewName].
@@ -178,13 +180,13 @@ Future<Map<String, List<Map<String, Object?>>>> _expectRebuildMatches(
 ) async {
   final byView = <String, List<Map<String, Object?>>>{};
   for (final view in views) {
-    final held = _sortedRows(await store.backend.findViewRows(view));
+    final held = _sortedRows(await store.reader.findViewRows(view));
     await rebuildView(
       store: store,
       viewName: view,
       targetVersionByEntryType: <String, EntryTypeVersion>{_kType: target},
     );
-    final rebuilt = _sortedRows(await store.backend.findViewRows(view));
+    final rebuilt = _sortedRows(await store.reader.findViewRows(view));
     expect(rebuilt, held, reason: 'view $view: rebuildView differs');
     byView[view] = held;
   }
@@ -206,17 +208,17 @@ void _expectRowWithoutDefault(Map<String, Object?>? row, Object? a) {
 }
 
 Future<EntryTypeVersion?> _storedTarget(EventStore store) =>
-    store.backend.transaction(
-      (txn) => store.backend.readViewTargetVersionInTxn(txn, _kView, _kType),
+    store.reader.transaction(
+      (txn) => store.reader.readViewTargetVersionInTxn(txn, _kView, _kType),
     );
 
 Future<Map<String, Object?>?> _row(EventStore store, String aggregateId) =>
-    store.backend.transaction(
-      (txn) => store.backend.readViewRowInTxn(txn, _kView, aggregateId),
+    store.reader.transaction(
+      (txn) => store.reader.readViewRowInTxn(txn, _kView, aggregateId),
     );
 
 Future<int> _promotionAudits(EventStore store) async {
-  final events = await store.backend.findAllEvents(
+  final events = await store.reader.findAllEvents(
     entryType: kViewSnapshotPromotedEntryType,
   );
   return events.where((e) => e.data['viewName'] == _kView).length;
@@ -305,7 +307,7 @@ void runVersionCompatibilityScenarios(
         await _appendNote(older, 'agg-n', <String, Object?>{'a': 3});
         final reopened = await _openNewer(db!);
 
-        final promoted = await reopened.backend.findViewRows(_kView);
+        final promoted = await reopened.reader.findViewRows(_kView);
         await rebuildView(
           store: reopened,
           viewName: _kView,
@@ -313,7 +315,7 @@ void runVersionCompatibilityScenarios(
             _kType: EntryTypeVersion(1, 1),
           },
         );
-        final rebuilt = await reopened.backend.findViewRows(_kView);
+        final rebuilt = await reopened.reader.findViewRows(_kView);
         expect(rebuilt, promoted);
         expect(await _storedTarget(reopened), const EntryTypeVersion(1, 1));
       });
@@ -328,8 +330,9 @@ void runVersionCompatibilityScenarios(
 
         // Stage a stored target below the registered version, as a
         // concurrent older build's fold leaves it.
-        await newer.backend.transaction(
-          (txn) => newer.backend.writeViewTargetVersionInTxn(
+        final newerBackend = testBackendOf(newer);
+        await newerBackend.transaction(
+          (txn) => newerBackend.writeViewTargetVersionInTxn(
             txn,
             _kView,
             _kType,
@@ -350,7 +353,7 @@ void runVersionCompatibilityScenarios(
         if (db == null) return;
         await _openNewer(db!);
         final older = await _openOlder(db!);
-        final eventsBefore = await older.backend.findAllEvents();
+        final eventsBefore = await older.reader.findAllEvents();
         EntryTypeVersion? targetInFold;
         Map<String, Object?>? rowInFold;
         await expectLater(
@@ -372,12 +375,12 @@ void runVersionCompatibilityScenarios(
               initiator: const UserInitiator('versions-user'),
             );
             // The fold lowers the target inside its own transaction.
-            targetInFold = await older.backend.readViewTargetVersionInTxn(
+            targetInFold = await older.reader.readViewTargetVersionInTxn(
               txn,
               _kView,
               _kType,
             );
-            rowInFold = await older.backend.readViewRowInTxn(
+            rowInFold = await older.reader.readViewRowInTxn(
               txn,
               _kView,
               'agg-1',
@@ -392,7 +395,7 @@ void runVersionCompatibilityScenarios(
         expect(await _storedTarget(older), const EntryTypeVersion(1, 1));
         expect(await _row(older, 'agg-1'), isNull);
         expect(
-          (await older.backend.findAllEvents()).length,
+          (await older.reader.findAllEvents()).length,
           eventsBefore.length,
         );
       });
@@ -529,9 +532,9 @@ void runVersionCompatibilityScenarios(
           expect(row, isNot(contains('b')));
         }
         for (final view in <String>[_kView, _kItemsView, _kTitlesView]) {
-          final target = await reopened.backend.transaction(
+          final target = await reopened.reader.transaction(
             (txn) =>
-                reopened.backend.readViewTargetVersionInTxn(txn, view, _kType),
+                reopened.reader.readViewTargetVersionInTxn(txn, view, _kType),
           );
           expect(target, const EntryTypeVersion(1, 1), reason: view);
         }
@@ -682,18 +685,20 @@ void runVersionCompatibilityScenarios(
           registry.register(spec);
         }
         return EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            db!.securityFor(backend),
+          ),
           entryTypes: entryTypes,
           source: _kSource,
-          securityContexts: db!.securityFor(backend),
           projections: registry,
         );
       }
 
       Future<bool> behind(EventStore store, String view, String entryType) =>
-          store.backend.transaction(
+          store.reader.transaction(
             (txn) =>
-                store.backend.readViewTargetBehindInTxn(txn, view, entryType),
+                store.reader.readViewTargetBehindInTxn(txn, view, entryType),
           );
 
       Future<List<Map<String, Object?>>> rowsAfterRebuild(
@@ -701,14 +706,14 @@ void runVersionCompatibilityScenarios(
         String view,
         Map<String, EntryTypeVersion> targets,
       ) async {
-        final held = _sortedRows(await store.backend.findViewRows(view));
+        final held = _sortedRows(await store.reader.findViewRows(view));
         await rebuildView(
           store: store,
           viewName: view,
           targetVersionByEntryType: targets,
         );
         expect(
-          _sortedRows(await store.backend.findViewRows(view)),
+          _sortedRows(await store.reader.findViewRows(view)),
           held,
           reason: 'view $view: rebuildView differs',
         );
@@ -725,14 +730,14 @@ void runVersionCompatibilityScenarios(
         await _appendNote(older, 'agg-2', <String, Object?>{'a': 2});
 
         final newer = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
-        expect(await newer.backend.findViewRows(newView), hasLength(2));
+        expect(await newer.reader.findViewRows(newView), hasLength(2));
 
         // The older build keeps serving: its appends are not folded into the
         // new view, and mark it.
         await _appendNote(older, 'agg-3', <String, Object?>{'a': 3});
         expect(await behind(older, newView, _kType), isTrue);
         expect(await behind(older, _kView, _kType), isFalse);
-        expect(await newer.backend.findViewRows(newView), hasLength(2));
+        expect(await newer.reader.findViewRows(newView), hasLength(2));
 
         final reopened = await openBuild(<ProjectionSpec>[_kSpec, newViewSpec]);
         expect(await behind(reopened, newView, _kType), isFalse);
@@ -768,8 +773,8 @@ void runVersionCompatibilityScenarios(
         );
         expect(await behind(older, _kView, otherType), isTrue);
         expect(await behind(older, _kView, _kType), isFalse);
-        final before = await older.backend.transaction(
-          (txn) => older.backend.readViewRowInTxn(txn, _kView, 'agg-1'),
+        final before = await older.reader.transaction(
+          (txn) => older.reader.readViewRowInTxn(txn, _kView, 'agg-1'),
         );
         expect(before!.containsKey('label'), isFalse);
 
@@ -801,7 +806,7 @@ void runVersionCompatibilityScenarios(
         );
         Future<List<Map<String, Object?>>> tableRows(EventStore store) async {
           final rows = <Map<String, Object?>>[
-            for (final row in await store.backend.findViewRows(tableView))
+            for (final row in await store.reader.findViewRows(tableView))
               Map<String, Object?>.from(row),
           ];
           String key(Map<String, Object?> row) =>
@@ -871,11 +876,10 @@ void runVersionCompatibilityScenarios(
           _kSpec,
           byAggregateSpec,
         ]);
-        expect(await newer.backend.findViewRows(byAggregateView), isEmpty);
+        expect(await newer.reader.findViewRows(byAggregateView), isEmpty);
         expect(
-          await newer.backend.transaction(
-            (txn) =>
-                newer.backend.readViewTargetsForEntryTypeInTxn(txn, _kType),
+          await newer.reader.transaction(
+            (txn) => newer.reader.readViewTargetsForEntryTypeInTxn(txn, _kType),
           ),
           isNot(contains(byAggregateView)),
           reason: 'no target is stored for an interest without entry types',
@@ -889,7 +893,7 @@ void runVersionCompatibilityScenarios(
           },
         );
         final rows = _sortedRows(
-          await newer.backend.findViewRows(byAggregateView),
+          await newer.reader.findViewRows(byAggregateView),
         );
         expect(rows.map((r) => r['aggregateId']), <String>['agg-1', 'agg-2']);
       });
@@ -929,8 +933,8 @@ void runVersionCompatibilityScenarios(
 
         final reopened = await openBuild(<ProjectionSpec>[wideSpec]);
         expect(
-          await reopened.backend.transaction(
-            (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
+          await reopened.reader.transaction(
+            (txn) => reopened.reader.readViewRowInTxn(txn, _kView, 'memo-1'),
           ),
           isNull,
         );
@@ -941,8 +945,8 @@ void runVersionCompatibilityScenarios(
             _kType: EntryTypeVersion(1, 0),
           },
         );
-        final row = await reopened.backend.transaction(
-          (txn) => reopened.backend.readViewRowInTxn(txn, _kView, 'memo-1'),
+        final row = await reopened.reader.transaction(
+          (txn) => reopened.reader.readViewRowInTxn(txn, _kView, 'memo-1'),
         );
         expect(row!['a'], 1);
       });
@@ -987,7 +991,7 @@ void runVersionCompatibilityScenarios(
               collector: collector,
             );
             expect(
-              await older.backend.readViewTargetBehindInTxn(
+              await older.reader.readViewTargetBehindInTxn(
                 txn,
                 newView,
                 _kType,
@@ -1012,8 +1016,8 @@ void runVersionCompatibilityScenarios(
           registered: const EntryTypeVersion(2, 0),
         );
         await _appendNote(current, 'agg-1', <String, Object?>{'a': 1});
-        final eventsBefore = await current.backend.findAllEvents();
-        final counterBefore = await current.backend.readSequenceCounter();
+        final eventsBefore = await current.reader.findAllEvents();
+        final counterBefore = await current.reader.readSequenceCounter();
         await db!.stop(current);
         final reader = await db!.openBackend();
 
@@ -1135,8 +1139,8 @@ void runVersionCompatibilityScenarios(
             if (db == null) return;
             final receiver = await openReceiver();
             final (entryVersion, dataFormat, matcher) = refusal.value;
-            final eventsBefore = await receiver.backend.findAllEvents();
-            final counterBefore = await receiver.backend.readSequenceCounter();
+            final eventsBefore = await receiver.reader.findAllEvents();
+            final counterBefore = await receiver.reader.readSequenceCounter();
             await expectLater(
               path.value(
                 receiver,
@@ -1149,11 +1153,11 @@ void runVersionCompatibilityScenarios(
               throwsA(matcher),
             );
             expect(
-              (await receiver.backend.findAllEvents()).length,
+              (await receiver.reader.findAllEvents()).length,
               eventsBefore.length,
             );
-            expect(await receiver.backend.readSequenceCounter(), counterBefore);
-            expect(await receiver.backend.findViewRows(_kView), isEmpty);
+            expect(await receiver.reader.readSequenceCounter(), counterBefore);
+            expect(await receiver.reader.findViewRows(_kView), isEmpty);
           });
         }
 
@@ -1167,7 +1171,7 @@ void runVersionCompatibilityScenarios(
             data: const <String, Object?>{'title': 'peer'},
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.libFormatVersion, const DataFormatVersion(2, 7));
         });
 
@@ -1183,7 +1187,7 @@ void runVersionCompatibilityScenarios(
             data: const <String, Object?>{'title': 'newer'},
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 9));
           final row = await _row(receiver, event.aggregateId);
           expect(row!['title'], 'newer');
@@ -1204,7 +1208,7 @@ void runVersionCompatibilityScenarios(
           final row = await _row(receiver, event.aggregateId);
           expect(row!['title'], 'older');
           expect(row['added'], 'default');
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 0));
         });
       }
@@ -1228,9 +1232,9 @@ void runVersionCompatibilityScenarios(
           if (db == null) return;
           final receiver = await openReceiver();
           await _appendNote(receiver, 'agg-held', <String, Object?>{'a': 1});
-          final eventsBefore = (await receiver.backend.findAllEvents()).length;
-          final counterBefore = await receiver.backend.readSequenceCounter();
-          final rowsBefore = await receiver.backend.findViewRows(_kView);
+          final eventsBefore = (await receiver.reader.findAllEvents()).length;
+          final counterBefore = await receiver.reader.readSequenceCounter();
+          final rowsBefore = await receiver.reader.findViewRows(_kView);
           final targetBefore = await _storedTarget(receiver);
           final (entryVersion, dataFormat) = refusal.value;
           final bytes = _batchOfMaps(<Map<String, Object?>>[
@@ -1254,9 +1258,9 @@ void runVersionCompatibilityScenarios(
               ),
             ),
           );
-          expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-          expect(await receiver.backend.readSequenceCounter(), counterBefore);
-          expect(await receiver.backend.findViewRows(_kView), rowsBefore);
+          expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+          expect(await receiver.reader.readSequenceCounter(), counterBefore);
+          expect(await receiver.reader.findViewRows(_kView), rowsBefore);
           expect(await _storedTarget(receiver), targetBefore);
         });
       }
@@ -1270,8 +1274,8 @@ void runVersionCompatibilityScenarios(
             db!,
             registered: const EntryTypeVersion(2, 0),
           );
-          final eventsBefore = (await receiver.backend.findAllEvents()).length;
-          final counterBefore = await receiver.backend.readSequenceCounter();
+          final eventsBefore = (await receiver.reader.findAllEvents()).length;
+          final counterBefore = await receiver.reader.readSequenceCounter();
           final event = _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 3),
             dataFormat: LibVersion.dataFormat,
@@ -1296,9 +1300,9 @@ void runVersionCompatibilityScenarios(
                   ),
             ),
           );
-          expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-          expect(await receiver.backend.readSequenceCounter(), counterBefore);
-          expect(await receiver.backend.findViewRows(_kView), isEmpty);
+          expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+          expect(await receiver.reader.readSequenceCounter(), counterBefore);
+          expect(await receiver.reader.findViewRows(_kView), isEmpty);
         });
 
         // Verifies: EVS-DEV-version-compatibility/D
@@ -1313,10 +1317,10 @@ void runVersionCompatibilityScenarios(
             entryType: 'unregistered_type',
           );
           await path.value(receiver, event);
-          final stored = await receiver.backend.findEventById(event.eventId);
+          final stored = await receiver.reader.findEventById(event.eventId);
           expect(stored!.entryTypeVersion, const EntryTypeVersion(9, 3));
           expect(stored.data, event.data);
-          expect(await receiver.backend.findViewRows(_kView), isEmpty);
+          expect(await receiver.reader.findViewRows(_kView), isEmpty);
         });
       }
 
@@ -1325,8 +1329,8 @@ void runVersionCompatibilityScenarios(
           'failure naming the field, before any write', () async {
         if (db == null) return;
         final receiver = await openReceiver();
-        final eventsBefore = (await receiver.backend.findAllEvents()).length;
-        final counterBefore = await receiver.backend.readSequenceCounter();
+        final eventsBefore = (await receiver.reader.findAllEvents()).length;
+        final counterBefore = await receiver.reader.readSequenceCounter();
         final malformed = <String, Map<String, Object?>>{
           'entry_type_version': <String, Object?>{'major': 0, 'minor': 0},
           'lib_format_version': <String, Object?>{'major': 2},
@@ -1353,8 +1357,8 @@ void runVersionCompatibilityScenarios(
             ),
           );
         }
-        expect((await receiver.backend.findAllEvents()).length, eventsBefore);
-        expect(await receiver.backend.readSequenceCounter(), counterBefore);
+        expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+        expect(await receiver.reader.readSequenceCounter(), counterBefore);
       });
 
       // Verifies: EVS-DEV-version-compatibility/D
@@ -1362,7 +1366,7 @@ void runVersionCompatibilityScenarios(
           'any write', () async {
         if (db == null) return;
         final receiver = await openReceiver();
-        final eventsBefore = await receiver.backend.findAllEvents();
+        final eventsBefore = await receiver.reader.findAllEvents();
         final bytes = _batchOf(
           _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 4),
@@ -1392,7 +1396,7 @@ void runVersionCompatibilityScenarios(
           ),
         );
         expect(
-          (await receiver.backend.findAllEvents()).length,
+          (await receiver.reader.findAllEvents()).length,
           eventsBefore.length,
         );
       });

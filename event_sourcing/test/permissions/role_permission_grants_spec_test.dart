@@ -45,8 +45,8 @@ void main() {
         );
 
         // Row is stored under the aggregateId key.
-        final row = await eventStore.backend.transaction(
-          (txn) => eventStore.backend.readViewRowInTxn(
+        final row = await eventStore.reader.transaction(
+          (txn) => eventStore.reader.readViewRowInTxn(
             txn,
             kRolePermissionGrantsView,
             'admin:user.invite',
@@ -85,8 +85,8 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final row = await eventStore.backend.transaction(
-        (txn) => eventStore.backend.readViewRowInTxn(
+      final row = await eventStore.reader.transaction(
+        (txn) => eventStore.reader.readViewRowInTxn(
           txn,
           kRolePermissionGrantsView,
           'admin:user.invite',
@@ -111,7 +111,7 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final rows = await eventStore.backend.findViewRows(
+      final rows = await eventStore.reader.findViewRows(
         kRolePermissionGrantsView,
       );
       expect(rows, isEmpty);
@@ -142,14 +142,14 @@ void main() {
         initiator: const AutomationInitiator(service: 'test'),
       );
 
-      final rows = await eventStore.backend.findViewRows(
+      final rows = await eventStore.reader.findViewRows(
         kRolePermissionGrantsView,
       );
       // Exactly one row — upsert overwrote, no duplicates.
       expect(rows.where((r) => r['role'] == 'admin').length, 1);
 
-      final row = await eventStore.backend.transaction(
-        (txn) => eventStore.backend.readViewRowInTxn(
+      final row = await eventStore.reader.transaction(
+        (txn) => eventStore.reader.readViewRowInTxn(
           txn,
           kRolePermissionGrantsView,
           aggregateId,

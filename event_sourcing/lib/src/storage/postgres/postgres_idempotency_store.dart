@@ -13,12 +13,7 @@
 //   `runIdempotencyStoreConformanceTests` harness alongside
 //   InMemoryIdempotencyStore.
 
-import 'package:event_sourcing/src/actions/idempotency.dart';
-import 'package:event_sourcing/src/actions/idempotency_store.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
-import 'package:postgres/postgres.dart';
+part of 'postgres_backend.dart';
 
 /// Postgres-backed [IdempotencyStore]. Persists each dispatch outcome
 /// as one row in the `idempotency` table; primary key is
@@ -28,23 +23,30 @@ import 'package:postgres/postgres.dart';
 ///
 /// The store assumes the `idempotency` table exists: `PostgresBackend.
 /// provision` creates it with the rest of the backend's schema.
+
 class PostgresIdempotencyStore implements IdempotencyStore {
   /// Build a [PostgresIdempotencyStore] over [backend], so dispatch
   /// outcomes persist in the backend's database. Every read and write runs
   /// through `PostgresBackend.transaction`, so it is checked against the
   /// database's generation record like every other library write, and a
   /// fenced backend refuses it. The backend owns the connections; closing
-  /// the backend closes the store's.
+  /// the backend closes the store's. The event store builds it for its own
+  /// storage (`EventStore.idempotencyStore`).
   // Implements: EVS-DEV-version-compatibility/I
   // the idempotency store's lookups, records and sweeps run through the
   //   backend's fenced transactions.
-  PostgresIdempotencyStore.forBackend(PostgresBackend backend)
+  // Implements: EVS-DEV-storage-capability/I
+  // the constructor over a backend is private to the backend's Dart
+  //   library: the event store builds the idempotency store over the
+  //   storage it opened, through the backend.
+  PostgresIdempotencyStore._forBackend(PostgresBackend backend)
     : _run = _throughBackend(backend);
 
-  /// Build a [PostgresIdempotencyStore] over an already-opened [Pool] the
-  /// caller owns, for the store's own conformance tests. Pool lifecycle
-  /// (open/close, connection limits) is the caller's concern.
-  @visibleForTesting
+  /// Build a [PostgresIdempotencyStore] over a [Pool] the application
+  /// opened, under its own role, whose connections find the `idempotency`
+  /// table (the application provisions it in its own schema). The
+  /// application owns the pool: its lifecycle and connection limits are
+  /// the caller's concern.
   PostgresIdempotencyStore.over(Pool<void> pool)
     : _run = (<R>(Future<R> Function(Session session) op) => pool.run(op));
 
@@ -53,7 +55,7 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   static Future<R> Function<R>(Future<R> Function(Session session) op)
   _throughBackend(PostgresBackend backend) =>
       <R>(Future<R> Function(Session session) op) =>
-          backend.transaction((txn) => op((txn as PostgresTxn).session));
+          backend.transaction((txn) => op((txn as _PostgresTxn)._session));
 
   // Implements: EVS-PRD-action-dispatch/D
   // entries past their

@@ -89,13 +89,12 @@ void runReconfigureScenarios(
       String? configurationVersion,
       SyncPolicy? policy,
     }) async {
-      final cycle = await w.start(
+      return w.start(
         on: p.registry,
         configurationVersion: configurationVersion,
         policy: policy ?? _budget(5),
+        handDriven: true,
       );
-      p.store.deliveryTrigger = null;
-      return cycle;
     }
 
     Future<StoredEvent> recoveryEvent() async => (await w.backend.findAllEvents(

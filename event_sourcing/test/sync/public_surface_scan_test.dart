@@ -47,8 +47,8 @@ const _reads = <String, String>{
 /// `StorageBackend` members that change state yet stay public.
 const _nonReads = <String, String>{
   'transaction':
-      "a consumer runs its own reads in one transaction (reaction's server "
-      'handlers do); an event-store append refuses any transaction but the '
+      'a consumer of an application-supplied backend runs its own reads in '
+      'one transaction; an event-store append refuses any transaction but the '
       "event store's own runTransaction, and every mutator reachable "
       'through the handle is itself internal',
   'close': "the consumer owns the backend's lifetime",
@@ -90,14 +90,10 @@ const _functionTyped = <String, String>{
       'refused',
   'EventStore.runTransaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
-  'EventStore.deliveryTrigger (getter)':
-      "internal: the trigger slot, which only the delivery cycle's start and "
-      'close set; the trigger wakes the cycle and decides nothing',
-  'EventStore.deliveryTrigger=(trigger)':
-      "internal: the trigger slot, which only the delivery cycle's start and "
-      'close set; the trigger wakes the cycle and decides nothing',
   'PostgresBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'PostgresBackend.readOnlyTransaction(body)':
+      "internal: the storage reader's body, in a READ ONLY transaction",
   'PostgresBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'ScopeClassRegistry.new(projectionLookup)':
@@ -115,8 +111,13 @@ const _functionTyped = <String, String>{
       "the consumer's transaction body; every write it can reach is internal",
   'StorageBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'StorageBackend.readOnlyTransaction(body)':
+      "internal: the storage reader's body, in a transaction for reads only",
   'StorageBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
+  'StorageReader.transaction(body)':
+      "the consumer's reads in one transaction for reads only; the handle "
+      'reaches only the reader, and every append refuses it',
   'SubscriptionFilter.new(predicate)':
       "a destination's filter is delivery configuration under the "
       "Destination trust entry; a subscription's filter decides only what "
@@ -132,12 +133,6 @@ const _functionTyped = <String, String>{
       'delivery configuration under the Destination trust entry; decides the '
       'retry policy per cycle, and each wedge event records the budget in '
       'effect',
-  'TableBackedAuthorizationPolicy.new(transactionProvider)':
-      'known unenumerated input: opens the transaction the authorization '
-      'policy reads in',
-  'TableBackedAuthorizationPolicy.transactionProvider (field)':
-      'known unenumerated input: opens the transaction the authorization '
-      'policy reads in',
 };
 
 /// The zone reads outside the seam file, by path, each exact. The boot
@@ -204,6 +199,8 @@ const _seamKinds = <String, String>{
   'failNextHeartbeat': 'failure injection',
   'afterCommitBeforePublish': 'interleave',
   'pageVisibility': 'environment signal',
+  'onDeliveryWake': 'observe',
+  'handDrivenCycle': 'failure injection',
 };
 
 const _seamKindNames = <String>{
@@ -272,9 +269,14 @@ List<String> seamKindRule(ClassElement hooks, Map<String, String> kinds) {
 }
 
 /// Members on types other than `StorageBackend`, and top-level functions,
-/// that must be internal.
+/// that must be internal. The writing, publishing and handle-yielding
+/// members of the types the library hands to application code are private
+/// to their Dart library instead, which the run-time barrier tests and the
+/// committed surface list (test/barrier/) enforce.
 const _mustBeInternal = <String, String>{
   'drain': 'drains a queue outside the delivery cycle',
+  'wedgeHeadInTxnForTest':
+      'wedges a queue head outside the drainer; refuses without assertions',
   'honourHaltById':
       'wedges a queue head for a halt request outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
@@ -282,8 +284,6 @@ const _mustBeInternal = <String, String>{
   'seedViewTargetVersions': 'writes view target versions',
   'promoteViewSnapshots': 'rewrites view rows and target versions',
   'catchUpViews': 'rewrites view rows and clears catch-up marks',
-  'EventStoreBundle.setViewTargetVersion':
-      'writes view_target_versions without the boot seeding',
   'AggregateFold.applyEvent': 'writes view rows',
   'TableFold.applyEvent': 'writes view rows',
   'ProjectionInterpreter.applyEvent': 'writes view rows',
@@ -314,29 +314,13 @@ const _mustBeInternal = <String, String>{
   'PostgresSecurityContextStore.deleteInTxn':
       "deletes an event's security "
       'context',
-  'PostgresTxn.invalidate': 'ends a transaction handle the backend owns',
-  'PostgresTxn.session': 'raw engine transaction',
-  'SembastBackend.unwrapSembastTxn': 'raw engine transaction',
-  'PublishCollector.add': 'publishes an event to live subscribers',
-  'PublishCollector.addRowChanges':
-      'publishes view changes to live subscribers',
   'PostgresBackend.pool': 'raw connection pool',
   'SembastBackendTestSupport.databaseForTesting': 'raw database handle',
   'DestinationRegistry.eventStore':
       'reaches the event store the drainer runs its outcome transactions in',
-  'DestinationRegistry.wedgeHeadInTxn':
-      'wedges a queue head and appends a reserved wedge event',
-  'DestinationRegistry.honourHaltInTxn':
-      'wedges a queue head for a halt request, or removes the stored request',
-  'EventStore.appendReserved': 'appends a reserved system event',
-  'EventStore.deliveryTrigger':
-      "sets or reads the delivery cycle's trigger slot",
-  'EventStore.wakeDeliveryCycle': 'fires the delivery cycle outside an append',
   'PostgresBackend.sessionLost': "observes the lock session's loss",
   'PostgresBackend.whenRegistered':
       'waits for the lock session to be registered again',
-  'EventStore.appendReservedInTxn':
-      'appends a reserved system event in a transaction',
   'GenerationRegistration.recordInTxn':
       "writes the generation's records in the boot transaction",
   'UnguardedGenerationRegistration.recordInTxn':
@@ -349,8 +333,7 @@ const _sanctionedRawHandles = <String>{
   'PostgresGenerationGuard.runOnSession',
   'PostgresLockSession.connection',
   'PostgresLockSession.run',
-  'PostgresTxn.session',
-  'SembastBackend.unwrapSembastTxn',
+  'PostgresLockSession.runOutsideTransactionForTest',
   'SembastBackendTestSupport.databaseForTesting',
 };
 
@@ -365,6 +348,12 @@ const _concreteOperations = <String, String>{
   'PostgresBackend.generationStatus': "reads the generation guard's state",
   'PostgresBackend.lockSessionForTest':
       "visible for testing: reads the lock session's settings",
+  'PostgresBackend.searchPathsForTest':
+      'visible for testing: reads the search path in effect in a library '
+      'transaction on the pool and on the lock session',
+  'PostgresBackend.sessionSearchPathsForTest':
+      "visible for testing: reads each pool session's and the lock "
+      "session's own search path",
 };
 
 /// Public members of unexported types, and unexported top-level functions,
@@ -422,6 +411,9 @@ const _topLevelOperations = <String, String>{
   'computeRoleAssignmentAggregateId': 'pure function; changes nothing',
   'configurationFingerprint': 'pure function; changes nothing',
   'declaredConfiguration': 'pure function; changes nothing',
+  'deleteSembastDatabase':
+      'deletes the Sembast database a description names, refused while an '
+      'event store of the isolate holds it open',
   'denialAuthorizationDenied': 'builds an event draft; changes nothing',
   'denialExecutionFailed': 'builds an event draft; changes nothing',
   'denialIdempotencyMismatch': 'builds an event draft; changes nothing',
@@ -444,6 +436,31 @@ const _bundleOperations = <String, String>{
   'securityContexts':
       'the read-only security-context store; its mutators are internal',
 };
+
+const _fixturePolicy = '''
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
+import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/storage/storage_reader.dart';
+import 'package:postgres/postgres.dart' show Pool;
+
+class ScanFixtureBackendPolicy {
+  ScanFixtureBackendPolicy({required this.reader, required StorageBackend backend})
+    : _backend = backend;
+  final StorageReader reader;
+  final StorageBackend _backend;
+  bool get hasBackend => identical(_backend, _backend);
+}
+
+class ScanFixturePoolPolicy {
+  ScanFixturePoolPolicy.over(Pool<void> pool);
+}
+
+class ScanFixtureGetterPolicy {
+  ScanFixtureGetterPolicy(this.reader);
+  final StorageReader reader;
+  PostgresBackend? get backend => null;
+}
+''';
 
 const _fixtureBackends = '''
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -543,30 +560,11 @@ class ScanFixtureSeam {}
 const _fixtureBarrel = '''
 export 'package:event_sourcing/event_sourcing.dart';
 export 'src/scan_fixture_exports.dart';
-export 'src/sync/drain.dart' show drain;
-export 'src/sync/fill_batch.dart' show fillBatch;
+export 'src/event_store.dart' show drain, fillBatch;
 export 'src/testing/scan_fixture_seam.dart';
 ''';
 
 const _fixtureInternalCopies = '''
-class EventStoreBundle {
-  Future<void> setViewTargetVersion(String v, String e, int n) async {}
-}
-
-class PostgresTxn {
-  Object get session => Object();
-  void invalidate() {}
-}
-
-class SembastBackend {
-  Object unwrapSembastTxn(Object txn) => txn;
-}
-
-class PublishCollector {
-  void add(Object event) {}
-  void addRowChanges(Iterable<Object> changes) {}
-}
-
 class PostgresBackend {
   Object get pool => Object();
   Future<void> get sessionLost async {}
@@ -579,16 +577,10 @@ extension SembastBackendTestSupport on SembastBackend {
 
 class DestinationRegistry {
   Object get eventStore => Object();
-  Future<void> wedgeHeadInTxn() async {}
-  Future<void> honourHaltInTxn() async {}
 }
 
-class EventStore {
-  Future<void> appendReserved() async {}
-  Future<void> appendReservedInTxn() async {}
-  Object? get deliveryTrigger => null;
-  set deliveryTrigger(Object? trigger) {}
-  void wakeDeliveryCycle() {}
+class EventStoreBundle {
+  Future<void> stageViewTargets(String v, String e, int n) async {}
 }
 
 class AggregateFold {
@@ -622,6 +614,7 @@ class PostgresSecurityContextStore {
 }
 
 Future<void> drain() async {}
+Future<void> wedgeHeadInTxnForTest() async {}
 Future<void> honourHaltById() async {}
 Future<void> fillBatch() async {}
 Future<void> writeQueueItemsTxn() async {}
@@ -777,7 +770,7 @@ void main() {
           'SembastBackend',
           'PostgresBackend',
           'SembastBackendTestSupport',
-          'PostgresTxn',
+          '_PostgresTxn',
         ]),
       );
       expect(
@@ -850,6 +843,18 @@ void main() {
         isEmpty,
       );
     });
+    // Verifies: EVS-DEV-storage-capability/I
+    // the authorization policy the library builds over its storage takes,
+    //   holds and yields no storage backend and no pool: it reads through
+    //   the storage reader.
+    test('(i) the authorization policy holds no storage backend or pool', () {
+      expect(
+        holdsNoBackendRule(<InterfaceElement>[
+          classNamed(libraries, 'TableBackedAuthorizationPolicy'),
+        ]),
+        isEmpty,
+      );
+    });
   });
 
   group('synthetic fixtures fail the rules', () {
@@ -873,6 +878,7 @@ void main() {
           'lib/src/sync/scan_fixture_writer.dart': _fixtureUnexportedWriter,
           'lib/src/sync/scan_fixture_zone.dart': _fixtureZoneAndLog,
           'lib/src/testing/scan_fixture_hooks.dart': _fixtureUnsafeHooks,
+          'lib/src/permissions/scan_fixture_policy.dart': _fixturePolicy,
         },
       );
       hooksLib = (await fixtures.library(
@@ -1163,7 +1169,7 @@ void main() {
         violations,
         containsAll(<Matcher>[
           contains('exported top-level function scanFixtureOperation'),
-          contains('EventStoreBundle.setViewTargetVersion is neither'),
+          contains('EventStoreBundle.stageViewTargets is neither'),
         ]),
       );
     });
@@ -1178,6 +1184,24 @@ void main() {
       expect(violations, <Matcher>[
         contains('unexported top-level function rewindQueue'),
         contains('ScanFixtureWriter.purge (unexported)'),
+      ]);
+    });
+
+    // Verifies: EVS-DEV-storage-capability/I
+    // a policy that takes a backend-typed constructor parameter, holds a
+    //   backend in a private field, takes a pool, or yields a backend fails
+    //   the rule.
+    test('(i) a policy that takes, holds or yields a backend or a pool '
+        'fails', () async {
+      final policyLib = (await fixtures.library(
+        'lib/src/permissions/scan_fixture_policy.dart',
+      ))!;
+      final violations = holdsNoBackendRule(policyLib.classes);
+      expect(violations, <Matcher>[
+        contains('ScanFixtureBackendPolicy.new(backend)'),
+        contains('ScanFixtureBackendPolicy._backend'),
+        contains('ScanFixturePoolPolicy.over(pool)'),
+        contains('ScanFixtureGetterPolicy.backend'),
       ]);
     });
   });

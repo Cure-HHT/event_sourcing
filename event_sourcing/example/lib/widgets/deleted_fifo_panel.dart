@@ -1,23 +1,23 @@
 import 'dart:async';
 
-import 'package:event_sourcing/event_sourcing.dart'
-    show FifoEntry, FinalStatus, SembastBackend;
+import 'package:event_sourcing/event_sourcing.dart' show FifoEntry, FinalStatus;
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 /// Read-only column for a destination the hub deleted. A deletion keeps the
 /// destination's delivered, wedged and recovered queue items as its
-/// delivery record; this panel lists them from the backend's public queue
-/// read, refreshed by the backend's queue watcher.
+/// delivery record; this panel lists them from the event store's reader,
+/// refreshed as the queue changes.
 class DeletedFifoPanel extends StatefulWidget {
   const DeletedFifoPanel({
     required this.destinationId,
-    required this.backend,
+    required this.watch,
     super.key,
   });
 
   final String destinationId;
-  final SembastBackend backend;
+  final StorageWatch watch;
 
   @override
   State<DeletedFifoPanel> createState() => _DeletedFifoPanelState();
@@ -30,7 +30,7 @@ class _DeletedFifoPanelState extends State<DeletedFifoPanel> {
   @override
   void initState() {
     super.initState();
-    _sub = widget.backend.watchFifo(widget.destinationId).listen((rows) {
+    _sub = widget.watch.queue(widget.destinationId).listen((rows) {
       if (!mounted) return;
       setState(() => _rows = rows);
     });

@@ -14,7 +14,6 @@ import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
-import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import 'test_postgres_url.dart';
@@ -26,16 +25,6 @@ const _kAddedView = 'pause_notes_added';
 final int _kAggregates =
     int.tryParse(Platform.environment['PAUSE_TEST_AGGREGATES'] ?? '') ?? 500;
 const _kEventsPerAggregate = 10;
-
-Future<void> _resetSchema(String url) async {
-  final tmp = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-}
 
 AggregateProjectionSpec _view(String name) => AggregateProjectionSpec(
   viewName: name,
@@ -84,14 +73,16 @@ Future<EventStore> _open(
   final projections = ProjectionRegistry()..register(_view(_kView));
   if (addView) projections.register(_view(_kAddedView));
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      PostgresSecurityContextStore(backend: backend),
+    ),
     entryTypes: registry,
     source: const Source(
       hopId: 'pause-hop',
       identifier: 'pause-install',
       softwareVersion: 'pause-test',
     ),
-    securityContexts: PostgresSecurityContextStore(backend: backend),
     projections: projections,
     promoters: promoters,
   );
@@ -132,25 +123,22 @@ typedef _Measure = ({
 });
 
 void main() {
-  final url = testPostgresUrl();
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
   Future<PostgresBackend> openBackend() async {
-    final backend = await PostgresBackend.open(
-      url: url!,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    final backend = await db!.open(provision: true);
     backends.add(backend);
     return backend;
   }
 
   setUp(() async {
-    if (url == null) {
+    if (db == null) {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await _resetSchema(url);
+    await db.reset();
   });
 
   tearDown(() async {
@@ -245,7 +233,7 @@ void main() {
   //   behind the log.
   test('a canary that adds a view over the log re-derives it in its boot '
       'while the serving instance appends', () async {
-    if (url == null) return;
+    if (db == null) return;
     final m = await measure((backend) => _open(backend, addView: true));
     final canary = backends.last;
     final rows = await canary.findViewRows(_kAddedView);
@@ -283,7 +271,7 @@ void main() {
   // a view, for as long as the promotion takes.
   test('a canary that promotes a view: the pause of the serving appends is '
       'measured', () async {
-    if (url == null) return;
+    if (db == null) return;
     await measure(
       (backend) => _open(backend, noteVersion: const EntryTypeVersion(1, 1)),
     );

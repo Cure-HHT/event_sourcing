@@ -172,7 +172,7 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
-      final events = await eventStore.backend.findAllEvents(
+      final events = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(events, isNotEmpty);
@@ -198,7 +198,7 @@ void main() {
       );
       expect(result, isA<DispatchSuccess<Object?>>());
 
-      final events = await eventStore.backend.findAllEvents(
+      final events = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(events, isNotEmpty);
@@ -226,7 +226,7 @@ void main() {
       );
       expect(result, isA<DispatchAuthorizationDenied<Object?>>());
 
-      final denials = await eventStore.backend.findAllEvents(
+      final denials = await eventStore.reader.findAllEvents(
         entryType: 'action_denial',
       );
       expect(denials, isNotEmpty);
@@ -258,7 +258,7 @@ void main() {
         _ctx(),
       );
 
-      final denials = await eventStore.backend.findAllEvents(
+      final denials = await eventStore.reader.findAllEvents(
         entryType: 'action_denial',
       );
       final unknownDenials = denials
@@ -300,7 +300,7 @@ void main() {
       expect(result, isA<DispatchSuccess<Object?>>());
 
       // D: round-trip through Sembast storage — token must be identical.
-      final stored = await eventStore.backend.findAllEvents(
+      final stored = await eventStore.reader.findAllEvents(
         entryType: 'greeting',
       );
       expect(stored, isNotEmpty);

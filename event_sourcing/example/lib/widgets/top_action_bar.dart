@@ -26,14 +26,12 @@ const SecurityDetails _kDemoSecurityDetails = SecurityDetails(
 class TopActionBar extends StatefulWidget {
   const TopActionBar({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.onResetAll,
     super.key,
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final Future<void> Function() onResetAll;
 

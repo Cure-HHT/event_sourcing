@@ -7,27 +7,23 @@
 // here against Postgres too: status, halt, cancellation, recovery, the 409
 // refusals and the 403 with nothing written.
 //
-// Gated on PG_TEST_URL. Drops + recreates the `public` schema in the
-// per-test factory so each call returns a deterministic empty database
-// — same discipline as `postgres_integration_test.dart` and the
-// StorageBackend conformance harness.
+// Gated on PG_TEST_URL. Drops the demo schema and runs the demo's deployment
+// step in the per-test factory, so each call returns a deterministic empty
+// database opened as the declared runtime role.
 
 @TestOn('vm')
 library;
 
-import 'dart:io';
-
-import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:postgres/postgres.dart';
 
 import 'delivery_routes_test.dart' show runDeliveryRoutesTests;
 import 'demo_routes_test.dart' show runDemoRoutesTests;
 import 'support/demo_bootstrap.dart';
+import 'support/demo_postgres.dart';
 
 void main() {
-  final url = Platform.environment['PG_TEST_URL'];
-  if (url == null || url.isEmpty) {
+  final db = DemoPostgres.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping postgres demo routes tests');
     });
@@ -35,25 +31,10 @@ void main() {
   }
 
   Future<DemoBackends> factory() async {
-    final endpoint = PostgresBackend.endpointFromUrl(url);
-    final tmp = await Connection.open(
-      endpoint,
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
-    );
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-
-    final pg = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    await db.reset();
+    final pg = await db.open();
     addTearDown(pg.close);
-    return DemoBackends(
-      backend: pg,
-      idempotencyStore: PostgresIdempotencyStore.forBackend(pg),
-    );
+    return DemoBackends(backend: pg);
   }
 
   runDemoRoutesTests(factory, label: 'postgres');

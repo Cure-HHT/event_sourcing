@@ -1,11 +1,4 @@
-import 'package:event_sourcing/src/security/event_security_context.dart';
-import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
-import 'package:event_sourcing/src/storage/sembast_backend.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:sembast/sembast.dart' hide Transaction;
-import 'package:sembast/sembast.dart' as sembast show Transaction;
+part of '../storage/sembast_backend.dart';
 
 /// Sembast-backed `SecurityContextStore`. Maintains one sembast store
 /// (`security_context`) keyed on `event_id`. Cross-store reads (the
@@ -19,17 +12,22 @@ import 'package:sembast/sembast.dart' as sembast show Transaction;
 // `findUnredactedOlderThanInTxn`
 //   and `findOlderThanInTxn` drive the retention compact/purge sweeps that
 //   satisfy ALCOA+ Enduring / §11.10(c) protection-of-records obligations.
-class SembastSecurityContextStore extends MutableSecurityContextStore {
-  SembastSecurityContextStore({required this.backend});
 
-  final SembastBackend backend;
+class SembastSecurityContextStore extends MutableSecurityContextStore {
+  /// A store over [backend]: the event store builds one over the storage
+  /// it opens, and an application builds one for a backend it constructed
+  /// and names as application-supplied storage.
+  SembastSecurityContextStore({required SembastBackend backend})
+    : _backend = backend;
+
+  final SembastBackend _backend;
 
   final StoreRef<String, Map<String, Object?>> _store = stringMapStoreFactory
       .store('security_context');
 
   @override
   Future<EventSecurityContext?> read(String eventId) {
-    return backend.transaction((txn) => readInTxn(txn, eventId));
+    return _backend.transaction((txn) => readInTxn(txn, eventId));
   }
 
   @override
@@ -110,7 +108,7 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     DateTime? to,
     int limit = 50,
     String? cursor,
-  }) => backend.queryAudit(
+  }) => _backend.queryAudit(
     initiator: initiator,
     flowToken: flowToken,
     ipAddress: ipAddress,
@@ -122,10 +120,10 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
 
   sembast.Transaction _castTxn(Transaction txn) {
     // Unwrap via the backend's transaction() — test-side txns passed in
-    // must have been produced by backend.transaction(). We can't access
+    // must have been produced by _backend.transaction(). We can't access
     // the private _SembastTxn directly, so the convention is to use the
     // txn via the backend's view methods. This concrete store is paired
     // with SembastBackend-produced transactions.
-    return backend.unwrapSembastTxn(txn);
+    return _backend._unwrapSembastTxn(txn);
   }
 }

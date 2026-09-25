@@ -16,7 +16,10 @@ void main() {
       final db = await newDatabaseFactoryMemory().openDatabase('panel.db');
       backend = SembastBackend(database: db);
       bundle = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: const Source(
           hopId: 'mobile-device',
           identifier: 'panel-test',

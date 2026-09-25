@@ -1,6 +1,10 @@
 // Implements: EVS-DEV-postgres-backend/G
-// the ordered migration list whose steps provisioning applies; this build
-//   ships one step, version 1, holding the whole DDL.
+// the ordered migration list whose steps provisioning applies: version 1
+//   holds the tables of the log, the views, the queues and the sidecars;
+//   version 2 adds the declared library roles and keeps the minimum.
+// Implements: EVS-DEV-postgres-backend/P
+// the `library_roles` table in the library's schema, created by the owner,
+//   in which provisioning records the declared runtime and lock roles.
 // Implements: EVS-DEV-destination-drain/S
 // the queue table's status check and the `fifo_entries_guard` triggers,
 //   created by provisioning with the table they guard.
@@ -18,7 +22,7 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 1;
+const int postgresSchemaVersion = 2;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
@@ -60,6 +64,11 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _idempotencyTable,
     ],
   ),
+  PostgresMigrationStep(
+    toVersion: 2,
+    minCompatibleVersion: 1,
+    ddl: <String>[_libraryRolesTable],
+  ),
 ];
 
 /// The tables the library creates. A schema that holds any of them but
@@ -74,6 +83,7 @@ const List<String> postgresLibraryTables = <String>[
   'backend_state',
   'security_context',
   'idempotency',
+  'library_roles',
 ];
 
 /// The migration steps in effect: [postgresMigrations], or the list a test
@@ -372,5 +382,20 @@ CREATE TABLE IF NOT EXISTS idempotency (
   expires_at                TIMESTAMPTZ  NOT NULL,
   raw_input_canonical_json  TEXT,
   PRIMARY KEY (action_name, principal_id, idempotency_key)
+)
+''';
+
+// --- Declared library roles ----------------------------------------------
+
+// The runtime and lock roles the deployment declared when it provisioned the
+// database, one row per role and kind. The owner creates the table and
+// provisioning, run as the owner, rewrites its rows; the runtime role is
+// granted `SELECT` alone, so no library role changes which roles `open`
+// admits.
+const String _libraryRolesTable = '''
+CREATE TABLE IF NOT EXISTS library_roles (
+  role_name  TEXT  NOT NULL  CHECK (role_name <> ''),
+  kind       TEXT  NOT NULL  CHECK (kind IN ('runtime', 'lock')),
+  PRIMARY KEY (role_name, kind)
 )
 ''';

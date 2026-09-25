@@ -14,58 +14,13 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import '../../test_support/boot_progress_conformance.dart';
-import '../../test_support/version_compatibility_conformance.dart'
-    show VersionTestDatabase;
+import 'postgres_scenario_database.dart';
 import 'test_postgres_url.dart';
-
-class _PostgresProgressDatabase implements VersionTestDatabase {
-  _PostgresProgressDatabase(this._url);
-
-  final String _url;
-  final List<PostgresBackend> _backends = <PostgresBackend>[];
-
-  @override
-  Future<StorageBackend> openBackend() async {
-    final backend = await PostgresBackend.open(
-      url: _url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
-    _backends.add(backend);
-    return backend;
-  }
-
-  @override
-  MutableSecurityContextStore securityFor(StorageBackend backend) =>
-      PostgresSecurityContextStore(backend: backend as PostgresBackend);
-
-  @override
-  Future<void> stop(EventStore store) => store.close();
-
-  @override
-  Future<void> close() async {
-    for (final backend in _backends) {
-      await backend.close();
-    }
-    _backends.clear();
-  }
-}
-
-Future<void> _resetSchema(String url) async {
-  final tmp = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await tmp.execute('DROP SCHEMA public CASCADE');
-  await tmp.execute('CREATE SCHEMA public');
-  await tmp.close();
-}
 
 /// Commits [contender]'s open transaction once another session of this
 /// database waits for a lock, or once [waiter] has completed.
@@ -99,23 +54,22 @@ Future<void> _until(bool Function() condition) async {
 }
 
 void main() {
-  final url = testPostgresUrl();
-  runBootProgressScenarios(() async {
-    if (url == null) return null;
-    await _resetSchema(url);
-    return _PostgresProgressDatabase(url);
-  }, backendLabel: 'postgres');
+  final pg = PostgresTestDatabase.fromEnvironment();
+  if (pg != null) tearDownAll(pg.drop);
+  runBootProgressScenarios(
+    () => PostgresScenarioDatabase.fresh(pg),
+    backendLabel: 'postgres',
+  );
 
   group('boot progress on Postgres', () {
-    _PostgresProgressDatabase? db;
+    PostgresScenarioDatabase? db;
 
     setUp(() async {
-      if (url == null) {
+      if (pg == null) {
         markTestSkipped('PG_TEST_URL unset');
         return;
       }
-      await _resetSchema(url);
-      db = _PostgresProgressDatabase(url);
+      db = await PostgresScenarioDatabase.fresh(pg);
     });
 
     tearDown(() async {
@@ -156,18 +110,14 @@ void main() {
       final baseline = await bootOutcome(baselineStore);
       await baselineStore.close();
       await db!.close();
-      await _resetSchema(url!);
-      db = _PostgresProgressDatabase(url);
+      db = await PostgresScenarioDatabase.fresh(pg);
       await seedOlder();
 
       // The contender writes, without committing, the first row the boot's
       // re-derivation of the new view writes, so the first run reports its
       // promotion, starts the re-derivation, waits for the contender, and
       // fails to serialize once the contender commits.
-      final contender = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
+      final contender = await pg!.connectAdmin();
       await contender.execute('BEGIN');
       await contender.execute(
         'INSERT INTO view_rows (view_name, row_key, row_data, updated_at) '

@@ -16,8 +16,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';

@@ -41,7 +41,10 @@ void main() {
         'entryTypes, destinations, securityContexts', () async {
       final backend = await _openBackend();
       final ds = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: [_defn('demo_note')],
         destinations: const <Destination>[],
@@ -57,7 +60,10 @@ void main() {
         'caller-supplied list', () async {
       final backend = await _openBackend();
       final ds = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: [_defn('demo_note')],
         destinations: const <Destination>[],
@@ -72,7 +78,10 @@ void main() {
       final backend = await _openBackend();
       await expectLater(
         bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: [_defn('security_context_redacted')],
           destinations: const <Destination>[],
@@ -97,7 +106,10 @@ void main() {
       ];
 
       final ds = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: types,
         destinations: dests,
@@ -128,7 +140,10 @@ void main() {
 
       await expectLater(
         bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: types,
           destinations: dests,
@@ -146,7 +161,10 @@ void main() {
 
       await expectLater(
         bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: types,
           destinations: dests,
@@ -179,7 +197,10 @@ void main() {
 
       await expectLater(
         bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: const [],
           destinations: dests,
@@ -201,7 +222,10 @@ void main() {
 
         await expectLater(
           bootstrapEventStore(
-            backend: backend,
+            storage: ApplicationSuppliedStorage(
+              backend,
+              SembastSecurityContextStore(backend: backend),
+            ),
             source: _source,
             entryTypes: const [],
             destinations: dests,
@@ -230,7 +254,10 @@ void main() {
     test('emits lib_version_initialized on first bootstrap', () async {
       final backend = await _openBackend();
       final bundle = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
         destinations: const <Destination>[],
@@ -253,7 +280,10 @@ void main() {
         dataFormat: LibVersion.dataFormat.nextMinor,
       );
       final bundle = await bootstrapEventStore(
-        backend: backend,
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
         source: _source,
         entryTypes: const <EntryTypeDefinition>[],
         destinations: const <Destination>[],
@@ -279,7 +309,10 @@ void main() {
       final counter = await backend.readSequenceCounter();
       await expectLater(
         bootstrapEventStore(
-          backend: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           source: _source,
           entryTypes: const <EntryTypeDefinition>[],
           destinations: const <Destination>[],

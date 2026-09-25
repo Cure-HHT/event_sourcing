@@ -18,10 +18,10 @@ import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/storage/storage_description.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/versions.dart';
@@ -55,14 +55,16 @@ Future<EventStore> _open() async {
     );
   final projections = ProjectionRegistry()..register(_spec);
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     entryTypes: entryTypes,
     source: const Source(
       hopId: 'test',
       identifier: 'test-instance',
       softwareVersion: '0.0.0-test',
     ),
-    securityContexts: SembastSecurityContextStore(backend: backend),
     projections: projections,
   );
 }

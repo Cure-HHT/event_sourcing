@@ -17,6 +17,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/test_backends.dart';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -61,7 +62,7 @@ Future<EventStore> _openStore() async {
         name: 'newcomer_type',
       ),
     );
-  return EventStore.openForTest(
+  final store = await EventStore.openForTest(
     storage: backend,
     entryTypes: entryTypes,
     source: const Source(
@@ -72,6 +73,8 @@ Future<EventStore> _openStore() async {
     securityContexts: SembastSecurityContextStore(backend: backend),
     projections: proj,
   );
+  trackTestBackend(store, backend);
+  return store;
 }
 
 Future<void> _appendEvent(
@@ -83,9 +86,10 @@ Future<void> _appendEvent(
   required Map<String, dynamic> data,
   required DateTime clientTimestamp,
 }) async {
-  await store.backend.transaction<void>((txn) async {
-    final seq = await store.backend.nextSequenceNumber(txn);
-    await store.backend.appendEvent(
+  final backend = testBackendOf(store);
+  await backend.transaction<void>((txn) async {
+    final seq = await backend.nextSequenceNumber(txn);
+    await backend.appendEvent(
       txn,
       StoredEvent(
         key: 0,
@@ -118,14 +122,14 @@ void main() {
     test('strict-superset failure on missing existing entry type', () async {
       final store = await _openStore();
       // Seed an existing target-version entry for two entry types.
-      await store.backend.transaction((txn) async {
-        await store.backend.writeViewTargetVersionInTxn(
+      await testBackendOf(store).transaction((txn) async {
+        await testBackendOf(store).writeViewTargetVersionInTxn(
           txn,
           'toy_view',
           'sample_event',
           const EntryTypeVersion(1, 0),
         );
-        await store.backend.writeViewTargetVersionInTxn(
+        await testBackendOf(store).writeViewTargetVersionInTxn(
           txn,
           'toy_view',
           'other_event',
@@ -144,13 +148,13 @@ void main() {
         throwsArgumentError,
       );
       // Existing entries remain.
-      final stored = await store.backend
+      final stored = await store.reader
           .transaction<Map<String, EntryTypeVersion>>(
             (txn) async =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+                store.reader.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
           );
       expect(stored.containsKey('other_event'), isTrue);
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     for (final (label, targets) in <(String, Map<String, EntryTypeVersion>)>[
@@ -191,11 +195,11 @@ void main() {
             _kEntryType: EntryTypeVersion(1, 0),
           },
         );
-        final rowsBefore = await store.backend.findViewRows('toy_view');
+        final rowsBefore = await store.reader.findViewRows('toy_view');
         Future<Map<String, EntryTypeVersion>> storedTargets() =>
-            store.backend.transaction<Map<String, EntryTypeVersion>>(
+            store.reader.transaction<Map<String, EntryTypeVersion>>(
               (txn) =>
-                  store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+                  store.reader.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
             );
         final targetsBefore = await storedTargets();
 
@@ -208,9 +212,9 @@ void main() {
           throwsArgumentError,
         );
 
-        expect(await store.backend.findViewRows('toy_view'), rowsBefore);
+        expect(await store.reader.findViewRows('toy_view'), rowsBefore);
         expect(await storedTargets(), targetsBefore);
-        await store.backend.close();
+        await testBackendOf(store).close();
       });
     }
 
@@ -232,6 +236,7 @@ void main() {
         ),
         securityContexts: SembastSecurityContextStore(backend: backend),
       );
+      trackTestBackend(store, backend);
       await expectLater(
         rebuildView(
           store: store,
@@ -242,14 +247,14 @@ void main() {
         ),
         throwsStateError,
       );
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     // allowed (strict superset).
     test('superset accept — new entry type added', () async {
       final store = await _openStore();
-      await store.backend.transaction((txn) async {
-        await store.backend.writeViewTargetVersionInTxn(
+      await testBackendOf(store).transaction((txn) async {
+        await testBackendOf(store).writeViewTargetVersionInTxn(
           txn,
           'toy_view',
           'sample_event',
@@ -274,16 +279,16 @@ void main() {
         },
       );
       expect(processed, 1);
-      final stored = await store.backend
+      final stored = await store.reader
           .transaction<Map<String, EntryTypeVersion>>(
             (txn) async =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+                store.reader.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
           );
       expect(stored, <String, EntryTypeVersion>{
         'sample_event': const EntryTypeVersion(1, 0),
         'newcomer_type': const EntryTypeVersion(2, 0),
       });
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     // produces the same view rows (idempotent).
@@ -311,16 +316,16 @@ void main() {
         'sample_event': EntryTypeVersion(1, 0),
       };
       Future<Map<String, EntryTypeVersion>> targets() =>
-          store.backend.transaction(
+          store.reader.transaction(
             (txn) =>
-                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+                store.reader.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
           );
       final first = await rebuildView(
         store: store,
         viewName: 'toy_view',
         targetVersionByEntryType: map,
       );
-      final firstRows = await store.backend.findViewRows('toy_view');
+      final firstRows = await store.reader.findViewRows('toy_view');
       expect(firstRows, hasLength(2));
       final firstTargets = await targets();
       final second = await rebuildView(
@@ -328,13 +333,13 @@ void main() {
         viewName: 'toy_view',
         targetVersionByEntryType: map,
       );
-      final secondRows = await store.backend.findViewRows('toy_view');
+      final secondRows = await store.reader.findViewRows('toy_view');
       expect(first, second);
       // Whole rows, every field, equal across the two rebuilds.
       expect(secondRows, firstRows);
       expect(await targets(), firstTargets);
       expect(firstTargets, map);
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     // view_target_versions atomically; view rows absent from the rebuilt
@@ -343,8 +348,8 @@ void main() {
         'the event log', () async {
       final store = await _openStore();
       // Seed toy_view with a garbage row not backed by any event.
-      await store.backend.transaction((txn) async {
-        await store.backend.upsertViewRowInTxn(
+      await testBackendOf(store).transaction((txn) async {
+        await testBackendOf(store).upsertViewRowInTxn(
           txn,
           'toy_view',
           'garbage-agg',
@@ -371,14 +376,14 @@ void main() {
       );
 
       expect(processed, 1);
-      final rows = await store.backend.findViewRows('toy_view');
+      final rows = await store.reader.findViewRows('toy_view');
       expect(rows, hasLength(1));
       expect(rows.single['latestEventId'], equals('e1'));
       expect(
         rows.map((r) => r['latestEventId']),
         isNot(contains('garbage-agg')),
       );
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     // when the log spans multiple streaming chunks.
@@ -413,7 +418,7 @@ void main() {
       );
       expect(processed, totalEvents);
 
-      final rows = await store.backend.findViewRows('toy_view');
+      final rows = await store.reader.findViewRows('toy_view');
       expect(rows, hasLength(2));
       // AggregateFold stamps 'aggregateId' into every view row so we can
       // look up directly without parsing the event-id string.
@@ -425,7 +430,7 @@ void main() {
       // the last event's data merged over all prior events.
       expect(byId['agg-odd']!['index'], totalEvents - 1); // 1249 (odd)
       expect(byId['agg-even']!['index'], totalEvents - 2); // 1248 (even)
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
 
     // PromoterRegistry with no registered steps (identity) produces the
@@ -449,9 +454,9 @@ void main() {
         },
       );
       expect(processed, 1);
-      final rows = await store.backend.findViewRows('toy_view');
+      final rows = await store.reader.findViewRows('toy_view');
       expect(rows.single['answer'], 42);
-      await store.backend.close();
+      await testBackendOf(store).close();
     });
   });
 }

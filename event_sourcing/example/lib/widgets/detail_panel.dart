@@ -3,19 +3,20 @@ import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
 class DetailPanel extends StatefulWidget {
   const DetailPanel({
-    required this.backend,
+    required this.watch,
     required this.databaseId,
     required this.appState,
     required this.policyNotifier,
     super.key,
   });
 
-  final SembastBackend backend;
+  final StorageWatch watch;
 
   /// The pane's database identity (`EventStore.databaseId`): rows of the
   /// default destination-wedges view whose `database_id` is this identity
@@ -37,7 +38,7 @@ class _DetailPanelState extends State<DetailPanel> {
     super.initState();
     widget.appState.addListener(_onAppState);
     widget.policyNotifier.addListener(_onChange);
-    _eventsSub = widget.backend.watchEvents().listen((_) {
+    _eventsSub = widget.watch.events().listen((_) {
       if (!mounted) return;
       _refresh();
     });
@@ -67,17 +68,17 @@ class _DetailPanelState extends State<DetailPanel> {
 
   Future<void> _refresh() async {
     try {
-      final events = await widget.backend.findAllEvents(limit: 100000);
-      final anyWedged = await widget.backend.hasFifoWedged();
+      final events = await widget.watch.reader.findAllEvents(limit: 100000);
+      final anyWedged = await widget.watch.reader.hasFifoWedged();
       // The pane's own queues, read directly.
-      final wedged = await widget.backend.wedgedFifos();
+      final wedged = await widget.watch.reader.wedgedFifos();
       // The library's default destination-wedges view, folded from the
       // wedge, recovery and deletion events in the log. Its local rows name
       // the same wedged heads as wedgedFifos() (each read is its own
       // snapshot, so the two can differ while the drainer runs between
       // them); its peer rows come from wedge events another pane forwarded,
       // which no read of this pane's queues shows.
-      final viewRows = await widget.backend.findViewRows(
+      final viewRows = await widget.watch.reader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
       );
       final local = <String>[];
@@ -176,7 +177,7 @@ class _DetailPanelState extends State<DetailPanel> {
           // Read the aggregate's row from the notes view.
           // AggregateFold stores: aggregateId, latestEventId, updatedAt,
           // firstEventTimestamp, sequence, plus event.data merged in.
-          final rows = await widget.backend.findViewRows('notes');
+          final rows = await widget.watch.reader.findViewRows('notes');
           Map<String, Object?>? row;
           for (final r in rows) {
             if ((r['aggregateId'] as String?) == aggId) {
@@ -190,7 +191,7 @@ class _DetailPanelState extends State<DetailPanel> {
       );
     }
     if (eventId != null) {
-      return _EventDetail(backend: widget.backend, eventId: eventId);
+      return _EventDetail(reader: widget.watch.reader, eventId: eventId);
     }
     final fifoDestId = widget.appState.selectedFifoDestinationId;
     if (fifoId != null && fifoDestId != null) {
@@ -199,7 +200,7 @@ class _DetailPanelState extends State<DetailPanel> {
           // FifoEntry.entryId == eventIds.first (library convention), so
           // rows collide on entry_id across destinations. Look up within
           // the specific destination the user selected.
-          final entries = await widget.backend.listFifoEntries(fifoDestId);
+          final entries = await widget.watch.reader.listFifoEntries(fifoDestId);
           for (final entry in entries) {
             if (entry.entryId == fifoId) {
               return <String, Object?>{
@@ -241,9 +242,9 @@ class _DetailPanelState extends State<DetailPanel> {
 /// `origin_sequence_number` is only rendered when non-null, keeping
 /// local-event details uncluttered.
 class _EventDetail extends StatefulWidget {
-  const _EventDetail({required this.backend, required this.eventId});
+  const _EventDetail({required this.reader, required this.eventId});
 
-  final SembastBackend backend;
+  final StorageReader reader;
   final String eventId;
 
   @override
@@ -271,7 +272,7 @@ class _EventDetailState extends State<_EventDetail> {
   }
 
   Future<void> _load() async {
-    final events = await widget.backend.findAllEvents(limit: 100000);
+    final events = await widget.reader.findAllEvents(limit: 100000);
     StoredEvent? event;
     for (final e in events) {
       if (e.eventId == widget.eventId) {

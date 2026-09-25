@@ -143,9 +143,8 @@ class ReactionTestHarness {
       projectionLookup: (_) => null,
     );
     final policy = TableBackedAuthorizationPolicy(
-      backend: backend,
+      reader: store.reader,
       scopeClassRegistry: scopeClassRegistry,
-      transactionProvider: <T>(fn) => backend.transaction<T>(fn),
     );
 
     // --- Action dispatcher ---

@@ -13,17 +13,8 @@
 // (the builders read nothing and write
 //   nothing: they run the destination's transform outside any transaction,
 //   and the fill commits their rows under its compare-and-set)
-import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/storage/source.dart';
-import 'package:event_sourcing/src/storage/storage_backend.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:uuid/uuid.dart';
+
+part of '../event_store.dart';
 
 const _uuidGen = Uuid();
 

@@ -35,16 +35,6 @@ const EntryTypeDefinition _noteDef = EntryTypeDefinition(
   name: 'concurrent_note',
 );
 
-Future<void> _reset(String url) async {
-  final conn = await Connection.open(
-    PostgresBackend.endpointFromUrl(url),
-    settings: const ConnectionSettings(sslMode: SslMode.disable),
-  );
-  await conn.execute('DROP SCHEMA public CASCADE');
-  await conn.execute('CREATE SCHEMA public');
-  await conn.close();
-}
-
 /// Accepts every send and records the event ids it received.
 class _Sink extends Destination {
   final List<String> received = <String>[];
@@ -120,16 +110,17 @@ Future<void> _append(EventStore store, String id) => store.append(
 );
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   final backends = <PostgresBackend>[];
-  setUp(() => _reset(url));
+  setUp(db.reset);
   tearDown(() async {
     for (final b in backends) {
       await b.close();
@@ -138,11 +129,7 @@ void main() {
   });
 
   Future<PostgresBackend> open() async {
-    final b = await PostgresBackend.open(
-      url: url,
-      sslMode: SslMode.disable,
-      provisionSchema: true,
-    );
+    final b = await db.open(provision: true);
     backends.add(b);
     return b;
   }
@@ -166,11 +153,11 @@ void main() {
 
     await Future.wait(<Future<void>>[loop(a, 'a'), loop(b, 'b')]);
     final notes = <StoredEvent>[
-      for (final e in await a.backend.findAllEvents())
+      for (final e in await a.reader.findAllEvents())
         if (e.entryType == 'concurrent_note') e,
     ];
     expect(notes, hasLength(2 * perInstance));
-    final all = await a.backend.findAllEvents();
+    final all = await a.reader.findAllEvents();
     expect(
       <int>[for (final e in all) e.sequenceNumber],
       <int>[for (var n = 1; n <= all.length; n++) n],
@@ -216,7 +203,7 @@ void main() {
 
         await Future.wait(<Future<void>>[loop(a, 'a'), loop(b, 'b')]);
         final appended = <String>[
-          for (final e in await a.backend.findAllEvents())
+          for (final e in await a.reader.findAllEvents())
             if (e.entryType == 'concurrent_note') e.eventId,
         ];
         expect(appended, hasLength(2 * perInstance));
@@ -235,7 +222,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         expect(sink.received.toSet(), appended.toSet());
-        final all = await a.backend.findAllEvents();
+        final all = await a.reader.findAllEvents();
         expect(
           <int>[for (final e in all) e.sequenceNumber],
           <int>[for (var n = 1; n <= all.length; n++) n],
@@ -277,7 +264,7 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 200));
       await sub.cancel();
       final stored = <int>[
-        for (final e in await store.backend.findAllEvents())
+        for (final e in await store.reader.findAllEvents())
           if (e.entryType == 'concurrent_note') e.sequenceNumber,
       ];
       expect(delivered, stored);

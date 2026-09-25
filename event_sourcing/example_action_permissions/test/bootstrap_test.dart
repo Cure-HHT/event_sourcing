@@ -19,7 +19,7 @@ void runBootstrapTests(DemoBackendFactory factory, {required String label}) {
   }) async {
     final backends = await factory();
     return bootstrapDemoServer(
-      backend: backends.backend,
+      storage: backends.storage,
       idempotencyStore: backends.idempotencyStore,
       permissionsYaml: permissionsYaml,
       usersYaml: usersYaml,

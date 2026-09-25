@@ -198,14 +198,16 @@ void main() {
       final store = await runWithDeliveryTestHooks(
         DeliveryTestHooks(onBootBodyRun: () => bodyRuns++),
         () => EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: EntryTypeRegistry(),
           source: const Source(
             hopId: 'rerun',
             identifier: 'rerun',
             softwareVersion: 'rerun',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
         ),
       );
       expect(bodyRuns, 2, reason: 'the boot body ran twice');

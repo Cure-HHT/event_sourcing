@@ -11,6 +11,7 @@ import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
 import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:event_sourcing_demo/native_demo_destination.dart';
+import 'package:event_sourcing_demo/storage_watch.dart';
 import 'package:event_sourcing_demo/widgets/detail_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,8 +25,12 @@ Future<EventStoreBundle> _pane({
   required List<Destination> destinations,
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(dbName);
+  final backend = SembastBackend(database: db);
   final datastore = await bootstrapEventStore(
-    backend: SembastBackend(database: db),
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: source,
     entryTypes: allDemoEntryTypes,
     destinations: destinations,
@@ -45,7 +50,7 @@ void main() {
       'the default destination-wedges view', (tester) async {
     late EventStoreBundle hub;
     late EventStoreBundle mobile;
-    late SembastBackend hubBackend;
+    late StorageReader hubReader;
     late AppState hubState;
     late SyncCycle mobileCycle;
     late SyncCycle hubCycle;
@@ -66,7 +71,7 @@ void main() {
           ),
         ],
       );
-      hubBackend = hub.eventStore.backend as SembastBackend;
+      hubReader = hub.eventStore.reader;
       mobile = await _pane(
         dbName: 'hub-wedges-view-mobile.db',
         source: const Source(
@@ -130,7 +135,7 @@ void main() {
             body: SizedBox(
               height: 600,
               child: DetailPanel(
-                backend: hubBackend,
+                watch: StorageWatch(hub.eventStore),
                 databaseId: hub.eventStore.databaseId,
                 appState: hubState,
                 policyNotifier: policy,
@@ -160,12 +165,12 @@ void main() {
     late FifoEntry? mobileHead;
     late List<FifoEntry> hubPrimary;
     await tester.runAsync(() async {
-      hubWedged = await hubBackend.wedgedFifos();
-      rows = await hubBackend.findViewRows(
+      hubWedged = await hubReader.wedgedFifos();
+      rows = await hubReader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
       );
-      mobileHead = await mobile.eventStore.backend.readFifoHead('Primary');
-      hubPrimary = await hubBackend.listFifoEntries('Primary');
+      mobileHead = await mobile.eventStore.reader.readFifoHead('Primary');
+      hubPrimary = await hubReader.listFifoEntries('Primary');
     });
     expect(mobileHead?.finalStatus, FinalStatus.wedged);
     expect(hubWedged, isEmpty, reason: "the hub's own queues are not wedged");

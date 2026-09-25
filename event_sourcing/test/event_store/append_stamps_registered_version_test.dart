@@ -104,7 +104,7 @@ void main() {
             'not a caller-supplied value and not a default.',
       );
       expect(stored.libFormatVersion, LibVersion.dataFormat);
-      final readBack = await store.backend.findEventById(stored.eventId);
+      final readBack = await store.reader.findEventById(stored.eventId);
       expect(readBack!.entryTypeVersion, const EntryTypeVersion(7, 3));
       expect(readBack.libFormatVersion, LibVersion.dataFormat);
     });
@@ -135,7 +135,7 @@ void main() {
         );
         expect(stored!.entryTypeVersion, const EntryTypeVersion(7, 3));
         expect(stored.libFormatVersion, LibVersion.dataFormat);
-        final readBack = await store.backend.findEventById(stored.eventId);
+        final readBack = await store.reader.findEventById(stored.eventId);
         expect(readBack!.entryTypeVersion, const EntryTypeVersion(7, 3));
         expect(readBack.libFormatVersion, LibVersion.dataFormat);
       },
@@ -165,7 +165,10 @@ void main() {
       SembastBackend backend,
       EntryTypeVersion registered,
     ) => bootstrapEventStore(
-      backend: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       source: const Source(
         hopId: 'test',
         identifier: 'test-install',

@@ -17,19 +17,11 @@
 // Implements: EVS-DEV-postgres-backend/J
 // a lost lock session is closed; before anything is registered again, the
 //   old server session is ended if it still holds a library lock.
-import 'dart:async';
 
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/generation.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_exceptions.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_lock_session.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
-import 'package:postgres/postgres.dart';
+part of 'postgres_backend.dart';
 
 /// Prefix of the exclusive boot-lock key.
+
 const String _bootPrefix = 'event_sourcing.boot';
 
 /// Prefix of the generation component keys.
@@ -153,7 +145,7 @@ Future<List<({String kind, String id, int value})>> readLiveComponents(
 /// [GenerationGuardConfigurationException].
 @internal
 Future<int> takePostgresBootLock(
-  Connection connection,
+  Session connection,
   PostgresScope scope,
   Duration wait,
 ) async {
@@ -188,7 +180,7 @@ Future<int> takePostgresBootLock(
 
 /// Releases the boot lock [key] on [connection].
 @internal
-Future<void> releasePostgresBootLock(Connection connection, int key) async {
+Future<void> releasePostgresBootLock(Session connection, int key) async {
   await connection.execute(
     Sql.named('SELECT pg_advisory_unlock(@k)'),
     parameters: <String, Object?>{'k': key},
@@ -286,13 +278,14 @@ final class _AsyncMutex {
 /// loss.
 @internal
 final class PostgresGenerationGuard {
-  PostgresGenerationGuard({
+  PostgresGenerationGuard._({
     required this.lockEndpoint,
     required this.sslMode,
     required this.lockQueryTimeout,
     required this.lockHeartbeat,
     required this.bootLockWait,
     required this.scope,
+    required this.schema,
     required this.schemaVersion,
     required Pool<void> pool,
     required PostgresLockSession session,
@@ -307,6 +300,9 @@ final class PostgresGenerationGuard {
   final Duration lockHeartbeat;
   final Duration bootLockWait;
   final PostgresScope scope;
+
+  /// The schema every library transaction puts first on its search path.
+  final String schema;
 
   /// The schema version of the build (its `schema:<n>` component).
   final int schemaVersion;
@@ -386,19 +382,19 @@ final class PostgresGenerationGuard {
   /// queue: a failure or a timeout declares it lost and is rethrown.
   Future<void> probeSession(PostgresLockSession session) async {
     try {
-      await session.run((c) => c.execute('SELECT 1'));
+      await session.run((tx) => tx.execute('SELECT 1'));
     } on Object catch (e) {
       session.declareLost(e);
       rethrow;
     }
   }
 
-  /// Runs [op] on the current lock session. While a lost session is being
-  /// replaced the current session is the lost one, and [op] fails: a
-  /// replacement session becomes current only once every generation is
-  /// registered on it again.
+  /// Runs [op] in a library transaction on the current lock session. While
+  /// a lost session is being replaced the current session is the lost one,
+  /// and [op] fails: a replacement session becomes current only once every
+  /// generation is registered on it again.
   @internal
-  Future<T> runOnSession<T>(Future<T> Function(Connection c) op) =>
+  Future<T> runOnSession<T>(Future<T> Function(Session session) op) =>
       _session.run(op);
 
   /// Starts the probe.
@@ -494,7 +490,7 @@ final class PostgresGenerationGuard {
   /// lock.
   Future<void> _registerAll(
     PostgresLockSession session,
-    Connection c,
+    Session c,
     List<PostgresGenerationRegistration> registrations, {
     required PostgresGenerationRegistration? booting,
     required bool checkRecord,
@@ -798,6 +794,7 @@ final class PostgresGenerationGuard {
     try {
       next = await PostgresLockSession.open(
         endpoint: lockEndpoint,
+        schema: schema,
         sslMode: sslMode,
         queryTimeout: lockQueryTimeout,
         expectedScope: scope,
@@ -814,7 +811,7 @@ final class PostgresGenerationGuard {
     }
     var adopted = false;
     try {
-      await verifyLockSessionServer(_pool, next);
+      await verifyLockSessionServer(_pool, schema, next);
       final old = _oldIdentity;
       if (old != null) {
         final ended = await _endOldSession(next, old);
@@ -1019,9 +1016,9 @@ final class PostgresGenerationRegistration extends GenerationRegistration {
   @override
   @internal
   Future<void> recordInTxn(Transaction txn) async {
-    final pgTxn = txn as PostgresTxn;
-    final session = pgTxn.session;
-    pgTxn.wroteBackendState = true;
+    final pgTxn = txn as _PostgresTxn;
+    final session = pgTxn._session;
+    pgTxn._wroteBackendState = true;
     for (final c in _components) {
       final hex = c.key.toUnsigned(64).toRadixString(16).padLeft(16, '0');
       await session.execute(

@@ -18,7 +18,10 @@ Future<EventStore> _bootstrap({
   );
   final backend = SembastBackend(database: db);
   final ds = await bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: Source(
       hopId: hopId,
       identifier: identifier,

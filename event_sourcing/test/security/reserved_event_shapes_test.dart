@@ -3,19 +3,19 @@
 //   aggregate type and the event types it appends that entry type with; no
 //   two reserved entry types share a declared pair, so the pair identifies
 //   the entry type; the declared shapes are fixed within a data-format
-//   major; and the library's reserved-append operations refuse a shape it
-//   does not declare, and a destination audit whose data ingest would
-//   refuse.
+//   major; and the check every reserved append of the library runs before
+//   it writes refuses a shape the library does not declare, and a
+//   destination audit whose data ingest would refuse.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
+        checkReservedAppend,
         kDestinationAuditAggregateType,
         kDestinationAuditEntryTypes,
         kReservedEventShapes;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
-const Initiator _init = AutomationInitiator(service: 'shapes-test');
 const String _noteType = 'shape_note';
 
 /// The declared shape of every reserved entry type -- its aggregate type
@@ -118,30 +118,6 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
         ],
       },
     };
-
-Future<EventStore> _open() async {
-  final db = await newDatabaseFactoryMemory().openDatabase(
-    'reserved-shapes-${DateTime.now().microsecondsSinceEpoch}.db',
-  );
-  final backend = SembastBackend(database: db);
-  return EventStore.openForTest(
-    storage: backend,
-    entryTypes: EntryTypeRegistry()
-      ..register(
-        const EntryTypeDefinition(
-          id: _noteType,
-          registeredVersion: EntryTypeVersion(1, 0),
-          name: _noteType,
-        ),
-      ),
-    source: const Source(
-      hopId: 'server',
-      identifier: 'shapes-install',
-      softwareVersion: 'test@1.0.0',
-    ),
-    securityContexts: SembastSecurityContextStore(backend: backend),
-  );
-}
 
 void main() {
   group('declared shapes of reserved events', () {
@@ -249,14 +225,20 @@ void main() {
   });
 
   group('the library appends reserved events only in a declared shape', () {
-    Future<void> expectRefused(
-      EventStore store,
-      Future<Object?> Function() call,
+    void expectRefused(
+      String entryType,
+      String aggregateType,
+      String eventType,
+      Map<String, Object?> data,
       String message,
-    ) async {
-      final before = await store.backend.findAllEvents();
-      await expectLater(
-        call(),
+    ) {
+      expect(
+        () => checkReservedAppend(
+          entryType: entryType,
+          aggregateType: aggregateType,
+          eventType: eventType,
+          data: data,
+        ),
         throwsA(
           isA<ArgumentError>().having(
             (e) => e.message.toString(),
@@ -265,48 +247,24 @@ void main() {
           ),
         ),
       );
-      expect(
-        (await store.backend.findAllEvents()).map((e) => e.eventId),
-        before.map((e) => e.eventId),
-      );
     }
 
-    test('appendReservedInTxn refuses an undeclared event type', () async {
-      final store = await _open();
-      await expectRefused(
-        store,
-        () => store.runTransaction(
-          (txn, collector) => store.appendReservedInTxn(
-            txn,
-            collector,
-            entryType: kDestinationWedgedEntryType,
-            aggregateId: store.source.identifier,
-            aggregateType: kDestinationAuditAggregateType,
-            eventType: kDestinationDeletedEventType,
-            data: const <String, Object?>{},
-            initiator: _init,
-          ),
-        ),
+    test('an undeclared event type is refused', () {
+      expectRefused(
+        kDestinationWedgedEntryType,
+        kDestinationAuditAggregateType,
+        kDestinationDeletedEventType,
+        const <String, Object?>{'id': 'x', 'database_id': 'db'},
         'declares',
       );
     });
 
-    test('appendReservedInTxn refuses an undeclared aggregate type', () async {
-      final store = await _open();
-      await expectRefused(
-        store,
-        () => store.runTransaction(
-          (txn, collector) => store.appendReservedInTxn(
-            txn,
-            collector,
-            entryType: kDestinationWedgedEntryType,
-            aggregateId: store.source.identifier,
-            aggregateType: 'note',
-            eventType: kDestinationWedgedEventType,
-            data: const <String, Object?>{},
-            initiator: _init,
-          ),
-        ),
+    test('an undeclared aggregate type is refused', () {
+      expectRefused(
+        kDestinationWedgedEntryType,
+        'note',
+        kDestinationWedgedEventType,
+        const <String, Object?>{'id': 'x', 'database_id': 'db'},
         'declares',
       );
     });
@@ -327,79 +285,78 @@ void main() {
       },
     };
     for (final c in badAuditData.entries) {
-      test('appendReservedInTxn refuses a destination audit with '
-          '${c.key}', () async {
-        final store = await _open();
-        await expectRefused(
-          store,
-          () => store.runTransaction(
-            (txn, collector) => store.appendReservedInTxn(
-              txn,
-              collector,
-              entryType: kDestinationWedgeRecoveredEntryType,
-              aggregateId: store.source.identifier,
-              aggregateType: kDestinationAuditAggregateType,
-              eventType: kDestinationWedgeRecoveredEventType,
-              data: c.value,
-              initiator: _init,
-            ),
-          ),
+      test('a destination audit with ${c.key} is refused', () {
+        expectRefused(
+          kDestinationWedgeRecoveredEntryType,
+          kDestinationAuditAggregateType,
+          kDestinationWedgeRecoveredEventType,
+          c.value,
           'destination audit',
         );
       });
     }
 
-    test('appendReserved refuses a destination audit without a database '
-        'identity', () async {
-      final store = await _open();
-      await expectRefused(
-        store,
-        () => store.appendReserved(
-          entryType: kDestinationRegisteredEntryType,
-          aggregateId: store.source.identifier,
-          aggregateType: kDestinationAuditAggregateType,
-          eventType: kDestinationRegisteredEventType,
-          data: const <String, Object?>{'id': 'x'},
-          initiator: _init,
-        ),
-        'destination audit',
-      );
-    });
-
-    test('appendReserved refuses an entry type that is not reserved', () async {
-      final store = await _open();
-      await expectRefused(
-        store,
-        () => store.appendReserved(
-          entryType: _noteType,
-          aggregateId: 'n',
-          aggregateType: 'note',
-          eventType: 'finalized',
-          data: const <String, Object?>{},
-          initiator: _init,
-        ),
+    test('an entry type that is not reserved is refused', () {
+      expectRefused(
+        _noteType,
+        'note',
+        'finalized',
+        const <String, Object?>{},
         'not a reserved',
       );
     });
 
-    test(
-      'appendReserved appends a declared shape and dedupes by content',
-      () async {
-        final store = await _open();
-        Future<StoredEvent?> audit() => store.appendReserved(
-          entryType: kEntryTypeRegistryInitializedEntryType,
-          aggregateId: store.source.identifier,
-          aggregateType:
-              kReservedEventShapes[kEntryTypeRegistryInitializedEntryType]!
-                  .aggregateType,
-          eventType: 'finalized',
-          data: const <String, Object?>{'registry': <String, Object?>{}},
-          initiator: _init,
-          dedupeByContent: true,
+    test('a declared shape with well-formed data passes', () {
+      checkReservedAppend(
+        entryType: kDestinationRegisteredEntryType,
+        aggregateType: kDestinationAuditAggregateType,
+        eventType: kDestinationRegisteredEventType,
+        data: const <String, Object?>{'id': 'x', 'database_id': 'db'},
+      );
+    });
+
+    test('the registry audit appends a declared shape and dedupes by '
+        'content', () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'reserved-shapes-${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+      final backend = SembastBackend(database: db);
+      addTearDown(backend.close);
+      Future<void> boot() async {
+        final bundle = await bootstrapEventStore(
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
+          source: const Source(
+            hopId: 'server',
+            identifier: 'shapes-install',
+            softwareVersion: 'test@1.0.0',
+          ),
+          entryTypes: const <EntryTypeDefinition>[
+            EntryTypeDefinition(
+              id: _noteType,
+              registeredVersion: EntryTypeVersion(1, 0),
+              name: _noteType,
+            ),
+          ],
+          destinations: const <Destination>[],
         );
-        expect(await audit(), isNotNull);
-        expect(await audit(), isNull);
-      },
-    );
+        await bundle.eventStore.close();
+      }
+
+      await boot();
+      await boot();
+      final audits = await backend.findAllEvents(
+        entryType: kEntryTypeRegistryInitializedEntryType,
+      );
+      expect(audits, hasLength(1), reason: 'the unchanged registry dedupes');
+      final shape =
+          kReservedEventShapes[kEntryTypeRegistryInitializedEntryType]!;
+      expect(
+        shape.admits(audits.single.aggregateType, audits.single.eventType),
+        isTrue,
+      );
+    });
   });
 }

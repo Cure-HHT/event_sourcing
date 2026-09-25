@@ -11,18 +11,15 @@
 //   and explicit targetVersionByEntryType map ensure the rebuild's scope is
 //   fully specified and auditable; rebuild does not silently shrink the set
 //   of entry types the view covers.
-import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
-import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
-import 'package:event_sourcing/src/projections/projection_spec.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/versions.dart';
+
+part of '../event_store.dart';
 
 /// Chunk size for the streaming read of the event log during a rebuild.
 ///
 /// Bounds the per-iteration working set to a fixed number of [StoredEvent]s
 /// regardless of total log size. Chosen to amortize find-query overhead while
 /// keeping peak memory modest on mobile and tolerable on server-scale logs.
+
 const int _rebuildChunkSize = 500;
 
 // Implements: EVS-PRD-destinations/K
@@ -87,7 +84,7 @@ Future<int> rebuildView({
       );
     }
   }
-  final backend = store.backend;
+  final backend = store._backend;
   return backend.transaction<int>((txn) async {
     // Strict-superset check BEFORE any destructive write.
     final existing = await backend.readAllViewTargetVersionsInTxn(

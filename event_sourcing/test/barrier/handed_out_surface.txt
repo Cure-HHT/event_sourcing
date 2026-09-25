@@ -1,0 +1,243 @@
+# The members accessible outside their declaring Dart library, on every
+# type whose instances the library hands to application code
+# (EVS-DEV-storage-capability/D), by name and signature. One line per
+# member: `Type.member: signature`. handed_out_surface_test.dart compares
+# this list with the surface the analyzer resolves; a member added to or
+# removed from that surface fails the test until the change is reviewed
+# against EVS-PRD-storage-barrier/B-E and recorded here.
+ActionDispatcher.authorization: field AuthorizationPolicy authorization
+ActionDispatcher.dispatch: Future<DispatchResult<Object?>> dispatch(ActionSubmission submission, ActionContext ctx)
+ActionDispatcher.events: field EventStore events
+ActionDispatcher.idempotency: field IdempotencyStore idempotency
+ActionDispatcher.new: constructor ActionDispatcher({required ActionRegistry registry, required AuthorizationPolicy authorization, required EventStore events, required IdempotencyStore idempotency})
+ActionDispatcher.registry: field ActionRegistry registry
+BootProgress.==: bool ==(Object other)
+BootProgress.done: field int done
+BootProgress.elapsed: field Duration elapsed
+BootProgress.hashCode: int get hashCode
+BootProgress.new: constructor BootProgress({required BootPhase phase, required int done, required int total, required Duration elapsed})
+BootProgress.phase: field BootPhase phase
+BootProgress.toString: String toString()
+BootProgress.total: field int total
+ChainVerdict.failures: field List<ChainFailure> failures
+ChainVerdict.isValid: field bool isValid
+ChainVerdict.new: constructor ChainVerdict({required bool isValid, required List<ChainFailure> failures})
+ChainVerdict.valid: static field ChainVerdict valid
+DeliveryStatus.destinations: field Map<String, DestinationDeliveryStatus> destinations
+DeliveryStatus.drainer: field DrainerDeclaration? drainer
+DeliveryStatus.heartbeat: field DrainHeartbeat? heartbeat
+DeliveryStatus.new: constructor DeliveryStatus({required DrainerDeclaration? drainer, required DrainHeartbeat? heartbeat, required Map<String, DestinationDeliveryStatus> destinations})
+DeliveryStatus.toString: String toString()
+Delta.cause: field String cause
+Delta.new: constructor Delta<T>({required T value, required int sequence, required String cause})
+Delta.sequence: field int sequence
+Delta.value: field T value
+DestinationRegistry.addDestination: Future<void> addDestination(Destination destination, {required Initiator initiator})
+DestinationRegistry.all: List<Destination> all()
+DestinationRegistry.byId: Destination? byId(String id)
+DestinationRegistry.cancelHalt: Future<void> cancelHalt(String destinationId, {required Initiator initiator})
+DestinationRegistry.deactivateDestination: Future<SetEndDateResult> deactivateDestination(String id, {required Initiator initiator})
+DestinationRegistry.deleteDestination: Future<void> deleteDestination(String id, {required Initiator initiator})
+DestinationRegistry.eventStore: EventStore get eventStore
+DestinationRegistry.localRegistrationId: String? localRegistrationId(String id)
+DestinationRegistry.new: constructor DestinationRegistry({required EventStore eventStore})
+DestinationRegistry.readDeliveryStatus: Future<DeliveryStatus> readDeliveryStatus()
+DestinationRegistry.requestHalt: Future<String> requestHalt(String destinationId, {required Initiator initiator, required HaltPurpose purpose})
+DestinationRegistry.scheduleOf: Future<DestinationSchedule> scheduleOf(String id)
+DestinationRegistry.setEndDate: Future<SetEndDateResult> setEndDate(String id, DateTime endDate, {required Initiator initiator})
+DestinationRegistry.setStartDate: Future<void> setStartDate(String id, DateTime when, {required Initiator initiator})
+DestinationRegistry.tombstoneAndRefill: Future<TombstoneAndRefillResult> tombstoneAndRefill(String destinationId, String fifoRowId, {required Initiator initiator})
+DestinationSchedule.==: bool ==(Object other)
+DestinationSchedule.allowHardDelete: field bool allowHardDelete
+DestinationSchedule.endDate: field DateTime? endDate
+DestinationSchedule.fromJson: constructor DestinationSchedule.fromJson(Map<String, Object?> json)
+DestinationSchedule.hashCode: int get hashCode
+DestinationSchedule.isActiveAt: bool isActiveAt(DateTime now)
+DestinationSchedule.isDormant: bool get isDormant
+DestinationSchedule.new: constructor DestinationSchedule({DateTime? startDate, DateTime? endDate, String? registrationId, bool allowHardDelete = false})
+DestinationSchedule.registrationId: field String? registrationId
+DestinationSchedule.startDate: field DateTime? startDate
+DestinationSchedule.toJson: Map<String, Object?> toJson()
+DestinationSchedule.toString: String toString()
+EndOfReplay.new: constructor EndOfReplay<T>({required int sequence})
+EndOfReplay.sequence: field int sequence
+EntryTypeRegistry.all: List<EntryTypeDefinition> all()
+EntryTypeRegistry.byId: EntryTypeDefinition? byId(String id)
+EntryTypeRegistry.isRegistered: bool isRegistered(String id)
+EntryTypeRegistry.new: constructor EntryTypeRegistry()
+EntryTypeRegistry.register: void register(EntryTypeDefinition definition)
+EventStore.append: Future<StoredEvent?> append({required String entryType, required String aggregateId, required String aggregateType, required String eventType, required Map<String, Object?> data, required Initiator initiator, String? flowToken, Map<String, Object?>? metadata, SecurityDetails? security, String? checkpointReason, String? changeReason, bool dedupeByContent = false})
+EventStore.appendInTxn: Future<StoredEvent?> appendInTxn(Transaction txn, {required String entryType, required String aggregateId, required String aggregateType, required String eventType, required Map<String, Object?> data, required Initiator initiator, required String? flowToken, required Map<String, Object?>? metadata, required SecurityDetails? security, required String? checkpointReason, required String? changeReason, required bool dedupeByContent, required PublishCollector collector})
+EventStore.applyRetentionPolicy: Future<RetentionResult> applyRetentionPolicy({SecurityRetentionPolicy? policy, Initiator? sweepInitiator})
+EventStore.clearSecurityContext: Future<void> clearSecurityContext(String eventId, {required String reason, required Initiator redactedBy})
+EventStore.close: Future<void> close()
+EventStore.databaseId: field String databaseId
+EventStore.entryTypes: field EntryTypeRegistry entryTypes
+EventStore.idempotencyStore: field IdempotencyStore? idempotencyStore
+EventStore.ingestBatch: Future<IngestBatchResult> ingestBatch(Uint8List bytes, {required String wireFormat})
+EventStore.ingestEvent: Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming)
+EventStore.isLocallyOriginated: bool isLocallyOriginated(StoredEvent event)
+EventStore.open: static Future<EventStore> open({required StorageDescription storage, required EntryTypeRegistry entryTypes, required Source source, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
+EventStore.openForTest: static Future<EventStore> openForTest({required StorageBackend storage, required EntryTypeRegistry entryTypes, required Source source, required MutableSecurityContextStore securityContexts, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
+EventStore.projections: ProjectionRegistry get projections
+EventStore.promoters: PromoterRegistry get promoters
+EventStore.reader: field StorageReader reader
+EventStore.runTransaction: Future<T> runTransaction<T>(Future<T> Function(Transaction, PublishCollector) body)
+EventStore.securityContexts: field SecurityContextStore securityContexts
+EventStore.source: field Source source
+EventStore.subscribe: Stream<Update<T>> subscribe<T>(SubscriptionFilter filter, SubscriptionMode<T> mode)
+EventStore.verifyEventChain: Future<ChainVerdict> verifyEventChain(StoredEvent event)
+EventStore.verifyIngestChain: Future<ChainVerdict> verifyIngestChain({int fromSequenceNumber = 0, int? toSequenceNumber})
+EventStoreBundle.destinations: field DestinationRegistry destinations
+EventStoreBundle.entryTypes: field EntryTypeRegistry entryTypes
+EventStoreBundle.eventStore: field EventStore eventStore
+EventStoreBundle.new: constructor EventStoreBundle({required EventStore eventStore, required EntryTypeRegistry entryTypes, required DestinationRegistry destinations, required SecurityContextStore securityContexts})
+EventStoreBundle.securityContexts: field SecurityContextStore securityContexts
+IdempotencyStore.listEntries: Future<List<IdempotencyEntry>> listEntries()
+IdempotencyStore.lookup: Future<IdempotencyEntry?> lookup(String actionName, String principalId, String key, {DateTime? now})
+IdempotencyStore.new: constructor IdempotencyStore()
+IdempotencyStore.record: Future<void> record({required String actionName, required String principalId, required String key, required Map<String, Object?> resultJson, required List<String> emittedEventIds, required DateTime expiresAt, String? rawInputCanonicalJson})
+IdempotencyStore.sweepExpired: Future<int> sweepExpired({DateTime? before})
+IngestBatchResult.batchId: field String batchId
+IngestBatchResult.events: field List<PerEventIngestOutcome> events
+IngestBatchResult.new: constructor IngestBatchResult({required String batchId, required List<PerEventIngestOutcome> events})
+PerEventIngestOutcome.eventId: field String eventId
+PerEventIngestOutcome.new: constructor PerEventIngestOutcome({required String eventId, required IngestOutcome outcome, required String resultHash})
+PerEventIngestOutcome.outcome: field IngestOutcome outcome
+PerEventIngestOutcome.resultHash: field String resultHash
+PostgresIdempotencyStore.listEntries: Future<List<IdempotencyEntry>> listEntries()
+PostgresIdempotencyStore.lookup: Future<IdempotencyEntry?> lookup(String actionName, String principalId, String key, {DateTime? now})
+PostgresIdempotencyStore.over: constructor PostgresIdempotencyStore.over(Pool<void> pool)
+PostgresIdempotencyStore.record: Future<void> record({required String actionName, required String principalId, required String key, required Map<String, Object?> resultJson, required List<String> emittedEventIds, required DateTime expiresAt, String? rawInputCanonicalJson})
+PostgresIdempotencyStore.sweepExpired: Future<int> sweepExpired({DateTime? before})
+ProjectionRegistry.all: Iterable<ProjectionSpec> all()
+ProjectionRegistry.isSealed: bool get isSealed
+ProjectionRegistry.lookup: ProjectionSpec? lookup(String viewName)
+ProjectionRegistry.new: constructor ProjectionRegistry()
+ProjectionRegistry.register: void register(ProjectionSpec spec)
+ProjectionRegistry.seal: void seal()
+PromoterRegistry.chain: List<PromoterSpec> chain({required String viewName, required String entryType, required EntryTypeVersion fromVersion, required EntryTypeVersion toVersion})
+PromoterRegistry.chainGap: String? chainGap({required String viewName, required String entryType, required EntryTypeVersion fromVersion, required EntryTypeVersion toVersion})
+PromoterRegistry.isSealed: bool get isSealed
+PromoterRegistry.new: constructor PromoterRegistry()
+PromoterRegistry.register: void register(PromoterSpec spec)
+PromoterRegistry.seal: void seal()
+PublishCollector.events: List<StoredEvent> get events
+PublishCollector.rowChanges: List<AggregateFoldChange> get rowChanges
+RetentionResult.compactedCount: field int compactedCount
+RetentionResult.new: constructor RetentionResult({required int compactedCount, required int purgedCount})
+RetentionResult.purgedCount: field int purgedCount
+SecurityContextStore.new: constructor SecurityContextStore()
+SecurityContextStore.queryAudit: Future<PagedAudit> queryAudit({Initiator? initiator, String? flowToken, String? ipAddress, DateTime? from, DateTime? to, int limit = 50, String? cursor})
+SecurityContextStore.read: Future<EventSecurityContext?> read(String eventId)
+Snapshot.new: constructor Snapshot<T>({required T? value, required int sequence})
+Snapshot.sequence: field int sequence
+Snapshot.value: field T? value
+StorageReader.findAllEvents: Future<List<StoredEvent>> findAllEvents({int? afterSequence, int? limit, String? originatorHopId, String? originatorIdentifier, String? entryType, DateTime? clientTimestampStart, DateTime? clientTimestampEnd})
+StorageReader.findAllEventsInTxn: Future<List<StoredEvent>> findAllEventsInTxn(Transaction txn, {int? afterSequence, int? limit, String? entryType, DateTime? clientTimestampStart, DateTime? clientTimestampEnd})
+StorageReader.findEventById: Future<StoredEvent?> findEventById(String eventId)
+StorageReader.findEventByIdInTxn: Future<StoredEvent?> findEventByIdInTxn(Transaction txn, String eventId)
+StorageReader.findEventsForAggregate: Future<List<StoredEvent>> findEventsForAggregate(String aggregateId)
+StorageReader.findEventsForAggregateInTxn: Future<List<StoredEvent>> findEventsForAggregateInTxn(Transaction txn, String aggregateId)
+StorageReader.findViewRows: Future<List<Map<String, dynamic>>> findViewRows(String viewName, {int? limit, int? offset})
+StorageReader.findViewRowsInTxn: Future<List<Map<String, dynamic>>> findViewRowsInTxn(Transaction txn, String viewName, {Map<String, Object?>? where, int? limit, int? offset})
+StorageReader.hasFifoWedged: Future<bool> hasFifoWedged()
+StorageReader.listFifoEntries: Future<List<FifoEntry>> listFifoEntries(String destinationId, {int? afterSequenceInQueue, int? limit})
+StorageReader.listSchedules: Future<Map<String, DestinationSchedule>> listSchedules()
+StorageReader.new: constructor StorageReader()
+StorageReader.queryAudit: Future<PagedAudit> queryAudit({Initiator? initiator, String? flowToken, String? ipAddress, DateTime? from, DateTime? to, int limit = 50, String? cursor})
+StorageReader.readAllViewTargetVersionsInTxn: Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(Transaction txn, String viewName)
+StorageReader.readEventsReverse: Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes})
+StorageReader.readFifoHead: Future<FifoEntry?> readFifoHead(String destinationId)
+StorageReader.readFifoRow: Future<FifoEntry?> readFifoRow(String destinationId, String entryId)
+StorageReader.readFillCursor: Future<int> readFillCursor(String destinationId)
+StorageReader.readLatestEventHash: Future<String?> readLatestEventHash(Transaction txn)
+StorageReader.readSchedule: Future<DestinationSchedule?> readSchedule(String destinationId)
+StorageReader.readSchemaVersion: Future<int> readSchemaVersion()
+StorageReader.readSequenceCounter: Future<int> readSequenceCounter()
+StorageReader.readViewRowInTxn: Future<Map<String, dynamic>?> readViewRowInTxn(Transaction txn, String viewName, String key)
+StorageReader.readViewRowsByKeys: Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(String viewName, Set<String> keys)
+StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn(Transaction txn, String viewName, String entryType)
+StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
+StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
+StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
+StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()
+StoredEvent.aggregateId: field String aggregateId
+StoredEvent.aggregateType: field String aggregateType
+StoredEvent.clientTimestamp: field DateTime clientTimestamp
+StoredEvent.data: field Map<String, dynamic> data
+StoredEvent.entryType: field String entryType
+StoredEvent.entryTypeVersion: field EntryTypeVersion entryTypeVersion
+StoredEvent.eventHash: field String eventHash
+StoredEvent.eventId: field String eventId
+StoredEvent.eventType: field String eventType
+StoredEvent.flowToken: field String? flowToken
+StoredEvent.fromMap: constructor StoredEvent.fromMap(Map<String, Object?> map, int key)
+StoredEvent.initiator: field Initiator initiator
+StoredEvent.key: field int key
+StoredEvent.libFormatVersion: field DataFormatVersion libFormatVersion
+StoredEvent.metadata: field Map<String, dynamic> metadata
+StoredEvent.new: constructor StoredEvent({required int key, required String eventId, required String aggregateId, required String aggregateType, required String entryType, required EntryTypeVersion entryTypeVersion, required DataFormatVersion libFormatVersion, required String eventType, required int sequenceNumber, required Map<String, dynamic> data, required Map<String, dynamic> metadata, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, String? flowToken, String? previousEventHash})
+StoredEvent.originatorHop: ProvenanceEntry get originatorHop
+StoredEvent.previousEventHash: field String? previousEventHash
+StoredEvent.recordKeys: static field Set<String> recordKeys
+StoredEvent.requireRecordTimestamps: void requireRecordTimestamps()
+StoredEvent.sequenceNumber: field int sequenceNumber
+StoredEvent.synthetic: constructor StoredEvent.synthetic({required String eventId, required String aggregateId, required String entryType, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, int key = 0, String aggregateType = '_test', String eventType = 'finalized', int sequenceNumber = 0, Map<String, dynamic>? data, Map<String, dynamic>? metadata, String? flowToken, String? previousEventHash, EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0), DataFormatVersion libFormatVersion = LibVersion.dataFormat})
+StoredEvent.toJson: Map<String, dynamic> toJson()
+StoredEvent.toMap: Map<String, dynamic> toMap()
+StoredEvent.toString: String toString()
+StoredEvent.withData: StoredEvent withData(Map<String, Object?> newData)
+SyncCycle.call: Future<void> call({bool flushHeld = false})
+SyncCycle.close: Future<void> close({Duration? timeout})
+SyncCycle.maxConfigurationVersionLength: static field int maxConfigurationVersionLength
+SyncCycle.pollInbound: Future<void> pollInbound()
+SyncCycle.start: static Future<SyncCycle> start({required DestinationRegistry registry, DateTime Function()? clock, SyncPolicy? policy, SyncPolicy? Function()? policyResolver, Duration cadence = const Duration(seconds: 15), String? configurationVersion})
+SyncCycle.state: SyncCycleState get state
+SyncCycle.stopCause: Object? get stopCause
+SyncCycle.stopped: Future<void> get stopped
+SyncCycle.unserved: Map<String, UnservedReason> get unserved
+TableBackedAuthorizationPolicy.effectivePermissionsFor: Future<EffectiveAuthorization> effectivePermissionsFor(Principal principal, {Transaction? txn})
+TableBackedAuthorizationPolicy.isPermitted: Future<AuthorizationDecision> isPermitted(Principal principal, Permission permission, ScopeValue? scopeValue, {Transaction? txn})
+TableBackedAuthorizationPolicy.new: constructor TableBackedAuthorizationPolicy({required StorageReader reader, required ScopeClassRegistry scopeClassRegistry})
+TableBackedAuthorizationPolicy.scopeClassRegistry: field ScopeClassRegistry scopeClassRegistry
+Tombstone.aggregateId: field String aggregateId
+Tombstone.new: constructor Tombstone<T>({required String aggregateId, required int sequence})
+Tombstone.sequence: field int sequence
+TombstoneAndRefillResult.deletedTrailCount: field int deletedTrailCount
+TombstoneAndRefillResult.new: constructor TombstoneAndRefillResult({required String rowId, required int deletedTrailCount, required int rewoundTo})
+TombstoneAndRefillResult.rewoundTo: field int rewoundTo
+TombstoneAndRefillResult.rowId: field String rowId
+Transaction.new: constructor Transaction()
+Update.new: constructor Update<T>()
+Update.sequence: int get sequence
+_SecurityContextReader.queryAudit: Future<PagedAudit> queryAudit({Initiator? initiator, String? flowToken, String? ipAddress, DateTime? from, DateTime? to, int limit = 50, String? cursor})
+_SecurityContextReader.read: Future<EventSecurityContext?> read(String eventId)
+_StorageReader.findAllEvents: Future<List<StoredEvent>> findAllEvents({int? afterSequence, int? limit, String? originatorHopId, String? originatorIdentifier, String? entryType, DateTime? clientTimestampStart, DateTime? clientTimestampEnd})
+_StorageReader.findAllEventsInTxn: Future<List<StoredEvent>> findAllEventsInTxn(Transaction txn, {int? afterSequence, int? limit, String? entryType, DateTime? clientTimestampStart, DateTime? clientTimestampEnd})
+_StorageReader.findEventById: Future<StoredEvent?> findEventById(String eventId)
+_StorageReader.findEventByIdInTxn: Future<StoredEvent?> findEventByIdInTxn(Transaction txn, String eventId)
+_StorageReader.findEventsForAggregate: Future<List<StoredEvent>> findEventsForAggregate(String aggregateId)
+_StorageReader.findEventsForAggregateInTxn: Future<List<StoredEvent>> findEventsForAggregateInTxn(Transaction txn, String aggregateId)
+_StorageReader.findViewRows: Future<List<Map<String, dynamic>>> findViewRows(String viewName, {int? limit, int? offset})
+_StorageReader.findViewRowsInTxn: Future<List<Map<String, dynamic>>> findViewRowsInTxn(Transaction txn, String viewName, {Map<String, Object?>? where, int? limit, int? offset})
+_StorageReader.hasFifoWedged: Future<bool> hasFifoWedged()
+_StorageReader.listFifoEntries: Future<List<FifoEntry>> listFifoEntries(String destinationId, {int? afterSequenceInQueue, int? limit})
+_StorageReader.listSchedules: Future<Map<String, DestinationSchedule>> listSchedules()
+_StorageReader.queryAudit: Future<PagedAudit> queryAudit({Initiator? initiator, String? flowToken, String? ipAddress, DateTime? from, DateTime? to, int limit = 50, String? cursor})
+_StorageReader.readAllViewTargetVersionsInTxn: Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(Transaction txn, String viewName)
+_StorageReader.readEventsReverse: Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes})
+_StorageReader.readFifoHead: Future<FifoEntry?> readFifoHead(String destinationId)
+_StorageReader.readFifoRow: Future<FifoEntry?> readFifoRow(String destinationId, String entryId)
+_StorageReader.readFillCursor: Future<int> readFillCursor(String destinationId)
+_StorageReader.readLatestEventHash: Future<String?> readLatestEventHash(Transaction txn)
+_StorageReader.readSchedule: Future<DestinationSchedule?> readSchedule(String destinationId)
+_StorageReader.readSchemaVersion: Future<int> readSchemaVersion()
+_StorageReader.readSequenceCounter: Future<int> readSequenceCounter()
+_StorageReader.readViewRowInTxn: Future<Map<String, dynamic>?> readViewRowInTxn(Transaction txn, String viewName, String key)
+_StorageReader.readViewRowsByKeys: Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(String viewName, Set<String> keys)
+_StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn(Transaction txn, String viewName, String entryType)
+_StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
+_StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
+_StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
+_StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()

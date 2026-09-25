@@ -2,14 +2,13 @@
 // (the wedge event records the retry budget in effect: the budget a
 //   cycle resolves once per pass, a static policy's budget, or the default
 //   budget when neither supplies one, reaches every destination's drain)
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';

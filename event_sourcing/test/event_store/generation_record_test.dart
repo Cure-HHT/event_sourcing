@@ -41,14 +41,16 @@ Future<EventStore> _open(
   );
   try {
     return await EventStore.open(
-      storage: backend,
+      storage: ApplicationSuppliedStorage(
+        backend,
+        SembastSecurityContextStore(backend: backend),
+      ),
       entryTypes: registry,
       source: const Source(
         hopId: 'gen-hop',
         identifier: 'gen-install',
         softwareVersion: 'gen-test',
       ),
-      securityContexts: SembastSecurityContextStore(backend: backend),
     );
   } catch (_) {
     await backend.close();

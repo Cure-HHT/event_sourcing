@@ -197,9 +197,8 @@ void main() {
 
     // --- Write-path policy (reads the real projection rows). ---
     final policy = TableBackedAuthorizationPolicy(
-      backend: backend,
+      reader: store.reader,
       scopeClassRegistry: registry,
-      transactionProvider: <T>(fn) => backend.transaction<T>(fn),
     );
 
     // --- View-scope binding: the participants view is scoped by the

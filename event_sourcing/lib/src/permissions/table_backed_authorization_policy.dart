@@ -32,25 +32,29 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
+/// The library's authorization policy: decides from the grant, assignment
+/// and containment views of the event store whose [StorageReader] it reads
+/// through. It holds no storage backend or pool.
+// Implements: EVS-DEV-storage-capability/I
+// the policy reads through the event store's storage reader; no
+//   constructor of it takes a backend or a pool.
 class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
+  /// A policy reading through [reader], an event store's `reader`.
   TableBackedAuthorizationPolicy({
-    required this.backend,
+    required StorageReader reader,
     required this.scopeClassRegistry,
-    required this.transactionProvider,
-  }) : _resolver = ContainmentResolver(
+  }) : _reader = reader,
+       _resolver = ContainmentResolver(
          registry: scopeClassRegistry,
-         findRowsInTxn: backend.findViewRowsInTxn,
+         findRowsInTxn: reader.findViewRowsInTxn,
        );
 
-  final StorageBackend backend;
+  /// The reads the policy decides from. A decision given a transaction
+  /// (the dispatcher passes its own, so authorize and execute run in one
+  /// transaction) reads in it; otherwise the policy reads in a transaction
+  /// of the reader's.
+  final StorageReader _reader;
   final ScopeClassRegistry scopeClassRegistry;
-
-  /// In production the dispatcher passes the active storage transaction
-  /// (so authorize + execute run inside the same backend transaction).
-  /// Tests can pass a one-shot supplier that opens a tx per call:
-  /// `<T>(fn) => backend.transaction<T>(fn)`.
-  final Future<T> Function<T>(Future<T> Function(Transaction txn))
-  transactionProvider;
 
   final ContainmentResolver _resolver;
 
@@ -99,17 +103,17 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
 
     // Run the projection reads either in the caller-supplied txn (so
     // they share the read-snapshot with subsequent appends in that tx)
-    // or open a fresh one via [transactionProvider].
+    // or in a fresh read-only transaction of the reader's.
     if (txn != null) {
       return _evaluate(txn, principal, permission, scopeValue);
     }
-    return transactionProvider(
+    return _reader.transaction(
       (innerTxn) => _evaluate(innerTxn, principal, permission, scopeValue),
     );
   }
 
   /// Pure projection-read body shared by the txn-injected and
-  /// transactionProvider-opened paths.
+  /// reader-opened paths.
   Future<AuthorizationDecision> _evaluate(
     Transaction txn,
     UserPrincipal principal,
@@ -124,7 +128,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     // before honouring any permission under that role. This read also
     // doubles as the scope-assignment enumeration consumed by step 6
     // for scoped permissions.
-    final assignments = await backend.findViewRowsInTxn(
+    final assignments = await _reader.findViewRowsInTxn(
       txn,
       'user_role_scopes',
       where: <String, Object?>{
@@ -137,7 +141,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     }
 
     // 4. Role-level grant: does the active role carry this permission name?
-    final grants = await backend.findViewRowsInTxn(
+    final grants = await _reader.findViewRowsInTxn(
       txn,
       'role_permission_grants',
       where: <String, Object?>{
@@ -240,7 +244,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     if (txn != null) {
       return _effectiveBody(txn, principal);
     }
-    return transactionProvider(
+    return _reader.transaction(
       (innerTxn) => _effectiveBody(innerTxn, principal),
     );
   }
@@ -253,7 +257,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     // assignment for (userId, activeRole), the principal does not
     // effectively hold that role — return empty rather than leaking the
     // role's permissions based on the Principal's unverified claim.
-    final assignmentRows = await backend.findViewRowsInTxn(
+    final assignmentRows = await _reader.findViewRowsInTxn(
       txn,
       'user_role_scopes',
       where: <String, Object?>{
@@ -264,7 +268,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     if (assignmentRows.isEmpty) {
       return EffectiveAuthorization.empty;
     }
-    final grants = await backend.findViewRowsInTxn(
+    final grants = await _reader.findViewRowsInTxn(
       txn,
       'role_permission_grants',
       where: <String, Object?>{'role': principal.activeRole},

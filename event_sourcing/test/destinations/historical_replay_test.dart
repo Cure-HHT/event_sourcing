@@ -4,8 +4,8 @@
 // enqueues every matching event in FIFO order (C), committing the items, the
 // advanced position and the cleared request together so batches survive
 // restart without duplication (D).
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';

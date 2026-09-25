@@ -64,7 +64,7 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
   //    user_role_scopes view. The row payload carries user_id / role /
   //    scope; the storage key is not surfaced by findViewRows, so we
   //    rebuild the aggregate id from the row body.
-  final rows = await eventStore.backend.findViewRows('user_role_scopes');
+  final rows = await eventStore.reader.findViewRows('user_role_scopes');
   final inView = <String>{};
   for (final r in rows) {
     final scope = ScopeValue.fromJson(

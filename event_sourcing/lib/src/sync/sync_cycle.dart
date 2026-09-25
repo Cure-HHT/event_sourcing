@@ -35,23 +35,11 @@
 //   trigger that arrives during a pass, the cadence and the heartbeat; each
 //   pass starts with a transaction that checks the lock and writes a
 //   heartbeat record)
-import 'dart:async';
 
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/drain_lock.dart';
-import 'package:event_sourcing/src/storage/drain_records.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
-import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/declared_configuration.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
-import 'package:event_sourcing/src/sync/sync_policy.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+part of '../event_store.dart';
 
 /// Where a delivery cycle is in its life.
+
 enum SyncCycleState {
   /// Started, waiting for the drain lock (another drainer holds it, or it
   /// could not be acquired yet). The cycle does no delivery work.
@@ -142,7 +130,12 @@ final class SyncCycle {
        _policy = policy,
        _policyResolver = policyResolver,
        _cadence = cadence,
-       _configurationVersion = configurationVersion;
+       _configurationVersion = configurationVersion,
+       _handDriven = DeliveryTestHooks.current?.handDrivenCycle ?? false;
+
+  /// Whether this cycle was started under the `handDrivenCycle` test seam,
+  /// read once at start: a wake then runs no pass of it.
+  final bool _handDriven;
 
   /// The longest `configurationVersion` [start] accepts.
   static const int maxConfigurationVersionLength = 128;
@@ -214,7 +207,7 @@ final class SyncCycle {
       );
     }
     final store = registry.eventStore;
-    final key = registry.backend.drainExclusionKey(store.databaseId);
+    final key = registry._backend.drainExclusionKey(store.databaseId);
     if (_started.containsKey(key)) {
       throw StateError(
         'SyncCycle.start: a delivery cycle over this database is already '
@@ -315,7 +308,7 @@ final class SyncCycle {
   // ------------------------------------------------------------ lifecycle
 
   Future<void> _begin() async {
-    final backend = _registry.backend;
+    final backend = _registry._backend;
     try {
       final lock = await backend.tryAcquireDrainLock(
         databaseId: _registry.eventStore.databaseId,
@@ -345,7 +338,7 @@ final class SyncCycle {
       _state = SyncCycleState.standby;
       _requestLock();
     }
-    _registry.eventStore.deliveryTrigger = _trigger;
+    _registry.eventStore._deliveryTrigger = _trigger;
     _armCadence();
     _heartbeatTimer = libraryPeriodicTimer(_cadence, (_) => _beat());
   }
@@ -372,14 +365,19 @@ final class SyncCycle {
 
   void _clearSlot() {
     final store = _registry.eventStore;
-    if (identical(store.deliveryTrigger, _trigger)) {
-      store.deliveryTrigger = null;
+    if (identical(store._deliveryTrigger, _trigger)) {
+      store._deliveryTrigger = null;
     }
   }
 
   /// The trigger the event store fires; bound once so the slot can be
-  /// compared by identity.
-  late final Future<void> Function() _trigger = call;
+  /// compared by identity. A cycle started under the `handDrivenCycle` test
+  /// seam holds the slot with a trigger that runs no pass.
+  late final Future<void> Function() _trigger = _handDriven
+      ? _ignoreWake
+      : call;
+
+  static Future<void> _ignoreWake() async {}
 
   void _hold(DrainLock lock) {
     final held = _CycleLock(lock);
@@ -400,7 +398,7 @@ final class SyncCycle {
 
   void _requestLock() {
     if (_stopping || _request != null) return;
-    final request = _registry.backend.requestDrainLock(
+    final request = _registry._backend.requestDrainLock(
       databaseId: _registry.eventStore.databaseId,
       retryInterval: _cadence,
     );
@@ -832,7 +830,7 @@ final class SyncCycle {
   /// heartbeat record, reads the persisted schedules and refill guards, and
   /// writes the drainer's declaration when it changed.
   Future<_PassPlan> _passStart(_CycleLock held) async {
-    final backend = _registry.backend;
+    final backend = _registry._backend;
     final registered = _registry.all();
     final declared = <String, _Declared>{
       for (final d in registered)
@@ -973,7 +971,7 @@ final class SyncCycle {
     try {
       await fillBatch(
         destination,
-        backend: _registry.backend,
+        backend: _registry._backend,
         source: _registry.eventStore.source,
         lock: held,
         clock: _clock,

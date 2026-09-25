@@ -12,7 +12,10 @@ Future<EventStoreBundle> _bootstrapHub(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
   return bootstrapEventStore(
-    backend: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
     source: const Source(
       hopId: 'hub-server',
       identifier: '11111111-1111-4111-8111-111111111111',
@@ -40,10 +43,10 @@ void main() {
       final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
       final eventId = envelope.events.single['event_id']! as String;
-      expect(await hub.eventStore.backend.findEventById(eventId), isNull);
+      expect(await hub.eventStore.reader.findEventById(eventId), isNull);
       final result = await bridge.deliver(_wirePayload(envelope.encode()));
       expect(result, isA<SendOk>());
-      final admitted = await hub.eventStore.backend.findEventById(eventId);
+      final admitted = await hub.eventStore.reader.findEventById(eventId);
       expect(admitted, isNotNull, reason: 'the hub log holds the event');
       expect(admitted!.aggregateId, 'remote-aggregate-1');
     });

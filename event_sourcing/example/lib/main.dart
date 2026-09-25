@@ -13,7 +13,6 @@ import 'package:event_sourcing_demo/native_demo_destination.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:sembast/sembast_io.dart';
 import 'package:uuid/uuid.dart';
 
 /// Reads a persisted install UUID from [path], or mints + persists a new
@@ -32,14 +31,12 @@ Future<String> _readOrMintUUID(String path) async {
 class _PaneRuntime {
   _PaneRuntime({
     required this.datastore,
-    required this.backend,
     required this.appState,
     required this.dbPath,
     required this.policyNotifier,
   });
 
   final EventStoreBundle datastore;
-  final SembastBackend backend;
   final AppState appState;
   final String dbPath;
   final ValueNotifier<SyncPolicy> policyNotifier;
@@ -61,8 +58,6 @@ Future<_PaneRuntime> _bootstrapPane({
   required Source source,
   DownstreamBridge? bridge,
 }) async {
-  final db = await databaseFactoryIo.openDatabase(dbPath);
-  final backend = SembastBackend(database: db);
   final policyNotifier = ValueNotifier<SyncPolicy>(demoDefaultSyncPolicy);
 
   final primary = DemoDestination(
@@ -126,19 +121,15 @@ Future<_PaneRuntime> _bootstrapPane({
       ),
     );
 
-  final EventStoreBundle datastore;
-  try {
-    datastore = await bootstrapEventStore(
-      backend: backend,
-      source: source,
-      entryTypes: allDemoEntryTypes,
-      destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-      projections: diaryProjections,
-    );
-  } on Object {
-    await backend.close();
-    rethrow;
-  }
+  // The library opens the database file, and closes it when the event
+  // store closes or when the open fails.
+  final datastore = await bootstrapEventStore(
+    storage: SembastStorage.file(dbPath),
+    source: source,
+    entryTypes: allDemoEntryTypes,
+    destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
+    projections: diaryProjections,
+  );
 
   final now = DateTime.now().toUtc();
   for (final id in <String>[
@@ -166,13 +157,12 @@ Future<_PaneRuntime> _bootstrapPane({
   try {
     await appState.startDelivery();
   } on Object {
-    await backend.close();
+    await datastore.eventStore.close();
     rethrow;
   }
 
   return _PaneRuntime(
     datastore: datastore,
-    backend: backend,
     appState: appState,
     dbPath: dbPath,
     policyNotifier: policyNotifier,
@@ -238,7 +228,7 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
     if (!needsDatabaseReset(e)) rethrow;
     if (hub != null) {
       await hub.appState.stopDelivery();
-      await hub.backend.close();
+      await hub.datastore.eventStore.close();
     }
     stderr.writeln('[demo] $e');
     return DatabaseResetRequiredApp(
@@ -249,7 +239,6 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
   return DualDemoApp(
     top: DemoPaneConfig(
       datastore: mobile.datastore,
-      backend: mobile.backend,
       appState: mobile.appState,
       dbPath: mobile.dbPath,
       policyNotifier: mobile.policyNotifier,
@@ -257,7 +246,6 @@ Future<Widget> buildDemoApp(Directory demoDir) async {
     ),
     bottom: DemoPaneConfig(
       datastore: hub.datastore,
-      backend: hub.backend,
       appState: hub.appState,
       dbPath: hub.dbPath,
       policyNotifier: hub.policyNotifier,

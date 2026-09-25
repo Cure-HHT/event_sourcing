@@ -61,7 +61,7 @@ Five concepts carry most of the weight:
   event log into a queryable table. No fold function — you supply data,
   the library computes the view deterministically.
 - **View** — the materialized output of a projection, read live via
-  `subscribe<T>` or one-off via `backend.findViewRows(...)`.
+  `subscribe<T>` or one-off via `eventStore.reader.findViewRows(...)`.
 - **Action** — the write API. Subclass `Action<TInput, TResult>`, declare
   required permissions, implement `parseInput` / `validate` / `execute`;
   the dispatcher runs the pipeline inside a single storage transaction.
@@ -91,7 +91,6 @@ the view subscription.
 
 ```dart
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:sembast/sembast_memory.dart';
 
 const kNote = EntryTypeDefinition(
   id: 'note',
@@ -100,9 +99,6 @@ const kNote = EntryTypeDefinition(
 );
 
 Future<void> main() async {
-  final db = await newDatabaseFactoryMemory().openDatabase('demo.db');
-  final backend = SembastBackend(database: db);
-
   // Declare views before bootstrap. AggregateProjectionSpec produces one
   // row per aggregate, deep-merged from successive events' payloads.
   final projections = ProjectionRegistry()
@@ -112,8 +108,8 @@ Future<void> main() async {
       tombstoneEventTypes: {'note_tombstoned'},
     ));
 
-  final datastore = await bootstrapAppendOnlyDatastore(
-    backend: backend,
+  final datastore = await bootstrapEventStore(
+    storage: const SembastStorage.memory('demo.db'),
     source: const Source(
       hopId: 'mobile-device',
       identifier: 'install-uuid-v4-here', // persist across boots
@@ -235,13 +231,17 @@ same conformance harness:
   holding a Web Lock, and the others stand by (`EVS-PRD-destinations/V`).
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
   a `view_rows(view_name, row_key, row_data, …)` table. The schema is
-  provisioned once per deployment with `PostgresBackend.provision` (or
-  `open(provisionSchema: true)` in development), as the role that owns the
-  schema; `open` performs no DDL and refuses a schema its build does not
-  support. Instances run as a runtime role that neither owns nor can
-  create the tables and holds exactly the privileges of
-  `postgresRuntimeRoleGrants`, under which every library operation but
-  provisioning works (`EVS-DEV-postgres-backend/K`). The queue table
+  provisioned once per deployment with `PostgresBackend.provision`, as the
+  role that owns the schema, declaring the runtime and lock roles the
+  instances connect as; `open` performs no DDL and refuses a schema its
+  build does not support. Instances run as a declared runtime role that
+  neither owns nor can create the tables and holds exactly the privileges
+  of `postgresRuntimeRoleGrants`, under which every library operation but
+  provisioning works (`EVS-DEV-postgres-backend/K`). `open` refuses an
+  undeclared role, a runtime or lock role that could become the owner, and
+  a database on which a role outside the owner and the declared roles may
+  write a library table or act as one of those roles, naming the role and
+  the privilege (`EVS-DEV-postgres-backend/M`, `/N`, `/P`). The queue table
   carries a database guard that, while it is in place (the schema owner
   can remove it), refuses every change outside the shapes of the library's
   own writes, whatever role makes it (`EVS-DEV-destination-drain/S`).
@@ -302,6 +302,27 @@ alone.
 Reactive `subscribe<T>` is wired over Sembast change-notifications; on
 Postgres, reactive UIs poll `findViewRows` on a cadence until
 `LISTEN/NOTIFY` plumbing lands (see `spec/postgres-backend.md`).
+
+### An application's own tables
+
+An application that keeps tables of its own in the library's Postgres
+database (`EVS-DEV-postgres-backend/O`, and the doc comment of
+`postgresRuntimeRoleGrants`):
+
+- creates a schema of its own, which the library does not provision, and
+  keeps its tables there;
+- connects under an application role of its own, through a pool it opens
+  itself, never the library's roles or connections;
+- grants that role no privilege on a library table beyond `SELECT`;
+- grants it no membership through which it can inherit the privileges of,
+  or set its role to, a declared library role, the owner of the library's
+  tables or `pg_write_all_data`;
+- on a server before Postgres 15 with the library in the `public` schema,
+  revokes `CREATE` on it from `PUBLIC`.
+
+The database then refuses the application role every write to a library
+table, and a grant that would allow one makes `PostgresBackend.open` refuse
+the database.
 
 ## Audit, provenance, and sync (advanced)
 

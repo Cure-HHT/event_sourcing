@@ -7,12 +7,12 @@ import 'package:flutter/material.dart';
 
 class MaterializedPanel extends StatefulWidget {
   const MaterializedPanel({
-    required this.backend,
+    required this.reader,
     required this.appState,
     super.key,
   });
 
-  final StorageBackend backend;
+  final StorageReader reader;
   final AppState appState;
 
   @override
@@ -71,7 +71,7 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
       // Tombstone events delete the row, so presence means the aggregate is live.
       // The demo_note action also deep-merges event.data which carries
       // answers.title — extracted here so the panel can show meaningful labels.
-      final rawRows = await widget.backend.findViewRows('notes');
+      final rawRows = await widget.reader.findViewRows('notes');
       final rows = <_ViewRow>[];
       for (final raw in rawRows) {
         final aggregateId = raw['aggregateId'] as String? ?? '';

@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show wedgeHeadInTxnForTest;
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +28,7 @@ import 'drain_wedge_conformance.dart'
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
+import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
 const Initiator _init = AutomationInitiator(service: 'halt-scenarios');
@@ -45,7 +47,7 @@ DateTime _fillNow() => DateTime.utc(2027, 1, 1);
 /// that no cancellation, wedge or deletion naming it followed.
 Future<Map<String, StoredEvent>> _openRequestsInLog(EventStore store) async {
   final open = <String, StoredEvent>{};
-  for (final e in await store.backend.findAllEvents()) {
+  for (final e in await store.reader.findAllEvents()) {
     if (e.aggregateType != kDestinationAuditAggregateType) continue;
     if (e.data['database_id'] != store.databaseId) continue;
     final id = e.data['id']! as String;
@@ -77,7 +79,7 @@ Future<void> expectHaltRequestMatchesLog(
   EventStore store,
   Iterable<String> destinationIds,
 ) async {
-  final backend = store.backend;
+  final backend = testBackendOf(store);
   final open = await _openRequestsInLog(store);
   for (final id in destinationIds) {
     final stored = await backend.transaction(
@@ -108,7 +110,7 @@ Future<void> expectHaltRequestMatchesLog(
 Future<void> expectHaltLogInvariant(EventStore store) async {
   final open = <String, String>{};
   final closed = <String>{};
-  for (final e in await store.backend.findAllEvents()) {
+  for (final e in await store.reader.findAllEvents()) {
     if (e.aggregateType != kDestinationAuditAggregateType) continue;
     if (e.data['database_id'] != store.databaseId) continue;
     final id = e.data['id']! as String;
@@ -147,7 +149,9 @@ Future<void> expectHaltLogInvariant(EventStore store) async {
 }
 
 class _Process {
-  _Process(this.backend, this.store, this.registry);
+  _Process(this.backend, this.store, this.registry) {
+    trackTestBackend(store, backend);
+  }
   final StorageBackend backend;
   final EventStore store;
   final DestinationRegistry registry;
@@ -878,7 +882,8 @@ void runOperatorHaltScenarios(
         for (final budgetInEffect in <int?>[3, null]) {
           await expectLater(
             w.store.runTransaction(
-              (txn, collector) => w.registry.wedgeHeadInTxn(
+              (txn, collector) => wedgeHeadInTxnForTest(
+                w.registry,
                 txn,
                 collector,
                 destinationId: 'x',
@@ -1217,16 +1222,15 @@ void runOperatorHaltScenarios(
           source: _source,
           securityContexts: w.db.securityFor(backend),
         );
-        store.deliveryTrigger = () async {
-          wakes += 1;
-        };
+        trackTestBackend(store, backend);
         final registry = DestinationRegistry(eventStore: store);
+        final counting = DeliveryTestHooks(onDeliveryWake: (_) => wakes += 1);
         Future<void> wakesOnce(
           String op,
           Future<Object?> Function() run,
         ) async {
           final before = wakes;
-          await run();
+          await runWithDeliveryTestHooks(counting, run);
           expect(wakes - before, 1, reason: op);
         }
 
@@ -1257,10 +1261,13 @@ void runOperatorHaltScenarios(
         );
         final refusedAt = wakes;
         await expectLater(
-          registry.requestHalt(
-            'x',
-            initiator: _operator,
-            purpose: HaltPurpose.pause,
+          runWithDeliveryTestHooks(
+            counting,
+            () => registry.requestHalt(
+              'x',
+              initiator: _operator,
+              purpose: HaltPurpose.pause,
+            ),
           ),
           throwsStateError,
         );
@@ -1824,6 +1831,7 @@ void runOperatorHaltScenarios(
           source: _source,
           securityContexts: w.db.securityFor(backend),
         );
+        trackTestBackend(store, backend);
         final registry = DestinationRegistry(eventStore: store);
         var passes = 0;
         final log = <LibraryLogRecord>[];

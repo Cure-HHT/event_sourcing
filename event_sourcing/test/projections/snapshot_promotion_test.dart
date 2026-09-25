@@ -628,14 +628,16 @@ void main() {
         );
         final projections = ProjectionRegistry()..register(_kNotesSpec);
         final store = await EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: entryTypes,
           source: const Source(
             hopId: 'test',
             identifier: 'test-i',
             softwareVersion: '0.0.0',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
           projections: projections,
         );
         await store.append(
@@ -680,14 +682,16 @@ void main() {
             ),
           );
         final store = await EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: entryTypes,
           source: const Source(
             hopId: 'test',
             identifier: 'test-i',
             softwareVersion: '0.0.0',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
           projections: projections,
           promoters: promoters,
         );
@@ -759,14 +763,16 @@ void main() {
         );
         final projections = ProjectionRegistry()..register(_kNotesSpec);
         final store = await EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: entryTypes,
           source: const Source(
             hopId: 'test',
             identifier: 'test-i',
             softwareVersion: '0.0.0',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
           projections: projections,
         );
         await store.append(
@@ -795,14 +801,16 @@ void main() {
 
       await expectLater(
         EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: entryTypes,
           source: const Source(
             hopId: 'test',
             identifier: 'test-i',
             softwareVersion: '0.0.0',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
           projections: projections,
         ),
         throwsA(

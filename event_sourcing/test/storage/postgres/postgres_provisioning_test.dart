@@ -23,41 +23,38 @@ import 'package:test/test.dart';
 import '../../test_support/lib_version_seed.dart';
 import 'test_postgres_url.dart';
 
-const _kRole = 'evs_provision_noschema';
+/// This build's schema version, and the one a later build's step leads to.
+const int _v = postgresSchemaVersion;
+const int _next = postgresSchemaVersion + 1;
 
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
+/// This build's migration steps, then a later build's step adding the probe
+/// table and recording [minimum].
+List<PostgresMigrationStep> _twoSteps({
+  int minimum = postgresMinCompatibleSchemaVersion,
+}) => <PostgresMigrationStep>[
+  ...postgresMigrations,
+  PostgresMigrationStep(
+    toVersion: _next,
+    minCompatibleVersion: minimum,
+    ddl: const <String>['CREATE TABLE schema_upgrade_probe (id INTEGER)'],
+  ),
+];
 
-Future<void> _resetSchema(String url) async {
-  final c = await _connect(url);
-  await c.execute('DROP SCHEMA public CASCADE');
-  await c.execute('CREATE SCHEMA public');
-  await c.close();
-}
-
-/// The two-step migration list: this build's step, then a step adding the
-/// probe table and recording [minimum].
-List<PostgresMigrationStep> _twoSteps({int minimum = 1}) =>
-    <PostgresMigrationStep>[
-      postgresMigrations.single,
-      PostgresMigrationStep(
-        toVersion: 2,
-        minCompatibleVersion: minimum,
-        ddl: const <String>['CREATE TABLE schema_upgrade_probe (id INTEGER)'],
-      ),
-    ];
+const (int, int) _built = (_v, postgresMinCompatibleSchemaVersion);
+const (int, int) _upgraded = (_next, postgresMinCompatibleSchemaVersion);
 
 T _as<T>(List<PostgresMigrationStep> steps, T Function() body) =>
     runWithDeliveryTestHooks(DeliveryTestHooks(schemaDeclaration: steps), body);
 
-Future<List<String>> _tables(String url) async {
-  final c = await _connect(url);
+Future<List<String>> _tables(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute(
-      'SELECT table_name FROM information_schema.tables '
-      "WHERE table_schema = 'public' ORDER BY table_name",
+      Sql.named(
+        'SELECT table_name FROM information_schema.tables '
+        'WHERE table_schema = @s ORDER BY table_name',
+      ),
+      parameters: <String, Object?>{'s': db.schema},
     );
     return r.map((row) => row[0]! as String).toList();
   } finally {
@@ -65,15 +62,18 @@ Future<List<String>> _tables(String url) async {
   }
 }
 
-/// Every column of the public schema, as `table.column type`, in order.
-Future<List<String>> _columns(String url) async {
-  final c = await _connect(url);
+/// Every column of the library's schema, as `table.column type`, in order.
+Future<List<String>> _columns(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute(
-      'SELECT table_name, column_name, data_type '
-      'FROM information_schema.columns '
-      "WHERE table_schema = 'public' "
-      'ORDER BY table_name, column_name',
+      Sql.named(
+        'SELECT table_name, column_name, data_type '
+        'FROM information_schema.columns '
+        'WHERE table_schema = @s '
+        'ORDER BY table_name, column_name',
+      ),
+      parameters: <String, Object?>{'s': db.schema},
     );
     return r.map((row) => '${row[0]}.${row[1]} ${row[2]}').toList();
   } finally {
@@ -83,8 +83,8 @@ Future<List<String>> _columns(String url) async {
 
 /// The keys of `backend_state`, in order, each with its value for the
 /// schema-version keys.
-Future<List<String>> _backendState(String url) async {
-  final c = await _connect(url);
+Future<List<String>> _backendState(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute(
       "SELECT key, CASE WHEN key LIKE '%schema_version' "
@@ -97,8 +97,8 @@ Future<List<String>> _backendState(String url) async {
   }
 }
 
-Future<(int?, int?)> _storedPair(String url) async {
-  final c = await _connect(url);
+Future<(int?, int?)> _storedPair(PostgresTestDatabase db) async {
+  final c = await db.connectAdmin();
   try {
     final r = await c.execute(
       'SELECT key, value::numeric::int FROM backend_state '
@@ -131,14 +131,16 @@ Future<EventStore> _openStore(PostgresBackend backend) {
     ),
   );
   return EventStore.open(
-    storage: backend,
+    storage: ApplicationSuppliedStorage(
+      backend,
+      PostgresSecurityContextStore(backend: backend),
+    ),
     entryTypes: registry,
     source: const Source(
       hopId: 'provision-hop',
       identifier: 'provision-install',
       softwareVersion: 'provision-test',
     ),
-    securityContexts: PostgresSecurityContextStore(backend: backend),
   );
 }
 
@@ -171,24 +173,22 @@ void main() {
     );
   });
 
-  final url = testPostgresUrl();
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db != null) tearDownAll(db.drop);
   final backends = <PostgresBackend>[];
 
   Future<PostgresBackend> open() async {
-    final backend = await PostgresBackend.open(
-      url: url!,
-      sslMode: SslMode.disable,
-    );
+    final backend = await db!.open();
     backends.add(backend);
     return backend;
   }
 
   setUp(() async {
-    if (url == null) {
+    if (db == null) {
       markTestSkipped('PG_TEST_URL unset');
       return;
     }
-    await _resetSchema(url);
+    await db.reset();
   });
 
   tearDown(() async {
@@ -202,7 +202,7 @@ void main() {
     // Verifies: EVS-DEV-postgres-backend/H
     test('an unprovisioned schema is refused, naming provision, and nothing '
         'is created', () async {
-      if (url == null) return;
+      if (db == null) return;
       await expectLater(
         open(),
         throwsA(
@@ -215,49 +215,43 @@ void main() {
               ),
         ),
       );
-      expect(await _tables(url), isEmpty);
+      expect(await _tables(db), isEmpty);
     });
 
     // Verifies: EVS-DEV-postgres-backend/H
     test("a schema below this build's version is refused", () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       await expectLater(
         _as(_twoSteps(), open),
         throwsA(
           isA<PostgresSchemaIncompatibleException>()
-              .having((e) => e.storedSchemaVersion, 'stored', 1)
-              .having((e) => e.buildSchemaVersion, 'build', 2),
+              .having((e) => e.storedSchemaVersion, 'stored', _v)
+              .having((e) => e.buildSchemaVersion, 'build', _next),
         ),
       );
     });
 
     // Verifies: EVS-DEV-postgres-backend/H
     test('a newer schema whose minimum this build meets opens', () async {
-      if (url == null) return;
-      await _as(
-        _twoSteps(),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-      );
-      expect(await _storedPair(url), (2, 1));
+      if (db == null) return;
+      await _as(_twoSteps(), db.provision);
+      expect(await _storedPair(db), _upgraded);
       final store = await _openStore(await open());
       expect(store.databaseId, isNotEmpty);
     });
 
     // Verifies: EVS-DEV-postgres-backend/H
     test('a schema whose minimum is above this build is refused', () async {
-      if (url == null) return;
-      await _as(
-        _twoSteps(minimum: 2),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-      );
+      if (db == null) return;
+      await _as(_twoSteps(minimum: _next), db.provision);
       await expectLater(
         open(),
         throwsA(
           isA<PostgresSchemaIncompatibleException>().having(
             (e) => e.storedMinCompatibleSchemaVersion,
             'minimum',
-            2,
+            _next,
           ),
         ),
       );
@@ -267,148 +261,151 @@ void main() {
   group('provision', () {
     // Verifies: EVS-DEV-postgres-backend/G
     test('a second provisioning leaves the schema untouched', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
-      final tables = await _tables(url);
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
-      expect(await _tables(url), tables);
-      expect(await _storedPair(url), (1, 1));
+      if (db == null) return;
+      await db.provision();
+      final tables = await _tables(db);
+      await db.provision();
+      expect(await _tables(db), tables);
+      expect(await _storedPair(db), _built);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     // Verifies: EVS-DEV-version-compatibility/G
     test('two provisionings of an empty schema at once both succeed and '
         'leave the schema one provisioning leaves', () async {
-      if (url == null) return;
+      if (db == null) return;
       // The schema a single provisioning of an empty schema leaves.
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
-      final singleColumns = await _columns(url);
-      final singleState = await _backendState(url);
-      await _resetSchema(url);
+      await db.provision();
+      final singleColumns = await _columns(db);
+      final singleState = await _backendState(db);
+      await db.reset();
 
-      await Future.wait(<Future<void>>[
-        PostgresBackend.provision(url, sslMode: SslMode.disable),
-        PostgresBackend.provision(url, sslMode: SslMode.disable),
-      ]);
-      expect(await _storedPair(url), (1, 1));
-      expect(await _columns(url), singleColumns);
-      expect(await _backendState(url), singleState);
+      await Future.wait(<Future<void>>[db.provision(), db.provision()]);
+      expect(await _storedPair(db), _built);
+      expect(await _columns(db), singleColumns);
+      expect(await _backendState(db), singleState);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     // Verifies: EVS-DEV-version-compatibility/G
     test('two provisionings from two isolates both succeed', () async {
-      if (url == null) return;
-      final u = url;
+      if (db == null) return;
+      final u = db.ownerUrl;
+      final schema = db.schema;
+      final runtimeRoles = <String>{db.runtime};
+      final lockRoles = <String>{db.runtime, db.lock};
       await Future.wait(<Future<void>>[
         Isolate.run(
-          () => PostgresBackend.provision(u, sslMode: SslMode.disable),
+          () => PostgresBackend.provision(
+            u,
+            schema: schema,
+            runtimeRoles: runtimeRoles,
+            lockRoles: lockRoles,
+            sslMode: SslMode.disable,
+          ),
         ),
         Isolate.run(
-          () => PostgresBackend.provision(u, sslMode: SslMode.disable),
+          () => PostgresBackend.provision(
+            u,
+            schema: schema,
+            runtimeRoles: runtimeRoles,
+            lockRoles: lockRoles,
+            sslMode: SslMode.disable,
+          ),
         ),
       ]);
-      expect(await _storedPair(url), (1, 1));
+      expect(await _storedPair(db), _built);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     test('an upgrade applies only the steps above the stored version, and an '
         'instance at the older version still opens', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
-      expect(await _tables(url), isNot(contains('schema_upgrade_probe')));
-      await _as(
-        _twoSteps(),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-      );
-      expect(await _tables(url), contains('schema_upgrade_probe'));
-      expect(await _storedPair(url), (2, 1));
+      if (db == null) return;
+      await db.provision();
+      expect(await _tables(db), isNot(contains('schema_upgrade_probe')));
+      await _as(_twoSteps(), db.provision);
+      expect(await _tables(db), contains('schema_upgrade_probe'));
+      expect(await _storedPair(db), _upgraded);
       await _openStore(await open());
     });
 
     // Verifies: EVS-DEV-postgres-backend/I
     test('a provisioning that raises the minimum above what a live instance '
         'requires is refused and changes nothing', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       await _openStore(await open());
-      final tables = await _tables(url);
+      final tables = await _tables(db);
       await expectLater(
-        _as(
-          _twoSteps(minimum: 2),
-          () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-        ),
+        _as(_twoSteps(minimum: _next), db.provision),
         throwsA(
           isA<IncompatibleGenerationException>()
               .having((e) => e.conflictingComponents, 'components', [
-                'schema:1',
+                'schema:$_v',
               ])
               .having((e) => e.descriptor, 'descriptor', isNull),
         ),
       );
-      expect(await _tables(url), tables);
-      expect(await _storedPair(url), (1, 1));
+      expect(await _tables(db), tables);
+      expect(await _storedPair(db), _built);
     });
 
     // Verifies: EVS-DEV-postgres-backend/I
     test('once the live instance has stopped, the same provisioning '
         'runs', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       final store = await _openStore(await open());
       await store.close();
-      await _as(
-        _twoSteps(minimum: 2),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-      );
-      expect(await _storedPair(url), (2, 2));
+      await _as(_twoSteps(minimum: _next), db.provision);
+      expect(await _storedPair(db), (_next, _next));
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     test('a provisioning that fails before it records the version leaves no '
         'library table on a fresh schema', () async {
-      if (url == null) return;
+      if (db == null) return;
       await expectLater(
         runWithDeliveryTestHooks(
           DeliveryTestHooks(failProvisioningBeforeVersionWrite: () => true),
-          () => PostgresBackend.provision(url, sslMode: SslMode.disable),
+          db.provision,
         ),
         throwsA(isA<InjectedFailure>()),
       );
-      expect(await _tables(url), isEmpty);
+      expect(await _tables(db), isEmpty);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     test('an upgrade that fails before it records the version leaves no '
         'probe table and the pair as it was', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       await expectLater(
         runWithDeliveryTestHooks(
           DeliveryTestHooks(
             schemaDeclaration: _twoSteps(),
             failProvisioningBeforeVersionWrite: () => true,
           ),
-          () => PostgresBackend.provision(url, sslMode: SslMode.disable),
+          db.provision,
         ),
         throwsA(isA<InjectedFailure>()),
       );
-      expect(await _tables(url), isNot(contains('schema_upgrade_probe')));
-      expect(await _storedPair(url), (1, 1));
+      expect(await _tables(db), isNot(contains('schema_upgrade_probe')));
+      expect(await _storedPair(db), _built);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     test('a schema holding library tables but no schema version is refused, '
         'naming a reset, and nothing is written', () async {
-      if (url == null) return;
-      final c = await _connect(url);
-      for (final statement in postgresMigrations.single.ddl) {
+      if (db == null) return;
+      final c = await db.connectOwner();
+      for (final statement in postgresMigrations.first.ddl) {
         await c.execute(statement);
       }
       await c.close();
-      final tables = await _tables(url);
+      final tables = await _tables(db);
       await expectLater(
-        PostgresBackend.provision(url, sslMode: SslMode.disable),
+        db.provision(),
         throwsA(
           isA<PostgresSchemaIncompatibleException>().having(
             (e) => e.reason,
@@ -417,16 +414,16 @@ void main() {
           ),
         ),
       );
-      expect(await _tables(url), tables);
-      expect(await _storedPair(url), (null, null));
+      expect(await _tables(db), tables);
+      expect(await _storedPair(db), (null, null));
     });
 
     // Verifies: EVS-DEV-postgres-backend/G+I
     // Verifies: EVS-DEV-version-compatibility/G
     test('a provisioning waits while a boot holds the boot lock, then refuses '
         'the minimum that boot registered below', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       final release = Completer<void>();
       // Released on failure too, so a held boot cannot keep tearDown's
       // close waiting and time out the tests that follow.
@@ -444,20 +441,20 @@ void main() {
         () async => _openStore(await open()),
       );
       await inside.future;
-      final tables = await _tables(url);
+      final tables = await _tables(db);
       var waiting = false;
       var settled = false;
       final provisioning =
           runWithDeliveryTestHooks(
                 DeliveryTestHooks(
-                  schemaDeclaration: _twoSteps(minimum: 2),
+                  schemaDeclaration: _twoSteps(minimum: _next),
                   onLog: (record) {
                     if (record.message.contains('waiting for the boot lock')) {
                       waiting = true;
                     }
                   },
                 ),
-                () => PostgresBackend.provision(url, sslMode: SslMode.disable),
+                db.provision,
               )
               .then<Object?>((_) => null, onError: (Object e) => e)
               .whenComplete(() => settled = true);
@@ -475,19 +472,19 @@ void main() {
         isA<IncompatibleGenerationException>().having(
           (e) => e.conflictingComponents,
           'components',
-          ['schema:1'],
+          ['schema:$_v'],
         ),
       );
-      expect(await _tables(url), tables);
-      expect(await _storedPair(url), (1, 1));
+      expect(await _tables(db), tables);
+      expect(await _storedPair(db), _built);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
     // Verifies: EVS-DEV-version-compatibility/G
     test('a provisioning that waits longer than bootLockWait for the boot '
         'lock is refused and creates nothing', () async {
-      if (url == null) return;
-      final holder = await _connect(url);
+      if (db == null) return;
+      final holder = await db.connectAdmin();
       addTearDown(holder.close);
       final scope = await PostgresScope.read(holder);
       await holder.execute(
@@ -497,21 +494,17 @@ void main() {
         },
       );
       await expectLater(
-        PostgresBackend.provision(
-          url,
-          sslMode: SslMode.disable,
-          bootLockWait: const Duration(milliseconds: 500),
-        ),
+        db.provision(bootLockWait: const Duration(milliseconds: 500)),
         throwsA(isA<GenerationGuardConfigurationException>()),
       );
-      expect(await _tables(url), isEmpty);
+      expect(await _tables(db), isEmpty);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G+J
     test('a provisioning whose lock connection reaches another database is '
         'refused and creates nothing', () async {
-      if (url == null) return;
-      final admin = await _connect(url);
+      if (db == null) return;
+      final admin = await db.connectAdmin();
       addTearDown(() async {
         await admin.execute('DROP DATABASE IF EXISTS evs_provision_other');
         await admin.close();
@@ -520,23 +513,26 @@ void main() {
       await admin.execute('CREATE DATABASE evs_provision_other');
       await expectLater(
         PostgresBackend.provision(
-          url,
+          db.ownerUrl,
+          schema: db.schema,
+          runtimeRoles: <String>{db.runtime},
+          lockRoles: <String>{db.runtime},
           lockUrl: Uri.parse(
-            url,
+            db.ownerUrl,
           ).replace(path: '/evs_provision_other').toString(),
           sslMode: SslMode.disable,
         ),
         throwsA(isA<LockSessionConfigurationException>()),
       );
-      expect(await _tables(url), isEmpty);
+      expect(await _tables(db), isEmpty);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G+H
     // Verifies: EVS-DEV-version-compatibility/I
     test('an instance at the older schema version keeps committing while an '
         'upgrade that keeps its minimum is provisioned', () async {
-      if (url == null) return;
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      if (db == null) return;
+      await db.provision();
       final store = await _openStore(await open());
       var stop = false;
       var appended = 0;
@@ -549,46 +545,45 @@ void main() {
       while (appended < 5) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
-      await _as(
-        _twoSteps(),
-        () => PostgresBackend.provision(url, sslMode: SslMode.disable),
-      );
+      await _as(_twoSteps(), db.provision);
       final atUpgrade = appended;
       while (appended < atUpgrade + 5) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
       stop = true;
       await loop;
-      expect(await _storedPair(url), (2, 1));
+      expect(await _storedPair(db), _upgraded);
     });
 
     // Verifies: EVS-DEV-postgres-backend/G
-    test('a connection that reaches no schema is refused, naming the '
-        'requirement, and nothing is created', () async {
-      if (url == null) return;
-      final admin = await _connect(url);
-      addTearDown(() async {
-        await admin.execute('DROP ROLE IF EXISTS $_kRole');
-        await admin.close();
-      });
-      await admin.execute('DROP ROLE IF EXISTS $_kRole');
-      await admin.execute("CREATE ROLE $_kRole LOGIN PASSWORD 'evs'");
-      await admin.execute(
-        'ALTER ROLE $_kRole SET search_path = no_such_schema',
-      );
-      final base = Uri.parse(url);
-      final roleUrl = base.replace(userInfo: '$_kRole:evs').toString();
+    // Verifies: EVS-DEV-postgres-backend/R
+    test('a schema that is not the current schema is refused, naming both '
+        'schemas, and nothing is created', () async {
+      if (db == null) return;
       await expectLater(
-        PostgresBackend.provision(roleUrl, sslMode: SslMode.disable),
+        PostgresBackend.provision(
+          db.ownerUrl,
+          schema: 'no_such_schema',
+          runtimeRoles: <String>{db.runtime},
+          lockRoles: <String>{db.runtime},
+          sslMode: SslMode.disable,
+        ),
         throwsA(
-          isA<PostgresSchemaIncompatibleException>().having(
-            (e) => e.reason,
-            'reason',
-            contains('the deployment creates the schema'),
-          ),
+          isA<PostgresSchemaMismatchException>()
+              .having((e) => e.describedSchema, 'described', 'no_such_schema')
+              .having(
+                (e) => e.toString(),
+                'message',
+                allOf(
+                  contains('"no_such_schema"'),
+                  contains(
+                    'the current schema inside a library transaction is',
+                  ),
+                ),
+              ),
         ),
       );
-      expect(await _tables(url), isEmpty);
+      expect(await _tables(db), isEmpty);
     });
   });
 
@@ -596,8 +591,8 @@ void main() {
   // Verifies: EVS-DEV-version-compatibility/I
   test('a boot that fails after its library-version event leaves the '
       'generation record as it was', () async {
-    if (url == null) return;
-    await PostgresBackend.provision(url, sslMode: SslMode.disable);
+    if (db == null) return;
+    await db.provision();
     final backend = await open();
     await seedLibVersionEventForTest(
       backend,
@@ -606,7 +601,7 @@ void main() {
       dataFormat: LibVersion.dataFormat,
     );
     Future<Object?> record() async {
-      final c = await _connect(url);
+      final c = await db.connectAdmin();
       try {
         final r = await c.execute(
           "SELECT value FROM backend_state WHERE key = 'data_generation'",

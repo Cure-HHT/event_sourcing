@@ -59,14 +59,16 @@ void main() {
           ),
         );
         final store = await EventStore.open(
-          storage: backend,
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
           entryTypes: registry,
           source: const Source(
             hopId: 'versions-hop',
             identifier: 'versions-install',
             softwareVersion: 'versions-test',
           ),
-          securityContexts: SembastSecurityContextStore(backend: backend),
           projections: ProjectionRegistry()
             ..register(
               const AggregateProjectionSpec(

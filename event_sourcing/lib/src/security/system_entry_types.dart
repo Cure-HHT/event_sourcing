@@ -192,16 +192,18 @@ const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
 /// Reserved id for the raw-path ingest-audit event emitted by
-/// `EventStore.logRejectedBatch` and `_emitDuplicateReceivedInTxn`.
-/// Registered here so the raw-path callers can read
-/// `registeredVersion` from the registry instead of hardcoding.
+/// `_emitDuplicateReceivedInTxn`. Registered here so the raw-path caller
+/// can read `registeredVersion` from the registry instead of hardcoding.
 const String kIngestAuditEntryType = 'ingest-audit';
 
 /// Aggregate type of the ingest audits ([kIngestAuditEntryType]).
 @internal
 const String kIngestAuditAggregateType = 'ingest-audit';
 
-/// Event type of the ingest audit recording a rejected batch.
+/// Event type of the ingest audit recording a rejected batch. No operation
+/// of this build appends it; it stays declared in [kReservedEventShapes],
+/// whose shapes are fixed within a data-format major, so that ingest admits
+/// one appended by another build of the same major.
 @internal
 const String kIngestBatchRejectedEventType = 'ingest.batch_rejected';
 
@@ -258,8 +260,7 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// event,
 /// the bootstrap registry-initialized audit, the substrate-internal
 /// lib-version boot events (initialized / changed), the raw-path
-/// `ingest-audit` event (covering `logRejectedBatch` and
-/// `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
+/// `ingest-audit` event (covering `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
 /// audit emitted by the boot-time snapshot-promotion pass. They exist to
 /// stamp an immutable event_log row for every covered mutation.
 ///
@@ -520,6 +521,39 @@ void checkReservedEventShape({
       'the library declares entry type $entryType only with aggregate type '
           '${shape.aggregateType} and event types '
           '${(shape.eventTypes.toList()..sort()).join(', ')}',
+    );
+  }
+}
+
+/// Throws [ArgumentError] unless [entryType] is a reserved system entry type
+/// appended in a shape the library declares for it
+/// ([checkReservedEventShape]) and, for a destination audit, with data
+/// ingest admits ([isWellFormedDestinationAuditData]). The event store's
+/// reserved appends run this check before they write.
+// Implements: EVS-DEV-destination-drain/K
+// every destination audit event the library appends carries a destination
+//   identifier and the appending database's identity, each non-empty and
+//   without '|'.
+@internal
+void checkReservedAppend({
+  required String entryType,
+  required String aggregateType,
+  required String eventType,
+  required Map<String, Object?> data,
+}) {
+  checkReservedEventShape(
+    entryType: entryType,
+    aggregateType: aggregateType,
+    eventType: eventType,
+  );
+  if (kDestinationAuditEntryTypes.contains(entryType) &&
+      !isWellFormedDestinationAuditData(data)) {
+    throw ArgumentError.value(
+      data,
+      'data',
+      'a destination audit event carries a destination identifier (id) '
+          'and a database identity (database_id), each a non-empty string '
+          "without '|'",
     );
   }
 }

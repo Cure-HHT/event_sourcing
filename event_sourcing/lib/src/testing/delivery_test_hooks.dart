@@ -37,7 +37,10 @@ final Object _zoneKey = Object();
 /// acquisition or a heartbeat fail ([failLockAcquisition],
 /// [failAfterExclusionObtained], [failDrainLockVerification],
 /// [failEpochBumpWithSerializationFailure], [stallEpochBumpPastQueryTimeout],
-/// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]). The boot of
+/// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]); an observing seam
+/// sees each wake of the delivery cycle ([onDeliveryWake]), and a cycle
+/// can be started so that no wake runs a pass of it ([handDrivenCycle]).
+/// The boot of
 /// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
 /// injection after its library-version append ([afterBootVersionEvent]).
 /// The incompatible-generation guard and the Postgres lock session have
@@ -62,7 +65,7 @@ final Object _zoneKey = Object();
 /// open or a provisioning succeeds or fails as the declared build's would,
 /// none can make an operation succeed that would otherwise fail; an
 /// exception thrown by an observing seam ([onLog], [onRegistryBodyRun],
-/// [onBootBodyRun], [onFenceBodyRun]) is reported and does not reach the
+/// [onBootBodyRun], [onFenceBodyRun], [onDeliveryWake]) is reported and does not reach the
 /// library code that called it, and none receives a database handle or a
 /// transaction.
 @internal
@@ -113,6 +116,8 @@ class DeliveryTestHooks {
     this.failNextHeartbeat,
     this.afterCommitBeforePublish,
     this.pageVisibility,
+    this.onDeliveryWake,
+    this.handDrivenCycle = false,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -360,6 +365,20 @@ class DeliveryTestHooks {
   /// a holder hand the lock over and a request wait, and the lock itself is
   /// still granted only by the browser's lock manager.
   final TestPageVisibility? pageVisibility;
+
+  /// Observes each wake of an event store's delivery cycle (after an
+  /// append, a committed registry operation, a committed dispatch or a
+  /// security-context operation), before the trigger fires. `cycleWoken`
+  /// is true when a started, not yet closed delivery cycle held the store's
+  /// trigger slot. An exception it throws is reported and does not reach
+  /// the operation that woke.
+  final void Function(bool cycleWoken)? onDeliveryWake;
+
+  /// Read once by `SyncCycle.start`. When true, the started cycle holds its
+  /// event store's trigger slot as any cycle does, but a wake runs no pass
+  /// of it: only a call of the cycle, its cadence and its lock requests
+  /// run passes, so a test drives the passes itself.
+  final bool handDrivenCycle;
 
   /// The seams installed for the current zone, or null. Always null when
   /// assertions are disabled: the zone is read only inside an assertion.

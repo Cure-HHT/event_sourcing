@@ -3,8 +3,8 @@
 // the drainer's fill and drain directly under a drain lock the harness
 // takes. This file declares no tests, so it carries no citation.
 import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -14,13 +14,12 @@ import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
-import 'package:event_sourcing/src/sync/sync_cycle.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
+import 'test_backends.dart';
 
 /// The `backend_state` keys of the drain lock's records: the drain epoch,
 /// the heartbeat and the drainer's declaration.
@@ -55,23 +54,31 @@ final class TestCycle {
   SyncCycle? _cycle;
   Map<String, UnservedReason> _lastUnserved = const <String, UnservedReason>{};
 
-  Object get _key =>
-      registry.backend.drainExclusionKey(registry.eventStore.databaseId);
+  Object get _key => testBackendOf(
+    registry.eventStore,
+  ).drainExclusionKey(registry.eventStore.databaseId);
 
   /// The started cycle, starting one when none is.
   Future<SyncCycle> started() async {
     final running = _cycle;
     if (running != null) return running;
     await pauseTestCycles(_key, except: this);
-    final cycle = await SyncCycle.start(
-      registry: registry,
-      clock: clock,
-      policy: policy,
-      policyResolver: policyResolver,
-      cadence: const Duration(hours: 1),
-      configurationVersion: configurationVersion,
+    // Hand-driven: no append or registry operation wakes it, so a pass runs
+    // only when the test calls it. The cycle is started under that seam
+    // alone, whatever the caller installed: its cadence and heartbeat are
+    // an hour and no test drives them, and each pass reads the seams of the
+    // zone that calls the cycle.
+    final cycle = await runWithDeliveryTestHooks(
+      const DeliveryTestHooks(handDrivenCycle: true),
+      () => SyncCycle.start(
+        registry: registry,
+        clock: clock,
+        policy: policy,
+        policyResolver: policyResolver,
+        cadence: const Duration(hours: 1),
+        configurationVersion: configurationVersion,
+      ),
     );
-    registry.eventStore.deliveryTrigger = null;
     _cycle = cycle;
     _testCycles.add(this);
     addTearDown(pause);
@@ -250,7 +257,7 @@ Future<void> drainForTest(
   Clock? clock,
   SyncPolicy? policy,
 }) => withTestDrainLock(
-  registry.backend,
+  testBackendOf(registry.eventStore),
   (lock) => drain(
     destination,
     registry: registry,
@@ -266,7 +273,7 @@ Future<void> honourHaltForTest(
   String destinationId, {
   required DestinationRegistry registry,
 }) => withTestDrainLock(
-  registry.backend,
+  testBackendOf(registry.eventStore),
   (lock) => honourHaltById(destinationId, registry: registry, lock: lock),
   databaseId: registry.eventStore.databaseId,
 );
@@ -335,8 +342,8 @@ Future<String> wedgeHeadForTest(
   String error = 'refused by the test receiver',
   DateTime? at,
 }) async {
-  final backend = registry.backend;
-  final head = await backend.readFifoHead(destinationId);
+  final reader = registry.eventStore.reader;
+  final head = await reader.readFifoHead(destinationId);
   if (head == null || head.finalStatus != null) {
     throw StateError(
       'wedgeHeadForTest($destinationId): the head is not pending '
@@ -351,7 +358,7 @@ Future<String> wedgeHeadForTest(
     registry: registry,
     clock: () => at ?? DateTime.utc(2100),
   );
-  final after = await backend.readFifoRow(destinationId, head.entryId);
+  final after = await reader.readFifoRow(destinationId, head.entryId);
   if (after?.finalStatus != FinalStatus.wedged) {
     throw StateError(
       'wedgeHeadForTest($destinationId): the head did not wedge',

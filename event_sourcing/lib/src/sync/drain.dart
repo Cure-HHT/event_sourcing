@@ -52,30 +52,12 @@
 //   and verifies the request; immediately before each send a fence
 //   transaction that writes finds no open request and the head unchanged
 //   since the payload was built, and no send starts otherwise)
-import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:event_sourcing/src/destinations/destination.dart';
-import 'package:event_sourcing/src/destinations/destination_registry.dart';
-import 'package:event_sourcing/src/destinations/wedge_cause.dart';
-import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/drain_lock.dart';
-import 'package:event_sourcing/src/storage/fifo_entry.dart';
-import 'package:event_sourcing/src/storage/final_status.dart';
-import 'package:event_sourcing/src/storage/queue_records.dart';
-import 'package:event_sourcing/src/storage/send_result.dart';
-import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
-import 'package:event_sourcing/src/sync/clock.dart';
-import 'package:event_sourcing/src/sync/sync_policy.dart';
-import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:meta/meta.dart' show internal;
+part of '../event_store.dart';
 
 /// The configuration the drainer declares for a destination, and its
 /// fingerprint, recorded in the wedge events the drainer appends for it.
+
 @internal
 final class DrainerConfiguration {
   const DrainerConfiguration({
@@ -147,7 +129,7 @@ Future<void> _lockCheck(
 /// [SendPermanent], or a [SendTransient] whose attempt reaches the budget,
 /// one event-store transaction records the attempt, marks the head wedged,
 /// consumes any open halt request, appends the wedge event and writes the
-/// destination's wedge record (`DestinationRegistry.wedgeHeadInTxn`). When that transaction reports
+/// destination's wedge record (`DestinationRegistry._wedgeHeadInTxn`). When that transaction reports
 /// failure, the failure is logged and a second transaction reads the head
 /// again: a pending head (the wedge rolled back) gets the attempt alone,
 /// and step 2 of a later pass wedges it before any further send; a head
@@ -180,7 +162,7 @@ Future<void> drain(
   DrainerConfiguration? declared,
   bool Function()? stopRequested,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   final now = clock ?? () => DateTime.now().toUtc();
   final effective = policy ?? SyncPolicy.defaults;
   checkRetryBudget(effective);
@@ -340,7 +322,7 @@ Future<void> drain(
             head.entryId,
             attempt,
           );
-          final wedged = await registry.wedgeHeadInTxn(
+          final wedged = await registry._wedgeHeadInTxn(
             txn,
             collector,
             destinationId: destinationId,
@@ -449,7 +431,7 @@ Future<void> honourHaltById(
   required DestinationRegistry registry,
   required DrainLock lock,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   final head = await backend.readFifoHead(destinationId);
   if (head == null || head.finalStatus != null) return;
   final requested = await backend.transaction(
@@ -493,7 +475,7 @@ Future<HaltHonour?> _honourHalt(
   try {
     honour = await registry.eventStore.runTransaction((txn, collector) async {
       await _lockCheck(lock, txn, destinationId);
-      return registry.honourHaltInTxn(
+      return registry._honourHaltInTxn(
         txn,
         collector,
         destinationId: destinationId,
@@ -583,7 +565,7 @@ Future<void> _wedgeFromAttempts(
   required int? maxAttempts,
   required DrainerConfiguration? declared,
 }) async {
-  final backend = registry.backend;
+  final backend = registry._backend;
   try {
     final discarded = await registry.eventStore.runTransaction((
       txn,
@@ -594,7 +576,7 @@ Future<void> _wedgeFromAttempts(
       if (current == null || current.finalStatus != null) return null;
       final cause = _derivedCause(current, maxAttempts);
       if (cause == null) return null;
-      final wedged = await registry.wedgeHeadInTxn(
+      final wedged = await registry._wedgeHeadInTxn(
         txn,
         collector,
         destinationId: destinationId,

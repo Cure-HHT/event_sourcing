@@ -42,7 +42,6 @@ library;
 import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
@@ -50,13 +49,14 @@ import 'package:test/test.dart';
 import 'test_postgres_url.dart';
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   group('PostgresBackend serialization-conflict retry', () {
     late PostgresBackend backend;
@@ -64,18 +64,8 @@ void main() {
     setUp(() async {
       // Clean slate so the counter starts at 0 and the assertions on the
       // final counter / contiguous sequence numbers are exact.
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backend = await db.open(provision: true);
     });
 
     tearDown(() => backend.close());
@@ -134,7 +124,8 @@ void main() {
 
       // The transactions run at SERIALIZABLE isolation.
       final isolation = await backend.transaction<Object?>((txn) async {
-        final rows = await (txn as PostgresTxn).session.execute(
+        final rows = await backend.queryInTxnForTest(
+          txn,
           'SHOW transaction_isolation',
         );
         return rows.first[0];
@@ -149,23 +140,9 @@ void main() {
     late EventStore storeA;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backendA = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
-      backendB = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backendA = await db.open(provision: true);
+      backendB = await db.open(provision: true);
       storeA = await _openStore(
         backendA,
         'aaaa0001-0000-4000-8000-00000000000a',
@@ -297,7 +274,8 @@ void main() {
 
     /// Whether this transaction holds the table lock a re-run takes.
     Future<bool> holdsStateTableLock(Transaction txn) async {
-      final rows = await (txn as PostgresTxn).session.execute(
+      final rows = await backendA.queryInTxnForTest(
+        txn,
         'SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation '
         "WHERE c.relname = 'backend_state' AND l.pid = pg_backend_pid() "
         "AND l.mode = 'ShareRowExclusiveLock' AND l.granted",
@@ -365,18 +343,8 @@ void main() {
     late EventStore store;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      await db.reset();
+      backend = await db.open(provision: true);
       store = await _openStore(backend, 'aaaa0001-0000-4000-8000-00000000000b');
     });
 
@@ -440,17 +408,8 @@ void main() {
     late Connection contender;
 
     setUp(() async {
-      final conn = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
-      contender = await Connection.open(
-        PostgresBackend.endpointFromUrl(url),
-        settings: const ConnectionSettings(sslMode: SslMode.disable),
-      );
+      await db.reset();
+      contender = await db.connectAdmin();
     });
 
     tearDown(() async {
@@ -464,11 +423,9 @@ void main() {
     Future<PostgresBackend> openBackend({
       Duration bootLockWait = const Duration(seconds: 60),
     }) async {
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
+      final backend = await db.open(
+        provision: true,
         bootLockWait: bootLockWait,
-        provisionSchema: true,
       );
       backends.add(backend);
       return backend;
@@ -569,14 +526,16 @@ void main() {
         runWithDeliveryTestHooks(
           DeliveryTestHooks(onBootBodyRun: () => bootRuns++),
           () => EventStore.open(
-            storage: backend,
+            storage: ApplicationSuppliedStorage(
+              backend,
+              PostgresSecurityContextStore(backend: backend),
+            ),
             entryTypes: EntryTypeRegistry()..register(_testEventDef()),
             source: const Source(
               hopId: 'test',
               identifier: 'aaaa0001-0000-4000-8000-00000000000c',
               softwareVersion: '0.0.0-test',
             ),
-            securityContexts: PostgresSecurityContextStore(backend: backend),
             projections: ProjectionRegistry()
               ..register(
                 const AggregateProjectionSpec(

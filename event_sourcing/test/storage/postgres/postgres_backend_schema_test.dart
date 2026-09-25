@@ -8,20 +8,20 @@
 @TestOn('vm')
 library;
 
-import 'package:event_sourcing/event_sourcing.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
 import 'test_postgres_url.dart';
 
 void main() {
-  final url = testPostgresUrl();
-  if (url == null) {
+  final db = PostgresTestDatabase.fromEnvironment();
+  if (db == null) {
     test('skipped — PG_TEST_URL unset', () {
       markTestSkipped('PG_TEST_URL unset; skipping Postgres tests');
     });
     return;
   }
+  tearDownAll(db.drop);
 
   group('PostgresBackend schema', () {
     setUp(() async {
@@ -29,16 +29,13 @@ void main() {
       // empty database, provisioned by the test itself. The two statements are
       // issued separately because the postgres client's extended-query
       // protocol rejects multi-statement strings.
-      final conn = await _connect(url);
-      await conn.execute('DROP SCHEMA public CASCADE');
-      await conn.execute('CREATE SCHEMA public');
-      await conn.close();
+      await db.reset();
     });
 
     test('provisioning creates every expected table', () async {
-      await PostgresBackend.provision(url, sslMode: SslMode.disable);
+      await db.provision();
 
-      final conn = await _connect(url);
+      final conn = await db.connectAdmin();
       addTearDown(conn.close);
 
       final tables = await _listPublicTables(conn);
@@ -57,13 +54,9 @@ void main() {
     });
 
     test('view_rows has the JSONB-blob shape with composite PK', () async {
-      final backend = await PostgresBackend.open(
-        url: url,
-        sslMode: SslMode.disable,
-        provisionSchema: true,
-      );
+      final backend = await db.open(provision: true);
       addTearDown(backend.close);
-      final conn = await _connect(url);
+      final conn = await db.connectAdmin();
       addTearDown(conn.close);
 
       // Columns + types.
@@ -94,11 +87,6 @@ void main() {
     });
   });
 }
-
-Future<Connection> _connect(String url) => Connection.open(
-  PostgresBackend.endpointFromUrl(url),
-  settings: const ConnectionSettings(sslMode: SslMode.disable),
-);
 
 Future<List<String>> _listPublicTables(Connection conn) async {
   final result = await conn.execute(
