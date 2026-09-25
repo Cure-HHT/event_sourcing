@@ -21,9 +21,10 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 /// strict order on write and are never reordered. `finalStatus` is
 /// nullable; `null` means "not-yet-terminal" (drain may attempt the
 /// row). Once delivered they are marked `FinalStatus.sent`; on
-/// permanent failure they are marked `FinalStatus.wedged`; rows excised
-/// by a trail sweep are marked `FinalStatus.tombstoned`. All non-null
-/// terminal states are retained forever as send-log / audit records.
+/// permanent failure they are marked `FinalStatus.wedged`; a wedged head
+/// that an operator recovery or a deletion retires is marked
+/// `FinalStatus.tombstoned`. Rows with a non-null status are retained for
+/// the database's lifetime as the delivery record.
 ///
 /// `eventIds` is a non-empty `List<String>`, `sequenceRange` is an
 /// `(firstSeq, lastSeq)` record, and `wirePayload` is one payload for
@@ -36,7 +37,7 @@ typedef SequenceRange = ({int firstSeq, int lastSeq});
 //   StorageBackend abstraction layer (FIFO persistence).
 // final_status is nullable (null means not-yet-terminal; non-null
 // values are one of {sent, wedged, tombstoned}).
-// wireFormat == "esd/batch@1" (native), in which case envelopeMetadata
+// wireFormat == "esd/batch@2" (native), in which case envelopeMetadata
 // is non-null and drain reconstructs the wire bytes from
 // envelopeMetadata + event_ids-resolved events. For 3rd-party rows
 // (any other wireFormat) wirePayload is non-null and envelopeMetadata
@@ -79,7 +80,7 @@ class FifoEntry {
   /// Decode from snake_case JSON. `wirePayload`, `attempts`, and
   /// `eventIds` are wrapped unmodifiable so downstream callers cannot
   /// mutate the record in place. `wire_payload` MAY be null (native
-  /// `esd/batch@1` rows store envelope_metadata instead).
+  /// `esd/batch@2` rows store envelope_metadata instead).
   /// `envelope_metadata` MAY be null (3rd-party rows). Throws
   /// [FormatException] on missing or wrong-typed fields, or when
   /// `event_ids` is empty.
@@ -130,7 +131,7 @@ class FifoEntry {
         'FifoEntry: missing or non-int "sequence_in_queue"',
       );
     }
-    // null for native `esd/batch@1` rows; non-null and a Map on 3rd-party rows. Reject
+    // null for native `esd/batch@2` rows; non-null and a Map on 3rd-party rows. Reject
     // any other shape.
     final wirePayloadRaw = json['wire_payload'];
     if (wirePayloadRaw != null && wirePayloadRaw is! Map) {
@@ -175,7 +176,7 @@ class FifoEntry {
         'FifoEntry: "sent_at" must be a String when present',
       );
     }
-    // Non-null iff wireFormat == "esd/batch@1".
+    // Non-null iff wireFormat == "esd/batch@2".
     final envelopeMetadataRaw = json['envelope_metadata'];
     if (envelopeMetadataRaw != null && envelopeMetadataRaw is! Map) {
       throw const FormatException(
@@ -212,7 +213,7 @@ class FifoEntry {
     );
   }
 
-  /// Stable per-row identifier used by `markFinal`, `appendAttempt`,
+  /// Stable per-row identifier used by the drain's outcome writes,
   /// `tombstoneAndRefill`, and operator diagnostics. Generated as a v4
   /// UUID at enqueue time and never reused across rows; two FIFO rows
   /// (of any `final_status`, including tombstoned archive rows) never
@@ -238,7 +239,7 @@ class FifoEntry {
 
   /// Transformed wire payload ready to hand to `destination.send()`. One
   /// payload covers every event in the batch; per-event
-  /// wire payloads are NOT stored. Null when `wireFormat == "esd/batch@1"`
+  /// wire payloads are NOT stored. Null when `wireFormat == "esd/batch@2"`
   /// (native rows reconstruct bytes at drain time from
   /// [envelopeMetadata] + event_ids-resolved events);
   /// non-null otherwise.
@@ -255,27 +256,27 @@ class FifoEntry {
   /// write transaction commit instant for all practical purposes).
   final DateTime enqueuedAt;
 
-  /// Historical send attempts; grows, never shrinks; retained forever per
-  ///
+  /// Historical send attempts; grows, never shrinks; retained for the
+  /// database's lifetime with the entry.
   final List<AttemptResult> attempts;
 
   /// Terminal state of this entry. `null` on enqueue and while the row is
   /// still a drain candidate; moves to `sent`, `wedged`, or `tombstoned`
-  /// on a terminal transition. Non-null terminal values are retained
-  /// forever as audit records.
+  /// on a terminal transition. Non-null terminal values are retained for
+  /// the database's lifetime as audit records.
   final FinalStatus? finalStatus;
 
   /// When the entry was marked `sent`; null while pre-terminal, wedged,
   /// or tombstoned.
   final DateTime? sentAt;
 
-  /// Envelope identity for native (`esd/batch@1`) FIFO rows. Carries the
+  /// Envelope identity for native (`esd/batch@2`) FIFO rows. Carries the
   /// `batchFormatVersion`, `batchId`, sender identity (`senderHop`,
   /// `senderIdentifier`, `senderSoftwareVersion`), and `sentAt` of the
   /// `BatchEnvelope` parsed at enqueue time. Drain combines this with
   /// `eventIds`-resolved events to re-encode the wire bytes
   /// deterministically (RFC 8785 JCS) on each send attempt. Non-null
-  /// iff `wireFormat == "esd/batch@1"`; null for 3rd-party rows.
+  /// iff `wireFormat == "esd/batch@2"`; null for 3rd-party rows.
   final BatchEnvelopeMetadata? envelopeMetadata;
 
   /// Encode to snake_case JSON. Optional fields emit explicit null.

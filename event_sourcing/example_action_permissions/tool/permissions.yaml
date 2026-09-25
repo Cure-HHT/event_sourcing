@@ -1,9 +1,10 @@
-# IMPLEMENTS REQUIREMENTS:
-#   REQ-d00175 — YAML seed for the role-permission matrix.
+# YAML seed of the role-permission matrix.
 #
-# Every permission name listed below MUST be declared by a registered Action
-# (otherwise the seed validator rejects the seed and bootstrap returns a
-# FailSafe policy that denies everything). The Anon role is intentionally
+# Every permission name listed below MUST be declared by a registered Action,
+# or by the server bootstrap for its own routes (`delivery.operate`, which the
+# operator routes under /demo/delivery/ require); otherwise the seed validator
+# rejects the seed and bootstrap returns a FailSafe policy that denies
+# everything. The Anon role is intentionally
 # absent: TableBackedAuthorizationPolicy denies anonymous principals before
 # the matrix is consulted, so granting permissions to an Anon role would be
 # dead code.
@@ -15,6 +16,7 @@ roles:
 grants:
   Admin:
     - users.provision
+    - delivery.operate
   GreenTeam:
     - help.ask
     - notes.write.green

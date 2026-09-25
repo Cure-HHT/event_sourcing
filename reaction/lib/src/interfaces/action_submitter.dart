@@ -22,6 +22,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// `ActionBuilder` in `reaction_widgets`). The submitter itself is a
 /// pass-through: whatever key the caller put in
 /// [ActionSubmission.idempotencyKey] is what the dispatcher sees.
+// ignore: one_member_abstracts, a pluggable interface with Local and Remote implementations
 abstract interface class ActionSubmitter {
   /// Submit an action. Returns when the dispatch pipeline has
   /// completed (Success with emitted events, or one of the denial
@@ -38,9 +39,9 @@ abstract interface class ActionSubmitter {
 /// response, etc.). Not used for dispatch-level denials — those flow
 /// through [DispatchResult]'s denial variants.
 class TransportException implements Exception {
+  const TransportException(this.message, {this.cause});
   final String message;
   final Object? cause;
-  const TransportException(this.message, {this.cause});
 
   @override
   String toString() => cause == null

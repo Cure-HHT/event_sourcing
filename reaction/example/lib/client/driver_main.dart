@@ -11,6 +11,7 @@
 // driver extension.
 
 import 'package:flutter/widgets.dart';
+// ignore: depend_on_referenced_packages, a dev dependency: this entry point runs only under flutter drive
 import 'package:flutter_driver/driver_extension.dart';
 import 'package:reaction_example/client/app.dart';
 

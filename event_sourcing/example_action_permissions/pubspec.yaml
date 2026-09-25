@@ -1,5 +1,5 @@
 name: action_permissions_demo
-description: "Linux-desktop reference app exercising the event_sourcing library actions + permissions modules end-to-end. Verifies REQ-d00166..REQ-d00178."
+description: "Linux-desktop reference app exercising the event_sourcing library actions + permissions modules end-to-end."
 version: 0.1.0+1
 publish_to: none
 
@@ -25,6 +25,7 @@ dependencies:
   meta: ^1.16.0
 
 dev_dependencies:
+  crypto: ^3.0.7
   flutter_test:
     sdk: flutter
   test: ^1.25.15

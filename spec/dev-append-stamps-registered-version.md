@@ -5,15 +5,15 @@
 
 ## Purpose
 
-How the substrate ensures every appended event carries the entry type's current `registeredVersion`. The version is sourced from the substrate's `EntryTypeRegistry` rather than supplied by callers, so producers cannot accidentally (or deliberately) emit events stamped against a version other than the registry's current one. This guarantee is load-bearing for the substrate's promotion contract (see EVS-DEV-ingest-promotes-before-fold and EVS-DEV-snapshot-promotion-on-open).
+How the substrate ensures every appended event carries the entry type's current `registeredVersion`, a major and a minor number (see EVS-DEV-version-compatibility). The version is sourced from the substrate's `EntryTypeRegistry` rather than supplied by callers, so producers cannot accidentally (or deliberately) emit events stamped against a version other than the registry's current one. This guarantee is load-bearing for the substrate's promotion contract (see EVS-DEV-ingest-promotes-before-fold and EVS-DEV-snapshot-promotion-on-open).
 
 ## Assertions
 
-A. `EventStore.append` SHALL stamp the appended event's `entryTypeVersion` field from the registered version returned by `entryTypes.byId(entryType).registeredVersion` at append-time.
+A. `EventStore.append` SHALL stamp the appended event's `entryTypeVersion` field with the registered major and minor returned by `entryTypes.byId(entryType).registeredVersion` at append-time.
 
-B. `EventStore.appendInTxn` SHALL apply the same stamping as `EventStore.append`, using the same registry lookup.
+B. `EventStore.appendInTxn` SHALL stamp the same registered major and minor as `EventStore.append`, using the same registry lookup.
 
-C. The `entryTypeVersion` parameter SHALL NOT appear on the public `append` / `appendInTxn` signatures; callers SHALL NOT be able to override the registry-derived value.
+C. The `entryTypeVersion` parameter SHALL NOT appear on the public `append` / `appendInTxn` signatures; callers SHALL NOT be able to override the registry-derived major and minor.
 
 D. The library SHALL refuse a registration for an entry type id that already has one, leaving the existing definition registered.
 
@@ -27,9 +27,11 @@ D. The library SHALL refuse a registration for an entry type id that already has
 
 ## Changelog
 
+- 2026-09-23 | b0a57e30 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Amend A-C: the stamped version is the registered major and minor
 - 2026-09-07 | 6e9c508c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-07 | - | - | Michael Lewis (<michael@anspar.org>) | Add D: a registration for an already-registered entry type id is refused; correct the Rationale's claim that the registry is immutable after open
 - 2026-08-10 | 2a4348d3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 17d2982d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Substrate stamps entryTypeVersion on append* | **Hash**: 6e9c508c
+*End* *Substrate stamps entryTypeVersion on append* | **Hash**: b0a57e30

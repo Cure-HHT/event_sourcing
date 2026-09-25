@@ -20,12 +20,16 @@ void main() {
   });
 
   group('Walkthrough 1: Onboarding', () {
-    test('admin-user resolves to Admin with users.provision only', () async {
+    test('admin-user resolves to Admin with users.provision and '
+        'delivery.operate', () async {
       final resp = await harness.sessionStart(userId: 'admin-user');
       expect(resp.principalRole, 'Admin');
       expect(resp.principalUserId, 'admin-user');
       expect(resp.principalActiveSite, isNull);
-      expect(resp.snapshotPermissions, <String>['users.provision']);
+      expect(resp.snapshotPermissions, <String>[
+        'delivery.operate',
+        'users.provision',
+      ]);
     });
 
     test(

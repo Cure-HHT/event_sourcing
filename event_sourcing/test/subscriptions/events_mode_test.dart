@@ -23,6 +23,7 @@ import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -33,7 +34,11 @@ Future<EventStore> _openStore() async {
   final backend = SembastBackend(database: db);
   final entryTypes = EntryTypeRegistry()
     ..register(
-      const EntryTypeDefinition(id: 'X', registeredVersion: 1, name: 'X'),
+      const EntryTypeDefinition(
+        id: 'X',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'X',
+      ),
     );
   return EventStore.open(
     storage: backend,
@@ -69,7 +74,7 @@ void main() {
       final received = <StoredEvent>[];
       final sub = store
           .subscribe<StoredEvent>(
-            SubscriptionFilter(aggregateTypes: const {'X'}),
+            const SubscriptionFilter(aggregateTypes: {'X'}),
             const Events(),
           )
           .listen((Update<StoredEvent> u) {

@@ -6,17 +6,41 @@
 @TestOn('vm')
 library;
 
-import 'package:event_sourcing/src/storage/sembast_backend.dart';
+import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/isolate_drain_lock.dart'
+    show isolateDrainLockHeld;
+import 'package:event_sourcing/src/storage/sembast_backend.dart'
+    show SembastBackendTestSupport;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import 'storage_backend_conformance.dart';
 
 void main() {
-  runStorageBackendConformanceTests(() async {
-    final db = await newDatabaseFactoryMemory().openDatabase(
-      'conformance-${DateTime.now().microsecondsSinceEpoch}.db',
-    );
-    return SembastBackend(database: db);
-  }, backendLabel: 'sembast (memory)');
+  // The factory and path each backend's database was opened through, so a
+  // closed backend's database can be opened again.
+  final opened = Expando<(DatabaseFactory, String)>();
+  runStorageBackendConformanceTests(
+    () async {
+      final factory = newDatabaseFactoryMemory();
+      final path = 'conformance-${DateTime.now().microsecondsSinceEpoch}.db';
+      final backend = SembastBackend(
+        database: await factory.openDatabase(path),
+      );
+      opened[backend] = (factory, path);
+      return backend;
+    },
+    reopen: (closed) async {
+      // The closed handle's registry entry is gone.
+      expect(
+        isolateDrainLockHeld((closed as SembastBackend).databaseForTesting),
+        isFalse,
+      );
+      final (factory, path) = opened[closed]!;
+      return SembastBackend(database: await factory.openDatabase(path));
+    },
+    backendLabel: 'sembast (memory)',
+    securityStoreOf: (backend) =>
+        SembastSecurityContextStore(backend: backend as SembastBackend),
+  );
 }

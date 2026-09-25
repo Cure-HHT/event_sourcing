@@ -8,6 +8,7 @@ import 'package:event_sourcing/src/actions/authorization_policy.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart';
 import 'package:event_sourcing/src/actions/scope_value.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/permissions/effective_authorization.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 
@@ -33,12 +34,12 @@ class DenyAllAuthorizationPolicy extends AuthorizationPolicy {
     Transaction? txn,
   }) async {
     if (!_suppressWarning) {
-      // ignore: avoid_print
-      print(
-        'WARNING: DenyAllAuthorizationPolicy.isPermitted called in '
-        'production mode (use TableBackedAuthorizationPolicy from the '
-        "event_sourcing package's permissions module, or another "
-        'concrete policy)',
+      libraryLog(
+        'authorization',
+        'DenyAllAuthorizationPolicy.isPermitted called in production mode '
+            '(use TableBackedAuthorizationPolicy from the event_sourcing '
+            "package's permissions module, or another concrete policy)",
+        level: LibraryLogLevel.warning,
       );
     }
     return Deny(permission: permission, reason: DenyReason.notGranted);

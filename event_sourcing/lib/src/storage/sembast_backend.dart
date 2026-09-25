@@ -1,23 +1,34 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
+import 'package:event_sourcing/src/storage/isolate_drain_lock.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:event_sourcing/src/storage/web_locks_stub.dart'
+    if (dart.library.js_interop) 'package:event_sourcing/src/storage/web_locks.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:meta/meta.dart' show visibleForTesting;
+import 'package:event_sourcing/src/versions.dart';
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
 import 'package:uuid/uuid.dart';
@@ -30,13 +41,6 @@ part 'sembast_test_support.dart';
 /// side-effect-free beyond its internal random state, so a shared
 /// instance is correct.
 const _uuidGen = Uuid();
-
-/// Package-private default log sink used when a [SembastBackend] instance
-/// has not overridden [SembastBackend.debugLogSink]. Routes through
-/// `dart:developer` at the warning level (`level: 900`).
-void _defaultLogSink(String message) {
-  developer.log(message, name: 'SembastBackend', level: 900);
-}
 
 /// Concrete Sembast-backed implementation of [StorageBackend].
 ///
@@ -74,9 +78,24 @@ class SembastBackend extends StorageBackend {
   /// a database via `package:sembast/sembast_memory.dart`'s
   /// `newDatabaseFactoryMemory()` and passing it to this constructor, as
   /// the conformance test suite does.
-  SembastBackend({required Database database}) : _db = database;
+  ///
+  /// [bootLockWait] applies on the web, where every tab of the origin that
+  /// opens the database takes the same exclusive boot lock: it bounds how
+  /// long `EventStore.open` waits for another tab's boot, after which the
+  /// open throws [GenerationGuardConfigurationException]. It must exceed
+  /// the longest boot the deployment expects, since a boot that promotes a
+  /// large view or re-derives a view over a long log holds the boot lock
+  /// for its whole duration. Outside the browser it has no effect.
+  SembastBackend({
+    required Database database,
+    Duration bootLockWait = const Duration(seconds: 60),
+  }) : _db = database,
+       _bootLockWait = bootLockWait;
 
   final Database _db;
+
+  /// See the constructor's `bootLockWait`.
+  final Duration _bootLockWait;
 
   static const _sequenceKey = 'sequence_counter';
   static const _schemaVersionKey = 'schema_version';
@@ -124,74 +143,177 @@ class SembastBackend extends StorageBackend {
   final StreamController<String> _viewChangesController =
       StreamController<String>.broadcast();
 
-  /// Per-transaction post-commit callback queue. The [transaction]
-  /// wrapper swaps in a fresh inner list around each body, then runs
-  /// the queued callbacks if and only if the body commits successfully.
-  /// Write paths ([appendEvent], FIFO mutators) push
-  /// `() => _eventsController.add(event)` /
-  /// `() => _fifoChangesController.add(destinationId)` onto this list
-  /// after their in-txn writes succeed; the wrapper drains them on
-  /// commit. The field is mutable so the wrapper can preserve outer
-  /// state across nested calls (sembast does not nest, but the swap is
-  /// the cleanest race-safe pattern).
-  List<void Function()> _pendingPostCommit = <void Function()>[];
-
   /// Close the underlying sembast database AND the reactive broadcast
-  /// controllers used by [watchEvents] / [watchFifo] / [watchView]. After
-  /// close, further calls to those reactive methods SHALL throw
-  /// `StateError`. Active subscribers receive `done`.
+  /// controllers used by [watchEvents] / [watchFifo] / [watchView], after
+  /// releasing a drain lock granted through this backend. After close,
+  /// further calls to those reactive methods SHALL throw `StateError`.
+  /// Active subscribers receive `done`.
   ///
   /// Not safe to call concurrently with an in-flight [transaction]. The
   /// caller is responsible for awaiting outstanding work before closing.
+  @override
   Future<void> close() async {
+    _closed = true;
+    if (!_gone.isCompleted) {
+      _gone.complete(const DrainLockBackendClosedException());
+    }
+    await _drainLock?.release();
+    _drainLock = null;
     await _eventsController.close();
     await _fifoChangesController.close();
     await _viewChangesController.close();
     await _db.close();
   }
 
-  /// Visible-for-testing sink for the warning-level diagnostic emitted by
-  /// [markFinal] and [appendAttempt] when they no-op on a missing target.
-  /// Defaults to the package-private [_defaultLogSink],
-  /// which writes through `dart:developer` at `level: 900` (warning).
-  /// Tests install a `List<String>.add` closure to capture emitted lines
-  /// without depending on a global logger. Setting this to `null`
-  /// suppresses diagnostics entirely.
-  void Function(String)? debugLogSink = _defaultLogSink;
-
   // -------- transaction --------
 
+  /// Runs the boot body as one transaction. The transactions of one
+  /// Sembast database run one at a time in a process, so an append cannot
+  /// abort the boot. On the web several tabs share the database, and a tab
+  /// whose commit another tab preceded re-runs its body on fresh data; the
+  /// boot therefore holds the database's write lock exclusively, which
+  /// every tab's transactions take shared, so the other tabs' writes wait
+  /// for the boot to commit instead of making it re-run without end. The
+  /// wait for that lock is bounded by the constructor's `bootLockWait`.
+  @override
+  @internal
+  Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) {
+    refuseCallFromBootProgressObserver('SembastBackend.bootTransaction');
+    return runHoldingBrowserWriteLock(
+      _database().path,
+      exclusive: true,
+      timeout: _bootLockWait,
+      body: () async {
+        _bootHoldsWriteLock = true;
+        try {
+          return await transaction(body);
+        } finally {
+          _bootHoldsWriteLock = false;
+        }
+      },
+    );
+  }
+
+  /// True while a boot holds this backend's write lock exclusively. The
+  /// boot's own transaction then runs without asking for the lock again,
+  /// and so does any other transaction on this backend, which the
+  /// database runs one at a time with the boot's.
+  bool _bootHoldsWriteLock = false;
+
+  // Implements: EVS-PRD-subscription/E
+  // Post-commit notifications are queued on the
+  //   per-run transaction handle, not on the backend, so two transactions in
+  //   flight at once never share a queue. sembast_web re-runs a body when
+  //   another tab committed first; each run gets a fresh handle, and only the
+  //   run that committed (the last one) has its queue fired. A body that
+  //   throws commits nothing and fires nothing.
+  // Implements: EVS-DEV-event-store-open/M
+  // a transaction the boot progress observer, or work it started, asks for
+  //   while the boot runs is refused.
+  /// On the web a transaction takes the database's write lock shared, so
+  /// the tabs' transactions run side by side and a body whose commit
+  /// another tab preceded runs again. After [_sharedRuns] such runs the
+  /// transaction runs again holding the write lock exclusively, where no
+  /// other tab's write can come between, so contention between tabs delays
+  /// a transaction but never fails it. A handle that cannot commit even
+  /// then fails with [TransactionRerunLimitException], and so does every
+  /// later transaction on it.
   @override
   Future<T> transaction<T>(Future<T> Function(Transaction txn) body) async {
-    final db = _database();
-    final outerPending = _pendingPostCommit;
-    final innerPending = <void Function()>[];
-    _pendingPostCommit = innerPending;
+    refuseCallFromBootProgressObserver('SembastBackend.transaction');
+    if (_bootHoldsWriteLock) return _transaction(body, exclusive: true);
     try {
-      final result = await db.transaction((sembastTxn) async {
-        final txn = _SembastTxn._(sembastTxn);
-        try {
-          return await body(txn);
-        } finally {
-          txn._invalidate();
-        }
-      });
-      // Commit succeeded — fire post-commit callbacks. Skip emissions
-      // when the corresponding controller has been closed (close() is
-      // not safe to race with in-flight transactions, but a fast-cycle
-      // test may still observe the closed state here).
-      for (final cb in innerPending) {
-        cb();
-      }
-      return result;
-    } finally {
-      _pendingPostCommit = outerPending;
+      return await runHoldingBrowserWriteLock(
+        _database().path,
+        exclusive: false,
+        body: () => _transaction(body, exclusive: false),
+      );
+    } on _RunsLostToOtherWriters {
+      return runHoldingBrowserWriteLock(
+        _database().path,
+        exclusive: true,
+        timeout: _bootLockWait,
+        timeoutError: (name, wait) => TimeoutException(
+          "a transaction that lost $_sharedRuns runs to other tabs' commits "
+          'waited longer than $wait for the write lock $name, which another '
+          'tab holds',
+          wait,
+        ),
+        body: () => _transaction(body, exclusive: true),
+      );
     }
   }
 
+  /// The runs of a body, holding the write lock shared, after which the
+  /// transaction runs again holding it exclusively.
+  static const int _sharedRuns = 4;
+
+  /// Set once a transaction found that this handle cannot commit; every
+  /// later transaction fails with it at once.
+  TransactionRerunLimitException? _handleFault;
+
+  /// Completes with the error that ends every drain-lock request through
+  /// this backend: its close, or a handle that cannot commit.
+  final Completer<Exception> _gone = Completer<Exception>();
+
+  // Implements: EVS-PRD-event-log/E
+  // sembast re-runs a body whose commit found another tab's commit first;
+  //   a body that keeps losing runs again with every other tab's writes held
+  //   back, and a handle that fails even then is reported as unable to
+  //   commit (another opener compacted the database past its revision).
+  Future<T> _transaction<T>(
+    Future<T> Function(Transaction txn) body, {
+    required bool exclusive,
+  }) async {
+    final fault = _handleFault;
+    if (fault != null) throw fault;
+    final db = _database();
+    late _SembastTxn committedRun;
+    final bound = exclusive
+        ? TransactionRerunLimitException.maxRuns
+        : _sharedRuns;
+    var runs = 0;
+    final result = await db.transaction((sembastTxn) async {
+      if (runs == bound) {
+        if (!exclusive) throw const _RunsLostToOtherWriters();
+        final fault = _handleFault ??= TransactionRerunLimitException(runs);
+        if (!_gone.isCompleted) _gone.complete(fault);
+        throw fault;
+      }
+      runs++;
+      final txn = _SembastTxn._(sembastTxn, this);
+      committedRun = txn;
+      try {
+        return await body(txn);
+      } finally {
+        txn._invalidate();
+      }
+    });
+    // Each callback checks its controller is still open: close() is not
+    // safe to race with an in-flight transaction, but a fast-cycle test may
+    // still observe the closed state here.
+    for (final cb in committedRun._postCommit) {
+      cb();
+    }
+    // One queue notification per destination the committed run changed.
+    for (final destinationId in committedRun._fifoChanged) {
+      if (!_fifoChangesController.isClosed) {
+        _fifoChangesController.add(destinationId);
+      }
+    }
+    return result;
+  }
+
+  // Implements: EVS-DEV-postgres-backend/L
+  // a handle another backend instance produced is refused.
   _SembastTxn _requireValidTxn(Transaction txn) {
     if (txn is! _SembastTxn) {
       throw StateError('Transaction is not a SembastBackend Transaction');
+    }
+    if (!identical(txn._owner, this)) {
+      throw StateError(
+        'Transaction was produced by a different SembastBackend instance',
+      );
     }
     if (!txn._isValid) {
       throw StateError('Transaction used outside its transaction() body');
@@ -205,6 +327,7 @@ class SembastBackend extends StorageBackend {
   /// transaction. NOT part of the abstract `StorageBackend` contract —
   /// only sembast-side code should reach for this.
   // ignore: library_private_types_in_public_api
+  @internal
   sembast.Transaction unwrapSembastTxn(Transaction txn) =>
       _requireValidTxn(txn)._sembastTxn;
 
@@ -227,6 +350,7 @@ class SembastBackend extends StorageBackend {
   // sequence number stamped by caller from
   //   nextSequenceNumber; persisted verbatim preserving total order.
   @override
+  @internal
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
@@ -242,10 +366,11 @@ class SembastBackend extends StorageBackend {
         'appendEvent consumes a reservation, it does not create one.)',
       );
     }
+    event.requireRecordTimestamps();
     await _eventStore.add(t._sembastTxn, event.toMap());
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_eventsController.isClosed) _eventsController.add(event);
     });
     return AppendResult(
@@ -295,9 +420,9 @@ class SembastBackend extends StorageBackend {
   // Implements: EVS-DEV-find-all-events-extended-filters/C
   // AND-composition;
   //   entry-type and client-timestamp filters land as sembast Filter predicates
-  //   on the top-level `entry_type` / `client_timestamp` fields (ISO 8601 UTC
-  //   strings sort lexicographically in chronological order so
-  //   greaterThanOrEquals / lessThanOrEquals reproduce the intended bounds).
+  //   on the top-level `entry_type` / `client_timestamp` fields; the
+  //   client-timestamp bounds compare parsed instants, start inclusive and
+  //   end exclusive.
   @override
   Future<List<StoredEvent>> findAllEvents({
     int? afterSequence,
@@ -361,19 +486,21 @@ class SembastBackend extends StorageBackend {
     if (entryType != null) {
       filters.add(Filter.equals('entry_type', entryType));
     }
+    // The stored `client_timestamp` is an ISO 8601 string whose fraction
+    // has three or six digits, so text order is not time order within a
+    // millisecond; the bounds compare the parsed instants.
     if (clientTimestampStart != null) {
       filters.add(
-        Filter.greaterThanOrEquals(
-          'client_timestamp',
-          clientTimestampStart.toUtc().toIso8601String(),
+        Filter.custom(
+          (record) =>
+              !_clientTimestampOf(record).isBefore(clientTimestampStart),
         ),
       );
     }
     if (clientTimestampEnd != null) {
       filters.add(
-        Filter.lessThanOrEquals(
-          'client_timestamp',
-          clientTimestampEnd.toUtc().toIso8601String(),
+        Filter.custom(
+          (record) => _clientTimestampOf(record).isBefore(clientTimestampEnd),
         ),
       );
     }
@@ -382,6 +509,10 @@ class SembastBackend extends StorageBackend {
     return Filter.and(filters);
   }
 
+  /// The instant a stored event record's `client_timestamp` names.
+  static DateTime _clientTimestampOf(RecordSnapshot<Object?, Object?> record) =>
+      DateTime.parse(record['client_timestamp']! as String);
+
   /// Reserve-and-increment the sequence counter within [txn]. Phase-2
   /// Prereq B, Option 1: the counter is advanced as a side effect so that
   /// a second call in the same transaction returns `current + 2`. A paired
@@ -389,6 +520,7 @@ class SembastBackend extends StorageBackend {
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
   @override
+  @internal
   Future<int> nextSequenceNumber(Transaction txn) async {
     final t = _requireValidTxn(txn);
     final currentRaw = await _backendStateStore
@@ -465,6 +597,44 @@ class SembastBackend extends StorageBackend {
     }
   }
 
+  /// Page size of [readEventsReverseInTxn].
+  static const int _reverseScanInTxnPageSize = 256;
+
+  /// Pages on `sequence_number` below the last event read, so an append
+  /// in [txn] while the stream is open does not shift the pages.
+  @override
+  @internal
+  Stream<StoredEvent> readEventsReverseInTxn(
+    Transaction txn, {
+    Set<String>? eventTypes,
+  }) async* {
+    int? lastSeenSequence;
+    while (true) {
+      final t = _requireValidTxn(txn);
+      final filters = <Filter>[
+        if (eventTypes != null)
+          Filter.inList('event_type', eventTypes.toList()),
+        if (lastSeenSequence != null)
+          Filter.lessThan('sequence_number', lastSeenSequence),
+      ];
+      final records = await _eventStore.find(
+        t._sembastTxn,
+        finder: Finder(
+          filter: filters.isEmpty
+              ? null
+              : (filters.length == 1 ? filters.single : Filter.and(filters)),
+          sortOrders: [SortOrder('sequence_number', false)],
+          limit: _reverseScanInTxnPageSize,
+        ),
+      );
+      for (final r in records) {
+        yield StoredEvent.fromMap(r.value, r.key);
+      }
+      if (records.length < _reverseScanInTxnPageSize) return;
+      lastSeenSequence = records.last.value['sequence_number']! as int;
+    }
+  }
+
   // Replay-then-live event stream, broadcast and close-aware.
   //
   // The per-call controller is itself broadcast so a single `watchEvents()`
@@ -472,11 +642,16 @@ class SembastBackend extends StorageBackend {
   //   1. `scheduleMicrotask(startReplay)` defers the replay so the caller's
   //      `listen()` returns before any emission, ensuring no replayed event
   //      is missed.
-  //   2. Replay reads `findAllEvents(afterSequence: lowerBound)` and
-  //      forwards each event, advancing `lastReplayed`.
-  //   3. After replay completes, attach to `_eventsController` and filter
-  //      `e.sequenceNumber > lastReplayed` to close the race where an event
-  //      commits between the replay snapshot read and the live attach.
+  //   2. The live listener on `_eventsController` attaches before the replay
+  //      reads the log, and buffers what it receives until the replay has
+  //      been forwarded, so an event that commits while the replay reads is
+  //      not lost.
+  //   3. Replay reads `findAllEvents(afterSequence: lowerBound)` and
+  //      forwards each event, advancing `lastForwarded`; the buffer is then
+  //      drained and the listener forwards directly. Every live event is
+  //      forwarded only when its sequence number is above `lastForwarded`,
+  //      so an event both read by the replay and notified live is delivered
+  //      once.
   // Close on `_eventsController` propagates via `onDone`.
   // Not on the StorageBackend abstract surface — SembastBackend-specific.
   Stream<StoredEvent> watchEvents({int? afterSequence}) {
@@ -487,29 +662,43 @@ class SembastBackend extends StorageBackend {
     }
     final lowerBound = afterSequence ?? 0;
     final controller = StreamController<StoredEvent>.broadcast();
-    var lastReplayed = lowerBound;
     StreamSubscription<StoredEvent>? liveSub;
     var started = false;
+    // Advanced by every first listen and every last cancel, so a pipeline
+    // started for an earlier listen forwards nothing once it was cancelled.
+    var pipeline = 0;
 
-    Future<void> startReplay() async {
-      try {
-        final replay = await findAllEvents(afterSequence: lowerBound);
-        for (final e in replay) {
-          if (controller.isClosed) return;
-          controller.add(e);
-          lastReplayed = e.sequenceNumber;
-        }
-      } catch (err, st) {
-        if (!controller.isClosed) controller.addError(err, st);
+    Future<void> startReplay(int current) async {
+      bool stale() => current != pipeline || controller.isClosed;
+      if (stale()) return;
+      var lastForwarded = lowerBound;
+      var replayDone = false;
+      final buffer = <StoredEvent>[];
+      void forward(StoredEvent e) {
+        if (stale() || e.sequenceNumber <= lastForwarded) return;
+        controller.add(e);
+        lastForwarded = e.sequenceNumber;
       }
-      if (controller.isClosed) return;
+
       liveSub = _eventsController.stream.listen(
-        (e) {
-          if (e.sequenceNumber > lastReplayed) controller.add(e);
-        },
+        (e) => replayDone ? forward(e) : buffer.add(e),
         onError: controller.addError,
         onDone: controller.close,
       );
+      try {
+        for (final e in await findAllEvents(afterSequence: lowerBound)) {
+          forward(e);
+        }
+      } catch (err, st) {
+        if (!stale()) controller.addError(err, st);
+      }
+      // The replay may have been cancelled while it read.
+      if (stale()) return;
+      for (final e in buffer) {
+        forward(e);
+      }
+      buffer.clear();
+      replayDone = true;
     }
 
     controller
@@ -521,7 +710,8 @@ class SembastBackend extends StorageBackend {
         // pipeline.
         if (started) return;
         started = true;
-        scheduleMicrotask(startReplay);
+        final current = ++pipeline;
+        scheduleMicrotask(() => startReplay(current));
       }
       ..onCancel = () async {
         // Broadcast `onCancel` fires when the LAST subscriber cancels;
@@ -529,9 +719,11 @@ class SembastBackend extends StorageBackend {
         // controller does not leak after all subscribers detach. The
         // controller stays open so a later listener can re-attach
         // (broadcast semantics).
-        await liveSub?.cancel();
-        liveSub = null;
+        pipeline++;
         started = false;
+        final cancelled = liveSub?.cancel();
+        liveSub = null;
+        await cancelled;
       };
     return controller.stream;
   }
@@ -553,6 +745,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> writeSchemaVersion(Transaction txn, int version) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
@@ -574,22 +767,23 @@ class SembastBackend extends StorageBackend {
     return (value as int?) ?? -1;
   }
 
-  /// Write the per-destination fill cursor inside its own atomic
-  /// transaction.
+  /// Read the per-destination fill cursor inside [txn]. Returns -1 when the
+  /// key is absent.
   @override
-  Future<void> writeFillCursor(String destinationId, int sequenceNumber) async {
-    _validateFillCursorValue(sequenceNumber);
-    await _database().transaction((sembastTxn) async {
-      await _backendStateStore
-          .record(_fillCursorKey(destinationId))
-          .put(sembastTxn, sequenceNumber);
-    });
+  @internal
+  Future<int> readFillCursorTxn(Transaction txn, String destinationId) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_fillCursorKey(destinationId))
+        .get(t._sembastTxn);
+    return (value as int?) ?? -1;
   }
 
   /// Write the per-destination fill cursor inside [txn] so the advance is
   /// co-atomic with the surrounding transaction. Rolls back with the rest
   /// of the transaction body on a throw.
   @override
+  @internal
   Future<void> writeFillCursorTxn(
     Transaction txn,
     String destinationId,
@@ -607,7 +801,7 @@ class SembastBackend extends StorageBackend {
   /// all other values are `sequence_number`s drawn from the
   /// event log, which are non-negative ints. Reject anything smaller than
   /// `-1` at write time so a bogus caller value cannot land as a stored
-  /// cursor and confuse downstream fillBatch / unjam logic.
+  /// cursor and confuse the fill or a recovery rewind.
   void _validateFillCursorValue(int sequenceNumber) {
     if (sequenceNumber < -1) {
       throw ArgumentError.value(
@@ -637,23 +831,57 @@ class SembastBackend extends StorageBackend {
     );
   }
 
-  /// Persist [schedule] for [destinationId] inside its own atomic
-  /// transaction (standalone variant).
+  /// Read the persisted `DestinationSchedule` for [destinationId] inside
+  /// [txn], or null when no schedule record exists.
   @override
-  Future<void> writeSchedule(
+  @internal
+  Future<DestinationSchedule?> readScheduleTxn(
+    Transaction txn,
     String destinationId,
-    DestinationSchedule schedule,
   ) async {
-    await _database().transaction((sembastTxn) async {
-      await _backendStateStore
-          .record(_scheduleKey(destinationId))
-          .put(sembastTxn, schedule.toJson());
-    });
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_scheduleKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DestinationSchedule.fromJson(
+      Map<String, Object?>.from(value as Map),
+    );
+  }
+
+  @override
+  Future<Map<String, DestinationSchedule>> listSchedules() =>
+      _listSchedules(_database());
+
+  @override
+  @internal
+  Future<Map<String, DestinationSchedule>> listSchedulesTxn(Transaction txn) =>
+      _listSchedules(_requireValidTxn(txn)._sembastTxn);
+
+  Future<Map<String, DestinationSchedule>> _listSchedules(
+    DatabaseClient client,
+  ) async {
+    const prefix = 'schedule_';
+    final records = await _backendStateStore.find(
+      client,
+      finder: Finder(
+        filter: Filter.custom(
+          (record) => (record.key! as String).startsWith(prefix),
+        ),
+      ),
+    );
+    return <String, DestinationSchedule>{
+      for (final record in records)
+        record.key.substring(prefix.length): DestinationSchedule.fromJson(
+          Map<String, Object?>.from(record.value! as Map),
+        ),
+    };
   }
 
   /// Persist [schedule] inside [txn] so the write participates in the
   /// surrounding transaction's atomicity.
   @override
+  @internal
   Future<void> writeScheduleTxn(
     Transaction txn,
     String destinationId,
@@ -668,6 +896,7 @@ class SembastBackend extends StorageBackend {
   /// Delete the persisted schedule record for [destinationId] inside
   /// [txn]. Used by `deleteDestination`.
   @override
+  @internal
   Future<void> deleteScheduleTxn(Transaction txn, String destinationId) async {
     final t = _requireValidTxn(txn);
     await _backendStateStore
@@ -675,46 +904,542 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
-  /// Drop the entire `fifo_<destinationId>` Sembast store inside [txn]
-  /// and remove [destinationId] from the known-FIFOs registry so
-  /// `hasFifoWedged` / `wedgedFifos` no longer iterate it.
+  /// Retire [destinationId]'s queue inside [txn] on deletion: refuse a
+  /// pending head, tombstone a wedged head, delete the null-status records
+  /// (all behind the head) and the fill cursor, and keep every terminal
+  /// record, the `sequence_in_queue` counter and the id in the known-FIFOs
+  /// list. Pushes one post-commit `watchFifo` notification.
+  // Implements: EVS-DEV-destination-drain/A
+  // retire a deleted destination's queue:
+  //   refuse a pending head; tombstone a wedged head; delete the pending
+  //   records and the fill cursor; keep terminal records and the counter.
   @override
-  Future<void> deleteFifoStoreTxn(Transaction txn, String destinationId) async {
+  @internal
+  Future<QueueRetirement> retireQueueTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
     final t = _requireValidTxn(txn);
-    await _fifoStore(destinationId).drop(t._sembastTxn);
-    // Also drop the fill-cursor record so a later addDestination of the
-    // same id starts from a clean slate rather than inheriting a stale
-    // cursor.
+    final head = await readFifoHeadTxn(txn, destinationId);
+    if (head != null && head.finalStatus == null) {
+      throw StateError(
+        'retireQueueTxn($destinationId): the queue head ${head.entryId} is '
+        'pending and may be in delivery; it is retired only once wedged.',
+      );
+    }
+    String? tombstoned;
+    if (head != null) {
+      await setFinalStatusTxn(
+        txn,
+        destinationId,
+        head.entryId,
+        FinalStatus.tombstoned,
+      );
+      tombstoned = head.entryId;
+    }
+    final deleted = await _fifoStore(destinationId).delete(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.isNull('final_status')),
+    );
     await _backendStateStore
         .record(_fillCursorKey(destinationId))
         .delete(t._sembastTxn);
-    // Drop the per-destination sequence_in_queue counter so a later
-    // addDestination of the same id starts at 1 rather than inheriting
-    // the old counter. The "never reused" invariant is scoped to a
-    // destination's lifetime; a fresh addDestination begins a new lifetime.
+    t._fifoChanged.add(destinationId);
+    return QueueRetirement(
+      tombstonedRowId: tombstoned,
+      deletedPendingCount: deleted,
+    );
+  }
+
+  // -------- Replay requests --------
+
+  static String _replayRequestKey(String destinationId) =>
+      'replay_request_$destinationId';
+
+  @override
+  @internal
+  Future<ReplayRequest?> readReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_replayRequestKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return ReplayRequest.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+    ReplayRequest request,
+  ) async {
+    final t = _requireValidTxn(txn);
     await _backendStateStore
-        .record(_fifoSeqCounterKey(destinationId))
+        .record(_replayRequestKey(destinationId))
+        .put(t._sembastTxn, request.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearReplayRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_replayRequestKey(destinationId))
         .delete(t._sembastTxn);
-    // Remove the id from the known-FIFOs registry so wedged-FIFO
-    // iteration does not hit a dropped store.
-    final current =
-        (await _backendStateStore.record(_knownFifosKey).get(t._sembastTxn)
-                as List?)
-            ?.cast<String>()
-            .toList() ??
-        <String>[];
-    if (current.remove(destinationId)) {
-      await _backendStateStore
-          .record(_knownFifosKey)
-          .put(t._sembastTxn, current);
+  }
+
+  // -------- Wedge records --------
+
+  static String _wedgeRecordKey(String destinationId) => 'wedge_$destinationId';
+
+  @override
+  @internal
+  Future<WedgeRecord?> readWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return WedgeRecord.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+    WedgeRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .put(t._sembastTxn, record.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearWedgeRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_wedgeRecordKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Halt requests --------
+
+  static String _haltRequestKey(String destinationId) =>
+      'halt_request_$destinationId';
+
+  @override
+  @internal
+  Future<HaltRequest?> readHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return HaltRequest.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+    HaltRequest request,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .put(t._sembastTxn, request.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearHaltRequestTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_haltRequestKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Send fences --------
+
+  static String _sendFenceKey(String destinationId) =>
+      'send_fence_$destinationId';
+
+  @override
+  @internal
+  Future<SendFence?> readSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_sendFenceKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return SendFence.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeSendFenceTxn(
+    Transaction txn,
+    String destinationId,
+    SendFence fence,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_sendFenceKey(destinationId))
+        .put(t._sembastTxn, fence.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearSendFenceTxn(Transaction txn, String destinationId) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_sendFenceKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Registry check record --------
+
+  static const _registryCheckKey = 'registry_check';
+
+  @override
+  @internal
+  Future<void> writeRegistryCheckTxn(
+    Transaction txn,
+    RegistryCheck check,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_registryCheckKey)
+        .put(t._sembastTxn, check.toJson());
+  }
+
+  @override
+  @internal
+  Future<RegistryCheck?> readRegistryCheckTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_registryCheckKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return RegistryCheck.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  // -------- Data generation --------
+
+  static const _dataGenerationKey = 'data_generation';
+
+  /// On the web every `SembastBackend` registers with the browser's lock
+  /// manager, under the name of its database (the IndexedDB name, unique
+  /// per origin); the public sembast `Database` API cannot tell an
+  /// IndexedDB database from an in-memory one, so an in-memory database on
+  /// the web is guarded by its name too. Elsewhere a Sembast database is
+  /// used by one process and the registration holds nothing.
+  // Implements: EVS-DEV-version-compatibility/H
+  // Web Locks on the web; nothing on io, where the database is used by one
+  //   process.
+  @override
+  @internal
+  Future<GenerationRegistration> registerGeneration(
+    GenerationDescriptor descriptor,
+  ) => registerBrowserGeneration(
+    path: _database().path,
+    descriptor: descriptor,
+    bootLockWait: _bootLockWait,
+  );
+
+  @override
+  @internal
+  Future<GenerationRecord?> readDataGenerationTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_dataGenerationKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return GenerationRecord.fromJson(value);
+  }
+
+  @override
+  @internal
+  Future<void> writeDataGenerationTxn(
+    Transaction txn,
+    GenerationRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_dataGenerationKey)
+        .put(t._sembastTxn, record.toJson());
+  }
+
+  // -------- Drain lock and drain records --------
+
+  static const _drainEpochKey = 'drain_epoch';
+  static const _drainerDeclarationKey = 'drainer_declaration';
+  static const _drainHeartbeatKey = 'drain_heartbeat';
+  static String _refillGuardKey(String destinationId) =>
+      'refill_guard_$destinationId';
+
+  /// The wrapped `Database` object: the drain lock excludes drainers per
+  /// open database handle in this isolate.
+  @override
+  @internal
+  Object drainExclusionKey(String databaseId) => _db;
+
+  // Implements: EVS-DEV-destination-drain-lock/A
+  // Sembast: an isolate-local registry keyed by the identity of the wrapped
+  //   database handle, and in the browser the Web Lock of the database;
+  //   every acquisition raises the drain epoch.
+  /// Outside the browser the isolate registry is the whole lock. In the
+  /// browser the acquisition also takes the database's Web Lock after the
+  /// registry entry and before the epoch raise; it is refused
+  /// ([DrainLockUnavailableException]) while another tab holds that lock or
+  /// while the page is hidden, and throws [DrainLockConfigurationException]
+  /// on a page without a lock manager.
+  @override
+  @internal
+  Future<DrainLock> tryAcquireDrainLock({required String databaseId}) async {
+    if (_closed) throw const DrainLockBackendClosedException();
+    return _acquireDrainLock(
+      obtainExclusion: () => tryBrowserDrainExclusion(
+        path: _database().path,
+        databaseId: databaseId,
+      ),
+    );
+  }
+
+  Future<DrainLock> _acquireDrainLock({
+    required Future<DrainExclusionHold?> Function() obtainExclusion,
+  }) async {
+    final lock = await acquireIsolateDrainLock(
+      backend: this,
+      handle: _db,
+      obtainExclusion: obtainExclusion,
+      bumpEpoch: (insideBump) => transaction((txn) async {
+        final t = _requireValidTxn(txn);
+        final record = _backendStateStore.record(_drainEpochKey);
+        final current = await record.get(t._sembastTxn);
+        final next = (current is int ? current : 0) + 1;
+        await record.put(t._sembastTxn, next);
+        insideBump();
+        return next;
+      }),
+    );
+    // A close that ran while the acquisition was in flight released the
+    // lock it knew of, not this one.
+    if (_closed) {
+      await lock.release();
+      throw const DrainLockBackendClosedException();
     }
-    // post-commit so live `watchFifo(destinationId)` subscribers see
-    // the FIFO-store drop (subsequent listFifoEntries will be empty).
-    _pendingPostCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+    _drainLock = lock;
+    return lock;
+  }
+
+  /// The drain lock last granted through this backend; [close] releases
+  /// it.
+  DrainLock? _drainLock;
+
+  /// Set by [close]: the backend grants no drain lock afterwards.
+  bool _closed = false;
+
+  /// In the browser the request waits for the database's Web Lock while the
+  /// page is visible and withdraws while it is hidden, and ends at once when
+  /// the backend is closed or its handle cannot commit; elsewhere it
+  /// retries the isolate registry every [retryInterval] and when this
+  /// handle's lock is released.
+  @override
+  @internal
+  DrainLockRequest requestDrainLock({
+    required String databaseId,
+    required Duration retryInterval,
+  }) =>
+      requestBrowserDrainLock(
+        path: _database().path,
+        databaseId: databaseId,
+        acquireHolding: (exclusion) async {
+          if (_closed) throw const DrainLockBackendClosedException();
+          return _acquireDrainLock(obtainExclusion: () async => exclusion);
+        },
+        retryInterval: retryInterval,
+        wake: () => isolateDrainLockReleased(_db),
+        ended: _gone.future,
+      ) ??
+      RetryingDrainLockRequest(
+        attempt: () => tryAcquireDrainLock(databaseId: databaseId),
+        retryInterval: retryInterval,
+        wake: () => isolateDrainLockReleased(_db),
+      );
+
+  @override
+  @internal
+  Future<int?> readDrainEpochTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainEpochKey)
+        .get(t._sembastTxn);
+    return value as int?;
+  }
+
+  @override
+  @internal
+  Future<DrainerDeclaration?> readDrainerDeclarationTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainerDeclarationKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DrainerDeclaration.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainerDeclarationTxn(
+    Transaction txn,
+    DrainerDeclaration declaration,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_drainerDeclarationKey)
+        .put(t._sembastTxn, declaration.toJson());
+  }
+
+  @override
+  @internal
+  Future<DrainHeartbeat?> readDrainHeartbeatTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_drainHeartbeatKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return DrainHeartbeat.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeDrainHeartbeatTxn(
+    Transaction txn,
+    DrainHeartbeat heartbeat,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_drainHeartbeatKey)
+        .put(t._sembastTxn, heartbeat.toJson());
+  }
+
+  @override
+  @internal
+  Future<RefillGuard?> readRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return RefillGuard.fromJson(Map<String, Object?>.from(value as Map));
+  }
+
+  @override
+  @internal
+  Future<void> writeRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+    RefillGuard guard,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .put(t._sembastTxn, guard.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearRefillGuardTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_refillGuardKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
+  // -------- Database identity and boot record --------
+
+  static const _databaseIdKey = 'database_id';
+  static const _bootCheckKey = 'boot_check';
+
+  @override
+  @internal
+  Future<String?> readDatabaseIdTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_databaseIdKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    if (value is! String || value.isEmpty) {
+      throw StateError(
+        'backend_state[$_databaseIdKey] is not a non-empty string; '
+        'database corrupted',
+      );
+    }
+    return value;
+  }
+
+  @override
+  @internal
+  Future<String> readOrCreateDatabaseIdTxn(Transaction txn) async {
+    final existing = await readDatabaseIdTxn(txn);
+    if (existing != null) return existing;
+    final t = _requireValidTxn(txn);
+    final minted = const Uuid().v4();
+    await _backendStateStore.record(_databaseIdKey).put(t._sembastTxn, minted);
+    return minted;
+  }
+
+  @override
+  @internal
+  Future<void> writeBootCheckTxn(Transaction txn, BootCheck check) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_bootCheckKey)
+        .put(t._sembastTxn, check.toJson());
+  }
+
+  @override
+  @internal
+  Future<BootCheck?> readBootCheckTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_bootCheckKey)
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return BootCheck.fromJson(Map<String, Object?>.from(value as Map));
   }
 
   // -------- Generic view storage --------
@@ -741,6 +1466,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -751,7 +1477,7 @@ class SembastBackend extends StorageBackend {
     await _viewStore(
       viewName,
     ).record(key).put(t._sembastTxn, Map<String, Object?>.from(row));
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -759,6 +1485,7 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> deleteViewRowInTxn(
     Transaction txn,
     String viewName,
@@ -766,7 +1493,7 @@ class SembastBackend extends StorageBackend {
   ) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).record(key).delete(t._sembastTxn);
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -844,10 +1571,11 @@ class SembastBackend extends StorageBackend {
   }
 
   @override
+  @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final t = _requireValidTxn(txn);
     await _viewStore(viewName).delete(t._sembastTxn);
-    _pendingPostCommit.add(() {
+    t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
@@ -871,7 +1599,7 @@ class SembastBackend extends StorageBackend {
       '$viewName::$entryType';
 
   @override
-  Future<int?> readViewTargetVersionInTxn(
+  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
@@ -881,35 +1609,125 @@ class SembastBackend extends StorageBackend {
         .record(_viewTargetVersionsKey(viewName, entryType))
         .get(t._sembastTxn);
     if (raw == null) return null;
-    final v = raw['target_version'];
-    if (v is! int) {
-      throw StateError(
-        'view_target_versions[$viewName::$entryType]: target_version not int '
-        '(got ${v.runtimeType}); database corrupted',
+    return _targetVersionOf(raw, '$viewName::$entryType');
+  }
+
+  /// Reads the `{major, minor}` target of one view-target record. A
+  /// single integer target is the shape an earlier data format stored, and
+  /// throws [DatabaseResetRequiredError].
+  static EntryTypeVersion _targetVersionOf(
+    Map<String, Object?> record,
+    String key,
+  ) {
+    if (record['target_version'] is int) {
+      throw DatabaseResetRequiredError(
+        'its view target versions are single integers, the shape of an '
+        'earlier data format (view_target_versions[$key])',
       );
     }
-    return v;
+    try {
+      return EntryTypeVersion.fromJson(record['target_version']);
+    } on FormatException catch (e) {
+      throw StateError(
+        'view_target_versions[$key]: target_version is not a '
+        '{major, minor} version (${e.message}); database corrupted',
+      );
+    }
   }
 
   @override
+  @internal
   Future<void> writeViewTargetVersionInTxn(
     Transaction txn,
     String viewName,
     String entryType,
-    int targetVersion,
+    EntryTypeVersion targetVersion,
   ) async {
     final t = _requireValidTxn(txn);
-    await _viewTargetVersionsStoreRef
-        .record(_viewTargetVersionsKey(viewName, entryType))
-        .put(t._sembastTxn, <String, Object?>{
-          'view_name': viewName,
-          'entry_type': entryType,
-          'target_version': targetVersion,
-        });
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    await record.put(t._sembastTxn, <String, Object?>{
+      'view_name': viewName,
+      'entry_type': entryType,
+      'target_version': targetVersion.toJson(),
+      if (existing?[_behindField] == true) _behindField: true,
+    });
+  }
+
+  /// Field of a view-target record that carries its catch-up mark.
+  static const _behindField = 'behind';
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+    Transaction txn,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final records = await _viewTargetVersionsStoreRef.find(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.equals('entry_type', entryType)),
+    );
+    return <String, EntryTypeVersion>{
+      for (final r in records)
+        (r.value['view_name'] as String): _targetVersionOf(r.value, r.key),
+    };
   }
 
   @override
-  Future<Map<String, int>> readAllViewTargetVersionsInTxn(
+  @internal
+  Future<void> markViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    if (existing == null || existing[_behindField] == true) return;
+    await record.put(t._sembastTxn, <String, Object?>{
+      ...existing,
+      _behindField: true,
+    });
+  }
+
+  @override
+  Future<bool> readViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final existing = await _viewTargetVersionsStoreRef
+        .record(_viewTargetVersionsKey(viewName, entryType))
+        .get(t._sembastTxn);
+    return existing?[_behindField] == true;
+  }
+
+  @override
+  @internal
+  Future<void> clearViewTargetBehindInTxn(
+    Transaction txn,
+    String viewName,
+    String entryType,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = _viewTargetVersionsStoreRef.record(
+      _viewTargetVersionsKey(viewName, entryType),
+    );
+    final existing = await record.get(t._sembastTxn);
+    if (existing == null || existing[_behindField] != true) return;
+    await record.put(t._sembastTxn, <String, Object?>{
+      for (final entry in existing.entries)
+        if (entry.key != _behindField) entry.key: entry.value,
+    });
+  }
+
+  @override
+  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
   ) async {
@@ -918,13 +1736,14 @@ class SembastBackend extends StorageBackend {
       t._sembastTxn,
       finder: Finder(filter: Filter.equals('view_name', viewName)),
     );
-    return <String, int>{
+    return <String, EntryTypeVersion>{
       for (final r in records)
-        (r.value['entry_type'] as String): (r.value['target_version'] as int),
+        (r.value['entry_type'] as String): _targetVersionOf(r.value, r.key),
     };
   }
 
   @override
+  @internal
   Future<void> clearViewTargetVersionsInTxn(
     Transaction txn,
     String viewName,
@@ -938,60 +1757,11 @@ class SembastBackend extends StorageBackend {
 
   // -------- FIFO --------
 
-  /// Append a batch-shaped row to destination [destinationId]'s FIFO. The
-  /// row covers every event in [batch].
-  ///
-  /// Opens its own atomic transaction and delegates the actual row
-  /// construction to [enqueueFifoTxn]. Callers already composing a larger
-  /// transaction (replay, fill_batch) SHALL use [enqueueFifoTxn] so the
-  /// enqueue and any accompanying writes (e.g., fill_cursor advance)
-  /// commit co-atomically.
-  ///
-  /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null
-  ///. See [StorageBackend.enqueueFifo] for the contract
-  /// distinguishing the two payload shapes.
-  ///
-  /// The backend owns `sequence_in_queue` via the persisted
-  /// `fifo_seq_counter_<destinationId>` record:
-  /// monotonic, never reused.
-  ///
-  /// The returned `FifoEntry` is the persisted record. Callers that
-  /// need to advance a per-destination cursor use
-  /// `result.sequenceRange.lastSeq` as the inclusive upper bound of the
-  /// batch on the event log.
-  ///
-  /// The row's `entry_id` is a freshly-minted v4 UUID and has no
-  /// relationship to the events the row carries — callers that need
-  /// to correlate against events use `eventIds` / `sequenceRange`.
-  @override
-  Future<FifoEntry> enqueueFifo(
-    String destinationId,
-    List<StoredEvent> batch, {
-    WirePayload? wirePayload,
-    BatchEnvelopeMetadata? nativeEnvelope,
-  }) async {
-    // Route through this backend's `transaction()` (rather than the
-    // raw `_database().transaction(...)`) so the post-commit callback
-    // appended inside `enqueueFifoTxn` is drained by the wrapper on
-    // commit; otherwise FIFO-change emissions on the
-    // standalone enqueue path would silently drop.
-    return transaction(
-      (txn) => enqueueFifoTxn(
-        txn,
-        destinationId,
-        batch,
-        wirePayload: wirePayload,
-        nativeEnvelope: nativeEnvelope,
-      ),
-    );
-  }
-
-  /// Transactional variant of [enqueueFifo]: participates in the
-  /// surrounding [txn] so the FIFO-row write and the caller's
-  /// accompanying writes commit or roll back together. Used by
-  /// `fillBatch` to keep the enqueue + fill_cursor advance co-atomic,
-  /// and by `runHistoricalReplay` to compose a larger walk of the event
-  /// log into a single transaction.
+  /// Append a queue item to [destinationId]'s FIFO inside [txn], so the
+  /// FIFO-row write and the caller's accompanying writes commit or roll
+  /// back together. Used by
+  /// `fillBatch` to keep the enqueue, the fill_cursor advance and a
+  /// cleared replay request co-atomic.
   ///
   /// Exactly one of [wirePayload] / [nativeEnvelope] SHALL be non-null:
   ///
@@ -999,16 +1769,16 @@ class SembastBackend extends StorageBackend {
   ///   map`, `wire_format = wirePayload.contentType`,
   ///   `transform_version = wirePayload.transformVersion`,
   ///   `envelope_metadata = null`.
-  /// - [nativeEnvelope] (native `esd/batch@1`): persists
-  ///   `wire_payload = null`, `wire_format = "esd/batch@1"`,
+  /// - [nativeEnvelope] (native `esd/batch@2`): persists
+  ///   `wire_payload = null`, `wire_format = "esd/batch@2"`,
   ///   `transform_version = null`, `envelope_metadata = nativeEnvelope`.
   ///
   /// Centralizes all row-construction logic: empty-batch rejection,
   /// XOR-shape enforcement, v4-UUID `entry_id` minting,
   /// `sequence_in_queue` assignment, and the known-FIFOs registry
-  /// bookkeeping all live here; [enqueueFifo] is a thin
-  /// `transaction(...)` wrapper.
+  /// bookkeeping all live here.
   @override
+  @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
     String destinationId,
@@ -1020,7 +1790,7 @@ class SembastBackend extends StorageBackend {
       throw ArgumentError.value(
         batch,
         'batch',
-        'enqueueFifo requires a non-empty batch',
+        'enqueueFifoTxn requires a non-empty batch',
       );
     }
     // XOR enforcement: exactly one payload shape is legal. Reject both
@@ -1028,7 +1798,7 @@ class SembastBackend extends StorageBackend {
     // never carries an ambiguous (wire_payload, envelope_metadata) pair.
     if ((wirePayload == null) == (nativeEnvelope == null)) {
       throw ArgumentError(
-        'enqueueFifo requires exactly one of wirePayload or nativeEnvelope '
+        'enqueueFifoTxn requires exactly one of wirePayload or nativeEnvelope '
         'to be non-null; got '
         'wirePayload=${wirePayload == null ? "null" : "set"}, '
         'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
@@ -1062,7 +1832,7 @@ class SembastBackend extends StorageBackend {
           throw ArgumentError.value(
             wp,
             'wirePayload',
-            'enqueueFifo requires wirePayload.bytes to encode a JSON object '
+            'enqueueFifoTxn requires wirePayload.bytes to encode a JSON object '
                 '(Map); got ${decoded.runtimeType}',
           );
         }
@@ -1071,7 +1841,7 @@ class SembastBackend extends StorageBackend {
         throw ArgumentError.value(
           wp,
           'wirePayload',
-          'enqueueFifo requires wirePayload.bytes to be UTF-8 JSON: '
+          'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
               '${e.message}',
         );
       }
@@ -1123,16 +1893,7 @@ class SembastBackend extends StorageBackend {
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);
-    // post-commit so live `watchFifo(destinationId)` subscribers learn
-    // of the new row. Pushed onto _pendingPostCommit so the emission is
-    // co-atomic with the surrounding `transaction()` commit; fires only
-    // if the transaction succeeds. `enqueueFifo` (the standalone
-    // wrapper) routes through `transaction()` for the same reason.
-    _pendingPostCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+    t._fifoChanged.add(destinationId);
     return entry;
   }
 
@@ -1173,11 +1934,21 @@ class SembastBackend extends StorageBackend {
   /// observe the wedge via this single entry point without a separate
   /// `wedgedFifos` probe.
   @override
-  Future<FifoEntry?> readFifoHead(String destinationId) async {
-    final db = _database();
+  Future<FifoEntry?> readFifoHead(String destinationId) =>
+      _readFifoHead(_database(), destinationId);
+
+  @override
+  @internal
+  Future<FifoEntry?> readFifoHeadTxn(Transaction txn, String destinationId) =>
+      _readFifoHead(_requireValidTxn(txn)._sembastTxn, destinationId);
+
+  Future<FifoEntry?> _readFifoHead(
+    DatabaseClient client,
+    String destinationId,
+  ) async {
     final store = _fifoStore(destinationId);
     final records = await store.find(
-      db,
+      client,
       finder: Finder(
         filter: Filter.or([
           Filter.isNull('final_status'),
@@ -1329,152 +2100,47 @@ class SembastBackend extends StorageBackend {
     return controller.stream;
   }
 
-  /// Append [attempt] to the entry's attempts[]. Does not change
-  /// finalStatus. Runs in its own transaction.
-  ///
-  /// Tolerates a missing target row or a never-registered FIFO store:
-  /// in both cases this method returns without throwing and emits a
-  /// warning-level diagnostic via [debugLogSink]. This closes
-  /// the drain/unjam + drain/delete race documented in design §6.6 —
-  /// drain `await send()`s outside any storage transaction, and a
-  /// concurrent user operation (unjamDestination, deleteDestination) may
-  /// remove the row before drain's subsequent `appendAttempt` runs.
-  ///
-  /// In Sembast, stores are lazily-created namespaces: a store that was
-  /// never written to simply has zero records, so the `records.isEmpty`
-  /// branch covers both "unknown destination" and "row deleted from a
-  /// known destination". No separate "store exists?" probe is needed.
+  /// Append [attempt] to the entry's attempts[] inside [txn]. Does not
+  /// change finalStatus. Throws [StateError] when the entry is absent (in
+  /// Sembast a never-written store has no records, so this also covers an
+  /// unknown destination) or terminal.
   @override
-  Future<void> appendAttempt(
+  @internal
+  Future<void> appendAttemptTxn(
+    Transaction txn,
     String destinationId,
     String entryId,
     AttemptResult attempt,
   ) async {
-    // Route through this backend's `transaction()` so post-commit FIFO
-    // emissions appended below are drained on commit.
-    await transaction((txn) async {
-      final t = _requireValidTxn(txn);
-      final store = _fifoStore(destinationId);
-      final records = await store.find(
-        t._sembastTxn,
-        finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    final t = _requireValidTxn(txn);
+    final store = _fifoStore(destinationId);
+    final records = await store.find(
+      t._sembastTxn,
+      finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    );
+    if (records.isEmpty) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): no such queue item; '
+        'the drainer records an attempt only on the pending head it sent.',
       );
-      if (records.isEmpty) {
-        debugLogSink?.call(
-          'appendAttempt: entry $entryId absent from FIFO '
-          '$destinationId; skipping (expected during drain/unjam or '
-          'drain/delete race)',
-        );
-        // No row mutated -> no FIFO-change emission.
-        return;
-      }
-      final record = records.single;
-      final updated = Map<String, Object?>.from(record.value);
-      final attemptsRaw = <Map<String, Object?>>[
-        ...(updated['attempts'] as List? ?? const <Object?>[])
-            .cast<Map<String, Object?>>()
-            .map(Map<String, Object?>.from),
-        attempt.toJson(),
-      ];
-      updated['attempts'] = attemptsRaw;
-      await store.record(record.key).put(t._sembastTxn, updated);
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the appended attempt.
-      _pendingPostCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
-    });
-  }
-
-  /// Transition entry's finalStatus to [status]. For `sent`, also stamps
-  /// `sent_at = DateTime.now().toUtc()`. The entry is RETAINED: no delete
-  /// ever happens through this path.
-  ///
-  /// Tolerates a missing target row or a never-registered FIFO store:
-  /// in both cases this method returns without throwing and emits a
-  /// warning-level diagnostic via [debugLogSink]. This closes
-  /// the drain/unjam + drain/delete race documented in design §6.6 —
-  /// drain `await send()`s outside any storage transaction, and a
-  /// concurrent user operation (unjamDestination, deleteDestination) may
-  /// remove the row before drain's subsequent `markFinal` runs.
-  ///
-  /// In Sembast, stores are lazily-created namespaces: a store that was
-  /// never written to simply has zero records, so the `records.isEmpty`
-  /// branch covers both "unknown destination" and "row deleted from a
-  /// known destination". No separate "store exists?" probe is needed.
-  ///
-  /// The one-way transition rule is preserved with idempotency: when the
-  /// entry is already terminal with the SAME status as [status], the call
-  /// returns cleanly (no-op, no re-stamp of `sent_at`). When the entry is
-  /// already terminal with a DIFFERENT status, `StateError` is thrown —
-  /// this is real corruption and loud failure is correct.
-  @override
-  Future<void> markFinal(
-    String destinationId,
-    String entryId,
-    FinalStatus status,
-  ) async {
-    // markFinal transitions a pre-terminal row (final_status == null)
-    // into one of the three non-null terminal states. `null` is not a
-    // legal target — it is the INITIAL state and is set only by
-    // enqueueFifo. The non-null target is enforced by the parameter
-    // type `FinalStatus` (non-nullable); the type system makes a
-    // runtime null-check unnecessary here.
-    //
-    // Routed through this backend's `transaction()` so post-commit
-    // FIFO emissions appended below are drained on commit.
-    await transaction((txn) async {
-      final t = _requireValidTxn(txn);
-      final store = _fifoStore(destinationId);
-      final records = await store.find(
-        t._sembastTxn,
-        finder: Finder(filter: Filter.equals('entry_id', entryId), limit: 1),
+    }
+    final record = records.single;
+    final updated = Map<String, Object?>.from(record.value);
+    final currentRaw = updated['final_status'];
+    if (currentRaw != null) {
+      throw StateError(
+        'appendAttemptTxn($destinationId, $entryId): the item is '
+        '$currentRaw; an attempt is recorded only on a pending item.',
       );
-      if (records.isEmpty) {
-        debugLogSink?.call(
-          'markFinal: entry $entryId absent from FIFO $destinationId; '
-          'skipping (expected during drain/unjam or drain/delete race)',
-        );
-        // No row mutated -> no FIFO-change emission.
-        return;
-      }
-      final record = records.single;
-      final updated = Map<String, Object?>.from(record.value);
-      final currentRaw = updated['final_status'];
-      final currentStatus = currentRaw == null
-          ? null
-          : FinalStatus.fromJson(currentRaw as String);
-      // final_status is one-way: null -> sent|wedged|tombstoned.
-      // A duplicate call with the SAME status is a no-op — drain() is
-      // documented at-least-once and concurrent drainers can both reach
-      // markFinal after the first completes. Matching status: return
-      // cleanly. Mismatched status: real corruption; loud failure.
-      if (currentStatus != null) {
-        if (currentStatus == status) {
-          // Idempotent duplicate — first call already wrote the correct
-          // terminal state. No additional write or sent_at re-stamp needed.
-          return;
-        }
-        throw StateError(
-          'markFinal($destinationId, $entryId, $status): entry is already '
-          '$currentStatus; final_status transitions are one-way.',
-        );
-      }
-      updated['final_status'] = status.toJson();
-      if (status == FinalStatus.sent) {
-        updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
-      }
-      await store.record(record.key).put(t._sembastTxn, updated);
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the terminal-status transition.
-      _pendingPostCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
-    });
+    }
+    updated['attempts'] = <Map<String, Object?>>[
+      ...(updated['attempts'] as List? ?? const <Object?>[])
+          .cast<Map<String, Object?>>()
+          .map(Map<String, Object?>.from),
+      attempt.toJson(),
+    ];
+    await store.record(record.key).put(t._sembastTxn, updated);
+    t._fifoChanged.add(destinationId);
   }
 
   @override
@@ -1531,34 +2197,24 @@ class SembastBackend extends StorageBackend {
   }
 
   /// Transition the target row's `final_status` to [status] inside
-  /// [txn]. The legal transitions, enforced by a guard below, are:
+  /// [txn]. The legal transitions are exactly `null -> sent`,
+  /// `null -> wedged` and `wedged -> tombstoned`; every other pair, a
+  /// repeated status and a missing row throw [StateError] with nothing
+  /// written.
   ///
-  /// - `null -> sent` — drain-terminal SendOk; stamps
-  ///   `sent_at = DateTime.now().toUtc()`.
-  /// - `null -> wedged` — drain-terminal SendPermanent / SendTransient
-  ///   at max attempts.
-  /// - `null -> tombstoned` — tombstoneAndRefill on a null head
-  ///  .
-  /// - `wedged -> tombstoned` — tombstoneAndRefill on a wedged head
-  ///  .
-  ///
-  /// Any other transition throws [StateError]. In particular `sent`
-  /// and `tombstoned` are terminal end-states; they cannot transition
-  /// to anything else.
-  ///
-  /// Preserves `attempts[]` verbatim on every transition (
-  /// tombstoneAndRefill requires it). `sent_at` is set on `null -> sent`
-  /// and untouched on every other transition.
-  ///
-  /// Throws [StateError] on a missing target row: callers verify
-  /// existence before opening the transaction, so a missing row here
-  /// indicates a concurrent delete race that these ops do not close.
+  /// Preserves `attempts[]` verbatim on every transition. `sent_at` is set
+  /// on `null -> sent` and untouched on every other transition.
+  // Implements: EVS-DEV-destination-drain/B
+  // exactly null -> sent, null -> wedged and
+  //   wedged -> tombstoned; every other pair, a repeat and a missing row
+  //   throw StateError with nothing written.
   @override
+  @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
     String destinationId,
     String entryId,
-    FinalStatus? status,
+    FinalStatus status,
   ) async {
     final t = _requireValidTxn(txn);
     final store = _fifoStore(destinationId);
@@ -1568,10 +2224,8 @@ class SembastBackend extends StorageBackend {
     );
     if (records.isEmpty) {
       throw StateError(
-        'setFinalStatusTxn($destinationId, $entryId, $status): target '
-        'row not found. Callers must verify existence (readFifoHead) '
-        'before opening the transaction; a missing row here indicates '
-        'a concurrent delete race.',
+        'setFinalStatusTxn($destinationId, $entryId, $status): no such '
+        'queue item.',
       );
     }
     final record = records.single;
@@ -1580,83 +2234,63 @@ class SembastBackend extends StorageBackend {
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw as String);
-    // Legal transitions:
-    //  - null  -> sent          (drain SendOk)
-    //  - null  -> wedged        (drain SendPermanent / max-attempts)
-    //  - null  -> tombstoned    (tombstoneAndRefill on null head)
-    //  - wedged -> tombstoned   (tombstoneAndRefill on wedged head)
-    final valid =
-        (current == null &&
-            (status == FinalStatus.sent ||
-                status == FinalStatus.wedged ||
-                status == FinalStatus.tombstoned)) ||
-        (current == FinalStatus.wedged && status == FinalStatus.tombstoned);
-    if (!valid) {
+    if (!isLegalFinalStatusTransition(current, status)) {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
-        '$current -> $status. Legal transitions: null -> {sent, wedged, '
-        'tombstoned}; wedged -> {tombstoned}. (one-way '
-        'rule.)',
+        '${current?.name} -> ${status.name}. Legal transitions: '
+        'null -> sent, null -> wedged, wedged -> tombstoned.',
       );
     }
-    updated['final_status'] = status?.toJson();
+    updated['final_status'] = status.toJson();
     if (status == FinalStatus.sent) {
-      // Drain-terminal SendOk stamps sent_at.
       updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
     }
-    // attempts[] is deliberately NOT touched
-    // tombstoneAndRefill requires verbatim preservation; the
-    // drain-terminal null->{sent,wedged} path has already appended its
-    // attempts via appendAttempt before calling markFinal /
-    // setFinalStatusTxn.
     await store.record(record.key).put(t._sembastTxn, updated);
-    // post-commit so live `watchFifo(destinationId)` subscribers see
-    // the final-status transition (tombstone / drain-terminal). The
-    // surrounding `transaction()` drains _pendingPostCommit on commit.
-    _pendingPostCommit.add(() {
-      if (!_fifoChangesController.isClosed) {
-        _fifoChangesController.add(destinationId);
-      }
-    });
+    t._fifoChanged.add(destinationId);
   }
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
-  /// `final_status IS null`. Returns the count of rows deleted.
+  /// `final_status IS null`. Returns a [TrailSweepResult]: the count of
+  /// rows deleted and the lowest first event sequence they carried.
   ///
   /// Used by `tombstoneAndRefill` to sweep the trail behind a
   /// tombstoned target in one transaction. Rows whose
   /// `final_status` is terminal (any of {sent, wedged, tombstoned})
   /// are left untouched regardless of their `sequence_in_queue` —
-  /// all non-null rows are retained forever.
+  /// all non-null rows are retained for the database's lifetime.
   @override
-  Future<int> deleteNullRowsAfterSequenceInQueueTxn(
+  @internal
+  Future<TrailSweepResult> deleteNullRowsAfterSequenceInQueueTxn(
     Transaction txn,
     String destinationId,
     int afterSequenceInQueue,
   ) async {
     final t = _requireValidTxn(txn);
     final store = _fifoStore(destinationId);
-    final deleted = await store.delete(
-      t._sembastTxn,
-      finder: Finder(
-        filter: Filter.and([
-          Filter.isNull('final_status'),
-          Filter.greaterThan('sequence_in_queue', afterSequenceInQueue),
-        ]),
-      ),
+    final finder = Finder(
+      filter: Filter.and([
+        Filter.isNull('final_status'),
+        Filter.greaterThan('sequence_in_queue', afterSequenceInQueue),
+      ]),
     );
-    if (deleted > 0) {
-      // post-commit so live `watchFifo(destinationId)` subscribers see
-      // the trail-sweep deletion. Skip when no rows were actually
-      // removed to avoid spurious wakeups.
-      _pendingPostCommit.add(() {
-        if (!_fifoChangesController.isClosed) {
-          _fifoChangesController.add(destinationId);
-        }
-      });
+    final matching = await store.find(t._sembastTxn, finder: finder);
+    int? minFirstSeq;
+    for (final record in matching) {
+      final range = Map<String, Object?>.from(
+        record.value['event_id_range']! as Map,
+      );
+      final firstSeq = range['first_seq']! as int;
+      if (minFirstSeq == null || firstSeq < minFirstSeq) {
+        minFirstSeq = firstSeq;
+      }
     }
-    return deleted;
+    await store.records(matching.map((r) => r.key)).delete(t._sembastTxn);
+    t._fifoChanged.add(destinationId);
+    return TrailSweepResult(
+      deletedCount: matching.length,
+      minFirstSeq: minFirstSeq,
+    );
   }
 
   // -------- Event lookup by event_id --------
@@ -1732,17 +2366,10 @@ class SembastBackend extends StorageBackend {
       securityFilters.add(Filter.equals('ip_address', ipAddress));
     }
     if (from != null) {
-      securityFilters.add(
-        Filter.greaterThanOrEquals(
-          'recorded_at',
-          from.toUtc().toIso8601String(),
-        ),
-      );
+      securityFilters.add(recordedAtNotBefore(from));
     }
     if (to != null) {
-      securityFilters.add(
-        Filter.lessThanOrEquals('recorded_at', to.toUtc().toIso8601String()),
-      );
+      securityFilters.add(recordedAtNotAfter(to));
     }
     // NOTE: we re-sort the join result in memory (see `rows.sort(...)`
     // below) so the in-memory order is authoritative for pagination; the
@@ -1864,8 +2491,21 @@ class SembastBackend extends StorageBackend {
 }
 
 class _SembastTxn extends Transaction {
-  _SembastTxn._(this._sembastTxn);
+  _SembastTxn._(this._sembastTxn, this._owner);
   final sembast.Transaction _sembastTxn;
+
+  /// The backend whose `transaction()` produced this handle.
+  final SembastBackend _owner;
+
+  /// Notifications to fire if this run of the transaction body commits.
+  /// Write paths push `() => controller.add(...)` here after their in-txn
+  /// writes succeed; [SembastBackend.transaction] fires the list of the run
+  /// that committed.
+  final List<void Function()> _postCommit = <void Function()>[];
+
+  /// Destinations whose queue this run changed; each is notified once if
+  /// the run commits.
+  final Set<String> _fifoChanged = <String>{};
   bool _isValid = true;
   void _invalidate() {
     _isValid = false;
@@ -1898,3 +2538,27 @@ class _AuditCursorPoint {
     return base64Url.encode(utf8.encode(raw));
   }
 }
+
+/// A transaction body lost its runs holding the write lock shared; the
+/// transaction runs again holding it exclusively.
+final class _RunsLostToOtherWriters implements Exception {
+  const _RunsLostToOtherWriters();
+}
+
+/// The instant a stored security-context record's `recorded_at` names.
+DateTime _recordedAtOf(RecordSnapshot<Object?, Object?> record) =>
+    DateTime.parse(record['recorded_at']! as String);
+
+/// A filter admitting security-context records recorded at or before
+/// [bound]. The stored `recorded_at` is an ISO 8601 string whose fraction
+/// has three or six digits, so text order is not time order within a
+/// millisecond; the filter compares the parsed instants.
+@internal
+Filter recordedAtNotAfter(DateTime bound) =>
+    Filter.custom((record) => !_recordedAtOf(record).isAfter(bound));
+
+/// A filter admitting security-context records recorded at or after
+/// [bound], comparing parsed instants as [recordedAtNotAfter] does.
+@internal
+Filter recordedAtNotBefore(DateTime bound) =>
+    Filter.custom((record) => !_recordedAtOf(record).isBefore(bound));

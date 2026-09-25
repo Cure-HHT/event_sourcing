@@ -9,7 +9,7 @@ enum Connection { ok, broken, rejecting }
 /// live-tunable network/batch knobs to the FIFO panel UI. The panel
 /// renders sliders + a connection dropdown for any destination that
 /// implements this interface, regardless of its concrete class. Both
-/// `DemoDestination` (lossy) and `NativeDemoDestination` (esd/batch@1)
+/// `DemoDestination` (lossy) and `NativeDemoDestination` (esd/batch@2)
 /// implement it; production destinations typically would not.
 ///
 /// The four notifiers map onto:

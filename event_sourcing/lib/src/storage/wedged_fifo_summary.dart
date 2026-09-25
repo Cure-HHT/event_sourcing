@@ -4,6 +4,11 @@
 /// is blocked and on which entry. The entry remains in its FIFO with
 /// `final_status = "wedged"`; this summary carries the derived fields
 /// a UI or log needs to show without replaying the whole FIFO.
+///
+/// It reads the local queue state. The library's default destination-wedges
+/// view (`defaultDestinationWedgesSpec`), folded from the wedge, recovery and
+/// deletion events in the log, shows the same wedges for this database and
+/// also the wedges of other databases whose events a peer forwarded.
 // Implements: EVS-PRD-portability/C
 // pure Dart value type; platform-
 //   independent JSON serialisation.

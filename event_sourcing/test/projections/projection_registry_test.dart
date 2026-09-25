@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 ProjectionSpec _spec(String viewName) => TableProjectionSpec(
   viewName: viewName,
-  interest: SubscriptionFilter(eventTypes: const {'evt'}),
+  interest: const SubscriptionFilter(eventTypes: {'evt'}),
   insertEventTypes: const {'evt'},
   removeEventTypes: const {},
   rowKey: const AggregateIdKey(),
@@ -24,31 +24,30 @@ ProjectionSpec _spec(String viewName) => TableProjectionSpec(
 void main() {
   group('ProjectionRegistry', () {
     test('register + lookup by viewName', () {
-      final reg = ProjectionRegistry();
-      reg.register(_spec('a'));
-      reg.register(_spec('b'));
+      final reg = ProjectionRegistry()
+        ..register(_spec('a'))
+        ..register(_spec('b'));
       expect(reg.lookup('a')?.viewName, 'a');
       expect(reg.lookup('b')?.viewName, 'b');
       expect(reg.lookup('missing'), isNull);
     });
 
     test('all() returns every registered spec', () {
-      final reg = ProjectionRegistry();
-      reg.register(_spec('a'));
-      reg.register(_spec('b'));
+      final reg = ProjectionRegistry()
+        ..register(_spec('a'))
+        ..register(_spec('b'));
       expect(reg.all().map((s) => s.viewName).toSet(), {'a', 'b'});
     });
 
     test('register throws on duplicate viewName', () {
-      final reg = ProjectionRegistry();
-      reg.register(_spec('a'));
+      final reg = ProjectionRegistry()..register(_spec('a'));
       expect(() => reg.register(_spec('a')), throwsArgumentError);
     });
 
     test('register after seal() throws', () {
-      final reg = ProjectionRegistry();
-      reg.register(_spec('a'));
-      reg.seal();
+      final reg = ProjectionRegistry()
+        ..register(_spec('a'))
+        ..seal();
       expect(() => reg.register(_spec('b')), throwsArgumentError);
     });
   });

@@ -1,6 +1,5 @@
 // event_sourcing/lib/src/promoters/primitives/transform.dart
 // Implements: EVS-PRD-materializer/A+B
-// Implements: EVS-DEV-snapshot-promotion-on-open/D
 // Implements: EVS-DEV-ingest-promotes-before-fold/A
 sealed class TransformPrimitive {
   const TransformPrimitive();
@@ -8,9 +7,9 @@ sealed class TransformPrimitive {
 }
 
 class RenameField extends TransformPrimitive {
+  const RenameField({required this.sourceField, required this.targetField});
   final String sourceField;
   final String targetField;
-  const RenameField({required this.sourceField, required this.targetField});
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {
@@ -27,10 +26,18 @@ class RenameField extends TransformPrimitive {
   }
 }
 
+/// Adds [fieldName] with [defaultValue] to a payload that lacks it.
+///
+/// As a transform, [apply] supplies the field whenever the payload lacks
+/// it. In the fold, a promoter chain's `DefaultField` is also decided
+/// against the view row the promoted event folds into: it supplies its
+/// value only when that row does not carry the field under the name it has
+/// at the registered version either (see `PromoterExecutor.promote`), so a
+/// promoted default never overrides a value the row holds.
 class DefaultField extends TransformPrimitive {
+  const DefaultField({required this.fieldName, required this.defaultValue});
   final String fieldName;
   final Object? defaultValue;
-  const DefaultField({required this.fieldName, required this.defaultValue});
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {
@@ -42,8 +49,8 @@ class DefaultField extends TransformPrimitive {
 }
 
 class DropField extends TransformPrimitive {
-  final String fieldName;
   const DropField({required this.fieldName});
+  final String fieldName;
 
   @override
   Map<String, Object?> apply(Map<String, Object?> input) {

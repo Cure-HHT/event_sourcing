@@ -1,6 +1,14 @@
 # Local-dev Postgres for the event_sourcing demo and Postgres conformance
 # tests. Bring up with `docker compose up -d --wait` so the next command
 # sees a healthy container; the healthcheck below allows ~40s to ready.
+# Provision the demo's schema before serving it:
+#   dart run bin/server.dart --backend=postgres \
+#     --postgres-url=postgres://evs:evs@localhost:5432/evs_demo \
+#     --postgres-ssl-mode=disable --provision
+# The one role here, `evs`, is a superuser that both provisions and serves:
+# a development setup only. A deployment provisions as the role that owns
+# the schema and serves as a runtime role holding exactly the privileges of
+# `postgresRuntimeRoleGrants` (see the README, "Running on Postgres").
 services:
   postgres:
     image: postgres:16

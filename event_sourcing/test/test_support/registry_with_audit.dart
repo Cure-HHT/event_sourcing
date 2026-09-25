@@ -33,20 +33,12 @@ class AuditedRegistryDeps {
 ///
 /// [callerEntryTypes] are appended after the system ones — handy for
 /// tests that want to append non-system events alongside the audits.
-///
-/// [auditEntryTypeOverride], when non-null, replaces the default
-/// `kSystemEntryTypes` list. Used by atomicity tests that need a
-/// truncated set so a specific audit append throws and rolls back the
-/// surrounding transaction. Default behavior (override null) is
-/// unchanged.
 Future<AuditedRegistryDeps> buildAuditedRegistryDeps(
   SembastBackend backend, {
   List<EntryTypeDefinition> callerEntryTypes = const <EntryTypeDefinition>[],
-  Iterable<EntryTypeDefinition>? auditEntryTypeOverride,
 }) async {
   final entryTypes = EntryTypeRegistry();
-  final auditEntryTypes = auditEntryTypeOverride ?? kSystemEntryTypes;
-  for (final definition in auditEntryTypes) {
+  for (final definition in kSystemEntryTypes) {
     entryTypes.register(definition);
   }
   for (final definition in callerEntryTypes) {

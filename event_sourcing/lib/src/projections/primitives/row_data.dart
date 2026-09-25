@@ -22,8 +22,8 @@ class WholePayload extends RowDataExtractor {
 }
 
 class PayloadField extends RowDataExtractor {
-  final String fieldName;
   const PayloadField(this.fieldName);
+  final String fieldName;
 
   @override
   Map<String, Object?> extract(StoredEvent event) {
@@ -42,8 +42,8 @@ class PayloadField extends RowDataExtractor {
 }
 
 class SelectedFields extends RowDataExtractor {
-  final List<String> fieldNames;
   const SelectedFields(this.fieldNames);
+  final List<String> fieldNames;
 
   @override
   Map<String, Object?> extract(StoredEvent event) {

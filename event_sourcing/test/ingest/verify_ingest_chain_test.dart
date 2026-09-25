@@ -12,6 +12,8 @@
 //   fromSequenceNumber / toSequenceNumber parameters
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/sembast_backend.dart'
+    show SembastBackendTestSupport;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';
@@ -43,29 +45,8 @@ Future<_Fixture> _openStore({
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: 1,
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: 1,
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: 1,
-        name: 'SC Purged',
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -94,29 +75,8 @@ Future<List<StoredEvent>> _originate(int count) async {
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: 1,
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: 1,
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: 1,
-        name: 'SC Purged',
       ),
     );
   final secCtx = SembastSecurityContextStore(backend: backend);

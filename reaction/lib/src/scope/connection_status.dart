@@ -1,6 +1,6 @@
 // Implements: EVS-PRD-reaction-scope/B
 
-/// Transport-connection liveness as observed by a [ReactionScope].
+/// Transport-connection liveness as observed by a `ReactionScope`.
 ///
 /// Three variants, exhaustive:
 ///
@@ -11,8 +11,8 @@
 ///                    given up; consumer should surface an actionable
 ///                    error.
 ///
-/// [LocalScope] reports [Connected] for its entire lifetime
-/// (in-process has no transport to lose). [RemoteScope] drives
+/// `LocalScope` reports [Connected] for its entire lifetime
+/// (in-process has no transport to lose). `RemoteScope` drives
 /// transitions from the underlying WS lifecycle.
 sealed class ConnectionStatus {
   const ConnectionStatus();

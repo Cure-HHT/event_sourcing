@@ -12,11 +12,11 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('AggregateProjectionSpec', () {
     test('exposes viewName, interest, tombstones, derivations', () {
-      final spec = AggregateProjectionSpec(
+      const spec = AggregateProjectionSpec(
         viewName: 'diary_entries',
-        interest: SubscriptionFilter(aggregateTypes: const {'note'}),
-        tombstoneEventTypes: const {'tombstone'},
-        derivedFields: const [
+        interest: SubscriptionFilter(aggregateTypes: {'note'}),
+        tombstoneEventTypes: {'tombstone'},
+        derivedFields: [
           DerivedField(
             'effective_date',
             DottedPathLookup(
@@ -34,19 +34,15 @@ void main() {
 
   group('TableProjectionSpec', () {
     test('exposes insert/remove event sets, key, data extractor', () {
-      final spec = TableProjectionSpec(
+      const spec = TableProjectionSpec(
         viewName: 'role_permission_grants',
         interest: SubscriptionFilter(
-          eventTypes: const {'permission_granted', 'permission_revoked'},
+          eventTypes: {'permission_granted', 'permission_revoked'},
         ),
-        insertEventTypes: const {'permission_granted'},
-        removeEventTypes: const {'permission_revoked'},
-        rowKey: const CompositeKey([
-          'data.role',
-          'data.permission',
-          'data.scope',
-        ]),
-        rowData: const PayloadField('data'),
+        insertEventTypes: {'permission_granted'},
+        removeEventTypes: {'permission_revoked'},
+        rowKey: CompositeKey(['data.role', 'data.permission', 'data.scope']),
+        rowData: PayloadField('data'),
       );
       expect(spec.viewName, 'role_permission_grants');
       expect(spec.insertEventTypes, {'permission_granted'});

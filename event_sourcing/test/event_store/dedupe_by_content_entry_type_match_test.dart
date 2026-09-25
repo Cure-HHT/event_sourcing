@@ -10,7 +10,9 @@
 // within the aggregate, not the unconditional last event of any type. This
 // is a pre-condition for system-event aggregate consolidation, where
 // multiple system entry types share the install-scoped `source.identifier`
-// aggregate and must dedupe per stream.
+// aggregate and must dedupe per stream. The public append refuses reserved
+// system entry types, so the scenarios use two user entry types sharing one
+// aggregate.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +24,9 @@ const _source = Source(
   softwareVersion: 'dedupe-by-entry-type-test@1.0.0',
 );
 
+const String _typeA = 'dedupe_stream_a';
+const String _typeB = 'dedupe_stream_b';
+
 Future<EventStore> _bootstrap() async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'dedupe-by-entry-type-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -30,7 +35,18 @@ Future<EventStore> _bootstrap() async {
   final ds = await bootstrapEventStore(
     backend: backend,
     source: _source,
-    entryTypes: const <EntryTypeDefinition>[],
+    entryTypes: const <EntryTypeDefinition>[
+      EntryTypeDefinition(
+        id: _typeA,
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: _typeA,
+      ),
+      EntryTypeDefinition(
+        id: _typeB,
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: _typeB,
+      ),
+    ],
     destinations: const <Destination>[],
   );
   return ds.eventStore;
@@ -52,7 +68,7 @@ void main() {
       final first = await es.append(
         aggregateId: aggId,
         aggregateType: 'system_thing',
-        entryType: kEntryTypeRegistryInitializedEntryType,
+        entryType: _typeB,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -63,7 +79,7 @@ void main() {
       final second = await es.append(
         aggregateId: aggId,
         aggregateType: 'system_thing',
-        entryType: kEntryTypeRegistryInitializedEntryType,
+        entryType: _typeB,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -87,7 +103,7 @@ void main() {
       final first = await es.append(
         aggregateId: aggId,
         aggregateType: 'system_thing',
-        entryType: kDestinationRegisteredEntryType,
+        entryType: _typeA,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -97,12 +113,12 @@ void main() {
 
       // Second: a different entry_type with identical content fields.
       // Refined dedupe scopes the prior-lookup to matching entry_type;
-      // there is no prior `entry_type_registry_initialized` event in
+      // there is no prior `dedupe_stream_b` event in
       // this aggregate, so the first emission of this type fires.
       final second = await es.append(
         aggregateId: aggId,
         aggregateType: 'system_thing',
-        entryType: kEntryTypeRegistryInitializedEntryType,
+        entryType: _typeB,
         eventType: 'finalized',
         data: data,
         initiator: initiator,
@@ -118,12 +134,12 @@ void main() {
       );
 
       // Third: identical re-emission of the second's entry_type. The
-      // refined dedupe finds the prior `entry_type_registry_initialized`
+      // refined dedupe finds the prior `dedupe_stream_b`
       // emission with matching content and skips.
       final third = await es.append(
         aggregateId: aggId,
         aggregateType: 'system_thing',
-        entryType: kEntryTypeRegistryInitializedEntryType,
+        entryType: _typeB,
         eventType: 'finalized',
         data: data,
         initiator: initiator,

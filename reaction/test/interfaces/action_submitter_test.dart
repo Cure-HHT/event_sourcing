@@ -15,7 +15,7 @@ import 'package:reaction/reaction.dart';
 
 class _StubSubmitter implements ActionSubmitter {
   DispatchResult<Object?>? _next;
-  void prime(DispatchResult<Object?> r) => _next = r;
+  set next(DispatchResult<Object?> r) => _next = r;
 
   @override
   Future<DispatchResult<Object?>> submit(ActionSubmission submission) async {
@@ -27,6 +27,10 @@ class _StubSubmitter implements ActionSubmitter {
   }
 }
 
+/// Returns [value] typed as [T]. Passing an explicit type argument makes the
+/// compiler check that [value] is assignable to the contracted type.
+T _asContracted<T>(T value) => value;
+
 void main() {
   group('ActionSubmitter interface shape', () {
     test('reachable through the public barrel and has '
@@ -35,8 +39,10 @@ void main() {
       // documented signature. If the interface ever drifts, this
       // assignment fails to compile.
       final ActionSubmitter submitter = _StubSubmitter();
-      final Future<DispatchResult<Object?>> Function(ActionSubmission) submit =
-          submitter.submit;
+      final submit =
+          _asContracted<
+            Future<DispatchResult<Object?>> Function(ActionSubmission)
+          >(submitter.submit);
       expect(submit, isNotNull);
     });
 
@@ -45,7 +51,7 @@ void main() {
       // (parameter accepted, return value type matches).
       final stub = _StubSubmitter();
       const result = DispatchSuccess<Object?>(null, <String>[]);
-      stub.prime(result);
+      stub.next = result;
       final got = await stub.submit(
         const ActionSubmission(actionName: 'noop', rawInput: {}),
       );

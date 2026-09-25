@@ -111,6 +111,9 @@ class _CapturingEventStore implements EventStore {
   Set<String>? capturedAggregates;
   bool subscribed = false;
 
+  /// Closes the stream every subscription was handed.
+  Future<void> closeUpdates() => _ctl.close();
+
   @override
   Stream<Update<T>> subscribe<T>(
     SubscriptionFilter filter,
@@ -190,6 +193,7 @@ void main() {
       final pair = _Pair();
       addTearDown(pair.close);
       final store = _CapturingEventStore();
+      addTearDown(store.closeUpdates);
       final viewScopes = ViewScopeRegistry()
         ..register(
           viewName: 'participants',

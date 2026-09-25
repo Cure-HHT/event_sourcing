@@ -105,7 +105,7 @@ class _TopActionBarState extends State<TopActionBar> {
     );
   }
 
-  /// Build a synthetic `esd/batch@1` envelope (one event from
+  /// Build a synthetic `esd/batch@2` envelope (one event from
   /// `remote-mobile-1`) and feed it through `EventStore.ingestBatch`.
   /// Surfaces the receiver-stamped `origin_sequence_number` in the
   /// DETAIL panel for the ingested event.
@@ -224,7 +224,7 @@ class _TopActionBarState extends State<TopActionBar> {
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text('Ingested 1-event esd/batch@1 envelope'),
+                  content: Text('Ingested 1-event esd/batch@2 envelope'),
                 ),
               );
             } catch (e) {
@@ -252,7 +252,9 @@ class _TopActionBarState extends State<TopActionBar> {
               final count = await rebuildView(
                 store: widget.datastore.eventStore,
                 viewName: 'notes',
-                targetVersionByEntryType: const <String, int>{'demo_note': 1},
+                targetVersionByEntryType: const <String, EntryTypeVersion>{
+                  'demo_note': EntryTypeVersion(1, 0),
+                },
               );
               if (!mounted) return;
               ScaffoldMessenger.of(

@@ -1,3 +1,8 @@
+## Unreleased
+
+* `parseIso8601Instant(text)` parses an ISO 8601 date-time to the UTC instant it names, and throws `FormatException` unless it has a four-digit year (0000-9999), a month, day, hour, minute and second each within its calendar range (no 30 February, hour 24 or 60th second, which `DateTime.parse` rolls over), and an explicit offset (`Z` or `+/-HH[:]MM`) of at most 23:59.
+* `ProvenanceEntry.fromJson` reads `received_at` with `parseIso8601Instant`: besides a `received_at` without an offset, it refuses one with a year outside 0000-9999 or a calendar field out of range, with a `FormatException` naming `received_at`.
+
 ## 0.1.0
 
 First functional release. Implements REQ-d00115 (ProvenanceEntry Schema and Append Rules).

@@ -6,6 +6,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/widgets/audit_panel.dart';
+import 'package:event_sourcing_demo/widgets/deleted_fifo_panel.dart';
 import 'package:event_sourcing_demo/widgets/detail_panel.dart';
 import 'package:event_sourcing_demo/widgets/event_stream_panel.dart';
 import 'package:event_sourcing_demo/widgets/fifo_panel.dart';
@@ -13,6 +14,7 @@ import 'package:event_sourcing_demo/widgets/materialized_panel.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:event_sourcing_demo/widgets/sync_policy_bar.dart';
 import 'package:event_sourcing_demo/widgets/top_action_bar.dart';
+import 'package:event_sourcing_demo/widgets/wedges_panel.dart';
 import 'package:flutter/material.dart';
 
 const double _kMinColumnWidth = 80;
@@ -22,6 +24,7 @@ const Map<String, double> _kDefaultColumnWidths = <String, double>{
   'materialized': 200,
   'events': 280,
   'audit': 320,
+  'wedged': 300,
 };
 const double _kDefaultFifoColumnWidth = 260;
 
@@ -35,7 +38,6 @@ class DemoAppRoot extends StatefulWidget {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tickController,
     super.key,
   });
 
@@ -43,7 +45,6 @@ class DemoAppRoot extends StatefulWidget {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tickController;
 
   @override
   State<DemoAppRoot> createState() => _DemoAppRootState();
@@ -82,7 +83,6 @@ class _DemoAppRootState extends State<DemoAppRoot> {
               backend: widget.backend,
               appState: widget.appState,
               dbPath: widget.dbPath,
-              tickController: widget.tickController,
               policyNotifier: _policyNotifier,
               paneLabel: 'Demo',
             ),
@@ -103,7 +103,6 @@ class DemoPane extends StatefulWidget {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tickController,
     required this.policyNotifier,
     required this.paneLabel,
     super.key,
@@ -113,7 +112,6 @@ class DemoPane extends StatefulWidget {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tickController;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
   /// Short identifier shown in the header strip (e.g. "MOBILE", "HUB").
@@ -236,6 +234,15 @@ class _DemoPaneState extends State<DemoPane> {
         ),
       ),
       _divider('audit', fallback: 320),
+      SizedBox(
+        width: _widthOf('wedged', fallback: 300),
+        child: WedgesPanel(
+          backend: widget.backend,
+          databaseId: widget.datastore.eventStore.databaseId,
+          appState: widget.appState,
+        ),
+      ),
+      _divider('wedged', fallback: 300),
       for (final dest in widget.appState.destinations) ...<Widget>[
         SizedBox(
           width: _widthOf(
@@ -251,9 +258,21 @@ class _DemoPaneState extends State<DemoPane> {
         ),
         _divider('fifo_${dest.id}', fallback: _kDefaultFifoColumnWidth),
       ],
+      for (final id in widget.appState.deletedDestinationIds) ...<Widget>[
+        SizedBox(
+          width: _widthOf('deleted_$id', fallback: _kDefaultFifoColumnWidth),
+          child: DeletedFifoPanel(
+            destinationId: id,
+            backend: widget.backend,
+            key: ValueKey<String>('deleted_$id'),
+          ),
+        ),
+        _divider('deleted_$id', fallback: _kDefaultFifoColumnWidth),
+      ],
       Expanded(
         child: DetailPanel(
           backend: widget.backend,
+          databaseId: widget.datastore.eventStore.databaseId,
           appState: widget.appState,
           policyNotifier: widget.policyNotifier,
         ),
@@ -273,7 +292,7 @@ class _DemoPaneState extends State<DemoPane> {
   }
 
   Future<void> resetAll() async {
-    widget.tickController.cancel();
+    await widget.appState.stopDelivery();
     await widget.backend.close();
     final file = File(widget.dbPath);
     if (file.existsSync()) {

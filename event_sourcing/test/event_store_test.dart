@@ -75,11 +75,11 @@ Future<_Fixture> _setup({
     ),
     securityContexts: securityContexts,
     projections: projections,
-    syncCycleTrigger: () async {
-      syncCalls.add(DateTime.now());
-    },
     clock: now == null ? null : () => now,
   );
+  eventStore.deliveryTrigger = () async {
+    syncCalls.add(DateTime.now());
+  };
   return _Fixture(
     eventStore: eventStore,
     backend: backend,
@@ -89,8 +89,11 @@ Future<_Fixture> _setup({
   );
 }
 
-EntryTypeDefinition _simpleDef(String id) =>
-    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
+EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
+  id: id,
+  registeredVersion: const EntryTypeVersion(1, 0),
+  name: id,
+);
 
 void main() {
   group('EventStore.append', () {
@@ -152,7 +155,7 @@ void main() {
         defs: [
           const EntryTypeDefinition(
             id: 'non_materialized',
-            registeredVersion: 1,
+            registeredVersion: EntryTypeVersion(1, 0),
             name: 'Non-Mat',
           ),
         ],

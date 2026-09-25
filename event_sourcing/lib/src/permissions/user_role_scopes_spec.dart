@@ -36,14 +36,14 @@ import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 
-final userRoleScopesSpec = TableProjectionSpec(
+const userRoleScopesSpec = TableProjectionSpec(
   viewName: 'user_role_scopes',
-  interest: const SubscriptionFilter(
+  interest: SubscriptionFilter(
     eventTypes: {'role_assigned', 'role_unassigned'},
     aggregateTypes: {'user_role_scope'},
   ),
-  insertEventTypes: const {'role_assigned'},
-  removeEventTypes: const {'role_unassigned'},
-  rowKey: const AggregateIdKey(),
-  rowData: const WholePayload(),
+  insertEventTypes: {'role_assigned'},
+  removeEventTypes: {'role_unassigned'},
+  rowKey: AggregateIdKey(),
+  rowData: WholePayload(),
 );

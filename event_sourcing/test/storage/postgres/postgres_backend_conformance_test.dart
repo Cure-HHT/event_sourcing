@@ -14,19 +14,60 @@ import 'test_postgres_url.dart';
 
 void main() {
   final url = testPostgresUrl();
-  runStorageBackendConformanceTests(() async {
-    if (url == null) return null;
-    // Fresh schema per test: drop+recreate public so each test sees an
-    // empty database. Split into two execute calls because postgres
-    // v3.5 rejects multi-statement strings in Session.execute.
-    final endpoint = PostgresBackend.endpointFromUrl(url);
-    final tmp = await Connection.open(
-      endpoint,
-      settings: const ConnectionSettings(sslMode: SslMode.disable),
+  runStorageBackendConformanceTests(
+    () async {
+      if (url == null) return null;
+      // Fresh schema per test: drop+recreate public so each test sees an
+      // empty database. Split into two execute calls because postgres
+      // v3.5 rejects multi-statement strings in Session.execute.
+      final endpoint = PostgresBackend.endpointFromUrl(url);
+      final tmp = await Connection.open(
+        endpoint,
+        settings: const ConnectionSettings(sslMode: SslMode.disable),
+      );
+      await tmp.execute('DROP SCHEMA public CASCADE');
+      await tmp.execute('CREATE SCHEMA public');
+      await tmp.close();
+      return PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
+    },
+    reopen: (_) => PostgresBackend.open(url: url!, sslMode: SslMode.disable),
+    backendLabel: 'postgres',
+    securityStoreOf: (backend) =>
+        PostgresSecurityContextStore(backend: backend as PostgresBackend),
+  );
+
+  // Verifies: EVS-DEV-postgres-backend/L
+  test('a security-context store refuses a transaction from another '
+      'backend and accepts one from its own backend', () async {
+    if (url == null) {
+      markTestSkipped('PG_TEST_URL is not set');
+      return;
+    }
+    final own = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+      provisionSchema: true,
     );
-    await tmp.execute('DROP SCHEMA public CASCADE');
-    await tmp.execute('CREATE SCHEMA public');
-    await tmp.close();
-    return PostgresBackend.open(url: url, sslMode: SslMode.disable);
-  }, backendLabel: 'postgres');
+    addTearDown(own.close);
+    final other = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+    );
+    addTearDown(other.close);
+    final store = PostgresSecurityContextStore(backend: own);
+    await other.transaction((foreignTxn) async {
+      await expectLater(
+        store.readInTxn(foreignTxn, 'no-such-event'),
+        throwsStateError,
+      );
+    });
+    final found = await own.transaction(
+      (txn) => store.readInTxn(txn, 'no-such-event'),
+    );
+    expect(found, isNull);
+  });
 }

@@ -42,11 +42,15 @@ void main() {
     await tmp.execute('CREATE SCHEMA public');
     await tmp.close();
 
-    final pg = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
+    final pg = await PostgresBackend.open(
+      url: url,
+      sslMode: SslMode.disable,
+      provisionSchema: true,
+    );
     addTearDown(pg.close);
     return DemoBackends(
       backend: pg,
-      idempotencyStore: PostgresIdempotencyStore.over(pg.pool),
+      idempotencyStore: PostgresIdempotencyStore.forBackend(pg),
     );
   }
 

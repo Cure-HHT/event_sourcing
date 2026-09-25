@@ -1,5 +1,5 @@
 name: canonical_json_jcs
-description: "JSON Canonicalization Scheme (RFC 8785 / JCS) for cross-platform deterministic JSON hashing - CUR-1154"
+description: "JSON Canonicalization Scheme (RFC 8785 / JCS) for cross-platform deterministic JSON hashing"
 version: 0.1.0
 publish_to: none
 homepage:

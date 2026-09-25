@@ -14,17 +14,21 @@ import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
+import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/native_destination.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -54,8 +58,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: aggregateId,
       aggregateType: 'note',
       entryType: entryType,
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -96,7 +100,7 @@ void main() {
       final dest = FakeDestination(id: 'fake');
       const schedule = DestinationSchedule();
       // Dormant schedule: should be a no-op despite candidates.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -111,7 +115,7 @@ void main() {
     test('fillBatch with empty event log does not advance cursor', () async {
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -139,7 +143,7 @@ void main() {
       final dest = FakeDestination(id: 'fake', batchCapacity: 3);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -170,7 +174,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // now - batch.first.clientTimestamp = 10s, well below 5 minutes.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -196,7 +200,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // age = 10s, well below the 5-minute window — but flushHeld overrides.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -224,7 +228,7 @@ void main() {
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       // Clock advanced 10 minutes past the event; age (10min) > 5min.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -258,7 +262,7 @@ void main() {
 
       final dest = FakeDestination(id: 'fake', batchCapacity: 10);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -295,7 +299,7 @@ void main() {
         endDate: DateTime.utc(2026, 4, 15),
       );
       // now() is well after endDate so the upper bound is endDate.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -316,7 +320,7 @@ void main() {
       // moved). fillBatch's walk stops at e-after (deferred); cursor
       // does NOT advance past it. this preserves
       // re-evaluability when endDate later widens.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -340,7 +344,7 @@ void main() {
         startDate: DateTime.utc(2026, 4, 1),
         endDate: DateTime.utc(2026, 4, 30),
       );
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: widened,
@@ -368,7 +372,7 @@ void main() {
       );
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -391,7 +395,7 @@ void main() {
       final dest = FakeDestination(id: 'fake');
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -402,7 +406,7 @@ void main() {
 
       // Second call — no new events. Should not touch the cursor, and
       // should not enqueue a second FIFO row.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -439,7 +443,7 @@ void main() {
         filter: const SubscriptionFilter(entryTypes: {'epistaxis_event'}),
       );
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -452,7 +456,7 @@ void main() {
 
       // Idempotency: a repeat call with no new candidates
       // does not re-advance the cursor and does not enqueue anything.
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -460,6 +464,84 @@ void main() {
       );
       expect(await backend.readFifoHead('fake'), isNull);
       expect(await backend.readFillCursor('fake'), 2);
+    });
+
+    // A reserved system event is enqueued only for a destination whose
+    // filter includes system events; a filter that does not skips it and
+    // the cursor advances past it.
+    test('a system event is enqueued only when the filter includes system '
+        'events', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e-sys',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+        entryType: kDestinationRegisteredEntryType,
+      );
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      final excluding = FakeDestination(id: 'excluding');
+      final including = FakeDestination(
+        id: 'including',
+        filter: const SubscriptionFilter(includeSystemEvents: true),
+      );
+      for (final dest in [excluding, including]) {
+        await fillWithScheduleForTest(
+          dest,
+          backend: backend,
+          schedule: schedule,
+          clock: () => DateTime.utc(2026, 4, 22, 12),
+        );
+      }
+      expect(await backend.readFifoHead('excluding'), isNull);
+      expect(await backend.readFillCursor('excluding'), 1);
+      final head = await backend.readFifoHead('including');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e-sys']);
+      expect(await backend.readFillCursor('including'), 1);
+    });
+
+    // The enqueue and the cursor advance commit together: a fill whose
+    // transaction fails after its writes leaves neither, and the next fill
+    // enqueues the same event.
+    test('a failed fill transaction leaves neither a FIFO row nor a cursor '
+        'advance', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e1',
+        clientTimestamp: DateTime.utc(2026, 4, 10),
+      );
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      var failures = 0;
+      await expectLater(
+        runWithDeliveryTestHooks(
+          DeliveryTestHooks(
+            failFillTransaction: (id) {
+              failures++;
+              return true;
+            },
+          ),
+          () => fillWithScheduleForTest(
+            dest,
+            backend: backend,
+            schedule: schedule,
+            clock: () => DateTime.utc(2026, 4, 22, 12),
+          ),
+        ),
+        throwsA(isA<InjectedFailure>()),
+      );
+      expect(failures, 1, reason: 'the fill reached its transaction');
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), -1);
+
+      await fillForTest(
+        dest,
+        backend: backend,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+      expect(await backend.readFillCursor('fake'), 1);
     });
 
     // fillBatch returns without enqueueing any new rows, without calling
@@ -475,7 +557,7 @@ void main() {
       );
       final dest = FakeDestination(id: 'fake', batchCapacity: 10);
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -483,7 +565,12 @@ void main() {
       );
       final wedgedRow = await backend.readFifoHead('fake');
       expect(wedgedRow, isNotNull);
-      await backend.markFinal('fake', wedgedRow!.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'fake',
+        wedgedRow!.entryId,
+        FinalStatus.wedged,
+      );
 
       // Step 2: snapshot post-wedge state.
       final cursorBeforeSecondFill = await backend.readFillCursor('fake');
@@ -503,7 +590,7 @@ void main() {
         clientTimestamp: DateTime.utc(2026, 4, 22, 11, 45),
       );
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -537,10 +624,20 @@ void main() {
         eventId: 'e1',
         clientTimestamp: DateTime.utc(2026, 4, 22, 10),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
       final wedged = await backend.readFifoHead('fake');
       expect(wedged, isNotNull);
-      await backend.markFinal('fake', wedged!.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'fake',
+        wedged!.entryId,
+        FinalStatus.wedged,
+      );
 
       // Phase B: append two MORE matching events while wedged. fillBatch
       // wedge-skips both invocations — no FIFO rows added, no cursor
@@ -550,13 +647,23 @@ void main() {
         eventId: 'e2',
         clientTimestamp: DateTime.utc(2026, 4, 22, 10, 30),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
       await _appendEvent(
         backend,
         eventId: 'e3',
         clientTimestamp: DateTime.utc(2026, 4, 22, 11),
       );
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
 
       // Sanity: still only the wedged row in the FIFO.
       expect(await backend.readFifoHead('fake'), isNotNull);
@@ -569,7 +676,6 @@ void main() {
       // registry's pre-mutation invariants without re-running fillBatch.
       final deps = await buildAuditedRegistryDeps(backend);
       final wedgeRecoveryRegistry = DestinationRegistry(
-        backend: backend,
         eventStore: deps.eventStore,
       );
       await wedgeRecoveryRegistry.addDestination(dest, initiator: _testInit);
@@ -582,7 +688,12 @@ void main() {
       // Phase D: next fillBatch. Promotes e1, e2, e3 in ONE pass into
       // ONE FIFO row (batchCapacity=10 admits all three), advances
       // fill_cursor to e3.sequenceNumber.
-      await fillBatch(dest, backend: backend, schedule: schedule, clock: clock);
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: clock,
+      );
 
       final fresh = await backend.readFifoHead('fake');
       expect(fresh, isNotNull);
@@ -611,7 +722,7 @@ void main() {
       final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
       final fillClock = DateTime.utc(2026, 4, 22, 12);
 
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -632,7 +743,10 @@ void main() {
       expect(head.envelopeMetadata!.senderHop, 'mobile-device');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-fb-native');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'my_app@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '1');
+      expect(
+        head.envelopeMetadata!.batchFormatVersion,
+        BatchEnvelope.currentBatchFormatVersion,
+      );
       expect(
         head.envelopeMetadata!.sentAt,
         fillClock,
@@ -644,31 +758,6 @@ void main() {
         reason: 'fillBatch mints a fresh v4-UUID batch_id per native batch',
       );
       expect(await backend.readFillCursor('native'), 2);
-    });
-
-    // A native destination without a `source:` parameter throws
-    // ArgumentError. The native branch needs Source to stamp envelope
-    // identity; the absence is a caller-bug surfaced loudly rather than
-    // a silent partial enqueue.
-    test('native destination without source: throws '
-        'ArgumentError', () async {
-      final clientTs = DateTime.utc(2026, 4, 22, 10);
-      await _appendEvent(backend, eventId: 'e1', clientTimestamp: clientTs);
-
-      final dest = NativeDestination(id: 'native');
-      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
-      await expectLater(
-        fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          clock: () => DateTime.utc(2026, 4, 22, 12),
-        ),
-        throwsArgumentError,
-      );
-      // No FIFO row was written, no cursor advance.
-      expect(await backend.readFifoHead('native'), isNull);
-      expect(await backend.readFillCursor('native'), -1);
     });
   });
 }

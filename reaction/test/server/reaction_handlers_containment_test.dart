@@ -14,7 +14,6 @@ import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:reaction/src/interfaces/principal_auth_validator.dart';
 import 'package:reaction/src/server/reaction_handlers.dart';
 import 'package:reaction/src/server/validators/trusting_auth_validator.dart';
 import 'package:reaction/src/server/view_scope_registry.dart';
@@ -44,36 +43,33 @@ void main() {
     backend = SembastBackend(database: db);
 
     // --- Entry types ---
-    final entryTypes = EntryTypeRegistry();
-    for (final definition in kSystemEntryTypes) {
-      entryTypes.register(definition);
-    }
-    entryTypes
+    // EventStore.open registers the library's reserved system entry types.
+    final entryTypes = EntryTypeRegistry()
       ..register(
         const EntryTypeDefinition(
           id: 'participant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Participant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-Permission Grant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'user_role_scope',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-Role-Scope Assignment',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'action_denial',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Action Denial',
         ),
       );

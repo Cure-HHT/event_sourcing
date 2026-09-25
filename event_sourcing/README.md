@@ -93,7 +93,11 @@ the view subscription.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:sembast/sembast_memory.dart';
 
-const kNote = EntryTypeDefinition(id: 'note', registeredVersion: 1, name: 'Note');
+const kNote = EntryTypeDefinition(
+  id: 'note',
+  registeredVersion: EntryTypeVersion(1, 0),
+  name: 'Note',
+);
 
 Future<void> main() async {
   final db = await newDatabaseFactoryMemory().openDatabase('demo.db');
@@ -225,10 +229,75 @@ is what keeps allow/deny outcomes reproducible from the log.
 transaction atomicity, durability). Two reference impls ship and pass the
 same conformance harness:
 
-- **`SembastBackend`** — client-side (file / IndexedDB), for mobile and
-  desktop.
+- **`SembastBackend`** — client-side (file / IndexedDB), for mobile,
+  desktop and the browser. In the browser the tabs of an origin share one
+  IndexedDB database: the delivery cycle of one visible tab drains it,
+  holding a Web Lock, and the others stand by (`EVS-PRD-destinations/V`).
 - **`PostgresBackend`** — server-side; view rows persist as JSONB blobs in
-  a `view_rows(view_name, row_key, row_data, …)` table.
+  a `view_rows(view_name, row_key, row_data, …)` table. The schema is
+  provisioned once per deployment with `PostgresBackend.provision` (or
+  `open(provisionSchema: true)` in development), as the role that owns the
+  schema; `open` performs no DDL and refuses a schema its build does not
+  support. Instances run as a runtime role that neither owns nor can
+  create the tables and holds exactly the privileges of
+  `postgresRuntimeRoleGrants`, under which every library operation but
+  provisioning works (`EVS-DEV-postgres-backend/K`). The queue table
+  carries a database guard that, while it is in place (the schema owner
+  can remove it), refuses every change outside the shapes of the library's
+  own writes, whatever role makes it (`EVS-DEV-destination-drain/S`).
+  Several processes may share one database: one delivery cycle commits its
+  queue changes, holding the drain lock on the backend's lock session, and
+  the others stand by (`EVS-PRD-destinations/V`); the lock reaches as far
+  as that session is one server session of the database.
+
+Builds that share one database register their data generation (the
+data-format major and each entry type's major) with an
+incompatible-generation guard before `EventStore.open` writes anything:
+a build of another major is refused while an instance of the other build
+is live, and a database records the highest generation that booted on it,
+so an older build is refused afterwards. On Postgres the guard holds
+advisory locks on a dedicated lock session per backend; on the web it holds
+Web Locks; a Sembast database outside the browser is used by one process.
+A backend several processes or tabs share is trusted to run this guard;
+the two reference backends do. Every backend is also trusted to exclude
+drainers through its drain lock: on Postgres an advisory lock on the lock
+session, on Sembast outside the browser one holder per open database
+handle in an isolate, and in the browser a Web Lock that only a visible tab
+of the origin requests (a tab whose page becomes hidden finishes its sends
+in flight, waiting at most one cadence, and hands it over; a page without Web Locks, which exist only in a
+secure context, refuses to start a delivery cycle). Three inputs of the
+guard are trusted without a pluggable interface: the Postgres
+lock-session path (`lockUrl`,
+or the pool's URL), trusted to be one server session reaching the pool's
+server, database and schema -- a direct connection or a session-mode
+proxy, never a transaction-mode pooler -- with keepalives and a role that
+may end its own sessions, which the backend checks where it can when it
+opens; the browser's lock manager, trusted to grant, report and release
+locks as the Web Locks API specifies, on which the drain lock of a
+browser database rests too; and, outside the browser, a Sembast
+database file opened by one isolate of one process
+(`spec/roadmap/storage.md` records how each could be checked).
+
+The trust in the storage seam has a precondition: the library's delivery
+guarantees, its views and its security-context records hold only while its
+persisted state (destination queues, the views it materializes, the
+records it keeps beside them, such as fill positions, schedules, replay
+requests, wedge records, halt requests, send fences, refill guards, the
+registry check record, the database identity, the generation records, the
+view catch-up marks, the fencing epoch and the declared configuration, and
+the security context it stores beside each event) changes only through the
+library's operations, and reserved system events are appended only by the
+library's own operations. The event store's
+reserved append operations are `@internal`, and so is every
+`StorageBackend` member that writes; a consumer uses the reads, `transaction` (for its own reads;
+an event-store append runs only inside `EventStore.runTransaction`) and
+`close`, and delivers through `SyncCycle` and `DestinationRegistry`. The
+marking is an analyzer guard, not a run-time barrier (see
+`EVS-PRD-destinations/K` and `EVS-PRD-destinations/L`). It reaches a
+backend in another package only if that package marks its own overrides of
+the internal members `@internal` (declared under its `lib/src/`); a backend
+declared in the application's own package is covered by the precondition
+alone.
 
 Reactive `subscribe<T>` is wired over Sembast change-notifications; on
 Postgres, reactive UIs poll `findViewRows` on a cadence until
@@ -245,9 +314,50 @@ deployment — see the guide's "Advanced" chapter for detail:
   `SecurityDetails` (IP / user-agent / session) persist to a *separate*
   security-context store keyed by `event_id`, keeping request PII out of
   the event record.
-- **Library version in the log** — first boot appends
-  `lib_version_initialized`; upgrades append `lib_version_changed`;
-  downgrades are refused unless explicitly opted in.
+- **Library version in the log** — the first open appends
+  `lib_version_initialized` with the database identity; every open by
+  another package or data-format version appends `lib_version_changed`,
+  older ones included; a database last opened by another data-format
+  major is refused before any write (`DataFormatIncompatibleError`).
+- **Delivery** — each `Destination` delivers its queue in order, and a
+  queue head the drain cannot deliver (a permanent refusal, or an
+  exhausted attempt budget) wedges, halting that destination until an
+  operator recovers it. The drain appends a `system.destination_wedged`
+  event in the transaction that marks the head wedged, recording the
+  cause, the attempt count, the budget in effect and the outcome category
+  and numeric status of the last attempt; the attempts' error text stays
+  on the queue item. An operator stops delivery on a healthy destination
+  with `DestinationRegistry.requestHalt`: the drainer honours the request
+  by wedging the head itself before its next send (cause `operator_halt`),
+  and `tombstoneAndRefill` then rebuilds the pending items; any wedge
+  consumes an open request, and `cancelHalt` withdraws one. A delivery
+  cycle fills and sends only the destinations its registry holds, reports
+  the others in `SyncCycle.unserved`, and still honours halt requests on
+  them. `SyncCycle.start` starts the cycle of a database and `close`
+  stops it; at most one cycle drains a database, and a cycle that cannot
+  take the drain lock stands by and takes over when it is released. Each
+  pass records the configuration the drainer declares for each destination
+  (`declaredConfiguration`, fingerprinted by `configurationFingerprint`),
+  so a recovery of a `reconfigure` halt is accepted only once a changed
+  configuration is in effect; `DestinationRegistry.readDeliveryStatus`
+  reads the drainer's declaration and heartbeat and each destination's
+  halt request, wedge, refill guard and unserved reason from any process. The delivery configuration the application supplies is trusted
+  on faith: the `Destination`'s filter (a predicate closure included) and
+  transform, its send outcomes, the `SyncPolicy` given to
+  `SyncCycle` (statically or through `policyResolver`; its retry curve
+  decides backoff and its attempt budget, at least one, decides when an
+  item wedges), the `clock` given to `SyncCycle` (fill computes its
+  window from it; its readings are not recorded) and the
+  `configurationVersion` (changed whenever code the library cannot read
+  changes; the log records it but cannot check it). The wedge event makes
+  each wedge decision auditable from the log. Every store folds the
+  library's default destination-wedges view (`default_destination_wedges`,
+  registered by `EventStore.open`): one row per wedged destination, keyed
+  by the appending database's identity and the destination, removed by
+  the recovery or deletion that ends the wedge. Only the library appends
+  reserved system events such as these: `append` and `appendInTxn` refuse
+  them, and ingest refuses one in a shape the library does not append
+  (`IngestReservedEventRefused`).
 - **Cross-installation ingest** — a `Destination` is the outbound
   transport; the inbound ingest path verifies the hash chain against
   what's stored, extends the provenance chain, and admits events into the
@@ -263,23 +373,39 @@ For browser/desktop clients talking to a server that owns the log, the
 sibling **`reaction`** package bridges the wire (HTTP + WebSocket) while
 keeping consumer code source-identical to the in-process case. See the
 guide's "Cross-process client/server deployments" chapter and
-`spec/reaction-remote.md`.
+`spec/reaction-remote.md`. Several server processes may share one
+database; the guide's "Several processes sharing one database" covers
+delivery (one drainer, the others stand by), deployment requirements,
+versions, start-up probes, and halting, recovering and rebuilding a
+destination.
 
 ## Examples
 
 - `example_action_permissions/` — a `shelf` HTTP server + Flutter client
   exercising the full action/permission/scope/idempotency surface; the
-  canonical wiring reference (`lib/server/bootstrap.dart`).
-- `example/` — a dual-pane sync/ingest demo.
+  canonical wiring reference (`lib/server/bootstrap.dart`). On Postgres it
+  provisions the schema as a separate step, listens before its event store
+  opens (`/livez`, `/health`), starts a delivery cycle to a demo
+  destination, serves operator routes to halt, cancel and recover
+  delivery, and runs as several instances on one database.
+- `example/` — a dual-pane sync/ingest demo, with the wedged-state view,
+  operator halts, recovery and a drainer reconfiguration.
 
 ## Running tests
 
 ```sh
 # Pure-Dart conformance (no services):
 cd event_sourcing && flutter test
+# Browser-only tests (sembast_web on IndexedDB, two tabs on one database):
+cd event_sourcing && flutter test --platform chrome test/web/
 # Postgres conformance/integration is gated on PG_TEST_URL (see
-# .github/workflows/conformance-tests.yml).
+# .github/workflows/conformance-tests.yml). Each file drops and recreates
+# the schema, so run them one file at a time.
 ```
+
+CI runs the analyzer and the full suite of every package in
+`.github/workflows/event-sourcing-tests.yml`, and the Postgres-gated files in
+`.github/workflows/conformance-tests.yml`.
 
 End-to-end and multi-client scenario suites and how/when to run them are
 documented in [`docs/e2e-testing.md`](../docs/e2e-testing.md).

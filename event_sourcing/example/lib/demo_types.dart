@@ -4,28 +4,28 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// the `AggregateProjectionSpec` registered in `_bootstrapPane`.
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo note',
 );
 
 /// Red-button action event. Point-in-time; no materialized view row.
 const EntryTypeDefinition redButtonType = EntryTypeDefinition(
   id: 'red_button_pressed',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Red button pressed',
 );
 
 /// Green-button action event.
 const EntryTypeDefinition greenButtonType = EntryTypeDefinition(
   id: 'green_button_pressed',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Green button pressed',
 );
 
 /// Blue-button action event.
 const EntryTypeDefinition blueButtonType = EntryTypeDefinition(
   id: 'blue_button_pressed',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Blue button pressed',
 );
 

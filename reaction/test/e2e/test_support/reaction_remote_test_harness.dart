@@ -1,13 +1,30 @@
 // reaction/test/e2e/test_support/reaction_remote_test_harness.dart
+import 'dart:async';
 import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:flutter_test/flutter_test.dart' show fail;
 import 'package:reaction/reaction.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf/shelf_io.dart' as shelf_io;
 import 'package:shelf_router/shelf_router.dart';
 
 import '../../local/test_support/reaction_test_harness.dart';
+
+/// Polls [condition] every 5 ms until it holds, failing after [bound].
+Future<void> until(
+  FutureOr<bool> Function() condition, {
+  Duration bound = const Duration(seconds: 10),
+  String reason = 'the condition',
+}) async {
+  final deadline = DateTime.now().add(bound);
+  while (!await condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('$reason did not hold within $bound');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
 
 /// Fully-wired in-memory substrate + reaction handlers mounted on a
 /// real shelf server + RemoteScope. Mirrors `ReactionTestHarness` for

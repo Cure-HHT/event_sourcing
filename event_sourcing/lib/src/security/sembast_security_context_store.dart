@@ -3,6 +3,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:sembast/sembast.dart' hide Transaction;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
 
@@ -42,16 +43,19 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     return EventSecurityContext.fromJson(Map<String, Object?>.from(raw));
   }
 
+  @internal
   @override
   Future<void> writeInTxn(Transaction txn, EventSecurityContext row) async {
     final sembastTxn = _castTxn(txn);
     await _store.record(row.eventId).put(sembastTxn, row.toJson());
   }
 
+  @internal
   @override
   Future<void> upsertInTxn(Transaction txn, EventSecurityContext row) =>
       writeInTxn(txn, row);
 
+  @internal
   @override
   Future<void> deleteInTxn(Transaction txn, String eventId) async {
     final sembastTxn = _castTxn(txn);
@@ -64,11 +68,10 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
-    final cutoffIso = cutoff.toUtc().toIso8601String();
     final finder = Finder(
       filter: Filter.and([
         Filter.isNull('redacted_at'),
-        Filter.lessThanOrEquals('recorded_at', cutoffIso),
+        recordedAtNotAfter(cutoff),
       ]),
     );
     final records = await _store.find(sembastTxn, finder: finder);
@@ -86,10 +89,7 @@ class SembastSecurityContextStore extends MutableSecurityContextStore {
     DateTime cutoff,
   ) async {
     final sembastTxn = _castTxn(txn);
-    final cutoffIso = cutoff.toUtc().toIso8601String();
-    final finder = Finder(
-      filter: Filter.lessThanOrEquals('recorded_at', cutoffIso),
-    );
+    final finder = Finder(filter: recordedAtNotAfter(cutoff));
     final records = await _store.find(sembastTxn, finder: finder);
     return records
         .map(

@@ -45,7 +45,7 @@ Future<_Fixture> _openStore({
   registry.register(
     const EntryTypeDefinition(
       id: 'epistaxis_event',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Epistaxis Event',
     ),
   );

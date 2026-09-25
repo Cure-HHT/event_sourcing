@@ -41,7 +41,7 @@ void main() {
     });
 
     test('Pattern matching across variants', () {
-      Update<int> any = const Snapshot<int>(value: 1, sequence: 0);
+      const Update<int> any = Snapshot<int>(value: 1, sequence: 0);
       final tag = switch (any) {
         Snapshot() => 'snap',
         EndOfReplay() => 'eor',

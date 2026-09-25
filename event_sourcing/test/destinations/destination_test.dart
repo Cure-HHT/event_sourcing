@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Minimal concrete Destination used only to verify the abstract surface
@@ -104,8 +105,8 @@ StoredEvent _mkEvent(String eventId) => StoredEvent(
   aggregateId: 'agg-1',
   aggregateType: 'note',
   entryType: 'epistaxis_event',
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: 'finalized',
   sequenceNumber: 1,
   data: const <String, dynamic>{},

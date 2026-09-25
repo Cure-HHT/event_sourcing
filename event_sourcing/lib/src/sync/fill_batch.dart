@@ -10,180 +10,291 @@
 // (durable queue — enqueue and
 //   fill_cursor advance run inside a single StorageBackend transaction so
 //   the FIFO state is crash-consistent across restarts)
-import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+// Implements: EVS-DEV-destination-drain/E
+// (only the drainer's fill enqueues: it
+//   performs a pending replay request, under the destination the drainer
+//   registers, before it fills, and never advances the fill position while
+//   a request is pending)
+// Implements: EVS-DEV-destination-drain/G
+// (fill compare-and-set: the fill writes
+//   queue items, the fill position or a cleared replay request only when,
+//   inside its transaction, the persisted schedule, head status, fill
+//   position, replay request and refill guard equal those its batch was
+//   computed from; the transform and every walk of the log run outside that
+//   transaction)
+// Implements: EVS-DEV-destination-drain/F
+// (a refill guard holds the fill of a
+//   drainer that declares the guarded configuration; a fill under any other
+//   configuration removes the guard in its compare-and-set transaction)
+// Implements: EVS-DEV-destination-drain-lock/B
+// (every transaction of the fill checks
+//   the drain lock first and commits nothing when the drainer no longer
+//   holds it)
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/storage/drain_lock.dart';
+import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
-import 'package:uuid/uuid.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/sync/historical_replay.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:meta/meta.dart' show internal;
 
-/// Module-private v4 UUID generator used by [fillBatch] to mint each
-/// native batch's `batch_id`. Held at file scope (const) so every call
-/// shares one generator; `Uuid.v4()` is side-effect-free beyond its
-/// internal random state, so a shared instance is correct.
-const _uuidGen = Uuid();
+/// The persisted state a fill computes from, read before its consumer code
+/// and its log walk run, and compared again inside the transaction that
+/// writes.
+///
+/// The head is compared by its status only (wedged, pending or no head):
+/// the fill appends at the tail, so a head another drainer delivered in the
+/// meantime does not change what the fill may write. A deletion changes
+/// the schedule and a recovery lowers the fill position, so both are seen
+/// without the head's identity.
+class _FillState {
+  const _FillState({
+    required this.schedule,
+    required this.headStatus,
+    required this.cursor,
+    required this.request,
+    required this.refillGuard,
+  });
+
+  final DestinationSchedule? schedule;
+  final FinalStatus? headStatus;
+  final int cursor;
+  final ReplayRequest? request;
+  final RefillGuard? refillGuard;
+
+  bool get headWedged => headStatus == FinalStatus.wedged;
+
+  static Future<_FillState> readTxn(
+    StorageBackend backend,
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final schedule = await backend.readScheduleTxn(txn, destinationId);
+    final head = await backend.readFifoHeadTxn(txn, destinationId);
+    final cursor = await backend.readFillCursorTxn(txn, destinationId);
+    final request = await backend.readReplayRequestTxn(txn, destinationId);
+    final refillGuard = await backend.readRefillGuardTxn(txn, destinationId);
+    return _FillState(
+      schedule: schedule,
+      headStatus: head?.finalStatus,
+      cursor: cursor,
+      request: request,
+      refillGuard: refillGuard,
+    );
+  }
+
+  static Future<_FillState> read(
+    StorageBackend backend,
+    String destinationId,
+  ) => backend.transaction((txn) => readTxn(backend, txn, destinationId));
+
+  @override
+  bool operator ==(Object other) =>
+      other is _FillState &&
+      other.schedule == schedule &&
+      other.headStatus == headStatus &&
+      other.cursor == cursor &&
+      other.request == request &&
+      other.refillGuard == refillGuard;
+
+  @override
+  int get hashCode =>
+      Object.hash(schedule, headStatus, cursor, request, refillGuard);
+}
+
+/// Runs [write] inside one transaction only when the persisted state still
+/// equals [computedFrom]; otherwise writes nothing. Returns whether it
+/// wrote. The transaction checks [lock] first. When [computedFrom] carries
+/// a refill guard, the fill proceeds only because it declares another
+/// configuration, and the same transaction removes the guard once the fill
+/// position it leaves ([cursorAfter], the position [computedFrom] read when
+/// the write leaves it unchanged) reaches the guard's `refillThrough`.
+Future<bool> _compareAndSet(
+  StorageBackend backend,
+  DrainLock lock,
+  String destinationId,
+  _FillState computedFrom,
+  Future<void> Function(Transaction txn) write, {
+  int? cursorAfter,
+}) async {
+  final seam = DeliveryTestHooks.current?.afterFillReads;
+  if (seam != null) await seam(destinationId);
+  return backend.transaction((txn) async {
+    await lock.assertHeldInTxn(txn);
+    await DeliveryTestHooks.current?.beforeQueueWrites?.call(destinationId);
+    final now = await _FillState.readTxn(backend, txn, destinationId);
+    if (now != computedFrom) return false;
+    await write(txn);
+    final guard = computedFrom.refillGuard;
+    if (guard != null &&
+        (cursorAfter ?? computedFrom.cursor) >= guard.refillThrough) {
+      await backend.clearRefillGuardTxn(txn, destinationId);
+    }
+    if (DeliveryTestHooks.current?.failFillTransaction?.call(destinationId) ??
+        false) {
+      throw InjectedFailure('fill transaction of $destinationId');
+    }
+    return true;
+  });
+}
 
 /// Promote matching events from the event log into a destination's FIFO
 /// as batches, advancing `fill_cursor` accordingly.
 ///
-/// Algorithm (design §6.8):
+/// The fill decides from the destination's persisted schedule, queue head,
+/// fill position and pending replay request. It reads them, walks the log
+/// and runs the destination's `transform` outside any transaction, then
+/// commits its items and the new fill position in one transaction that
+/// re-reads that state and writes nothing when any of it changed (another
+/// process deleted, re-added or rescheduled the destination, or an operator
+/// recovered its queue); the next fill recomputes.
 ///
-/// 1. If the destination's schedule is dormant (`startDate == null`),
-///    there is nothing to do. Return.
-/// 2. Compute the upper bound of the promotion window as
-///    `min(endDate, now())`. If `startDate` is past that upper bound,
-///    the window is closed; return.
-/// 3. Read `readFifoHead(destination.id)`. If the returned row's
-///    `final_status == FinalStatus.wedged`, return — drain halts at a
-///    wedged head, so any row promoted now would be
-///    speculative work that `tombstoneAndRefill`'s trail-delete sweep
-///    would undo. Recovery rewinds `fill_cursor`
-///    and the next `fillBatch` promotes in one pass.
-/// 4. Read `fill_cursor_<destId>` and fetch every event with
-///    `sequence_number > fill_cursor`.
-/// 5. Filter by `client_timestamp ∈ [startDate, upper]` and by
-///    `destination.filter.matches(event)`.
-/// 6. If no events remain after filtering, advance the cursor past the
-///    non-matching tail (so they are not re-evaluated on the next tick)
-///    and return. treats this as a no-op at the
-///    "no new matching events" level: no FIFO row is written, and the
-///    cursor advance is only the cursor-maintenance we need to keep
-///    fillBatch O(new events) rather than O(log).
-/// 7. Otherwise, assemble a greedy batch: start with the first matching
-///    event, then add each subsequent one while `canAddToBatch` returns
-///    true. Break on the first `false`.
-/// 8. if the batch is a single event AND `maxAccumulateTime`
-///    has not yet elapsed (`now() - batch.first.clientTimestamp < max`),
-///    hold the batch. Do not write a FIFO row; do not advance the cursor.
-///    Multi-event batches do not hit the hold — `canAddToBatch` returning
-///    false for the next candidate already indicated size pressure, which
-///    is an admissible flush condition.
-/// 9. Branch on `destination.serializesNatively`:
-///    - True: build a fresh [BatchEnvelopeMetadata] from [source] (mint
-///      `batch_id`, stamp `sent_at = now`, copy `hopId` /
-///      `identifier` / `softwareVersion`) and enqueue via
-///      `nativeEnvelope:`. The destination's [Destination.transform] is
-///      NOT called.
-///    - False: call `destination.transform(batch)` and enqueue via
-///      `wirePayload:`.
-///   The enqueue and the `fill_cursor` advance to
-///   `batch.last.sequenceNumber` run inside a single
-///   `StorageBackend.transaction`, so on rollback neither is visible.
+/// Algorithm:
 ///
-/// [source] is required when `destination.serializesNatively` is true
-/// (the envelope identity is built from it). Callers that drive only
-/// 3rd-party destinations MAY omit it; passing it is harmless.
+/// 1. No persisted schedule (the destination was deleted): nothing to do.
+/// 2. A wedged head: nothing to do. Drain halts at it, so any item promoted
+///    now would be speculative work the recovery's trail sweep would undo.
+/// 3. A pending replay request (a first activation, or a start date moved
+///    earlier) is performed first, and the fill ends when it could not
+///    commit it; the fill never advances the position while a request is
+///    pending. A first-activation replay enqueues every admitted event past
+///    the position, to completion, and advances the position; a gap replay
+///    enqueues the admitted events at or below the position whose client
+///    timestamp lies in `[startDate, gapUpper)`, and leaves the position.
+/// 4. Dormant schedule (`startDate == null`) or a window entirely in the
+///    future: nothing to do.
+/// 5. Fetch the events past the position and walk them: an event the filter
+///    rejects or that precedes `startDate` is decided; an event past
+///    `upper = min(endDate, now)` is deferred and stops the walk; every
+///    other event is in the window.
+/// 6. No event in the window: advance the position past the decided events
+///    (so they are not re-evaluated) and return.
+/// 7. Otherwise assemble a greedy batch through `canAddToBatch`. A lone
+///    event younger than `maxAccumulateTime` is held (nothing written)
+///    unless [flushHeld] is set.
+/// 8. Build the item (a native destination gets a library-built envelope;
+///    any other destination's `transform` runs) and commit it with the
+///    position advanced to the batch's last event.
 ///
-/// [clock] defaults to `() => DateTime.now().toUtc()`; tests inject a
-/// fixed-time closure so the `now()` reference point is deterministic.
+/// A refill guard (left by an accepted recovery of a reconfigure halt) that
+/// names [declaredFingerprint], the fingerprint of the configuration the
+/// drainer declares for the destination, holds the fill: it writes nothing.
+/// Under any other fingerprint the fill proceeds, and the guard is removed
+/// in the compare-and-set transaction that advances the fill position to
+/// the guard's `refillThrough` (the position the recovery rewound from), so
+/// a drainer declaring the guarded configuration that takes the lock part
+/// way through the refill does not continue it. When nothing is left to
+/// fill, a transaction of its own removes the guard.
 ///
-/// [flushHeld] bypasses step 8's single-event `maxAccumulateTime` hold for
-/// this invocation: a lone in-window event is promoted immediately instead of
-/// being held to coalesce with a later one. Used by a caller-forced sync cycle
-/// (e.g. a user-visible submission that must ship promptly) so the coalescing
-/// window still applies to ordinary background cycles. Defaults to false, so
-/// the normal hold is unchanged.
+/// With [registrationId] (the registration the draining process holds the
+/// destination under), a persisted schedule of another registration (the
+/// destination was deleted and registered again elsewhere) holds the fill:
+/// it writes nothing. The compare-and-set re-reads the schedule, so a
+/// registration that changes while the fill builds its items commits
+/// nothing either.
+///
+/// Every transaction of the fill checks [lock] first and commits nothing
+/// when the drainer no longer holds it. A native destination's envelope
+/// carries [source], the source identity of the event store whose
+/// [backend] the fill writes. [clock] defaults to
+/// `() => DateTime.now().toUtc()`.
+@internal
 Future<void> fillBatch(
   Destination destination, {
   required StorageBackend backend,
-  required DestinationSchedule schedule,
-  Source? source,
+  required Source source,
+  required DrainLock lock,
   Clock? clock,
   bool flushHeld = false,
+  String? declaredFingerprint,
+  String? registrationId,
 }) async {
   final now = (clock ?? () => DateTime.now().toUtc())();
+  final id = destination.id;
 
-  // Dormant destination: schedule has no startDate. Nothing to promote.
-  if (schedule.startDate == null) return;
+  // Perform every pending replay request before filling: a request recorded
+  // while one is performed is performed next, so the position never
+  // advances while a request is pending.
+  _FillState state;
+  for (;;) {
+    state = await _FillState.read(backend, id);
+    if (state.schedule == null || state.headWedged) return;
+    if (registrationId != null &&
+        state.schedule!.registrationId != registrationId) {
+      return;
+    }
+    final guard = state.refillGuard;
+    if (guard != null && guard.fingerprint == declaredFingerprint) return;
+    final request = state.request;
+    if (request == null) break;
+    final performed = await _performReplayRequest(
+      destination,
+      backend,
+      lock,
+      state,
+      request,
+      source: source,
+      now: now,
+    );
+    if (!performed) return;
+  }
 
-  // Upper bound: min(endDate, now). When endDate is null, upper = now.
-  // When endDate is in the future, upper = now (we don't promote events
-  // past wall-clock time). When endDate is in the past, upper = endDate.
-  final upper = schedule.endDate == null || schedule.endDate!.isAfter(now)
-      ? now
-      : schedule.endDate!;
-  // Window entirely in the future (startDate > upper): nothing to promote.
-  if (schedule.startDate!.isAfter(upper)) return;
+  final schedule = state.schedule!;
+  final startDate = schedule.startDate;
+  if (startDate == null) return;
+  final endDate = schedule.endDate;
+  final upper = endDate == null || endDate.isAfter(now) ? now : endDate;
+  if (startDate.isAfter(upper)) return;
 
-  // When the FIFO head is wedged, drain halts at it. Any row promoted now
-  // would be speculative work that tombstoneAndRefill's trail-delete sweep
-  // would have to undo. Recovery rewinds fill_cursor; the next fillBatch
-  // fills in one pass.
-  final head = await backend.readFifoHead(destination.id);
-  if (head?.finalStatus == FinalStatus.wedged) return;
+  final candidates = await backend.findAllEvents(afterSequence: state.cursor);
+  if (candidates.isEmpty) {
+    // Nothing is left to refill: the guard goes in a transaction of its
+    // own.
+    if (state.refillGuard != null) {
+      await _compareAndSet(backend, lock, id, state, (_) async {});
+    }
+    return;
+  }
 
-  // Walk the event log past fill_cursor.
-  final fillCursor = await backend.readFillCursor(destination.id);
-  final candidates = await backend.findAllEvents(afterSequence: fillCursor);
-  if (candidates.isEmpty) return;
-
-  // Walk candidates classifying each as deferred (upper-bound rejection)
-  // or decided (in-window OR permanently rejected). The walk stops at the
-  // first deferred event so its sequence_number stays "in front of"
-  // fill_cursor for re-evaluation when the upper bound widens (clock
-  // advances past the event's client_timestamp, or endDate is widened
-  // via setEndDate).
-  //
-  // Permanent rejections (subscription filter, startDate-lower) contribute to
-  // cursor advance; deferred rejections (upper bound) stop the walk so the
-  // cursor does not skip past them. Check order matters: permanent rejection
-  // reasons (subscription mismatch, startDate-lower) are evaluated BEFORE the
-  // deferred-by-upper check so an event that fails subscription does not block
-  // the walk even if its client_timestamp is past the upper bound. Otherwise a
-  // system audit emitted at real-clock-now in a test using a mock fillBatch
-  // clock would be treated as deferred and freeze cursor advance, even though
-  // the destination's subscription filter would reject it permanently.
+  // Permanent rejections (filter, startDate-lower) are decided and let the
+  // position pass them; a deferred event (past the upper bound, which a
+  // later end date or the clock may widen) stops the walk. The permanent
+  // checks run first, so an event the filter rejects never blocks the walk
+  // even when its client timestamp is past the upper bound.
   final inWindow = <StoredEvent>[];
   int? lastDecidedSeq;
   for (final e in candidates) {
     if (!destination.filter.matches(e)) {
-      // Permanent: subscription filter is stable for the destination's
-      // lifetime. Cursor may advance past this event.
       lastDecidedSeq = e.sequenceNumber;
       continue;
     }
-    if (e.clientTimestamp.isBefore(schedule.startDate!)) {
-      // Permanent for the current invocation: events outside the
-      // current window are skipped and the cursor advances past them.
-      // Under monotonic-backward startDate semantics, a
-      // setStartDate(earlier) call re-promotes the gap window via
-      // runGapReplay (independent of fill_cursor), so fillBatch does
-      // not need to keep these events re-evaluable.
+    if (e.clientTimestamp.isBefore(startDate)) {
+      // A later backward start-date move records a gap replay for events
+      // behind the position, so the fill need not keep these re-evaluable.
       lastDecidedSeq = e.sequenceNumber;
       continue;
     }
-    if (e.clientTimestamp.isAfter(upper)) {
-      // Deferred — endDate is mutable so this event may become eligible
-      // later. Stop the walk; the cursor must not advance past this event
-      // or any subsequent candidate (advancing past a later in-window event
-      // would skip this deferred one).
-      break;
-    }
-    // In-window candidate. Decided either way (will be promoted, or held
-    // by canAddToBatch / maxAccumulateTime downstream).
+    if (e.clientTimestamp.isAfter(upper)) break;
     inWindow.add(e);
     lastDecidedSeq = e.sequenceNumber;
   }
 
   if (inWindow.isEmpty) {
-    // No promotions to make. Advance cursor past any permanently-rejected
-    // events the walk visited; if the walk stopped at the very first
-    // candidate (deferred), do not advance — that event must remain
-    // re-evaluable. Idempotent: repeated invocations with no new matching
-    // events produce no new FIFO rows.
-    if (lastDecidedSeq != null) {
-      await backend.writeFillCursor(destination.id, lastDecidedSeq);
-    }
+    if (lastDecidedSeq == null) return;
+    final advanceTo = lastDecidedSeq;
+    await _compareAndSet(backend, lock, id, state, (txn) async {
+      await backend.writeFillCursorTxn(txn, id, advanceTo);
+    }, cursorAfter: advanceTo);
     return;
   }
 
-  // Assemble a greedy batch: start with the first matching event, then
-  // admit each subsequent one while canAddToBatch says yes. Break on
-  // the first false.
   final batch = <StoredEvent>[inWindow.first];
   for (final c in inWindow.skip(1)) {
     if (destination.canAddToBatch(batch, c)) {
@@ -193,78 +304,108 @@ Future<void> fillBatch(
     }
   }
 
-  // maxAccumulateTime hold: single-event batches are held until the oldest
-  // event's age exceeds maxAccumulateTime. Multi-event batches are not held
-  // because canAddToBatch returning false already indicated size pressure.
-  // A forced cycle (flushHeld) bypasses the hold so the lone event ships now.
+  // maxAccumulateTime hold: a lone event is held (nothing written, the
+  // position not advanced) until it is older than maxAccumulateTime, so a
+  // later event can join it. A forced cycle (flushHeld) ships it now.
   final oldestAge = now.difference(batch.first.clientTimestamp);
   if (!flushHeld &&
       batch.length == 1 &&
       oldestAge < destination.maxAccumulateTime) {
-    // Hold: do NOT advance the cursor either — the event is still a
-    // live match that we want to re-evaluate on the next tick, possibly
-    // joined by a newer event that clears the hold via canAddToBatch
-    // batching or by time elapsing past maxAccumulateTime.
     return;
   }
 
-  // Branch on destination.serializesNatively. Native destinations
-  // consume the library's `esd/batch@1` format; the library mints the
-  // envelope identity from the local `Source` and enqueues via
-  // `nativeEnvelope:`. The on-the-wire bytes are reconstructed
-  // deterministically at drain time so we do NOT call
-  // `Destination.transform` and do NOT carry the bytes through the FIFO
-  // row. Non-native destinations own their wire format and pass through
-  // [transform].
-  if (destination.serializesNatively) {
-    if (source == null) {
-      throw ArgumentError(
-        'fillBatch: destination "${destination.id}" declares '
-        'serializesNatively == true but no source was supplied; '
-        'native batches require a Source to stamp the envelope identity '
-        '',
-      );
+  final item = await buildQueueItem(
+    destination,
+    batch,
+    source: source,
+    now: now,
+  );
+  await _compareAndSet(backend, lock, id, state, (txn) async {
+    await writeQueueItemsTxn(txn, backend, id, <BuiltQueueItem>[item]);
+    await backend.writeFillCursorTxn(txn, id, batch.last.sequenceNumber);
+  }, cursorAfter: batch.last.sequenceNumber);
+}
+
+/// Perform [request] under the compare-and-set: build its items outside any
+/// transaction, then commit them, the advanced position (first activation)
+/// and the cleared request together. Returns whether it committed.
+Future<bool> _performReplayRequest(
+  Destination destination,
+  StorageBackend backend,
+  DrainLock lock,
+  _FillState state,
+  ReplayRequest request, {
+  required Source source,
+  required DateTime now,
+}) async {
+  final id = destination.id;
+  final schedule = state.schedule!;
+  final items = <BuiltQueueItem>[];
+  int? advanceTo;
+  final gapUpper = request.gapUpper;
+  final startDate = schedule.startDate;
+  if (gapUpper != null && startDate != null && startDate.isBefore(gapUpper)) {
+    final events = await _eventsAtOrBelow(
+      backend,
+      state.cursor,
+      keep: (e) =>
+          !e.clientTimestamp.isBefore(startDate) &&
+          e.clientTimestamp.isBefore(gapUpper),
+    );
+    items.addAll(
+      await buildGapReplayRows(
+        destination,
+        events,
+        startDate: startDate,
+        gapUpper: gapUpper,
+        fillCursor: state.cursor,
+        now: now,
+        source: source,
+      ),
+    );
+  }
+  if (request.firstActivation) {
+    final candidates = await backend.findAllEvents(afterSequence: state.cursor);
+    final build = await buildHistoricalReplayRows(
+      destination,
+      candidates,
+      startDate: startDate,
+      endDate: schedule.endDate,
+      now: now,
+      source: source,
+    );
+    items.addAll(build.items);
+    advanceTo = build.cursor;
+  }
+  final cursor = advanceTo;
+  return _compareAndSet(backend, lock, id, state, (txn) async {
+    await writeQueueItemsTxn(txn, backend, id, items);
+    if (cursor != null) await backend.writeFillCursorTxn(txn, id, cursor);
+    await backend.clearReplayRequestTxn(txn, id);
+  }, cursorAfter: cursor);
+}
+
+/// The events whose sequence number is at or below [cursor] and that [keep]
+/// accepts, in `sequence_number` order. The log is read in pages that stop
+/// at the cursor, and only the kept events are held.
+Future<List<StoredEvent>> _eventsAtOrBelow(
+  StorageBackend backend,
+  int cursor, {
+  required bool Function(StoredEvent) keep,
+}) async {
+  const pageSize = 500;
+  final events = <StoredEvent>[];
+  int? after;
+  for (;;) {
+    final page = await backend.findAllEvents(
+      afterSequence: after,
+      limit: pageSize,
+    );
+    for (final e in page) {
+      if (e.sequenceNumber > cursor) return events;
+      if (keep(e)) events.add(e);
     }
-    final envelope = BatchEnvelopeMetadata(
-      batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-      batchId: _uuidGen.v4(),
-      senderHop: source.hopId,
-      senderIdentifier: source.identifier,
-      senderSoftwareVersion: source.softwareVersion,
-      sentAt: now,
-    );
-    await backend.transaction((txn) async {
-      await backend.enqueueFifoTxn(
-        txn,
-        destination.id,
-        batch,
-        nativeEnvelope: envelope,
-      );
-      await backend.writeFillCursorTxn(
-        txn,
-        destination.id,
-        batch.last.sequenceNumber,
-      );
-    });
-    return;
+    if (page.length < pageSize) return events;
+    after = page.last.sequenceNumber;
   }
-
-  final wirePayload = await destination.transform(batch);
-
-  // Enqueue + advance cursor atomically. Uses enqueueFifoTxn so both
-  // writes participate in the same transaction — on rollback, neither
-  // the FIFO row nor the cursor advance is visible.
-  await backend.transaction((txn) async {
-    await backend.enqueueFifoTxn(
-      txn,
-      destination.id,
-      batch,
-      wirePayload: wirePayload,
-    );
-    await backend.writeFillCursorTxn(
-      txn,
-      destination.id,
-      batch.last.sequenceNumber,
-    );
-  });
 }

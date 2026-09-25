@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/security/sembast_security_context_store.dart'
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -29,10 +30,10 @@ void main() {
 
     final projections = ProjectionRegistry()
       ..register(
-        AggregateProjectionSpec(
+        const AggregateProjectionSpec(
           viewName: 'diary_entries',
-          interest: const SubscriptionFilter(aggregateTypes: {'note'}),
-          tombstoneEventTypes: const {'tombstone'},
+          interest: SubscriptionFilter(aggregateTypes: {'note'}),
+          tombstoneEventTypes: {'tombstone'},
         ),
       );
 
@@ -40,7 +41,7 @@ void main() {
       ..register(
         const EntryTypeDefinition(
           id: 'epistaxis_event',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Epistaxis Event',
         ),
       );

@@ -12,8 +12,8 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
-import 'envelope.dart';
-import 'filter_codec.dart';
+import 'package:reaction/src/wire/envelope.dart';
+import 'package:reaction/src/wire/filter_codec.dart';
 
 // --- Client -> Server messages ---
 
@@ -22,26 +22,26 @@ sealed class ClientMessage {
 }
 
 class AuthMessage extends ClientMessage {
-  final String credential;
   const AuthMessage({required this.credential});
+  final String credential;
 }
 
 class SubscribeMsg extends ClientMessage {
-  final String subscriptionId;
-  final String viewName;
-  final SubscriptionFilter? filter;
-  final Set<String>? aggregates;
   const SubscribeMsg({
     required this.subscriptionId,
     required this.viewName,
     this.filter,
     this.aggregates,
   });
+  final String subscriptionId;
+  final String viewName;
+  final SubscriptionFilter? filter;
+  final Set<String>? aggregates;
 }
 
 class UnsubscribeMsg extends ClientMessage {
-  final String subscriptionId;
   const UnsubscribeMsg({required this.subscriptionId});
+  final String subscriptionId;
 }
 
 // --- Server -> Client messages ---
@@ -51,8 +51,8 @@ sealed class ServerMessage {
 }
 
 class AuthOkMsg extends ServerMessage {
-  final String principalId;
   const AuthOkMsg({required this.principalId});
+  final String principalId;
 }
 
 enum SubscriptionDenyReason {
@@ -86,12 +86,12 @@ enum SubscriptionDenyReason {
 }
 
 class SubscriptionDeniedMsg extends ServerMessage {
-  final String subscriptionId;
-  final SubscriptionDenyReason reason;
   const SubscriptionDeniedMsg({
     required this.subscriptionId,
     required this.reason,
   });
+  final String subscriptionId;
+  final SubscriptionDenyReason reason;
 }
 
 enum WireErrorCode {
@@ -120,9 +120,9 @@ enum WireErrorCode {
 }
 
 class ErrorMsg extends ServerMessage {
+  const ErrorMsg({required this.code, required this.message});
   final WireErrorCode code;
   final String message;
-  const ErrorMsg({required this.code, required this.message});
 }
 
 enum StaleDataReason {
@@ -161,11 +161,11 @@ enum StaleDataReason {
 /// user holds). The server does NOT force a resubscribe — the
 /// client decides.
 class StaleDataMsg extends ServerMessage {
-  final StaleDataReason? reason;
   const StaleDataMsg({this.reason});
+  final StaleDataReason? reason;
 }
 
-/// Codec for the WS control-plane envelopes. Note: Update<T> envelopes
+/// Codec for the WS control-plane envelopes. Note: `Update<T>` envelopes
 /// (server -> client) live in update_codec.dart; this codec covers
 /// only the control-plane shapes.
 class SubscriptionMessages {

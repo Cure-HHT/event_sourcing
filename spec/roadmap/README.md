@@ -14,9 +14,22 @@ names, frozen semantics).
   canonicalization (the headline roadmap item).
 - `reaction.md` — reaction layer: reconnect optimizations,
   observability, pagination, validators, adapters.
-- `storage.md` — storage backends: reactive Postgres subscribe,
-  pooling, SQL-native view rows, additional backends.
+- `storage.md` — storage backends: reactive Postgres subscribe and the
+  drainer's wake-up, pooling, SQL-native view rows, additional backends, a
+  run-time barrier on internal storage members, a browser tab whose
+  database handle cannot commit, verifying the inputs the generation
+  guard and the drain lock trust, keeping or removing `readEventsReverse`.
 - `permissions.md` — permission-model extensions.
-- `projections.md` — projection/materializer primitives.
-- `sync.md` — sync/destination layer: inbound tombstone propagation.
+- `projections.md` — projection/materializer primitives; views that
+  catch up with the log whatever their interest; snapshot promotion and
+  view catch-up outside the boot transaction.
+- `sync.md` — sync/destination layer: inbound tombstone propagation,
+  detecting undeclared delivery-configuration changes, a recovery that
+  skips the wedged item, rebuilding a destination in one call.
+- `versions.md` — versions and the data generation: the appending library
+  version on every event, projection specifications in the data
+  generation, reading an older data-format major.
 - `authentication.md` — substrate-level authentication closure.
+- `tooling.md` — tooling, tests and examples: Dart doc references as
+  links, a real browser's page visibility in the drain-lock tests, owner
+  and runtime roles in the Postgres example deployment.

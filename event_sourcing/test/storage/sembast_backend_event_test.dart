@@ -11,6 +11,7 @@
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -49,8 +50,8 @@ void main() {
             aggregateId: 'agg-1',
             aggregateType: 'note',
             entryType: 'epistaxis_event',
-            entryTypeVersion: 1,
-            libFormatVersion: 1,
+            entryTypeVersion: const EntryTypeVersion(1, 0),
+            libFormatVersion: const DataFormatVersion(2, 0),
             eventType: 'Event',
             sequenceNumber: s,
             data: const <String, dynamic>{},

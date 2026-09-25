@@ -18,9 +18,9 @@ ActionSubmission _sub({String? idempotencyKey}) => ActionSubmission(
 
 /// Captures the submission it receives and returns a canned result.
 class _CapturingSubmitter implements ActionSubmitter {
+  _CapturingSubmitter(this.result);
   final List<ActionSubmission> received = <ActionSubmission>[];
   final DispatchResult<Object?> result;
-  _CapturingSubmitter(this.result);
 
   @override
   Future<DispatchResult<Object?>> submit(ActionSubmission submission) async {

@@ -126,7 +126,7 @@ prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
 
-# CUR-1533 test targets: one per Flutter package. Each runs `flutter test
+# Test targets: one per Flutter package. Each runs `flutter test
 # --machine` (native JSON on stdout, real `suite.path` per test file) and reads
 # the package's `coverage/lcov.info`. `match = "source"` wires file-granular
 # RESULT->TEST verification by real path (no tojunit, no gen-junit script).
@@ -134,10 +134,10 @@ reference_patterns = []
 # // Implements: lines. `elspais checks --run-tests` runs these; CI omits
 # `command` and points at pre-produced coverage/results.
 #
-# CUR-1556: each command also writes the same machine JSON to a file via
+# Each command also writes the same machine JSON to a file via
 # `--file-reporter=json:coverage/machine.jsonl`, and `results` points at it
-# (path/name matched to hht_diary's CUR-1556 targets for cross-repo
-# consistency). The `flutter-machine` reporter is a stdout channel, so
+# (the same path and name a consuming repository's targets use, for
+# cross-repo consistency). The `flutter-machine` reporter is a stdout channel, so
 # `--run-tests` ingests results transiently from captured stdout -- but commands
 # that do NOT run the tests (`elspais trace`, `viewer`, `graph`) have no captured
 # stdout and fall back to globbing `results`. Without a persisted file they
@@ -153,7 +153,7 @@ reference_patterns = []
 # stable test_id, so those nodes have no FILE ancestor and trip
 # `spec.structural_orphans`. That is inherent to path-based (not edge-based)
 # result matching and benign for verification, so `[rules.hierarchy]
-# allow_structural_orphans` below suppresses it (as hht_diary already does).
+# allow_structural_orphans` below suppresses it.
 #
 # Postgres-backed packages (event_sourcing, example_action_permissions) share a
 # single DB across multiple test files; `flutter test` runs files in parallel by
@@ -246,10 +246,9 @@ file_patterns = ["*.md"]
 # Requirement-status semantics
 #
 # Default elspais behaviour treats `Draft` as `provisional` (excluded
-# from coverage tallies). For CUR-1317 the whole spec set is still in
-# Draft — promoting requirements to Active is part of the post-Phase-I
-# stabilization pass, not yet done. Until then we want coverage metrics
-# to reflect the Draft surface so authoring progress is visible.
+# from coverage tallies). Much of the spec set is in Draft, and the
+# coverage metrics count the Draft surface so authoring progress is
+# visible.
 #
 # Move `Draft` into `active`. `Proposed` stays provisional (genuinely
 # tentative requirements still excluded). Aspirational and retired
@@ -261,7 +260,7 @@ provisional = ["Proposed"]
 aspirational = ["Roadmap", "Future", "Idea"]
 retired = ["Deprecated", "Superseded", "Rejected"]
 
-# Structural-orphan suppression (CUR-1556).
+# Structural-orphan suppression.
 #
 # A "structural orphan" is a node with no FILE ancestor. The flutter-machine
 # reporter emits one RESULT node per executed test case with no stable
@@ -271,7 +270,7 @@ retired = ["Deprecated", "Superseded", "Rejected"]
 # not by a build bug. Once `results` persists to disk (above), every `checks`
 # run loads them, so the default `spec.structural_orphans` check would fail the
 # pre-push hook (`elspais checks --lenient`) on ~1 orphan-per-test-case even
-# though nothing is wrong. Suppress it -- matching hht_diary's CUR-1556 config.
+# though nothing is wrong. Suppress it.
 # Reference and format severities
 #
 # The keys left at their default are named rather than omitted, so the levers

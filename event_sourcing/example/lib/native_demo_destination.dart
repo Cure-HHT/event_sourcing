@@ -3,7 +3,7 @@ import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:flutter/foundation.dart';
 
-/// Native demo destination — declares it speaks `esd/batch@1` so the
+/// Native demo destination — declares it speaks `esd/batch@2` so the
 /// library handles serialization itself. FIFO rows for this destination
 /// store envelope metadata with a null wire_payload. Used in the example
 /// to demonstrate the storage-shape difference vs `DemoDestination`
@@ -58,8 +58,8 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   final ValueNotifier<Duration> sendLatency;
 
-  /// Live-tunable upper bound on current-batch length. fillBatch asks
-  /// `canAddToBatch` once per candidate; when the batch reaches this
+  /// Live-tunable upper bound on current-batch length. When the delivery
+  /// cycle fills the queue it asks `canAddToBatch` once per candidate; when the batch reaches this
   /// length, the next candidate is rejected.
   @override
   final ValueNotifier<int> batchSize;
@@ -76,26 +76,28 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   bool get serializesNatively => true;
 
   @override
-  String get wireFormat => 'esd/batch@1';
+  String get wireFormat => 'esd/batch@2';
 
   @override
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
       currentBatch.length < batchSize.value;
 
-  // Library handles native serialization in fillBatch; the
+  // The delivery cycle serializes a native batch itself when it fills the
+  // queue; the
   // contract guarantees transform is never invoked when serializesNatively
   // is true, so this throw is defense-in-depth, not a code path.
   @override
   Future<WirePayload> transform(List<StoredEvent> batch) {
     throw StateError(
       'transform must not be called on a native destination '
-      '(serializesNatively=true); fillBatch builds the envelope itself.',
+      '(serializesNatively=true); the delivery cycle builds the envelope '
+      'itself.',
     );
   }
 
   // Demo: routes by `connection.value`. `ok` succeeds after `sendLatency`;
   // `broken` returns SendTransient; `rejecting` returns SendPermanent.
-  // Real native destinations would POST the re-encoded `esd/batch@1` bytes
+  // Real native destinations would POST the re-encoded `esd/batch@2` bytes
   // (reconstructed by drain from envelope_metadata + the row's events) to
   // a server.
   @override

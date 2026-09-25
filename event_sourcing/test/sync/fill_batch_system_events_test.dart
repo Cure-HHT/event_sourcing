@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
+import '../test_support/queue_test_support.dart';
 
 const _user = UserInitiator('demo-user-1');
 const _automation = AutomationInitiator(service: 'fill-batch-system-test');
@@ -144,8 +145,6 @@ void main() {
       final liveSchedule = DestinationSchedule(
         startDate: DateTime.utc(2020, 1, 1),
       );
-      await backend.writeSchedule('audit-mirror', liveSchedule);
-      await backend.writeSchedule('user-stream', liveSchedule);
 
       // Promote into FIFOs. FakeDestination's batchCapacity is 1, so
       // each event lands in its own FIFO row; we run fillBatch in a
@@ -156,7 +155,7 @@ void main() {
         // regresses.
         for (var i = 0; i < 64; i++) {
           final cursorBefore = await backend.readFillCursor(destId);
-          await fillBatch(
+          await fillWithScheduleForTest(
             ds.destinations.byId(destId)!,
             backend: backend,
             schedule: liveSchedule,
@@ -243,7 +242,7 @@ void main() {
         DateTime.utc(2020, 1, 1),
         initiator: _user,
       );
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: await ds.destinations.scheduleOf('misconfigured'),

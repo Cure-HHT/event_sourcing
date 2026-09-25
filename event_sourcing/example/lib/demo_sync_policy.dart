@@ -10,5 +10,4 @@ const SyncPolicy demoDefaultSyncPolicy = SyncPolicy(
   maxBackoff: Duration(seconds: 10),
   jitterFraction: 0.0,
   maxAttempts: 1000000,
-  periodicInterval: Duration(seconds: 1),
 );

@@ -22,7 +22,7 @@ const Source _source = Source(
 
 const EntryTypeDefinition _demoNote = EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'demo_note',
 );
 
@@ -37,12 +37,16 @@ void main() {
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
       );
-      await ds.setViewTargetVersion('toy_view', 'late_arrival', 3);
-      final stored = await backend.transaction<int?>(
+      await ds.setViewTargetVersion(
+        'toy_view',
+        'late_arrival',
+        const EntryTypeVersion(3, 0),
+      );
+      final stored = await backend.transaction<EntryTypeVersion?>(
         (txn) async =>
             backend.readViewTargetVersionInTxn(txn, 'toy_view', 'late_arrival'),
       );
-      expect(stored, 3);
+      expect(stored, const EntryTypeVersion(3, 0));
     });
 
     test('overwrites an existing entry-type version', () async {
@@ -53,13 +57,21 @@ void main() {
         entryTypes: const <EntryTypeDefinition>[_demoNote],
         destinations: const <Destination>[],
       );
-      await ds.setViewTargetVersion('toy_view', 'demo_note', 1);
-      await ds.setViewTargetVersion('toy_view', 'demo_note', 5);
-      final stored = await backend.transaction<int?>(
+      await ds.setViewTargetVersion(
+        'toy_view',
+        'demo_note',
+        const EntryTypeVersion(1, 0),
+      );
+      await ds.setViewTargetVersion(
+        'toy_view',
+        'demo_note',
+        const EntryTypeVersion(5, 2),
+      );
+      final stored = await backend.transaction<EntryTypeVersion?>(
         (txn) async =>
             backend.readViewTargetVersionInTxn(txn, 'toy_view', 'demo_note'),
       );
-      expect(stored, 5);
+      expect(stored, const EntryTypeVersion(5, 2));
     });
   });
 }

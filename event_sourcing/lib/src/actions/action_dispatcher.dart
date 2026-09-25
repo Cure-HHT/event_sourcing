@@ -304,6 +304,16 @@ class ActionDispatcher {
 
     try {
       await events.runTransaction<void>((txn, collector) async {
+        // Implements: EVS-PRD-event-log/G
+        // The backend may run this body more
+        //   than once before one run commits; every value that describes a
+        //   run starts empty here, so what is returned and recorded after the
+        //   transaction is the committed run's alone.
+        emittedEventIds.clear();
+        authorizationDenial = null;
+        executionResultHolder = null;
+        executeError = null;
+
         // Stage 6: policy-level authorize, inside the dispatch tx.
         for (var i = 0; i < permissionList.length; i++) {
           final permission = permissionList[i];
@@ -399,6 +409,10 @@ class ActionDispatcher {
           }
         }
       });
+      // Implements: EVS-DEV-destination-drain-lock/D
+      // the committed dispatch wakes the delivery cycle; the wake never
+      //   raises into the dispatch.
+      events.wakeDeliveryCycle();
     } on Object catch (err) {
       // Transaction was rolled back by the backend. Distinguish:
       //   - execute() threw  → emit execution_failed denial (we captured

@@ -52,7 +52,7 @@ Future<_Fixture> _openStore({
   registry.register(
     const EntryTypeDefinition(
       id: 'epistaxis_event',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Epistaxis Event',
     ),
   );
@@ -78,7 +78,7 @@ BatchEnvelope _buildEnvelope(
   required String senderSoftwareVersion,
 }) {
   return BatchEnvelope(
-    batchFormatVersion: '1',
+    batchFormatVersion: '2',
     batchId: const Uuid().v4(),
     senderHop: senderHop,
     senderIdentifier: senderIdentifier,
@@ -425,9 +425,13 @@ void main() {
         // Capture destination's local sequence counter after first ingest.
         final seqBefore = await dest.backend.readSequenceCounter();
 
-        // 2. Build tampered e1 (same event_id, different hash).
+        // 2. Build a divergent e1 (same event_id, different content, sealed
+        //    with the canonical hash of that content).
         final e1Map = e1.toMap();
-        e1Map['event_hash'] = 'tampered-hash-abcdef1234567890abcdef123456';
+        e1Map['data'] = const {
+          'answers': {'severity': 'severe'},
+        };
+        e1Map['event_hash'] = canonicalEventHash(e1Map);
         final e1Tampered = StoredEvent.fromMap(e1Map, 0);
 
         // 3. Originate two new events.

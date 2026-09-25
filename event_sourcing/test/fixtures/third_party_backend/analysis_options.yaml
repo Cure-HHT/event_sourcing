@@ -1,0 +1,8 @@
+# Analyzer options of the third-party backend fixture the internal-member
+# test analyzes out of package: a use of an internal library member is an
+# error.
+analyzer:
+  errors:
+    # A use of a member marked @visibleForTesting outside a test.
+    invalid_use_of_visible_for_testing_member: error
+    invalid_use_of_internal_member: error

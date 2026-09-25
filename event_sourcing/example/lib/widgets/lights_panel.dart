@@ -1,90 +1,29 @@
-import 'dart:async';
-
-import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing_demo/lights_materializer.dart';
+import 'package:event_sourcing_demo/lights_state.dart';
 import 'package:event_sourcing_demo/widgets/styles.dart';
 import 'package:flutter/material.dart';
 
-/// Three RGB "lights" rendered from the `rgb_lights` materialized view.
-/// Each light's `is_on` state is toggled on every press of its
-/// corresponding button (RED / GREEN / BLUE in the top action bar).
+/// Three RGB "lights" rendered from [LightsState]. Each light's on/off
+/// state is toggled by every press of its button (RED / GREEN / BLUE in
+/// the top action bar).
 ///
-/// Subscribes via `eventStore.subscribe<StoredEvent>(...)` in `Events` mode
-/// so the panel re-fetches view rows whenever any event lands — no timer,
-/// no legacy `watchView` poll. Demonstrates the reactive read primitive
-/// end-to-end: button press → event appended → `LightsMaterializer.applyInTxn`
-/// toggles the row → subscription delta fires → panel re-fetches and re-renders.
-class LightsPanel extends StatefulWidget {
-  const LightsPanel({
-    required this.backend,
-    required this.eventStore,
-    super.key,
-  });
+/// [LightsState] folds the raw button-press events -- replayed from the log,
+/// then live from `subscribe(Events)` -- so the panel re-renders when an
+/// event lands: button press, event appended, [LightsState] toggles the
+/// color, the panel rebuilds. No timer and no view table are involved.
+class LightsPanel extends StatelessWidget {
+  const LightsPanel({required this.lights, super.key});
 
-  final StorageBackend backend;
-  final EventStore eventStore;
-
-  @override
-  State<LightsPanel> createState() => _LightsPanelState();
-}
-
-class _LightsPanelState extends State<LightsPanel> {
-  StreamSubscription<Update<StoredEvent>>? _eventsSub;
-  Map<String, _LightState> _state = const <String, _LightState>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _refresh();
-    // Re-fetch view rows on every event arrival (including button-press
-    // events that trigger LightsMaterializer). No view-level subscription
-    // is needed because rgb_lights is populated by a custom in-transaction
-    // fold rather than a ProjectionRegistry spec.
-    _eventsSub = widget.eventStore
-        .subscribe<StoredEvent>(
-          const SubscriptionFilter(
-            entryTypes: <String>{
-              'red_button_pressed',
-              'green_button_pressed',
-              'blue_button_pressed',
-            },
-          ),
-          const Events(),
-        )
-        .listen((_) {
-          if (!mounted) return;
-          _refresh();
-        });
-  }
-
-  @override
-  void dispose() {
-    _eventsSub?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    try {
-      final rows = await widget.backend.findViewRows(
-        LightsMaterializer.viewKey,
-      );
-      if (!mounted) return;
-      setState(() {
-        _state = <String, _LightState>{
-          for (final Map<String, Object?> row in rows)
-            row['color']! as String: _LightState(
-              isOn: (row['is_on'] as bool?) ?? false,
-              lastToggledAt: row['last_toggled_at'] as String?,
-            ),
-        };
-      });
-    } catch (_) {
-      // Non-fatal; next event tick retries.
-    }
-  }
+  final LightsState lights;
 
   @override
   Widget build(BuildContext context) {
+    return ValueListenableBuilder<Map<String, LightState>>(
+      valueListenable: lights,
+      builder: (context, state, _) => _panel(state),
+    );
+  }
+
+  Widget _panel(Map<String, LightState> state) {
     return Container(
       decoration: BoxDecoration(color: DemoColors.bg, border: demoBorder),
       padding: const EdgeInsets.all(8),
@@ -96,9 +35,9 @@ class _LightsPanelState extends State<LightsPanel> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: <Widget>[
-              _light('red', DemoColors.red),
-              _light('green', DemoColors.green),
-              _light('blue', DemoColors.blue),
+              _light(state, 'red', DemoColors.red),
+              _light(state, 'green', DemoColors.green),
+              _light(state, 'blue', DemoColors.blue),
             ],
           ),
           const SizedBox(height: 8),
@@ -117,14 +56,14 @@ class _LightsPanelState extends State<LightsPanel> {
     );
   }
 
-  Widget _light(String color, Color paint) {
-    final s = _state[color];
-    final isOn = s?.isOn ?? false;
+  Widget _light(Map<String, LightState> state, String color, Color paint) {
+    final isOn = state[color]?.isOn ?? false;
     // Off: dimmed to ~15% alpha so the color identity stays visible but
     // the light reads as inactive. On: full brightness with a yellow
     // outline matching the panel's selection cue (DemoColors.selectedOutline).
     final fill = isOn ? paint : paint.withAlpha(38);
     return Column(
+      key: ValueKey<String>('light-$color-${isOn ? 'on' : 'off'}'),
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Container(
@@ -158,10 +97,4 @@ class _LightsPanelState extends State<LightsPanel> {
       ],
     );
   }
-}
-
-class _LightState {
-  const _LightState({required this.isOn, required this.lastToggledAt});
-  final bool isOn;
-  final String? lastToggledAt;
 }

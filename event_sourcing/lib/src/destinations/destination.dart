@@ -56,27 +56,31 @@ abstract class Destination {
   /// candidate. Destinations that are happy with single-event batches
   /// SHALL return `Duration.zero`.
   ///
-  /// Historical replay (`runHistoricalReplay`) does NOT honor this hold:
-  /// replay promotes every in-window historical event in one pass, so a
-  /// trailing single-event batch is flushed immediately. The hold exists
-  /// to let a live single-event batch coalesce with a second arrival,
-  /// which has no meaning for historical catch-up.
+  /// The replays a registry operation requests do NOT honor this hold. The
+  /// first-activation replay runs at the first fill after the activation
+  /// and covers every admitted event in the window up to that fill,
+  /// including events appended after the activation; it enqueues all of
+  /// them in one pass and holds none. A gap replay (a start date moved
+  /// earlier) likewise enqueues its events in one pass. Only the fill's
+  /// batches of events past the replayed ones are held.
   Duration get maxAccumulateTime;
 
-  /// Whether this destination permits hard deletion of its FIFO store via
-  /// `DestinationRegistry.deleteDestination`. The abstract default is
-  /// `false` because some destinations carry regulatory audit weight and
-  /// must not be purged in one call; concrete destinations that permit
-  /// hard deletion SHALL override the getter to `true` as an explicit
-  /// opt-in.
+  /// Whether this destination permits its deletion through
+  /// `DestinationRegistry.deleteDestination`, which removes its schedule,
+  /// fill position and pending queue items (the delivered, wedged and
+  /// recovered items are kept). The abstract default is `false` because
+  /// some destinations carry regulatory audit weight; concrete
+  /// destinations that permit deletion SHALL override the getter to `true`
+  /// as an explicit opt-in. The latest registration's value is the opt-in
+  /// in effect.
   bool get allowHardDelete => false;
 
   /// Whether this destination consumes the library's canonical batch
-  /// format (`esd/batch@1`). When `true`, `fillBatch` skips
+  /// format (`esd/batch@2`). When `true`, `fillBatch` skips
   /// [transform] entirely and instead constructs a
   /// `BatchEnvelopeMetadata` from the library's source identity, persisted
   /// on the FIFO row as `envelope_metadata` with `wire_payload: null` and
-  /// `wire_format: "esd/batch@1"`. The drain path reconstructs the wire
+  /// `wire_format: "esd/batch@2"`. The drain path reconstructs the wire
   /// bytes deterministically via `BatchEnvelope.encode` over the
   /// row's events plus `envelope_metadata`.
   ///

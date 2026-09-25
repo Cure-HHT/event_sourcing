@@ -170,11 +170,13 @@ they shape what's possible:
   because every Allow/Deny outcome must be reproducible from the event
   log + the library version. App-supplied policy callbacks would break
   that.
-- **The substrate records its own version in the log.** Every
-  installation appends `lib_version_initialized` on first boot and
-  `lib_version_changed` on each upgrade. Downgrades are refused unless
-  explicitly opted in. "What did the library do at sequence N?" is
-  answerable from the log alone.
+- **The substrate records its own version in the log.** The first open
+  of a database appends `lib_version_initialized`, and every open by a
+  build of another package or data-format version appends
+  `lib_version_changed`, older builds included. Builds of one
+  data-format major share a database; another major is refused before
+  anything is written. "Which library opened the database, and in what
+  order?" is answerable from the log alone.
 - **Single-source-per-aggregate-type, today.** The multi-source
   machinery exists in design but is dormant in 0.x. In practice this
   means: in the 0.x model, each kind of aggregate is produced by one
@@ -411,17 +413,118 @@ final db = await databaseFactoryMemory.openDatabase('demo');
 final backend = SembastBackend(database: db);
 ```
 
-Or, for server-side:
+Or, for server-side, provision the schema once per deployment (a step
+of its own, before any instance starts), then open:
 
 ```dart
+await PostgresBackend.provision(
+  'postgres://evs:evs@localhost:5432/evs_demo',
+  sslMode: SslMode.disable,
+);
+
 final backend = await PostgresBackend.open(
   url: 'postgres://evs:evs@localhost:5432/evs_demo',
   sslMode: SslMode.disable,
 );
 ```
 
-The backend is trusted for persistence, atomicity, and durability.
-Everything else is derived from the events it holds.
+`open` runs no DDL: it verifies the provisioned schema version and
+refuses, naming `provision`, a database that was never provisioned or
+whose schema this build does not support. A schema a newer build
+provisioned ahead of it still opens when the newer build kept the
+minimum compatible version, so a serving revision keeps restarting while
+a canary runs. Provisioning takes the same boot lock as the instances'
+boots, and refuses to raise the minimum above what a live instance needs.
+The deployment creates the schema itself (the first schema on the role's
+search path) and its grants; `provision` creates the tables.
+
+Run provisioning as the role that owns the schema, and the instances as a
+separate runtime role that neither owns nor can create the tables: grant
+it `USAGE` on the schema and, after each provisioning, exactly the table
+privileges `postgresRuntimeRoleGrants` lists (the table in
+`spec/postgres-backend.md`, "Roles and privileges"; `SELECT` and `INSERT`
+only on `events`). Every library operation other than provisioning works
+under those privileges (`EVS-DEV-postgres-backend/K`). Provision, then
+grant, then start the new build's instances: provisioning commits its DDL
+before the grants exist. The runtime role, and any role `lockUrl` names,
+must not be able to become the owner: it owns nothing in the schema, is not
+a member of the owning role, holds neither `SUPERUSER` nor `CREATEROLE`
+nor membership in a role that carries them (a hosting platform's
+administrative role included), and has no `CREATE` on the schema (revoke
+it from `PUBLIC` on a `public` schema of a Postgres major before 15). The
+library is tested against PostgreSQL 16. The queue table's guard
+(`EVS-DEV-destination-drain/S`) refuses every change to a queue item
+outside the shapes of the library's own writes, from any role; it cannot
+tell a hand-written change of a legal shape from the library's own, and
+only the owner can drop it, which is why no serving process runs as the
+owner and no person writes as the runtime role. Reporting uses a
+read-only role.
+
+Each `PostgresBackend` also holds one dedicated connection for its
+lifetime, the lock session, to `lockUrl` when given and to `url`
+otherwise. The library keeps its generation locks there, so it must be one
+real server session: a direct connection to the database, or a
+session-mode proxy that resets sessions on release -- never a
+transaction-mode pooler (the pool's own connections may go through one).
+`open` checks this, and that the lock session reaches the pool's server,
+database and schema, and throws `LockSessionConfigurationException` on a
+mismatch; the check can miss a pooler that happens to return the same
+server connection each time. The library sets server-side TCP keepalives
+and no idle-session timeout on the lock session; a proxy between the
+process and the database has client-side timeouts of its own to
+configure. The lock role must be allowed to end its own sessions (as the
+role that owns them is): when the library declares a lock session lost, it
+ends the old server session before registering again.
+
+Several server processes may share one database. Only one of them drains
+its destinations: each starts a delivery cycle, one holds the database's
+drain lock on its lock session and delivers, and the others stand by and
+take over when it stops (`EVS-PRD-destinations/V`; see "Several processes
+sharing one database" under "Cross-process client/server deployments").
+Each registers its build's
+data generation -- its data-format major and each registered entry type's
+major -- when its event store opens, and an open is refused
+(`IncompatibleGenerationException`, nothing written) while a live instance
+of a conflicting build holds a different major; builds that differ only in
+minors, or in which entry types they register, run side by side.
+
+A Sembast database file outside the browser is opened by one isolate of
+one process: the generation guard has nothing to guard there, and the
+drain lock excludes a second delivery cycle over the same open database
+handle in that isolate. Two processes, or two isolates, that open one file
+are outside what the library supports.
+
+In the browser the tabs of an origin share one IndexedDB database. The
+generation guard and the delivery cycle's drain lock both use the
+browser's lock manager (Web Locks), which exists only in a secure context
+(HTTPS or localhost): on a page without it `EventStore.open` throws
+`GenerationGuardConfigurationException` and `SyncCycle.start` throws
+`DrainLockConfigurationException`. The drain lock follows the visible tab:
+a tab whose page becomes hidden finishes its sends in flight (waiting at
+most one cadence for a send that does not return, whose item the next
+drainer sends again), hands the lock over and stands by, so nothing
+drains while no tab of the origin is visible (`EVS-PRD-destinations/V`).
+A page the browser freezes before its hand-over completes keeps the lock
+until it is resumed or discarded, and the visible tab stands by until
+then: a liveness limit, not a safety one. Every tab registers the same
+destinations, because delivery uses the destinations of the tab that
+drains.
+
+Tabs write to the database side by side; a write that keeps losing its
+commit to other tabs' writes runs again with them held back, so
+contention delays a write but never fails it. A sembast_web handle that
+another tab's open compacted past the commits it has seen cannot commit
+again, even alone: its writes fail with `TransactionRerunLimitException`
+at once, and a delivery cycle over it stops, releases the drain lock to
+another tab, and reports the exception as `SyncCycle.stopCause` once
+`SyncCycle.stopped` completes. The application closes the database, opens
+it again and starts a new cycle.
+
+The backend is trusted for persistence, atomicity, and durability, and a
+backend shared by several processes or tabs for running the generation
+guard; the lock-session path above, the browser's lock manager on the web,
+and one opener of a Sembast database file outside the browser are trusted
+too. Everything else is derived from the events the backend holds.
 
 > **Note on Postgres + subscriptions.** Both backends pass the same
 > conformance harness for storage, transactions, and view
@@ -477,7 +580,7 @@ register them. Then add your own.
 ### 5. Open the event store
 
 ```dart
-final datastore = await bootstrapAppendOnlyDatastore(
+final datastore = await bootstrapEventStore(
   backend: backend,
   source: Source(
     hopId: 'server-1',
@@ -487,28 +590,45 @@ final datastore = await bootstrapAppendOnlyDatastore(
   entryTypes: <EntryTypeDefinition>[
     EntryTypeDefinition(
       id: 'role_permission_grant',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'Role-permission grant',
-      materialize: false,
     ),
     EntryTypeDefinition(
       id: 'user_role_scope',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'User-role-scope assignment',
-      materialize: false,
     ),
     // ... your app's entry types
   ],
-  destinations: const <Destination>[],
+  destinations: <Destination>[myAppOutboundDestination],
   projections: projections,
+  onBootProgress: bootHealth.record,   // optional: see "Start-up and
+                                       // readiness probes"
 );
 final eventStore = datastore.eventStore;
 ```
 
 Every event type your app appends must have its `entryType` registered
-here — missing entries fail at append time, not boot. The
-`registeredVersion` is what gets stamped on every event of that type;
-bumping it later signals a schema change.
+here — missing entries fail at append time, not boot. The library's own
+reserved system entry types, and its default destination-wedges view, are
+registered by the open itself; list only your application's types (an id
+the library reserves is refused unless it is the library's own
+definition). The
+`registeredVersion` -- a major and a minor number -- is what gets
+stamped on every event of that type; raising it later signals a schema
+change (a minor to add a field with a default, a major to rename or drop
+one).
+
+`onBootProgress` is optional (`bootHealth` above stands for the server's
+own health tracker). The open reports its boot to it -- the
+phase (`BootPhase.checks`, `promotion`, `catchUp`, `complete`), the units
+of the phase done and its total, and the time since the open began -- so a
+server can answer a health probe while a long boot runs (see "Start-up and
+readiness probes" below). The observer runs synchronously inside the boot,
+and on Postgres the boot holds every instance's appends back while it runs,
+so it must only record: its future is not awaited, what it throws is
+logged, and a call from it into an event store while the boot runs throws
+`StateError`.
 
 ### 6. Apply the permissions seed
 
@@ -569,6 +689,26 @@ final dispatcher = bootstrapAuditedActions(
 You hand the dispatcher to whatever takes input from outside — your
 HTTP routes, your CLI, your test harness. It's the single entry point
 for any code that mutates state.
+
+### 9. Start the delivery cycle
+
+```dart
+final cycle = await SyncCycle.start(
+  registry: datastore.destinations,
+  configurationVersion: revisionId,    // the deployment's revision
+);
+// ... serve ...
+await cycle.close();
+```
+
+The delivery cycle fills each registered destination's queue from the log
+and sends it, in log order. At most one cycle drains a database: a second
+`start` over the same database in one isolate throws `StateError`, and a
+cycle in another process or tab stands by until the drain lock is free
+(`EVS-PRD-destinations/V`). Every append and every committed registry
+operation wakes it, and it runs a pass at least every `cadence` (15 s by
+default). "Several processes sharing one database" below covers
+deployment, halts and recovery.
 
 ## Defining an action
 
@@ -824,18 +964,22 @@ that are not part of your payload:
   order for this installation.
 - **`event_id`** — a UUIDv4 the substrate generates per event.
 - **`event_hash`** — a SHA-256 deterministically derived from the
-  event's canonical-form content (see `spec/prd-canonical-json.md` for
-  the serialization contract).
+  event's canonical-form content, both version fields below included
+  (see `spec/prd-canonical-json.md` for the serialization contract).
 - **`previous_event_hash`** — the hash of the immediately preceding
   event in the log. This chains the log: any modification, insertion,
   or deletion of a prior event breaks the chain from that point
   forward.
 - **`entry_type_version`** — the version of the entry type at the time
-  this event was appended. Read from the `EntryTypeRegistry` you passed
-  to `bootstrapAppendOnlyDatastore`. Producers don't choose it; the
-  substrate stamps it.
-- **`lib_format_version`** — the version of `event_sourcing` itself
-  at the time of append. Same idea, one level up.
+  this event was appended, a major and a minor number
+  (`{"major": 1, "minor": 0}`). Read from the `EntryTypeRegistry` you
+  passed to `bootstrapAppendOnlyDatastore`. Producers don't choose it;
+  the substrate stamps it.
+- **`lib_format_version`** — the data-format version of the
+  `event_sourcing` build that appended the event
+  (`LibVersion.dataFormat`), also a major and a minor number. It
+  versions what the library stores and sends, not the package version
+  (`LibVersion.version`). Same idea, one level up.
 - **`metadata.change_reason`** — a free-form string describing the
   reason for the change. Defaults to `"initial"` if you don't supply
   one.
@@ -947,47 +1091,190 @@ system accepted" without parsing the payload.
 
 ### The library records its own version in the log
 
-On the first boot against a fresh storage backend, the substrate
-appends a `lib_version_initialized` event recording the version of
-`event_sourcing` you're running. Each subsequent boot:
+A build of the library carries two versions: its package version
+(`LibVersion.version`) and its data-format version
+(`LibVersion.dataFormat`, a major and a minor number that versions what
+the library stores and sends). The data format decides; the package
+version is recorded for audit.
 
-- If the version matches what's recorded: silent no-op.
-- If the version is newer: append a `lib_version_changed` event.
-- If the version is older: refuse to open the store, unless you pass
-  `allowDowngrade: true` to `EventStore.open`. (This is a safety
-  net: an older library may not understand newer event shapes.)
+`EventStore.open` runs its whole boot in one storage transaction. On the
+first open of a database it mints the database identity
+(`EventStore.databaseId`, the same for every event store over the
+database) and appends a `lib_version_initialized` event recording the
+identity, the package version and the data format. Each later open:
 
-The same boot path runs a check called "entry-type downgrade refusal":
-if any registered entry type's `registeredVersion` is less than the
-highest version the substrate has previously recorded for that type
-(tracked in the `view_target_versions` table), boot fails. The substrate
-will not silently re-interpret an event under an older schema.
+- If the package version and data format match the latest recorded
+  ones: nothing is appended.
+- If either differs and the data-format major is the same: append a
+  `lib_version_changed` event, whether this build is newer or older (a
+  rollback, or an older revision running beside a newer one).
+- If the recorded data-format major differs: refuse with
+  `DataFormatIncompatibleError` before writing anything. An older build
+  cannot read a newer major, and a newer build has no reader for an
+  older one; the way out is the build that wrote the database, or a
+  restore.
+
+Only the library-version events the database appended itself count.
+Events ingested from a peer carry a receiver provenance entry, and the
+boot ignores them, so a peer's newer build never reads as this
+database's version. A stored identity that is missing or differs from
+the recorded one is refused (`DatabaseIdentityMismatchError`), and a
+database an earlier data format wrote is refused by name
+(`DatabaseResetRequiredError`): it must be reset. There is no override;
+`EventStore.openForTest` refuses the same databases and appends no
+library-version event, and it is for tests only.
+
+The same boot runs the "entry-type downgrade refusal", before it writes
+anything: if any registered entry type's major is less than the major
+of the highest version the substrate has recorded for that type
+(tracked in the `view_target_versions` table), the open fails. The
+substrate will not silently re-interpret an event under an older major.
+A build registering an older minor of the same major opens: minor steps
+only add fields with defaults, so it reads rows a newer minor promoted.
+
+The same boot also checks the database's generation record: the
+highest data generation any committed boot registered. A build of another
+data-format major, or one registering a lower major of an entry type than
+an earlier boot did -- whether or not a view names that entry type -- is
+refused before anything is written. While the build runs, a live instance
+of a conflicting build cannot open the database at all (see "Open a
+storage backend").
+
+On Postgres the boot transaction's first statement locks the table
+holding the sequence counter, which every append writes, so the appends
+of a revision serving the same database wait for the boot to commit
+rather than abort it. That wait lasts for the whole boot transaction: its
+reads of the library-version events and the stored view targets, its
+checks, and any promotion and re-derivation it performs. A release whose
+minor bump promotes a large view, or that adds a view over events already
+in the log, pauses the serving revision's appends for as long as the
+promotion or the re-derivation takes, in proportion to the rows promoted
+or the events re-derived -- measure it on a copy of production data and
+roll such a release out when that pause is acceptable. On the web the
+boot holds back the other tabs' writes to the database the same way.
+`bootLockWait` (default 60 s; on the web the `SembastBackend`
+constructor's) bounds each wait of a boot: for the boot lock another boot
+or a provisioning holds, and for the lock that holds the writes back. It
+must exceed the longest boot the deployment expects, since a boot holds
+the boot lock for its whole duration and another instance's open fails
+once its wait runs out.
+
+Deploying. Builds with the same data-format major and the same
+entry-type majors share a database in any mix: a no-traffic canary
+beside the serving revision, several instances, a restart, a rollback
+to the previous release. A build of another data-format major, or one
+that raises an entry-type major, is deployed stop-then-start: every
+instance of the old revision stops before the first instance of the new
+one opens the database, and the old revision's next open is refused
+afterwards. The generation guard enforces that order: the new revision's
+open is refused while an instance of the old one is still connected.
+Recovery after such a deployment is a restore from a backup
+taken before the switch, or a roll-forward. Evolve compatibly where you
+can: add an optional field as a minor step, and make a real reshape a
+new entry type that you append instead of the old one.
+
+Never forward a database's own events back to it. Every destination audit
+event (a registration, a date change, a recovery, a deletion, a wedge)
+records the identity of the database that appended it, and a receiver
+refuses an ingested destination audit that names its own database but that
+it does not hold (`IngestReservedEventRefused` with reason
+`namesReceiverDatabase`); an own event it still holds is refused as
+`IngestIdentityMismatch`. So a peer's destination that carries the
+receiver's own events back to it wedges whether or not the receiver's
+database was ever restored from a backup; a restore only changes which of
+the two refusals the peer sees. The fix is that destination's filter:
+leave out the events that originated at the receiver (for example with a
+filter predicate on the event's first provenance entry), then recover the
+wedged head with `tombstoneAndRefill`, which rebuilds the destination's
+pending items under the new filter and loses nothing.
 
 ### Schema evolution: entry types and promoters
 
 When you need to evolve an event shape — rename a field, add a default,
-drop a column — you bump the entry type's `registeredVersion` and
+drop a column — you raise the entry type's `registeredVersion` and
 register a `PromoterSpec` describing the transformation. The substrate
 supplies a small fixed set of promoter primitives (`RenameField`,
 `DefaultField`, `DropField`) that are deliberately limited to
-shape-changes so the promoter chain is commutative with the
-deep-merge fold.
+shape-changes. Adding a field with a default is a minor step, whose
+promoters may only be `DefaultField` (or none); renaming or dropping a
+field is a major step, to minor 0 of the next major.
+`PromoterRegistry.register` refuses any other step:
+
+```dart
+final promoters = PromoterRegistry()
+  ..register(const PromoterSpec(
+    viewName: 'notes',
+    entryType: 'note',
+    fromVersion: EntryTypeVersion(1, 0),
+    toVersion: EntryTypeVersion(1, 1),
+    transforms: <TransformPrimitive>[
+      DefaultField(fieldName: 'language', defaultValue: 'en'),
+    ],
+  ))
+  ..register(const PromoterSpec(
+    viewName: 'notes',
+    entryType: 'note',
+    fromVersion: EntryTypeVersion(1, 1),
+    toVersion: EntryTypeVersion(2, 0),
+    transforms: <TransformPrimitive>[
+      RenameField(sourceField: 'body', targetField: 'text'),
+    ],
+  ));
+```
+
+The library checks the shape of every step it registers; what it
+cannot check is producer code. A minor bump is safe only when it adds
+optional fields: producers do not rename, drop or re-type a field
+within a major. Make any other change a major step.
 
 Two paths exercise the promoters:
 
-- **Boot-time snapshot promotion.** When `EventStore.open` sees a
-  view row written under an older `entry_type_version` than is now
-  registered, it walks the promoter chain over the stored row and
-  writes the upgraded shape back. This runs once per upgrade.
-- **Ingest-time event promotion.** When an event arrives from an
-  older peer (see below), the substrate runs the promoter chain on
-  the incoming payload before passing it to the projection fold. The
-  log records the event at its original `entry_type_version`; the
+- **Boot-time snapshot promotion.** When `EventStore.open` finds a
+  view whose stored target version for an entry type is below the
+  registered one -- after an upgrade, or after a build of an older
+  minor folded into it -- it re-derives the view's affected rows from
+  the log: it folds their events again, each promoted through the
+  chain to the registered version, and records the new target. The
+  re-derived rows are the rows `rebuildView` produces.
+- **Fold-time event promotion.** When an event of an older version is
+  folded -- one ingested from an older peer (see below), or one an
+  older build appended -- the substrate runs the promoter chain on
+  the payload before passing it to the projection fold. The log
+  records the event at its original `entry_type_version`; the
   promotion happens in-memory.
+
+A promoted `DefaultField` fills a field only when neither the event nor
+the view row it folds into already carries it, looked up under the
+name the field has at the registered version (after any later rename
+in the chain). An older event that does not mention a field leaves the
+row's value as it is, exactly as the fold treats any key an event
+omits; a table view has no row to decide against, so there the default
+is always supplied.
 
 Both paths exist because the schema-evolution discipline says "the log
 is canonical; you can reconstruct any past state by replaying the
 events through the current promoter chain."
+
+A view is folded only by the builds that register it, and the views
+catch up with the log at the next open. Registering a new view, or a
+new entry type in a view's interest, on a database that already holds
+events of that type re-derives the view from the log in the boot
+transaction. A build that stores an event of an entry type without
+folding it into a view another build registers -- the serving revision
+beside a canary that adds a view -- marks that view behind the log, and
+the next open of a build that registers the view re-derives it. Until
+that open the view lacks those events; `rebuildView` fills it at any
+time.
+
+Catch-up follows the entry types a view's interest names. A view whose
+interest names none -- one that selects by aggregate type, as
+`SubscriptionFilter(aggregateTypes: {...})` does, or matches every
+entry type -- is not caught up: registered over events already in the
+log it starts empty, and the events a build that does not register it
+stores stay out of it. The same holds when two builds' interests for one
+view differ only in aggregate types or in `includeSystemEvents`. Run
+`rebuildView` for such a view once no build that lacks it, or holds the
+narrower interest, still serves the database.
 
 ### Provenance: where an event has been
 
@@ -1012,17 +1299,40 @@ design:
 
 - A `Destination` is the outbound transport for forwarding events to
   another installation. You register destinations at composition time
-  by passing them to `bootstrapAppendOnlyDatastore`; the substrate
-  enqueues outbound events through them.
+  by passing them to `bootstrapEventStore`; the delivery cycle enqueues
+  outbound events through them.
 - On the receiving side, the substrate exposes an ingest entry point
   that accepts a `BatchEnvelope` of events from a peer, verifies the
   hash chain against what's stored, extends the provenance chain, and
   admits the events into the local log. Ingested events flow into
   projections and subscriptions identically to locally-produced events.
-- The substrate verifies hash-chain integrity on every ingested event.
+- The substrate verifies hash-chain integrity on every ingested event:
+  the event's `event_hash` against the canonical hash of its content,
+  and each receiver hop's arrival hash against the record the hop before
+  it stored.
   A break produces a `ChainVerdict` recording exactly where the chain
   diverged from what was expected; the local install can refuse the
   batch and emit an audit event explaining the refusal.
+- Reserved system events (the library's own audits, such as a destination
+  wedge) are appended only by the library: `append` and `appendInTxn`
+  refuse their entry types. Ingest admits a peer's reserved event only in
+  the aggregate type and event types the library appends it with (fixed
+  within a data-format major), and a destination audit only with a
+  destination identifier and the appending database's identity, each a
+  non-empty string without `|`; anything else is refused, with the whole
+  batch, as `IngestReservedEventRefused` naming the reason. A destination
+  whose transport ingests into another store should treat that refusal as
+  permanent, as it treats the version refusals.
+- Every store folds the library's default destination-wedges view
+  (`defaultDestinationWedgesSpec`, view `default_destination_wedges`): one
+  row per wedged destination, keyed `<database identity>|<destination>`,
+  inserted by a wedge event and removed by the recovery or deletion that
+  ends it. It is a convention over the log, not a read of the queues: rows
+  whose `database_id` field is the store's own `databaseId` name the same
+  wedged heads as `backend.wedgedFifos()` (read each in its own
+  transaction, the two can differ for the moment between them), and rows
+  for other databases come from wedge events a peer forwarded, as that peer
+  asserts them. Tell local rows from peer rows by that field.
 
 Activating that machinery — canonicalization rules: per-aggregate-type
 rules saying who is the canonical authority for that aggregate, who can
@@ -1448,6 +1758,268 @@ policy queries are sub-millisecond and subscribe messages are
 infrequent. Instead the watcher reacts to permission events and sends
 the appropriate wire signal; it does not keep a live copy of each
 Principal's `EffectiveAuthorization`.
+
+### Several processes sharing one database
+
+A server deployment often runs several processes against one Postgres
+database: instances behind a load balancer, a canary beside the serving
+revision, a replacement starting while the old instance stops. Each opens
+its own backend and event store and serves requests. Delivery to
+destinations is different: at most one delivery cycle commits queue
+changes for a database at a time (`EVS-PRD-destinations/V`), within what
+the backend's drain lock supports. The drain lock rests on deployment
+properties the library does not audit: on Postgres, a lock session that is
+one server session of the database (below); in the browser, Web Locks;
+outside the browser, one opener of a Sembast file. A send already in
+flight when a drainer loses its lock can still arrive (see "Fencing, and
+the late duplicate").
+
+#### One drains, the others stand by
+
+Every process may start a delivery cycle with `SyncCycle.start`. The
+backend grants the database's drain lock to one of them, which runs
+(`SyncCycleState.running`); every other cycle stands by
+(`SyncCycleState.standby`), requests the lock again every cadence, and
+takes over when it is released -- when the drainer closes its cycle,
+stops, or loses its lock -- without a restart. `start` never fails because
+another process drains, nor because the database is briefly unreachable:
+such a cycle starts in standby. A lock connection that is misconfigured
+fails `start` with `DrainLockConfigurationException`. A second cycle over
+the same database in one isolate is a programming error and throws
+`StateError`.
+
+On Postgres the drain lock is a session advisory lock whose key derives
+from the database, the schema and the database identity, held on the
+backend's lock session: the dedicated connection each `PostgresBackend`
+keeps for its lifetime, to `lockUrl` when given and to `url` otherwise.
+That connection must be one real server session: a direct connection, or
+a session-mode proxy that resets sessions on release. A transaction-mode
+pooler is not supported for it (the pool's own connections may use one).
+`open` checks the session: it sets a random setting and reads it back with
+the server process id in three separate statements, compares the database
+and schema the session reaches with the pool's, and checks that the
+session sees an advisory lock a pool connection takes, so both reach one
+server; a mismatch throws `LockSessionConfigurationException`. The check
+can miss a pooler that happens to return the same server connection every
+time, so the requirement stands on its own. The library sets server-side
+TCP keepalives and no idle-session timeout on the lock session; those
+cover only the server's side of the connection, and a proxy between the
+process and the database has client-side timeouts of its own for the
+deployment to configure. Every statement on the lock session is bounded
+by `lockQueryTimeout`, and the backend probes it every `lockHeartbeat`: a
+failed probe declares the session lost, the backend opens a replacement,
+ends the old server session if it still holds a library lock (so the lock
+role must be allowed to end its own sessions), and registers its build's
+generation again; a delivery cycle whose lock was lost returns to standby
+and takes the lock again.
+
+#### Fencing, and the late duplicate
+
+Each acquisition raises the database's drain epoch, and every transaction
+of the drainer that changes a queue -- the pass start, the fill, a halt
+honour, the fence before a send and every outcome -- first checks that its
+epoch is still the current one, and commits nothing otherwise. A drainer
+that lost its lock without knowing it (its lock session was ended while
+its process ran on) therefore records nothing more, and starts no further
+send once it detects the loss. What it cannot stop is a send already on
+the wire: that item may arrive at the receiver after the new drainer sent
+it again. Delivery is at-least-once, and a receiver deduplicates.
+
+#### What the other processes do
+
+A process whose cycle stands by, or that starts none, keeps its event
+store and registry and does everything but drain: it appends, sets
+destination dates, requests and cancels halts, recovers a wedged head and
+deletes a destination. Every registry operation acts on the persisted
+state of the database, whichever process runs it, and none enqueues:
+only the drainer's fill does. Its events and halt requests wake the
+drainer only through the drainer's cadence (15 s by default), and the
+cadence timer is armed again when a pass ends: they wait at most one
+cadence after the drainer's current pass ends, and a pass that sends a
+large backlog, or a send that hangs, holds them off for as long as it
+runs. A halt request that the drainer has seen is honoured before its next
+send. An append in the drainer's own process, and every registry
+operation there, wake it at once.
+
+Every process that may drain registers the same destinations, because
+delivery uses the destinations registered in the process that drains. A
+destination that the drainer does not register, that storage no longer
+knows, that another process registered again under the same id, or that
+a refill guard holds (below) is not filled or sent; its halt requests are
+still honoured. The drainer reports each such gap: `SyncCycle.unserved` in
+its own process, and `DestinationRegistry.readDeliveryStatus()` from any
+process, which also shows the drainer's declared configuration and
+heartbeat and each destination's open halt request, wedge and refill
+guard. The default destination-wedges view shows wedges only, not these
+gaps. Each registration appends a `destination_registered` event recording
+the configuration the registering process declared, and the latest
+registration's hard-delete opt-in is the one in effect.
+
+#### Deployment requirements
+
+Stated as properties, so that they hold wherever the processes run:
+
+- A process that starts a delivery cycle has CPU while it has no requests
+  to serve: the cycle's cadence and heartbeat are timers in that process.
+- At least one such process runs at all times; otherwise nothing drains
+  until one starts.
+- Every process registers the same destinations.
+- The lock connection is direct or a session-mode proxy, and the lock role
+  may end its own sessions.
+- A process that receives no traffic (a canary) either starts no delivery
+  cycle, or may become the drainer and fill the queues under the
+  configuration it declares; its configuration must then be acceptable to
+  fill with.
+
+At a switchover the new revision's processes stand by until the old
+revision's drainer stops and its lock frees; then one of them takes over.
+Provisioning a schema change for the new revision while the old one serves
+is safe (it takes the boot lock and refuses a minimum a live instance does
+not meet), and the schema changes of one release stay compatible with the
+revision beside it.
+
+#### Browser tabs
+
+In the browser the tabs of an origin share one IndexedDB database, and the
+same rule holds. The page must be a secure context (HTTPS or localhost),
+or `EventStore.open` and `SyncCycle.start` refuse. A tab of a conflicting
+build refuses to open while an older tab is open. One tab drains and the
+rest stand by; the drain lock follows the visible tab, so nothing drains
+while no tab of the origin is visible, and a page the browser freezes
+before it hands the lock over holds it until it is resumed or discarded
+(a liveness limit, not a safety one). Every tab registers the same
+destinations. "Open a storage backend" above has the details.
+
+#### Versions and deployment
+
+A build carries three kinds of version, and each decides something
+different:
+
+- The package version (`LibVersion.version`) is recorded in the log at
+  every open by a different build (`lib_version_changed`), for audit; it
+  decides nothing.
+- The data-format version (`LibVersion.dataFormat`, major.minor) is what
+  the library stores and sends. Builds of the same data-format major are
+  compatible: a newer or older one opens the database and the open is
+  recorded. Another major is refused (`DataFormatIncompatibleError`).
+- Each entry type's registered version (major.minor) decides how its
+  events fold. A minor step adds optional fields (its promoters may only be
+  `DefaultField`, or none); a rename or drop is a major step.
+
+Evolve compatibly: add an optional field as a minor step, and make a real
+reshape a new entry type that you append instead of the old one. Revisions
+whose data-format majors and entry-type majors agree can be canaried beside
+the serving revision, scaled, and rolled back to freely, and each open is
+recorded. A major bump -- a data-format major, or a rename or drop in an
+entry type -- is deployed stop-then-start, and the incompatible-generation
+guard enforces it: a new revision's open is refused
+(`IncompatibleGenerationException`, nothing written) while an instance of a
+conflicting build is connected, and once the new revision has booted, the
+old revision's next open is refused. Recovery after a major bump is a
+restore from a backup taken before the switch, or a roll-forward. A
+deployment pipeline can compare the new build's `LibVersion.dataFormat`
+major with the serving one's before it starts a canary. The lock-session
+requirement covers the guard's locks as well as the drain lock.
+
+A boot that promotes view rows or re-derives a view pauses every
+instance's appends while it runs, and `bootLockWait` must exceed the
+longest boot: "The library records its own version in the log" above has
+the details, and "Start-up and readiness probes" below keeps such a boot
+from being killed. After a restore from a backup, never forward the
+restored database's own events back to it; the same section says what a
+peer that does is refused with and how to recover its destination.
+
+#### Start-up and readiness probes
+
+A boot that promotes or re-derives views can take minutes, and a boot
+killed part-way rolls back and pauses the database's appends again when it
+restarts. A server therefore listens before it opens its event store and
+answers two probes, as the Postgres example server does
+(`event_sourcing/example_action_permissions/lib/server/boot_health.dart`):
+
+- `/livez` answers 200 as soon as the process listens. Point the
+  platform's startup and liveness probes at it, so a long boot is never
+  killed.
+- `/health` answers 503 with the boot's phase, the percentage of the phase
+  done and an estimate of the time left, from the reports of
+  `onBootProgress`, and 200 once the event store is open and the server
+  serves. Point the readiness probe at it, so no traffic arrives before
+  then. Readiness is the return of the bootstrap, not the boot's
+  `complete` report, which means only that the store opened.
+
+During `checks`, which also covers the wait for another instance's boot
+lock, no further report arrives, so the endpoint reads elapsed time from
+its own clock. The percentage and the estimate are approximate when a
+phase re-derives both aggregate and table views. The observer only
+records: it runs synchronously inside the boot (its own work delays the
+boot and, on Postgres, every instance's appends), and a call from it into
+an event store while the boot runs throws `StateError`.
+
+#### Halting, recovering and rebuilding a destination
+
+The drainer wedges a queue head when the receiver refuses it permanently
+or its retry budget runs out, and appends a `system.destination_wedged`
+event in the same transaction, recording the destination, the item, the
+cause and the attempt count (a fact in the log). Every event store folds
+the library's default destination-wedges view from the wedge events and
+the events that end a wedge: its default interpretation of which
+destinations are wedged now. A wedged head halts delivery on that
+destination until an operator recovers it.
+
+An operator halts a healthy destination with
+`DestinationRegistry.requestHalt(id, initiator: ..., purpose: ...)`. The
+request is an event naming the initiator; the drainer honours it before its next send by wedging the head
+itself (cause operator halt), so a head is never wedged while it is in
+delivery. A request on an empty queue stays open until a head exists; any
+wedge consumes an open request; `cancelHalt` withdraws one the drainer has
+not honoured yet.
+
+`tombstoneAndRefill(id, rowId, initiator: ...)` recovers a wedged head,
+recording the initiator on the recovery event: it tombstones the
+head, deletes the pending items behind it and rewinds the fill position
+below every event they carried, so the drainer's next fill enqueues those
+events again under the configuration it registers. It is refused on a
+pending head, which may be in delivery.
+
+To rebuild a destination's pending items under a new delivery
+configuration (a changed filter or transform):
+
+- The new configuration is still to be deployed: request a halt with
+  purpose `reconfigure`, deploy the new revision, then recover. The
+  recovery is refused while the drainer still declares the configuration
+  recorded when it honoured the halt, so the refill cannot run under the
+  old one. Once accepted, it leaves a refill guard: a drainer that declares
+  the halted configuration (an instance of the old revision taking the lock
+  during the rollout) does not fill the destination until one with another
+  configuration has refilled the rewound range, which removes the guard.
+  If the rollout is rolled back, so that every instance declares the halted
+  configuration again, restart the drainer with a changed
+  `configurationVersion`, or delete the destination.
+- The new configuration is already deployed: request a halt with purpose
+  `pause`, then recover.
+
+The drainer declares, per destination, the configuration the library can
+read (identifier, wire format, accumulation window, filter sets, whether
+the filter has a predicate) and `SyncCycle.start`'s `configurationVersion`.
+Change `configurationVersion` whenever code the library cannot read
+changes (transform, predicate or batching code); a deployment can pass its
+build or revision identifier. It is recorded in every wedge and recovery
+event, so it is an identifier, not free text.
+
+Moving a destination's start date earlier is refused while its head is
+wedged: recover first.
+
+Deleting a destination is refused while its queue head is pending, because
+it may be in delivery: halt first, and delete once the drainer has wedged
+the head. The deletion tombstones the wedged head, deletes the pending
+items and keeps every delivered, wedged and recovered item as the delivery
+record. The same id registered again starts a new registration.
+
+Delivery is at-least-once. A receiver sees an event again when a recovery
+rewinds below events that `sent` items above the rewind point already
+delivered, when a destination deleted and registered again refills events
+the earlier registration delivered, and when a send's outcome did not
+commit (the drainer lost its lock or stopped before recording it).
 
 ### Reading order from here
 

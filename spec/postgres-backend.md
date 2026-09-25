@@ -6,7 +6,7 @@ The substrate's persistence contract is exposed behind the abstract
 `StorageBackend` interface. Two reference implementations ship in-tree:
 
 - `SembastBackend` — mobile / Flutter deployments (sembast-on-disk).
-- `PostgresBackend` — server-side deployments (Cloud SQL / managed Postgres).
+- `PostgresBackend` — server-side deployments (self-managed or managed Postgres).
 
 Both pass the same backend-agnostic conformance harness. This document is
 the cross-system narrative for the `PostgresBackend` design: the choices
@@ -26,8 +26,8 @@ serves three purposes:
   Dart-supported runtime. Postgres is the first concrete server-side
   backend to prove this for server deployments.
 - **Unblocks server-side deployment of the full substrate.** A
-  server-side deployment needs a backend it can actually deploy on
-  Cloud SQL. Sembast on a server is technically possible but
+  server-side deployment needs a backend it can actually deploy on a
+  managed Postgres service. Sembast on a server is technically possible but
   operationally awkward.
 - **Hardens the `StorageBackend` contract.** Having two impls that both
   pass the conformance harness verifies that the abstraction boundary
@@ -82,40 +82,77 @@ realized through a different mechanism.
 
 ## Schema overview
 
-The Postgres schema is a small, fixed set of tables emitted at `open()`
-time via `CREATE TABLE IF NOT EXISTS`. Each table maps one-for-one to a
+The Postgres schema is a small, fixed set of tables that
+`PostgresBackend.provision` creates, as the ordered migration steps of
+`postgres_schema.dart`, in a provisioning step of its own. Each table maps one-for-one to a
 sembast store the reference impl uses today; the contents are the same
 `StoredEvent` / view-row / FIFO-entry / KV shapes the substrate already
 operates on. The tables are:
 
-- **`events`** — the append-only event log. Columns include `sequence`
-  (BIGINT PRIMARY KEY), `entry_type` (TEXT), `entry_type_version`
-  (INTEGER), `aggregate_id` (TEXT), `event_id` (TEXT UNIQUE),
-  `payload` (JSONB), `prev_hash` (TEXT), `hash` (TEXT),
-  `client_timestamp` (TIMESTAMPTZ), `originator_hop_id` (TEXT),
-  `originator_identifier` (TEXT), and a `metadata` JSONB column for the
-  remainder of `StoredEvent`'s fields. Secondary indexes on
-  `aggregate_id`, `entry_type`, and `client_timestamp` support the
+- **`events`** — the append-only event log. Columns: `sequence_number`
+  (BIGINT PRIMARY KEY), `event_id` (TEXT UNIQUE), `aggregate_id`,
+  `aggregate_type`, `entry_type`, `event_type` (TEXT), the entry-type
+  version and the data-format version as major and minor `INTEGER` columns
+  (`entry_type_version_major`, `entry_type_version_minor`,
+  `lib_format_version_major`, `lib_format_version_minor`) beside the two
+  version maps as the event hash covers them (`entry_type_version_json`,
+  `lib_format_version_json`, JSONB), `data`, `metadata` and `initiator`
+  (JSONB), `client_timestamp` (TIMESTAMPTZ) with `client_timestamp_text`
+  (TEXT, the timestamp's string as the event hash covers it),
+  `event_hash` and `previous_event_hash` (TEXT), `flow_token` (TEXT), and
+  `unknown_fields` (JSONB, the record's top-level keys the library does
+  not read, as they arrived).
+  Secondary indexes on `(aggregate_id, sequence_number)`,
+  `client_timestamp` and `(event_type, sequence_number)` support the
   filter combinations enumerated in
-  `EVS-DEV-find-all-events-extended-filters`.
+  `EVS-DEV-find-all-events-extended-filters` and the boot's read of the
+  library-version events.
 - **`view_rows`** — single table for every materialized view, keyed by
   `(view_name TEXT, row_key TEXT)` with `row_data JSONB` payload and an
   `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
   `view_name = ?` ordered by `row_key`.
 - **`view_target_versions`** — the per-view target-version map
   maintained by `EventStore.open`'s snapshot-promotion pass.
-  Single-row-per-view KV; columns `view_name TEXT PRIMARY KEY`,
-  `target_version INTEGER`.
+  One row per (view, entry type); columns `view_name TEXT`,
+  `entry_type TEXT`, `target_major INTEGER`, `target_minor INTEGER`,
+  and `behind BOOLEAN` (the view catch-up mark: true while the view is
+  behind the log for that entry type), keyed by
+  `(view_name, entry_type)`.
 - **`fifo_entries`** — single table for every outbound FIFO queue,
-  keyed by `(destination_id TEXT, sequence_in_queue BIGINT)` with the
-  queued event reference and delivery bookkeeping columns
-  (`event_sequence BIGINT`, `enqueued_at TIMESTAMPTZ`,
-  `last_attempt_at TIMESTAMPTZ NULL`, `attempt_count INTEGER`,
-  `state TEXT`).
+  keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
+  one queue item: `entry_id` (TEXT UNIQUE), the events it carries
+  (`event_ids` JSONB, `event_id_first_seq`, `event_id_last_seq`), how it
+  was built (`wire_format`, `transform_version`, `wire_payload`,
+  `envelope_metadata`), `enqueued_at`, and its delivery bookkeeping:
+  `attempts` (a JSONB array of recorded attempts), `final_status` (null
+  while pending, then `sent`, `wedged` or `tombstoned`) and `sent_at`.
+  The table is guarded (EVS-DEV-destination-drain/S): a CHECK
+  (`fifo_entries_final_status_check`) constrains `final_status`, and the
+  trigger `fifo_entries_guard` refuses every change outside the shapes of
+  the library's own writes: any insert of an item that is not pending with
+  no attempts and no `sent_at`; any status change but pending to sent,
+  pending to wedged and wedged to tombstoned; any change to a column the
+  item was enqueued with; any change to `attempts` but appending one
+  attempt while pending (in the change that keeps it pending or marks it
+  sent or wedged); any change to `sent_at` outside the change that marks
+  the item sent; and the deletion of a terminal item. A statement trigger,
+  `fifo_entries_truncate_guard`, refuses every truncation. Both triggers
+  are enabled `ALWAYS`, so they fire in every session replication role.
+  The guard checks the shape of a change, not who makes it: a hand-written
+  change of a legal shape (wedging, marking sent or deleting a pending
+  item, tombstoning a wedged one, inserting a pending one) passes, and
+  rests on the storage precondition. The guard catches defects and
+  hand-written SQL of any other shape; the role that owns the table can
+  drop it, which the runtime role cannot (see "Roles and privileges").
 - **`backend_state`** — the substrate's general-purpose KV bookkeeping
   area (library-version watermark, current sequence counter, last-hash
-  cache, originator identity). Columns `key TEXT PRIMARY KEY`,
-  `value JSONB`.
+  cache, originator identity, the provisioned schema version pair, the
+  database's generation record and the records that map the generation
+  guard's lock keys back to their components, the drain epoch
+  (`drain_epoch`), the drainer's declaration (`drainer_declaration`) and
+  heartbeat (`drain_heartbeat`), and each destination's refill guard
+  (`refill_guard_<destination>`)). Columns
+  `key TEXT PRIMARY KEY`, `value JSONB`.
 - **`security_context`** — the persisted role/permission/scope snapshot
   the substrate maintains for closed-under-events authorization
   evaluation. Schema mirrors the sembast layout; one logical row per
@@ -139,6 +176,92 @@ orientation; the DDL file is the source of truth.
   `nextSequenceNumber` calls serialize as expected. The substrate is
   single-writer-per-source by design; this just prevents accidental
   concurrent writers from silently corrupting the chain.
+- A transaction that wrote `backend_state` (every append does, through
+  the sequence counter) and lost a serialization race is re-run after
+  `LOCK TABLE backend_state IN SHARE ROW EXCLUSIVE MODE`, taken before
+  its snapshot, so the re-run waits for the writes it lost to and cannot
+  lose the same race again. The runtime role therefore needs a privilege
+  that `SHARE ROW EXCLUSIVE` requires on `backend_state` (it writes the
+  table anyway: `INSERT`, `UPDATE` and `DELETE`). A re-run of a
+  transaction that wrote nothing to `backend_state` takes no lock, so a
+  read-only role needs only `SELECT`. While the lock is held every other
+  write to `backend_state`, and so every append, waits.
+
+## Roles and privileges
+
+The library assumes three kinds of database role, and the deployment
+creates them (EVS-DEV-postgres-backend/K):
+
+- **Owner.** Owns the schema and the tables. Provisioning
+  (`PostgresBackend.provision`, or `open(provisionSchema: true)` in
+  development) runs as this role, in its own deployment step; it is the
+  one library operation the runtime role cannot perform. No process serves
+  traffic as the owner: the owner can disable or drop the queue table's
+  guard and rewrite the log.
+- **Runtime.** The role an application's `PostgresBackend` opens its pool
+  and, unless `lockUrl` names another role, its lock session as. It holds
+  `USAGE` on the schema and exactly the table privileges below (exported
+  as `postgresRuntimeRoleGrants`), and every library operation other than
+  provisioning works under them. The log is append-only for it. For a
+  lock session opened as another role, `USAGE` on the schema and the
+  runtime role's privileges on `backend_state` suffice; every lock role
+  must be allowed to end its own sessions, as the role that owns them is.
+- **Read-only.** Reporting and inspection hold `SELECT` only. No person
+  holds write access.
+
+The split holds only if neither the runtime role nor any lock role can
+become the owner or create objects in the schema. Each of them:
+
+- does not own the schema or any table in it, and is not a member of the
+  owning role;
+- holds neither `SUPERUSER` nor `CREATEROLE`, and is not a member of any
+  role that carries them (a hosting platform's administrative role
+  included), so it cannot grant itself the owner's membership. Create it
+  with plain SQL or as a platform identity that carries no such
+  membership, and check its attributes and memberships on the platform's
+  server;
+- holds no `CREATE` on the schema: the schema grants `CREATE` to no role
+  but the owner. A server's default `public` schema grants `CREATE` to
+  every role on Postgres majors before 15, so a deployment on `public`
+  runs `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner
+  creates grants nothing to `PUBLIC`.
+
+The order of a deployment is: create the schema for the owner and grant
+the runtime and lock roles `USAGE` on it; provision as the owner; grant
+the runtime role the privileges below (and a lock role its
+`backend_state` privileges); then start the new build's instances.
+Provisioning commits its DDL on its own, before the grants, so an instance
+of the new build started before the grants fails with a permission error
+on a table the provisioning added.
+
+The library is built and tested against PostgreSQL 16; that is the
+supported server major.
+
+Grants cannot separate the library from the application that embeds it
+(they share one process and one connection); they separate the process
+from the schema. The library's delivery guarantees still rest on the
+storage precondition (EVS-PRD-destinations/L). The queue table carries a
+database guard (above) that refuses changes outside the shapes of the
+library's writes; `backend_state`, which holds the fill positions,
+schedules, replay requests, wedge records, halt requests, send fences,
+refill guards, the drain epoch, the drainer's declaration and heartbeat,
+the generation records and the database identity, has none.
+
+### Runtime role privileges
+
+| Table | Privileges |
+| --- | --- |
+| `events` | SELECT, INSERT |
+| `view_rows` | SELECT, INSERT, UPDATE, DELETE |
+| `view_target_versions` | SELECT, INSERT, UPDATE, DELETE |
+| `fifo_entries` | SELECT, INSERT, UPDATE, DELETE |
+| `backend_state` | SELECT, INSERT, UPDATE, DELETE |
+| `security_context` | SELECT, INSERT, UPDATE, DELETE |
+| `idempotency` | SELECT, INSERT, UPDATE, DELETE |
+
+Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on
+`backend_state` also covers the table lock a re-run transaction takes and
+the share lock the drain-epoch read takes (see "Transactional model").
 
 ## What's the same as sembast
 
@@ -167,11 +290,37 @@ store to the dedicated `backend_state` table.
   sequence_in_queue)`, not per-destination sembast stores. Adding a new
   destination is a no-op at the DDL level; sembast's lazy-store
   creation is replaced by row inserts into the shared table.
-- Schema DDL is emitted at backend `open()` time as `CREATE TABLE IF
-  NOT EXISTS` statements; sembast creates stores lazily on first write.
-  The upfront DDL makes Postgres deployments observable (a freshly-
-  opened DB has the tables present even before any events are
-  appended), which matters for ops tooling.
+- Schema DDL runs in a provisioning step (`PostgresBackend.provision`)
+  that a deployment runs once, before its instances open the database;
+  `open` runs no DDL and verifies the stored schema version and minimum
+  compatible version (EVS-DEV-postgres-backend/G, H). Sembast creates
+  stores lazily on first write. The upfront DDL makes Postgres
+  deployments observable (a freshly provisioned database has the tables
+  present even before any events are appended), which matters for ops
+  tooling.
+- Each backend holds a dedicated lock session besides its pool, on which
+  it holds the incompatible-generation guard's advisory locks
+  (EVS-DEV-postgres-backend/J, EVS-DEV-version-compatibility/F to I). The
+  lock connection must be one real server session: a direct connection
+  to the database, or a session-mode proxy that resets sessions on
+  release, never a transaction-mode pooler. `open` checks that three
+  separate statements reach one server session carrying a setting the
+  first made and that the session reaches the pool's database and schema,
+  but the check can miss a pooler that happens to hand back the same
+  server connection every time. The library sets server-side keepalives
+  and no idle-session timeout on it; a proxy between the process and the
+  database has client-side timeouts of its own, which the deployment
+  configures. The lock role must be allowed to end its own sessions.
+- The drain lock lives on the same lock session: a session advisory lock
+  whose key derives from the database, the schema and the database
+  identity (EVS-DEV-destination-drain-lock/A). Every acquisition raises
+  `drain_epoch` in a transaction on the lock session after confirming the
+  key and the identity, then checks through the pool that the lock
+  session holds the key; every queue-changing transaction of the drainer
+  reads `drain_epoch` under a share lock as its first step
+  (EVS-DEV-destination-drain-lock/B). When the lock session is declared
+  lost, its replacement ends the old server session if it still holds
+  the drain key, as for the generation locks.
 - JSONB payloads accept native Postgres JSON operators on the
   underlying column, but the substrate's API surface does not expose
   them; all reads go through the abstract `StorageBackend` methods.

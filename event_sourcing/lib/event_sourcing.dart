@@ -19,9 +19,16 @@
 /// - `SubscriptionFilter` — filter by aggregate type, entry type, event type.
 /// - `SubscriptionMode` — sealed: `Events` (raw) or `AggregateMode` (view).
 /// - `Update` — sealed stream element: `Snapshot`, `EndOfReplay`, `Delta`, `Tombstone`.
-/// - `DowngradeRefusedError` — thrown by `EventStore.open` on lib downgrade.
+/// - `DataFormatIncompatibleError` — thrown by `EventStore.open` when the
+///   database was last opened by a build of another data-format major.
+/// - `DatabaseResetRequiredError` / `DatabaseIdentityMismatchError` — thrown
+///   by `EventStore.open` for a database an earlier build wrote, or whose
+///   stored identity is missing or changed.
+/// - `LibVersion` — this build's package version and data-format version.
 /// - `EntryTypeVersionDowngradeError` — thrown by `EventStore.open` when any
-///   entry type's `registeredVersion` is below its stored target.
+///   entry type's registered major is below its stored target's major.
+/// - `EntryTypeVersion` / `DataFormatVersion` — major.minor versions of an
+///   entry type and of the library's data format.
 ///
 /// ## Quick start
 ///
@@ -37,12 +44,31 @@
 ///     tombstoneEventTypes: {'invoice_cancelled'},
 ///   ));
 ///
-/// // Open the store (runs lib-version boot check).
+/// // Open the store: the boot checks the database and registers the
+/// // library's reserved entry types and its default views.
 /// final db = await databaseFactoryIo.openDatabase('data.db');
-/// final store = await EventStore.open(
-///   storage: SembastBackend(db),
+/// final bundle = await bootstrapEventStore(
+///   backend: SembastBackend(database: db),
+///   source: const Source(
+///     hopId: 'mobile-device',
+///     identifier: '00000000-0000-4000-8000-000000000001',
+///     softwareVersion: 'my-app@1.0.0',
+///   ),
+///   entryTypes: const [
+///     EntryTypeDefinition(
+///       id: 'invoice_created',
+///       registeredVersion: EntryTypeVersion(1, 0),
+///       name: 'Invoice created',
+///     ),
+///   ],
+///   destinations: const [],
 ///   projections: projections,
 /// );
+/// final store = bundle.eventStore;
+///
+/// // Deliver to the registered destinations: the delivery cycle fills and
+/// // drains their queues (one cycle per database drains; others stand by).
+/// final cycle = await SyncCycle.start(registry: bundle.destinations);
 ///
 /// // Append an event. The substrate stamps entry_type_version from
 /// // the registry's registeredVersion for 'invoice_created'.
@@ -74,6 +100,7 @@
 ///   }
 /// }
 ///
+/// await cycle.close();
 /// await store.close();
 /// ```
 ///
@@ -146,12 +173,16 @@ export 'src/core/errors/sync_exception.dart';
 // exported.
 export 'src/destinations/batch_envelope_metadata.dart'
     show BatchEnvelopeMetadata;
+export 'src/destinations/default_destination_wedges_spec.dart'
+    show defaultDestinationWedgesSpec;
 export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_registry.dart' show DestinationRegistry;
 export 'src/destinations/destination_schedule.dart'
     show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
+export 'src/destinations/halt_purpose.dart' show HaltPurpose;
 export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
+export 'src/destinations/wedge_cause.dart' show WedgeCause;
 export 'src/destinations/wire_payload.dart' show WirePayload;
 
 // Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
@@ -163,12 +194,7 @@ export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 // appendWithSecurity call.
 export 'src/event_draft.dart' show EventDraft;
 export 'src/event_store.dart'
-    show
-        DowngradeRefusedError,
-        EntryTypeVersionDowngradeError,
-        EventStore,
-        EventStoreSyncCycleTrigger,
-        RetentionResult;
+    show EntryTypeVersionDowngradeError, EventStore, RetentionResult;
 
 // Ingest types — error types, result types, and chain verdict.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
@@ -177,61 +203,26 @@ export 'src/ingest/chain_verdict.dart'
 export 'src/ingest/ingest_errors.dart'
     show
         IngestChainBroken,
+        IngestDataFormatIncompatible,
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
+        IngestEntryTypeVersionUnpromotable,
         IngestIdentityMismatch,
-        IngestLibFormatVersionAhead;
+        IngestReservedEventRefused,
+        ReservedEventRefusal;
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
-// Projections — declarative view specs, the registry that holds them, and
-// the parameterized rebuild helper. Projections use the declarative
-// ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
-// is intentionally NOT exported — it lives under test/test_support/ so
-// production code cannot depend on it.
-export 'src/projections/rebuild.dart' show rebuildView;
-// Callers create AggregateProjectionSpec / TableProjectionSpec values,
-// register them in a ProjectionRegistry, and pass the registry to
-// bootstrapEventStore or directly to EventStore.
-export 'src/projections/projection_spec.dart'
-    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
-export 'src/projections/projection_registry.dart' show ProjectionRegistry;
-// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
-// when an app declares its own projections. Re-exported because they are the
-// public API surface for defining projection shape, not internal implementation.
-export 'src/projections/primitives/row_key.dart'
-    show AggregateIdKey, CompositeKey, RowKeyExtractor;
-export 'src/projections/primitives/row_data.dart'
-    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
-export 'src/projections/primitives/derived_field.dart'
-    show
-        ConstantValue,
-        DerivedField,
-        DerivedFieldComputation,
-        DottedPathLookup,
-        FallbackValue,
-        FirstEventTimestamp;
-
-// Promoters — entry-type version promotion chains for schema migration.
-export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
-export 'src/promoters/promoter_spec.dart' show PromoterSpec;
-export 'src/promoters/primitives/transform.dart'
-    show
-        DefaultField,
-        DropField,
-        RenameField,
-        TransformChain,
-        TransformPrimitive;
-
-// Subscriptions — live-update stream primitives returned by
-// EventStore.subscribe<T>().
-export 'src/subscriptions/subscription_mode.dart'
-    show AggregateMode, Events, SubscriptionMode;
-export 'src/subscriptions/update.dart'
-    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
-
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.
+export 'src/lifecycle/boot_errors.dart'
+    show
+        DatabaseIdentityMismatchError,
+        DatabaseResetRequiredError,
+        DataFormatIncompatibleError;
+export 'src/lifecycle/boot_progress.dart' show BootPhase, BootProgress;
+export 'src/lifecycle/lib_version.dart' show LibVersion;
+
 export 'src/permissions/authorization_bootstrap_result.dart'
     show AuthorizationBootstrapResult, PolicyReady, PolicyFailSafe;
 export 'src/permissions/bootstrap_action_permissions.dart'
@@ -240,12 +231,8 @@ export 'src/permissions/bootstrap_role_assignments.dart'
     show RoleAssignmentSeedResult, bootstrapRoleAssignments;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
-export 'src/permissions/scope_descendant_expander.dart'
-    show ScopeDescendantExpander;
 export 'src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
-export 'src/permissions/permission_seed_applier.dart'
-    show PermissionSeedApplier, SeedApplyResult;
 export 'src/permissions/fail_safe_authorization_policy.dart'
     show FailSafeAuthorizationPolicy;
 export 'src/permissions/permission_granted_payload.dart'
@@ -253,16 +240,17 @@ export 'src/permissions/permission_granted_payload.dart'
 export 'src/permissions/permission_revoked_payload.dart'
     show PermissionRevokedPayload;
 export 'src/permissions/permission_seed.dart' show PermissionSeed;
+export 'src/permissions/permission_seed_applier.dart'
+    show PermissionSeedApplier, SeedApplyResult;
 export 'src/permissions/role_assigned_payload.dart' show RoleAssignedPayload;
 export 'src/permissions/role_assignment_aggregate_id.dart'
     show computeRoleAssignmentAggregateId;
 export 'src/permissions/role_assignment_seed.dart'
     show RoleAssignmentSeed, RoleAssignmentSeedEntry;
-export 'src/permissions/role_unassigned_payload.dart'
-    show RoleUnassignedPayload;
 export 'src/permissions/role_permission_grants_spec.dart'
     show rolePermissionGrantsSpec;
-export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
+export 'src/permissions/role_unassigned_payload.dart'
+    show RoleUnassignedPayload;
 export 'src/permissions/scope_assignment.dart' show ScopeAssignment;
 export 'src/permissions/scope_class_match.dart'
     show ScopeClassMatch, matchScopeClass;
@@ -270,17 +258,61 @@ export 'src/permissions/scope_class_registry.dart'
     show ScopeClassRegistry, ScopeProjectionDescriptor;
 export 'src/permissions/scope_class_spec.dart'
     show ContainmentReference, ScopeClassSpec;
+export 'src/permissions/scope_descendant_expander.dart'
+    show ScopeDescendantExpander;
 export 'src/permissions/seed_validator.dart'
     show SeedInvalid, SeedValid, SeedValidationResult, SeedValidator;
 export 'src/permissions/table_backed_authorization_policy.dart'
     show TableBackedAuthorizationPolicy;
+export 'src/permissions/user_role_scopes_spec.dart' show userRoleScopesSpec;
 export 'src/permissions/yaml_seed_loader.dart' show YamlSeedLoader;
+
+// Projections — declarative view specs, the registry that holds them, and
+// the parameterized rebuild helper. Projections use the declarative
+// ProjectionSpec/PromoterRegistry model. MapEntryTypeDefinitionLookup
+// is intentionally NOT exported — it lives under test/test_support/ so
+// production code cannot depend on it.
+// Projection primitives consumed by AggregateProjectionSpec / TableProjectionSpec
+// when an app declares its own projections. Re-exported because they are the
+// public API surface for defining projection shape, not internal implementation.
+export 'src/projections/primitives/derived_field.dart'
+    show
+        ConstantValue,
+        DerivedField,
+        DerivedFieldComputation,
+        DottedPathLookup,
+        FallbackValue,
+        FirstEventTimestamp;
+export 'src/projections/primitives/row_data.dart'
+    show PayloadField, RowDataExtractor, SelectedFields, WholePayload;
+export 'src/projections/primitives/row_key.dart'
+    show AggregateIdKey, CompositeKey, RowKeyExtractor;
+export 'src/projections/projection_registry.dart' show ProjectionRegistry;
+// Callers create AggregateProjectionSpec / TableProjectionSpec values,
+// register them in a ProjectionRegistry, and pass the registry to
+// bootstrapEventStore or directly to EventStore.
+export 'src/projections/projection_spec.dart'
+    show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
+export 'src/projections/rebuild.dart' show rebuildView;
+
+// Promoters — entry-type version promotion chains for schema migration.
+export 'src/promoters/primitives/transform.dart'
+    show
+        DefaultField,
+        DropField,
+        RenameField,
+        TransformChain,
+        TransformPrimitive;
+export 'src/promoters/promoter_registry.dart' show PromoterRegistry;
+export 'src/promoters/promoter_spec.dart' show PromoterSpec;
 
 // Security module — EventSecurityContext value type, SecurityDetails caller
 // input, SecurityRetentionPolicy sweeps, SecurityContextStore read-only
 // surface, concrete impls, and reserved system entry types for
 // redaction/compact/purge audit events.
 export 'src/security/event_security_context.dart' show EventSecurityContext;
+export 'src/security/postgres_security_context_store.dart'
+    show PostgresSecurityContextStore;
 export 'src/security/security_context_store.dart'
     show AuditRow, PagedAudit, SecurityContextStore;
 export 'src/security/security_details.dart' show SecurityDetails;
@@ -288,20 +320,36 @@ export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
 export 'src/security/sembast_security_context_store.dart'
     show SembastSecurityContextStore;
-export 'src/security/postgres_security_context_store.dart'
-    show PostgresSecurityContextStore;
 export 'src/security/system_entry_types.dart'
     show
-        // Security-context lifecycle audits.
+        // Security-context lifecycle audits: entry types, their aggregate
+        // type and the per-kind event types they are appended under.
+        kSecurityContextAuditAggregateType,
         kSecurityContextCompactedEntryType,
+        kSecurityContextCompactedEventType,
         kSecurityContextPurgedEntryType,
+        kSecurityContextPurgedEventType,
         kSecurityContextRedactedEntryType,
-        // Destination-mutation audits.
+        kSecurityContextRedactedEventType,
+        // Destination-mutation audits: entry types, their aggregate type and
+        // the per-kind event types they are appended under.
+        kDestinationAuditAggregateType,
         kDestinationDeletedEntryType,
+        kDestinationDeletedEventType,
         kDestinationEndDateSetEntryType,
+        kDestinationEndDateSetEventType,
+        kDestinationHaltCancelledEntryType,
+        kDestinationHaltCancelledEventType,
+        kDestinationHaltRequestedEntryType,
+        kDestinationHaltRequestedEventType,
         kDestinationRegisteredEntryType,
+        kDestinationRegisteredEventType,
         kDestinationStartDateSetEntryType,
+        kDestinationStartDateSetEventType,
         kDestinationWedgeRecoveredEntryType,
+        kDestinationWedgeRecoveredEventType,
+        kDestinationWedgedEntryType,
+        kDestinationWedgedEventType,
         // Retention sweep audit.
         kRetentionPolicyAppliedEntryType,
         // Bootstrap registry-initialized audit.
@@ -315,17 +363,53 @@ export 'src/security/system_entry_types.dart'
 
 // Storage layer — StorageBackend contract, the SembastBackend +
 // PostgresBackend concrete implementations, and the value types that
-// flow through the contract. `ensurePostgresSchema` is intentionally
-// library-private: only `PostgresBackend.open` calls it.
+// flow through the contract. The Postgres migration list is
+// library-private: only `PostgresBackend.provision` applies it.
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
+export 'src/storage/boot_check.dart' show BootCheck;
+export 'src/storage/drain_lock.dart'
+    show
+        DrainLock,
+        DrainLockBackendClosedException,
+        DrainLockConfigurationException,
+        DrainLockLossReason,
+        DrainLockLostException,
+        DrainLockRequest,
+        DrainLockUnavailableException;
+export 'src/storage/drain_records.dart'
+    show
+        DeliveryStatus,
+        DestinationDeliveryStatus,
+        DrainHeartbeat,
+        DrainerDeclaration,
+        RefillGuard,
+        UnservedReason;
+export 'src/storage/event_hash.dart' show canonicalEventHash;
 export 'src/storage/fifo_entry.dart' show SequenceRange, FifoEntry;
 export 'src/storage/final_status.dart' show FinalStatus;
+export 'src/storage/generation.dart'
+    show
+        GenerationDescriptor,
+        GenerationFencedException,
+        GenerationGuardConfigurationException,
+        GenerationRecord,
+        GenerationRegistration,
+        GenerationStatus,
+        IncompatibleGenerationException;
 export 'src/storage/initiator.dart'
     show Initiator, UserInitiator, AutomationInitiator, AnonymousInitiator;
 export 'src/storage/postgres/postgres.dart';
-export 'src/storage/sembast_backend.dart'
-    show SembastBackend, SembastBackendTestSupport;
+export 'src/storage/queue_records.dart'
+    show
+        HaltRequest,
+        QueueRetirement,
+        RegistryCheck,
+        ReplayRequest,
+        SendFence,
+        TrailSweepResult,
+        WedgeRecord;
+export 'src/storage/sembast_backend.dart' show SembastBackend;
 export 'src/storage/send_result.dart'
     show SendResult, SendOk, SendTransient, SendPermanent;
 export 'src/storage/source.dart' show Source;
@@ -339,10 +423,27 @@ export 'src/storage/storage_exception.dart'
         classifyStorageException;
 export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/transaction.dart' show Transaction;
+export 'src/storage/transaction_rerun_limit.dart'
+    show TransactionRerunLimitException;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 
-// Sync — backoff curve, drain loop, and top-level orchestrator.
-export 'src/sync/drain.dart' show Clock, drain;
-export 'src/sync/fill_batch.dart' show fillBatch;
-export 'src/sync/sync_cycle.dart' show SyncCycle;
+// Subscriptions — live-update stream primitives returned by
+// EventStore.subscribe<T>().
+export 'src/subscriptions/subscription_mode.dart'
+    show AggregateMode, Events, SubscriptionMode;
+export 'src/subscriptions/update.dart'
+    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
+
+// Implements: EVS-PRD-destinations/K
+// the queue-changing functions are not
+//   exported; SyncCycle and DestinationRegistry are the entry points.
+// Sync — the delivery cycle, its clock and its policy. The cycle is the
+// only entry point that fills and drains destination queues.
+export 'src/sync/clock.dart' show Clock;
+export 'src/sync/declared_configuration.dart'
+    show configurationFingerprint, declaredConfiguration;
+export 'src/sync/sync_cycle.dart' show SyncCycle, SyncCycleState;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
+
+// Versions — entry-type versions and the library's data-format version.
+export 'src/versions.dart' show DataFormatVersion, EntryTypeVersion;

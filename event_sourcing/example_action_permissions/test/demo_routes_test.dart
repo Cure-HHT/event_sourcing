@@ -162,7 +162,7 @@ void runDemoRoutesTests(DemoBackendFactory factory, {required String label}) {
       final body = await _readJson(r);
       final snap = InspectSnapshot.fromJson(body);
       expect(snap.directory, hasLength(3));
-      expect(snap.matrixGrants, hasLength(9));
+      expect(snap.matrixGrants, hasLength(10));
     });
 
     test('lastTrace updates after a dispatch', () async {

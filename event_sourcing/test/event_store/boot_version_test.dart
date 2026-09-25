@@ -1,21 +1,21 @@
-// Verifies: EVS-DEV-event-store-open/B+C+D
-// EventStore.open boot flow:
-//   emits lib_version_initialized on first boot (B), emits lib_version_changed
-//   on upgrade (C), refuses to construct on downgrade throwing
-//   DowngradeRefusedError (D); also verifies no-op on same-version reboot
-//   (no additional event emitted).
+// EventStore.open boot flow on Sembast: the library-version event it
+// appends at the first open, after an upgrade and after a downgrade within
+// one data-format major, none on a same-version reopen, and the refusal of
+// another data-format major.
 
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
-import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
-import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/lib_version_seed.dart';
 
 const _kTestSource = Source(
   hopId: 'boot-version-test',
@@ -30,140 +30,96 @@ Future<SembastBackend> _openBackend() async {
   return SembastBackend(database: db);
 }
 
-/// Append a synthetic version event directly to [backend], simulating a
-/// previous boot at [version]. Uses the Transaction-based API with an explicit
-/// nextSequenceNumber reservation, matching the pattern from version_check_test.
-Future<void> _appendSyntheticVersionEvent(
-  SembastBackend backend, {
-  required String version,
-  required String eventType,
-  String? fromVersion,
-}) async {
-  await backend.transaction((txn) async {
-    final seq = await backend.nextSequenceNumber(txn);
-    final data = eventType == LibVersionEvents.initialized
-        ? <String, Object?>{
-            'version': version,
-            'initializedAt': '2026-04-01T00:00:00Z',
-          }
-        : <String, Object?>{
-            'fromVersion': fromVersion ?? '0.0.0',
-            'toVersion': version,
-            'changedAt': '2026-04-01T00:00:00Z',
-          };
-    await backend.appendEvent(
-      txn,
-      StoredEvent.synthetic(
-        eventId: 'synth-$eventType-$seq',
-        aggregateId: '_lib',
-        aggregateType: '_lib',
-        entryType: eventType,
-        eventType: eventType,
-        sequenceNumber: seq,
-        eventHash: 'h-$seq',
-        initiator: const AutomationInitiator(service: 'event_sourcing'),
-        clientTimestamp: DateTime.utc(2026, 4, 1),
-        data: Map<String, dynamic>.from(data),
-      ),
-    );
-  });
-}
+Future<EventStore> _open(SembastBackend backend) => EventStore.open(
+  storage: backend,
+  entryTypes: EntryTypeRegistry(),
+  source: _kTestSource,
+  securityContexts: SembastSecurityContextStore(backend: backend),
+);
+
+Future<RecordedLibVersion?> _latest(SembastBackend backend) async =>
+    (await backend.transaction(
+      (txn) => VersionCheck.readLocalInTxn(backend, txn),
+    )).latest;
 
 void main() {
   group('EventStore.open boot version flow', () {
+    // Verifies: EVS-DEV-event-store-open/B
     test('emits lib_version_initialized on first boot', () async {
       final backend = await _openBackend();
-      final store = await EventStore.open(
-        storage: backend,
-        entryTypes: EntryTypeRegistry(),
-        source: _kTestSource,
-        securityContexts: SembastSecurityContextStore(backend: backend),
-      );
-      final result = await VersionCheck.findMostRecent(backend);
-      expect(result?.recordedVersion, LibVersion.version);
-      expect(result?.eventType, LibVersionEvents.initialized);
+      final store = await _open(backend);
+      final result = await _latest(backend);
+      expect(result?.packageVersion, LibVersion.version);
+      expect(result?.dataFormat, LibVersion.dataFormat);
+      expect(result?.event.eventType, LibVersionEvents.initialized);
       await store.close();
     });
 
+    // Verifies: EVS-DEV-event-store-open/C
     test('no-op when recorded version equals current', () async {
       final backend = await _openBackend();
-      // first boot writes init
-      await EventStore.open(
-        storage: backend,
-        entryTypes: EntryTypeRegistry(),
-        source: _kTestSource,
-        securityContexts: SembastSecurityContextStore(backend: backend),
+      await _open(backend);
+      final beforeSecond = await _latest(backend);
+      await _open(backend);
+      final afterSecond = await _latest(backend);
+      expect(
+        afterSecond?.event.sequenceNumber,
+        beforeSecond?.event.sequenceNumber,
       );
-      final beforeSecond = await VersionCheck.findMostRecent(backend);
-      // second boot at same version
-      await EventStore.open(
-        storage: backend,
-        entryTypes: EntryTypeRegistry(),
-        source: _kTestSource,
-        securityContexts: SembastSecurityContextStore(backend: backend),
-      );
-      final afterSecond = await VersionCheck.findMostRecent(backend);
-      expect(afterSecond?.sequenceNumber, beforeSecond?.sequenceNumber);
     });
 
+    // Verifies: EVS-DEV-event-store-open/C
     test('emits lib_version_changed on upgrade', () async {
       final backend = await _openBackend();
-      // Simulate an older recorded version by appending a synthetic init event.
-      await _appendSyntheticVersionEvent(
+      await seedLibVersionEventForTest(
         backend,
         version: '0.3.0',
-        eventType: LibVersionEvents.initialized,
+        dataFormat: LibVersion.dataFormat,
       );
-      final store = await EventStore.open(
-        storage: backend,
-        entryTypes: EntryTypeRegistry(),
-        source: _kTestSource,
-        securityContexts: SembastSecurityContextStore(backend: backend),
-      );
-      final result = await VersionCheck.findMostRecent(backend);
-      expect(result?.eventType, LibVersionEvents.changed);
-      expect(result?.recordedVersion, LibVersion.version);
+      final store = await _open(backend);
+      final result = await _latest(backend);
+      expect(result?.event.eventType, LibVersionEvents.changed);
+      expect(result?.packageVersion, LibVersion.version);
+      expect(result?.event.data['fromVersion'], '0.3.0');
       await store.close();
     });
 
-    test('refuses to boot on downgrade by default', () async {
+    // Verifies: EVS-DEV-event-store-open/C
+    test('emits lib_version_changed when the recorded version is newer '
+        'within the data-format major', () async {
       final backend = await _openBackend();
-      // Simulate a future version recorded.
-      await _appendSyntheticVersionEvent(
+      await seedLibVersionEventForTest(
         backend,
         version: '99.0.0',
-        eventType: LibVersionEvents.initialized,
+        dataFormat: LibVersion.dataFormat.nextMinor,
       );
+      final store = await _open(backend);
+      final result = await _latest(backend);
+      expect(result?.event.eventType, LibVersionEvents.changed);
+      expect(result?.event.data['fromVersion'], '99.0.0');
       expect(
-        () => EventStore.open(
-          storage: backend,
-          entryTypes: EntryTypeRegistry(),
-          source: _kTestSource,
-          securityContexts: SembastSecurityContextStore(backend: backend),
-        ),
-        throwsA(isA<DowngradeRefusedError>()),
+        result?.event.data['fromDataFormat'],
+        LibVersion.dataFormat.nextMinor.toJson(),
       );
+      expect(result?.packageVersion, LibVersion.version);
+      expect(result?.dataFormat, LibVersion.dataFormat);
+      await store.close();
     });
 
-    test('allowDowngrade: true bypasses downgrade refusal', () async {
+    // Verifies: EVS-DEV-event-store-open/D
+    test('refuses a database of another data-format major', () async {
       final backend = await _openBackend();
-      await _appendSyntheticVersionEvent(
+      await seedLibVersionEventForTest(
         backend,
         version: '99.0.0',
-        eventType: LibVersionEvents.initialized,
+        dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
       );
-      final store = await EventStore.open(
-        storage: backend,
-        entryTypes: EntryTypeRegistry(),
-        source: _kTestSource,
-        securityContexts: SembastSecurityContextStore(backend: backend),
-        allowDowngrade: true,
+      await expectLater(
+        _open(backend),
+        throwsA(isA<DataFormatIncompatibleError>()),
       );
-      // No new lib_version event should be emitted on downgrade — the existing
-      // record stays authoritative until the next upgrade re-passes through.
-      final result = await VersionCheck.findMostRecent(backend);
-      expect(result?.recordedVersion, '99.0.0');
-      await store.close();
+      final result = await _latest(backend);
+      expect(result?.packageVersion, '99.0.0');
     });
   });
 }

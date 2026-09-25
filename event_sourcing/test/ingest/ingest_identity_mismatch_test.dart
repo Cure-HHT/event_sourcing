@@ -37,29 +37,8 @@ Future<_Fixture> _openStore({
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: 1,
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: 1,
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: 1,
-        name: 'SC Purged',
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -107,10 +86,14 @@ void main() {
           expect(e1, isNotNull);
           await dest.store.ingestEvent(e1!);
 
-          // 2. Build a tampered version: same event_id, different event_hash.
+          // 2. Build a divergent copy: same event_id, different content,
+          //    sealed with the canonical hash of that content.
           final tamperedMap = e1.toMap();
-          tamperedMap['event_hash'] =
-              'totally-different-hash-abcdef1234567890ab';
+          tamperedMap['data'] = const {
+            'answers': {'severity': 'severe'},
+          };
+          final divergentHash = canonicalEventHash(tamperedMap);
+          tamperedMap['event_hash'] = divergentHash;
           final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
           // 3. Re-ingest with mismatched hash must throw.
@@ -119,11 +102,7 @@ void main() {
             throwsA(
               isA<IngestIdentityMismatch>()
                   .having((e) => e.eventId, 'eventId', e1.eventId)
-                  .having(
-                    (e) => e.incomingHash,
-                    'incomingHash',
-                    'totally-different-hash-abcdef1234567890ab',
-                  ),
+                  .having((e) => e.incomingHash, 'incomingHash', divergentHash),
             ),
           );
 
@@ -159,7 +138,10 @@ void main() {
         await dest.store.ingestEvent(e1!);
 
         final tamperedMap = e1.toMap();
-        tamperedMap['event_hash'] = 'bad-hash-0000000000000000000000000000';
+        tamperedMap['data'] = const {
+          'answers': {'severity': 'severe'},
+        };
+        tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
         // Should throw.

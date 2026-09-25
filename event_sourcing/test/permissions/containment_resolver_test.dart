@@ -156,7 +156,7 @@ void main() {
       );
       final resolver = ContainmentResolver(
         registry: reg,
-        findRowsInTxn: (_, __, {where, limit, offset}) async => [],
+        findRowsInTxn: (_, _, {where, limit, offset}) async => [],
       );
       final result = await resolver.resolve(
         txn: const _FakeTxn(),
@@ -166,7 +166,7 @@ void main() {
       expect(result, equals(const BoundScope(class_: 'site', value: 'A')));
     });
 
-    test('returns null when target is not in from\'s ancestor chain', () async {
+    test("returns null when target is not in from's ancestor chain", () async {
       final reg = ScopeClassRegistry(
         classes: const [
           ScopeClassSpec(name: 'site'),
@@ -176,7 +176,7 @@ void main() {
       );
       final resolver = ContainmentResolver(
         registry: reg,
-        findRowsInTxn: (_, __, {where, limit, offset}) async => [],
+        findRowsInTxn: (_, _, {where, limit, offset}) async => [],
       );
       final result = await resolver.resolve(
         txn: const _FakeTxn(),

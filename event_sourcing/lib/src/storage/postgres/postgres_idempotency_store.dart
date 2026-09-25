@@ -6,9 +6,8 @@
 // Implements: EVS-DEV-postgres-backend/E
 // persist entries in the
 //   `idempotency` table keyed by (action_name, principal_id,
-//   idempotency_key). The DDL is emitted by `ensurePostgresSchema`
-//   (Task 1 of the Postgres backend plan) and shared with the rest of
-//   the backend.
+//   idempotency_key). The table is created by `PostgresBackend.provision`
+//   with the rest of the backend's schema.
 // Implements: EVS-DEV-postgres-backend/F
 // passes the
 //   `runIdempotencyStoreConformanceTests` harness alongside
@@ -16,6 +15,9 @@
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
+import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed [IdempotencyStore]. Persists each dispatch outcome
@@ -24,19 +26,34 @@ import 'package:postgres/postgres.dart';
 /// determines uniqueness and the in-memory and Postgres impls share
 /// the same key semantics.
 ///
-/// The store assumes the `idempotency` table already exists; the
-/// substrate's `PostgresBackend.open` emits the DDL alongside the
-/// events tables via `ensurePostgresSchema`. Standalone callers
-/// (test harnesses, scripts) must call `ensurePostgresSchema` against
-/// the underlying database first.
+/// The store assumes the `idempotency` table exists: `PostgresBackend.
+/// provision` creates it with the rest of the backend's schema.
 class PostgresIdempotencyStore implements IdempotencyStore {
-  /// Build a [PostgresIdempotencyStore] over an already-opened [Pool].
-  /// Pool lifecycle (open/close, connection limits) is the caller's
-  /// concern — `PostgresBackend` owns its own pool, and standalone
-  /// callers (e.g., the conformance harness) own theirs.
-  PostgresIdempotencyStore.over(this._pool);
+  /// Build a [PostgresIdempotencyStore] over [backend], so dispatch
+  /// outcomes persist in the backend's database. Every read and write runs
+  /// through `PostgresBackend.transaction`, so it is checked against the
+  /// database's generation record like every other library write, and a
+  /// fenced backend refuses it. The backend owns the connections; closing
+  /// the backend closes the store's.
+  // Implements: EVS-DEV-version-compatibility/I
+  // the idempotency store's lookups, records and sweeps run through the
+  //   backend's fenced transactions.
+  PostgresIdempotencyStore.forBackend(PostgresBackend backend)
+    : _run = _throughBackend(backend);
 
-  final Pool<void> _pool;
+  /// Build a [PostgresIdempotencyStore] over an already-opened [Pool] the
+  /// caller owns, for the store's own conformance tests. Pool lifecycle
+  /// (open/close, connection limits) is the caller's concern.
+  @visibleForTesting
+  PostgresIdempotencyStore.over(Pool<void> pool)
+    : _run = (<R>(Future<R> Function(Session session) op) => pool.run(op));
+
+  final Future<R> Function<R>(Future<R> Function(Session session) op) _run;
+
+  static Future<R> Function<R>(Future<R> Function(Session session) op)
+  _throughBackend(PostgresBackend backend) =>
+      <R>(Future<R> Function(Session session) op) =>
+          backend.transaction((txn) => op((txn as PostgresTxn).session));
 
   // Implements: EVS-PRD-action-dispatch/D
   // entries past their
@@ -58,8 +75,9 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     DateTime? now,
   }) async {
     final cutoff = (now ?? DateTime.now()).toUtc();
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _run(
+      (session) => session.execute(
+        Sql.named('''
         SELECT result_json, emitted_event_ids, recorded_at, expires_at,
                raw_input_canonical_json
         FROM idempotency
@@ -69,12 +87,13 @@ class PostgresIdempotencyStore implements IdempotencyStore {
           AND expires_at > @cutoff
         LIMIT 1
       '''),
-      parameters: {
-        'a': actionName,
-        'p': principalId,
-        'k': key,
-        'cutoff': cutoff,
-      },
+        parameters: {
+          'a': actionName,
+          'p': principalId,
+          'k': key,
+          'cutoff': cutoff,
+        },
+      ),
     );
     if (result.isEmpty) return null;
     final row = result.first;
@@ -119,8 +138,9 @@ class PostgresIdempotencyStore implements IdempotencyStore {
     required DateTime expiresAt,
     String? rawInputCanonicalJson,
   }) async {
-    await _pool.execute(
-      Sql.named('''
+    await _run(
+      (session) => session.execute(
+        Sql.named('''
         INSERT INTO idempotency (
           action_name, principal_id, idempotency_key,
           result_json, emitted_event_ids, recorded_at, expires_at,
@@ -138,16 +158,17 @@ class PostgresIdempotencyStore implements IdempotencyStore {
           expires_at = EXCLUDED.expires_at,
           raw_input_canonical_json = EXCLUDED.raw_input_canonical_json
       '''),
-      parameters: {
-        'a': actionName,
-        'p': principalId,
-        'k': key,
-        'res': resultJson,
-        'ids': emittedEventIds,
-        'recAt': DateTime.now().toUtc(),
-        'expAt': expiresAt.toUtc(),
-        'rawJson': rawInputCanonicalJson,
-      },
+        parameters: {
+          'a': actionName,
+          'p': principalId,
+          'k': key,
+          'res': resultJson,
+          'ids': emittedEventIds,
+          'recAt': DateTime.now().toUtc(),
+          'expAt': expiresAt.toUtc(),
+          'rawJson': rawInputCanonicalJson,
+        },
+      ),
     );
   }
 
@@ -158,9 +179,11 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   @override
   Future<int> sweepExpired({DateTime? before}) async {
     final cutoff = (before ?? DateTime.now()).toUtc();
-    final result = await _pool.execute(
-      Sql.named('DELETE FROM idempotency WHERE expires_at <= @c'),
-      parameters: {'c': cutoff},
+    final result = await _run(
+      (session) => session.execute(
+        Sql.named('DELETE FROM idempotency WHERE expires_at <= @c'),
+        parameters: {'c': cutoff},
+      ),
     );
     return result.affectedRows;
   }
@@ -170,14 +193,16 @@ class PostgresIdempotencyStore implements IdempotencyStore {
   //   currently-cached entry; not filtered by expiry (callers decide).
   @override
   Future<List<IdempotencyEntry>> listEntries() async {
-    final result = await _pool.execute(
-      Sql.named('''
+    final result = await _run(
+      (session) => session.execute(
+        Sql.named('''
         SELECT action_name, principal_id, idempotency_key,
                result_json, emitted_event_ids, recorded_at, expires_at,
                raw_input_canonical_json
         FROM idempotency
         ORDER BY action_name ASC, principal_id ASC, idempotency_key ASC
       '''),
+      ),
     );
     return List<IdempotencyEntry>.unmodifiable(
       result.map(

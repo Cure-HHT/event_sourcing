@@ -19,6 +19,7 @@ import 'package:uuid/uuid.dart';
 ///
 /// Defining this as an interface lets tests inject a deterministic
 /// stub for reproducible assertions.
+// ignore: one_member_abstracts, a pluggable interface tests replace with a deterministic stub
 abstract interface class IdempotencyKeyGenerator {
   String generate();
 }
@@ -26,13 +27,12 @@ abstract interface class IdempotencyKeyGenerator {
 /// Default impl: generates random UUID v4 strings using the `uuid`
 /// package.
 class UuidIdempotencyKeyGenerator implements IdempotencyKeyGenerator {
-  final Uuid _uuid;
-
   UuidIdempotencyKeyGenerator() : _uuid = const Uuid();
 
   /// Injection point for tests that want a deterministic UUID source.
   @visibleForTesting
   UuidIdempotencyKeyGenerator.withUuid(this._uuid);
+  final Uuid _uuid;
 
   @override
   String generate() => _uuid.v4();

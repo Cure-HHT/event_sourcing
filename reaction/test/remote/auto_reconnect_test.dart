@@ -32,8 +32,7 @@ void main() {
           maxAttempts: 3,
           multiplier: 2,
         ),
-      );
-      conn.onConnectionStatusChanged = transitions.add;
+      )..onConnectionStatusChanged = transitions.add;
 
       // Open a subscription; the connection lazily connects.
       conn
@@ -83,8 +82,7 @@ void main() {
           maxAttempts: 2,
           multiplier: 2,
         ),
-      );
-      conn.onConnectionStatusChanged = transitions.add;
+      )..onConnectionStatusChanged = transitions.add;
 
       conn
           .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
@@ -122,8 +120,7 @@ void main() {
           maxAttempts: 3,
           multiplier: 2,
         ),
-      );
-      conn.onConnectionStatusChanged = transitions.add;
+      )..onConnectionStatusChanged = transitions.add;
 
       conn
           .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')
@@ -165,8 +162,7 @@ void main() {
             maxAttempts: 3,
             multiplier: 2,
           ),
-        );
-        conn.onConnectionStatusChanged = transitions.add;
+        )..onConnectionStatusChanged = transitions.add;
 
         conn
             .openSubscription(subscriptionId: 'sub-1', viewName: 'notes_today')

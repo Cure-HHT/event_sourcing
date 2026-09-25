@@ -6,6 +6,11 @@
 // rebuild is deterministic and idempotent;
 //   tests confirm identical rows across two consecutive rebuilds on the same
 //   log, as well as cross-chunk correctness for large logs.
+// Verifies: EVS-PRD-destinations/K
+// the view rebuild writes only target
+//   versions derived from the entry-type registry: a target that differs
+//   from its entry type's registered version, or names an unregistered entry
+//   type, is refused before any write and the view is left untouched.
 //
 // ProjectionSpec replay; strict-superset target-version map.
 
@@ -27,8 +32,6 @@ const _kAggSpec = AggregateProjectionSpec(
   tombstoneEventTypes: <String>{'tombstone'},
 );
 
-final _kProjections = ProjectionRegistry()..register(_kAggSpec);
-
 Future<EventStore> _openStore() async {
   _dbCounter += 1;
   final db = await newDatabaseFactoryMemory().openDatabase(
@@ -36,9 +39,31 @@ Future<EventStore> _openStore() async {
   );
   final backend = SembastBackend(database: db);
   final proj = ProjectionRegistry()..register(_kAggSpec);
+  final entryTypes = EntryTypeRegistry()
+    ..register(
+      const EntryTypeDefinition(
+        id: _kEntryType,
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: _kEntryType,
+      ),
+    )
+    ..register(
+      const EntryTypeDefinition(
+        id: 'other_event',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'other_event',
+      ),
+    )
+    ..register(
+      const EntryTypeDefinition(
+        id: 'newcomer_type',
+        registeredVersion: EntryTypeVersion(2, 0),
+        name: 'newcomer_type',
+      ),
+    );
   return EventStore.openForTest(
     storage: backend,
-    entryTypes: EntryTypeRegistry(),
+    entryTypes: entryTypes,
     source: const Source(
       hopId: 'test',
       identifier: 'test-device',
@@ -68,8 +93,8 @@ Future<void> _appendEvent(
         aggregateId: aggregateId,
         aggregateType: 'SampleAggregate',
         entryType: entryType,
-        entryTypeVersion: 1,
-        libFormatVersion: 1,
+        entryTypeVersion: const EntryTypeVersion(1, 0),
+        libFormatVersion: const DataFormatVersion(2, 0),
         eventType: eventType,
         sequenceNumber: seq,
         data: data,
@@ -98,13 +123,13 @@ void main() {
           txn,
           'toy_view',
           'sample_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
         await store.backend.writeViewTargetVersionInTxn(
           txn,
           'toy_view',
           'other_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await expectLater(
@@ -112,18 +137,82 @@ void main() {
           store: store,
           viewName: 'toy_view',
           // 'other_event' missing — strict-superset violation.
-          targetVersionByEntryType: const <String, int>{'sample_event': 1},
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            'sample_event': EntryTypeVersion(1, 0),
+          },
         ),
         throwsArgumentError,
       );
       // Existing entries remain.
-      final stored = await store.backend.transaction<Map<String, int>>(
-        (txn) async =>
-            store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-      );
+      final stored = await store.backend
+          .transaction<Map<String, EntryTypeVersion>>(
+            (txn) async =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
       expect(stored.containsKey('other_event'), isTrue);
       await store.backend.close();
     });
+
+    for (final (label, targets) in <(String, Map<String, EntryTypeVersion>)>[
+      (
+        'a target below the registered version',
+        <String, EntryTypeVersion>{
+          _kEntryType: const EntryTypeVersion(1, 0),
+          'newcomer_type': const EntryTypeVersion(1, 0),
+        },
+      ),
+      (
+        'a target above the registered version',
+        <String, EntryTypeVersion>{_kEntryType: const EntryTypeVersion(2, 0)},
+      ),
+      (
+        'an unregistered entry type',
+        <String, EntryTypeVersion>{
+          _kEntryType: const EntryTypeVersion(1, 0),
+          'bogus': const EntryTypeVersion(7, 0),
+        },
+      ),
+    ]) {
+      test('$label is refused before any write', () async {
+        final store = await _openStore();
+        await _appendEvent(
+          store,
+          eventId: 'e1',
+          aggregateId: 'agg-1',
+          entryType: _kEntryType,
+          eventType: 'finalized',
+          data: const <String, dynamic>{'intensity': 'mild'},
+          clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
+        );
+        await rebuildView(
+          store: store,
+          viewName: 'toy_view',
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            _kEntryType: EntryTypeVersion(1, 0),
+          },
+        );
+        final rowsBefore = await store.backend.findViewRows('toy_view');
+        Future<Map<String, EntryTypeVersion>> storedTargets() =>
+            store.backend.transaction<Map<String, EntryTypeVersion>>(
+              (txn) =>
+                  store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+            );
+        final targetsBefore = await storedTargets();
+
+        await expectLater(
+          rebuildView(
+            store: store,
+            viewName: 'toy_view',
+            targetVersionByEntryType: targets,
+          ),
+          throwsArgumentError,
+        );
+
+        expect(await store.backend.findViewRows('toy_view'), rowsBefore);
+        expect(await storedTargets(), targetsBefore);
+        await store.backend.close();
+      });
+    }
 
     // raises StateError.
     test('missing ProjectionSpec raises StateError', () async {
@@ -147,7 +236,9 @@ void main() {
         rebuildView(
           store: store,
           viewName: 'toy_view',
-          targetVersionByEntryType: const <String, int>{'sample_event': 1},
+          targetVersionByEntryType: const <String, EntryTypeVersion>{
+            'sample_event': EntryTypeVersion(1, 0),
+          },
         ),
         throwsStateError,
       );
@@ -162,7 +253,7 @@ void main() {
           txn,
           'toy_view',
           'sample_event',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await _appendEvent(
@@ -177,17 +268,21 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{
-          'sample_event': 1,
-          'newcomer_type': 2, // brand new — allowed
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+          'newcomer_type': EntryTypeVersion(2, 0), // brand new — allowed
         },
       );
       expect(processed, 1);
-      final stored = await store.backend.transaction<Map<String, int>>(
-        (txn) async =>
-            store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
-      );
-      expect(stored, <String, int>{'sample_event': 1, 'newcomer_type': 2});
+      final stored = await store.backend
+          .transaction<Map<String, EntryTypeVersion>>(
+            (txn) async =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
+      expect(stored, <String, EntryTypeVersion>{
+        'sample_event': const EntryTypeVersion(1, 0),
+        'newcomer_type': const EntryTypeVersion(2, 0),
+      });
       await store.backend.close();
     });
 
@@ -203,13 +298,31 @@ void main() {
         data: const <String, dynamic>{'intensity': 'mild'},
         clientTimestamp: DateTime.parse('2026-04-22T10:00:00Z'),
       );
-      const map = <String, int>{'sample_event': 1};
+      await _appendEvent(
+        store,
+        eventId: 'e2',
+        aggregateId: 'agg-2',
+        entryType: 'sample_event',
+        eventType: 'finalized',
+        data: const <String, dynamic>{'intensity': 'severe'},
+        clientTimestamp: DateTime.parse('2026-04-22T11:00:00Z'),
+      );
+      const map = <String, EntryTypeVersion>{
+        'sample_event': EntryTypeVersion(1, 0),
+      };
+      Future<Map<String, EntryTypeVersion>> targets() =>
+          store.backend.transaction(
+            (txn) =>
+                store.backend.readAllViewTargetVersionsInTxn(txn, 'toy_view'),
+          );
       final first = await rebuildView(
         store: store,
         viewName: 'toy_view',
         targetVersionByEntryType: map,
       );
       final firstRows = await store.backend.findViewRows('toy_view');
+      expect(firstRows, hasLength(2));
+      final firstTargets = await targets();
       final second = await rebuildView(
         store: store,
         viewName: 'toy_view',
@@ -217,10 +330,10 @@ void main() {
       );
       final secondRows = await store.backend.findViewRows('toy_view');
       expect(first, second);
-      expect(firstRows.length, secondRows.length);
-      final firstRow = firstRows.single;
-      final secondRow = secondRows.single;
-      expect(firstRow['latestEventId'], equals(secondRow['latestEventId']));
+      // Whole rows, every field, equal across the two rebuilds.
+      expect(secondRows, firstRows);
+      expect(await targets(), firstTargets);
+      expect(firstTargets, map);
       await store.backend.close();
     });
 
@@ -252,7 +365,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
 
       expect(processed, 1);
@@ -292,7 +407,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
       expect(processed, totalEvents);
 
@@ -327,7 +444,9 @@ void main() {
       final processed = await rebuildView(
         store: store,
         viewName: 'toy_view',
-        targetVersionByEntryType: const <String, int>{'sample_event': 1},
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          'sample_event': EntryTypeVersion(1, 0),
+        },
       );
       expect(processed, 1);
       final rows = await store.backend.findViewRows('toy_view');

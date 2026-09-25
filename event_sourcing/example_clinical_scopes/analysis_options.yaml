@@ -6,6 +6,15 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
 
+  errors:
+    # A use of a member marked @visibleForTesting outside a test.
+    invalid_use_of_visible_for_testing_member: error
+    # A use of a library member marked @internal outside its package.
+    invalid_use_of_internal_member: error
+
+  exclude:
+    - 'build/**'
+
 linter:
   rules:
     - prefer_const_constructors

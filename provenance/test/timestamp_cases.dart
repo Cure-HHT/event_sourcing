@@ -1,0 +1,43 @@
+/// Timestamps `parseIso8601Instant` accepts, each named by what it shows.
+const Map<String, String> acceptedTimestamps = <String, String>{
+  'Z': '2026-09-01T12:00:00Z',
+  'Z with milliseconds': '2026-09-01T12:00:00.000Z',
+  'Z with microseconds': '2026-09-01T12:00:00.000001Z',
+  '+00:00': '2026-09-01T12:00:00+00:00',
+  '+02:00 with a fraction': '2026-09-01T14:00:00.5+02:00',
+  '-05:30': '2026-09-01T06:30:00-05:30',
+  '+0200': '2026-09-01T14:00:00+0200',
+  '+02': '2026-09-01T14:00:00+02',
+  'a leap day': '2024-02-29T12:00:00Z',
+  'a leap day of a year divisible by 400': '2000-02-29T12:00:00Z',
+  'year 0000': '0000-01-01T00:00:00Z',
+  'year 9999': '9999-12-31T23:59:59.999999Z',
+  'offset 23:59': '2026-09-01T12:00:00+23:59',
+};
+
+/// Timestamps `parseIso8601Instant` refuses, each named by its defect.
+const Map<String, String> refusedTimestamps = <String, String>{
+  'no offset': '2026-09-01T12:00:00',
+  'no offset, with a fraction': '2026-09-01T12:00:00.000',
+  'a date only': '2026-09-01',
+  'a lowercase z': '2026-09-01T12:00:00z',
+  'a space before Z': '2026-09-01T12:00:00 Z',
+  'a five-digit year': '10000-01-01T00:00:00Z',
+  'a six-digit year Dart wraps': '999999-01-01T00:00:00Z',
+  'a signed year': '+2026-09-01T12:00:00Z',
+  'a negative year': '-0001-01-01T00:00:00Z',
+  'below the Postgres range': '-4714-11-23T23:59:59Z',
+  'month 13': '2026-13-01T00:00:00Z',
+  'month 00': '2026-00-01T00:00:00Z',
+  '30 February': '2026-02-30T00:00:00Z',
+  '29 February of a common year': '2026-02-29T00:00:00Z',
+  '29 February of a century not divisible by 400': '1900-02-29T00:00:00Z',
+  '31 April': '2026-04-31T00:00:00Z',
+  'day 00': '2026-09-00T00:00:00Z',
+  'hour 24': '2026-09-01T24:00:00Z',
+  'minute 60': '2026-09-01T12:60:00Z',
+  'second 60': '2026-09-01T12:00:60Z',
+  'offset hours 24': '2026-09-01T12:00:00+24:00',
+  'offset minutes 60': '2026-09-01T12:00:00+01:60',
+  'not a date-time': 'yesterday',
+};

@@ -29,7 +29,7 @@ class _FakeHttpClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     lastRequest = request;
     return http.StreamedResponse(
-      Stream.value((response?.bodyBytes) ?? <int>[]),
+      Stream.value(response?.bodyBytes ?? <int>[]),
       response?.statusCode ?? 200,
     );
   }
@@ -160,8 +160,7 @@ void main() {
       baseUrl: Uri.parse('http://localhost:1234'),
       httpClient: client,
       wsFactory: (_) => throw UnimplementedError(),
-    );
-    conn.setCredential('alice');
+    )..setCredential('alice');
     await conn.httpGet(Uri.parse('http://localhost:1234/me'));
     expect(client.lastRequest!.headers['Authorization'], 'Bearer alice');
   });
@@ -206,8 +205,7 @@ void main() {
         baseUrl: Uri.parse('http://localhost:0'),
         httpClient: _FakeHttpClient(),
         wsFactory: (_) => pair.clientSide,
-      );
-      conn.setCredential('alice');
+      )..setCredential('alice');
 
       // Drain server-inbound traffic so the connection's dispose() can
       // close its sink without hanging on an undrained listener.
@@ -252,8 +250,7 @@ void main() {
         baseUrl: Uri.parse('http://localhost:0'),
         httpClient: _FakeHttpClient(),
         wsFactory: (_) => pair.clientSide,
-      );
-      conn.setCredential('alice');
+      )..setCredential('alice');
 
       // Record the order/types of messages the server receives. With a
       // slow validator the server holds off on auth_ok; the client must
@@ -298,8 +295,7 @@ void main() {
       baseUrl: Uri.parse('http://localhost:0'),
       httpClient: _FakeHttpClient(),
       wsFactory: (_) => pair.clientSide,
-    );
-    conn.setCredential('alice');
+    )..setCredential('alice');
     pair.serverSide.stream.listen((_) {});
 
     final errored = Completer<Object>();

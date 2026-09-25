@@ -11,8 +11,8 @@ void main() {
     test('id is "demo_note"', () {
       expect(demoNoteType.id, 'demo_note');
     });
-    test('registeredVersion is positive', () {
-      expect(demoNoteType.registeredVersion, greaterThan(0));
+    test('registeredVersion is 1.0', () {
+      expect(demoNoteType.registeredVersion, const EntryTypeVersion(1, 0));
     });
     test('name non-empty', () {
       expect(demoNoteType.name, isNotEmpty);

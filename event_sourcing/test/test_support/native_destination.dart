@@ -6,11 +6,11 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 
 /// Test-support [Destination] that declares `serializesNatively == true`,
 /// modelling a destination that consumes the library's canonical
-/// `esd/batch@1` batch format. `fillBatch` SHALL bypass [transform] for
+/// `esd/batch@2` batch format. `fillBatch` SHALL bypass [transform] for
 /// such destinations and instead build a `BatchEnvelopeMetadata` from the
 /// library's source identity.
 ///
-/// `wireFormat` is fixed to `"esd/batch@1"` and `transform` throws if
+/// `wireFormat` is fixed to `"esd/batch@2"` and `transform` throws if
 /// invoked — calling `transform` on a native destination is a contract
 /// violation by `fillBatch`.
 ///
@@ -31,7 +31,7 @@ class NativeDestination extends Destination {
   final String id;
 
   @override
-  String get wireFormat => 'esd/batch@1';
+  String get wireFormat => 'esd/batch@2';
 
   @override
   bool get serializesNatively => true;

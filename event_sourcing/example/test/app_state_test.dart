@@ -12,13 +12,10 @@ import 'package:sembast/sembast_memory.dart';
 Future<DestinationRegistry> _mkRegistry(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   final backend = SembastBackend(database: db);
-  // Build a minimal EventStore wired with the system entry types so
-  // registry mutations can stamp their audit events without
-  // bootstrapping the full datastore facade.
+  // Build a minimal EventStore without bootstrapping the full datastore
+  // facade; EventStore.openForTest registers the reserved system entry
+  // types the registry mutations stamp their audit events with.
   final entryTypes = EntryTypeRegistry();
-  for (final definition in kSystemEntryTypes) {
-    entryTypes.register(definition);
-  }
   final securityContexts = SembastSecurityContextStore(backend: backend);
   final eventStore = await EventStore.openForTest(
     storage: backend,
@@ -30,7 +27,7 @@ Future<DestinationRegistry> _mkRegistry(String path) async {
     ),
     securityContexts: securityContexts,
   );
-  return DestinationRegistry(backend: backend, eventStore: eventStore);
+  return DestinationRegistry(eventStore: eventStore);
 }
 
 Future<AppState> _mkState(String path) async {

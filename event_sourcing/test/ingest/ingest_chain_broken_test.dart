@@ -37,29 +37,8 @@ Future<_Fixture> _openStore({
     ..register(
       const EntryTypeDefinition(
         id: 'epistaxis_event',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Epistaxis Event',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_redacted',
-        registeredVersion: 1,
-        name: 'SC Redacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_compacted',
-        registeredVersion: 1,
-        name: 'SC Compacted',
-      ),
-    )
-    ..register(
-      const EntryTypeDefinition(
-        id: 'security_context_purged',
-        registeredVersion: 1,
-        name: 'SC Purged',
       ),
     );
   final securityContexts = SembastSecurityContextStore(backend: backend);
@@ -145,6 +124,9 @@ void main() {
         provList[1] = hop1;
         metadata['provenance'] = provList;
         tamperedMap['metadata'] = metadata;
+        // Reseal the record so its own hash verifies and the broken arrival
+        // hash is what the receiver refuses.
+        tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
         // 4. Third destination must throw IngestChainBroken at hopIndex=1.
@@ -153,6 +135,11 @@ void main() {
           throwsA(
             isA<IngestChainBroken>()
                 .having((e) => e.eventId, 'eventId', original.eventId)
+                .having(
+                  (e) => e.kind,
+                  'kind',
+                  ChainFailureKind.arrivalHashMismatch,
+                )
                 .having((e) => e.hopIndex, 'hopIndex', 1),
           ),
         );
@@ -200,8 +187,8 @@ void main() {
           'aggregate_id': 'agg-chain-null',
           'aggregate_type': 'note',
           'entry_type': 'epistaxis_event',
-          'entry_type_version': 1,
-          'lib_format_version': 1,
+          'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
+          'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
           'event_type': 'finalized',
           'sequence_number': 1,
           'data': const <String, Object?>{},
@@ -210,14 +197,20 @@ void main() {
           'flow_token': null,
           'client_timestamp': now.toIso8601String(),
           'previous_event_hash': null,
-          'event_hash': 'some-hash-value-for-test',
         };
+        recordMap['event_hash'] = canonicalEventHash(recordMap);
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);
 
         await expectLater(
           () => dest.store.ingestEvent(syntheticEvent),
           throwsA(
-            isA<IngestChainBroken>().having((e) => e.hopIndex, 'hopIndex', 1),
+            isA<IngestChainBroken>()
+                .having(
+                  (e) => e.kind,
+                  'kind',
+                  ChainFailureKind.arrivalHashMismatch,
+                )
+                .having((e) => e.hopIndex, 'hopIndex', 1),
           ),
         );
       } finally {

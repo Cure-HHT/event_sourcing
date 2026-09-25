@@ -68,7 +68,10 @@ void main() {
     // (3) Collect snapshots until EOR, then expect a future delta.
     final replay = <Update<Map<String, Object?>>>[];
     final sub = stream.listen(replay.add);
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await until(
+      () => replay.any((u) => u is EndOfReplay),
+      reason: 'the end of the replay',
+    );
     final snaps = replay.whereType<Snapshot<Map<String, Object?>>>().toList();
     final eor = replay.whereType<EndOfReplay<Map<String, Object?>>>().toList();
     expect(snaps, hasLength(2));
@@ -83,7 +86,10 @@ void main() {
       data: const {'title': 'third'},
       initiator: initiator,
     );
-    await Future<void>.delayed(const Duration(milliseconds: 200));
+    await until(
+      () => replay.last is! EndOfReplay,
+      reason: 'the update after the replay',
+    );
     expect(replay.last, isA<Delta<Map<String, Object?>>>());
     await sub.cancel();
   });

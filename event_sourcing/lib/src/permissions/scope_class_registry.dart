@@ -21,7 +21,7 @@ abstract class ScopeProjectionDescriptor {
 }
 
 /// Compose-time registry of [ScopeClassSpec]s. Validates the registry
-/// against the projection registry (via [projectionLookup]) so that
+/// against the projection registry (via `projectionLookup`) so that
 /// containment references are guaranteed to resolve at evaluate time.
 ///
 /// Throws `StateError` on validation failure with a message naming the

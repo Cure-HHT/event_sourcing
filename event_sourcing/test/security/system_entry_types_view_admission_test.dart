@@ -72,15 +72,15 @@ void main() {
     // deliberate decision rather than an incidental one. A change here means a
     // library-generated entry type was added; confirm it belongs in the set
     // that filters gate.
-    test('the reserved id set is the discriminator and has 14 members', () {
-      expect(kReservedSystemEntryTypeIds, hasLength(14));
+    test('the reserved id set is the discriminator and has 17 members', () {
+      expect(kReservedSystemEntryTypeIds, hasLength(17));
     });
 
     test('reserved ids are registered so a filter can resolve them', () {
       final byId = {for (final d in kSystemEntryTypes) d.id: d};
       for (final id in <String>['ingest-audit', 'view_snapshot_promoted']) {
         expect(byId.containsKey(id), isTrue, reason: '$id must be registered');
-        expect(byId[id]!.registeredVersion, 1);
+        expect(byId[id]!.registeredVersion, const EntryTypeVersion(1, 0));
       }
     });
   });

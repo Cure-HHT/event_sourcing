@@ -9,112 +9,166 @@
 //   accept a starting sequence position for replay from any offset.
 // Implements: EVS-DEV-event-store-open/A
 // EventStore.open is the sole
-//   public constructor; EventStore._ is private and library-internal only.
+//   production constructor; EventStore._ is private and library-internal
+//   only; EventStore.openForTest is visible for testing only.
 // Implements: EVS-DEV-event-store-open/B
-// open emits lib_version_initialized
-//   on first boot via _runBootVersionCheck.
+// open appends lib_version_initialized
+//   when the database holds no locally appended library-version event
+//   (_runBoot).
 // Implements: EVS-DEV-event-store-open/C
-// open emits lib_version_changed
-//   on version upgrade via _runBootVersionCheck.
+// open appends lib_version_changed
+//   when its package version or data format differs from the latest locally
+//   recorded one, older ones included (_runBoot).
 // Implements: EVS-DEV-event-store-open/D
-// open throws DowngradeRefusedError
-//   on lib-version downgrade (unless allowDowngrade: true) via
-//   _runBootVersionCheck.
+// every library-version event records
+//   the package version and data format; a different recorded data-format
+//   major throws DataFormatIncompatibleError before any write (_runBoot).
 // Implements: EVS-DEV-event-store-open/E
-// both the version check and the
-//   snapshot-promotion pass run inside single backend.transaction calls in
-//   _runBootVersionCheck and _runBootSnapshotPromotionPass respectively.
+// the whole boot runs in one
+//   bootTransaction, refusals first, then the library-version event,
+//   seeding, promotion, re-derivation, the generation record and the boot
+//   record (_runBoot).
+// Implements: EVS-DEV-event-store-open/F
+// the database identity is minted
+//   or adopted at the first open, recorded in lib_version_initialized, and
+//   checked at every later open; a database an earlier data format wrote
+//   is refused as one to reset before any write (_runBoot).
 // Implements: EVS-DEV-append-stamps-registered-version/A
 // append looks up
-//   entryTypes.byId(entryType).registeredVersion and stamps it on the event.
+//   entryTypes.byId(entryType).registeredVersion and stamps its major and
+//   minor on the event.
 // Implements: EVS-DEV-append-stamps-registered-version/B
 // appendInTxn
-//   applies the same registry-lookup stamping as append.
+//   stamps the same registered major and minor as append.
 // Implements: EVS-DEV-append-stamps-registered-version/C
 // entryTypeVersion
 //   does not appear on the public append/appendInTxn signatures.
+// Implements: EVS-DEV-version-compatibility/C
+// every append path stamps LibVersion.dataFormat as the event's
+//   lib_format_version.
 // Implements: EVS-DEV-snapshot-promotion-on-open
-// _runBootSnapshotPromotionPass
-//   promotes lagging view rows and emits view_snapshot_promoted audit events.
+// _runBoot promotes lagging view rows
+//   and emits view_snapshot_promoted audit events.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A
 // EntryTypeVersionDowngradeError
-//   is thrown from open when registeredVersion < stored target version.
+//   is thrown from open when a registered major is below the major of the
+//   highest stored target version.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/B
 // verifyNoEntryTypeDowngrade
-//   runs before any seeding or promotion inside _runBootSnapshotPromotionPass.
+//   runs in _runBoot before any write of the boot transaction.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C
 // EntryTypeVersionDowngradeError
-//   carries entryType id, fromVersion, and toVersion for diagnostic logging.
+//   carries the entryType id and the stored and registered versions, each a
+//   major and a minor, for diagnostic logging.
 
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 import 'package:crypto/crypto.dart';
+import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_verdict.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
+import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
-import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
-import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
-import 'package:event_sourcing/src/subscriptions/update.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/event_hash.dart';
+import 'package:event_sourcing/src/storage/generation.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
+import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
+import 'package:event_sourcing/src/subscriptions/update.dart';
+import 'package:event_sourcing/src/sync/clock.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:event_sourcing/src/versions.dart';
+import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
 
-/// Fire-and-forget trigger into `SyncCycle.call()`.
-typedef EventStoreSyncCycleTrigger = Future<void> Function();
+/// The delivery cycle's trigger, held in an event store's trigger slot.
+typedef _DeliveryTrigger = Future<void> Function();
 
-/// Accumulates [StoredEvent]s and [AggregateFoldChange]s produced inside a
-/// single transaction so that [EventStore._runInTxnWithPublish] can publish
-/// them to the subscription bus after the transaction commits. Callers that
-/// use [EventStore.appendInTxn] directly inside their own transaction MUST
-/// pass a [PublishCollector] and use [EventStore.runTransaction] so that
-/// subscribers receive delivery.
+/// Accumulates the [StoredEvent]s and [AggregateFoldChange]s that
+/// [EventStore.appendInTxn] produces inside one run of a transaction body,
+/// so that [EventStore.runTransaction] can publish them to the subscription
+/// bus after that run commits.
 ///
-/// `appendInTxn` runs the projection interpreter inside the same transaction
-/// as the event append (so action-emitted events update views atomically with
-/// the dispatch), and records the resulting row-change records here for
-/// post-commit publication.
+/// A collector belongs to exactly one run of one transaction body: the
+/// event store creates it for the run, binds it to the run's
+/// [Transaction], and closes it when the run ends. [EventStore.appendInTxn]
+/// refuses a collector that is bound to another transaction or whose run
+/// has ended, so an append can neither publish through a collector whose
+/// transaction does not commit it nor commit without being published.
 ///
-/// The type lives in `lib/src/` and is intentionally not re-exported from the
-/// package barrel: external consumers interact with the event store through the
-/// public [EventStore] API and never construct a collector directly. Only
-/// intra-package callers (e.g. [DestinationRegistry]) that open their own
-/// transaction via [EventStore.runTransaction] see this type.
+/// A consumer never constructs a collector; it receives one as the second
+/// argument of a [EventStore.runTransaction] body and passes it to
+/// [EventStore.appendInTxn].
 class PublishCollector {
+  PublishCollector._(this._transaction, this._onFirstEvent);
+
+  final Transaction _transaction;
+  final void Function(int sequenceNumber) _onFirstEvent;
+  bool _open = true;
   final List<StoredEvent> _events = <StoredEvent>[];
   final List<AggregateFoldChange> _rowChanges = <AggregateFoldChange>[];
 
-  void add(StoredEvent event) => _events.add(event);
+  @internal
+  void add(StoredEvent event) {
+    _checkOpen();
+    if (_events.isEmpty) _onFirstEvent(event.sequenceNumber);
+    _events.add(event);
+  }
 
-  void addRowChanges(Iterable<AggregateFoldChange> changes) =>
-      _rowChanges.addAll(changes);
+  @internal
+  void addRowChanges(Iterable<AggregateFoldChange> changes) {
+    _checkOpen();
+    _rowChanges.addAll(changes);
+  }
+
+  void _checkOpen() {
+    if (!_open) {
+      throw StateError(
+        'PublishCollector used after the transaction run it belongs to '
+        'ended',
+      );
+    }
+  }
 
   List<StoredEvent> get events => List<StoredEvent>.unmodifiable(_events);
 
   List<AggregateFoldChange> get rowChanges =>
       List<AggregateFoldChange>.unmodifiable(_rowChanges);
+}
+
+/// A committed transaction's publication, waiting for its turn in sequence
+/// order.
+final class _Publication {
+  _Publication(this.publish);
+
+  final void Function() publish;
 }
 
 /// Result of `EventStore.applyRetentionPolicy`: counts of rows touched by
@@ -128,52 +182,44 @@ class RetentionResult {
   final int purgedCount;
 }
 
-/// Thrown by [EventStore.open] when the event log was last processed by a
-/// newer version of the library than the current build, indicating that
-/// downgrading would risk data corruption.
-///
-/// Pass `allowDowngrade: true` to [EventStore.open] to bypass this check
-/// during development. **Do not use in production.**
-class DowngradeRefusedError extends Error {
-  DowngradeRefusedError(this.recordedVersion, this.currentVersion);
-
-  final String recordedVersion;
-  final String currentVersion;
-
-  @override
-  String toString() =>
-      'DowngradeRefusedError: log was processed by lib version '
-      '$recordedVersion which is newer than this build ($currentVersion). '
-      'Pass EventStore.open(allowDowngrade: true) to override '
-      '(development use only).';
-}
-
-/// Thrown by [EventStore.open] when any registered entry type's
-/// `registeredVersion` is below the highest value recorded for that
-/// entry type across the local `view_target_versions` store. The lib
-/// has no `DemotionSpec` mechanism in Phase I; the only resolution is
-/// to pin a lib build whose registry's `registeredVersion` is at least
-/// as high as the stored target. See
-/// docs/superpowers/specs/2026-05-11-entry-type-version-substrate-owned-design.md.
+/// Thrown by [EventStore.open] when a registered entry type's major is
+/// below the major of the highest target version stored for that entry type
+/// in `view_target_versions`: the views hold rows folded under a newer
+/// major, which this build cannot read. A higher stored minor of the same
+/// major is not a downgrade. The resolution is a build whose registered
+/// major is at least [fromVersion]'s major.
 class EntryTypeVersionDowngradeError extends Error {
   EntryTypeVersionDowngradeError({
     required this.entryType,
     required this.fromVersion,
     required this.toVersion,
+    this.recordedByOpen = false,
   });
 
+  /// The entry type whose registered major is below its stored major.
   final String entryType;
-  final int fromVersion;
-  final int toVersion;
+
+  /// The highest target version stored for [entryType].
+  final EntryTypeVersion fromVersion;
+
+  /// The version this build registers for [entryType].
+  final EntryTypeVersion toVersion;
+
+  /// True when the higher major comes from the database's generation
+  /// record (an earlier open registered it) rather than from a stored view
+  /// target; [fromVersion] then carries that major with minor 0.
+  final bool recordedByOpen;
 
   @override
   String toString() =>
       'EntryTypeVersionDowngradeError: entry type "$entryType" was '
-      'previously folded at registeredVersion=$fromVersion (stored in '
-      'view_target_versions), but the current registry has '
-      'registeredVersion=$toVersion. Phase I refuses entry-type '
-      'downgrade unconditionally. Pin a lib build with '
-      'registeredVersion >= $fromVersion for "$entryType".';
+      '${recordedByOpen ? 'registered at major ${fromVersion.major} by an '
+                'earlier open of the database (its generation record)' : 'previously folded at version $fromVersion (stored in '
+                'view_target_versions)'}, '
+      'but this build registers version $toVersion. '
+      'A build whose registered major (${toVersion.major}) is below the '
+      'stored major (${fromVersion.major}) is refused. Run a build that '
+      'registers major ${fromVersion.major} or higher for "$entryType".';
 }
 
 /// The substrate's append-only event log. Serves callers across mobile and
@@ -190,7 +236,8 @@ class EventStore {
     required this.entryTypes,
     required this.source,
     required this.securityContexts,
-    this.syncCycleTrigger,
+    required this.databaseId,
+    required GenerationRegistration registration,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
@@ -201,6 +248,7 @@ class EventStore {
          entryTypes: entryTypes,
        ),
        _promoters = promoters ?? PromoterRegistry(),
+       _registration = registration,
        _clock = clock,
        _uuid = uuid ?? const Uuid();
 
@@ -208,41 +256,201 @@ class EventStore {
   final EntryTypeRegistry entryTypes;
   final Source source;
   final MutableSecurityContextStore securityContexts;
-  final EventStoreSyncCycleTrigger? syncCycleTrigger;
+
+  /// The trigger slot: the trigger of the one started, not yet closed
+  /// delivery cycle over this store, or null.
+  _DeliveryTrigger? _deliveryTrigger;
+
+  /// The trigger of the delivery cycle that holds this store's trigger
+  /// slot, or null. Only `SyncCycle` sets it: when it starts, and back to
+  /// null when it closes.
+  @internal
+  Future<void> Function()? get deliveryTrigger => _deliveryTrigger;
+
+  @internal
+  set deliveryTrigger(Future<void> Function()? trigger) =>
+      _deliveryTrigger = trigger;
+
+  /// Wakes the delivery cycle that holds the trigger slot, if any, without
+  /// waiting for it. Nothing it raises reaches the caller: a trigger that
+  /// throws, synchronously or through its future, is logged.
+  // Implements: EVS-DEV-destination-drain-lock/D
+  // a delivery-cycle trigger never raises into the operation that fires it.
+  @internal
+  void wakeDeliveryCycle() {
+    final trigger = _deliveryTrigger;
+    if (trigger == null) return;
+    void report(Object e, StackTrace st) => libraryLog(
+      'event_store',
+      'the delivery cycle trigger failed',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+    try {
+      unawaited(trigger().then((_) {}, onError: report));
+    } on Object catch (e, st) {
+      report(e, st);
+    }
+  }
+
   final ProjectionInterpreter _interpreter;
 
+  /// The database identity: a random identifier minted at the database's
+  /// first open, recorded in its `lib_version_initialized` event, and the
+  /// same for every event store over the database, whatever its [source].
+  final String databaseId;
+
+  /// This store's registration with the backend's incompatible-generation
+  /// guard, released by [close].
+  final GenerationRegistration _registration;
+
   /// Sealed registry of promoter specs, threaded in from [EventStore.open] (or
-  /// supplied directly on the constructor). Used by [rebuildView] to apply
+  /// supplied directly on the constructor). Used by `rebuildView` to apply
   /// promoter chains during replay.
   final PromoterRegistry _promoters;
 
-  /// Exposes the projection registry for [rebuildView].
+  /// Exposes the projection registry for `rebuildView`.
   ProjectionRegistry get projections => _interpreter.projections;
 
-  /// Exposes the promoter registry for [rebuildView].
+  /// Exposes the promoter registry for `rebuildView`.
   PromoterRegistry get promoters => _promoters;
 
   final Clock? _clock;
   final Uuid _uuid;
   final SubscriptionEngine _subs = SubscriptionEngine();
 
-  /// Opens an [EventStore] against [storage] and performs the lib-version
-  /// boot check:
+  /// Opens an [EventStore] against [storage]: the single production entry
+  /// point. All required collaborators ([entryTypes], [source],
+  /// [securityContexts]) must be supplied; the returned store is fully
+  /// configured and ready for use.
   ///
-  /// - **First boot** (no version event in the log): appends a
-  ///   `lib_version_initialized` event recording [LibVersion.version].
-  /// - **Same version**: no-op — the log already records this version.
-  /// - **Upgrade** (recorded version < current): appends a
-  ///   `lib_version_changed` event recording the transition.
-  /// - **Downgrade** (recorded version > current): throws
-  ///   [DowngradeRefusedError] unless [allowDowngrade] is `true`.
+  /// The open first registers, in [entryTypes] and [projections], every
+  /// reserved system entry type ([kSystemEntryTypes]) and the library's
+  /// default destination-wedges view ([defaultDestinationWedgesSpec]) they
+  /// lack, then seals [projections]; the reserved types are therefore part
+  /// of the build's data generation. A registry that already holds a
+  /// reserved entry-type id, or a spec under the default view's name, is
+  /// accepted only when it holds the library's own object (the exported
+  /// definition or spec, which an earlier open with the same registries
+  /// also leaves there); any other definition, or a sealed [projections]
+  /// that lacks the view, throws [ArgumentError] naming the reserved id or
+  /// view, before either registry changes and before anything is written.
   ///
-  /// This is the single production entry point. All required collaborators
-  /// ([entryTypes], [source], [securityContexts]) must be supplied; the
-  /// returned store is fully configured and ready for use.
-  // Implements: EVS-DEV-event-store-open/A+B+C+D+E
-  // sole public constructor;
-  //   emits lib_version_initialized/changed; refuses downgrade; atomic boot.
+  /// Before anything is written, the build registers its data generation
+  /// (its data-format major and each registered entry type's major) with
+  /// the backend's incompatible-generation guard: while another live
+  /// instance on the database holds a conflicting generation -- another
+  /// data-format major, or another major of an entry type both register --
+  /// the open throws [IncompatibleGenerationException]. On Postgres the
+  /// guard covers every process on the database, on the web every tab of
+  /// the origin (a page without Web Locks throws
+  /// [GenerationGuardConfigurationException]); a Sembast database outside
+  /// the browser is used by one process. The registration lasts until
+  /// [close], and a failed open releases it.
+  ///
+  /// The boot then runs in one storage transaction, under the guard's
+  /// exclusive boot lock. It first decides, before writing anything,
+  /// whether this build may open the database:
+  ///
+  /// - The database identity stored beside the log must equal the one the
+  ///   database's first `lib_version_initialized` event records; a missing
+  ///   or different identity throws [DatabaseIdentityMismatchError]. A
+  ///   database written by a build that recorded no identity or no data
+  ///   format, or whose stored shapes predate this data format, throws
+  ///   [DatabaseResetRequiredError]: it must be reset.
+  /// - The data-format major recorded by the latest library-version event,
+  ///   and by the database's generation record, must equal this build's
+  ///   ([LibVersion.dataFormat]); another major throws
+  ///   [DataFormatIncompatibleError].
+  /// - No registered entry type's major may be below the major stored for
+  ///   it in `view_target_versions`, or recorded for it in the generation
+  ///   record by an earlier boot; a lower one throws
+  ///   [EntryTypeVersionDowngradeError].
+  ///
+  /// Only the library-version events this database appended itself count;
+  /// a peer's library-version events it ingested are never read as its
+  /// own. When the boot accepts, it writes, in this order: a
+  /// `lib_version_initialized` event at the first open (minting the
+  /// database identity, [databaseId]), or a `lib_version_changed` event
+  /// when this build's package version or data format differs from the one
+  /// recorded last, older ones included; the target versions of newly
+  /// registered view and entry-type pairs; the promotion of views whose
+  /// stored targets lag the registered versions; the re-derivation of views
+  /// that are behind the log; the generation record, merged with this
+  /// build's generation; and a boot record. A refused boot writes nothing.
+  ///
+  /// Deployment. Builds with the same data-format major and the same
+  /// entry-type majors share a database in any mix -- a canary beside the
+  /// serving revision, several instances, a restart, a rollback to the
+  /// previous release -- and every open by a different version is recorded
+  /// in the log. A view, or an entry type in a view's interest, that only
+  /// some of those builds register misses the events the others store
+  /// until a build that registers it opens the database again: that open
+  /// re-derives it (or `rebuildView` does). That catch-up follows the entry
+  /// types a view's interest names; a view whose interest names none (one
+  /// that selects by aggregate type), or whose interest differs between the
+  /// builds only outside its entry types, is not caught up: run
+  /// `rebuildView` for it once no build lacking it, or holding the narrower
+  /// interest, still serves the database. A build of another data-format
+  /// major, or one that raises an entry-type major, is deployed
+  /// stop-then-start: every instance of the old revision stops before the
+  /// first instance of the new one opens the database, and the old
+  /// revision's next open is refused afterwards. Recovery after such a
+  /// deployment is a restore from a backup taken before the switch, or a
+  /// roll-forward. Evolve compatibly where possible: add an optional field
+  /// as a minor step, and make a real reshape a new entry type.
+  ///
+  /// On a backend whose transactions contend with concurrent appends, the
+  /// boot first locks what every append writes, so the appends of a
+  /// revision serving the same database wait for the boot to commit rather
+  /// than abort it. The wait lasts for the whole boot: its reads of the
+  /// library-version events and the stored view targets, its checks, and
+  /// any seeding, promotion and re-derivation it performs, the last two
+  /// proportional to the events and rows of the views they rewrite. A
+  /// release that promotes a large view, or adds a view over a long log,
+  /// pauses the serving revision's appends for as long; measure the boot on
+  /// a copy of production data before such a rollout.
+  ///
+  /// Progress. [onBootProgress], when given, observes the boot: it receives
+  /// a [BootProgress] when the open starts its checks ([BootPhase.checks]),
+  /// when snapshot promotion and view catch-up each start, after each chunk
+  /// of their work and when each ends ([BootPhase.promotion],
+  /// [BootPhase.catchUp]; a phase with nothing to re-derive reports
+  /// nothing), and once the boot has committed, just before the open
+  /// returns ([BootPhase.complete]). A refused open reports no completion. A
+  /// boot transaction the backend runs again reports its phases again from
+  /// [BootPhase.checks] when the new run starts; until then the discarded
+  /// run's last report stands.
+  ///
+  /// The observer only observes: nothing it does changes what the boot
+  /// decides or writes. The boot calls it synchronously and does not await
+  /// a future it returns, so its synchronous work extends the boot -- on
+  /// Postgres, the time every append to the database is held back -- and it
+  /// must return quickly: record the progress (for a readiness endpoint,
+  /// say) and act on it after the open returns. It runs in an error zone the
+  /// library owns: what it throws, at once or from work it started, is
+  /// logged and the boot continues. That zone outlives the boot, so an error
+  /// the observer's later work raises is logged by the library rather than
+  /// reaching the caller's zone, and a future created there that fails does
+  /// not complete an await in another error zone.
+  ///
+  /// While the boot runs, a call from the observer, or from work it started
+  /// in its zone, that opens an event store, runs a transaction of an event
+  /// store (its writes, [runTransaction], ingest, [logRejectedBatch], and
+  /// `rebuildView`) or starts a transaction on a storage backend the library
+  /// ships throws [StateError], whichever database it is over. A callback
+  /// the observer hands to code registered outside its zone (a stream
+  /// listener subscribed elsewhere, say), a read a backend serves outside a
+  /// transaction, and a transaction an application-supplied backend starts
+  /// are not recognised.
+  // Implements: EVS-DEV-event-store-open/A+B+C+D+E+F
+  // the sole production constructor; the whole boot, refusals first, runs
+  //   in one storage transaction (see _runBoot).
+  // Implements: EVS-DEV-event-store-open/G+I+M
+  // the boot reports its phases to an optional observer that decides nothing;
+  //   the completion is reported after the boot committed; an open the
+  //   observer calls while the boot runs is refused.
   static Future<EventStore> open({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -250,46 +458,68 @@ class EventStore {
     required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
-    EventStoreSyncCycleTrigger? syncCycleTrigger,
     Clock? clock,
     Uuid? uuid,
-    bool allowDowngrade = false,
+    void Function(BootProgress progress)? onBootProgress,
   }) async {
-    await _runBootVersionCheck(storage, allowDowngrade: allowDowngrade);
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    effectiveProjections.seal();
-    final effectivePromoters = promoters ?? PromoterRegistry();
-    effectivePromoters.seal();
-    await _runBootSnapshotPromotionPass(
-      storage: storage,
-      entryTypes: entryTypes,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-    );
-    return EventStore._(
-      backend: storage,
-      entryTypes: entryTypes,
-      source: source,
-      securityContexts: securityContexts,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      syncCycleTrigger: syncCycleTrigger,
-      clock: clock,
-      uuid: uuid,
-    );
+    refuseCallFromBootProgressObserver('EventStore.open');
+    final progress = BootProgressReporter(onBootProgress);
+    try {
+      progress.report(BootPhase.checks, 0, 0);
+      final effectiveProjections = projections ?? ProjectionRegistry();
+      _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      effectiveProjections.seal();
+      final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
+      final (:databaseId, :registration) = await _guardedBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        recordVersion: true,
+        progress: progress,
+      );
+      final store = EventStore._(
+        backend: storage,
+        entryTypes: entryTypes,
+        source: source,
+        securityContexts: securityContexts,
+        databaseId: databaseId,
+        registration: registration,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        clock: clock,
+        uuid: uuid,
+      );
+      progress
+        ..bootFinished()
+        ..report(BootPhase.complete, 0, 0);
+      return store;
+    } finally {
+      progress.bootFinished();
+    }
   }
 
-  /// Opens an [EventStore] without running the lib-version boot check.
+  /// Opens an [EventStore] for a test: the boot of [open], refusals
+  /// included, without its library-version event.
   ///
-  /// Intended for **tests only** — use [EventStore.open] in production code.
-  /// Skipping the boot check means no `lib_version_initialized` event is
-  /// appended, which keeps sequence numbers predictable for tests that assert
-  /// on raw sequence values.
-  ///
-  /// The snapshot-promotion boot pass (entry-type downgrade refusal,
-  /// view_target_versions seeding, and snapshot promotion) still runs here:
-  /// on a greenfield log it's a no-op (no view rows, no stored target
-  /// versions), and tests that exercise version evolution want it to fire.
+  /// It registers the reserved system entry types and the default
+  /// destination-wedges view as [open] does, runs the incompatible-generation
+  /// guard and refuses what [open] refuses (a reserved id or the view's name
+  /// under a definition other than the library's, a sealed projection
+  /// registry without the view, the database identity, the data format, an
+  /// entry-type downgrade), and otherwise seeds, promotes and re-derives
+  /// views and writes the generation and boot records as [open] does. It
+  /// appends no `lib_version_initialized` or `lib_version_changed` event,
+  /// so sequence numbers stay predictable, and at a first open it mints the
+  /// database identity without a log record; a later [open] adopts that
+  /// identity. The guarantee that the log records every version that opened
+  /// the database holds for [open] only. [onBootProgress] observes the boot
+  /// as it does for [open].
+  // Implements: EVS-DEV-event-store-open/A
+  // the test-only constructor: visible for testing, so the analyzer reports
+  //   a call from production code; the refusals of open; no library-version
+  //   event.
+  @visibleForTesting
   static Future<EventStore> openForTest({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -297,73 +527,335 @@ class EventStore {
     required MutableSecurityContextStore securityContexts,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
-    EventStoreSyncCycleTrigger? syncCycleTrigger,
     Clock? clock,
     Uuid? uuid,
+    void Function(BootProgress progress)? onBootProgress,
   }) async {
-    final effectiveProjections = projections ?? ProjectionRegistry();
-    effectiveProjections.seal();
-    final effectivePromoters = promoters ?? PromoterRegistry();
-    effectivePromoters.seal();
-    await _runBootSnapshotPromotionPass(
-      storage: storage,
-      entryTypes: entryTypes,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-    );
-    return EventStore._(
-      backend: storage,
-      entryTypes: entryTypes,
-      source: source,
-      securityContexts: securityContexts,
-      projections: effectiveProjections,
-      promoters: effectivePromoters,
-      syncCycleTrigger: syncCycleTrigger,
-      clock: clock,
-      uuid: uuid,
-    );
+    refuseCallFromBootProgressObserver('EventStore.openForTest');
+    final progress = BootProgressReporter(onBootProgress);
+    try {
+      progress.report(BootPhase.checks, 0, 0);
+      final effectiveProjections = projections ?? ProjectionRegistry();
+      _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      effectiveProjections.seal();
+      final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
+      final (:databaseId, :registration) = await _guardedBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        recordVersion: false,
+        progress: progress,
+      );
+      final store = EventStore._(
+        backend: storage,
+        entryTypes: entryTypes,
+        source: source,
+        securityContexts: securityContexts,
+        databaseId: databaseId,
+        registration: registration,
+        projections: effectiveProjections,
+        promoters: effectivePromoters,
+        clock: clock,
+        uuid: uuid,
+      );
+      progress
+        ..bootFinished()
+        ..report(BootPhase.complete, 0, 0);
+      return store;
+    } finally {
+      progress.bootFinished();
+    }
   }
 
-  /// Runs the three boot-time entry-type-version helpers in fixed order
-  /// inside a single backend transaction:
+  /// Registers, in the caller's registries, every reserved system entry
+  /// type ([kSystemEntryTypes]) and the default destination-wedges view
+  /// ([defaultDestinationWedgesSpec]) they lack, before the registries are
+  /// sealed and the boot reads them.
   ///
-  ///   1. [verifyNoEntryTypeDowngrade] — refuse boot if any entry type's
-  ///      `registeredVersion` is below the highest stored
-  ///      `view_target_versions` value.
-  ///   2. [seedViewTargetVersions] — write a `view_target_versions` row
-  ///      at the current `registeredVersion` for every (viewName, entry
-  ///      type matched by the projection's interest filter) pair that
-  ///      doesn't already have one.
-  ///   3. [promoteViewSnapshots] — for each pair where the stored target
-  ///      lags the registry, apply the registered promoter chain to the
-  ///      affected view rows, update `view_target_versions`, and emit
-  ///      one `view_snapshot_promoted` audit event per promoted pair via
-  ///      [_appendViewSnapshotPromotedAuditInTxn].
-  ///
-  /// All three run inside a single [backend.transaction] so a mid-pass
-  /// crash rolls back atomically and the next boot retries from a clean
-  /// state.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B,
-  //             EVS-DEV-snapshot-promotion-on-open/A+B+C,
-  //             EVS-DEV-event-store-open/E
-  //
-  // Downgrade refusal runs before any mutation; lagging view rows are then
-  // promoted and a view_snapshot_promoted audit event emitted per pair; all
-  // three steps run inside one storage.transaction.
-  static Future<void> _runBootSnapshotPromotionPass({
+  /// A registry that already holds a reserved entry-type id, or a spec under
+  /// the default view's name, is accepted only when it holds the library's
+  /// own object (the exported definition or spec, which is also what an
+  /// earlier open with the same registries left there); anything else, or a
+  /// sealed projection registry that lacks the view, throws [ArgumentError]
+  /// naming the reserved id or view before either registry changes and
+  /// before anything is written.
+  // Implements: EVS-DEV-destination-drain/M
+  // opening an event store registers the reserved system entry types and the
+  //   default destination-wedges view, accepting only the library's own
+  //   definitions already present.
+  static void _registerLibraryDefinitions(
+    EntryTypeRegistry entryTypes,
+    ProjectionRegistry projections,
+  ) {
+    for (final definition in kSystemEntryTypes) {
+      final held = entryTypes.byId(definition.id);
+      if (held != null && !identical(held, definition)) {
+        throw ArgumentError.value(
+          definition.id,
+          'entryTypes',
+          'entryType id "${definition.id}" is reserved for system events; '
+              "the registry holds a definition other than the library's "
+              "(kSystemEntryTypes). Register the library's own definition "
+              'or none: EventStore.open registers it.',
+        );
+      }
+    }
+    final viewName = defaultDestinationWedgesSpec.viewName;
+    final heldSpec = projections.lookup(viewName);
+    if (heldSpec != null &&
+        !identical(heldSpec, defaultDestinationWedgesSpec)) {
+      throw ArgumentError.value(
+        viewName,
+        'projections',
+        "view \"$viewName\" is reserved for the library's default "
+            'destination-wedges view; the registry holds another spec under '
+            'that name. Register defaultDestinationWedgesSpec or none: '
+            'EventStore.open registers it.',
+      );
+    }
+    if (heldSpec == null && projections.isSealed) {
+      throw ArgumentError.value(
+        viewName,
+        'projections',
+        "the projection registry is sealed and lacks the library's default "
+            'destination-wedges view "$viewName", which EventStore.open '
+            'registers; pass the registry unsealed, or register '
+            'defaultDestinationWedgesSpec before sealing it.',
+      );
+    }
+    for (final definition in kSystemEntryTypes) {
+      if (entryTypes.byId(definition.id) == null) {
+        entryTypes.register(definition);
+      }
+    }
+    if (heldSpec == null) projections.register(defaultDestinationWedgesSpec);
+  }
+
+  /// The build this process runs as: the compiled [LibVersion] constants,
+  /// or the declaration a test installed.
+  static ({String version, DataFormatVersion dataFormat}) _build() =>
+      DeliveryTestHooks.current?.buildDeclaration ??
+      (version: LibVersion.version, dataFormat: LibVersion.dataFormat);
+
+  /// The generation guard around the boot of [open] and [openForTest]:
+  /// registers this build's generation with the backend's guard (refusing a
+  /// conflicting live instance before any write), runs the boot transaction
+  /// under the boot lock the registration holds, completes the boot (the
+  /// registration joins the backend's active set and the boot lock is
+  /// released). Any failure after the registration releases it before the
+  /// error surfaces.
+  // Implements: EVS-DEV-version-compatibility/F+G
+  // register before any write; the boot transaction runs under the boot
+  //   lock; a failed open releases its registration.
+  static Future<({String databaseId, GenerationRegistration registration})>
+  _guardedBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required ProjectionRegistry projections,
     required PromoterRegistry promoters,
+    required bool recordVersion,
+    required BootProgressReporter progress,
   }) async {
-    await storage.transaction((txn) async {
+    final build = _build();
+    final descriptor = GenerationDescriptor(
+      packageVersion: build.version,
+      dataFormat: build.dataFormat,
+      entryTypes: <String, EntryTypeVersion>{
+        for (final definition in entryTypes.all())
+          definition.id: definition.registeredVersion,
+      },
+    );
+    final registration = await storage.registerGeneration(descriptor);
+    try {
+      final databaseId = await _runBoot(
+        storage: storage,
+        entryTypes: entryTypes,
+        projections: projections,
+        promoters: promoters,
+        recordVersion: recordVersion,
+        descriptor: descriptor,
+        registration: registration,
+        progress: progress,
+      );
+      await registration.completeBoot();
+      return (databaseId: databaseId, registration: registration);
+    } catch (_) {
+      await registration.release();
+      rethrow;
+    }
+  }
+
+  /// The boot of [open] (with [recordVersion]) and of [openForTest]
+  /// (without), in one `bootTransaction` of [storage]. Returns the database
+  /// identity.
+  ///
+  /// Every refusal is decided before the first write: the stored shapes,
+  /// the database identity, the data format (in the log, then in the
+  /// generation record) and the entry-type majors (in the stored view
+  /// targets, then in the generation record). Then, in order: the
+  /// library-version event (when [recordVersion] and one is due),
+  /// view-target seeding, snapshot promotion (each promoted pair audited by
+  /// a `view_snapshot_promoted` event), the re-derivation of views behind
+  /// the log, the merged generation record and [registration]'s own
+  /// records, and the boot record. The whole body may run more than once (a serialization retry, or a browser database re-running it
+  /// after another tab committed); each run decides again from what it
+  /// reads.
+  // Implements: EVS-DEV-event-store-open/B+C+D+E+F
+  // one boot transaction; refusals before any write; the library-version
+  //   event before seeding and promotion; the boot record on every accepted
+  //   boot.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B
+  // verifyNoEntryTypeDowngrade runs before any write of the boot
+  //   transaction.
+  // Implements: EVS-DEV-snapshot-promotion-on-open/A+B+C
+  // lagging view rows are re-derived and a view_snapshot_promoted audit
+  //   appended per pair, in the boot transaction.
+  // Implements: EVS-DEV-version-compatibility/L
+  // views behind the log for an entry type in their interest are
+  //   re-derived in the boot transaction.
+  // Implements: EVS-DEV-version-compatibility/I
+  // the generation record refuses, before any write, a build it does not
+  //   admit, and every accepted boot merges its generation into it.
+  static Future<String> _runBoot({
+    required StorageBackend storage,
+    required EntryTypeRegistry entryTypes,
+    required ProjectionRegistry projections,
+    required PromoterRegistry promoters,
+    required bool recordVersion,
+    required GenerationDescriptor descriptor,
+    required GenerationRegistration registration,
+    required BootProgressReporter progress,
+  }) {
+    final hooks = DeliveryTestHooks.current;
+    final build = _build();
+    return storage.bootTransaction<String>((txn) async {
+      _observeBootBodyRun(hooks);
+      progress.beginBodyRun();
+
+      // -------- Decide: nothing below writes until every refusal ran.
+      await _refuseEarlierFormatEvents(storage, txn);
+      final storedId = await storage.readDatabaseIdTxn(txn);
+      final LocalLibVersionHistory history;
+      try {
+        history = await VersionCheck.readLocalInTxn(storage, txn);
+      } on FormatException catch (e) {
+        throw DatabaseResetRequiredError(
+          'a library-version event is not in this data format: ${e.message}',
+        );
+      }
+      final initialized = history.firstInitialized;
+      final latest = history.latest;
+      if (initialized == null && latest != null) {
+        throw DatabaseResetRequiredError(
+          'its log records library-version changes but no initialization',
+        );
+      }
+      if (initialized != null) {
+        final recordedId = initialized.databaseId;
+        if (recordedId == null ||
+            history.events.any((recorded) => recorded.dataFormat == null)) {
+          throw DatabaseResetRequiredError(
+            'its library-version events record no database identity or no '
+            'data format',
+          );
+        }
+        if (storedId != recordedId) {
+          throw DatabaseIdentityMismatchError(
+            recordedDatabaseId: recordedId,
+            storedDatabaseId: storedId,
+          );
+        }
+        final recordedFormat = latest!.dataFormat!;
+        if (recordedFormat.major != build.dataFormat.major) {
+          throw DataFormatIncompatibleError(
+            recordedPackageVersion: latest.packageVersion ?? '(unrecorded)',
+            recordedDataFormat: recordedFormat,
+            packageVersion: build.version,
+            dataFormat: build.dataFormat,
+          );
+        }
+      }
+      final record = await storage.readDataGenerationTxn(txn);
+      if (record != null && record.dataFormatMajor != build.dataFormat.major) {
+        final recordedFormat = latest?.dataFormat;
+        throw DataFormatIncompatibleError(
+          recordedPackageVersion: latest?.packageVersion ?? '(unrecorded)',
+          recordedDataFormat:
+              recordedFormat != null &&
+                  recordedFormat.major == record.dataFormatMajor
+              ? recordedFormat
+              : DataFormatVersion(record.dataFormatMajor, 0),
+          packageVersion: build.version,
+          dataFormat: build.dataFormat,
+        );
+      }
       await verifyNoEntryTypeDowngrade(
         txn: txn,
         backend: storage,
         projections: projections,
         entryTypes: entryTypes,
       );
-      await seedViewTargetVersions(
+      if (record != null) {
+        for (final entry in descriptor.entryTypes.entries) {
+          final recordedMajor = record.entryTypeMajors[entry.key];
+          if (recordedMajor != null && recordedMajor > entry.value.major) {
+            throw EntryTypeVersionDowngradeError(
+              entryType: entry.key,
+              fromVersion: EntryTypeVersion(recordedMajor, 0),
+              toVersion: entry.value,
+              recordedByOpen: true,
+            );
+          }
+        }
+      }
+
+      // -------- Write.
+      final String databaseId;
+      var versionEventAppended = false;
+      if (initialized == null) {
+        databaseId = await storage.readOrCreateDatabaseIdTxn(txn);
+        if (recordVersion) {
+          await _appendLibVersionEventInTxn(
+            txn,
+            storage,
+            LibVersionEvents.initialized,
+            <String, Object?>{
+              'version': build.version,
+              'data_format': build.dataFormat.toJson(),
+              'database_id': databaseId,
+              'initializedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          );
+          versionEventAppended = true;
+        }
+      } else {
+        databaseId = initialized.databaseId!;
+        final recordedVersion = latest!.packageVersion;
+        final recordedFormat = latest.dataFormat!;
+        if (recordVersion &&
+            (recordedVersion != build.version ||
+                recordedFormat != build.dataFormat)) {
+          await _appendLibVersionEventInTxn(
+            txn,
+            storage,
+            LibVersionEvents.changed,
+            <String, Object?>{
+              'fromVersion': recordedVersion,
+              'toVersion': build.version,
+              'fromDataFormat': recordedFormat.toJson(),
+              'toDataFormat': build.dataFormat.toJson(),
+              'changedAt': DateTime.now().toUtc().toIso8601String(),
+            },
+          );
+          versionEventAppended = true;
+        }
+      }
+      if (versionEventAppended &&
+          (hooks?.afterBootVersionEvent?.call() ?? false)) {
+        throw const InjectedFailure('afterBootVersionEvent');
+      }
+      final seeded = await seedViewTargetVersions(
         txn: txn,
         backend: storage,
         projections: projections,
@@ -375,13 +867,12 @@ class EventStore {
         projections: projections,
         promoters: promoters,
         entryTypes: entryTypes,
-        now: DateTime.now().toUtc(),
         emitAudit:
             ({
               required String viewName,
               required String entryType,
-              required int fromVersion,
-              required int toVersion,
+              required EntryTypeVersion fromVersion,
+              required EntryTypeVersion toVersion,
               required int rowsPromoted,
             }) async {
               await _appendViewSnapshotPromotedAuditInTxn(
@@ -395,61 +886,82 @@ class EventStore {
                 rowsPromoted: rowsPromoted,
               );
             },
+        progress: progress,
       );
+      await catchUpViews(
+        txn: txn,
+        backend: storage,
+        projections: projections,
+        promoters: promoters,
+        entryTypes: entryTypes,
+        seeded: seeded,
+        progress: progress,
+      );
+      final merged = record == null
+          ? GenerationRecord.of(descriptor)
+          : record.merge(descriptor);
+      if (merged != record) {
+        await storage.writeDataGenerationTxn(txn, merged);
+      }
+      await registration.recordInTxn(txn);
+      // An accepted boot always writes, so a browser database checks this
+      // transaction against other tabs' commits and re-runs it on fresh data
+      // when one committed first.
+      await storage.writeBootCheckTxn(
+        txn,
+        BootCheck(
+          at: DateTime.now().toUtc(),
+          packageVersion: build.version,
+          dataFormat: build.dataFormat,
+        ),
+      );
+      return databaseId;
     });
   }
 
-  /// Runs the lib-version boot check against [storage].
-  ///
-  /// - First boot: appends `lib_version_initialized`.
-  /// - Upgrade: appends `lib_version_changed`.
-  /// - Downgrade: throws [DowngradeRefusedError] unless
-  ///   [allowDowngrade] is `true`.
-  /// - Same version: no-op.
-  static Future<void> _runBootVersionCheck(
-    StorageBackend storage, {
-    bool allowDowngrade = false,
-  }) async {
-    final recorded = await VersionCheck.findMostRecent(storage);
-    if (recorded == null) {
-      await _appendLibVersionEventToBackend(
-        storage,
-        LibVersionEvents.initialized,
-        <String, Object?>{
-          'version': LibVersion.version,
-          'initializedAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      );
-    } else {
-      final cmp = LibVersion.compare(
-        recorded.recordedVersion,
-        LibVersion.version,
-      );
-      if (cmp > 0 && !allowDowngrade) {
-        throw DowngradeRefusedError(
-          recorded.recordedVersion,
-          LibVersion.version,
-        );
-      } else if (cmp < 0) {
-        await _appendLibVersionEventToBackend(
-          storage,
-          LibVersionEvents.changed,
-          <String, Object?>{
-            'fromVersion': recorded.recordedVersion,
-            'toVersion': LibVersion.version,
-            'changedAt': DateTime.now().toUtc().toIso8601String(),
-          },
-        );
+  /// Throws [DatabaseResetRequiredError] when the latest event in the log
+  /// is not in this data format's stored shape.
+  static Future<void> _refuseEarlierFormatEvents(
+    StorageBackend storage,
+    Transaction txn,
+  ) async {
+    try {
+      await for (final _ in storage.readEventsReverseInTxn(txn)) {
+        break;
       }
-      // cmp == 0 or (cmp > 0 && allowDowngrade): no-op.
+    } on FormatException catch (e) {
+      throw DatabaseResetRequiredError(
+        'its events are not in this data format: ${e.message}',
+      );
+    }
+  }
+
+  static void _observeBootBodyRun(DeliveryTestHooks? hooks) {
+    final seam = hooks?.onBootBodyRun;
+    if (seam == null) return;
+    try {
+      seam();
+    } on Object catch (e, st) {
+      libraryLog(
+        'event_store',
+        'the onBootBodyRun test seam threw',
+        level: LibraryLogLevel.severe,
+        error: e,
+        stackTrace: st,
+      );
     }
   }
 
   /// Close the backend and subscription engine, releasing all resources.
   /// Not safe to call concurrently with in-flight work.
+  ///
+  /// The generation registration is released last, once the store and the
+  /// backend have stopped writing, so no write of this store runs after a
+  /// conflicting build could register.
   Future<void> close() async {
     await _subs.close();
     await backend.close();
+    await _registration.release();
   }
 
   /// Run [body] inside a single `backend.transaction`, collecting every
@@ -459,32 +971,169 @@ class EventStore {
   /// listeners receive the same delivery they would from the public [append]
   /// method.
   ///
-  /// External callers (e.g. [DestinationRegistry]) that need to open their
-  /// own transaction and call [appendInTxn] SHOULD use this method instead
-  /// of [backend.transaction] directly to ensure subscription delivery.
+  /// This is the only transaction [appendInTxn] accepts: it requires the
+  /// collector this method hands [body], and refuses an append inside a
+  /// plain `backend.transaction`.
   ///
-  /// Does NOT trigger the sync cycle — callers that want sync-cycle triggering
-  /// must call `unawaited(syncCycleTrigger?.call())` after this returns.
+  /// Does not wake the delivery cycle: the library's operations that call
+  /// it (action dispatch, the destination registry's operations) wake the
+  /// cycle themselves after it returns. Events a consumer appends through it
+  /// reach the drainer at its next pass, at the latest one cadence later; a
+  /// consumer that wants them delivered sooner calls its started
+  /// `SyncCycle` after this returns.
+  ///
+  /// On Postgres a run that wrote the table holding the sequence counter
+  /// (every run that appended) and lost a serialization race is re-run
+  /// holding a lock on that table, which holds back every other write to it,
+  /// and so every append to the database, until the re-run ends. [body]
+  /// therefore does not wait on anything outside the database (a network
+  /// call, a timer, another transaction of this store's database).
+  ///
+  /// A live subscriber receives this store's events in log order, so the
+  /// events of a transaction are published only once every transaction of
+  /// this store that appended before it has committed or failed. [body]
+  /// therefore does not wait for the live delivery of an event that a later
+  /// transaction of this store appends: that delivery waits for [body]'s
+  /// transaction to end.
+  ///
+  /// The backend may run [body] more than once before one run commits (see
+  /// `StorageBackend.transaction`). Each run receives its own
+  /// [PublishCollector], and only the committed run's collector is
+  /// published. A caller keeps every value that describes a run -- event ids
+  /// it appended, a decision it reached, results it accumulated -- inside
+  /// [body] and returns it as [body]'s result, or resets it at the start of
+  /// each run, so that what it reports reflects only the committed run.
   Future<T> runTransaction<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
     return _runInTxnWithPublish(body);
   }
 
-  /// Internal helper: wraps a [backend.transaction] call with a
+  /// The first sequence number each transaction of this store has appended
+  /// in its current run, while it has not committed or failed: the
+  /// publication of a committed transaction waits while one with a lower
+  /// first sequence number is still in flight.
+  final SplayTreeMap<int, int> _inFlightFirstSequences =
+      SplayTreeMap<int, int>();
+
+  /// Committed transactions waiting to publish, by first sequence number.
+  final SplayTreeMap<int, _Publication> _awaitingPublication =
+      SplayTreeMap<int, _Publication>();
+
+  void _holdSequence(int sequenceNumber) => _inFlightFirstSequences.update(
+    sequenceNumber,
+    (count) => count + 1,
+    ifAbsent: () => 1,
+  );
+
+  void _releaseSequence(int sequenceNumber) {
+    final count = _inFlightFirstSequences[sequenceNumber];
+    if (count == null) return;
+    if (count <= 1) {
+      _inFlightFirstSequences.remove(sequenceNumber);
+    } else {
+      _inFlightFirstSequences[sequenceNumber] = count - 1;
+    }
+  }
+
+  /// Publishes, in sequence order, every committed transaction that no
+  /// in-flight transaction with a lower first sequence number precedes.
+  void _publishInOrder() {
+    while (_awaitingPublication.isNotEmpty) {
+      final next = _awaitingPublication.firstKey()!;
+      final lowestInFlight = _inFlightFirstSequences.isEmpty
+          ? null
+          : _inFlightFirstSequences.firstKey();
+      if (lowestInFlight != null && lowestInFlight < next) return;
+      _awaitingPublication.remove(next)!.publish();
+    }
+  }
+
+  /// Internal helper: wraps a `backend.transaction` call with a
   /// [PublishCollector] and publishes all collected events and row changes
   /// after commit.
+  // Implements: EVS-PRD-subscription/E
+  // A backend may run the body more than once
+  //   (Postgres re-runs it after a serialization conflict; sembast_web re-runs
+  //   it after another tab commits first). Each run gets a fresh collector, and
+  //   only the collector of the run that committed (the last one) publishes.
+  //   Runs that overlap break that contract and are refused.
+  // Implements: EVS-PRD-subscription/C
+  // Transactions of one store commit in the order of the sequence numbers
+  //   they append (each append advances the one sequence counter), but their
+  //   continuations can resume in any order. A committed transaction's
+  //   events are therefore published only once no transaction of this store
+  //   that appended a lower sequence number is still in flight, so live
+  //   subscribers receive the store's events in log order.
   Future<T> _runInTxnWithPublish<T>(
     Future<T> Function(Transaction txn, PublishCollector collector) body,
   ) async {
-    final collector = PublishCollector();
-    final result = await backend.transaction<T>((txn) => body(txn, collector));
-    for (final event in collector.events) {
-      _subs.publishEvent(event);
+    refuseCallFromBootProgressObserver('An EventStore transaction');
+    late PublishCollector collector;
+    var runInProgress = false;
+    int? heldSequence;
+    void releaseHeld() {
+      final held = heldSequence;
+      if (held == null) return;
+      heldSequence = null;
+      _releaseSequence(held);
     }
-    for (final change in collector.rowChanges) {
-      _subs.publishRowChange(change);
+
+    final T result;
+    try {
+      result = await backend.transaction<T>((txn) async {
+        if (runInProgress) {
+          throw StateError(
+            'StorageBackend.transaction started a run of the body while an '
+            'earlier run was still in progress; runs must be sequential.',
+          );
+        }
+        runInProgress = true;
+        // A new run replaces whatever an earlier, discarded run appended.
+        releaseHeld();
+        _publishInOrder();
+        final runCollector = PublishCollector._(txn, (sequenceNumber) {
+          heldSequence = sequenceNumber;
+          _holdSequence(sequenceNumber);
+        });
+        collector = runCollector;
+        try {
+          return await body(txn, runCollector);
+        } finally {
+          runCollector._open = false;
+          runInProgress = false;
+        }
+      });
+    } catch (_) {
+      releaseHeld();
+      _publishInOrder();
+      rethrow;
     }
+    if (heldSequence != null) {
+      await DeliveryTestHooks.current?.afterCommitBeforePublish?.call();
+    }
+    final events = collector.events;
+    final rowChanges = collector.rowChanges;
+    void publish() {
+      for (final event in events) {
+        _subs.publishEvent(event);
+      }
+      for (final change in rowChanges) {
+        _subs.publishRowChange(change);
+      }
+    }
+
+    final first = heldSequence;
+    releaseHeld();
+    if (first == null) {
+      publish();
+      _publishInOrder();
+      return result;
+    }
+    // Not awaited: a caller whose body waits on another transaction of this
+    // store must not wait on its own publication too.
+    _awaitingPublication[first] = _Publication(publish);
+    _publishInOrder();
     return result;
   }
 
@@ -508,7 +1157,7 @@ class EventStore {
   ///
   /// Atomic snapshot-then-attach: opens a single live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and forward-mode delivery. A [_replayDone] flag
+  /// snapshot read and forward-mode delivery. A `_replayDone` flag
   /// inside the listener routes events to the buffer during snapshot
   /// read and directly to the output controller after it.
   ///
@@ -556,11 +1205,11 @@ class EventStore {
         // Implements: EVS-PRD-subscription/A
         // a filtered (row-scoped)
         // materialized-state snapshot. Materialize the whole allow-list in ONE
-        // bulk read (CUR-1471) instead of a BEGIN/SELECT/COMMIT per aggregate id —
-        // the former per-id transaction loop was an N+1 round-trip storm
-        // (~3xN Cloud SQL round-trips for a site-scoped subscriber). Each
-        // requested id still emits a Snapshot, with a null value for an absent
-        // row, preserving the prior per-id tombstoned/absent signal.
+        // bulk read rather than a BEGIN/SELECT/COMMIT per aggregate id, which
+        // would cost about three round trips per id against a networked
+        // database. Each requested id emits a Snapshot, with a null value for
+        // an absent row, so a tombstoned or absent row is still signalled
+        // per id.
         final byKey = await backend.readViewRowsByKeys(
           mode.viewName,
           aggregateIds,
@@ -601,7 +1250,7 @@ class EventStore {
     }
 
     controller = StreamController<Update<T>>(
-      onListen: () => start(),
+      onListen: start,
       onCancel: () async {
         await liveSub?.cancel();
         liveSub = null;
@@ -629,21 +1278,29 @@ class EventStore {
     );
   }
 
-  DateTime _now() => (_clock ?? () => DateTime.now().toUtc())();
+  /// The current instant in UTC, whatever zone the injected clock returns
+  /// it in: every time the store writes into a hashed field (an event's
+  /// `client_timestamp`, a provenance entry's `received_at`) is written as
+  /// a `Z`-suffixed string, which every backend stores and reads back
+  /// unchanged.
+  DateTime _now() => (_clock ?? DateTime.now)().toUtc();
 
   /// Append a new event. Returns the persisted `StoredEvent`, or `null`
   /// when `dedupeByContent` is true and the content matches the
-  /// aggregate's most recent event.
+  /// aggregate's most recent event of [entryType].
   ///
-  /// The substrate stamps `entry_type_version` from the registry's
-  /// `EntryTypeDefinition.registeredVersion` for [entryType] and stamps
-  /// `lib_format_version` from [StoredEvent.currentLibFormatVersion]. The
-  /// substrate is the single source of truth for both fields; callers do
-  /// not (and cannot) supply them. Ingest still validates
-  /// `entry_type_version` against the registry
+  /// Throws [ArgumentError], appending nothing, when [entryType] is a
+  /// reserved system entry type ([kReservedSystemEntryTypeIds]): only the
+  /// library appends reserved system events.
+  ///
+  /// The library stamps `entry_type_version` with the registered major and
+  /// minor (`EntryTypeDefinition.registeredVersion` for [entryType]) and
+  /// `lib_format_version` with its data-format version
+  /// (`LibVersion.dataFormat`). The library is the single source of truth
+  /// for both fields; callers do not (and cannot) supply them.
   // Implements: EVS-DEV-append-stamps-registered-version
   // substrate stamps
-  //   entry_type_version from registry.registeredVersion; callers do not
+  //   entry_type_version with the registered major and minor; callers do not
   //   supply this field. dedupeByContent skips the append when content
   //   matches the prior event; any throw rolls back the entire append.
   Future<StoredEvent?> append({
@@ -660,6 +1317,7 @@ class EventStore {
     String? changeReason,
     bool dedupeByContent = false,
   }) async {
+    _refuseReservedEntryType(entryType);
     // appendInTxn runs the projection interpreter and threads row-changes
     // through the collector; _runInTxnWithPublish fires both events and
     // row changes to subscribers after the transaction commits.
@@ -667,7 +1325,7 @@ class EventStore {
       txn,
       collector,
     ) async {
-      return appendInTxn(
+      return _appendInTxn(
         txn,
         collector: collector,
         entryType: entryType,
@@ -686,8 +1344,152 @@ class EventStore {
     });
 
     if (event == null) return null;
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
     return event;
+  }
+
+  /// Throws [ArgumentError] when [entryType] is a reserved system entry
+  /// type: the public append operations never append one.
+  // Implements: EVS-DEV-destination-drain/L
+  // the event store's public append operations refuse reserved system entry
+  //   types.
+  static void _refuseReservedEntryType(String entryType) {
+    if (kReservedSystemEntryTypeIds.contains(entryType)) {
+      throw ArgumentError.value(
+        entryType,
+        'entryType',
+        'is a reserved system entry type; only the library appends reserved '
+            'system events',
+      );
+    }
+  }
+
+  /// Throws [ArgumentError] unless [entryType] is a reserved system entry
+  /// type appended in a shape the library declares for it and, for a
+  /// destination audit, with data ingest admits
+  /// ([isWellFormedDestinationAuditData]).
+  // Implements: EVS-DEV-destination-drain/K
+  // every destination audit event the library appends carries a destination
+  //   identifier and the appending database's identity, each non-empty and
+  //   without '|'.
+  static void _checkReservedAppend({
+    required String entryType,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+  }) {
+    checkReservedEventShape(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+    );
+    if (kDestinationAuditEntryTypes.contains(entryType) &&
+        !isWellFormedDestinationAuditData(data)) {
+      throw ArgumentError.value(
+        data,
+        'data',
+        'a destination audit event carries a destination identifier (id) '
+            'and a database identity (database_id), each a non-empty string '
+            "without '|'",
+      );
+    }
+  }
+
+  /// Append a reserved system event in its own transaction: the library's
+  /// counterpart of [append] for the entry types [append] refuses.
+  ///
+  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
+  /// reserved system entry type, when [aggregateType] and [eventType] are
+  /// not a shape the library declares for [entryType], or when a destination
+  /// audit's [data] lacks a destination identifier or a database identity
+  /// that ingest admits. Otherwise behaves as [append]: stamps the registered version, dedupes by content when
+  /// [dedupeByContent] is true (returning null), publishes after the commit
+  /// and triggers the sync cycle.
+  @internal
+  Future<StoredEvent?> appendReserved({
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    bool dedupeByContent = false,
+  }) async {
+    _checkReservedAppend(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+    );
+    final event = await _runInTxnWithPublish<StoredEvent?>(
+      (txn, collector) => _appendInTxn(
+        txn,
+        collector: collector,
+        entryType: entryType,
+        aggregateId: aggregateId,
+        aggregateType: aggregateType,
+        eventType: eventType,
+        data: data,
+        initiator: initiator,
+        flowToken: null,
+        metadata: null,
+        security: null,
+        checkpointReason: null,
+        changeReason: null,
+        dedupeByContent: dedupeByContent,
+      ),
+    );
+    if (event == null) return null;
+    wakeDeliveryCycle();
+    return event;
+  }
+
+  /// Append a reserved system event inside the transaction of a
+  /// [runTransaction] body: the library's counterpart of [appendInTxn] for
+  /// the entry types [appendInTxn] refuses.
+  ///
+  /// Throws [ArgumentError], appending nothing, when [entryType] is not a
+  /// reserved system entry type, when [aggregateType] and [eventType] are
+  /// not a shape the library declares for [entryType], or when a destination
+  /// audit's [data] lacks a destination identifier or a database identity
+  /// that ingest admits; and [StateError] as
+  /// [appendInTxn] does for a collector of another run. Returns null only
+  /// when [dedupeByContent] is true and the content matches the latest event
+  /// of [entryType] in the aggregate.
+  @internal
+  Future<StoredEvent?> appendReservedInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    bool dedupeByContent = false,
+  }) {
+    _checkReservedAppend(
+      entryType: entryType,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+    );
+    return _appendInTxn(
+      txn,
+      collector: collector,
+      entryType: entryType,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+      initiator: initiator,
+      flowToken: null,
+      metadata: null,
+      security: null,
+      checkpointReason: null,
+      changeReason: null,
+      dedupeByContent: dedupeByContent,
+    );
   }
 
   /// True iff [event] was originated locally on this `EventStore`'s
@@ -729,24 +1531,18 @@ class EventStore {
       // the redaction subject moves into `data.subject_event_id` so callers
       // can query "all redactions of event X" by filtering on entry_type
       // AND data.subject_event_id.
-      await appendInTxn(
+      await appendReservedInTxn(
         txn,
-        collector: collector,
+        collector,
         entryType: kSecurityContextRedactedEntryType,
         aggregateId: source.identifier,
-        aggregateType: 'security_context',
-        eventType: 'finalized',
+        aggregateType: kSecurityContextAuditAggregateType,
+        eventType: kSecurityContextRedactedEventType,
         data: <String, Object?>{'subject_event_id': eventId, 'reason': reason},
         initiator: redactedBy,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: false,
       );
     });
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
   }
 
   /// Apply [policy] (or [SecurityRetentionPolicy.defaults]) to the
@@ -787,57 +1583,45 @@ class EventStore {
       }
 
       if (compactCandidates.isNotEmpty) {
-        await appendInTxn(
+        await appendReservedInTxn(
           txn,
-          collector: collector,
+          collector,
           entryType: kSecurityContextCompactedEntryType,
           aggregateId: source.identifier,
-          aggregateType: 'security_context',
-          eventType: 'finalized',
+          aggregateType: kSecurityContextAuditAggregateType,
+          eventType: kSecurityContextCompactedEventType,
           data: <String, Object?>{
             'count': compactCandidates.length,
             'cutoff': compactCutoff.toIso8601String(),
             'policy': p.toJson(),
           },
           initiator: sweepBy,
-          flowToken: null,
-          metadata: null,
-          security: null,
-          checkpointReason: null,
-          changeReason: null,
-          dedupeByContent: false,
         );
       }
       if (purgeCandidates.isNotEmpty) {
-        await appendInTxn(
+        await appendReservedInTxn(
           txn,
-          collector: collector,
+          collector,
           entryType: kSecurityContextPurgedEntryType,
           aggregateId: source.identifier,
-          aggregateType: 'security_context',
-          eventType: 'finalized',
+          aggregateType: kSecurityContextAuditAggregateType,
+          eventType: kSecurityContextPurgedEventType,
           data: <String, Object?>{
             'count': purgeCandidates.length,
             'cutoff': purgeCutoff.toIso8601String(),
           },
           initiator: sweepBy,
-          flowToken: null,
-          metadata: null,
-          security: null,
-          checkpointReason: null,
-          changeReason: null,
-          dedupeByContent: false,
         );
       }
       // Always emit the policy-applied audit event, even when both sweeps
       // were empty, so operators have a continuous retention timeline.
-      await appendInTxn(
+      await appendReservedInTxn(
         txn,
-        collector: collector,
+        collector,
         entryType: kRetentionPolicyAppliedEntryType,
         aggregateId: source.identifier,
-        aggregateType: 'system_retention',
-        eventType: 'finalized',
+        aggregateType: kRetentionAuditAggregateType,
+        eventType: kRetentionPolicyAppliedEventType,
         data: <String, Object?>{
           'policy_full_retention_seconds': p.fullRetention.inSeconds,
           'policy_truncated_retention_seconds': p.truncatedRetention.inSeconds,
@@ -847,19 +1631,13 @@ class EventStore {
           'cutoff_purge': purgeCutoff.toUtc().toIso8601String(),
         },
         initiator: sweepBy,
-        flowToken: null,
-        metadata: null,
-        security: null,
-        checkpointReason: null,
-        changeReason: null,
-        dedupeByContent: false,
       );
       return RetentionResult(
         compactedCount: compactCandidates.length,
         purgedCount: purgeCandidates.length,
       );
     });
-    unawaited(syncCycleTrigger?.call());
+    wakeDeliveryCycle();
     return result;
   }
 
@@ -884,26 +1662,31 @@ class EventStore {
     }
   }
 
-  /// Transactional companion to [append]. Use when the caller is already
-  /// inside a `backend.transaction` and wants the append to participate
-  /// (e.g. so a config-mutation audit event lands atomically with the
-  /// mutation that triggered it).
+  /// Transactional companion to [append]: appends inside the transaction
+  /// of a [runTransaction] body, so the append commits atomically with the
+  /// body's other work (for example a configuration change and the audit
+  /// event that records it).
   ///
-  /// Skips `unawaited(syncCycleTrigger?.call())` — the public [append]
-  /// fires that AFTER the transaction commits.
+  /// [txn] and [collector] are the two arguments the [runTransaction] body
+  /// received. The append throws [StateError] before any write when
+  /// [collector] belongs to another transaction or to a run that has ended:
+  /// the collector is what publishes the event and its view changes to live
+  /// subscribers once the run commits, so an append through any other
+  /// transaction would either publish an event its transaction rolled back
+  /// or commit an event no subscriber sees.
+  ///
+  /// Does not wake the delivery cycle; the public [append] wakes it after
+  /// the transaction commits.
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
-  /// so direct callers do not need to pre-validate.
+  /// so direct callers do not need to pre-validate. Throws [ArgumentError],
+  /// appending nothing, when [entryType] is a reserved system entry type
+  /// ([kReservedSystemEntryTypeIds]): only the library appends reserved
+  /// system events.
   ///
   /// Runs the projection interpreter inside the same transaction as the
   /// append, so all matching `ProjectionSpec`s materialize views before
   /// commit. Any spec throw rolls back the entire append.
-  ///
-  /// When [collector] is non-null, both the persisted event and the
-  /// resulting row changes are recorded into it so the surrounding
-  /// [_runInTxnWithPublish] / [runTransaction] call can publish them to the
-  /// subscription bus after commit. Callers that open their own transaction
-  /// via [runTransaction] MUST pass their collector here.
   Future<StoredEvent?> appendInTxn(
     Transaction txn, {
     required String entryType,
@@ -918,8 +1701,55 @@ class EventStore {
     required String? checkpointReason,
     required String? changeReason,
     required bool dedupeByContent,
-    PublishCollector? collector,
+    required PublishCollector collector,
   }) async {
+    _refuseReservedEntryType(entryType);
+    return _appendInTxn(
+      txn,
+      entryType: entryType,
+      aggregateId: aggregateId,
+      aggregateType: aggregateType,
+      eventType: eventType,
+      data: data,
+      initiator: initiator,
+      flowToken: flowToken,
+      metadata: metadata,
+      security: security,
+      checkpointReason: checkpointReason,
+      changeReason: changeReason,
+      dedupeByContent: dedupeByContent,
+      collector: collector,
+    );
+  }
+
+  /// The append every append operation shares, reserved and user entry
+  /// types alike.
+  // Implements: EVS-PRD-destinations/K
+  // an append publishes only through the
+  //   collector of the transaction run that commits it.
+  Future<StoredEvent?> _appendInTxn(
+    Transaction txn, {
+    required String entryType,
+    required String aggregateId,
+    required String aggregateType,
+    required String eventType,
+    required Map<String, Object?> data,
+    required Initiator initiator,
+    required String? flowToken,
+    required Map<String, Object?>? metadata,
+    required SecurityDetails? security,
+    required String? checkpointReason,
+    required String? changeReason,
+    required bool dedupeByContent,
+    required PublishCollector collector,
+  }) async {
+    if (!collector._open || !identical(collector._transaction, txn)) {
+      throw StateError(
+        'EventStore.appendInTxn: the collector does not belong to this '
+        'transaction run. Pass the transaction and collector a '
+        'runTransaction body received, while that body runs.',
+      );
+    }
     _validateAppendInputs(
       entryType: entryType,
       aggregateType: aggregateType,
@@ -999,8 +1829,8 @@ class EventStore {
       'aggregate_id': aggregateId,
       'aggregate_type': aggregateType,
       'entry_type': entryType,
-      'entry_type_version': entryTypeVersion,
-      'lib_format_version': StoredEvent.currentLibFormatVersion,
+      'entry_type_version': entryTypeVersion.toJson(),
+      'lib_format_version': LibVersion.dataFormat.toJson(),
       'event_type': eventType,
       'sequence_number': sequenceNumber,
       'data': dataMap,
@@ -1030,7 +1860,7 @@ class EventStore {
       await securityContexts.writeInTxn(txn, row);
     }
 
-    collector?.add(event);
+    collector.add(event);
 
     // Run the projection interpreter inside the same transaction so views
     // materialize atomically with the append. Action-emitted events (via
@@ -1041,7 +1871,7 @@ class EventStore {
       backend: backend,
       event: event,
     );
-    if (collector != null && rowChanges.isNotEmpty) {
+    if (rowChanges.isNotEmpty) {
       collector.addRowChanges(rowChanges);
     }
     return event;
@@ -1074,10 +1904,34 @@ class EventStore {
   /// Process-local ingest. Opens its own transaction and delegates to
   /// [_ingestOneInTxn] with `batchContext: null`.
   ///
-  /// Accepts an [incoming] StoredEvent, verifies Chain 1, checks idempotency
+  /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
+  /// or entry-type version ([IngestDataFormatIncompatible],
+  /// [IngestEntryTypeVersionAhead]) and a reserved system event the library
+  /// does not append ([IngestReservedEventRefused]), verifies Chain 1 (the
+  /// event's own hash against its content and every hop's arrival hash,
+  /// refusing with [IngestChainBroken]), checks
+  /// idempotency
   /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
   /// (`batch_context = null`), recomputes `event_hash`, and persists.
+  ///
+  /// The caller already holds the parsed event, so its hash is checked over
+  /// `incoming.toMap()`. For an event parsed with [StoredEvent.fromMap] that
+  /// is the record it was parsed from, as far as the hash reaches: parsing
+  /// keeps every hashed field as the record spelled it.
+  ///
+  /// An event whose client timestamp, or a provenance entry's
+  /// `received_at`, is not one a record may carry throws
+  /// [IngestDecodeFailure] naming the field, before any write; an event
+  /// parsed with [StoredEvent.fromMap] was already refused there.
+  // Implements: EVS-DEV-event-record/A+C
+  // both ingest entry points refuse a malformed client timestamp or
+  //   received_at as a decode failure naming the field, before any write.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
+    try {
+      incoming.requireRecordTimestamps();
+    } on FormatException catch (e) {
+      throw IngestDecodeFailure('event ${incoming.eventId}: ${e.message}');
+    }
     return _runInTxnWithPublish((txn, collector) async {
       return _ingestOneInTxn(
         txn,
@@ -1088,12 +1942,19 @@ class EventStore {
     });
   }
 
-  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@1` envelope,
+  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope,
   /// runs every subject event through [_ingestOneInTxn] inside a single
   /// transaction, and stamps each with a [BatchContext] referencing this
   /// batch. Throws [IngestDecodeFailure] for any unsupported [wireFormat] or
-  /// malformed bytes; throws [IngestIdentityMismatch] (rolling back the whole
+  /// malformed bytes; throws the refusal of any event, [ingestEvent]'s
+  /// refusals included, rolling back the whole batch; throws [IngestIdentityMismatch] (rolling back the whole
   /// batch) if any subject has a hash conflict with an already-stored event.
+  ///
+  /// Each event's `event_hash` is checked against the canonical hash of its
+  /// record exactly as the envelope carried it, not of the parsed event. The
+  /// parsed event keeps every hashed field as that record spelled it, so
+  /// the stored copy, and the copy a later delivery forwards, hash as the
+  /// record did.
   ///
   /// See design spec §2.5.
   Future<IngestBatchResult> ingestBatch(
@@ -1110,28 +1971,21 @@ class EventStore {
     final outcomes = <PerEventIngestOutcome>[];
 
     await _runInTxnWithPublish<void>((txn, collector) async {
+      // Implements: EVS-PRD-event-log/G
+      // A re-run body starts from no outcomes, so
+      //   the result lists the committed run's outcomes only.
+      outcomes.clear();
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
-        final storedEvent = StoredEvent.fromMap(
-          Map<String, Object?>.from(eventMap),
-          0,
-        );
-        if (storedEvent.libFormatVersion >
-            StoredEvent.currentLibFormatVersion) {
-          throw IngestLibFormatVersionAhead(
-            eventId: storedEvent.eventId,
-            wireVersion: storedEvent.libFormatVersion,
-            receiverVersion: StoredEvent.currentLibFormatVersion,
+        final StoredEvent storedEvent;
+        try {
+          storedEvent = StoredEvent.fromMap(
+            Map<String, Object?>.from(eventMap),
+            0,
           );
-        }
-        final def = entryTypes.byId(storedEvent.entryType);
-        if (def != null &&
-            storedEvent.entryTypeVersion > def.registeredVersion) {
-          throw IngestEntryTypeVersionAhead(
-            eventId: storedEvent.eventId,
-            entryType: storedEvent.entryType,
-            wireVersion: storedEvent.entryTypeVersion,
-            receiverVersion: def.registeredVersion,
+        } on FormatException catch (e) {
+          throw IngestDecodeFailure(
+            'batch ${envelope.batchId} event $i: ${e.message}',
           );
         }
         final batchContext = BatchContext(
@@ -1146,6 +2000,7 @@ class EventStore {
           storedEvent,
           batchContext: batchContext,
           collector: collector,
+          wireRecord: eventMap,
         );
         outcomes.add(outcome);
       }
@@ -1158,19 +2013,80 @@ class EventStore {
   /// `ingestBatch` loop.
   ///
   /// [batchContext] is non-null when called from `ingestBatch`, null when
-  /// called from [ingestEvent].
+  /// called from [ingestEvent]. [wireRecord] is the record [incoming] was
+  /// parsed from, as the batch envelope carried it; the event's own hash is
+  /// checked over it when given.
   Future<PerEventIngestOutcome> _ingestOneInTxn(
     Transaction txn,
     StoredEvent incoming, {
     required BatchContext? batchContext,
     PublishCollector? collector,
+    Map<String, Object?>? wireRecord,
   }) async {
-    // 1. Chain 1 verify on the incoming provenance.
-    final verdict = _verifyChainOn(incoming);
+    // 0. Version compatibility, before any read or write: the data-format
+    //    major must equal this build's, and the entry-type major must not be
+    //    above the registered one. A same-major event is accepted at any
+    //    minor.
+    // Implements: EVS-DEV-version-compatibility/D
+    // every ingest entry point (ingestEvent and each event of ingestBatch)
+    //   refuses a different data-format major or a higher entry-type major
+    //   before any write.
+    if (!incoming.libFormatVersion.isCompatibleWith(LibVersion.dataFormat)) {
+      throw IngestDataFormatIncompatible(
+        eventId: incoming.eventId,
+        wireFormat: incoming.libFormatVersion,
+        receiverFormat: LibVersion.dataFormat,
+      );
+    }
+    // An entry type this build does not register is accepted at any
+    // version: it is stored as it is and folds under its own version.
+    final def = entryTypes.byId(incoming.entryType);
+    if (def != null &&
+        incoming.entryTypeVersion.major > def.registeredVersion.major) {
+      throw IngestEntryTypeVersionAhead(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        wireVersion: incoming.entryTypeVersion,
+        receiverVersion: def.registeredVersion,
+      );
+    }
+    // Implements: EVS-DEV-version-compatibility/D
+    // an event below the registered version that a view it folds into has
+    //   no promoter path for is refused by name before any write.
+    if (def != null && incoming.entryTypeVersion < def.registeredVersion) {
+      for (final spec in projections.all()) {
+        if (!spec.interest.matches(incoming)) continue;
+        final gap = promoters.chainGap(
+          viewName: spec.viewName,
+          entryType: incoming.entryType,
+          fromVersion: incoming.entryTypeVersion,
+          toVersion: def.registeredVersion,
+        );
+        if (gap != null) {
+          throw IngestEntryTypeVersionUnpromotable(
+            eventId: incoming.eventId,
+            entryType: incoming.entryType,
+            viewName: spec.viewName,
+            wireVersion: incoming.entryTypeVersion,
+            receiverVersion: def.registeredVersion,
+            reason: gap,
+          );
+        }
+      }
+    }
+
+    // 0b. Reserved system events: only shapes the library appends, before
+    //     any read or write.
+    _refuseUndeclaredReservedEvent(incoming);
+
+    // 1. Chain 1: the event's own hash against its content, then each
+    //    hop's arrival hash.
+    final verdict = _verifyChainOn(incoming, wireRecord: wireRecord);
     if (!verdict.isValid) {
       final failure = verdict.failures.first;
       throw IngestChainBroken(
         eventId: incoming.eventId,
+        kind: failure.kind,
         hopIndex: failure.position,
         expectedHash: failure.expectedHash,
         actualHash: failure.actualHash,
@@ -1208,6 +2124,21 @@ class EventStore {
       }
     }
 
+    // 2b. A destination audit naming this database that this database does
+    //     not hold is not one it appended and still has.
+    // Implements: EVS-DEV-destination-drain/L
+    // ingest refuses, before any write, a reserved destination audit event
+    //   that names the receiver's own database and that the receiver does not
+    //   already hold.
+    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
+        incoming.data['database_id'] == databaseId) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.namesReceiverDatabase,
+      );
+    }
+
     // 3. New event — reserve a fresh local sequence_number, capture the
     //    originator's wire-supplied sequence_number, and stamp receiver
     //    provenance. Under the unified event store, "Chain 2 ordering"
@@ -1236,19 +2167,11 @@ class EventStore {
       localSeq: localSeq,
     );
 
-    // 5. Read prior aggregate history before appendEvent so the
-    //    materializer receives "events strictly before the new one"
-    //    in symmetry with the append path's loop.
-    final aggregateHistory = await backend.findEventsForAggregateInTxn(
-      txn,
-      updatedEvent.aggregateId,
-    );
-
-    // 6. Persist via the same path as origin appends.
+    // 5. Persist via the same path as origin appends.
     await backend.appendEvent(txn, updatedEvent);
     collector?.add(updatedEvent);
 
-    // 7. Fire the projection interpreter symmetric with the local-append path.
+    // 6. Fire the projection interpreter symmetric with the local-append path.
     //    The interpreter runs inside the same transaction as `appendEvent`,
     //    applying all registered ProjectionSpecs whose interest filter matches
     //    the event. A throw propagates out and rolls back the entire ingest
@@ -1269,16 +2192,50 @@ class EventStore {
     );
   }
 
+  /// Throws [IngestReservedEventRefused] when [incoming] is of a reserved
+  /// system entry type and is not in a shape the library appends: its
+  /// aggregate type and event type must be declared for its entry type
+  /// ([ReservedEventRefusal.shapeMismatch]), and a destination audit event
+  /// must carry a destination identifier and a database identity, each a
+  /// non-empty string without `|` ([ReservedEventRefusal.malformed]). Reads
+  /// and writes nothing.
+  // Implements: EVS-DEV-destination-drain/L
+  // ingest refuses, with a named reason and before any write, an event of a
+  //   reserved entry type whose aggregate type or event type is not one the
+  //   library declares for that entry type, and an event of a reserved
+  //   destination audit entry type whose destination identifier or database
+  //   identity is missing, empty, not a string, or contains '|'.
+  static void _refuseUndeclaredReservedEvent(StoredEvent incoming) {
+    final shape = kReservedEventShapes[incoming.entryType];
+    if (shape == null) return;
+    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.shapeMismatch,
+      );
+    }
+    if (!kDestinationAuditEntryTypes.contains(incoming.entryType)) return;
+    if (!isWellFormedDestinationAuditData(incoming.data)) {
+      throw IngestReservedEventRefused(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        reason: ReservedEventRefusal.malformed,
+      );
+    }
+  }
+
   // -----------------------------------------------------------------------
   // Verification APIs
   // -----------------------------------------------------------------------
 
-  /// Walk Chain 1 on [event].metadata.provenance backward from tail to origin.
-  /// Non-throwing; returns a [ChainVerdict] with `ok=true` when every
-  /// `arrival_hash` matches the recomputed hash at that hop, `ok=false`
-  /// otherwise with a list of [ChainFailure] instances describing each broken
-  /// link. Returns `ok=true` for origin-only events (single-entry provenance —
-  /// no inter-hop links to verify).
+  /// Walk Chain 1 on [event]: check that its `event_hash` is the canonical
+  /// hash of its content, then walk `metadata.provenance` backward from tail
+  /// to origin. Non-throwing; returns a [ChainVerdict] with `ok=true` when the
+  /// event's hash and every `arrival_hash` match the hash recomputed at that
+  /// hop, `ok=false` otherwise with a list of [ChainFailure] instances
+  /// describing each broken link. An origin-only event (single-entry
+  /// provenance) has no inter-hop link; its own hash is still checked.
   ///
   /// See design spec §2.11.
   Future<ChainVerdict> verifyEventChain(StoredEvent event) async {
@@ -1370,8 +2327,13 @@ class EventStore {
       _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
   /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
-  /// verdict. Used by [ingestEvent] and [verifyEventChain].
-  ChainVerdict _verifyChainOn(StoredEvent event) {
+  /// verdict. Used by [ingestEvent] and [verifyEventChain]. The event's own
+  /// hash is checked over [wireRecord] when given (the record as a batch
+  /// envelope carried it), else over `event.toMap()`.
+  ChainVerdict _verifyChainOn(
+    StoredEvent event, {
+    Map<String, Object?>? wireRecord,
+  }) {
     final provenanceRaw = event.metadata['provenance'];
     if (provenanceRaw is! List) {
       return const ChainVerdict(
@@ -1401,7 +2363,43 @@ class EventStore {
       );
     }
     final failures = <ChainFailure>[];
-    // Walk from tail back to hop 1 (skip origin at index 0).
+    // Implements: EVS-PRD-ingest/D
+    // the event's own hash is recomputed from the record as it arrived,
+    //   whatever the length of its provenance, so an event whose
+    //   `event_hash` is not the hash of that record is refused before any
+    //   write.
+    // Implements: EVS-PRD-hash-chain-integrity/A
+    // the hash an event states must be the canonical hash of its content.
+    //
+    // `event_hash` is the hash the last hop stored the record under: the
+    // originator's for an origin-only event, the last receiver's for a
+    // relayed one. Each hop seals the record it holds (its own provenance
+    // entry and its own `sequence_number` included) and a delivery sends
+    // that stored record. A batch's record is hashed exactly as the
+    // envelope carried it; `StoredEvent.fromMap` keeps every hashed field
+    // as the record spelled it, so a parsed event's `toMap()` hashes the
+    // same, and so does the copy this hop stores and forwards. The hops
+    // below the last are covered by the arrival-hash walk that follows,
+    // which rebuilds each earlier hop's record from the same fields.
+    //
+    // Limits: the hash is an unkeyed SHA-256, so the check detects a change
+    // made without recomputing every hash it affects, not a forger who
+    // recomputes them. `aggregate_type` is outside the hash input.
+    // `previous_event_hash` is not checked against the event before it in
+    // the upstream log.
+    final recomputedTail = _eventHash(wireRecord ?? event.toMap());
+    if (recomputedTail != event.eventHash) {
+      failures.add(
+        ChainFailure(
+          position: provenance.length - 1,
+          kind: ChainFailureKind.eventHashMismatch,
+          expectedHash: event.eventHash,
+          actualHash: recomputedTail,
+        ),
+      );
+    }
+    // Walk from tail back to hop 1: each receiver hop's `arrival_hash` is
+    // the hash of the record as the hop before it stored it.
     //
     // Each receiver hop reassigns the stored event's `sequence_number` to
     // its local counter. To recompute the hash at hop k-1,
@@ -1519,11 +2517,11 @@ class EventStore {
   /// Typical call site:
   /// ```dart
   /// try {
-  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@1');
+  ///   await store.ingestBatch(bytes, wireFormat: 'esd/batch@2');
   /// } on IngestIdentityMismatch catch (e) {
   ///   await store.logRejectedBatch(
   ///     bytes,
-  ///     wireFormat: 'esd/batch@1',
+  ///     wireFormat: 'esd/batch@2',
   ///     reason: 'identityMismatch',
   ///     failedEventId: e.eventId,
   ///     errorDetail: e.toString(),
@@ -1537,6 +2535,7 @@ class EventStore {
     String? failedEventId,
     String? errorDetail,
   }) async {
+    refuseCallFromBootProgressObserver('EventStore.logRejectedBatch');
     await backend.transaction((txn) async {
       final now = _now();
       final wireBytesHash = sha256.convert(bytes).toString();
@@ -1556,12 +2555,12 @@ class EventStore {
         txn,
         backend,
         aggregateId: 'ingest-audit:${source.hopId}',
-        aggregateType: 'ingest-audit',
-        entryType: 'ingest-audit',
+        aggregateType: kIngestAuditAggregateType,
+        entryType: kIngestAuditEntryType,
         entryTypeVersion: entryTypes
             .byId(kIngestAuditEntryType)!
             .registeredVersion,
-        eventType: 'ingest.batch_rejected',
+        eventType: kIngestBatchRejectedEventType,
         data: <String, Object?>{
           'wire_bytes': base64Encode(bytes),
           'wire_format': wireFormat,
@@ -1608,12 +2607,12 @@ class EventStore {
       txn,
       backend,
       aggregateId: 'ingest-audit:${source.hopId}',
-      aggregateType: 'ingest-audit',
-      entryType: 'ingest-audit',
+      aggregateType: kIngestAuditAggregateType,
+      entryType: kIngestAuditEntryType,
       entryTypeVersion: entryTypes
           .byId(kIngestAuditEntryType)!
           .registeredVersion,
-      eventType: 'ingest.duplicate_received',
+      eventType: kIngestDuplicateReceivedEventType,
       data: <String, Object?>{
         'subject_event_id': subjectEventId,
         'subject_event_hash_on_record': subjectEventHashOnRecord,
@@ -1635,33 +2634,15 @@ class EventStore {
 /// Fixed initiator used for substrate-emitted lib_version events.
 const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 
-/// Canonical event hash used by every raw-record-map append site.
-///
-/// Extracts the 11-field identity set from [recordMap] and returns its
-/// SHA-256 as a hex string. Used by [EventStore._eventHash] (the normal
-/// append path) and [_appendLibVersionEventToBackend] (the substrate-
-/// internal boot path).
-String _canonicalEventHash(Map<String, Object?> recordMap) {
-  final hashInput = <String, Object?>{
-    'event_id': recordMap['event_id'],
-    'aggregate_id': recordMap['aggregate_id'],
-    'entry_type': recordMap['entry_type'],
-    'event_type': recordMap['event_type'],
-    'sequence_number': recordMap['sequence_number'],
-    'data': recordMap['data'],
-    'initiator': recordMap['initiator'],
-    'flow_token': recordMap['flow_token'],
-    'client_timestamp': recordMap['client_timestamp'],
-    'previous_event_hash': recordMap['previous_event_hash'],
-    'metadata': recordMap['metadata'],
-  };
-  return sha256.convert(canonicalizeBytes(hashInput)).toString();
-}
+/// Canonical event hash used by every raw-record-map append site; see
+/// [canonicalEventHash].
+String _canonicalEventHash(Map<String, Object?> recordMap) =>
+    canonicalEventHash(recordMap);
 
 /// Build and append one substrate-internal event to [backend] inside [txn].
 ///
 /// Encapsulates the ~25-line boilerplate shared by [EventStore.logRejectedBatch],
-/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventToBackend]:
+/// [EventStore._emitDuplicateReceivedInTxn], and [_appendLibVersionEventInTxn]:
 /// assemble the 14-key record map, hash it with [_canonicalEventHash], call
 /// [StorageBackend.appendEvent], and optionally record the event into [collector].
 ///
@@ -1674,7 +2655,7 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required String aggregateId,
   required String aggregateType,
   required String entryType,
-  required int entryTypeVersion,
+  required EntryTypeVersion entryTypeVersion,
   required String eventType,
   required Map<String, Object?> data,
   required Initiator initiator,
@@ -1684,14 +2665,23 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required Uuid uuid,
   PublishCollector? collector,
 }) async {
+  // Every caller passes a shape it takes from the declared-shape constants,
+  // so this check never fires on the library's own paths; it keeps a future
+  // raw emitter from writing an undeclared shape. The emitted shapes are
+  // checked on each backend by the reserved-shape assertions over the log.
+  checkReservedEventShape(
+    entryType: entryType,
+    aggregateType: aggregateType,
+    eventType: eventType,
+  );
   final eventId = uuid.v4();
   final recordMap = <String, Object?>{
     'event_id': eventId,
     'aggregate_id': aggregateId,
     'aggregate_type': aggregateType,
     'entry_type': entryType,
-    'entry_type_version': entryTypeVersion,
-    'lib_format_version': StoredEvent.currentLibFormatVersion,
+    'entry_type_version': entryTypeVersion.toJson(),
+    'lib_format_version': LibVersion.dataFormat.toJson(),
     'event_type': eventType,
     'sequence_number': localSeq,
     'data': data,
@@ -1711,57 +2701,56 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   return event;
 }
 
-/// Append a substrate-emitted lib_version event directly to [backend].
+/// Append a substrate-emitted lib_version event to [backend] inside [txn].
 ///
 /// Bypasses [EventStore.appendInTxn] because lib_version events are
-/// appended from inside [EventStore.open] BEFORE the [EventStore]
+/// appended from inside [EventStore.open]'s boot BEFORE the [EventStore]
 /// instance exists, so we cannot reach the registry through it. The
-/// hardcoded `entryTypeVersion: 1` here is the one documented exception
+/// hardcoded `entryTypeVersion` `1.0` here is the one documented exception
 /// to the substrate-stamps-registeredVersion-from-the-registry rule
 /// (see EVS-DEV-append-stamps-registered-version). If
 /// `kLibVersionInitializedEntryType` / `kLibVersionChangedEntryType`
-/// ever bump their `registeredVersion` in `kSystemEntryTypes`, this
+/// ever raise their `registeredVersion` in `kSystemEntryTypes`, this
 /// constant must move in lockstep.
 ///
 /// Delegates to [_appendRawInternalEventInTxn] for the actual
 /// record-assembly and hashing.
-Future<void> _appendLibVersionEventToBackend(
+Future<void> _appendLibVersionEventInTxn(
+  Transaction txn,
   StorageBackend backend,
   String eventType,
   Map<String, Object?> data,
 ) async {
-  await backend.transaction<void>((txn) async {
-    const uuid = Uuid();
-    final now = DateTime.now().toUtc();
-    final localSeq = await backend.nextSequenceNumber(txn);
-    final previousTailHash = await backend.readLatestEventHash(txn);
-    final provenance0 = ProvenanceEntry(
-      hop: 'event_sourcing',
-      receivedAt: now,
-      identifier: 'event_sourcing',
-      softwareVersion: LibVersion.version,
-    );
-    await _appendRawInternalEventInTxn(
-      txn,
-      backend,
-      aggregateId: '_lib',
-      aggregateType: '_lib',
-      entryType: eventType,
-      entryTypeVersion: 1,
-      eventType: eventType,
-      data: data,
-      initiator: _kLibVersionInitiator,
-      provenance0: provenance0,
-      localSeq: localSeq,
-      previousTailHash: previousTailHash,
-      uuid: uuid,
-    );
-  });
+  const uuid = Uuid();
+  final now = DateTime.now().toUtc();
+  final localSeq = await backend.nextSequenceNumber(txn);
+  final previousTailHash = await backend.readLatestEventHash(txn);
+  final provenance0 = ProvenanceEntry(
+    hop: 'event_sourcing',
+    receivedAt: now,
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.version,
+  );
+  await _appendRawInternalEventInTxn(
+    txn,
+    backend,
+    aggregateId: kLibAggregateType,
+    aggregateType: kLibAggregateType,
+    entryType: eventType,
+    entryTypeVersion: const EntryTypeVersion(1, 0),
+    eventType: eventType,
+    data: data,
+    initiator: _kLibVersionInitiator,
+    provenance0: provenance0,
+    localSeq: localSeq,
+    previousTailHash: previousTailHash,
+    uuid: uuid,
+  );
 }
 
 /// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
 ///
-/// Called by [EventStore._runBootSnapshotPromotionPass] (via the
+/// Called by [EventStore._runBoot] (via the
 /// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
 /// (viewName, entryType) pair that has been lifted to a new
 /// `registeredVersion`. Runs inside the same backend transaction as the
@@ -1779,8 +2768,8 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
   EntryTypeRegistry entryTypes, {
   required String viewName,
   required String entryType,
-  required int fromVersion,
-  required int toVersion,
+  required EntryTypeVersion fromVersion,
+  required EntryTypeVersion toVersion,
   required int rowsPromoted,
 }) async {
   const uuid = Uuid();
@@ -1796,18 +2785,18 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
   await _appendRawInternalEventInTxn(
     txn,
     backend,
-    aggregateId: '_lib',
-    aggregateType: '_lib',
+    aggregateId: kLibAggregateType,
+    aggregateType: kLibAggregateType,
     entryType: kViewSnapshotPromotedEntryType,
     entryTypeVersion: entryTypes
         .byId(kViewSnapshotPromotedEntryType)!
         .registeredVersion,
-    eventType: 'finalized',
+    eventType: kViewSnapshotPromotedEventType,
     data: <String, Object?>{
       'viewName': viewName,
       'entryType': entryType,
-      'fromVersion': fromVersion,
-      'toVersion': toVersion,
+      'fromVersion': fromVersion.toString(),
+      'toVersion': toVersion.toString(),
       'rowsPromoted': rowsPromoted,
     },
     initiator: _kLibVersionInitiator,

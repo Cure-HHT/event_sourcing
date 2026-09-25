@@ -2,7 +2,6 @@
 // Verifies: EVS-PRD-destinations/C+D
 // Verifies: EVS-PRD-ingest/A+F
 // Verifies: EVS-PRD-provenance/B+C
-import 'dart:async';
 import 'dart:math';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -26,6 +25,7 @@ class _Pane {
     required this.backend,
     required this.source,
     required this.policyNotifier,
+    required this.cycle,
   });
 
   final EventStoreBundle datastore;
@@ -33,21 +33,13 @@ class _Pane {
   final Source source;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
-  Future<void> tick() async {
-    final destinations = datastore.destinations.all();
-    for (final dest in destinations) {
-      final schedule = await datastore.destinations.scheduleOf(dest.id);
-      await fillBatch(
-        dest,
-        backend: backend,
-        schedule: schedule,
-        source: source,
-      );
-    }
-    for (final dest in destinations) {
-      await drain(dest, backend: backend, policy: policyNotifier.value);
-    }
-  }
+  /// The pane's delivery cycle: fills every destination's queue from the
+  /// log and drains it, with the pane's live policy, at least once a second
+  /// and whenever an append wakes it.
+  final SyncCycle cycle;
+
+  /// Runs a pass, or waits for the passes in flight and one more.
+  Future<void> tick() => cycle();
 }
 
 Future<_Pane> _mkPane({
@@ -125,11 +117,18 @@ Future<_Pane> _mkPane({
     }
   }
 
+  final cycle = await SyncCycle.start(
+    registry: datastore.destinations,
+    policyResolver: () => policyNotifier.value,
+    cadence: const Duration(seconds: 1),
+  );
+  addTearDown(cycle.close);
   return _Pane(
     datastore: datastore,
     backend: backend,
     source: source,
     policyNotifier: policyNotifier,
+    cycle: cycle,
   );
 }
 
@@ -215,84 +214,11 @@ void main() {
         hubSecondary.sendLatency.value = Duration.zero;
         // hub.Native has no bridge and default sendLatency=0 already
 
-        // ---- Tick loops --------------------------------------------------
-        // Each pane uses a single shared async tick function gated by a
-        // per-pane in-flight bool. The periodic timer AND the manual flush
-        // sequence both call through this function, so they can never
-        // overlap and race on markFinal (which is one-way).
-        var mobileSyncInFlight = false;
-        var hubSyncInFlight = false;
-
-        Future<void> mobileSyncTick() async {
-          if (mobileSyncInFlight) return;
-          mobileSyncInFlight = true;
-          try {
-            final dests = mobile.datastore.destinations.all();
-            for (final dest in dests) {
-              final schedule = await mobile.datastore.destinations.scheduleOf(
-                dest.id,
-              );
-              await fillBatch(
-                dest,
-                backend: mobile.backend,
-                schedule: schedule,
-                source: mobile.source,
-              );
-            }
-            for (final dest in dests) {
-              await drain(
-                dest,
-                backend: mobile.backend,
-                policy: mobile.policyNotifier.value,
-              );
-            }
-          } catch (e, s) {
-            // ignore: avoid_print
-            print('[soak:mobile] tick error: $e\n$s');
-          } finally {
-            mobileSyncInFlight = false;
-          }
-        }
-
-        Future<void> hubSyncTick() async {
-          if (hubSyncInFlight) return;
-          hubSyncInFlight = true;
-          try {
-            final dests = hub.datastore.destinations.all();
-            for (final dest in dests) {
-              final schedule = await hub.datastore.destinations.scheduleOf(
-                dest.id,
-              );
-              await fillBatch(
-                dest,
-                backend: hub.backend,
-                schedule: schedule,
-                source: hub.source,
-              );
-            }
-            for (final dest in dests) {
-              await drain(
-                dest,
-                backend: hub.backend,
-                policy: hub.policyNotifier.value,
-              );
-            }
-          } catch (e, s) {
-            // ignore: avoid_print
-            print('[soak:hub] tick error: $e\n$s');
-          } finally {
-            hubSyncInFlight = false;
-          }
-        }
-
-        final mobileTick = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) => mobileSyncTick(),
-        );
-        final hubTick = Timer.periodic(
-          const Duration(seconds: 1),
-          (_) => hubSyncTick(),
-        );
+        // ---- Delivery ----------------------------------------------------
+        // Each pane's delivery cycle runs a pass at least once a second
+        // (its cadence) and whenever an append on its store wakes it; a
+        // trigger that arrives during a pass makes it run one more, so
+        // passes never overlap on one pane.
 
         // ---- 60-second click loop ----------------------------------------
         final rng = Random(42);
@@ -318,30 +244,14 @@ void main() {
         }
         final clickElapsed = DateTime.now().difference(clickStart);
 
-        // ---- Cancel tick timers ------------------------------------------
-        // cancel() stops future firings. Any already-queued timer callback
-        // that fires after this point will call mobileSyncTick() /
-        // hubSyncTick(), which check the in-flight bool and skip if
-        // a tick is already running. The flush ticks below use the same
-        // guarded functions, so timer bodies and manual flush bodies are
-        // mutually exclusive — no double-markFinal is possible.
-        mobileTick.cancel();
-        hubTick.cancel();
+        // ---- Flush sequence: 8 alternating passes ------------------------
+        // A tick waits for any pass in flight and runs one more after it.
+        Future<void> flush(_Pane pane) => pane.tick();
 
-        // ---- Flush sequence: 8 alternating guarded ticks ----------------
-        // Use the same guarded tick functions so any late-firing periodic
-        // callback and the flush ticks share the in-flight mutex.
-        // Wait for the lock to be free before each call so we don't skip.
         for (var i = 0; i < 8; i++) {
-          while (mobileSyncInFlight) {
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
-          await mobileSyncTick();
+          await flush(mobile);
           await Future<void>.delayed(const Duration(milliseconds: 250));
-          while (hubSyncInFlight) {
-            await Future<void>.delayed(const Duration(milliseconds: 10));
-          }
-          await hubSyncTick();
+          await flush(hub);
           await Future<void>.delayed(const Duration(milliseconds: 250));
         }
 

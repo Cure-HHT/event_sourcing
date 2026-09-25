@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing_demo/app_state.dart';
+import 'package:event_sourcing_demo/database_reset_notice.dart';
 import 'package:event_sourcing_demo/demo_destination.dart';
 import 'package:event_sourcing_demo/demo_sync_policy.dart';
 import 'package:event_sourcing_demo/demo_types.dart';
@@ -34,7 +35,6 @@ class _PaneRuntime {
     required this.backend,
     required this.appState,
     required this.dbPath,
-    required this.tick,
     required this.policyNotifier,
   });
 
@@ -42,18 +42,20 @@ class _PaneRuntime {
   final SembastBackend backend;
   final AppState appState;
   final String dbPath;
-  final Timer tick;
   final ValueNotifier<SyncPolicy> policyNotifier;
 }
 
-/// Bootstraps one datastore with its own destinations and starts a
-/// 1-second sync tick. The optional [bridge] is wired into the Native
+/// Bootstraps one datastore with its own destinations and starts its
+/// delivery cycle. The optional [bridge] is wired into the Native
 /// destination's `send()` so mobile's outgoing wire stream lands in
 /// hub's `EventStore.ingestBatch`. The hub pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
-/// simulator (existing behavior).
-// The tick body drives fillBatch + drain per destination with live policy
-// from the per-pane policyNotifier.
+/// simulator.
+///
+/// The pane's `SyncCycle` fills every destination's queue from the log and
+/// drains it with the live policy from the pane's policyNotifier. Every
+/// append and every committed registry operation wakes it, and it runs a
+/// pass at least once a second.
 Future<_PaneRuntime> _bootstrapPane({
   required String dbPath,
   required Source source,
@@ -124,13 +126,19 @@ Future<_PaneRuntime> _bootstrapPane({
       ),
     );
 
-  final datastore = await bootstrapEventStore(
-    backend: backend,
-    source: source,
-    entryTypes: allDemoEntryTypes,
-    destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
-    projections: diaryProjections,
-  );
+  final EventStoreBundle datastore;
+  try {
+    datastore = await bootstrapEventStore(
+      backend: backend,
+      source: source,
+      entryTypes: allDemoEntryTypes,
+      destinations: <Destination>[primary, secondary, nativeUser, nativeAudit],
+      projections: diaryProjections,
+    );
+  } on Object {
+    await backend.close();
+    rethrow;
+  }
 
   final now = DateTime.now().toUtc();
   for (final id in <String>[
@@ -152,40 +160,21 @@ Future<_PaneRuntime> _bootstrapPane({
   final appState = AppState(
     registry: datastore.destinations,
     policyNotifier: policyNotifier,
+    eventStore: datastore.eventStore,
   );
 
-  // reentrancy guard and per-cycle policy resolution; we do per-pane
-  // fillBatch in this tick body since SyncCycle covers drain + inbound
-  // poll only.
-  final syncCycle = SyncCycle(
-    backend: backend,
-    registry: datastore.destinations,
-    policyResolver: () => policyNotifier.value,
-  );
-  final tick = Timer.periodic(const Duration(seconds: 1), (_) async {
-    try {
-      final destinations = datastore.destinations.all();
-      for (final dest in destinations) {
-        final schedule = await datastore.destinations.scheduleOf(dest.id);
-        await fillBatch(
-          dest,
-          backend: backend,
-          schedule: schedule,
-          source: source,
-        );
-      }
-      await syncCycle();
-    } catch (e, s) {
-      stderr.writeln('[demo:${source.hopId}] sync tick error: $e\n$s');
-    }
-  });
+  try {
+    await appState.startDelivery();
+  } on Object {
+    await backend.close();
+    rethrow;
+  }
 
   return _PaneRuntime(
     datastore: datastore,
     backend: backend,
     appState: appState,
     dbPath: dbPath,
-    tick: tick,
     policyNotifier: policyNotifier,
   );
 }
@@ -195,6 +184,14 @@ Future<void> main() async {
 
   final appSupportDir = await getApplicationSupportDirectory();
   final demoDir = Directory(p.join(appSupportDir.path, 'event_sourcing_demo'));
+  runApp(await buildDemoApp(demoDir));
+}
+
+/// Opens both panes over the files in [demoDir] and returns the dual-pane
+/// app, or, when a database file does not open under this build (an
+/// earlier data format, or another data-format major), an app naming the
+/// files to delete.
+Future<Widget> buildDemoApp(Directory demoDir) async {
   await demoDir.create(recursive: true);
 
   final mobileInstallUUID = await _readOrMintUUID(
@@ -214,47 +211,57 @@ Future<void> main() async {
 
   // Hub must be bootstrapped first so the bridge can capture its
   // EventStore before mobile's NativeDemoDestination is constructed.
-  final hub = await _bootstrapPane(
-    dbPath: hubDbPath,
-    source: Source(
-      hopId: 'hub-server',
-      identifier: hubInstallUUID,
-      softwareVersion: 'event_sourcing_demo@0.1.0+1',
-    ),
-  );
-
-  final bridge = DownstreamBridge(hub.datastore.eventStore);
-
-  final mobile = await _bootstrapPane(
-    dbPath: mobileDbPath,
-    source: Source(
-      hopId: 'mobile-device',
-      identifier: mobileInstallUUID,
-      softwareVersion: 'event_sourcing_demo@0.1.0+1',
-    ),
-    bridge: bridge,
-  );
-
-  runApp(
-    DualDemoApp(
-      top: DemoPaneConfig(
-        datastore: mobile.datastore,
-        backend: mobile.backend,
-        appState: mobile.appState,
-        dbPath: mobile.dbPath,
-        tickController: mobile.tick,
-        policyNotifier: mobile.policyNotifier,
-        paneLabel: 'MOBILE',
+  _PaneRuntime? hub;
+  final _PaneRuntime mobile;
+  try {
+    hub = await _bootstrapPane(
+      dbPath: hubDbPath,
+      source: Source(
+        hopId: 'hub-server',
+        identifier: hubInstallUUID,
+        softwareVersion: 'event_sourcing_demo@0.1.0+1',
       ),
-      bottom: DemoPaneConfig(
-        datastore: hub.datastore,
-        backend: hub.backend,
-        appState: hub.appState,
-        dbPath: hub.dbPath,
-        tickController: hub.tick,
-        policyNotifier: hub.policyNotifier,
-        paneLabel: 'HUB',
+    );
+
+    final bridge = DownstreamBridge(hub.datastore.eventStore);
+
+    mobile = await _bootstrapPane(
+      dbPath: mobileDbPath,
+      source: Source(
+        hopId: 'mobile-device',
+        identifier: mobileInstallUUID,
+        softwareVersion: 'event_sourcing_demo@0.1.0+1',
       ),
+      bridge: bridge,
+    );
+  } on Object catch (e) {
+    if (!needsDatabaseReset(e)) rethrow;
+    if (hub != null) {
+      await hub.appState.stopDelivery();
+      await hub.backend.close();
+    }
+    stderr.writeln('[demo] $e');
+    return DatabaseResetRequiredApp(
+      message: databaseResetMessage(e, <String>[mobileDbPath, hubDbPath]),
+    );
+  }
+
+  return DualDemoApp(
+    top: DemoPaneConfig(
+      datastore: mobile.datastore,
+      backend: mobile.backend,
+      appState: mobile.appState,
+      dbPath: mobile.dbPath,
+      policyNotifier: mobile.policyNotifier,
+      paneLabel: 'MOBILE',
+    ),
+    bottom: DemoPaneConfig(
+      datastore: hub.datastore,
+      backend: hub.backend,
+      appState: hub.appState,
+      dbPath: hub.dbPath,
+      policyNotifier: hub.policyNotifier,
+      paneLabel: 'HUB',
     ),
   );
 }

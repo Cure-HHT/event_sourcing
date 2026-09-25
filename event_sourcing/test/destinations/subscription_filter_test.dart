@@ -5,6 +5,7 @@
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 StoredEvent _mkEvent({
@@ -17,8 +18,8 @@ StoredEvent _mkEvent({
   aggregateId: 'agg-1',
   aggregateType: 'note',
   entryType: entryType,
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: eventType,
   sequenceNumber: 1,
   data: const <String, dynamic>{},

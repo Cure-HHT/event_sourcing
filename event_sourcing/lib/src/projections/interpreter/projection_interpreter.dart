@@ -11,8 +11,8 @@
 //   outside the backend transaction) are introduced here.
 // Implements: EVS-DEV-ingest-promotes-before-fold/A
 // applies the per-view
-//   promoter chain to any event whose entryTypeVersion is below
-//   registeredVersion, before dispatching to the fold.
+//   promoter chain to any event of a lower major, or of the registered major
+//   and a lower minor, before dispatching to the fold.
 // Implements: EVS-DEV-ingest-promotes-before-fold/B
 // promotion operates on
 //   an in-memory event.withData(...) copy; the original StoredEvent is not
@@ -22,8 +22,20 @@
 //   same entry type receive independently-computed promoted payloads (per-spec
 //   loop; promoter chain lookup is keyed by (viewName, entryType)).
 // Implements: EVS-DEV-ingest-promotes-before-fold/D
-// when entryTypeVersion
-//   equals registeredVersion the promoter branch is skipped entirely.
+// an event of the
+//   registered major at an equal or higher minor bypasses the promoter chain
+//   and folds unchanged.
+// Implements: EVS-DEV-version-compatibility/D
+// an event of a higher major than the registered one is refused before the
+//   fold writes anything.
+// Implements: EVS-DEV-version-compatibility/E
+// when a view's stored target for the event's entry type has the registered
+//   major and a higher minor, the fold lowers it to the registered version in
+//   its own transaction.
+// Implements: EVS-DEV-version-compatibility/L
+// every stored target of the event's entry type whose view this build
+//   neither folds the event into nor registers for the entry type is marked
+//   behind the log in the fold's own transaction.
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
@@ -34,76 +46,188 @@ import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/versions.dart';
+import 'package:meta/meta.dart' show internal;
 
 class ProjectionInterpreter {
-  final ProjectionRegistry projections;
-  final PromoterRegistry promoters;
-  final EntryTypeRegistry entryTypes;
-
   ProjectionInterpreter({
     required this.projections,
     required this.promoters,
     required this.entryTypes,
   });
+  final ProjectionRegistry projections;
+  final PromoterRegistry promoters;
+  final EntryTypeRegistry entryTypes;
 
-  /// Apply [event] to all matching projection specs inside [txn]. When
-  /// [event.entryTypeVersion] is below the entry type's current
-  /// `registeredVersion`, the substrate applies the promoter chain for
-  /// each matching view in-memory before folding. The original [event]
-  /// is not modified; only an in-memory working copy is promoted.
+  /// Apply [event] to all matching projection specs inside [txn].
+  ///
+  /// The fold decides by the event's entry-type version against the
+  /// registered version of its entry type: an event of a lower major, or of
+  /// the registered major and a lower minor, is promoted through each
+  /// matching view's promoter chain before the fold; an event of the
+  /// registered major at an equal or higher minor folds unchanged; an event
+  /// of a higher major throws [StateError] before anything is written.
+  /// Promotion works on an in-memory copy; the original [event] is not
+  /// modified. A `DefaultField` in the chain supplies its value only for a
+  /// field that neither the event nor the aggregate's existing row carries
+  /// under the field's name at the registered version (see
+  /// `PromoterExecutor.promote`).
+  ///
+  /// For each matching view whose stored target version for the event's
+  /// entry type has the registered major and a higher minor, the fold
+  /// writes the registered version as the stored target, so the next open
+  /// under the newer minor re-derives the rows this build folded.
+  ///
+  /// Every stored target of the event's entry type whose view this build
+  /// neither folds the event into nor registers for that entry type (a
+  /// view, or an entry type in a view's interest, that another build
+  /// sharing the database registers) is marked behind the log, so the next
+  /// open of a build that registers the view re-derives it.
   ///
   /// Returns the list of [AggregateFoldChange] records from every spec
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
-  /// notification via [SubscriptionEngine.publishRowChange].
+  /// notification via `SubscriptionEngine.publishRowChange`.
+  @internal
   Future<List<AggregateFoldChange>> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required StoredEvent event,
   }) async {
-    // Resolve the entry type's current registered version. The `def == null`
-    // fallback handles boot-time replays of lib_version events whose entry
-    // types are not (re-)registered through `EntryTypeRegistry` — for those,
-    // treat the event's own version as authoritative so no promotion runs.
+    // The entry type's registered version. An entry type the registry does
+    // not hold (a library-version event appended before the registry
+    // exists) folds under the event's own version: no promotion, and no
+    // stored target to compare.
     final def = entryTypes.byId(event.entryType);
     final registeredVersion = def?.registeredVersion ?? event.entryTypeVersion;
+    if (event.entryTypeVersion.major > registeredVersion.major) {
+      throw StateError(
+        'ProjectionInterpreter: event ${event.eventId} of entry type '
+        '"${event.entryType}" is at version ${event.entryTypeVersion}, a '
+        'higher major than the registered $registeredVersion; this build '
+        'cannot fold it.',
+      );
+    }
 
     final changes = <AggregateFoldChange>[];
     for (final spec in projections.all()) {
       if (!spec.interest.matches(event)) continue;
 
-      StoredEvent eventForFold = event;
-      if (event.entryTypeVersion < registeredVersion) {
-        final promotedData = PromoterExecutor.promote(
+      if (def != null) {
+        final stored = await backend.readViewTargetVersionInTxn(
+          txn,
+          spec.viewName,
+          event.entryType,
+        );
+        if (stored != null &&
+            stored.major == registeredVersion.major &&
+            stored.minor > registeredVersion.minor) {
+          await backend.writeViewTargetVersionInTxn(
+            txn,
+            spec.viewName,
+            event.entryType,
+            registeredVersion,
+          );
+        }
+      }
+
+      final change = await foldIntoView(
+        txn: txn,
+        backend: backend,
+        spec: spec,
+        promoters: promoters,
+        event: event,
+        version: registeredVersion,
+      );
+      if (change != null) changes.add(change);
+    }
+
+    // A stored target of this entry type whose view this build neither
+    // folds the event into nor registers for the entry type belongs to a
+    // view, or a view's interest, that another build registers: mark it, so
+    // the next open of a build that registers it re-derives the view.
+    final stored = await backend.readViewTargetsForEntryTypeInTxn(
+      txn,
+      event.entryType,
+    );
+    for (final viewName in stored.keys) {
+      final spec = projections.lookup(viewName);
+      final folds = spec != null && spec.interest.matches(event);
+      final registersPair =
+          spec?.interest.entryTypes?.contains(event.entryType) ?? false;
+      if (folds || registersPair) continue;
+      await backend.markViewTargetBehindInTxn(txn, viewName, event.entryType);
+    }
+    return changes;
+  }
+
+  /// Folds [event] into the view of [spec] under [version], the version
+  /// the view folds the event's entry type under, inside [txn].
+  ///
+  /// The one fold step every fold path shares -- the interpreter, a
+  /// rebuild and boot promotion -- so they derive the same rows from the
+  /// same events: an event of a lower major, or of [version]'s major and a
+  /// lower minor, is promoted through the view's promoter chain before the
+  /// fold, each default decided against the aggregate's current row (a
+  /// table view has none: it writes one row per event); an event of
+  /// [version]'s major at an equal or higher minor folds unchanged; an
+  /// event of a higher major throws [StateError] before anything is
+  /// written.
+  ///
+  /// Returns the fold's change record, or null when the fold changed
+  /// nothing.
+  @internal
+  static Future<AggregateFoldChange?> foldIntoView({
+    required Transaction txn,
+    required StorageBackend backend,
+    required ProjectionSpec spec,
+    required PromoterRegistry promoters,
+    required StoredEvent event,
+    required EntryTypeVersion version,
+  }) async {
+    if (event.entryTypeVersion.major > version.major) {
+      throw StateError(
+        'ProjectionInterpreter: event ${event.eventId} of entry type '
+        '"${event.entryType}" is at version ${event.entryTypeVersion}, a '
+        'higher major than $version, the version view "${spec.viewName}" '
+        'folds it under; this build cannot fold it.',
+      );
+    }
+    var eventForFold = event;
+    if (event.entryTypeVersion < version) {
+      final existingRow = switch (spec) {
+        AggregateProjectionSpec() => await backend.readViewRowInTxn(
+          txn,
+          spec.viewName,
+          event.aggregateId,
+        ),
+        TableProjectionSpec() => null,
+      };
+      eventForFold = event.withData(
+        PromoterExecutor.promote(
           registry: promoters,
           viewName: spec.viewName,
           entryType: event.entryType,
           fromVersion: event.entryTypeVersion,
-          toVersion: registeredVersion,
+          toVersion: version,
           payload: event.data,
-        );
-        eventForFold = event.withData(promotedData);
-      }
-
-      AggregateFoldChange? change;
-      switch (spec) {
-        case AggregateProjectionSpec():
-          change = await AggregateFold.applyEvent(
-            txn: txn,
-            backend: backend,
-            spec: spec,
-            event: eventForFold,
-          );
-        case TableProjectionSpec():
-          change = await TableFold.applyEvent(
-            txn: txn,
-            backend: backend,
-            spec: spec,
-            event: eventForFold,
-          );
-      }
-      if (change != null) changes.add(change);
+          existingRow: existingRow,
+        ),
+      );
     }
-    return changes;
+    return switch (spec) {
+      AggregateProjectionSpec() => AggregateFold.applyEvent(
+        txn: txn,
+        backend: backend,
+        spec: spec,
+        event: eventForFold,
+      ),
+      TableProjectionSpec() => TableFold.applyEvent(
+        txn: txn,
+        backend: backend,
+        spec: spec,
+        event: eventForFold,
+      ),
+    };
   }
 }

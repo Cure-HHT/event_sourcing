@@ -8,8 +8,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 // AggregateIdKey and WholePayload are not re-exported from the barrel.
-import 'package:event_sourcing/src/projections/primitives/row_data.dart';
-import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:sembast/sembast_memory.dart';
 
 /// Test grant: role -> permission-name. Pumped through bootstrap-equivalent
@@ -93,21 +91,21 @@ class PolicyHarness {
       ..register(
         const EntryTypeDefinition(
           id: 'role_permission_grant',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Role-permission grant',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'user_role_scope',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'User-role-scope assignment',
         ),
       )
       ..register(
         const EntryTypeDefinition(
           id: 'patient_site_assignment',
-          registeredVersion: 1,
+          registeredVersion: EntryTypeVersion(1, 0),
           name: 'Patient-to-site assignment',
         ),
       );

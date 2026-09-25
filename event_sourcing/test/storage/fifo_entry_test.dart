@@ -200,7 +200,7 @@ void main() {
     // Equality covers eventIds and sequenceRange: two entries differing only
     // in eventIds are NOT equal. These guard the completeness of `==`, which
     // the backend conformance harness uses to compare a read-back entry
-    // against the one enqueueFifo returned.
+    // against the one enqueueFifoTxn returned.
     test('equality distinguishes entries differing only in eventIds', () {
       final a = makeBatch(eventIds: const ['ev-x']);
       final b = makeBatch(eventIds: const ['ev-y']);
@@ -221,7 +221,7 @@ void main() {
 
   group('FifoEntry nullable final_status', () {
     // null means "not yet terminal". Drain may attempt a row whose
-    // finalStatus is null; non-null terminal values are retained forever
+    // finalStatus is null; non-null terminal values are retained for the database's lifetime
     // as audit records.
     test('finalStatus is nullable; null is not a terminal state', () {
       final entry = FifoEntry(
@@ -285,7 +285,7 @@ void main() {
 
   group('FifoEntry envelopeMetadata + nullable wirePayload', () {
     final meta = BatchEnvelopeMetadata(
-      batchFormatVersion: '1',
+      batchFormatVersion: '2',
       batchId: 'b-001',
       senderHop: 'mobile-1',
       senderIdentifier: 'device-uuid',
@@ -302,7 +302,7 @@ void main() {
         eventIds: const <String>['e1'],
         sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
-        wireFormat: 'esd/batch@1',
+        wireFormat: 'esd/batch@2',
         wirePayload: null,
         transformVersion: 'native-v1',
         enqueuedAt: DateTime.utc(2026, 4, 25, 12),
@@ -319,7 +319,7 @@ void main() {
       expect(
         json['envelope_metadata'],
         equals(<String, Object?>{
-          'batch_format_version': '1',
+          'batch_format_version': '2',
           'batch_id': 'b-001',
           'sender_hop': 'mobile-1',
           'sender_identifier': 'device-uuid',

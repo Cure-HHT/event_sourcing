@@ -1,12 +1,21 @@
 # Conformance tests — runs the sembast and Postgres conformance + integration
 # test suites on every PR and push to main.
 #
-# Two jobs:
+# Three jobs:
 #   sembast  — SembastBackend conformance + in-memory IdempotencyStore
 #              conformance. No external services required.
-#   postgres — PostgresBackend conformance + schema test + IdempotencyStore
-#              conformance + action_permissions_demo end-to-end integration.
-#              Runs a postgres:16 service container; gated on PG_TEST_URL.
+#   postgres_storage, postgres_delivery — every Postgres-gated test file,
+#              split across two parallel jobs, each file in its own step: the
+#              PostgresBackend schema, conformance and serialization-retry
+#              tests, IdempotencyStore conformance, and the
+#              example_action_permissions bootstrap, routes, state-projection
+#              and end-to-end integration tests. Runs a postgres:16 service
+#              container; the files are gated on PG_TEST_URL.
+#              event_sourcing/test/ci/postgres_ci_listing_test.dart fails when
+#              a gated file is not run here.
+#
+# The Flutter SDK is pinned (flutter-version) in every workflow so a new stable
+# release or lint set cannot change a run's outcome; bump it deliberately.
 
 name: Conformance tests
 
@@ -32,6 +41,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.7
       - name: Resolve deps (canonical_json_jcs)
         run: flutter pub get
         working-directory: canonical_json_jcs
@@ -48,10 +58,14 @@ jobs:
         run: flutter test test/actions/idempotency_store_test.dart
         working-directory: event_sourcing
 
-  postgres:
-    name: Postgres conformance + integration
+  postgres_storage:
+    name: Postgres conformance (storage, versions, boot)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The Postgres files are split across two jobs that run in parallel.
+    # Together they take close to half an hour on a runner, and the required
+    # Validation Summary check waits at most 30 minutes for every other
+    # check, so one job with a longer limit would not help.
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16
@@ -66,13 +80,30 @@ jobs:
           --health-interval 2s
           --health-timeout 2s
           --health-retries 30
+      # A second server whose database and schema have the same names, for
+      # the check that a lock session reaches the pool's server.
+      postgres_other:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
     env:
       PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.7
       - name: Resolve deps (canonical_json_jcs)
         run: flutter pub get
         working-directory: canonical_json_jcs
@@ -94,6 +125,125 @@ jobs:
       - name: PostgresIdempotencyStore conformance
         run: flutter test test/storage/postgres/postgres_idempotency_store_conformance_test.dart
         working-directory: event_sourcing
+      - name: PostgresBackend serialization retry
+        run: flutter test test/storage/postgres/postgres_backend_serialization_retry_test.dart
+        working-directory: event_sourcing
+      - name: Entry-type and data-format versions on Postgres
+        run: flutter test test/storage/postgres/postgres_versions_test.dart
+        working-directory: event_sourcing
+      - name: Destination queue registry scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_queue_registry_test.dart
+        working-directory: event_sourcing
+      - name: Drain wedge event scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_drain_wedge_event_test.dart
+        working-directory: event_sourcing
+      - name: Operator halt scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_operator_halt_test.dart
+        working-directory: event_sourcing
+      - name: Destination-wedges view and reserved-event scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_destination_wedges_view_test.dart
+        working-directory: event_sourcing
+      - name: Ingest event-hash scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_hash_test.dart
+        working-directory: event_sourcing
+      - name: Boot and data-format compatibility scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_data_format_compatibility_test.dart
+        working-directory: event_sourcing
+      - name: Concurrent first opens and database identity on Postgres
+        run: flutter test test/storage/postgres/postgres_database_identity_test.dart
+        working-directory: event_sourcing
+      - name: Boot under a serving revision's load on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
+        working-directory: event_sourcing
+      - name: Boot pause beside a serving revision on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_pause_test.dart
+        working-directory: event_sourcing
+      - name: Boot progress reports on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_progress_test.dart
+        working-directory: event_sourcing
+
+  postgres_delivery:
+    name: Postgres conformance (provisioning, delivery, examples)
+    runs-on: ubuntu-latest
+    # The Postgres files are split across two jobs that run in parallel.
+    # Together they take close to half an hour on a runner, and the required
+    # Validation Summary check waits at most 30 minutes for every other
+    # check, so one job with a longer limit would not help.
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+      # A second server whose database and schema have the same names, for
+      # the check that a lock session reaches the pool's server.
+      postgres_other:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      PG_TEST_URL_OTHER_SERVER: postgres://evs:evs@localhost:5433/evs_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Resolve deps (example_action_permissions)
+        run: flutter pub get
+        working-directory: event_sourcing/example_action_permissions
+      - name: Schema provisioning on Postgres
+        run: flutter test test/storage/postgres/postgres_provisioning_test.dart
+        working-directory: event_sourcing
+      - name: Incompatible-generation guard and lock session on Postgres
+        run: flutter test test/storage/postgres/postgres_generation_guard_test.dart
+        working-directory: event_sourcing
+      - name: Delivery cycle and drain lock scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_delivery_cycle_test.dart
+        working-directory: event_sourcing
+      - name: Reconfigure halt and refill guard scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_reconfigure_test.dart
+        working-directory: event_sourcing
+      - name: Concurrent appends from several instances on Postgres
+        run: flutter test test/storage/postgres/postgres_concurrent_appends_test.dart
+        working-directory: event_sourcing
+      - name: Drain lock across processes on Postgres
+        run: flutter test test/storage/postgres/postgres_drain_lock_test.dart
+        working-directory: event_sourcing
+      - name: Queue-table guard on Postgres
+        run: flutter test test/storage/postgres/postgres_fifo_guard_test.dart
+        working-directory: event_sourcing
+      - name: Runtime role privileges on Postgres
+        run: flutter test test/storage/postgres/postgres_runtime_role_test.dart
+        working-directory: event_sourcing
       - name: Demo bootstrap on Postgres
         run: flutter test test/bootstrap_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions
@@ -105,4 +255,16 @@ jobs:
         working-directory: event_sourcing/example_action_permissions
       - name: action_permissions_demo Postgres integration
         run: flutter test test/postgres_integration_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server provisioning on Postgres
+        run: flutter test test/server_provision_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server instances sharing one database
+        run: flutter test test/drain_lock_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo incompatible build refused while one serves
+        run: flutter test test/generation_guard_postgres_test.dart
+        working-directory: event_sourcing/example_action_permissions
+      - name: action_permissions_demo server process boot probes and hand-over
+        run: flutter test test/server_process_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions

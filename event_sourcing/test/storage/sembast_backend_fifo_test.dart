@@ -4,17 +4,15 @@
 //   contract: (a) the on-disk lockstep between the Sembast int store-key
 //   and the payload's `sequence_in_queue`; (b) sequence_in_queue's
 //   never-reused property after a raw `store.delete` bypassing the
-//   public API; (c) the `debugLogSink` warning emissions from
-//   `markFinal`/`appendAttempt` no-op branches.
+//   public API.
 //
-// The abstract StorageBackend FIFO contract (enqueueFifo, readFifoHead,
-// listFifoEntries, appendAttempt, markFinal, hasFifoWedged/wedgedFifos,
-// fill-cursor read/write, markFinal idempotency and one-way transitions)
-// is exercised against this backend by
+// The abstract StorageBackend FIFO contract (enqueueFifoTxn,
+// readFifoHead, listFifoEntries, appendAttemptTxn, setFinalStatusTxn,
+// hasFifoWedged/wedgedFifos, fill-cursor read/write, and the exact legal
+// status transitions: a repeated status, a missing item or a terminal
+// item throws StateError) is exercised against this backend by
 // `sembast_backend_conformance_test.dart` via the backend-agnostic
 // conformance harness in `storage_backend_conformance.dart`.
-import 'package:event_sourcing/src/storage/attempt_result.dart';
-import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -124,73 +122,6 @@ void main() {
       );
       expect(e5Record.value['sequence_in_queue'], 5);
       expect(e5Record.key, 5);
-    });
-
-    // -------- debugLogSink warning emissions --------
-    //
-    // The abstract StorageBackend contract documents that markFinal and
-    // appendAttempt SHALL emit a warning-level diagnostic when they
-    // no-op due to a missing target. The verification *hook* used here
-    // (`backend.debugLogSink`) is sembast-specific — other backends may
-    // expose their own diagnostic plumbing. Until the abstract contract
-    // gains a portable diagnostic surface, these tests stay attached to
-    // the SembastBackend impl.
-
-    test('markFinal emits a warning that names method, '
-        'entry id, and destination id when it no-ops', () async {
-      final logs = <String>[];
-      backend.debugLogSink = logs.add;
-
-      await backend.markFinal('primary', 'ghost', FinalStatus.sent);
-
-      expect(logs, hasLength(1));
-      final line = logs.single;
-      expect(line, contains('markFinal'));
-      expect(line, contains('ghost'));
-      expect(line, contains('primary'));
-      expect(line, contains('drain/unjam'));
-      expect(line, contains('drain/delete'));
-    });
-
-    test('appendAttempt emits a warning that names method, '
-        'entry id, and destination id when it no-ops', () async {
-      final logs = <String>[];
-      backend.debugLogSink = logs.add;
-
-      await backend.appendAttempt(
-        'primary',
-        'ghost',
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
-      );
-
-      expect(logs, hasLength(1));
-      final line = logs.single;
-      expect(line, contains('appendAttempt'));
-      expect(line, contains('ghost'));
-      expect(line, contains('primary'));
-      expect(line, contains('drain/unjam'));
-      expect(line, contains('drain/delete'));
-    });
-
-    test('no warning is emitted on a happy-path markFinal / '
-        'appendAttempt', () async {
-      final logs = <String>[];
-      backend.debugLogSink = logs.add;
-
-      final e1 = await enqueueSingle(
-        backend,
-        'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
-      );
-      await backend.appendAttempt(
-        'primary',
-        e1.entryId,
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
-      );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-
-      expect(logs, isEmpty);
     });
   });
 }

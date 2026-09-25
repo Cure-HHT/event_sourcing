@@ -1,4 +1,4 @@
-// Verifies: EVS-DEV-event-store-open/B
+// Verifies: EVS-DEV-version-compatibility/K
 // Verifies the bootstrap-time `system.entry_type_registry_initialized`
 // audit stamps `aggregateId = source.identifier` (the install UUID).
 // The bootstrap audit is the first event in every installation's
@@ -17,7 +17,7 @@ const _source = Source(
 
 EntryTypeDefinition _typeA() => const EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo Note',
 );
 

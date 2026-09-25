@@ -3,9 +3,13 @@
 // Verifies: EVS-PRD-provenance/C
 // (toJson/fromJson round-trip without
 //   loss, timezone-offset validation, ingest and origin fields)
+// Verifies: EVS-DEV-event-record/C
+// (received_at in the shared timestamp form)
 
 import 'package:provenance/provenance.dart';
 import 'package:test/test.dart';
+
+import 'timestamp_cases.dart';
 
 void main() {
   group('ProvenanceEntry', () {
@@ -184,6 +188,43 @@ void main() {
           ..['received_at'] = '2026-04-21T10:30:00-0430';
         final entry = ProvenanceEntry.fromJson(input);
         expect(entry.receivedAt.isUtc, isTrue);
+      });
+
+      // Verifies: EVS-DEV-event-record/C
+      test('received_at in the shared timestamp form is accepted as the '
+          'instant it names', () {
+        for (final timestamp in acceptedTimestamps.entries) {
+          final entry = ProvenanceEntry.fromJson(
+            Map<String, Object?>.of(validJson)
+              ..['received_at'] = timestamp.value,
+          );
+          expect(
+            entry.receivedAt.isAtSameMomentAs(DateTime.parse(timestamp.value)),
+            isTrue,
+            reason: timestamp.key,
+          );
+        }
+      });
+
+      // Verifies: EVS-DEV-event-record/C
+      test('received_at outside the shared timestamp form throws a '
+          'FormatException naming received_at', () {
+        for (final timestamp in refusedTimestamps.entries) {
+          expect(
+            () => ProvenanceEntry.fromJson(
+              Map<String, Object?>.of(validJson)
+                ..['received_at'] = timestamp.value,
+            ),
+            throwsA(
+              isA<FormatException>().having(
+                (e) => e.message,
+                'message',
+                contains('"received_at"'),
+              ),
+            ),
+            reason: timestamp.key,
+          );
+        }
       });
     });
 

@@ -13,8 +13,10 @@ import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 
 class TableFold {
+  @internal
   static Future<AggregateFoldChange?> applyEvent({
     required Transaction txn,
     required StorageBackend backend,

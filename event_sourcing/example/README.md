@@ -26,10 +26,10 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 ```text
 +-------------------------------------------------------+
 |  MOBILE pane                                          |
-|  +-----------+----------+----------+----+----+----+   |
-|  | MATERIAL- | EVENTS   | AUDIT    | P  | S  | NU |   |
-|  | IZED      | (watch)  |          | FIFO   ...   |   |
-|  +-----------+----------+----------+----+----+----+   |
+|  +-----------+----------+-------+--------+----+----+  |
+|  | MATERIAL- | EVENTS   | AUDIT | WEDGED | P  | S  |  |
+|  | IZED      | (watch)  |       |        | FIFO ...|  |
+|  +-----------+----------+-------+--------+----+----+  |
 |                                                       |
 |  AppendOnlyDatastore A (hopId='mobile-device')        |
 |  Source.identifier = MOBILE.install.uuid              |
@@ -39,10 +39,10 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 |         v                                             |
 +---------v---------------------------------------------+
 |  HUB pane                                             |
-|  +-----------+----------+----------+----+----+----+   |
-|  | MATERIAL- | EVENTS   | AUDIT    | FIFO panels  |   |
-|  | IZED      | (watch)  |          |              |   |
-|  +-----------+----------+----------+----+----+----+   |
+|  +-----------+----------+-------+--------+----+----+  |
+|  | MATERIAL- | EVENTS   | AUDIT | WEDGED | FIFO    |  |
+|  | IZED      | (watch)  |       |        | panels  |  |
+|  +-----------+----------+-------+--------+----+----+  |
 |                                                       |
 |  AppendOnlyDatastore B (hopId='hub-server')           |
 |  Source.identifier = HUB.install.uuid                 |
@@ -59,9 +59,10 @@ at hop 1. Materializer rows appear on hub as ingest commits, not
 on a separate code path.
 
 The single MaterialApp hosts the two panes split by a draggable
-horizontal divider. Each pane runs its own 1-second sync tick that
-calls `fillBatch` per destination plus `SyncCycle()` for drain plus
-inbound poll.
+horizontal divider. Each pane starts its own delivery cycle
+(`SyncCycle.start`, over its own database, with a 1-second cadence): a
+pass fills every destination's queue from the log and drains it, and
+every append and registry operation on the pane wakes it at once.
 
 ---
 
@@ -99,16 +100,21 @@ Both panes persist their state under
 The two `*.install.uuid` files are minted on first launch and re-read
 on every subsequent boot. To start over from scratch, delete the four
 files (or use the **Reset all** button in either pane's top bar — that
-button also deletes the database file).
+button also deletes the database file). A `demo.db` or `demo_hub.db`
+written by an earlier library build does not open under this build:
+instead of its panes the demo shows a message naming both files, and
+deleting them starts it over. One written by a build of another
+data-format major is not deleted: the message says to open it with a
+build of that major, or to restore a backup.
 
 ---
 
 ## 3. Bootstrap and Startup
 
-`example/lib/main.dart` boots in a fixed order:
+`example/lib/main.dart` resolves `applicationSupportDirectory` and runs
+the app `buildDemoApp` returns, which boots in a fixed order:
 
-1. Resolve `applicationSupportDirectory` and ensure the demo subdir
-   exists.
+1. Ensure the demo subdir exists.
 2. `_readOrMintUUID` reads (or mints + persists) each pane's install
    UUID.
 3. Bootstrap the **hub pane first** — the `DownstreamBridge` needs a
@@ -117,7 +123,10 @@ button also deletes the database file).
 4. Construct the bridge.
 5. Bootstrap the **mobile pane** with the bridge wired into its native
    destinations.
-6. Hand both panes to `DualDemoApp`.
+6. Hand both panes to `DualDemoApp`. When a database file does not open
+   under this build (`DatabaseResetRequiredError` or
+   `DataFormatIncompatibleError`), return `DatabaseResetRequiredApp`
+   instead, naming the files to delete.
 
 Per-pane bootstrap (the `_bootstrapPane` function):
 
@@ -168,7 +177,7 @@ lifecycle / CQRS / lights demonstrations.
 ```dart
 const EntryTypeDefinition demoNoteType = EntryTypeDefinition(
   id: 'demo_note',
-  registeredVersion: 1,
+  registeredVersion: EntryTypeVersion(1, 0),
   name: 'Demo note',
   widgetId: 'demo_note_widget_v1',
   widgetConfig: <String, Object?>{},
@@ -224,11 +233,14 @@ Same code, two independent stores, two independently observable view
 states. The materialize-on-ingest behavior is what the receiver-side
 panel demonstrates.
 
-`example/lib/lights_materializer.dart` defines a second materializer
-maintaining an `rgb_lights` view from the three button-press entry
-types. It is shipped as a reference example for callers writing their
-own materializers; it is not wired into the demo's bootstrap by
-default.
+`example/lib/lights_state.dart` shows the other way to read the log:
+`LightsState` computes the three RGB lights in the app, folding the
+button-press events (replayed from the log, then live from
+`subscribe(Events)`) rather than writing a library view table. The
+library's views are written only by its projection interpreter; an
+application that wants its own interpretation computes it from the
+events. `widgets/lights_panel.dart` renders it; the demo's layout does
+not mount the panel.
 
 ---
 
@@ -240,8 +252,8 @@ The demo registers four destinations per pane:
 | --- | --- | --- | --- |
 | `Primary` | 3rd-party | `demo-json-v1` | `demo_note`, `red_button_pressed`, `green_button_pressed` |
 | `Secondary` | 3rd-party | `demo-json-v1` | `green_button_pressed`, `blue_button_pressed` |
-| `NativeUser` | Native (`esd/batch@1`) | `esd/batch@1` | All four user entry types |
-| `NativeAudit` | Native (`esd/batch@1`) | `esd/batch@1` | System events only |
+| `NativeUser` | Native (`esd/batch@2`) | `esd/batch@2` | All four user entry types |
+| `NativeAudit` | Native (`esd/batch@2`) | `esd/batch@2` | System events only |
 
 `Primary` and `Secondary` are `DemoDestination` —
 `serializesNatively: false`; lib invokes `transform` and persists the
@@ -249,8 +261,8 @@ resulting `WirePayload` verbatim. `Secondary` opts into
 `allowHardDelete: true` so the demo can exercise hard-delete on it.
 
 `NativeUser` and `NativeAudit` are `NativeDemoDestination` —
-`serializesNatively: true`; lib produces the `esd/batch@1` envelope
-inside `fillBatch` and persists `envelope_metadata` with
+`serializesNatively: true`; lib produces the `esd/batch@2` envelope
+when the delivery cycle fills the queue and persists `envelope_metadata` with
 `wire_payload: null`. Drain reconstructs the wire bytes
 deterministically on each send attempt and (when a bridge is wired)
 hands them to `DownstreamBridge.deliver`, which calls
@@ -277,15 +289,52 @@ Each destination panel exposes live-tunable knobs (sliders /
 dropdowns):
 
 - **Connection** — `ok` (succeed after `sendLatency`), `broken`
-  (return `SendTransient`), `rejecting` (return `SendPermanent`).
+  (return `SendTransient`), `rejecting` (return `SendPermanent`). A
+  rejection wedges the queue head, and the drain appends a
+  `destination_wedged` event with the wedge, shown in the EVENTS panel.
 - **Send latency** — wall-clock delay before `SendOk`.
 - **Batch size** — upper bound on `canAddToBatch` length.
 - **Accumulate** — `maxAccumulateTime` hold for single-event batches.
 
+Each destination panel's **ops** drawer holds the operator controls:
+
+- **[Halt]** and **[Halt to reconfigure]** request a halt
+  (`DestinationRegistry.requestHalt`, purpose `pause` or `reconfigure`).
+  The panel shows `HALT REQUESTED (<purpose>)` while the request is open.
+  The drainer honours it before its next send by wedging the queue head
+  itself (cause `operator_halt`); on an empty queue the request waits, and
+  the first item enqueued is wedged.
+- **[Cancel halt]** cancels an open request.
+- **[Reconfigure drainer]** plays the deployment of a new delivery
+  configuration of a `DemoDestination`: it closes the pane's delivery cycle
+  and starts one over a new registry that registers the destination with
+  its filter narrowed to one entry type, so the configuration the drainer
+  declares changes.
+- **[Delete destination]** (destinations that opt into hard deletion).
+
+The WEDGED column lists the rows of the library's default
+destination-wedges view (`default_destination_wedges`), one per wedged
+destination, with its cause, attempt count and who requested the halt
+it consumed, and below them the latest delivery events (wedges, halt
+requests and cancellations, recoveries, deletions). A row whose
+`database_id` is the pane's own database is one of the pane's own
+wedges and has a **Recover** button (`tombstoneAndRefill`); any other row
+is a peer's wedge, forwarded with the peer's system events, labelled with
+its origin database, with no action: a registry operation acts only on
+its own database, and the pane's destination of the same id is a
+different queue. A wedged row in a FIFO column has a **Tombstone &
+Refill** button that does the same as Recover.
+
+With nothing selected, the DETAIL column shows the pane's delivery cycle
+(`SyncCycle.state`, `SyncCycle.unserved`) and the database's persisted
+delivery status (`DestinationRegistry.readDeliveryStatus()`: the
+drainer's declaration and heartbeat, and per destination the open halt
+request, the wedge, the refill guard and the unserved reason).
+
 The `SyncPolicyBar` above the columns exposes per-pane `SyncPolicy`
 knobs (`initialBackoff`, `backoffMultiplier`, `maxBackoff`,
-`jitterFraction`, `maxAttempts`, `periodicInterval`) that flow into
-the drain loop on each tick.
+`jitterFraction`, `maxAttempts`) that flow into the drain loop on each
+tick.
 
 ---
 
@@ -354,10 +403,64 @@ Secondary's head row flips through `draining` to `wedged` after one
 permanent rejection, the two later rows queue behind it as `pending`
 (Secondary's drain has halted), Primary processes the same three
 batches to `sent` normally, and `wedgedFifos()` returns one summary
-naming Secondary only. To recover, click the wedged row, then
-**Tombstone & Refill** in the detail panel — Secondary's wedged row
-flips to `tombstoned`, the trail of pending rows is swept, and fresh
-rows enqueue and drain on the next tick.
+naming Secondary only. The detail panel's summary (nothing selected)
+shows both reads of the wedge: `wedged dst` is `wedgedFifos()`, a read
+of the pane's own queues, and `wedges view (this database)` lists the
+rows of the library's default destination-wedges view
+(`default_destination_wedges`) whose `database_id` is the pane's own
+database identity, folded from the `destination_wedged` event; the two
+name the same destinations. Each is read as its own snapshot, one after
+the other, so while the drainer runs they can differ until the next
+refresh. The WEDGED column shows Secondary's row with a **Recover**
+button. Flip Secondary back to `ok` and click **Recover** (or **Tombstone
+& Refill** on the wedged row) — Secondary's wedged row flips to
+`tombstoned`, the trail of pending rows is swept, fresh rows enqueue and
+drain on the next tick, and the recovery event removes the view's row.
+
+### A peer's wedge in the hub
+
+To see how the default destination-wedges view differs from
+`wedgedFifos()`: in the mobile pane, flip Primary to `rejecting` and
+click Red. Mobile's Primary wedges, and NativeAudit forwards mobile's
+system events, the `destination_wedged` event among them, to the hub.
+The hub's WEDGED column then shows the wedge as a peer row labelled with
+mobile's database identity, with no Recover button, and its detail panel
+lists it under `wedges view (peers)`, while its `any wedged` reads false
+and `wedges view (this database)` reads none: the hub's own Primary queue
+is not wedged. Click **Recover** in the mobile pane's WEDGED column: once
+NativeAudit forwards the recovery event, the hub's peer row goes. The view is folded from the log, so it holds the wedges a
+peer forwarded; `wedgedFifos()` reads only the pane's own queues. A peer
+row shows what the forwarding pane asserts, and it is removed only when
+that pane forwards the recovery or deletion that ends the wedge.
+
+### Halt and recover
+
+To stop delivery on a healthy destination: open Primary's **ops**
+drawer and click **[Halt]**. The panel shows `HALT REQUESTED (pause)`.
+Click Red: the drainer enqueues the event and, before sending it, wedges
+the head for the halt, appending a `destination_wedged` event with cause
+`operator_halt` that names the halt request and who made it. The
+indicator goes (the wedge consumed the request), and the WEDGED column
+shows `Primary: operator_halt, halt by demo-user-1`. Click **Recover**:
+the head is tombstoned and refilled, and delivery resumes. **[Cancel
+halt]** withdraws a request the drainer has not honoured yet.
+
+To see a halt wait for a head: halt a destination whose queue is empty.
+The request stays open through every pass, and the first event the
+destination's filter admits is enqueued and wedged at once, never sent.
+
+### Rebuild after a reconfiguration
+
+To rebuild a destination's pending items under a new configuration: click
+**[Halt to reconfigure]** on Primary, then Red and a new note. The
+drainer wedges the head for the halt. Click **Recover**: it is refused,
+and the banner says why — the drainer still declares the configuration
+it recorded when it honoured the halt, so a refill now would rebuild the
+items under the old configuration. Click **[Reconfigure drainer]**: the
+pane's drainer restarts with Primary's filter narrowed to notes. Click
+**Recover** again: it is accepted, and the refill enqueues the note and
+no longer the Red press. A halt for `pause` is recoverable at any time;
+use it when the new configuration is already running.
 
 ### Transient disconnect and recovery
 
@@ -367,7 +470,8 @@ events), and watch for ~10 seconds. Observe Primary's head row shows
 `retrying` with `attempts[]` accumulating; Secondary continues to
 deliver its copies of the same events. Flip Primary back to `ok`.
 Observe the queued rows drain in order at Primary's send latency;
-`wedgedFifos()` stayed empty throughout.
+`wedgedFifos()`, and the default destination-wedges view with it, stayed
+empty throughout.
 
 ### Sync policy tuning
 
@@ -395,11 +499,32 @@ repeat clicks.
 To see runtime add plus replay: click **Add destination**, set id =
 `Backup`, allowHardDelete = true, submit. A new column appears,
 state = `DORMANT`. Set Backup's start date to a value earlier than
-any event in the log. Observe Backup's schedule flips to `ACTIVE`,
-the lib walks the event log in sequence order, batches into groups
+any event in the log. Observe Backup's schedule flips to `ACTIVE`;
+setting the start date records a replay request and enqueues
+nothing itself. On the next tick the delivery cycle performs the
+replay: it walks the event log in sequence order, batches into groups
 respecting `canAddToBatch`, and populates Backup's FIFO with
-`pending` rows; on the next tick they drain to `sent`. Other panels
-are unaffected.
+`pending` rows, which then drain to `sent`. Other panels are
+unaffected.
+
+The replay covers every event in the window up to that tick,
+including events appended after the start date was set, and none of
+them waits out Backup's `maxAccumulateTime`. The drain that follows
+sends the replayed rows one after another in the same tick, each
+after Backup's send latency: with a 10 s latency, a three-row replay
+keeps that tick busy for about 30 s before the rows all show `sent`.
+
+### Deleting a destination keeps its delivery record
+
+To see deletion: open Backup's **ops** drawer and click **Delete
+destination**. While Backup's head row is pending (it may be in
+delivery) the delete is refused, and the panel's banner names the
+reason and points at **[Halt]**. Click **[Halt]**: the drainer wedges the
+head at its next pass. Then delete: Backup's live column disappears and
+a read-only `Backup (deleted)` column appears, listing the rows the
+deletion kept — every `sent` row, and the wedged head, now
+`tombstoned`. The pending rows behind the head are gone. Adding `Backup`
+again starts a new registration.
 
 ### setEndDate semantics
 

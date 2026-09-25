@@ -12,10 +12,19 @@ Builder primitives, `ViewListener`, `PermissionGate`,
 `ReActionErrorListener`) and the sibling `reaction_widgets_testing/`
 (shipped `FakeReaction` + `pumpReactionWidget` widget-test doubles,
 split out so consumers' release builds don't pull `flutter_test`).
-All other packages remain pure Dart. CI therefore runs `dart test`
-on the pure-Dart packages and `flutter test` on both
-`reaction_widgets/` and `reaction_widgets_testing/`. Downstream
-consumers pin this repo by git ref.
+All other library packages are pure Dart at runtime, though the
+`event_sourcing` and `reaction` test suites run under `flutter test`.
+CI (`.github/workflows/event-sourcing-tests.yml`) runs
+`flutter analyze --no-pub` (infos fatal) and `flutter test` in each of
+the eight Flutter packages (`event_sourcing`, its three examples,
+`reaction`, `reaction/example`, `reaction_widgets`,
+`reaction_widgets_testing`), `dart analyze` and `dart test` in
+`provenance` and `canonical_json_jcs`, the browser-only
+`event_sourcing/test/web/` suite in Chrome, and the
+`event_sourcing/example` desktop integration test;
+`conformance-tests.yml` runs every Postgres-gated test file against a
+Postgres service. Every workflow pins the Flutter SDK version.
+Downstream consumers pin this repo by git ref.
 
 The substrate ships two concrete `StorageBackend` reference
 implementations — `SembastBackend` (mobile/Flutter) and
@@ -89,22 +98,30 @@ These commitments shape the library's design.
   Alternative policy models require library extension (same Append-
   Only Primitives discipline as projections), not app-side replacement.
 - **Library version recorded in the log.** Substrate emits
-  `lib_version_initialized` on first boot under a new lib version and
-  `lib_version_changed` on subsequent transitions. Downgrades are
-  refused by default. State at sequence N is reconstructable from
-  `(events, projection_specs, promoter_specs, lib_version)` — all in
-  the log.
-- **Entry-type version is substrate-owned.** The substrate stamps
-  `entryTypeVersion = entryTypes.byId(entryType).registeredVersion` on
-  every appended event. Producers do not choose the version; ingest
-  transparently promotes older-peer events before the fold;
-  `EventStore.open` snapshot-promotes view rows on a `registeredVersion`
-  bump and refuses downgrade. Promoter primitives are restricted to
-  shape-changers (`RenameField`, `DefaultField`, `DropField`) so the
-  chain commutes with the deep-merge fold — snapshot promotion at boot
-  is provably equivalent to event-replay-with-promotion. The normative
-  requirements live in the boot-flow DEV specs
-  (`spec/dev-append-stamps-registered-version.md`,
+  `lib_version_initialized` (with the database identity) on the first
+  open and `lib_version_changed` on every open by a different package or
+  data-format version, older ones included, all in one boot transaction.
+  Compatibility is decided by the data-format major: an older library of
+  the same major opens and is recorded; another major is refused before
+  any write. The log records each open, not which of two builds
+  running side by side appended a given event. A view equals a replay
+  of the events under the projection and promoter specs of the build
+  that registers it once that build has re-derived it (boot promotion
+  and view catch-up at its open, or `rebuildView`).
+- **Entry-type version is substrate-owned.** Entry-type versions and
+  the library's data-format version are `major.minor`. The substrate
+  stamps `entryTypeVersion = entryTypes.byId(entryType).registeredVersion`
+  on every appended event, and the event hash covers it. Producers do not
+  choose the version; ingest transparently promotes older-peer events
+  before the fold. A minor step is compatible by definition: its
+  promoters are `DefaultField` only, enforced at registration, while
+  `RenameField`/`DropField` need a major step. Downgrade refusal and
+  ingest compare majors only, so builds of one major share a database.
+  `EventStore.open` re-derives lagging view rows from the log through the
+  same fold step the interpreter and `rebuildView` use, so boot promotion
+  equals event-replay-with-promotion by construction. The normative
+  requirements live in `spec/dev-version-compatibility.md` and the
+  boot-flow DEV specs (`spec/dev-append-stamps-registered-version.md`,
   `spec/dev-ingest-promotes-before-fold.md`,
   `spec/dev-snapshot-promotion-on-open.md`,
   `spec/dev-entry-type-downgrade-refusal.md`,
@@ -176,8 +193,8 @@ They are useful defaults, not unique truths:
 - A projection produces one row per aggregate, materialized via
   generic merge (the substrate could equally produce per-event rows or
   derived-only views)
-- "Version" is a monotonically-bumped integer per entry type (the
-  substrate could equally use content-hash-as-version)
+- "Version" is a major.minor pair per entry type (the substrate could
+  equally use content-hash-as-version)
 
 The library bundles these as primitives because most consumers want
 them, but they don't carry the same epistemic weight as Layer 1.
@@ -228,19 +245,108 @@ The currently-trusted inputs are:
   `event_sourcing/lib/src/storage/postgres/`). Both pass the same
   backend-agnostic conformance harness. Alternative backends
   (IndexedDB, etc.) are app-supplied; each is the trusted persistence
-  layer for that deployment.
-- **`Destination` outbound transport.** Per-destination delivery
-  transport (HTTP, WebSocket, file, etc.) supplied by the app at
-  composition time. Trusted for transport-layer correctness and
-  for honouring the FIFO queue's delivery semantics. The substrate
-  does not verify that the transport delivered the event to its
-  remote endpoint correctly; only that the FIFO queue advanced.
+  layer for that deployment. A backend that several processes or tabs
+  share is also trusted to run the incompatible-generation guard (the
+  live registration, the serialized boots, and on Postgres the
+  per-transaction fence): one that does not lets builds of different
+  majors write one database side by side, and nothing checks that it
+  guards. Every backend is also trusted to exclude drainers through its
+  drain lock (`EVS-DEV-destination-drain-lock/A`): on Postgres a session
+  advisory lock on the lock session below, on Sembast outside the
+  browser an isolate-local registry per open database handle, and in the
+  browser a Web Lock on the lock manager below, requested only while a
+  tab's page is visible and released once a hidden page's sends in
+  flight have their outcomes committed (or one cadence has passed); one
+  that admits two drainers of a database lets both send and record
+  outcomes. Precondition
+  (`EVS-PRD-destinations/L`):
+  the library's delivery guarantees, its views and its security-context
+  records hold only while its persisted state (destination queues, the
+  views it materializes, the records it keeps beside them, such as fill
+  positions, schedules, replay requests, wedge records, halt requests,
+  send fences, refill guards, the registry check record, the database
+  identity, the generation records, the view catch-up marks, the fencing
+  epoch and the declared configuration, and the security context it
+  stores beside each event) changes only through the library's
+  operations, and reserved system events are appended only by the
+  library's own operations. At most one drainer per database: the
+  requirement is `EVS-PRD-destinations/V`. On Postgres the queue table's
+  guard (`EVS-DEV-destination-drain/S`), while it is in place (the schema
+  owner can remove it), refuses every change to a queue item outside the
+  shapes of the library's own writes, from any role; it
+  cannot tell a hand-written change of a legal shape from the library's
+  own, so it is a safety net and adds no trusted input.
+  Every `StorageBackend` member that writes, and the event store's
+  reserved append operations, are `@internal`, which the analyzer
+  enforces but nothing enforces at run time: the consumer
+  holds the backend (and, on Sembast, the database it opened), and a
+  backend in another package keeps the guard only by marking its own
+  overrides `@internal`.
+- **Deployment-supplied Postgres lock-session path.** The connection a
+  `PostgresBackend` holds its generation locks and the drain lock on
+  (`lockUrl`, or the pool's URL) is trusted to be one server session reaching the pool's
+  server, database and schema (a direct connection or a session-mode
+  proxy that resets sessions, never a transaction-mode pooler), to carry
+  the keepalives the library sets, and to let the lock role end its own
+  sessions. The library checks what it can when the backend opens and
+  when it replaces a lost lock session (one server session, the same
+  database and schema, and a lock the pool takes visible to the lock
+  session, so the same server) and documents the rest
+  (`EVS-DEV-postgres-backend/J`). An unaudited boundary with no
+  pluggable interface (`spec/roadmap/storage.md`).
+- **The browser's lock manager (Web Locks).** On the web the
+  incompatible-generation guard and the drain lock run on
+  `navigator.locks`, trusted to grant a lock name exclusively or shared
+  as requested, to report held locks when queried, and to release every
+  lock of a closed or discarded page (`EVS-DEV-version-compatibility/H`,
+  `EVS-DEV-destination-drain-lock/A`). An unaudited boundary with no
+  pluggable interface; a page without it is refused
+  (`spec/roadmap/storage.md`).
+- **One opener of a Sembast database file outside the browser.** On io
+  a `SembastBackend` registers nothing with the generation guard: the
+  database file is trusted to be opened by one isolate of one process
+  (a second process, or a second isolate such as a mobile background
+  isolate, sees no lock of the first) (`EVS-DEV-version-compatibility/H`).
+  An unaudited deployment assumption with no pluggable interface
+  (`spec/roadmap/storage.md`).
+- **`Destination` outbound transport and delivery configuration.**
+  Per-destination delivery transport (HTTP, WebSocket, file, etc.)
+  supplied by the app at composition time. Trusted for transport-layer
+  correctness and for honouring the FIFO queue's delivery semantics.
+  The substrate does not verify that the transport delivered the event
+  to its remote endpoint correctly; only that the FIFO queue advanced.
+  The delivery configuration the app supplies with it is trusted on
+  faith too: the `Destination`'s filter (a `SubscriptionFilter`
+  predicate closure included) and transform (they decide which events
+  are enqueued and what each queue item carries), its send outcomes (a
+  permanent failure wedges the queue head), the `SyncPolicy` given to
+  `SyncCycle` statically or through `policyResolver` (its retry curve
+  decides backoff, its attempt budget decides when an item wedges; the
+  library refuses a budget below one), and the `clock` given to
+  `SyncCycle` (fill computes its window's upper bound from it, so it
+  decides which events are enqueued). Each wedge appends a wedge event
+  recording the outcome category, the numeric status and the budget in
+  effect (`EVS-PRD-destinations/P`-`R`), so every wedge decision is
+  auditable from the log; the clock's readings are not recorded, so its
+  influence on the fill window is an unaudited input. Queue items are
+  built by the configuration the drain-lock holder declares
+  (`declaredConfiguration`); `destination_registered` records the
+  registering process's configuration, not the one in effect, and the
+  processes sharing a database are expected to declare identical
+  configurations. The wedge and recovery events record the declared
+  configuration in effect and its fingerprint. The `configurationVersion`
+  given to `SyncCycle.start` is trusted on faith as well: it decides
+  whether a recovery of a reconfigure halt is accepted and whether a fill
+  under a refill guard writes; the log records its value, but the library
+  cannot check that it changes when code it cannot read (a transform, a
+  predicate, a batching rule) changes (`spec/roadmap/sync.md`).
 - **Caller-supplied `Principal.userId` on action submissions and
   event metadata.** Identity is still accepted on faith — the
   substrate does not authenticate which user the caller claims to be
   (`Principal.userId`), nor the `initiator` recorded on appended
   events. The calling application is trusted to supply correct
-  identity. The fourth bullet below is the wire-side closure of this
+  identity. The consumer-supplied wire-authentication bullet below is the
+  wire-side closure of this
   gap for cross-process deployments (the `reaction` package composes
   a consumer-supplied validator into its shelf pipeline); in-process
   deployments still bear the userId-on-faith trust input. Full

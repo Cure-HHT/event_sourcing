@@ -18,6 +18,21 @@ class DemoDestination implements Destination, DemoKnobs {
        batchSize = ValueNotifier<int>(initialBatchSize),
        maxAccumulateTimeN = ValueNotifier<Duration>(initialAccumulate);
 
+  DemoDestination._sharing(DemoDestination other, this.filter)
+    : id = other.id,
+      allowHardDelete = other.allowHardDelete,
+      connection = other.connection,
+      sendLatency = other.sendLatency,
+      batchSize = other.batchSize,
+      maxAccumulateTimeN = other.maxAccumulateTimeN;
+
+  /// The same destination with the filter [filter]: a new delivery
+  /// configuration of it, as a new deployment would register. It shares
+  /// this destination's knobs, so the FIFO panel's controls keep acting on
+  /// it.
+  DemoDestination withFilter(SubscriptionFilter filter) =>
+      DemoDestination._sharing(this, filter);
+
   @override
   final String id;
 
@@ -47,8 +62,8 @@ class DemoDestination implements Destination, DemoKnobs {
   @override
   final ValueNotifier<Duration> sendLatency;
 
-  /// Live-tunable upper bound on current-batch length. fillBatch asks
-  /// `canAddToBatch` once per candidate; when the batch reaches this
+  /// Live-tunable upper bound on current-batch length. When the delivery
+  /// cycle fills the queue it asks `canAddToBatch` once per candidate; when the batch reaches this
   /// length, the next candidate is rejected.
   @override
   final ValueNotifier<int> batchSize;

@@ -16,11 +16,24 @@
 ///   for all time once `startDate` has elapsed. A later `setEndDate` call
 ///   may populate it.
 ///
+/// The persisted schedule also carries the destination's registration
+/// identity ([registrationId], the event id of the
+/// `system.destination_registered` event that created it) and the
+/// hard-delete opt-in in effect ([allowHardDelete], written by the latest
+/// registration). The registry's date, recovery and deletion operations act
+/// on this persisted record, so any process can run them for any destination
+/// the database knows.
+///
 /// The value type is deliberately immutable; `DestinationRegistry`
 /// mutations construct a new `DestinationSchedule` and persist it.
 class DestinationSchedule {
-  /// Construct a schedule. Either field may be null — see class doc.
-  const DestinationSchedule({this.startDate, this.endDate});
+  /// Construct a schedule. Either date may be null — see class doc.
+  const DestinationSchedule({
+    this.startDate,
+    this.endDate,
+    this.registrationId,
+    this.allowHardDelete = false,
+  });
 
   /// Inverse of [toJson]. `null` fields parse back to `null` DateTime.
   factory DestinationSchedule.fromJson(Map<String, Object?> json) {
@@ -29,6 +42,8 @@ class DestinationSchedule {
     return DestinationSchedule(
       startDate: start == null ? null : DateTime.parse(start),
       endDate: end == null ? null : DateTime.parse(end),
+      registrationId: json['registration_id'] as String?,
+      allowHardDelete: (json['allow_hard_delete'] as bool?) ?? false,
     );
   }
 
@@ -40,6 +55,16 @@ class DestinationSchedule {
   /// Null means "no scheduled end" — active indefinitely once `startDate`
   /// has elapsed.
   final DateTime? endDate;
+
+  /// Event id of the `system.destination_registered` event that created this
+  /// persisted schedule. A destination deleted and registered again under
+  /// the same id gets a new one. Null only on a schedule no registration
+  /// wrote (a value built in memory).
+  final String? registrationId;
+
+  /// The hard-delete opt-in in effect: the value the latest registration of
+  /// the destination declared. A deletion acts on, and records, this value.
+  final bool allowHardDelete;
 
   /// True when no `startDate` has been assigned; the destination is
   /// registered but not yet active for any wall-clock time.
@@ -53,11 +78,13 @@ class DestinationSchedule {
       startDate!.compareTo(now) <= 0 &&
       (endDate == null || endDate!.compareTo(now) > 0);
 
-  /// JSON representation used by `StorageBackend.writeSchedule`. Both
+  /// JSON representation used by `StorageBackend.writeScheduleTxn`. Both
   /// fields serialize to either an ISO-8601 string or `null`.
   Map<String, Object?> toJson() => {
     'start_date': startDate?.toIso8601String(),
     'end_date': endDate?.toIso8601String(),
+    'registration_id': registrationId,
+    'allow_hard_delete': allowHardDelete,
   };
 
   @override
@@ -65,14 +92,18 @@ class DestinationSchedule {
       identical(this, other) ||
       other is DestinationSchedule &&
           startDate == other.startDate &&
-          endDate == other.endDate;
+          endDate == other.endDate &&
+          registrationId == other.registrationId &&
+          allowHardDelete == other.allowHardDelete;
 
   @override
-  int get hashCode => Object.hash(startDate, endDate);
+  int get hashCode =>
+      Object.hash(startDate, endDate, registrationId, allowHardDelete);
 
   @override
   String toString() =>
-      'DestinationSchedule(startDate: $startDate, endDate: $endDate)';
+      'DestinationSchedule(startDate: $startDate, endDate: $endDate, '
+      'registrationId: $registrationId, allowHardDelete: $allowHardDelete)';
 }
 
 /// Return code from `DestinationRegistry.setEndDate`.
@@ -92,25 +123,27 @@ enum SetEndDateResult { closed, scheduled, applied }
 
 /// Result of `tombstoneAndRefill`
 ///
-/// Carries three operator-visible values: the `entry_id` of the target
+/// Carries three operator-visible values: the `entry_id` of the wedged
 /// row flipped to `tombstoned`, the count of trail null rows deleted in
 /// the same transaction, and the value `fill_cursor` was rewound to.
 class TombstoneAndRefillResult {
   const TombstoneAndRefillResult({
-    required this.targetRowId,
+    required this.rowId,
     required this.deletedTrailCount,
     required this.rewoundTo,
   });
 
-  /// `entry_id` of the tombstoned target row.
-  final String targetRowId;
+  /// `entry_id` of the tombstoned row, recorded as `row_id` on the
+  /// recovery audit.
+  final String rowId;
 
   /// Count of null-finalStatus rows whose sequence_in_queue was strictly
-  /// greater than the target's sequence_in_queue that were deleted from
+  /// greater than the tombstoned row's sequence_in_queue that were deleted from
   /// the FIFO store in the same transaction.
   final int deletedTrailCount;
 
-  /// Value the per-destination fill_cursor was rewound to
-  /// — equals target.event_id_range.first_seq - 1.
+  /// Value the per-destination fill_cursor was rewound to: one below the
+  /// lowest `event_id_range.first_seq` among the tombstoned head and the
+  /// swept trail items.
   final int rewoundTo;
 }

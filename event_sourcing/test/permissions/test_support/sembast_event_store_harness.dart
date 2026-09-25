@@ -28,16 +28,6 @@
 // that flexibility.
 
 import 'package:event_sourcing/event_sourcing.dart';
-import 'package:event_sourcing/src/entry_type_definition.dart';
-import 'package:event_sourcing/src/entry_type_registry.dart';
-import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/permissions/role_permission_grants_spec.dart';
-import 'package:event_sourcing/src/permissions/user_role_scopes_spec.dart';
-import 'package:event_sourcing/src/projections/projection_registry.dart';
-import 'package:event_sourcing/src/projections/projection_spec.dart';
-import 'package:event_sourcing/src/security/sembast_security_context_store.dart';
-import 'package:event_sourcing/src/storage/sembast_backend.dart';
-import 'package:event_sourcing/src/storage/source.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';
 
@@ -52,14 +42,14 @@ const List<EntryTypeDefinition> _kPermissionsEntryTypeDefinitions =
     <EntryTypeDefinition>[
       EntryTypeDefinition(
         id: kRolePermissionGrantEntryType,
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-permission grant',
         // Projection is driven by the registered ProjectionSpec
         // (rolePermissionGrantsSpec).
       ),
       EntryTypeDefinition(
         id: kUserRoleScopeEntryType,
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-role-scope assignment',
         // Projection is driven by the registered ProjectionSpec
         // (userRoleScopesSpec).

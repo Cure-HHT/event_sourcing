@@ -13,7 +13,7 @@ combination.
 ## Two tiers
 
 | Tier | What | Runs under | Needs |
-|------|------|-----------|-------|
+| --- | --- | --- | --- |
 | 1 | Automated multi-client + permission/projection scenarios | `flutter test` | nothing extra (boots its own server on a loopback port / subprocess) |
 | 2 | UI confirmation through the rendered Flutter client | `flutter drive` | a display + a manually-started server |
 
@@ -48,8 +48,9 @@ cd reaction_widgets
 flutter test test/view/view_builder_test.dart
 ```
 
-(#3 already runs in the existing `reaction-widgets-tests.yml` workflow,
-since it lives in that package's normal test suite.)
+(All three run in CI: `.github/workflows/event-sourcing-tests.yml` runs
+every package's full `flutter test` suite, `test/e2e/`, `test/scenarios/`
+and `reaction_widgets` included.)
 
 ## Tier 2 — UI confirmation (run on demand)
 

@@ -92,8 +92,12 @@ void main() {
       await tmp.execute('CREATE SCHEMA public');
       await tmp.close();
 
-      backend = await PostgresBackend.open(url: url, sslMode: SslMode.disable);
-      idempotencyStore = PostgresIdempotencyStore.over(backend.pool);
+      backend = await PostgresBackend.open(
+        url: url,
+        sslMode: SslMode.disable,
+        provisionSchema: true,
+      );
+      idempotencyStore = PostgresIdempotencyStore.forBackend(backend);
 
       components = await bootstrapDemoServer(
         backend: backend,
@@ -493,8 +497,9 @@ void main() {
       final backend1 = await PostgresBackend.open(
         url: url,
         sslMode: SslMode.disable,
+        provisionSchema: true,
       );
-      final idem1 = PostgresIdempotencyStore.over(backend1.pool);
+      final idem1 = PostgresIdempotencyStore.forBackend(backend1);
       final components1 = await bootstrapDemoServer(
         backend: backend1,
         idempotencyStore: idem1,
@@ -573,9 +578,10 @@ void main() {
       final backend2 = await PostgresBackend.open(
         url: url,
         sslMode: SslMode.disable,
+        provisionSchema: true,
       );
       addTearDown(backend2.close);
-      final idem2 = PostgresIdempotencyStore.over(backend2.pool);
+      final idem2 = PostgresIdempotencyStore.forBackend(backend2);
 
       // Read events + view rows from the NEW backend instance.
       final eventsPhase2 = await backend2.findAllEvents();

@@ -16,8 +16,6 @@
 // to the subscription engine so that subscribers using
 // SubscriptionFilter(includeSystemEvents: true) receive every system event.
 
-import 'dart:async';
-
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -29,8 +27,11 @@ const _source = Source(
   softwareVersion: '0.0.0-test',
 );
 
-EntryTypeDefinition _simpleDef(String id) =>
-    EntryTypeDefinition(id: id, registeredVersion: 1, name: id);
+EntryTypeDefinition _simpleDef(String id) => EntryTypeDefinition(
+  id: id,
+  registeredVersion: const EntryTypeVersion(1, 0),
+  name: id,
+);
 
 Future<
   ({EventStore store, SembastBackend backend, SembastSecurityContextStore sc})

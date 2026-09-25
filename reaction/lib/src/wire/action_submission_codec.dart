@@ -9,7 +9,7 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
-import 'envelope.dart';
+import 'package:reaction/src/wire/envelope.dart';
 
 /// JSON codec for [ActionSubmission].
 ///
@@ -26,8 +26,9 @@ class ActionSubmissionCodec {
       'actionName': submission.actionName,
       'rawInput': submission.rawInput,
     };
-    if (submission.idempotencyKey != null)
+    if (submission.idempotencyKey != null) {
       out['idempotencyKey'] = submission.idempotencyKey;
+    }
     if (submission.flowToken != null) out['flowToken'] = submission.flowToken;
     return out;
   }

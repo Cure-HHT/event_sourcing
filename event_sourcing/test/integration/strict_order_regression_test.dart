@@ -19,9 +19,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/storage/sembast_backend.dart'
+    show SembastBackendTestSupport;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -50,8 +53,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: 'agg-1',
       aggregateType: 'note',
       entryType: 'epistaxis_event',
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: 'finalized',
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -178,10 +181,7 @@ void main() {
       // and does not pre-enqueue anything: we want every FIFO row on
       // `secondary` to be produced by the fillBatch path under test.
       final deps = await buildAuditedRegistryDeps(backend);
-      final registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      final registry = DestinationRegistry(eventStore: deps.eventStore);
       await registry.addDestination(destination, initiator: _testInit);
       await registry.setStartDate(
         destination.id,
@@ -223,7 +223,7 @@ void main() {
       // Three fillBatch calls promote e1, e2, e3 into three single-
       // event FIFO rows (batchCapacity = 1).
       for (var i = 0; i < 3; i++) {
-        await fillBatch(
+        await fillWithScheduleForTest(
           destination,
           backend: backend,
           schedule: schedule,
@@ -234,7 +234,11 @@ void main() {
       // Act: drain once. The contract under test: drain ships e1
       // (SendOk), wedges e2 (SendPermanent), and halts — leaving e3
       // pending.
-      await drain(destination, backend: backend, clock: () => fillClock);
+      await drainForTest(
+        destination,
+        registry: registry,
+        clock: () => fillClock,
+      );
 
       // Assert: exactly two send calls — e1 (SendOk) and e2 (wedged
       // attempt). e3 was NOT attempted.
@@ -287,7 +291,7 @@ void main() {
         initiator: _testInit,
       );
       expect(result, isA<TombstoneAndRefillResult>());
-      expect(result.targetRowId, wedgedEntryId);
+      expect(result.rowId, wedgedEntryId);
       // trail sweep.
       expect(result.deletedTrailCount, 1);
       // e2.sequenceNumber - 1 = 1 (= e1.sequenceNumber).
@@ -301,14 +305,18 @@ void main() {
       // into fresh FIFO rows starting from the rewound cursor, then
       // drain ships them.
       for (var i = 0; i < 2; i++) {
-        await fillBatch(
+        await fillWithScheduleForTest(
           destination,
           backend: backend,
           schedule: schedule,
           clock: () => fillClock,
         );
       }
-      await drain(destination, backend: backend, clock: () => fillClock);
+      await drainForTest(
+        destination,
+        registry: registry,
+        clock: () => fillClock,
+      );
 
       // Assert: the destination now has e1, e2, e3 delivered in
       // sequence order — fresh delivery through post-fix drain, not

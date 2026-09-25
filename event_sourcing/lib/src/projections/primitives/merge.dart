@@ -12,11 +12,11 @@
 /// Library-supplied projection primitive: key-wise merge with
 /// null-as-clear semantics.
 ///
-/// Each key present in [delta] overwrites the corresponding key in
-/// [prior], including when the delta's value is `null` (explicit clear).
-/// Each key absent from [delta] preserves the prior value.
+/// Each key present in `delta` overwrites the corresponding key in
+/// `prior`, including when the delta's value is `null` (explicit clear).
+/// Each key absent from `delta` preserves the prior value.
 ///
-/// The iteration uses [delta.keys] rather than indexing into delta, so
+/// The iteration uses `delta.keys` rather than indexing into delta, so
 /// "key absent" and "key present with null value" are distinguished.
 class Merge {
   /// Shallow merge: each top-level key in [delta] overwrites or clears the
@@ -67,8 +67,8 @@ class Merge {
         // Defensive branch: handle decoded-from-JSON Maps whose runtime type
         // is Map<dynamic, dynamic>. Normalizes both sides before recursing.
         result[key] = applyDeepDelta(
-          Map<String, Object?>.from(priorVal as Map),
-          Map<String, Object?>.from(deltaVal as Map),
+          Map<String, Object?>.from(priorVal),
+          Map<String, Object?>.from(deltaVal),
         );
       } else {
         result[key] = deltaVal;

@@ -59,10 +59,15 @@ class _EventStreamPanelState extends State<EventStreamPanel> {
     setState(() {});
   }
 
+  /// Counts refreshes started, so a read that completes after a later one
+  /// does not replace the later, fresher list.
+  int _refreshes = 0;
+
   Future<void> _refresh() async {
+    final refresh = ++_refreshes;
     try {
       final events = await widget.backend.findAllEvents(limit: 500);
-      if (!mounted) return;
+      if (!mounted || refresh != _refreshes) return;
       setState(() {
         _events = events;
       });

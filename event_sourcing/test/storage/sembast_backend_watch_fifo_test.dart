@@ -1,14 +1,16 @@
-// Verifies: EVS-PRD-portability/D
-// watchFifo is a SembastBackend-specific
-//   reactive surface exposing FIFO state changes; snapshot-on-subscribe +
-//   re-emit-on-mutation contract; cross-destination isolation.
+// Verifies: EVS-PRD-subscription/E
+// a committed queue change (an enqueue, a
+//   status change) is published to the watchers of that destination's FIFO
+//   as a fresh snapshot, and to no other destination's watchers.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
+import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sembast/sembast_memory.dart';
+import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
 import '../test_support/fifo_entry_helpers.dart';
 
@@ -61,7 +63,7 @@ void main() {
       expect(emissions.last.first.eventIds, ['e1']);
     });
 
-    test('watchFifo emits a snapshot on markFinal', () async {
+    test('watchFifo emits a snapshot on a status change', () async {
       final entry = await enqueueSingle(
         backend,
         'dest',
@@ -74,7 +76,7 @@ void main() {
       final sub = stream.listen(emissions.add);
       await Future<void>.delayed(Duration.zero);
 
-      await backend.markFinal('dest', entry.entryId, FinalStatus.sent);
+      await setStatusForTest(backend, 'dest', entry.entryId, FinalStatus.sent);
       // Two pumps: one to drain the broadcast notification microtask,
       // one for the snapshot fetch's controller.add to deliver.
       await Future<void>.delayed(Duration.zero);
@@ -103,17 +105,17 @@ void main() {
       expect(emA, isEmpty);
     });
 
-    // envelopeMetadata for native (`esd/batch@1`) rows. The row-typed
+    // envelopeMetadata for native (`esd/batch@2`) rows. The row-typed
     // snapshot exposes the envelope identity that drain reconstructs from,
     // and wirePayload is null on the emitted entry.
     test('watchFifo emits envelopeMetadata for '
         'native rows; wirePayload is null on the snapshot', () async {
-      // Enqueue a native esd/batch@1 row via the public enqueueFifo
+      // Enqueue a native esd/batch@2 row via enqueueFifoTxn's
       // nativeEnvelope: path so the row's envelope_metadata column is
       // exercised end-to-end through the watchFifo snapshot pipeline.
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-watch-1',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-watch',
@@ -126,7 +128,11 @@ void main() {
       final sub = stream.listen(emissions.add);
       await Future<void>.delayed(Duration.zero); // initial empty snapshot
 
-      await backend.enqueueFifo('dest', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'dest', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
       // Two pumps: one to drain the broadcast notification microtask,
       // one for the snapshot fetch's controller.add to deliver.
       await Future<void>.delayed(Duration.zero);
@@ -151,7 +157,7 @@ void main() {
       expect(entry.envelopeMetadata!.batchId, 'batch-watch-1');
       expect(entry.envelopeMetadata!.senderHop, 'mobile-1');
       expect(entry.envelopeMetadata!.senderIdentifier, 'device-watch');
-      expect(entry.envelopeMetadata!.batchFormatVersion, '1');
+      expect(entry.envelopeMetadata!.batchFormatVersion, '2');
     });
 
     test('watchFifo closes on backend close, then throws', () async {
@@ -161,6 +167,209 @@ void main() {
       await fut;
       expect(() => backend.watchFifo('dest'), throwsStateError);
       backend = await _openBackend('watch-fifo-reopen-$dbCounter.db');
+    });
+  });
+
+  // Verifies: EVS-PRD-subscription/E
+  // two transactions in flight at once on one backend: the committed one
+  //   notifies its FIFO's watchers exactly once, the rolled-back one never.
+  group('SembastBackend.watchFifo under concurrent transactions', () {
+    late SembastBackend backend;
+    var dbCounter = 0;
+
+    setUp(() async {
+      dbCounter += 1;
+      backend = await _openBackend('watch-fifo-concurrent-$dbCounter.db');
+    });
+
+    tearDown(() async {
+      await backend.close();
+    });
+
+    /// Enqueues one row on [destinationId] inside its own transaction and
+    /// throws after the write when [rollBack] is set.
+    Future<void> enqueueInTxn(
+      String destinationId, {
+      required String eventId,
+      required bool rollBack,
+    }) => backend.transaction<void>((txn) async {
+      await backend.enqueueFifoTxn(
+        txn,
+        destinationId,
+        [storedEventFixture(eventId: eventId, sequenceNumber: 1)],
+        wirePayload: wirePayloadJson(const <String, Object?>{'ok': true}),
+      );
+      if (rollBack) throw StateError('injected rollback');
+    });
+
+    /// Starts both transactions without awaiting either, so both are in
+    /// flight at once, then returns the emissions each destination's
+    /// watcher received after its initial snapshot.
+    Future<(List<List<FifoEntry>>, List<List<FifoEntry>>)> runPair({
+      required bool firstRollsBack,
+    }) async {
+      final emissionsA = <List<FifoEntry>>[];
+      final emissionsB = <List<FifoEntry>>[];
+      final subA = backend.watchFifo('A').listen(emissionsA.add);
+      final subB = backend.watchFifo('B').listen(emissionsB.add);
+      await pumpEventQueue();
+      expect(emissionsA, hasLength(1), reason: 'initial snapshot of A');
+      expect(emissionsB, hasLength(1), reason: 'initial snapshot of B');
+
+      final first = enqueueInTxn(
+        'A',
+        eventId: 'on-a',
+        rollBack: firstRollsBack,
+      );
+      final second = enqueueInTxn(
+        'B',
+        eventId: 'on-b',
+        rollBack: !firstRollsBack,
+      );
+      final outcomes = await Future.wait<Object?>([
+        first.then<Object?>((_) => null, onError: (Object e) => e),
+        second.then<Object?>((_) => null, onError: (Object e) => e),
+      ]);
+      expect(outcomes.whereType<StateError>(), hasLength(1));
+      await pumpEventQueue();
+
+      await subA.cancel();
+      await subB.cancel();
+      return (emissionsA.skip(1).toList(), emissionsB.skip(1).toList());
+    }
+
+    test('first commits, second rolls back: only the first notifies, '
+        'once', () async {
+      final (liveA, liveB) = await runPair(firstRollsBack: false);
+      expect(liveA, hasLength(1), reason: 'committed enqueue on A');
+      expect(liveA.single.single.eventIds, ['on-a']);
+      expect(liveB, isEmpty, reason: 'rolled-back enqueue on B');
+      expect(await backend.listFifoEntries('B'), isEmpty);
+    });
+
+    test('first rolls back, second commits: only the second notifies, '
+        'once', () async {
+      final (liveA, liveB) = await runPair(firstRollsBack: true);
+      expect(liveA, isEmpty, reason: 'rolled-back enqueue on A');
+      expect(liveB, hasLength(1), reason: 'committed enqueue on B');
+      expect(liveB.single.single.eventIds, ['on-b']);
+      expect(await backend.listFifoEntries('A'), isEmpty);
+    });
+  });
+
+  group('SembastBackend.watchFifo on queue-changing writes', () {
+    late SembastBackend backend;
+    var dbCounter = 0;
+
+    setUp(() async {
+      dbCounter += 1;
+      backend = await _openBackend('watch-fifo-writes-$dbCounter.db');
+    });
+
+    tearDown(() async {
+      await backend.close();
+    });
+
+    /// Runs [write] in one transaction (throwing after it when [rollBack])
+    /// and returns how many snapshots the watcher received after its
+    /// initial one.
+    Future<int> notificationsFor(
+      Future<void> Function(Transaction txn) write, {
+      required bool rollBack,
+    }) async {
+      final emissions = <List<FifoEntry>>[];
+      final sub = backend.watchFifo('dest').listen(emissions.add);
+      await pumpEventQueue();
+      expect(emissions, hasLength(1), reason: 'initial snapshot');
+      final done = backend.transaction<void>((txn) async {
+        await write(txn);
+        if (rollBack) throw StateError('injected rollback');
+      });
+      if (rollBack) {
+        await expectLater(done, throwsStateError);
+      } else {
+        await done;
+      }
+      await pumpEventQueue();
+      await sub.cancel();
+      return emissions.length - 1;
+    }
+
+    Future<FifoEntry> seed(String eventId, int seq) =>
+        enqueueSingle(backend, 'dest', eventId: eventId, sequenceNumber: seq);
+
+    // Verifies: EVS-PRD-subscription/E
+    // an attempt and a status change notify
+    //   the queue's watchers once on commit and never on rollback.
+    // Verifies: EVS-DEV-destination-drain/C
+    // the drain's outcome writes, committed
+    //   together, notify once.
+    test('appendAttemptTxn and setFinalStatusTxn', () async {
+      final e1 = await seed('e1', 1);
+      Future<void> outcome(Transaction txn) async {
+        await backend.appendAttemptTxn(
+          txn,
+          'dest',
+          e1.entryId,
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        );
+        await backend.setFinalStatusTxn(
+          txn,
+          'dest',
+          e1.entryId,
+          FinalStatus.sent,
+        );
+      }
+
+      expect(await notificationsFor(outcome, rollBack: true), 0);
+      expect(await notificationsFor(outcome, rollBack: false), 1);
+    });
+
+    // Verifies: EVS-PRD-subscription/E
+    // a trail sweep notifies once on commit
+    //   and never on rollback.
+    test('deleteNullRowsAfterSequenceInQueueTxn', () async {
+      final head = await seed('h', 1);
+      await seed('t', 2);
+      await setStatusForTest(backend, 'dest', head.entryId, FinalStatus.wedged);
+      Future<void> sweep(Transaction txn) =>
+          backend.deleteNullRowsAfterSequenceInQueueTxn(
+            txn,
+            'dest',
+            head.sequenceInQueue,
+          );
+
+      expect(await notificationsFor(sweep, rollBack: true), 0);
+      expect(await notificationsFor(sweep, rollBack: false), 1);
+    });
+
+    // Verifies: EVS-PRD-subscription/E
+    // retiring a queue notifies once on
+    //   commit and never on rollback.
+    // Verifies: EVS-DEV-destination-drain/A
+    // a deletion's retirement is visible to
+    //   the queue's watchers, which then see the retained items.
+    test('retireQueueTxn', () async {
+      final sent = await seed('s', 1);
+      final head = await seed('h', 2);
+      await seed('p', 3);
+      await seedSentRowForTest(backend, 'dest', sent.entryId);
+      await setStatusForTest(backend, 'dest', head.entryId, FinalStatus.wedged);
+      Future<void> retire(Transaction txn) =>
+          backend.retireQueueTxn(txn, 'dest');
+
+      expect(await notificationsFor(retire, rollBack: true), 0);
+      final emissions = <List<FifoEntry>>[];
+      final sub = backend.watchFifo('dest').listen(emissions.add);
+      await pumpEventQueue();
+      await backend.transaction((txn) => backend.retireQueueTxn(txn, 'dest'));
+      await pumpEventQueue();
+      await sub.cancel();
+      expect(emissions, hasLength(2));
+      expect(emissions.last.map((e) => e.finalStatus), [
+        FinalStatus.sent,
+        FinalStatus.tombstoned,
+      ]);
     });
   });
 }

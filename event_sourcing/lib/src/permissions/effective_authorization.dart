@@ -6,10 +6,9 @@
 //   is the empty-active-role canonical instance for anonymous principals.
 
 import 'package:collection/collection.dart';
+import 'package:event_sourcing/src/actions/permission.dart';
+import 'package:event_sourcing/src/permissions/scope_assignment.dart';
 import 'package:meta/meta.dart';
-
-import '../actions/permission.dart';
-import 'scope_assignment.dart';
 
 /// Materials a client needs to gate UI per scope: the active role's
 /// permission set plus the user's scope assignments under that role.

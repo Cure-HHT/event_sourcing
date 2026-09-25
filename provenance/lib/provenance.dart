@@ -8,4 +8,5 @@ library;
 
 export 'src/append_hop.dart';
 export 'src/batch_context.dart';
+export 'src/iso8601_instant.dart';
 export 'src/provenance_entry.dart';

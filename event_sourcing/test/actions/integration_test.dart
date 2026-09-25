@@ -124,7 +124,7 @@ Future<EventStore> _bootstrapStore() async {
   store.entryTypes.register(
     const EntryTypeDefinition(
       id: 'user_invitation',
-      registeredVersion: 1,
+      registeredVersion: EntryTypeVersion(1, 0),
       name: 'User invitation',
     ),
   );

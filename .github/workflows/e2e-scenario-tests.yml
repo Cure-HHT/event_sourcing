@@ -35,6 +35,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: 3.44.7
       - name: Resolve deps (canonical_json_jcs)
         run: flutter pub get
         working-directory: canonical_json_jcs

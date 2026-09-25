@@ -13,6 +13,11 @@ class Events extends SubscriptionMode<StoredEvent> {
 }
 
 class AggregateMode<T> extends SubscriptionMode<T> {
+  const AggregateMode({
+    required this.viewName,
+    required this.mapper,
+    this.aggregates,
+  });
   final String viewName;
   final T Function(Map<String, Object?>) mapper;
 
@@ -24,10 +29,4 @@ class AggregateMode<T> extends SubscriptionMode<T> {
   /// snapshot and filtering live deltas. Not consulted by
   /// `SubscriptionFilter.matches`.
   final Set<String>? aggregates;
-
-  const AggregateMode({
-    required this.viewName,
-    required this.mapper,
-    this.aggregates,
-  });
 }

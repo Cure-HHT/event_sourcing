@@ -6,16 +6,26 @@ import 'dart:convert';
 
 import 'package:action_permissions_demo/server/bootstrap.dart';
 import 'package:action_permissions_demo/server/demo_state_projection.dart';
+import 'package:action_permissions_demo/server/log_destination.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
 class DemoRoutes {
-  DemoRoutes({required this.components, required this.projection});
+  DemoRoutes({
+    required this.components,
+    required this.projection,
+    this.deliveryState,
+  });
 
   final DemoServerComponents components;
   final DemoStateProjection projection;
+
+  /// The state of this process's delivery cycle, or null when the process
+  /// runs none. The `refuse-next` fault injection acts only while it is
+  /// [SyncCycleState.running].
+  final SyncCycleState Function()? deliveryState;
 
   /// Per-process trace tracking the last dispatch's stage list. The
   /// inspector pane reads this through [lastTrace]. Concurrency model:
@@ -28,6 +38,11 @@ class DemoRoutes {
       ..get('/healthz', _healthz)
       ..post('/session/start', _sessionStart)
       ..post('/dispatch', _dispatch)
+      ..get('/demo/delivery/status', _deliveryStatus)
+      ..post('/demo/delivery/halt', _deliveryHalt)
+      ..post('/demo/delivery/cancel-halt', _deliveryCancelHalt)
+      ..post('/demo/delivery/recover', _deliveryRecover)
+      ..post('/demo/delivery/refuse-next', _deliveryRefuseNext)
       ..get('/_demo/inspect', _inspect)
       ..post('/_demo/reset', _reset);
     return router.call;
@@ -102,6 +117,212 @@ class DemoRoutes {
       headers: _jsonHeaders,
     );
   }
+
+  // ---------------------------------------------------------------------
+  // Operator routes under /demo/delivery/. Any instance serves them,
+  // whether or not its delivery cycle drains: the registry operations act
+  // on the database's persisted state, and the draining process honours
+  // them. Each route resolves the caller's principal the way /dispatch
+  // does and asks the authorization policy for `delivery.operate`, a grant
+  // recorded in the log; any other decision than Allow is a 403 and
+  // nothing is written. The operator's principal is recorded as the
+  // initiator of the halt, cancellation and recovery events.
+  // ---------------------------------------------------------------------
+
+  /// The operator for [userId], or null when the policy does not permit
+  /// `delivery.operate` to that principal.
+  Future<UserPrincipal?> _operator(String? userId) async {
+    final principal = components.directory.resolve(userId);
+    final decision = await components.policy.isPermitted(
+      principal,
+      deliveryOperatePermission,
+      null,
+    );
+    if (decision is! Allow || principal is! UserPrincipal) return null;
+    return principal;
+  }
+
+  static Response _forbidden() => Response(
+    403,
+    body: jsonEncode(<String, Object?>{
+      'error': 'the caller is not permitted ${deliveryOperatePermission.name}',
+    }),
+    headers: _jsonHeaders,
+  );
+
+  /// A registry refusal (a halt already open, a pending head, an unknown
+  /// destination, ...) as a 409 carrying the registry's message. The
+  /// registry reports its refusals as [StateError] and [ArgumentError];
+  /// any other [StateError] of the operation (a closed event store) is
+  /// answered the same way.
+  static Response _refused(Object e) => Response(
+    409,
+    body: jsonEncode(<String, Object?>{
+      'error': switch (e) {
+        StateError(:final message) => message,
+        ArgumentError(:final message) => '$message',
+        _ => '$e',
+      },
+    }),
+    headers: _jsonHeaders,
+  );
+
+  static Response _badRequest(String message) => Response(
+    400,
+    body: jsonEncode(<String, Object?>{'error': message}),
+    headers: _jsonHeaders,
+  );
+
+  /// Runs [operation] for the operator named in [req]'s JSON body. A body
+  /// that is not a JSON object, or a field of the wrong type, is a 400 and
+  /// nothing is written.
+  Future<Response> _asOperator(
+    Request req,
+    Future<Map<String, Object?>> Function(
+      UserPrincipal operator,
+      Map<String, Object?> body,
+    )
+    operation,
+  ) async {
+    final Map<String, Object?> body;
+    final UserPrincipal? operator;
+    try {
+      final decoded = jsonDecode(await req.readAsString());
+      if (decoded is! Map<String, Object?>) {
+        throw const FormatException('the body must be a JSON object');
+      }
+      body = decoded;
+      operator = await _operator(_stringField(body, 'userId'));
+    } on FormatException catch (e) {
+      return _badRequest(e.message);
+    }
+    if (operator == null) return _forbidden();
+    try {
+      return Response.ok(
+        jsonEncode(await operation(operator, body)),
+        headers: _jsonHeaders,
+      );
+    } on FormatException catch (e) {
+      return _badRequest(e.message);
+    } on StateError catch (e) {
+      return _refused(e);
+    } on ArgumentError catch (e) {
+      return _refused(e);
+    }
+  }
+
+  /// The string field [name] of [body]; null when absent. Throws
+  /// [FormatException] for a value of another type.
+  static String? _stringField(Map<String, Object?> body, String name) {
+    final value = body[name];
+    if (value == null || value is String) return value as String?;
+    throw FormatException('$name must be a string');
+  }
+
+  /// GET /demo/delivery/status?userId=...: the persisted delivery status
+  /// (`DestinationRegistry.readDeliveryStatus`) and the rows of the default
+  /// destination-wedges view. The two parts are two reads: a wedge, halt or
+  /// recovery that commits between them shows in one part and not yet, or
+  /// no longer, in the other. Each part is consistent in itself.
+  Future<Response> _deliveryStatus(Request req) async {
+    final operator = await _operator(req.url.queryParameters['userId']);
+    if (operator == null) return _forbidden();
+    final status = await components.destinations.readDeliveryStatus();
+    final wedges = await components.eventStore.backend.findViewRows(
+      defaultDestinationWedgesSpec.viewName,
+    );
+    return Response.ok(
+      jsonEncode(<String, Object?>{
+        'drainer': status.drainer?.toJson(),
+        'heartbeat': status.heartbeat?.toJson(),
+        'destinations': <String, Object?>{
+          for (final e in status.destinations.entries)
+            e.key: <String, Object?>{
+              'schedule': e.value.schedule.toJson(),
+              'open_halt_request': e.value.openHaltRequest?.toJson(),
+              'wedge': e.value.wedge?.toJson(),
+              'refill_guard': e.value.refillGuard?.toJson(),
+              'unserved': e.value.unserved?.wire,
+            },
+        },
+        'wedges': wedges,
+      }),
+      headers: _jsonHeaders,
+    );
+  }
+
+  /// POST /demo/delivery/halt {userId, destinationId, purpose}: requests a
+  /// halt (`pause` or `reconfigure`); the drainer honours it by wedging the
+  /// queue head.
+  Future<Response> _deliveryHalt(Request req) =>
+      _asOperator(req, (operator, body) async {
+        final purposeWire = _stringField(body, 'purpose') ?? 'pause';
+        final HaltPurpose purpose;
+        try {
+          purpose = HaltPurpose.fromWire(purposeWire);
+        } on FormatException {
+          throw ArgumentError.value(
+            purposeWire,
+            'purpose',
+            'must be pause or reconfigure',
+          );
+        }
+        final requestEventId = await components.destinations.requestHalt(
+          _stringField(body, 'destinationId') ?? '',
+          initiator: UserInitiator(operator.userId),
+          purpose: purpose,
+        );
+        return <String, Object?>{'halt_request_event_id': requestEventId};
+      });
+
+  /// POST /demo/delivery/cancel-halt {userId, destinationId}.
+  Future<Response> _deliveryCancelHalt(Request req) =>
+      _asOperator(req, (operator, body) async {
+        await components.destinations.cancelHalt(
+          _stringField(body, 'destinationId') ?? '',
+          initiator: UserInitiator(operator.userId),
+        );
+        return <String, Object?>{'cancelled': true};
+      });
+
+  /// POST /demo/delivery/recover {userId, destinationId, rowId}: recovers a
+  /// wedged queue head (`DestinationRegistry.tombstoneAndRefill`).
+  Future<Response> _deliveryRecover(Request req) =>
+      _asOperator(req, (operator, body) async {
+        final result = await components.destinations.tombstoneAndRefill(
+          _stringField(body, 'destinationId') ?? '',
+          _stringField(body, 'rowId') ?? '',
+          initiator: UserInitiator(operator.userId),
+        );
+        return <String, Object?>{
+          'row_id': result.rowId,
+          'deleted_trail_count': result.deletedTrailCount,
+          'rewound_to': result.rewoundTo,
+        };
+      });
+
+  /// POST /demo/delivery/refuse-next {userId}: a demo fault injection, not
+  /// an operator control. It simulates a receiver refusal: the next send of
+  /// this process's demo destination ([logDestinationId]) returns a
+  /// permanent refusal, so the drainer wedges the head and the log records
+  /// the wedge with cause `permanent_refusal`, naming no operator. Only the
+  /// process whose delivery cycle drains sends, so the route answers 409
+  /// and arms nothing on any other process (a standby would otherwise
+  /// refuse a send long after, once it took over). An operator who wants a
+  /// wedge attributed to them requests a halt.
+  Future<Response> _deliveryRefuseNext(Request req) =>
+      _asOperator(req, (operator, body) async {
+        final state = deliveryState?.call();
+        if (state != SyncCycleState.running) {
+          throw StateError(
+            'this process does not drain (its delivery cycle is '
+            '${state?.name ?? 'not started'}); send refuse-next to the '
+            'process whose delivery cycle is running',
+          );
+        }
+        components.deliveryDestination.refuseNext();
+        return <String, Object?>{'refuses_next': true};
+      });
 
   Future<Response> _inspect(Request _) async {
     final snap = await projection.snapshot();

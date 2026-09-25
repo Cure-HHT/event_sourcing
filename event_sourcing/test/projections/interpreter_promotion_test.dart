@@ -14,8 +14,6 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
-import 'package:event_sourcing/src/promoters/primitives/transform.dart';
-import 'package:event_sourcing/src/promoters/promoter_spec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -33,7 +31,7 @@ Future<SembastBackend> _openBackend() async {
 StoredEvent _event({
   required int seq,
   required Map<String, Object?> data,
-  int entryTypeVersion = 1,
+  EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0),
 }) {
   return StoredEvent(
     key: seq,
@@ -42,7 +40,7 @@ StoredEvent _event({
     aggregateType: 'note',
     entryType: _kNoteEntryType,
     entryTypeVersion: entryTypeVersion,
-    libFormatVersion: 1,
+    libFormatVersion: const DataFormatVersion(2, 0),
     eventType: 'finalized',
     sequenceNumber: seq,
     data: data,
@@ -59,14 +57,14 @@ void main() {
   group('ProjectionInterpreter promotion', () {
     test('event at registered version is folded raw (no promotion)', () async {
       final backend = await _openBackend();
-      final entryTypes = EntryTypeRegistry();
-      entryTypes.register(
-        const EntryTypeDefinition(
-          id: _kNoteEntryType,
-          registeredVersion: 1,
-          name: 'Note',
-        ),
-      );
+      final entryTypes = EntryTypeRegistry()
+        ..register(
+          const EntryTypeDefinition(
+            id: _kNoteEntryType,
+            registeredVersion: EntryTypeVersion(1, 0),
+            name: 'Note',
+          ),
+        );
 
       final projections = ProjectionRegistry()
         ..register(
@@ -101,14 +99,14 @@ void main() {
       'event below registered version is folded after per-view promotion',
       () async {
         final backend = await _openBackend();
-        final entryTypes = EntryTypeRegistry();
-        entryTypes.register(
-          const EntryTypeDefinition(
-            id: _kNoteEntryType,
-            registeredVersion: 2,
-            name: 'Note',
-          ),
-        );
+        final entryTypes = EntryTypeRegistry()
+          ..register(
+            const EntryTypeDefinition(
+              id: _kNoteEntryType,
+              registeredVersion: EntryTypeVersion(2, 0),
+              name: 'Note',
+            ),
+          );
 
         final projections = ProjectionRegistry()
           ..register(
@@ -125,8 +123,8 @@ void main() {
             const PromoterSpec(
               viewName: 'notes',
               entryType: _kNoteEntryType,
-              fromVersion: 1,
-              toVersion: 2,
+              fromVersion: EntryTypeVersion(1, 0),
+              toVersion: EntryTypeVersion(2, 0),
               transforms: <TransformPrimitive>[
                 RenameField(sourceField: 'body', targetField: 'note_body'),
               ],
@@ -145,7 +143,7 @@ void main() {
             event: _event(
               seq: 1,
               data: const {'body': 'hello'},
-              entryTypeVersion: 1,
+              entryTypeVersion: const EntryTypeVersion(1, 0),
             ),
           );
         });
@@ -174,14 +172,14 @@ void main() {
       // same entry type. After folding the same v1 event, viewA's row has
       // body_a; viewB's row has neither body nor body_a.
       final backend = await _openBackend();
-      final entryTypes = EntryTypeRegistry();
-      entryTypes.register(
-        const EntryTypeDefinition(
-          id: _kNoteEntryType,
-          registeredVersion: 2,
-          name: 'Note',
-        ),
-      );
+      final entryTypes = EntryTypeRegistry()
+        ..register(
+          const EntryTypeDefinition(
+            id: _kNoteEntryType,
+            registeredVersion: EntryTypeVersion(2, 0),
+            name: 'Note',
+          ),
+        );
 
       final projections = ProjectionRegistry()
         ..register(
@@ -203,8 +201,8 @@ void main() {
           const PromoterSpec(
             viewName: 'view_a',
             entryType: _kNoteEntryType,
-            fromVersion: 1,
-            toVersion: 2,
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
             transforms: <TransformPrimitive>[
               RenameField(sourceField: 'body', targetField: 'body_a'),
             ],
@@ -214,8 +212,8 @@ void main() {
           const PromoterSpec(
             viewName: 'view_b',
             entryType: _kNoteEntryType,
-            fromVersion: 1,
-            toVersion: 2,
+            fromVersion: EntryTypeVersion(1, 0),
+            toVersion: EntryTypeVersion(2, 0),
             transforms: <TransformPrimitive>[DropField(fieldName: 'body')],
           ),
         );
@@ -232,7 +230,7 @@ void main() {
           event: _event(
             seq: 1,
             data: const {'body': 'hello'},
-            entryTypeVersion: 1,
+            entryTypeVersion: const EntryTypeVersion(1, 0),
           ),
         );
       });

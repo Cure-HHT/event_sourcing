@@ -9,12 +9,18 @@ import 'package:flutter/material.dart';
 class DetailPanel extends StatefulWidget {
   const DetailPanel({
     required this.backend,
+    required this.databaseId,
     required this.appState,
     required this.policyNotifier,
     super.key,
   });
 
   final SembastBackend backend;
+
+  /// The pane's database identity (`EventStore.databaseId`): rows of the
+  /// default destination-wedges view whose `database_id` is this identity
+  /// are this pane's own wedges; every other row is a peer's.
+  final String databaseId;
   final AppState appState;
   final ValueNotifier<SyncPolicy> policyNotifier;
 
@@ -29,7 +35,7 @@ class _DetailPanelState extends State<DetailPanel> {
   @override
   void initState() {
     super.initState();
-    widget.appState.addListener(_onChange);
+    widget.appState.addListener(_onAppState);
     widget.policyNotifier.addListener(_onChange);
     _eventsSub = widget.backend.watchEvents().listen((_) {
       if (!mounted) return;
@@ -41,7 +47,7 @@ class _DetailPanelState extends State<DetailPanel> {
   @override
   void dispose() {
     _eventsSub?.cancel();
-    widget.appState.removeListener(_onChange);
+    widget.appState.removeListener(_onAppState);
     widget.policyNotifier.removeListener(_onChange);
     super.dispose();
   }
@@ -51,18 +57,74 @@ class _DetailPanelState extends State<DetailPanel> {
     setState(() {});
   }
 
+  void _onAppState() {
+    _onChange();
+    if (!mounted) return;
+    // A registry operation, or a restarted delivery cycle, changes the
+    // delivery status without always appending an event.
+    unawaited(_refresh());
+  }
+
   Future<void> _refresh() async {
     try {
       final events = await widget.backend.findAllEvents(limit: 100000);
       final anyWedged = await widget.backend.hasFifoWedged();
+      // The pane's own queues, read directly.
       final wedged = await widget.backend.wedgedFifos();
+      // The library's default destination-wedges view, folded from the
+      // wedge, recovery and deletion events in the log. Its local rows name
+      // the same wedged heads as wedgedFifos() (each read is its own
+      // snapshot, so the two can differ while the drainer runs between
+      // them); its peer rows come from wedge events another pane forwarded,
+      // which no read of this pane's queues shows.
+      final viewRows = await widget.backend.findViewRows(
+        defaultDestinationWedgesSpec.viewName,
+      );
+      final local = <String>[];
+      final peers = <String>[];
+      for (final row in viewRows) {
+        final id = row['id'] as String? ?? '?';
+        final cause = row['cause'] as String? ?? '?';
+        final origin = row['database_id'] as String? ?? '?';
+        if (origin == widget.databaseId) {
+          local.add('$id ($cause)');
+        } else {
+          peers.add('$id ($cause) from database ${_short(origin)}');
+        }
+      }
       final aggCount = events.map((e) => e.aggregateId).toSet().length;
+      // The pane's delivery cycle, and the database's persisted delivery
+      // status, which any process can read, draining or not.
+      final cycle = widget.appState.cycle;
+      final status = await widget.appState.readDeliveryStatus();
+      final drainer = status.drainer;
+      final heartbeat = status.heartbeat;
+      final unserved = <String>[
+        for (final e
+            in (cycle?.unserved ?? const <String, UnservedReason>{}).entries)
+          '${e.key} (${e.value.wire})',
+      ];
+      final drainerLine = drainer == null
+          ? 'none declared'
+          : 'epoch ${drainer.epoch}, '
+                'version ${drainer.configurationVersion ?? '-'}';
+      final heartbeatLine = heartbeat == null
+          ? 'none'
+          : 'epoch ${heartbeat.epoch} pass ${heartbeat.pass}';
       final text = <String>[
         'events:     ${events.length}',
         'aggregates: $aggCount',
         'any wedged: $anyWedged',
         if (wedged.isNotEmpty)
           'wedged dst: ${wedged.map((s) => s.destinationId).join(", ")}',
+        'wedges view (this database): ${_listOrNone(local)}',
+        'wedges view (peers):         ${_listOrNone(peers)}',
+        '',
+        'delivery cycle: ${cycle?.state.name ?? 'not started'}',
+        'unserved: ${_listOrNone(unserved)}',
+        'drainer: $drainerLine',
+        'heartbeat: $heartbeatLine',
+        for (final e in status.destinations.entries) _destinationLine(e),
       ].join('\n');
       if (!mounted) return;
       setState(() => _summary = text);
@@ -70,6 +132,23 @@ class _DetailPanelState extends State<DetailPanel> {
       // Non-fatal.
     }
   }
+
+  static String _destinationLine(
+    MapEntry<String, DestinationDeliveryStatus> e,
+  ) {
+    final s = e.value;
+    final halt = s.openHaltRequest?.purpose.wire ?? '-';
+    final wedge = s.wedge?.cause.wire ?? '-';
+    final guard = s.refillGuard == null ? '-' : 'set';
+    return '  ${e.key}: halt $halt, wedge $wedge, refill guard $guard, '
+        'unserved ${s.unserved?.wire ?? '-'}';
+  }
+
+  static String _listOrNone(List<String> items) =>
+      items.isEmpty ? 'none' : items.join(', ');
+
+  /// The first eight characters of a database identity, for display.
+  static String _short(String id) => id.length <= 8 ? id : id.substring(0, 8);
 
   @override
   Widget build(BuildContext context) {
@@ -146,8 +225,7 @@ class _DetailPanelState extends State<DetailPanel> {
       '  backoffMultiplier: ${policy.backoffMultiplier}\n'
       '  maxBackoff:        ${policy.maxBackoff.inSeconds}s\n'
       '  jitterFraction:    ${policy.jitterFraction}\n'
-      '  maxAttempts:       ${policy.maxAttempts}\n'
-      '  periodicInterval:  ${policy.periodicInterval.inSeconds}s',
+      '  maxAttempts:       ${policy.maxAttempts}',
       style: DemoText.body,
     );
   }

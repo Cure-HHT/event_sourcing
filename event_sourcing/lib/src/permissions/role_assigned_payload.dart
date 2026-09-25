@@ -5,9 +5,8 @@
 // role_assigned events bind a
 //   user/role to a ScopeValue (sealed-variant JSON) recorded in the log.
 
+import 'package:event_sourcing/src/actions/scope_value.dart';
 import 'package:meta/meta.dart';
-
-import '../actions/scope_value.dart';
 
 @immutable
 class RoleAssignedPayload {

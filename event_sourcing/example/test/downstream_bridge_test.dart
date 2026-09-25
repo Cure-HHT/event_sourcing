@@ -1,6 +1,4 @@
 // Verifies: EVS-PRD-destinations/E
-// Verifies: EVS-PRD-ingest/D
-// Verifies: EVS-PRD-ingest/D
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -36,12 +34,18 @@ void main() {
   String nextPath() => 'bridge-${++pathCounter}.db';
 
   group('DownstreamBridge.deliver', () {
-    test('valid esd/batch@1 envelope returns SendOk', () async {
+    test('valid esd/batch@2 envelope returns SendOk and the hub admits '
+        'its event', () async {
       final hub = await _bootstrapHub(nextPath());
       final bridge = DownstreamBridge(hub.eventStore);
       final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
+      final eventId = envelope.events.single['event_id']! as String;
+      expect(await hub.eventStore.backend.findEventById(eventId), isNull);
       final result = await bridge.deliver(_wirePayload(envelope.encode()));
       expect(result, isA<SendOk>());
+      final admitted = await hub.eventStore.backend.findEventById(eventId);
+      expect(admitted, isNotNull, reason: 'the hub log holds the event');
+      expect(admitted!.aggregateId, 'remote-aggregate-1');
     });
 
     test('garbage bytes return SendPermanent (decode failure)', () async {
@@ -73,12 +77,12 @@ void main() {
       expect(result, isA<SendTransient>());
     });
 
-    test('IngestLibFormatVersionAhead -> SendPermanent', () async {
+    test('IngestDataFormatIncompatible -> SendPermanent', () async {
       final stub = _ThrowingEventStore(
-        const IngestLibFormatVersionAhead(
+        const IngestDataFormatIncompatible(
           eventId: 'e-1',
-          wireVersion: 2,
-          receiverVersion: 1,
+          wireFormat: DataFormatVersion(3, 0),
+          receiverFormat: DataFormatVersion(2, 0),
         ),
       );
       final bridge = DownstreamBridge(stub);
@@ -93,8 +97,8 @@ void main() {
         const IngestEntryTypeVersionAhead(
           eventId: 'e-1',
           entryType: 'demo_note',
-          wireVersion: 5,
-          receiverVersion: 2,
+          wireVersion: EntryTypeVersion(5, 0),
+          receiverVersion: EntryTypeVersion(2, 0),
         ),
       );
       final bridge = DownstreamBridge(stub);
@@ -103,6 +107,45 @@ void main() {
       );
       expect(result, isA<SendPermanent>());
     });
+
+    test('IngestEntryTypeVersionUnpromotable -> SendPermanent', () async {
+      final stub = _ThrowingEventStore(
+        const IngestEntryTypeVersionUnpromotable(
+          eventId: 'e-1',
+          entryType: 'demo_note',
+          viewName: 'demo_notes',
+          wireVersion: EntryTypeVersion(1, 3),
+          receiverVersion: EntryTypeVersion(2, 0),
+          reason: 'no major step is registered from major 1',
+        ),
+      );
+      final bridge = DownstreamBridge(stub);
+      final result = await bridge.deliver(
+        _wirePayload(Uint8List.fromList(<int>[1])),
+      );
+      expect(result, isA<SendPermanent>());
+    });
+
+    for (final reason in ReservedEventRefusal.values) {
+      test(
+        'IngestReservedEventRefused (${reason.name}) -> SendPermanent',
+        () async {
+          final stub = _ThrowingEventStore(
+            IngestReservedEventRefused(
+              eventId: 'e-1',
+              entryType: kDestinationWedgedEntryType,
+              reason: reason,
+            ),
+          );
+          final bridge = DownstreamBridge(stub);
+          final result = await bridge.deliver(
+            _wirePayload(Uint8List.fromList(<int>[1])),
+          );
+          expect(result, isA<SendPermanent>());
+          expect((result as SendPermanent).error, contains(reason.name));
+        },
+      );
+    }
   });
 }
 

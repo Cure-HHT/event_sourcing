@@ -108,6 +108,7 @@ B. The library SHALL ...
   - MUST be unique within the requirement,
   - MUST remain stable over time,
   - MUST NOT be reused once removed (**IMPORTANT**).
+- A label whose obligation is withdrawn keeps its line as `X. <RETIRED> <note>`, the one directive the tooling recognizes: the assertion leaves every coverage count, references to it stop resolving, and the letter stays allocated. The note names where the obligation's subject is now stated, in the final-state voice, and carries no SHALL.
 - If more than 26 assertions are required, the requirement MUST be split into smaller components.
 
 ### Assertion References

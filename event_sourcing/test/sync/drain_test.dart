@@ -3,28 +3,36 @@
 //   sequence_in_queue order; SendOk advances to the next head; a wedged head
 //   halts the pass; trail rows are never sent ahead of a wedged head)
 // Verifies: EVS-PRD-destinations/D
-// (durable queue — drain reads from
-//   StorageBackend; queued rows survive across drain call boundaries)
+// (durable queue — rows enqueued on a file-backed database survive closing
+//   the backend and are drained, in order, by a backend reopened over the
+//   same file)
 // Verifies: EVS-PRD-destinations/E
 // (pluggable delivery — every test calls
 //   drain() via FakeDestination.send, the application-supplied transport)
+@TestOn('vm')
+library;
+
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
-import 'package:event_sourcing/src/sync/drain.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
+import 'package:sembast/sembast_io.dart' show databaseFactoryIo;
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/queue_test_support.dart';
+import '../test_support/registry_with_audit.dart';
 
 /// Fixture — a fresh in-memory SembastBackend per test.
 Future<SembastBackend> _openBackend(String path) async {
@@ -32,7 +40,7 @@ Future<SembastBackend> _openBackend(String path) async {
   return SembastBackend(database: db);
 }
 
-/// Enqueue a single-event row via the batch-aware `enqueueFifo`. The
+/// Enqueue a single-event row via the batch-aware `enqueueFifoTxn`. The
 /// backend mints a v4-UUID `entry_id` at enqueue time (independent of
 /// the event id); callers that need to look the row up later capture the
 /// returned `FifoEntry.entryId`.
@@ -57,11 +65,14 @@ Future<String> _enqueueRow(
 void main() {
   group('drain()', () {
     late SembastBackend backend;
+    late DestinationRegistry registry;
     var dbCounter = 0;
 
     setUp(() async {
       dbCounter += 1;
       backend = await _openBackend('drain-$dbCounter.db');
+      final deps = await buildAuditedRegistryDeps(backend);
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -70,7 +81,7 @@ void main() {
 
     test('empty FIFO returns without calling send', () async {
       final dest = FakeDestination();
-      await drain(dest, backend: backend);
+      await drainForTest(dest, registry: registry);
       expect(dest.sent, isEmpty);
     });
 
@@ -78,10 +89,10 @@ void main() {
       await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
       final dest = FakeDestination(script: [const SendOk()]);
 
-      await drain(dest, backend: backend);
+      await drainForTest(dest, registry: registry);
 
       expect(dest.sent, hasLength(1));
-      // After markFinal sent, the head is gone; readFifoHead returns null.
+      // After the head is marked sent, readFifoHead returns null.
       expect(await backend.readFifoHead('fake'), isNull);
     });
 
@@ -95,7 +106,7 @@ void main() {
         script: [const SendOk(), const SendOk(), const SendOk()],
       );
 
-      await drain(dest, backend: backend);
+      await drainForTest(dest, registry: registry);
       expect(dest.sent, hasLength(3));
       expect(await backend.readFifoHead('fake'), isNull);
     });
@@ -111,7 +122,7 @@ void main() {
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('fake', e1RowId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'fake', e1RowId, FinalStatus.wedged);
       // Script would throw StateError if send() were invoked (see
       // FakeDestination.send); absence of such a throw confirms
       // drain did not call send. We script SendOk defensively so a
@@ -119,7 +130,7 @@ void main() {
       // mismatch rather than an exhausted-script StateError.
       final dest = FakeDestination(script: [const SendOk()]);
 
-      await drain(dest, backend: backend);
+      await drainForTest(dest, registry: registry);
 
       expect(dest.sent, isEmpty);
       // The wedged row remains wedged, unchanged.
@@ -151,7 +162,7 @@ void main() {
         script: [const SendPermanent(error: 'schema-skew')],
       );
 
-      await drain(dest, backend: backend);
+      await drainForTest(dest, registry: registry);
       // Exactly one send call — e1. e2 (trail) was NOT attempted.
       expect(dest.sent, hasLength(1));
 
@@ -193,15 +204,14 @@ void main() {
         maxBackoff: Duration.zero,
         jitterFraction: 0.0,
         maxAttempts: 1,
-        periodicInterval: Duration(minutes: 15),
       );
       final dest = FakeDestination(
         script: [const SendTransient(error: 'HTTP 503', httpStatus: 503)],
       );
 
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
         policy: oneAttemptPolicy,
       );
@@ -231,7 +241,7 @@ void main() {
       );
 
       // First drain: uses scripted "now" = firstAttemptAt.
-      await drain(dest, backend: backend, clock: () => firstAttemptAt);
+      await drainForTest(dest, registry: registry, clock: () => firstAttemptAt);
       expect(dest.sent, hasLength(1));
       // Entry is still pending with one attempt.
       final head = await backend.readFifoHead('fake');
@@ -241,9 +251,9 @@ void main() {
 
       // Re-drain immediately after (clock = firstAttemptAt + 1s). Backoff
       // is 60s from the last attempt; 1s after is well inside the window.
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => firstAttemptAt.add(const Duration(seconds: 1)),
       );
       expect(dest.sent, hasLength(1)); // no new send call
@@ -264,10 +274,10 @@ void main() {
         ],
       );
 
-      await drain(dest, backend: backend, clock: () => firstAttemptAt);
+      await drainForTest(dest, registry: registry, clock: () => firstAttemptAt);
       expect(dest.sent, hasLength(1));
 
-      await drain(dest, backend: backend, clock: () => afterBackoff);
+      await drainForTest(dest, registry: registry, clock: () => afterBackoff);
       expect(dest.sent, hasLength(2));
       expect(await backend.readFifoHead('fake'), isNull); // sent
     });
@@ -290,9 +300,9 @@ void main() {
         script: [const SendOk(), const SendOk(), const SendOk()],
       );
 
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
 
@@ -321,9 +331,9 @@ void main() {
         script: [const SendOk(), const SendOk(), const SendOk()],
       );
 
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
       // Three send calls, in the order e1, e2, e3. The WirePayload
@@ -362,8 +372,8 @@ void main() {
         );
         final d2 = FakeDestination(id: 'd2', script: [const SendOk()]);
 
-        await drain(d1, backend: backend, clock: () => clockTime);
-        await drain(d2, backend: backend, clock: () => clockTime);
+        await drainForTest(d1, registry: registry, clock: () => clockTime);
+        await drainForTest(d2, registry: registry, clock: () => clockTime);
 
         expect(d1.sent, hasLength(1));
         expect(d2.sent, hasLength(1));
@@ -396,11 +406,15 @@ void main() {
         maxBackoff: Duration(hours: 2),
         jitterFraction: 0.1,
         maxAttempts: 3, // smaller cap than defaults.maxAttempts (20)
-        periodicInterval: Duration(minutes: 15),
       );
       // Pre-load attempts: smallPolicy.maxAttempts - 1 transient records.
       for (var i = 0; i < smallPolicy.maxAttempts - 1; i++) {
-        await backend.appendAttempt('fake', e1RowId, _attemptResultFactory(i));
+        await appendAttemptForTest(
+          backend,
+          'fake',
+          e1RowId,
+          _attemptResultFactory(i),
+        );
       }
       // Clock well past any backoff window.
       final longAfter = DateTime.utc(2027, 1, 1);
@@ -408,9 +422,9 @@ void main() {
         script: [const SendTransient(error: 'HTTP 503', httpStatus: 503)],
       );
 
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => longAfter,
         policy: smallPolicy,
       );
@@ -435,14 +449,19 @@ void main() {
       // Pre-load 2 attempts: well below the default cap of 20, so a
       // transient should leave the entry pending (head still present).
       for (var i = 0; i < 2; i++) {
-        await backend.appendAttempt('fake', e1RowId, _attemptResultFactory(i));
+        await appendAttemptForTest(
+          backend,
+          'fake',
+          e1RowId,
+          _attemptResultFactory(i),
+        );
       }
       final longAfter = DateTime.utc(2027, 1, 1);
       final dest = FakeDestination(
         script: [const SendTransient(error: 'HTTP 503', httpStatus: 503)],
       );
 
-      await drain(dest, backend: backend, clock: () => longAfter);
+      await drainForTest(dest, registry: registry, clock: () => longAfter);
       expect(dest.sent, hasLength(1));
       final head = await backend.readFifoHead('fake');
       expect(head, isNotNull);
@@ -458,9 +477,9 @@ void main() {
       await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
       final dest = _ThrowingDestination();
 
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 22, 11),
       );
 
@@ -493,18 +512,22 @@ void main() {
         );
       });
 
-      // Enqueue a native esd/batch@1 row directly via the
+      // Enqueue a native esd/batch@2 row directly via the
       // nativeEnvelope: path. Drain reconstructs the wire bytes from
       // envelope_metadata + event_ids-resolved events on each attempt.
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('fake', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
 
       // First drain: scripted SendTransient leaves the row pending and
       // captures the bytes the destination saw on attempt #1.
@@ -514,7 +537,6 @@ void main() {
         maxBackoff: Duration.zero,
         jitterFraction: 0.0,
         maxAttempts: 5, // well above 2 — keeps the row pending across both
-        periodicInterval: Duration(minutes: 15),
       );
       final dest = FakeDestination(
         script: [
@@ -522,9 +544,9 @@ void main() {
           const SendOk(),
         ],
       );
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 25, 13),
         policy: oneAttemptCapPolicy,
       );
@@ -540,9 +562,9 @@ void main() {
 
       // Second drain: clock past the zero-backoff window; SendOk lands
       // the row. Capture bytes again and assert byte-for-byte equality.
-      await drain(
+      await drainForTest(
         dest,
-        backend: backend,
+        registry: registry,
         clock: () => DateTime.utc(2026, 4, 25, 14),
         policy: oneAttemptCapPolicy,
       );
@@ -575,14 +597,18 @@ void main() {
         );
       });
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('fake', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
 
       // Surgically delete the event from the origin event store
       // (bypasses the append-only API; test-only mutation that simulates
@@ -600,8 +626,59 @@ void main() {
       await eventStore.record(record.key).delete(db);
 
       final dest = FakeDestination(script: [const SendOk()]);
-      expect(() => drain(dest, backend: backend), throwsA(isA<StateError>()));
+      await expectLater(
+        drainForTest(dest, registry: registry),
+        throwsA(isA<StateError>()),
+      );
+      // The drain refused before sending anything and recorded no attempt:
+      // the row is still the pending head with an empty attempt history.
+      expect(dest.sent, isEmpty);
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['e1']);
+      expect(head.attempts, isEmpty);
+      expect(head.finalStatus, isNull);
     });
+  });
+
+  // A queue on a file-backed database outlives the backend that wrote it:
+  // rows enqueued before the backend closes are drained, in order, by a
+  // fresh backend opened over the same file.
+  test('queued rows survive closing and reopening the database', () async {
+    final dir = await Directory.systemTemp.createTemp('drain-restart-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/queue.db';
+
+    final before = SembastBackend(
+      database: await databaseFactoryIo.openDatabase(path),
+    );
+    await buildAuditedRegistryDeps(before);
+    await _enqueueRow(before, 'fake', eventId: 'e1', sequenceNumber: 1);
+    await _enqueueRow(before, 'fake', eventId: 'e2', sequenceNumber: 2);
+    await before.close();
+
+    final after = SembastBackend(
+      database: await databaseFactoryIo.openDatabase(path),
+    );
+    addTearDown(after.close);
+    final deps = await buildAuditedRegistryDeps(after);
+    final registry = DestinationRegistry(eventStore: deps.eventStore);
+
+    final dest = FakeDestination(script: [const SendOk(), const SendOk()]);
+    await drainForTest(dest, registry: registry);
+
+    expect(
+      dest.sent
+          .map(
+            (p) =>
+                (jsonDecode(utf8.decode(p.bytes))
+                        as Map<String, Object?>)['event_id']
+                    as String,
+          )
+          .toList(),
+      ['e1', 'e2'],
+    );
+    expect(await after.readFifoHead('fake'), isNull);
   });
 }
 

@@ -3,15 +3,15 @@
 //   canonical production entry point that calls EventStore.open (the sole
 //   public constructor) before returning an EventStoreBundle facade.
 // Implements: EVS-DEV-event-store-open/E
-// the lib-version boot check and
-//   snapshot-promotion pass both run inside EventStore.open's single
-//   transaction; bootstrap wires this path via allowDowngrade forwarding.
+// bootstrapEventStore opens through EventStore.open, whose whole boot runs
+//   in one storage transaction.
 
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/security/postgres_security_context_store.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -22,6 +22,8 @@ import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
+import 'package:event_sourcing/src/versions.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Facade returned by `bootstrapEventStore`. Exposes the four
 /// collaborators an app reads through after startup: the write API
@@ -44,14 +46,19 @@ class EventStoreBundle {
   final SecurityContextStore securityContexts;
   final StorageBackend _backend;
 
-  /// Register or update a (`viewName`, `entryType`) → `version` entry in
-  /// the persisted `view_target_versions`. Used to add a new entry type
-  /// to a materialized view after bootstrap (e.g., when an application
-  /// adds a new entry type at runtime).
+  /// Library-internal write of one (`viewName`, `entryType`) → `version`
+  /// entry in the persisted `view_target_versions`, outside the boot
+  /// seeding. The library's own tests use it to stage stored targets.
+  ///
+  /// An application does not write view target versions: it registers
+  /// every entry type before `EventStore.open`, which seeds and promotes
+  /// the targets, or replays a view at the registered versions with
+  /// `rebuildView`.
+  @internal
   Future<void> setViewTargetVersion(
     String viewName,
     String entryType,
-    int version,
+    EntryTypeVersion version,
   ) {
     return _backend.transaction((txn) async {
       await _backend.writeViewTargetVersionInTxn(
@@ -68,37 +75,49 @@ class EventStoreBundle {
 /// `Destination`s, the security-context store, and the `EventStore`. Returns
 /// an `EventStoreBundle` facade the rest of the app reads through.
 ///
-/// Reserved system entry types (security-context audit events) are
-/// auto-registered BEFORE the caller-supplied list. Id collision with a
-/// reserved id throws `ArgumentError` with a "reserved" message.
+/// [entryTypes] lists the application's own entry types. `EventStore.open`
+/// registers the reserved system entry types ([kSystemEntryTypes]) and the
+/// default destination-wedges view beside them; a definition in
+/// [entryTypes] under a reserved id throws `ArgumentError` with a
+/// "reserved" message unless it is the library's own definition, and so
+/// does a spec in [projections] under the default view's name unless it is
+/// the library's own spec.
 ///
 /// Destinations are registered sequentially, preserving fail-fast on id
-/// collision.
+/// collision. Delivery starts when the application starts a `SyncCycle`
+/// over the bundle's destination registry; appends through the bundle's
+/// event store then wake it.
 ///
-/// The [allowDowngrade] flag is forwarded to [EventStore.open] for the
-/// lib-version boot check. Default `false` — production-correct behaviour
-/// is to refuse a downgrade. Pass `true` only during development / testing.
+/// The boot of [EventStore.open] runs as it documents: a build opens a
+/// database written by a build of the same data-format major, older ones
+/// included, and records that it did; a database of another data-format
+/// major is refused before anything is written. Builds with the same
+/// data-format major and entry-type majors share a database in any mix (a
+/// canary, several instances, a rollback); a build of another data-format
+/// major, or one that raises an entry-type major, is deployed
+/// stop-then-start, and recovery after it is a restore from a backup taken
+/// before the switch, or a roll-forward.
+///
+/// [onBootProgress] observes the boot of that open, as
+/// [EventStore.open] documents: the progress of a long boot can be served
+/// by a readiness endpoint while the open runs, and the observer must not
+/// call back into an event store while the boot runs. Its
+/// [BootPhase.complete] means the store opened, not that this function
+/// finished: the registry audit and the destination registration run after
+/// it and can still fail, so a readiness endpoint turns ready when this
+/// function returns.
+// Implements: EVS-DEV-event-store-open/G
+// bootstrapEventStore passes its boot-progress observer to EventStore.open.
 Future<EventStoreBundle> bootstrapEventStore({
   required StorageBackend backend,
   required Source source,
   required List<EntryTypeDefinition> entryTypes,
   required List<Destination> destinations,
   ProjectionRegistry? projections,
-  EventStoreSyncCycleTrigger? syncCycleTrigger,
-  bool allowDowngrade = false,
+  void Function(BootProgress progress)? onBootProgress,
 }) async {
   final typeRegistry = EntryTypeRegistry();
-  for (final definition in kSystemEntryTypes) {
-    typeRegistry.register(definition);
-  }
   for (final definition in entryTypes) {
-    if (kReservedSystemEntryTypeIds.contains(definition.id)) {
-      throw ArgumentError.value(
-        definition.id,
-        'definition.id',
-        'entryType id "${definition.id}" is reserved for system events',
-      );
-    }
     typeRegistry.register(definition);
   }
 
@@ -128,32 +147,32 @@ Future<EventStoreBundle> bootstrapEventStore({
     source: source,
     securityContexts: securityContexts,
     projections: projections,
-    syncCycleTrigger: syncCycleTrigger,
-    allowDowngrade: allowDowngrade,
+    onBootProgress: onBootProgress,
   );
 
-  final destinationRegistry = DestinationRegistry(
-    backend: backend,
-    eventStore: eventStore,
-  );
+  final destinationRegistry = DestinationRegistry(eventStore: eventStore);
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
   // Emit an event recording the registry's full id->registered_version map
   // after EventStore construction and before destination registration.
-  // dedupeByContent: same-state reboots no-op; a schema bump (added entry
-  // type or registeredVersion bump) emits a new event. Each install uses
+  // dedupeByContent: same-state reboots no-op; a schema change (an added
+  // entry type, or a raised major or minor) emits a new event. Each install uses
   // source.identifier as its aggregate, so there is a single per-installation
   // hash-chained system aggregate spanning bootstrap, destination registry,
   // and retention/redaction audits.
-  final registryStateMap = <String, int>{};
+  // Implements: EVS-DEV-version-compatibility/K
+  // the registry audit records every registered entry type's major and minor
+  //   as `M.m`; a changed set, major or minor changes the content, so a new
+  //   audit is appended, and an unchanged registry dedupes to none.
+  final registryStateMap = <String, String>{};
   for (final definition in typeRegistry.all()) {
-    registryStateMap[definition.id] = definition.registeredVersion;
+    registryStateMap[definition.id] = definition.registeredVersion.toString();
   }
-  await eventStore.append(
+  await eventStore.appendReserved(
     entryType: kEntryTypeRegistryInitializedEntryType,
     aggregateId: source.identifier,
-    aggregateType: 'system_registry',
-    eventType: 'finalized',
+    aggregateType: kRegistryAuditAggregateType,
+    eventType: kEntryTypeRegistryInitializedEventType,
     data: <String, Object?>{'registry': registryStateMap},
     initiator: bootstrapInitiator,
     dedupeByContent: true,

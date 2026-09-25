@@ -126,16 +126,16 @@ class RemoteConnection {
 
   /// Invoked when the WS channel closes with an auth-related close
   /// code (4001 auth_rejected, 4003 permissions_changed). Wired by
-  /// [RemoteScope] to [RemoteAuthSession.handleAuthRejected], which flips
-  /// the session to [Expired]. Other close codes (1000 normal, 1006
+  /// `RemoteScope` to `RemoteAuthSession.handleAuthRejected`, which flips
+  /// the session to `Expired`. Other close codes (1000 normal, 1006
   /// abnormal, 1011 server-internal-error, etc.) are treated as wire
   /// drops, not auth changes, and do not invoke this callback.
   ///
   /// Implemented as a settable field rather than a constructor
-  /// parameter because [RemoteAuthSession] takes a [RemoteConnection]
+  /// parameter because `RemoteAuthSession` takes a [RemoteConnection]
   /// at construction time, and Dart forbids referencing
   /// `this`-instance fields inside an initializer-list closure — so
-  /// the wiring must happen post-construction in [RemoteScope]'s body.
+  /// the wiring must happen post-construction in `RemoteScope`'s body.
   void Function()? onAuthClose;
 
   /// Invoked when the server pushes a `stale_data` envelope on the
@@ -143,8 +143,8 @@ class RemoteConnection {
   /// keyed to any one subscription): the server's `AuthorizationWatcher` emits
   /// it on security-EXPANDING changes (`role_assigned`,
   /// `permission_granted`) and on opt-in containment updates. Wired by
-  /// [RemoteScope] to trigger a [RemotePermissionSource] re-fetch so
-  /// UI gating updates without waiting for the next [Authenticated]
+  /// `RemoteScope` to trigger a `RemotePermissionSource` re-fetch so
+  /// UI gating updates without waiting for the next `Authenticated`
   /// transition.
   ///
   /// Settable field for the same `this`-in-initializer-closure reason
@@ -154,7 +154,7 @@ class RemoteConnection {
   /// Invoked on every [ConnectionStatus] transition (de-duped: the
   /// callback is NOT fired when the new status equals the previous one,
   /// so a successful initial open emits `Connected` once, not twice).
-  /// Wired by [RemoteScope] to drive its public
+  /// Wired by `RemoteScope` to drive its public
   /// `connectionStatusStream`. Same settable-field rationale as
   /// [onAuthClose] / [onStaleData].
   void Function(ConnectionStatus)? onConnectionStatusChanged;
@@ -212,6 +212,7 @@ class RemoteConnection {
 
   /// Set or clear the credential. Future HTTP calls and the WS auth
   /// message will use the new value.
+  // ignore: use_setters_to_change_properties, mirrors AuthSession.setCredential, which callers invoke
   void setCredential(String? credential) {
     _credential = credential;
   }
@@ -269,7 +270,7 @@ class RemoteConnection {
   }
 
   /// Open a subscription against the WS connection. Returns a stream
-  /// that emits Update<Map<String, Object?>> envelopes for this
+  /// that emits `Update<Map<String, Object?>>` envelopes for this
   /// subscriptionId. The mapper is applied client-side by
   /// RemoteViewSource (this connection method works in untyped maps).
   Stream<Update<Map<String, Object?>>> openSubscription({
@@ -278,6 +279,7 @@ class RemoteConnection {
     SubscriptionFilter? filter,
     Set<String>? aggregates,
   }) {
+    // ignore: close_sinks, owned by the subscription table, which closes it
     final controller = StreamController<Update<Map<String, Object?>>>(
       onCancel: () => _closeSubscription(subscriptionId),
     );

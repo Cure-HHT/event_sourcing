@@ -26,7 +26,11 @@
 // Postgres harness with no `PG_TEST_URL`), the test marks itself skipped.
 // `tearDown` calls `backend.close()` inside try/catch so a skipped-test
 // teardown does not raise.
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/fifo_entry_helpers.dart';
@@ -44,9 +48,20 @@ import '../test_support/fifo_entry_helpers.dart';
 ///
 /// [backendLabel] is the human-readable name folded into the outer group
 /// title (e.g. `'sembast (memory)'`, `'postgres'`).
+///
+/// [securityStoreOf] returns the security-context store that stores beside
+/// the events of the backend it is given; the suite uses it to write the
+/// context `queryAudit` joins.
+///
+/// [reopen] opens another backend over the database of a closed backend
+/// of [factory]'s, checking along the way whatever the backend's exclusion
+/// primitive is (the drain-lock case "close releases the drain lock").
 void runStorageBackendConformanceTests(
   Future<StorageBackend?> Function() factory, {
   required String backendLabel,
+  required MutableSecurityContextStore Function(StorageBackend backend)
+  securityStoreOf,
+  required Future<StorageBackend> Function(StorageBackend closed) reopen,
 }) {
   group('StorageBackend conformance ($backendLabel)', () {
     late StorageBackend backend;
@@ -82,8 +97,25 @@ void runStorageBackendConformanceTests(
     _registerFifoTests(() => backend, () => initialized);
     _registerListFifoEntriesTests(() => backend, () => initialized);
     _registerFillCursorTests(() => backend, () => initialized);
+    _registerQueueRecordTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
+    _registerDrainLockTests(() => backend, () => initialized, reopen);
+    _registerEventVersionColumnTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
+    _registerEventSpellingTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
+    _registerRecordedAtComparisonTests(
+      () => backend,
+      () => initialized,
+      securityStoreOf,
+    );
     _registerCloseTests(() => backend, () => initialized);
   });
 }
@@ -101,8 +133,8 @@ StoredEvent _event(
     aggregateId: aggregateId,
     aggregateType: 'note',
     entryType: 'epistaxis_event',
-    entryTypeVersion: 1,
-    libFormatVersion: 1,
+    entryTypeVersion: const EntryTypeVersion(1, 0),
+    libFormatVersion: const DataFormatVersion(2, 0),
     eventType: 'Event',
     sequenceNumber: sequenceNumber,
     data: const <String, dynamic>{},
@@ -122,14 +154,15 @@ StoredEvent _eventWithProvenance({
   String identifier = 'install-A',
   String eventId = '',
   String eventType = 'finalized',
+  List<Map<String, Object?>> laterHops = const <Map<String, Object?>>[],
 }) => StoredEvent(
   key: 0,
   eventId: eventId.isEmpty ? 'e$seq' : eventId,
   aggregateId: aggregateId,
   aggregateType: 'note',
   entryType: entryType,
-  entryTypeVersion: 1,
-  libFormatVersion: 1,
+  entryTypeVersion: const EntryTypeVersion(1, 0),
+  libFormatVersion: const DataFormatVersion(2, 0),
   eventType: eventType,
   sequenceNumber: seq,
   data: const <String, Object?>{},
@@ -142,6 +175,7 @@ StoredEvent _eventWithProvenance({
         'identifier': identifier,
         'software_version': 'app@1.0.0',
       },
+      ...laterHops,
     ],
   },
   initiator: const UserInitiator('u1'),
@@ -170,8 +204,7 @@ Future<StoredEvent> _appendBuilt(
 // successful body commits all writes
 //   atomically; thrown exception rolls back all writes; Transaction handle is
 //   invalidated when body returns or throws; a Transaction from one backend
-//   instance is rejected by another (defense-in-depth on the type-and-
-//   identity check).
+//   instance is rejected by another, even while it is live.
 void _registerTransactionTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
@@ -230,10 +263,9 @@ void _registerTransactionTests(
       await backend.transaction((txn) async {
         escaped = txn;
       });
-      await expectLater(
-        backend.appendEvent(escaped, _event('ev-late', 1)),
-        throwsStateError,
-      );
+      // A read has no precondition of its own, so only the handle check
+      // can raise.
+      await expectLater(backend.readLatestEventHash(escaped), throwsStateError);
     });
 
     test('Transaction cannot be used after body throws', () async {
@@ -247,10 +279,7 @@ void _registerTransactionTests(
         }),
         throwsStateError,
       );
-      await expectLater(
-        backend.appendEvent(escaped, _event('ev-late', 1)),
-        throwsStateError,
-      );
+      await expectLater(backend.readLatestEventHash(escaped), throwsStateError);
     });
 
     test(
@@ -271,10 +300,11 @@ void _registerTransactionTests(
       },
     );
 
-    // Defense-in-depth: a Transaction handed out by a *different* backend
-    // instance must be rejected when re-used against this one. The
-    // type-and-identity check guards against accidentally feeding one
-    // backend's transaction into another's state.
+    // A Transaction handed out by a *different* backend instance is
+    // refused by this one even while it is still live in its own body:
+    // the handle belongs to the other backend's database, so a type check
+    // and a validity check alone do not catch it.
+    // Verifies: EVS-DEV-postgres-backend/L
     test(
       'foreign Transaction (from a different backend) is rejected',
       () async {
@@ -285,20 +315,15 @@ void _registerTransactionTests(
           markTestSkipped('factory returned null on second invocation');
           return;
         }
-        late Transaction foreignTxn;
-        await other.transaction((txn) async {
-          foreignTxn = txn;
+        addTearDown(other.close);
+        await other.transaction((foreignTxn) async {
+          // A read has no precondition of its own, so only the handle's
+          // ownership check can raise.
+          await expectLater(
+            backend.readLatestEventHash(foreignTxn),
+            throwsStateError,
+          );
         });
-        await other.close();
-
-        // The foreign Transaction is already invalidated by its own backend's
-        // end-of-body invalidation, so the validity check fires first.
-        // Even if it were still valid, the type-and-identity check would
-        // catch it.
-        await expectLater(
-          backend.appendEvent(foreignTxn, _event('ev-foreign', 1)),
-          throwsStateError,
-        );
       },
     );
   });
@@ -711,39 +736,54 @@ void _registerFindAllEventsFilterTests(
     });
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/A
-    test('clientTimestampEnd filter is inclusive-upper-bound', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 1),
-        ),
-      );
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 5),
-        ),
-      );
-      await _appendBuilt(
-        backend,
-        (s) => _eventWithProvenance(
-          seq: s,
-          entryType: 'note',
-          clientTimestamp: DateTime.utc(2026, 1, 10),
-        ),
-      );
+    test(
+      'clientTimestampEnd filter is an exclusive upper bound: an event at '
+      'the end is excluded, one a microsecond before it is included',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final end = DateTime.utc(2026, 1, 5);
+        for (final at in <DateTime>[
+          DateTime.utc(2026, 1, 1),
+          end.subtract(const Duration(microseconds: 1)),
+          end,
+          end.add(const Duration(microseconds: 1)),
+          DateTime.utc(2026, 1, 10),
+        ]) {
+          await _appendBuilt(
+            backend,
+            (s) => _eventWithProvenance(
+              seq: s,
+              entryType: 'note',
+              clientTimestamp: at,
+            ),
+          );
+        }
 
-      final earlier = await backend.findAllEvents(
-        clientTimestampEnd: DateTime.utc(2026, 1, 5),
-      );
-      expect(earlier.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
-    });
+        final earlier = await backend.findAllEvents(clientTimestampEnd: end);
+        expect(earlier.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
+
+        final inTxn = await backend.transaction(
+          (txn) => backend.findAllEventsInTxn(txn, clientTimestampEnd: end),
+        );
+        expect(inTxn.map((e) => e.sequenceNumber).toList(), <int>[1, 2]);
+
+        // The start stays inclusive: [end, end + 1 day) holds the event at
+        // the end and the one a microsecond after it, and nothing earlier.
+        final window = await backend.findAllEvents(
+          clientTimestampStart: end,
+          clientTimestampEnd: end.add(const Duration(days: 1)),
+        );
+        expect(window.map((e) => e.sequenceNumber).toList(), <int>[3, 4]);
+
+        // Bounds compare instants, not text: a bound a microsecond after the
+        // end holds the event at the end and not the one a microsecond later.
+        final upTo = await backend.findAllEvents(
+          clientTimestampEnd: end.add(const Duration(microseconds: 1)),
+        );
+        expect(upTo.map((e) => e.sequenceNumber).toList(), <int>[1, 2, 3]);
+      },
+    );
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/C
     test('AND-composes entryType with timestamp range', () async {
@@ -903,14 +943,14 @@ void _registerFindAllEventsFilterTests(
 // -------- Originator filters --------
 //
 // originatorHopId and
-//   originatorIdentifier filters; each filters on provenance[0]; AND'd when
-//   both supplied.
+//   originatorIdentifier filters; each filters on provenance[0] only, never
+//   a later hop; AND'd when both supplied.
 void _registerOriginatorFilterTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
   group('findAllEvents originator filters', () {
-    Future<void> seedThreeOrigins(StorageBackend backend) async {
+    Future<void> seedOrigins(StorageBackend backend) async {
       await backend.transaction((txn) async {
         final s1 = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(
@@ -951,24 +991,66 @@ void _registerOriginatorFilterTests(
             eventId: 'ev-controlP',
           ),
         );
+        // install-A's identifier under another hop: the identifier filter
+        // alone matches it, the hop filter does not.
+        final s4 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: s4,
+            entryType: 'epistaxis_event',
+            clientTimestamp: DateTime.utc(2026, 4, 26),
+            aggregateId: 'agg-ev-controlA',
+            hopId: 'control-server',
+            identifier: 'install-A',
+            eventId: 'ev-controlA',
+          ),
+        );
+        // Originated elsewhere and later relayed through mobile-device /
+        // install-A: only the first hop is the originator.
+        final s5 = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: s5,
+            entryType: 'epistaxis_event',
+            clientTimestamp: DateTime.utc(2026, 4, 26),
+            aggregateId: 'agg-ev-relayed',
+            hopId: 'relay-server',
+            identifier: 'install-R',
+            eventId: 'ev-relayed',
+            laterHops: const <Map<String, Object?>>[
+              <String, Object?>{
+                'hop': 'mobile-device',
+                'received_at': '2026-04-26T00:00:01.000Z',
+                'identifier': 'install-A',
+                'software_version': 'app@1.0.0',
+              },
+            ],
+          ),
+        );
       });
     }
 
     // Verifies: EVS-DEV-find-all-events-extended-filters/C
-    test('originatorIdentifier alone — install-A returns 1 event', () async {
+    test('originatorIdentifier alone — install-A as the first hop returns '
+        '2 events', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorIdentifier: 'install-A',
       );
-      expect(result.map((e) => e.eventId), <String>['ev-mobileA']);
+      expect(result.map((e) => e.eventId), <String>[
+        'ev-mobileA',
+        'ev-controlA',
+      ]);
     });
 
     test('originatorHopId alone — mobile-device returns 2 events', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorHopId: 'mobile-device',
       );
@@ -981,7 +1063,7 @@ void _registerOriginatorFilterTests(
     test('both filters AND — mobile-device + install-A returns 1', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await seedThreeOrigins(backend);
+      await seedOrigins(backend);
       final result = await backend.findAllEvents(
         originatorHopId: 'mobile-device',
         originatorIdentifier: 'install-A',
@@ -1241,8 +1323,131 @@ void _registerViewTargetVersionTests(
   bool Function() initializedOf,
 ) {
   group('view_target_versions storage', () {
+    // Verifies: EVS-DEV-version-compatibility/L
+    // the catch-up mark: marking a stored pair sets it and a repeat is
+    //   harmless, marking an absent pair writes nothing, writing the pair's
+    //   target keeps the mark, clearing removes it, clearing a view's targets
+    //   removes its marks, a rolled-back mark leaves none, and the read by
+    //   entry type returns every view's target of that entry type.
+    test('catch-up mark: mark, keep across a target write, clear, roll '
+        'back; targets read by entry type', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      Future<bool> behind(String view, String entryType) => backend.transaction(
+        (txn) => backend.readViewTargetBehindInTxn(txn, view, entryType),
+      );
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v1',
+          'note',
+          const EntryTypeVersion(1, 2),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'note',
+          const EntryTypeVersion(1, 0),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'other',
+          const EntryTypeVersion(3, 1),
+        );
+      });
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'note'),
+        ),
+        <String, EntryTypeVersion>{
+          'v1': const EntryTypeVersion(1, 2),
+          'v2': const EntryTypeVersion(1, 0),
+        },
+      );
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'absent'),
+        ),
+        isEmpty,
+      );
+      expect(await behind('v1', 'note'), isFalse);
+
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+          expect(
+            await backend.readViewTargetBehindInTxn(txn, 'v1', 'note'),
+            isTrue,
+          );
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await behind('v1', 'note'), isFalse);
+
+      await backend.transaction((txn) async {
+        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
+        await backend.markViewTargetBehindInTxn(txn, 'absent', 'note');
+      });
+      expect(await behind('v1', 'note'), isTrue);
+      expect(await behind('v2', 'note'), isFalse);
+      expect(await behind('absent', 'note'), isFalse);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'absent', 'note'),
+        ),
+        isNull,
+      );
+
+      await backend.transaction(
+        (txn) => backend.writeViewTargetVersionInTxn(
+          txn,
+          'v1',
+          'note',
+          const EntryTypeVersion(1, 1),
+        ),
+      );
+      expect(await behind('v1', 'note'), isTrue);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        ),
+        const EntryTypeVersion(1, 1),
+      );
+
+      await backend.transaction(
+        (txn) => backend.clearViewTargetBehindInTxn(txn, 'v1', 'note'),
+      );
+      expect(await behind('v1', 'note'), isFalse);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        ),
+        const EntryTypeVersion(1, 1),
+      );
+
+      await backend.transaction(
+        (txn) => backend.markViewTargetBehindInTxn(txn, 'v2', 'other'),
+      );
+      await backend.transaction(
+        (txn) => backend.clearViewTargetVersionsInTxn(txn, 'v2'),
+      );
+      await backend.transaction(
+        (txn) => backend.writeViewTargetVersionInTxn(
+          txn,
+          'v2',
+          'other',
+          const EntryTypeVersion(3, 1),
+        ),
+      );
+      expect(await behind('v2', 'other'), isFalse);
+    });
+
     // Verifies: EVS-PRD-portability/D
-    test('round-trip read/write', () async {
+    // Verifies: EVS-DEV-version-compatibility/A
+    test('round-trip read/write keeps major and minor', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
@@ -1250,7 +1455,7 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
           'demo_note',
-          3,
+          const EntryTypeVersion(1, 3),
         );
       });
       await backend.transaction((txn) async {
@@ -1260,7 +1465,7 @@ void _registerViewTargetVersionTests(
             'diary_entries',
             'demo_note',
           ),
-          3,
+          const EntryTypeVersion(1, 3),
         );
       });
     });
@@ -1280,6 +1485,7 @@ void _registerViewTargetVersionTests(
       });
     });
 
+    // Verifies: EVS-DEV-version-compatibility/A
     test('readAll returns full map for one view', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1288,19 +1494,19 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
           'demo_note',
-          2,
+          const EntryTypeVersion(2, 1),
         );
         await backend.writeViewTargetVersionInTxn(
           txn,
           'diary_entries',
           'epistaxis',
-          5,
+          const EntryTypeVersion(5, 0),
         );
         await backend.writeViewTargetVersionInTxn(
           txn,
           'other_view',
           'demo_note',
-          1,
+          const EntryTypeVersion(1, 0),
         );
       });
       await backend.transaction((txn) async {
@@ -1308,7 +1514,10 @@ void _registerViewTargetVersionTests(
           txn,
           'diary_entries',
         );
-        expect(map, <String, int>{'demo_note': 2, 'epistaxis': 5});
+        expect(map, const <String, EntryTypeVersion>{
+          'demo_note': EntryTypeVersion(2, 1),
+          'epistaxis': EntryTypeVersion(5, 0),
+        });
       });
     });
 
@@ -1316,8 +1525,18 @@ void _registerViewTargetVersionTests(
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'view_a', 'x', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'view_b', 'x', 2);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'view_a',
+          'x',
+          const EntryTypeVersion(1, 0),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'view_b',
+          'x',
+          const EntryTypeVersion(2, 0),
+        );
       });
       await backend.transaction((txn) async {
         await backend.clearViewTargetVersionsInTxn(txn, 'view_a');
@@ -1327,18 +1546,86 @@ void _registerViewTargetVersionTests(
           await backend.readViewTargetVersionInTxn(txn, 'view_a', 'x'),
           isNull,
         );
-        expect(await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'), 2);
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'),
+          const EntryTypeVersion(2, 0),
+        );
       });
     });
 
-    test('idempotent overwrite', () async {
+    // Verifies: EVS-DEV-version-compatibility/A
+    test('overwrite, including a lower minor within the major', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 1);
-        await backend.writeViewTargetVersionInTxn(txn, 'v', 'e', 2);
-        expect(await backend.readViewTargetVersionInTxn(txn, 'v', 'e'), 2);
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 1),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 1),
+        );
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 4),
+        );
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 4),
+        );
+      });
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 2),
+        );
+      });
+      await backend.transaction((txn) async {
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 2),
+        );
+      });
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/E
+    test('a write in a transaction that throws is rolled back', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction((txn) async {
+        await backend.writeViewTargetVersionInTxn(
+          txn,
+          'v',
+          'e',
+          const EntryTypeVersion(1, 3),
+        );
+      });
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeViewTargetVersionInTxn(
+            txn,
+            'v',
+            'e',
+            const EntryTypeVersion(1, 0),
+          );
+          throw StateError('injected failure after the write');
+        }),
+        throwsStateError,
+      );
+      await backend.transaction((txn) async {
+        expect(
+          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
+          const EntryTypeVersion(1, 3),
+        );
       });
     });
   });
@@ -1346,21 +1633,22 @@ void _registerViewTargetVersionTests(
 
 // -------- FIFO subgroup --------
 //
-// FIFO persistence methods (enqueueFifo,
-//   readFifoHead, listFifoEntries, appendAttempt, markFinal,
+// FIFO persistence methods (enqueueFifoTxn,
+//   readFifoHead, listFifoEntries, appendAttemptTxn, setFinalStatusTxn,
 //   hasFifoWedged/wedgedFifos) are part of the StorageBackend abstraction.
-//   markFinal idempotency + one-way transition rule are part of the FIFO
-//   contract; drain's at-least-once delivery depends on
-//   markFinal(same-status) being a no-op.
+//   setFinalStatusTxn allows exactly pending -> sent, pending -> wedged
+//   and wedged -> tombstoned; a repeated status or a missing item throws
+//   StateError. appendAttemptTxn throws StateError on a missing or
+//   terminal item.
 void _registerFifoTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
   group('FIFO', () {
-    // -------- enqueueFifo + validation --------
+    // -------- enqueueFifoTxn + validation --------
 
     // Verifies: EVS-PRD-portability/D
-    test('enqueueFifo + readFifoHead round-trip', () async {
+    test('enqueueFifoTxn + readFifoHead round-trip', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final enqueued = await enqueueSingle(
@@ -1381,7 +1669,7 @@ void _registerFifoTests(
       expect(head.attempts, isEmpty);
       expect(head.sentAt, isNull);
       expect(head.sequenceInQueue, enqueued.sequenceInQueue);
-      // Whole-value parity: the entry read back equals the one enqueueFifo
+      // Whole-value parity: the entry read back equals the one enqueueFifoTxn
       // returned, field for field. Sembast persists FifoEntry.toJson and
       // Postgres maps explicit columns, so a field added to FifoEntry is
       // carried automatically by one backend and silently dropped by the
@@ -1391,20 +1679,23 @@ void _registerFifoTests(
       expect(head, equals(enqueued));
     });
 
-    test('enqueueFifo rejects an empty batch with ArgumentError', () async {
+    test('enqueueFifoTxn rejects an empty batch with ArgumentError', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
-        backend.enqueueFifo(
-          'primary',
-          const [],
-          wirePayload: wirePayloadJson(const {'k': 'v'}),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(
+            txn,
+            'primary',
+            const [],
+            wirePayload: wirePayloadJson(const {'k': 'v'}),
+          ),
         ),
         throwsArgumentError,
       );
     });
 
-    test('enqueueFifo assigns distinct UUID entry_ids even when the same '
+    test('enqueueFifoTxn assigns distinct UUID entry_ids even when the same '
         'event id is enqueued twice', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1448,20 +1739,24 @@ void _registerFifoTests(
 
     // -------- enqueueFifoTxn — native vs 3rd-party wire-format branch --------
 
-    test('enqueueFifo with nativeEnvelope persists '
+    test('enqueueFifoTxn with nativeEnvelope persists '
         'envelope_metadata and nulls wire_payload', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '1',
+        batchFormatVersion: '2',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
       );
-      await backend.enqueueFifo('dest', [event], nativeEnvelope: envelope);
+      await backend.transaction(
+        (txn) => backend.enqueueFifoTxn(txn, 'dest', [
+          event,
+        ], nativeEnvelope: envelope),
+      );
       final head = await backend.readFifoHead('dest');
       expect(head, isNotNull);
       expect(
@@ -1474,7 +1769,7 @@ void _registerFifoTests(
       expect(head.envelopeMetadata!.senderHop, 'mobile-1');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-uuid');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'diary@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '1');
+      expect(head.envelopeMetadata!.batchFormatVersion, '2');
       expect(head.wireFormat, BatchEnvelope.wireFormat);
       expect(
         head.transformVersion,
@@ -1483,7 +1778,7 @@ void _registerFifoTests(
       );
     });
 
-    test('enqueueFifo with wirePayload stores '
+    test('enqueueFifoTxn with wirePayload stores '
         'wire_payload, envelope_metadata is null', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -1493,7 +1788,10 @@ void _registerFifoTests(
         contentType: 'application/json',
         transformVersion: 'json-v1',
       );
-      await backend.enqueueFifo('dest', [event], wirePayload: payload);
+      await backend.transaction(
+        (txn) =>
+            backend.enqueueFifoTxn(txn, 'dest', [event], wirePayload: payload),
+      );
       final head = await backend.readFifoHead('dest');
       expect(head, isNotNull);
       expect(head!.wirePayload, isNotNull);
@@ -1509,36 +1807,41 @@ void _registerFifoTests(
       expect(head.wireFormat, 'application/json');
     });
 
-    test('enqueueFifo rejects supplying both wirePayload '
+    test('enqueueFifoTxn rejects supplying both wirePayload '
         'and nativeEnvelope', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
-        backend.enqueueFifo(
-          'dest',
-          [event],
-          wirePayload: wirePayloadJson(const {'k': 'v'}),
-          nativeEnvelope: BatchEnvelopeMetadata(
-            batchFormatVersion: '1',
-            batchId: 'batch-x',
-            senderHop: 'mobile-1',
-            senderIdentifier: 'device-uuid',
-            senderSoftwareVersion: 'diary@1.2.3',
-            sentAt: DateTime.utc(2026, 4, 25, 12),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(
+            txn,
+            'dest',
+            [event],
+            wirePayload: wirePayloadJson(const {'k': 'v'}),
+            nativeEnvelope: BatchEnvelopeMetadata(
+              batchFormatVersion: '2',
+              batchId: 'batch-x',
+              senderHop: 'mobile-1',
+              senderIdentifier: 'device-uuid',
+              senderSoftwareVersion: 'diary@1.2.3',
+              sentAt: DateTime.utc(2026, 4, 25, 12),
+            ),
           ),
         ),
         throwsArgumentError,
       );
     });
 
-    test('enqueueFifo rejects supplying neither wirePayload '
+    test('enqueueFifoTxn rejects supplying neither wirePayload '
         'nor nativeEnvelope', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
       await expectLater(
-        backend.enqueueFifo('dest', [event]),
+        backend.transaction(
+          (txn) => backend.enqueueFifoTxn(txn, 'dest', [event]),
+        ),
         throwsArgumentError,
       );
     });
@@ -1584,9 +1887,12 @@ void _registerFifoTests(
       expect((await backend.readFifoHead('B'))?.eventIds, ['b-only']);
     });
 
-    // -------- appendAttempt --------
+    // -------- appendAttemptTxn --------
 
-    test('appendAttempt appends without changing final_status', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // an attempt is appended to a pending
+    //   item without changing its status.
+    test('appendAttemptTxn appends without changing final_status', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1602,7 +1908,7 @@ void _registerFifoTests(
         errorMessage: 'timeout',
         httpStatus: 503,
       );
-      await backend.appendAttempt('primary', e1.entryId, attempt);
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
 
       final head = await backend.readFifoHead('primary');
       expect(head?.attempts, [attempt]);
@@ -1615,12 +1921,15 @@ void _registerFifoTests(
         errorMessage: 'timeout',
         httpStatus: 503,
       );
-      await backend.appendAttempt('primary', e1.entryId, attempt2);
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt2);
       final head2 = await backend.readFifoHead('primary');
       expect(head2?.attempts, [attempt, attempt2]);
     });
 
-    test('appendAttempt no-ops when entry does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a missing
+    //   item is an error, and nothing changes.
+    test('appendAttemptTxn throws StateError on a missing item', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1629,33 +1938,87 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      // Must not throw.
-      await backend.appendAttempt(
-        'primary',
-        'nonexistent',
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      await expectLater(
+        appendAttemptForTest(
+          backend,
+          'primary',
+          'nonexistent',
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        ),
+        throwsStateError,
       );
-      // The FIFO is otherwise untouched: e1 is still pending with no attempts.
       final head = await backend.readFifoHead('primary');
       expect(head?.entryId, e1.entryId);
       expect(head?.attempts, isEmpty);
     });
 
-    test('appendAttempt no-ops when FIFO store does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a destination
+    //   with no queue is an error, and nothing is created.
+    test('appendAttemptTxn throws StateError on a missing queue', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.appendAttempt(
-        'ghost-dest',
-        'any-entry',
-        AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+      await expectLater(
+        appendAttemptForTest(
+          backend,
+          'ghost-dest',
+          'any-entry',
+          AttemptResult(attemptedAt: DateTime.utc(2026, 4, 22), outcome: 'ok'),
+        ),
+        throwsStateError,
       );
-      // Nothing materialized in the unknown store.
       expect(await backend.readFifoHead('ghost-dest'), isNull);
+      expect(await backend.listFifoEntries('ghost-dest'), isEmpty);
     });
 
-    // -------- markFinal --------
+    // Verifies: EVS-DEV-destination-drain/D
+    // recording an attempt on a terminal
+    //   item is an error, and the item is unchanged.
+    test('appendAttemptTxn throws StateError on a terminal item', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final wedged = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        wedged.entryId,
+        FinalStatus.wedged,
+      );
+      for (final entry in <FifoEntry>[sent, wedged]) {
+        final before = await backend.readFifoRow('primary', entry.entryId);
+        await expectLater(
+          appendAttemptForTest(
+            backend,
+            'primary',
+            entry.entryId,
+            AttemptResult(
+              attemptedAt: DateTime.utc(2026, 4, 22),
+              outcome: 'ok',
+            ),
+          ),
+          throwsStateError,
+        );
+        final after = await backend.readFifoRow('primary', entry.entryId);
+        expect(after!.toJson(), before!.toJson());
+      }
+    });
 
-    test('markFinal sent retains the entry', () async {
+    // Verifies: EVS-DEV-destination-drain/C
+    // an attempt written in a transaction
+    //   that rolls back is not recorded.
+    test('appendAttemptTxn rolls back with its transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1664,10 +2027,52 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.appendAttemptTxn(
+            txn,
+            'primary',
+            e1.entryId,
+            AttemptResult(
+              attemptedAt: DateTime.utc(2026, 4, 22),
+              outcome: 'ok',
+            ),
+          );
+          await backend.setFinalStatusTxn(
+            txn,
+            'primary',
+            e1.entryId,
+            FinalStatus.sent,
+          );
+          throw StateError('simulated failure after the outcome writes');
+        }),
+        throwsStateError,
+      );
+      final row = await backend.readFifoRow('primary', e1.entryId);
+      expect(row!.attempts, isEmpty);
+      expect(row.finalStatus, isNull);
+      expect(row.sentAt, isNull);
+    });
+
+    // -------- setFinalStatusTxn --------
+
+    test('status sent retains the entry', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
 
       // After marking sent, readFifoHead moves past it to the next pending.
       expect(await backend.readFifoHead('primary'), isNull);
+      expect(
+        (await backend.readFifoRow('primary', e1.entryId))!.finalStatus,
+        FinalStatus.sent,
+      );
 
       final e2 = await enqueueSingle(
         backend,
@@ -1679,7 +2084,7 @@ void _registerFifoTests(
       expect(nextHead?.entryId, e2.entryId);
     });
 
-    test('markFinal sent sets sent_at', () async {
+    test('status sent sets sent_at', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1689,7 +2094,7 @@ void _registerFifoTests(
         sequenceNumber: 1,
       );
       final before = DateTime.now().toUtc();
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
       final after = DateTime.now().toUtc();
 
       final row = await backend.readFifoRow('primary', e1.entryId);
@@ -1699,7 +2104,7 @@ void _registerFifoTests(
       expect(row.sentAt!.isBefore(after) || row.sentAt == after, isTrue);
     });
 
-    test('markFinal wedged does NOT set sent_at', () async {
+    test('status wedged does NOT set sent_at', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1708,14 +2113,138 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
 
       final row = await backend.readFifoRow('primary', e1.entryId);
       expect(row, isNotNull);
       expect(row!.sentAt, isNull);
     });
 
-    test('after markFinal sent, readFifoHead returns next pending', () async {
+    // Verifies: EVS-DEV-destination-drain/B
+    // wedged -> tombstoned keeps the
+    //   wedge's attempts and leaves sent_at unset.
+    test('wedged -> tombstoned keeps attempts', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'permanent',
+        errorMessage: 'refused',
+      );
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.tombstoned,
+      );
+      final row = await backend.readFifoRow('primary', e1.entryId);
+      expect(row!.finalStatus, FinalStatus.tombstoned);
+      expect(row.attempts, [attempt]);
+      expect(row.sentAt, isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // every transition other than
+    //   null -> sent, null -> wedged and wedged -> tombstoned throws, and the
+    //   item is unchanged.
+    test('every illegal transition throws and leaves the item '
+        'unchanged', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      var seq = 0;
+      Future<FifoEntry> itemAt(FinalStatus? status) async {
+        seq += 1;
+        final e = await enqueueSingle(
+          backend,
+          'primary',
+          eventId: 'ill-$seq',
+          sequenceNumber: seq,
+        );
+        switch (status) {
+          case null:
+            break;
+          case FinalStatus.sent:
+            await seedSentRowForTest(backend, 'primary', e.entryId);
+          case FinalStatus.wedged:
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.wedged,
+            );
+          case FinalStatus.tombstoned:
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.wedged,
+            );
+            await setStatusForTest(
+              backend,
+              'primary',
+              e.entryId,
+              FinalStatus.tombstoned,
+            );
+        }
+        return e;
+      }
+
+      const illegal = <(FinalStatus?, FinalStatus)>[
+        (null, FinalStatus.tombstoned),
+        (FinalStatus.sent, FinalStatus.sent),
+        (FinalStatus.sent, FinalStatus.wedged),
+        (FinalStatus.sent, FinalStatus.tombstoned),
+        (FinalStatus.wedged, FinalStatus.wedged),
+        (FinalStatus.wedged, FinalStatus.sent),
+        (FinalStatus.tombstoned, FinalStatus.tombstoned),
+        (FinalStatus.tombstoned, FinalStatus.sent),
+        (FinalStatus.tombstoned, FinalStatus.wedged),
+      ];
+      for (final (from, to) in illegal) {
+        final e = await itemAt(from);
+        final before = await backend.readFifoRow('primary', e.entryId);
+        await expectLater(
+          setStatusForTest(backend, 'primary', e.entryId, to),
+          throwsStateError,
+          reason: '$from -> $to',
+        );
+        final after = await backend.readFifoRow('primary', e.entryId);
+        expect(after!.toJson(), before!.toJson(), reason: '$from -> $to');
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // a status change on a missing item
+    //   throws.
+    test('setFinalStatusTxn throws StateError on a missing item', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await expectLater(
+        setStatusForTest(backend, 'primary', 'ghost', FinalStatus.sent),
+        throwsStateError,
+      );
+      expect(await backend.listFifoEntries('primary'), isEmpty);
+    });
+
+    test('after status sent, readFifoHead returns next pending', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1731,7 +2260,7 @@ void _registerFifoTests(
         sequenceNumber: 2,
       );
 
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
 
       final head = await backend.readFifoHead('primary');
       expect(head?.entryId, e2.entryId);
@@ -1755,8 +2284,13 @@ void _registerFifoTests(
       );
       await enqueueSingle(backend, 'primary', eventId: 'e3', sequenceNumber: 3);
 
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await backend.markFinal('primary', e2.entryId, FinalStatus.wedged);
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.wedged,
+      );
       // e3 is left pending.
 
       final head = await backend.readFifoHead('primary');
@@ -1782,17 +2316,18 @@ void _registerFifoTests(
         eventId: 'e2',
         sequenceNumber: 2,
       );
-      // Transition the head into tombstoned via the public setFinalStatusTxn
-      // method (null -> tombstoned is a legal transition per the contract);
-      // this focuses the test on readFifoHead's skip-past behavior.
-      await backend.transaction((txn) async {
-        await backend.setFinalStatusTxn(
-          txn,
-          'primary',
-          e1.entryId,
-          FinalStatus.tombstoned,
-        );
-      });
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        FinalStatus.tombstoned,
+      );
 
       final head = await backend.readFifoHead('primary');
       expect(head, isNotNull);
@@ -1816,20 +2351,28 @@ void _registerFifoTests(
         eventId: 'e2',
         sequenceNumber: 2,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await backend.transaction((txn) async {
-        await backend.setFinalStatusTxn(
-          txn,
-          'primary',
-          e2.entryId,
-          FinalStatus.tombstoned,
-        );
-      });
+      await seedSentRowForTest(backend, 'primary', e1.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.wedged,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        e2.entryId,
+        FinalStatus.tombstoned,
+      );
 
       expect(await backend.readFifoHead('primary'), isNull);
     });
 
-    test('markFinal no-ops when entry does not exist', () async {
+    // Verifies: EVS-DEV-destination-drain/D
+    // the head read inside a transaction
+    //   reflects a status change staged in that transaction.
+    test('readFifoHeadTxn sees a status change staged in its '
+        'transaction', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final e1 = await enqueueSingle(
@@ -1838,67 +2381,235 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      // Must not throw.
-      await backend.markFinal('primary', 'ghost', FinalStatus.sent);
-      // e1 still at head, still pending.
-      final head = await backend.readFifoHead('primary');
-      expect(head?.entryId, e1.entryId);
-      expect(head?.finalStatus, isNull);
-    });
-
-    test('markFinal no-ops when FIFO store does not exist', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.markFinal('ghost-dest', 'any-entry', FinalStatus.sent);
-      expect(await backend.readFifoHead('ghost-dest'), isNull);
-    });
-
-    // markFinal idempotency: calling markFinal with the same status twice
-    // returns cleanly without throwing; the row retains its final status.
-    test('markFinal sent twice on the same row returns cleanly '
-        '(no throw, row stays sent)', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      final e1 = await enqueueSingle(
+      final e2 = await enqueueSingle(
         backend,
         'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
+        eventId: 'e2',
+        sequenceNumber: 2,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        backend.markFinal('primary', e1.entryId, FinalStatus.sent),
-        completes,
+      final seen = await backend.transaction((txn) async {
+        final before = await backend.readFifoHeadTxn(txn, 'primary');
+        await backend.setFinalStatusTxn(
+          txn,
+          'primary',
+          e1.entryId,
+          FinalStatus.sent,
+        );
+        final after = await backend.readFifoHeadTxn(txn, 'primary');
+        return (before?.entryId, after?.entryId);
+      });
+      expect(seen, (e1.entryId, e2.entryId));
+      expect(
+        await backend.transaction(
+          (txn) => backend.readFifoHeadTxn(txn, 'unknown'),
+        ),
+        isNull,
       );
-      final all = await backend.listFifoEntries('primary');
-      expect(all, hasLength(1));
-      expect(all.single.finalStatus, FinalStatus.sent);
     });
 
-    // markFinal one-way transition: transitioning from one final status to
-    // a different final status throws a StateError naming both statuses.
-    test('markFinal sent then markFinal wedged throws StateError '
-        'naming both statuses', () async {
+    // -------- trail sweep --------
+
+    // Verifies: EVS-DEV-destination-drain/F
+    // the trail sweep deletes only the
+    //   pending items behind the given position and reports the lowest event
+    //   any of them carried.
+    test('deleteNullRowsAfterSequenceInQueueTxn reports count and lowest '
+        'first_seq', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      final e1 = await enqueueSingle(
+      final head = await enqueueSingle(
         backend,
         'primary',
-        eventId: 'e1',
-        sequenceNumber: 1,
+        eventId: 'h',
+        sequenceNumber: 10,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
-      await expectLater(
-        () async =>
-            backend.markFinal('primary', e1.entryId, FinalStatus.wedged),
-        throwsA(
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('sent'), contains('wedged')),
-          ),
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 't1',
+        sequenceNumber: 12,
+      );
+      // A later item carrying a lower event (a gap replay's item).
+      await enqueueSingle(backend, 'primary', eventId: 't2', sequenceNumber: 4);
+      final sweep = await backend.transaction(
+        (txn) => backend.deleteNullRowsAfterSequenceInQueueTxn(
+          txn,
+          'primary',
+          head.sequenceInQueue,
         ),
       );
+      expect(sweep, const TrailSweepResult(deletedCount: 2, minFirstSeq: 4));
+      final rows = await backend.listFifoEntries('primary');
+      expect(rows.map((r) => r.entryId), [head.entryId]);
+
+      final empty = await backend.transaction(
+        (txn) => backend.deleteNullRowsAfterSequenceInQueueTxn(
+          txn,
+          'primary',
+          head.sequenceInQueue,
+        ),
+      );
+      expect(empty, const TrailSweepResult(deletedCount: 0));
+    });
+
+    // -------- queue retirement --------
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retirement refuses a pending head and
+    //   changes nothing.
+    test('retireQueueTxn refuses a pending head; nothing changes', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e2', sequenceNumber: 2);
+      await writeFillCursorForTest(backend, 'primary', 2);
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      await expectLater(
+        backend.transaction((txn) => backend.retireQueueTxn(txn, 'primary')),
+        throwsStateError,
+      );
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+      expect(await backend.readFillCursor('primary'), 2);
+      expect((await backend.readFifoHead('primary'))!.entryId, e1.entryId);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retirement tombstones a wedged head,
+    //   deletes the pending items and the fill cursor, keeps terminal items
+    //   and the sequence_in_queue counter.
+    test('retireQueueTxn tombstones a wedged head, deletes pending items and '
+        'the cursor, keeps terminal items and the counter', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e3', sequenceNumber: 3);
+      await enqueueSingle(backend, 'primary', eventId: 'e4', sequenceNumber: 4);
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await writeFillCursorForTest(backend, 'primary', 4);
+
+      final retirement = await backend.transaction(
+        (txn) => backend.retireQueueTxn(txn, 'primary'),
+      );
+      expect(
+        retirement,
+        QueueRetirement(tombstonedRowId: head.entryId, deletedPendingCount: 2),
+      );
+      final rows = await backend.listFifoEntries('primary');
+      expect(rows.map((r) => (r.entryId, r.finalStatus)), [
+        (sent.entryId, FinalStatus.sent),
+        (head.entryId, FinalStatus.tombstoned),
+      ]);
+      expect(await backend.readFillCursor('primary'), -1);
+      expect(await backend.readFifoHead('primary'), isNull);
+      expect(await backend.hasFifoWedged(), isFalse);
+
+      // The counter is kept: a later item continues above the retained ones.
+      final next = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e5',
+        sequenceNumber: 5,
+      );
+      expect(next.sequenceInQueue, 5);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // retiring an empty queue, or one with
+    //   only terminal items, tombstones nothing.
+    test('retireQueueTxn on an empty or all-terminal queue', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(
+        await backend.transaction(
+          (txn) => backend.retireQueueTxn(txn, 'never-used'),
+        ),
+        const QueueRetirement(tombstonedRowId: null, deletedPendingCount: 0),
+      );
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      expect(
+        await backend.transaction(
+          (txn) => backend.retireQueueTxn(txn, 'primary'),
+        ),
+        const QueueRetirement(tombstonedRowId: null, deletedPendingCount: 0),
+      );
+      expect(
+        (await backend.readFifoRow('primary', sent.entryId))!.finalStatus,
+        FinalStatus.sent,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/A
+    // a retirement in a transaction that
+    //   rolls back changes nothing.
+    test('retireQueueTxn rolls back with its transaction', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final head = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await enqueueSingle(backend, 'primary', eventId: 'e2', sequenceNumber: 2);
+      await setStatusForTest(
+        backend,
+        'primary',
+        head.entryId,
+        FinalStatus.wedged,
+      );
+      await writeFillCursorForTest(backend, 'primary', 2);
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.retireQueueTxn(txn, 'primary');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+      expect(await backend.readFillCursor('primary'), 2);
     });
 
     // -------- hasFifoWedged + wedgedFifos --------
@@ -1916,7 +2627,7 @@ void _registerFifoTests(
 
       expect(await backend.hasFifoWedged(), isFalse);
 
-      await backend.markFinal('A', a1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'A', a1.entryId, FinalStatus.wedged);
       expect(await backend.hasFifoWedged(), isTrue);
     });
 
@@ -1938,7 +2649,8 @@ void _registerFifoTests(
       );
 
       // Record an attempt on A's head so the summary has a lastError.
-      await backend.appendAttempt(
+      await appendAttemptForTest(
+        backend,
         'A',
         a1.entryId,
         AttemptResult(
@@ -1948,8 +2660,8 @@ void _registerFifoTests(
           httpStatus: 400,
         ),
       );
-      await backend.markFinal('A', a1.entryId, FinalStatus.wedged);
-      await backend.markFinal('C', c1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'A', a1.entryId, FinalStatus.wedged);
+      await setStatusForTest(backend, 'C', c1.entryId, FinalStatus.wedged);
 
       final summaries = await backend.wedgedFifos();
       final byDest = {for (final s in summaries) s.destinationId: s};
@@ -1977,7 +2689,12 @@ void _registerFifoTests(
         eventId: 'e-bare',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', bare.entryId, FinalStatus.wedged);
+      await setStatusForTest(
+        backend,
+        'primary',
+        bare.entryId,
+        FinalStatus.wedged,
+      );
 
       final summary = (await backend.wedgedFifos()).single;
       expect(summary.destinationId, 'primary');
@@ -1995,7 +2712,7 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await setStatusForTest(backend, 'primary', e1.entryId, FinalStatus.sent);
       expect(await backend.hasFifoWedged(), isFalse);
       expect(await backend.wedgedFifos(), isEmpty);
     });
@@ -2004,7 +2721,7 @@ void _registerFifoTests(
 
     // The backend assigns sequence_in_queue monotonically starting at 1,
     // independent of any caller-side sequencing.
-    test('enqueueFifo assigns its own monotonic sequence_in_queue '
+    test('enqueueFifoTxn assigns its own monotonic sequence_in_queue '
         '(Prereq A, Option 1)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -2052,7 +2769,7 @@ void _registerFifoTests(
         eventId: 'e1',
         sequenceNumber: 1,
       );
-      await backend.markFinal('primary', e1.entryId, FinalStatus.sent);
+      await setStatusForTest(backend, 'primary', e1.entryId, FinalStatus.sent);
       final e2 = await enqueueSingle(
         backend,
         'primary',
@@ -2060,7 +2777,7 @@ void _registerFifoTests(
         sequenceNumber: 2,
       );
       // e2 should get sequence 2, not 1 (the slot vacated by e1 going sent
-      // is NOT reused — terminal-state rows are retained forever).
+      // is NOT reused — terminal-state rows are retained for the database's lifetime).
       final row = await backend.readFifoRow('primary', e2.entryId);
       expect(row, isNotNull);
       expect(row!.sequenceInQueue, 2);
@@ -2171,24 +2888,24 @@ void _registerFillCursorTests(
       expect(await backend.readFillCursor('primary'), -1);
     });
 
-    test('writeFillCursor then readFillCursor round-trips', () async {
+    test('writeFillCursorTxn then readFillCursor round-trips', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.writeFillCursor('primary', 42);
+      await writeFillCursorForTest(backend, 'primary', 42);
       expect(await backend.readFillCursor('primary'), 42);
 
       // A second write replaces the prior value (monotonic advance is
       // caller policy; the backend contract just stores what it's given).
-      await backend.writeFillCursor('primary', 100);
+      await writeFillCursorForTest(backend, 'primary', 100);
       expect(await backend.readFillCursor('primary'), 100);
     });
 
-    test('writeFillCursor inside a transaction participates in '
+    test('writeFillCursorTxn inside a transaction participates in '
         'atomicity (rollback confirms cursor was NOT advanced)', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       // Pre-transaction baseline.
-      await backend.writeFillCursor('primary', 7);
+      await writeFillCursorForTest(backend, 'primary', 7);
       expect(await backend.readFillCursor('primary'), 7);
 
       await expectLater(
@@ -2216,20 +2933,37 @@ void _registerFillCursorTests(
       expect(await backend.readFillCursor('primary'), -1);
       expect(await backend.readFillCursor('secondary'), -1);
 
-      await backend.writeFillCursor('primary', 10);
+      await writeFillCursorForTest(backend, 'primary', 10);
       expect(await backend.readFillCursor('primary'), 10);
       expect(await backend.readFillCursor('secondary'), -1);
 
-      await backend.writeFillCursor('secondary', 22);
+      await writeFillCursorForTest(backend, 'secondary', 22);
       expect(await backend.readFillCursor('secondary'), 22);
       expect(await backend.readFillCursor('primary'), 10);
     });
 
-    test('writeFillCursor rejects sequenceNumber < -1', () async {
+    // Verifies: EVS-DEV-destination-drain/G
+    // the fill position read inside a
+    //   transaction reflects a write staged in that transaction.
+    test('readFillCursorTxn sees an in-transaction write', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await writeFillCursorForTest(backend, 'primary', 3);
+      final seen = await backend.transaction((txn) async {
+        final before = await backend.readFillCursorTxn(txn, 'primary');
+        await backend.writeFillCursorTxn(txn, 'primary', 9);
+        final after = await backend.readFillCursorTxn(txn, 'primary');
+        final unset = await backend.readFillCursorTxn(txn, 'other');
+        return (before, after, unset);
+      });
+      expect(seen, (3, 9, -1));
+    });
+
+    test('writeFillCursorTxn rejects sequenceNumber < -1', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       await expectLater(
-        backend.writeFillCursor('primary', -2),
+        writeFillCursorForTest(backend, 'primary', -2),
         throwsArgumentError,
       );
       // The failed write left the cursor unchanged.
@@ -2237,6 +2971,382 @@ void _registerFillCursorTests(
     });
   });
 }
+
+// -------- Records kept beside a queue --------
+//
+// The schedule, the replay request, the registry check record and the wedge
+// record round-trip through the contract reads, in the same transaction and a later one, and
+// roll back with their transaction.
+void _registerQueueRecordTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+) {
+  group('records beside a queue', () {
+    // Verifies: EVS-DEV-destination-drain/A
+    // the persisted schedule keeps its
+    //   registration identity and hard-delete opt-in exactly.
+    // Verifies: EVS-DEV-destination-drain/G
+    // the fill compares the whole persisted
+    //   schedule, registration included, so the read returns what was written.
+    test('schedule round-trips registrationId and allowHardDelete', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      for (final optIn in <bool>[true, false]) {
+        final schedule = DestinationSchedule(
+          startDate: DateTime.utc(2026, 1, 2, 3),
+          endDate: DateTime.utc(2027, 1, 2, 3),
+          registrationId: 'reg-$optIn',
+          allowHardDelete: optIn,
+        );
+        final sameTxn = await backend.transaction((txn) async {
+          await backend.writeScheduleTxn(txn, 'dest-$optIn', schedule);
+          return backend.readScheduleTxn(txn, 'dest-$optIn');
+        });
+        expect(sameTxn, schedule);
+        final later = await backend.transaction(
+          (txn) => backend.readScheduleTxn(txn, 'dest-$optIn'),
+        );
+        expect(later, schedule);
+        expect(later!.registrationId, 'reg-$optIn');
+        expect(later.allowHardDelete, optIn);
+        expect(await backend.readSchedule('dest-$optIn'), schedule);
+      }
+      expect(
+        await backend.transaction(
+          (txn) => backend.readScheduleTxn(txn, 'absent'),
+        ),
+        isNull,
+      );
+    });
+
+    // Verifies: EVS-DEV-destination-drain/E
+    // a replay request round-trips, is
+    //   overwritten, rolls back with its transaction and is cleared.
+    test('replay request write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const first = ReplayRequest(firstActivation: true);
+      final gap = ReplayRequest(gapUpper: DateTime.utc(2026, 3, 4, 5, 6, 7));
+      Future<ReplayRequest?> read() => backend.transaction(
+        (txn) => backend.readReplayRequestTxn(txn, 'dest'),
+      );
+
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeReplayRequestTxn(txn, 'dest', first);
+        return backend.readReplayRequestTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read(), first);
+
+      await backend.transaction(
+        (txn) => backend.writeReplayRequestTxn(txn, 'dest', gap),
+      );
+      expect(await read(), gap);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeReplayRequestTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), gap);
+
+      await backend.transaction(
+        (txn) => backend.clearReplayRequestTxn(txn, 'dest'),
+      );
+      expect(await read(), isNull);
+      // Clearing an absent request is a no-op.
+      await backend.transaction(
+        (txn) => backend.clearReplayRequestTxn(txn, 'dest'),
+      );
+      expect(await read(), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/U
+    // the registry check record commits
+    //   and reads back in the same and a later transaction, a second write
+    //   overwrites it, and a rolled-back write leaves the prior value.
+    test('registry check write, overwrite and rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final a = RegistryCheck(
+        op: 'setStartDate',
+        destinationId: 'd1',
+        outcome: 'unchanged',
+        at: DateTime.utc(2026, 5, 6, 7, 8, 9, 123),
+      );
+      final b = RegistryCheck(
+        op: 'deleteDestination',
+        destinationId: 'd2',
+        outcome: 'refused_pending_head',
+        at: DateTime.utc(2026, 5, 6, 7, 8, 10),
+      );
+      Future<RegistryCheck?> read() =>
+          backend.transaction(backend.readRegistryCheckTxn);
+
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeRegistryCheckTxn(txn, a);
+        return backend.readRegistryCheckTxn(txn);
+      });
+      expect(sameTxn, a);
+      expect(await read(), a);
+
+      await backend.transaction((txn) => backend.writeRegistryCheckTxn(txn, b));
+      expect(await read(), b);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeRegistryCheckTxn(txn, a);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), b);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/I
+    // the wedge record written with a wedge
+    //   round-trips every field, is overwritten, rolls back with its
+    //   transaction, is kept per destination and is cleared.
+    test('wedge record write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const first = WedgeRecord(
+        rowId: 'row-1',
+        wedgeEventId: 'event-1',
+        cause: WedgeCause.permanentRefusal,
+      );
+      const second = WedgeRecord(
+        rowId: 'row-2',
+        wedgeEventId: 'event-2',
+        cause: WedgeCause.operatorHalt,
+        haltPurpose: HaltPurpose.reconfigure,
+        drainerEpoch: 7,
+        configurationFingerprint: 'fp-2',
+      );
+      Future<WedgeRecord?> read(String dest) =>
+          backend.transaction((txn) => backend.readWedgeRecordTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeWedgeRecordTxn(txn, 'dest', first);
+        return backend.readWedgeRecordTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeWedgeRecordTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeWedgeRecordTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.clearWedgeRecordTxn(txn, 'dest');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearWedgeRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      // Clearing an absent record is a no-op.
+      await backend.transaction(
+        (txn) => backend.clearWedgeRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/N
+    // the halt request round-trips every
+    //   field, is overwritten, rolls back with its transaction, is kept per
+    //   destination and is cleared.
+    test('halt request write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = HaltRequest(
+        requestEventId: 'request-1',
+        requestedAt: DateTime.utc(2026, 4, 1, 2, 3, 4, 5),
+        purpose: HaltPurpose.pause,
+        requestedBy: const UserInitiator('operator').toJson(),
+      );
+      final second = HaltRequest(
+        requestEventId: 'request-2',
+        requestedAt: DateTime.utc(2026, 4, 2),
+        purpose: HaltPurpose.reconfigure,
+        requestedBy: const AutomationInitiator(
+          service: 'ops',
+          triggeringEventId: 'e-1',
+        ).toJson(),
+      );
+      Future<HaltRequest?> read(String dest) =>
+          backend.transaction((txn) => backend.readHaltRequestTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeHaltRequestTxn(txn, 'dest', first);
+        return backend.readHaltRequestTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeHaltRequestTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeHaltRequestTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.clearHaltRequestTxn(txn, 'dest');
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearHaltRequestTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearHaltRequestTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/N
+    // the send fence round-trips, is
+    //   overwritten, rolls back with its transaction, is kept per destination
+    //   and is cleared.
+    test('send fence write, overwrite, rollback and clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 0,
+        at: DateTime.utc(2026, 4, 1, 2, 3, 4, 5),
+      );
+      final second = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 1,
+        at: DateTime.utc(2026, 4, 1, 3),
+      );
+      Future<SendFence?> read(String dest) =>
+          backend.transaction((txn) => backend.readSendFenceTxn(txn, dest));
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeSendFenceTxn(txn, 'dest', first);
+        return backend.readSendFenceTxn(txn, 'dest');
+      });
+      expect(sameTxn, first);
+      expect(await read('dest'), first);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeSendFenceTxn(txn, 'dest', second),
+      );
+      expect(await read('dest'), second);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeSendFenceTxn(txn, 'dest', first);
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), second);
+
+      await backend.transaction(
+        (txn) => backend.clearSendFenceTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearSendFenceTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/T
+    // every persisted schedule is listed by
+    //   destination id, inside and outside a transaction; a deleted schedule
+    //   leaves the listing, a rolled-back write never enters it, and a key
+    //   that merely contains the schedule prefix is not listed.
+    test('listSchedules after schedule writes and a deletion', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.listSchedules(), isEmpty);
+      DestinationSchedule schedule(String id) => DestinationSchedule(
+        startDate: DateTime.utc(2026, 1, 1),
+        registrationId: 'reg-$id',
+      );
+      await backend.transaction((txn) async {
+        for (final id in <String>['a', 'b_c', 'schedule_d']) {
+          await backend.writeScheduleTxn(txn, id, schedule(id));
+        }
+        await backend.writeFillCursorTxn(txn, 'a', 3);
+        await backend.writeReplayRequestTxn(
+          txn,
+          'a',
+          const ReplayRequest(firstActivation: true),
+        );
+      });
+      final expected = <String, DestinationSchedule>{
+        'a': schedule('a'),
+        'b_c': schedule('b_c'),
+        'schedule_d': schedule('schedule_d'),
+      };
+      expect(await backend.listSchedules(), expected);
+      expect(await backend.transaction(backend.listSchedulesTxn), expected);
+      final inTxn = await backend.transaction((txn) async {
+        await backend.deleteScheduleTxn(txn, 'b_c');
+        return backend.listSchedulesTxn(txn);
+      });
+      expect(inTxn.keys.toSet(), <String>{'a', 'schedule_d'});
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeScheduleTxn(txn, 'e', schedule('e'));
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect((await backend.listSchedules()).keys.toSet(), <String>{
+        'a',
+        'schedule_d',
+      });
+    });
+  });
+}
+
+final RegExp _uuidV4 = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
 
 // -------- Backend-state subgroup --------
 //
@@ -2251,11 +3361,305 @@ void _registerBackendStateTests(
     test('schema_version round-trips', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      expect(await backend.readSchemaVersion(), 0); // never written
+      // A provisioned Postgres schema starts at its provisioned version; a
+      // Sembast database at 0 (never written).
+      final before = await backend.readSchemaVersion();
       await backend.transaction((txn) async {
-        await backend.writeSchemaVersion(txn, 7);
+        await backend.writeSchemaVersion(txn, before + 7);
       });
-      expect(await backend.readSchemaVersion(), 7);
+      expect(await backend.readSchemaVersion(), before + 7);
+      // Put back the provisioned version, which on Postgres gates every
+      // later transaction together with the stored minimum.
+      await backend.transaction((txn) async {
+        await backend.writeSchemaVersion(txn, before);
+      });
+      expect(await backend.readSchemaVersion(), before);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/F
+    // the database identity is minted once: a rolled-back mint leaves no
+    //   identity, and the committed one is stable in the same and a later
+    //   transaction.
+    test('database identity: minted once, stable, and a rolled-back mint '
+        'leaves none', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.transaction(backend.readDatabaseIdTxn), isNull);
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          final minted = await backend.readOrCreateDatabaseIdTxn(txn);
+          expect(minted, isNotEmpty);
+          expect(await backend.readDatabaseIdTxn(txn), minted);
+          throw StateError('roll back the mint');
+        }),
+        throwsStateError,
+      );
+      expect(await backend.transaction(backend.readDatabaseIdTxn), isNull);
+      final (first, second, read) = await backend.transaction(
+        (txn) async => (
+          await backend.readOrCreateDatabaseIdTxn(txn),
+          await backend.readOrCreateDatabaseIdTxn(txn),
+          await backend.readDatabaseIdTxn(txn),
+        ),
+      );
+      expect(second, first);
+      expect(read, first);
+      expect(_uuidV4.hasMatch(first), isTrue, reason: 'a version 4 UUID');
+      expect(
+        await backend.transaction(backend.readOrCreateDatabaseIdTxn),
+        first,
+      );
+      expect(await backend.transaction(backend.readDatabaseIdTxn), first);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot record commits and reads back in the same and a later
+    //   transaction, a second write overwrites it, and a rolled-back write
+    //   leaves the prior value.
+    test('boot record write, overwrite and rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final a = BootCheck(
+        at: DateTime.utc(2026, 5, 6, 7, 8, 9, 123),
+        packageVersion: '0.5.0',
+        dataFormat: const DataFormatVersion(2, 0),
+      );
+      final b = BootCheck(
+        at: DateTime.utc(2026, 5, 6, 7, 8, 10),
+        packageVersion: '0.6.0',
+        dataFormat: const DataFormatVersion(2, 1),
+      );
+      Future<BootCheck?> read() =>
+          backend.transaction(backend.readBootCheckTxn);
+      expect(await read(), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeBootCheckTxn(txn, a);
+        return backend.readBootCheckTxn(txn);
+      });
+      expect(sameTxn, a);
+      expect(await read(), a);
+      await backend.transaction((txn) => backend.writeBootCheckTxn(txn, b));
+      expect(await read(), b);
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeBootCheckTxn(txn, a);
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), b);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot transaction commits what its body writes and rolls it back
+    //   when the body throws.
+    test(
+      'bootTransaction commits its body and rolls back on a throw',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final check = BootCheck(
+          at: DateTime.utc(2026, 5, 6),
+          packageVersion: '0.5.0',
+          dataFormat: const DataFormatVersion(2, 0),
+        );
+        await expectLater(
+          backend.bootTransaction<void>((txn) async {
+            await backend.writeBootCheckTxn(txn, check);
+            throw StateError('roll back');
+          }),
+          throwsStateError,
+        );
+        expect(await backend.transaction(backend.readBootCheckTxn), isNull);
+        final result = await backend.bootTransaction((txn) async {
+          await backend.writeBootCheckTxn(txn, check);
+          return 'done';
+        });
+        expect(result, 'done');
+        expect(await backend.transaction(backend.readBootCheckTxn), check);
+      },
+    );
+
+    // Verifies: EVS-DEV-version-compatibility/I
+    // the generation record round-trips through the contract: written,
+    //   merged and overwritten, and a write in a transaction that does not
+    //   commit leaves the committed record.
+    test('the generation record: write, merge, rollback', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      expect(await backend.transaction(backend.readDataGenerationTxn), isNull);
+      final first = GenerationRecord(
+        dataFormatMajor: 2,
+        entryTypeMajors: const <String, int>{'a': 1},
+      );
+      await backend.transaction(
+        (txn) => backend.writeDataGenerationTxn(txn, first),
+      );
+      expect(await backend.transaction(backend.readDataGenerationTxn), first);
+      final merged = first.merge(
+        GenerationDescriptor(
+          packageVersion: '0.5.0',
+          dataFormat: const DataFormatVersion(2, 0),
+          entryTypes: const <String, EntryTypeVersion>{
+            'a': EntryTypeVersion(2, 0),
+            'b': EntryTypeVersion(1, 3),
+          },
+        ),
+      );
+      await backend.transaction(
+        (txn) => backend.writeDataGenerationTxn(txn, merged),
+      );
+      expect(
+        await backend.transaction(backend.readDataGenerationTxn),
+        GenerationRecord(
+          dataFormatMajor: 2,
+          entryTypeMajors: const <String, int>{'a': 2, 'b': 1},
+        ),
+      );
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeDataGenerationTxn(
+            txn,
+            GenerationRecord(
+              dataFormatMajor: 3,
+              entryTypeMajors: const <String, int>{},
+            ),
+          );
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await backend.transaction(backend.readDataGenerationTxn), merged);
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/F
+    // a registration completes its boot and is released, after which the
+    //   same generation registers again; on a backend whose live
+    //   registration refuses a conflicting generation, the release ends
+    //   that refusal.
+    test('a generation registers, completes its boot, is released, and '
+        'registers again', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final descriptor = GenerationDescriptor(
+        packageVersion: '0.5.0',
+        dataFormat: const DataFormatVersion(2, 0),
+        entryTypes: const <String, EntryTypeVersion>{
+          'a': EntryTypeVersion(1, 0),
+        },
+      );
+      final conflicting = GenerationDescriptor(
+        packageVersion: '0.6.0',
+        dataFormat: const DataFormatVersion(2, 0),
+        entryTypes: const <String, EntryTypeVersion>{
+          'a': EntryTypeVersion(2, 0),
+        },
+      );
+      final first = await backend.registerGeneration(descriptor);
+      expect(first.isLost, isFalse);
+      await first.completeBoot();
+      // A backend used by one process holds nothing for a registration, so
+      // it admits the conflicting generation; one that guards the database
+      // refuses it while the first registration is live.
+      var guarded = false;
+      try {
+        final probe = await backend.registerGeneration(conflicting);
+        await probe.completeBoot();
+        await probe.release();
+      } on IncompatibleGenerationException {
+        guarded = true;
+      }
+      await first.release();
+      await first.release();
+      if (guarded) {
+        final afterRelease = await backend.registerGeneration(conflicting);
+        await afterRelease.completeBoot();
+        await afterRelease.release();
+      }
+      final second = await backend.registerGeneration(descriptor);
+      await second.completeBoot();
+      await second.release();
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot reads the log inside its transaction: the reverse read sees
+    //   an append made earlier in the same transaction, newest first, and
+    //   filters by event type.
+    test('readEventsReverseInTxn sees an in-transaction append, newest '
+        'first', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await _appendBuilt(backend, (seq) => _event('r1', seq));
+      final (all, filtered) = await backend.transaction((txn) async {
+        final seq = await backend.nextSequenceNumber(txn);
+        await backend.appendEvent(
+          txn,
+          _eventWithProvenance(
+            seq: seq,
+            entryType: 'lib_version_initialized',
+            eventType: 'lib_version_initialized',
+            clientTimestamp: DateTime.utc(2026, 5),
+            eventId: 'r2',
+          ),
+        );
+        final all = await backend.readEventsReverseInTxn(txn).toList();
+        final filtered = await backend
+            .readEventsReverseInTxn(
+              txn,
+              eventTypes: const <String>{'lib_version_initialized'},
+            )
+            .toList();
+        return (
+          [for (final e in all) e.eventId],
+          [for (final e in filtered) e.eventId],
+        );
+      });
+      expect(all, <String>['r2', 'r1']);
+      expect(filtered, <String>['r2']);
+    });
+
+    // Verifies: EVS-DEV-event-store-open/E
+    // the boot's in-transaction reverse read crosses the backend's pages:
+    //   every event once, newest first, with and without a type filter.
+    test('readEventsReverseInTxn reads more than a page of mixed types '
+        'completely, once each, newest first', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const total = 1300;
+      await backend.transaction((txn) async {
+        for (var i = 0; i < total; i++) {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            _eventWithProvenance(
+              seq: seq,
+              entryType: i % 7 == 0 ? 'kind_rare' : 'kind_common',
+              eventType: i % 7 == 0 ? 'kind_rare' : 'kind_common',
+              clientTimestamp: DateTime.utc(2026, 5),
+              eventId: 'p$i',
+            ),
+          );
+        }
+      });
+      final (all, rare) = await backend.transaction((txn) async {
+        final all = await backend.readEventsReverseInTxn(txn).toList();
+        final rare = await backend
+            .readEventsReverseInTxn(
+              txn,
+              eventTypes: const <String>{'kind_rare'},
+            )
+            .toList();
+        return (
+          [for (final e in all) e.sequenceNumber],
+          [for (final e in rare) e.sequenceNumber],
+        );
+      });
+      final expectedAll = [for (var seq = total; seq >= 1; seq--) seq];
+      expect(all, expectedAll);
+      expect(rare, [
+        for (final seq in expectedAll)
+          if ((seq - 1) % 7 == 0) seq,
+      ]);
     });
   });
 }
@@ -2265,6 +3669,290 @@ void _registerBackendStateTests(
 // findEventById / findEventByIdInTxn read
 //   a single event from the unified log; returns null when absent; used
 //   by ingest's idempotency check.
+void _registerDrainLockTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  Future<StorageBackend> Function(StorageBackend closed) reopen,
+) {
+  group('drain lock and drain records', () {
+    Future<String> identity(StorageBackend backend) =>
+        backend.transaction(backend.readOrCreateDatabaseIdTxn);
+    Future<int?> epoch(StorageBackend backend) =>
+        backend.transaction(backend.readDrainEpochTxn);
+
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // one live drain lock per database through a backend: a second try
+    //   while the first is live is refused and raises no epoch; a release
+    //   frees it, and every acquisition raises the stored epoch.
+    test('one holder at a time; every acquisition raises the epoch', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      expect(await epoch(backend), isNull);
+      final first = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(first.epoch, await epoch(backend));
+      await expectLater(
+        backend.tryAcquireDrainLock(databaseId: id),
+        throwsA(isA<DrainLockUnavailableException>()),
+      );
+      expect(await epoch(backend), first.epoch, reason: 'no epoch raised');
+      await first.release();
+      final second = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(second.epoch, greaterThan(first.epoch));
+      expect(await epoch(backend), second.epoch);
+      await second.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/A
+    // a backend without a visibility signal never asks the holder to hand
+    //   the lock over: not while it is held and used, nor after its release.
+    test('no hand-over is requested outside the browser', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final lock = await backend.tryAcquireDrainLock(databaseId: id);
+      var requested = false;
+      unawaited(lock.handOverRequested.then((_) => requested = true));
+      await lock.heartbeat();
+      await lock.assertHeld();
+      await backend.transaction(lock.assertHeldInTxn);
+      await pumpEventQueue();
+      expect(requested, isFalse, reason: 'while held');
+      await lock.release();
+      await pumpEventQueue();
+      expect(requested, isFalse, reason: 'after the release');
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/B
+    // the check a queue-changing transaction runs passes while the lock is
+    //   held and current, and refuses once it is released, whatever the
+    //   stored epoch; a release is never reported as a loss.
+    test(
+      'assertHeldInTxn refuses after a release; a release is no loss',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final id = await identity(backend);
+        final lock = await backend.tryAcquireDrainLock(databaseId: id);
+        await backend.transaction(lock.assertHeldInTxn);
+        await lock.assertHeld();
+        var lost = false;
+        unawaited(lock.lost.then((_) => lost = true));
+        await lock.release();
+        expect(lock.isReleased, isTrue);
+        await expectLater(
+          backend.transaction(lock.assertHeldInTxn),
+          throwsA(
+            isA<DrainLockLostException>().having(
+              (e) => e.reason,
+              'reason',
+              DrainLockLossReason.released,
+            ),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(lost, isFalse);
+      },
+    );
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a request stands by while the lock is held and is granted once it is
+    //   released, without another call.
+    test('a request is granted once the holder releases', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final holder = await backend.tryAcquireDrainLock(databaseId: id);
+      final request = backend.requestDrainLock(
+        databaseId: id,
+        retryInterval: const Duration(milliseconds: 50),
+      );
+      DrainLock? granted;
+      unawaited(request.granted.then((l) => granted = l));
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      expect(granted, isNull, reason: 'held elsewhere');
+      await holder.release();
+      final lock = await request.granted.timeout(const Duration(seconds: 10));
+      expect(lock, isNotNull);
+      expect(lock!.epoch, greaterThan(holder.epoch));
+      await lock.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a request cancelled before its grant completes with null, and a later
+    //   acquisition succeeds at once.
+    test('a request cancelled before its grant leaves the lock free', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final holder = await backend.tryAcquireDrainLock(databaseId: id);
+      final request = backend.requestDrainLock(
+        databaseId: id,
+        retryInterval: const Duration(milliseconds: 50),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      await request.cancel();
+      expect(await request.granted, isNull);
+      await holder.release();
+      // Several retry intervals pass with the lock free: a cancelled
+      // request that kept retrying would take it and raise the epoch.
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(
+        await epoch(backend),
+        holder.epoch,
+        reason: 'no acquisition after the cancellation',
+      );
+      final later = await backend.tryAcquireDrainLock(databaseId: id);
+      expect(later.epoch, greaterThan(holder.epoch));
+      await later.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // a grant that races the cancellation is released before the request
+    //   completes with null: the lock is free afterwards.
+    test('a grant that races a cancellation is released', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      late DrainLockRequest request;
+      Future<void>? cancelled;
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          beforeGrantDelivered: () async {
+            cancelled = request.cancel();
+          },
+        ),
+        () async {
+          request = backend.requestDrainLock(
+            databaseId: id,
+            retryInterval: const Duration(milliseconds: 50),
+          );
+          expect(await request.granted, isNull);
+          await cancelled;
+        },
+      );
+      final later = await backend.tryAcquireDrainLock(databaseId: id);
+      await later.release();
+    });
+
+    // Verifies: EVS-DEV-destination-drain-lock/C
+    // closing the backend releases the drain lock granted through it: the
+    //   exclusion primitive is free, so another backend over the database
+    //   takes the lock at once, with a higher epoch; the closed backend
+    //   grants no drain lock.
+    test('close releases the drain lock', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final id = await identity(backend);
+      final lock = await backend.tryAcquireDrainLock(databaseId: id);
+      await backend.close();
+      expect(lock.isReleased, isTrue);
+      await expectLater(
+        backend.tryAcquireDrainLock(databaseId: id),
+        throwsA(isA<DrainLockBackendClosedException>()),
+      );
+      final other = await reopen(backend);
+      try {
+        final next = await other.tryAcquireDrainLock(databaseId: id);
+        expect(next.epoch, greaterThan(lock.epoch));
+        await next.release();
+      } finally {
+        await other.close();
+      }
+    });
+
+    // Verifies: EVS-DEV-destination-drain/T
+    // the drainer's declaration, its heartbeat and a refill guard
+    //   round-trip through the contract: read in the writing and a later
+    //   transaction, overwritten, left as they were by a write that does not
+    //   commit, and (the guard) cleared.
+    test('drain records: write, overwrite, rollback, clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final at = DateTime.utc(2026, 9, 1);
+      final d1 = DrainerDeclaration(
+        epoch: 1,
+        configurationVersion: 'v1',
+        configurations: const <String, Map<String, Object?>>{
+          'x': <String, Object?>{'id': 'x'},
+        },
+        fingerprints: const <String, String>{'x': 'f1'},
+        unserved: const <String, UnservedReason>{
+          'y': UnservedReason.notRegisteredHere,
+        },
+        declaredAt: at,
+      );
+      final d2 = DrainerDeclaration(
+        epoch: 2,
+        configurationVersion: null,
+        configurations: const <String, Map<String, Object?>>{},
+        fingerprints: const <String, String>{},
+        unserved: const <String, UnservedReason>{
+          'x': UnservedReason.refillAwaitsChangedConfiguration,
+        },
+        declaredAt: at,
+      );
+      final h1 = DrainHeartbeat(epoch: 1, pass: 1, at: at);
+      final h2 = DrainHeartbeat(epoch: 1, pass: 2, at: at);
+      const g1 = RefillGuard(
+        fingerprint: 'f1',
+        recoveryEventId: 'r1',
+        refillThrough: 7,
+      );
+      const g2 = RefillGuard(
+        fingerprint: 'f2',
+        recoveryEventId: 'r2',
+        refillThrough: 9,
+      );
+      Future<(DrainerDeclaration?, DrainHeartbeat?, RefillGuard?)> read() =>
+          backend.transaction(
+            (txn) async => (
+              await backend.readDrainerDeclarationTxn(txn),
+              await backend.readDrainHeartbeatTxn(txn),
+              await backend.readRefillGuardTxn(txn, 'x'),
+            ),
+          );
+      expect(await read(), (null, null, null));
+      final inTxn = await backend.transaction((txn) async {
+        await backend.writeDrainerDeclarationTxn(txn, d1);
+        await backend.writeDrainHeartbeatTxn(txn, h1);
+        await backend.writeRefillGuardTxn(txn, 'x', g1);
+        return (
+          await backend.readDrainerDeclarationTxn(txn),
+          await backend.readDrainHeartbeatTxn(txn),
+          await backend.readRefillGuardTxn(txn, 'x'),
+        );
+      });
+      expect(inTxn, (d1, h1, g1));
+      expect(await read(), (d1, h1, g1));
+      await backend.transaction((txn) async {
+        await backend.writeDrainerDeclarationTxn(txn, d2);
+        await backend.writeDrainHeartbeatTxn(txn, h2);
+        await backend.writeRefillGuardTxn(txn, 'x', g2);
+      });
+      expect(await read(), (d2, h2, g2));
+      await expectLater(
+        backend.transaction<void>((txn) async {
+          await backend.writeDrainerDeclarationTxn(txn, d1);
+          await backend.writeDrainHeartbeatTxn(txn, h1);
+          await backend.clearRefillGuardTxn(txn, 'x');
+          throw StateError('roll back');
+        }),
+        throwsStateError,
+      );
+      expect(await read(), (d2, h2, g2));
+      await backend.transaction((txn) => backend.clearRefillGuardTxn(txn, 'x'));
+      expect((await read()).$3, isNull);
+      expect(
+        await backend.transaction(
+          (txn) => backend.readRefillGuardTxn(txn, 'other'),
+        ),
+        isNull,
+      );
+    });
+  });
+}
+
 void _registerEventByIdTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
@@ -2338,6 +4026,570 @@ void _registerCloseTests(
       // After close(), operations on the backend fail; the caller owns
       // re-opening if reads are desired post-close.
       await expectLater(backend.findAllEvents(), throwsA(isA<Exception>()));
+    });
+  });
+}
+
+// -------- Event version columns --------
+//
+// The entry-type version and the data-format version of an event keep their
+// major and minor through every read path that builds a StoredEvent, in and
+// out of a transaction, and the event's hash verifies after each read.
+void _registerEventVersionColumnTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('event version columns', () {
+    // Verifies: EVS-DEV-version-compatibility/A+C
+    test('an event stamped entry type 1.3 and data format 2.1 reads back '
+        'exactly through every read path, and its hash verifies', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const entryVersion = EntryTypeVersion(1, 3);
+      const dataFormat = DataFormatVersion(2, 1);
+      final recordedAt = DateTime.utc(2026, 5, 1, 12);
+
+      late StoredEvent appended;
+      await backend.transaction((txn) async {
+        final seq = await backend.nextSequenceNumber(txn);
+        final record = <String, Object?>{
+          'event_id': 'versioned-1',
+          'aggregate_id': 'agg-versions',
+          'aggregate_type': 'note',
+          'entry_type': 'versioned_note',
+          'entry_type_version': entryVersion.toJson(),
+          'lib_format_version': dataFormat.toJson(),
+          'event_type': 'finalized',
+          'sequence_number': seq,
+          'data': <String, Object?>{'title': 'v'},
+          'metadata': <String, Object?>{
+            'change_reason': 'initial',
+            'provenance': <Map<String, Object?>>[
+              <String, Object?>{
+                'hop': 'mobile-device',
+                'received_at': '2026-05-01T12:00:00.000Z',
+                'identifier': 'install-A',
+                'software_version': 'app@1.0.0',
+              },
+            ],
+          },
+          'initiator': const UserInitiator('u-versions').toJson(),
+          'flow_token': 'flow-versions',
+          'client_timestamp': recordedAt.toIso8601String(),
+          'previous_event_hash': null,
+        };
+        record['event_hash'] = canonicalEventHash(record);
+        appended = StoredEvent.fromMap(record, seq);
+        await backend.appendEvent(txn, appended);
+        await securityStoreOf(backend).writeInTxn(
+          txn,
+          EventSecurityContext(
+            eventId: 'versioned-1',
+            recordedAt: recordedAt,
+            ipAddress: '10.0.0.1',
+          ),
+        );
+      });
+
+      void expectExact(StoredEvent? read, String path) {
+        expect(read, isNotNull, reason: path);
+        expect(read!.entryTypeVersion, entryVersion, reason: path);
+        expect(read.libFormatVersion, dataFormat, reason: path);
+        final map = Map<String, Object?>.from(read.toMap())
+          ..remove('event_hash');
+        expect(canonicalEventHash(map), appended.eventHash, reason: path);
+      }
+
+      StoredEvent? pick(Iterable<StoredEvent> events) {
+        for (final e in events) {
+          if (e.eventId == 'versioned-1') return e;
+        }
+        return null;
+      }
+
+      expectExact(
+        pick(await backend.findEventsForAggregate('agg-versions')),
+        'findEventsForAggregate',
+      );
+      expectExact(pick(await backend.findAllEvents()), 'findAllEvents');
+      expectExact(await backend.findEventById('versioned-1'), 'findEventById');
+      expectExact(
+        pick(await backend.readEventsReverse().toList()),
+        'readEventsReverse',
+      );
+      final audit = await backend.queryAudit(flowToken: 'flow-versions');
+      expectExact(pick(audit.rows.map((r) => r.event)), 'queryAudit');
+      await backend.transaction((txn) async {
+        expectExact(
+          pick(await backend.findEventsForAggregateInTxn(txn, 'agg-versions')),
+          'findEventsForAggregateInTxn',
+        );
+        expectExact(
+          pick(await backend.findAllEventsInTxn(txn)),
+          'findAllEventsInTxn',
+        );
+        expectExact(
+          await backend.findEventByIdInTxn(txn, 'versioned-1'),
+          'findEventByIdInTxn',
+        );
+      });
+    });
+  });
+}
+
+// -------- Hashed fields as the sender spelled them --------
+//
+// An event's hash covers its `client_timestamp` string, its `initiator` map
+// and its two version maps as they were hashed. A backend that stores an
+// event must read it back with those fields exactly as it was given them,
+// so that a copy it forwards still hashes to the `event_hash` it carries,
+// and with every top-level key of its record, so that the copy carries
+// them on.
+void _registerEventSpellingTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('hashed fields as spelled', () {
+    const user = <String, Object?>{'type': 'user', 'user_id': 'u-spelling'};
+    const plain = '2026-05-01T12:00:00.000Z';
+    final entryVersion = const EntryTypeVersion(1, 0).toJson();
+    final dataFormat = LibVersion.dataFormat.toJson();
+    const noExtras = <String, Object?>{};
+    // Each: (client_timestamp, initiator, entry_type_version,
+    // lib_format_version, top-level keys this build does not read).
+    final spellings =
+        <
+          String,
+          (
+            String,
+            Map<String, Object?>,
+            Map<String, Object?>,
+            Map<String, Object?>,
+            Map<String, Object?>,
+          )
+        >{
+          'a timestamp without a fraction': (
+            '2026-05-01T12:00:00Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a +00:00 offset': (
+            '2026-05-01T12:00:00+00:00',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a +02:00 offset': (
+            '2026-05-01T14:00:00.5+02:00',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with a -05:30 offset': (
+            '2026-05-01T06:30:00-05:30',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp with microseconds': (
+            '2026-05-01T12:00:00.000001Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp in year 0000': (
+            '0000-01-01T00:00:00Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'a timestamp in year 9999': (
+            '9999-12-31T23:59:59.999999Z',
+            user,
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'an initiator with a key this build does not read': (
+            plain,
+            <String, Object?>{
+              'type': 'user',
+              'user_id': 'u-spelling',
+              'display_name': 'A. User',
+            },
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'an automation initiator without its optional key': (
+            plain,
+            <String, Object?>{'type': 'automation', 'service': 'svc'},
+            entryVersion,
+            dataFormat,
+            noExtras,
+          ),
+          'version maps with keys this build does not read': (
+            plain,
+            user,
+            <String, Object?>{...entryVersion, 'patch': 4},
+            <String, Object?>{...dataFormat, 'label': 'later'},
+            noExtras,
+          ),
+          'top-level keys this build does not read': (
+            plain,
+            user,
+            entryVersion,
+            dataFormat,
+            <String, Object?>{
+              'later_field': <String, Object?>{
+                'list': <Object?>[1, 'two', null],
+              },
+              'later_flag': true,
+            },
+          ),
+        };
+    var n = 0;
+    for (final spelling in spellings.entries) {
+      // Verifies: EVS-PRD-hash-chain-integrity/D
+      // Verifies: EVS-DEV-postgres-backend/D
+      // Verifies: EVS-DEV-event-record/A+B
+      test('an event with ${spelling.key} reads back as it was stored '
+          'through every read path, and its hash verifies', () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        n += 1;
+        final eventId = 'spelled-$n';
+        final aggregateId = 'agg-spelled-$n';
+        final flowToken = 'flow-spelled-$n';
+        final (
+          timestamp,
+          initiator,
+          entryTypeVersion,
+          libFormatVersion,
+          extras,
+        ) = spelling.value;
+        late StoredEvent appended;
+        late Map<String, Object?> record;
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          record = <String, Object?>{
+            ...extras,
+            'event_id': eventId,
+            'aggregate_id': aggregateId,
+            'aggregate_type': 'note',
+            'entry_type': 'spelled_note',
+            'entry_type_version': entryTypeVersion,
+            'lib_format_version': libFormatVersion,
+            'event_type': 'finalized',
+            'sequence_number': seq,
+            'data': <String, Object?>{'title': 's', 'note': null},
+            'metadata': <String, Object?>{
+              'change_reason': null,
+              'provenance': <Map<String, Object?>>[
+                <String, Object?>{
+                  'hop': 'mobile-device',
+                  'received_at': '2026-05-01T12:00:00Z',
+                  'identifier': 'install-A',
+                  'software_version': 'app@1.0.0',
+                },
+              ],
+            },
+            'initiator': initiator,
+            'flow_token': flowToken,
+            'client_timestamp': timestamp,
+            'previous_event_hash': null,
+          };
+          record['event_hash'] = canonicalEventHash(record);
+          appended = StoredEvent.fromMap(record, seq);
+          await backend.appendEvent(txn, appended);
+          await securityStoreOf(backend).writeInTxn(
+            txn,
+            EventSecurityContext(
+              eventId: eventId,
+              recordedAt: DateTime.utc(2026, 5, 1, 12),
+            ),
+          );
+        });
+
+        final reads = await _readEveryPath(
+          backend,
+          eventId: eventId,
+          aggregateId: aggregateId,
+          flowToken: flowToken,
+          initiator: Initiator.fromJson(initiator),
+        );
+        for (final read in reads.entries) {
+          final event = read.value;
+          expect(event, isNotNull, reason: read.key);
+          final map = event!.toMap();
+          expect(map, record, reason: read.key);
+          expect(
+            event.clientTimestamp.isAtSameMomentAs(DateTime.parse(timestamp)),
+            isTrue,
+            reason: read.key,
+          );
+          expect(canonicalEventHash(map), appended.eventHash, reason: read.key);
+          expect(event.eventHash, appended.eventHash, reason: read.key);
+        }
+        // The instant the timestamp names bounds a window that finds it.
+        final instant = DateTime.parse(timestamp);
+        final windowed = await backend.findAllEvents(
+          clientTimestampStart: instant,
+          clientTimestampEnd: instant.add(const Duration(microseconds: 1)),
+        );
+        expect(windowed.map((e) => e.eventId), contains(eventId));
+      });
+    }
+
+    // Verifies: EVS-DEV-event-record/A
+    test('a record whose client timestamp has no offset, lies outside the '
+        'four-digit years or rolls a field over does not parse, naming the '
+        'field', () {
+      const malformed = <String>[
+        '2026-05-01T12:00:00',
+        '2026-05-01T12:00:00.000',
+        '10000-01-01T00:00:00Z',
+        '-0001-01-01T00:00:00Z',
+        '2026-02-30T00:00:00Z',
+        '2026-05-01T24:00:00Z',
+      ];
+      for (final timestamp in malformed) {
+        final record = <String, Object?>{
+          'event_id': 'unparsed',
+          'aggregate_id': 'agg-unparsed',
+          'aggregate_type': 'note',
+          'entry_type': 'spelled_note',
+          'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
+          'lib_format_version': LibVersion.dataFormat.toJson(),
+          'event_type': 'finalized',
+          'sequence_number': 1,
+          'data': const <String, Object?>{},
+          'metadata': const <String, Object?>{},
+          'initiator': user,
+          'flow_token': null,
+          'client_timestamp': timestamp,
+          'event_hash': 'h',
+          'previous_event_hash': null,
+        };
+        expect(
+          () => StoredEvent.fromMap(record, 1),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('"client_timestamp"'),
+            ),
+          ),
+          reason: timestamp,
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/A
+    test('appendEvent refuses an event whose client timestamp lies outside '
+        'the four-digit years, writing nothing', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final before = await backend.findAllEvents();
+      await expectLater(
+        backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent.synthetic(
+              key: seq,
+              eventId: 'far-future',
+              aggregateId: 'agg-far-future',
+              entryType: 'spelled_note',
+              sequenceNumber: seq,
+              initiator: const UserInitiator('u-spelling'),
+              clientTimestamp: DateTime.utc(10000),
+              eventHash: 'h',
+            ),
+          );
+        }),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"client_timestamp"'),
+          ),
+        ),
+      );
+      expect(
+        (await backend.findAllEvents()).map((e) => e.eventId),
+        before.map((e) => e.eventId),
+      );
+    });
+  });
+}
+
+/// The event [eventId] as every read path of [backend] returns it, keyed by
+/// the path's name. [flowToken] and [initiator] must be the event's own and
+/// the event must have a security context beside it, for `queryAudit`.
+Future<Map<String, StoredEvent?>> _readEveryPath(
+  StorageBackend backend, {
+  required String eventId,
+  required String aggregateId,
+  required String flowToken,
+  required Initiator initiator,
+}) async {
+  StoredEvent? pick(Iterable<StoredEvent> events) {
+    for (final e in events) {
+      if (e.eventId == eventId) return e;
+    }
+    return null;
+  }
+
+  final reads = <String, StoredEvent?>{
+    'findEventsForAggregate': pick(
+      await backend.findEventsForAggregate(aggregateId),
+    ),
+    'findAllEvents': pick(await backend.findAllEvents()),
+    'findEventById': await backend.findEventById(eventId),
+    'readEventsReverse': pick(await backend.readEventsReverse().toList()),
+    'queryAudit': pick(
+      (await backend.queryAudit(flowToken: flowToken)).rows.map((r) => r.event),
+    ),
+    'queryAudit by initiator': pick(
+      (await backend.queryAudit(
+        initiator: initiator,
+        flowToken: flowToken,
+      )).rows.map((r) => r.event),
+    ),
+  };
+  await backend.transaction((txn) async {
+    reads['findEventsForAggregateInTxn'] = pick(
+      await backend.findEventsForAggregateInTxn(txn, aggregateId),
+    );
+    reads['findAllEventsInTxn'] = pick(await backend.findAllEventsInTxn(txn));
+    reads['findEventByIdInTxn'] = await backend.findEventByIdInTxn(
+      txn,
+      eventId,
+    );
+  });
+  return reads;
+}
+
+// -------- recorded_at comparisons --------
+//
+// A security context's `recorded_at` is compared as an instant, so a record
+// a microsecond on either side of a cutoff or a bound falls on the correct
+// side of it, whatever the number of fraction digits its stored form has.
+void _registerRecordedAtComparisonTests(
+  StorageBackend Function() backendOf,
+  bool Function() initializedOf,
+  MutableSecurityContextStore Function(StorageBackend backend) securityStoreOf,
+) {
+  group('recorded_at comparisons', () {
+    final at = DateTime.utc(2026, 6, 1, 12);
+    final justAfter = at.add(const Duration(microseconds: 1));
+    final justBefore = at.subtract(const Duration(microseconds: 1));
+
+    /// Security contexts recorded a microsecond before [at], at [at], and a
+    /// microsecond after it, each beside an event of flow `flow-recorded`.
+    Future<void> seed(StorageBackend backend) async {
+      final times = <String, DateTime>{
+        'rec-before': justBefore,
+        'rec-at': at,
+        'rec-after': justAfter,
+      };
+      for (final entry in times.entries) {
+        await backend.transaction((txn) async {
+          final seq = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            StoredEvent(
+              key: 0,
+              eventId: entry.key,
+              aggregateId: 'agg-recorded',
+              aggregateType: 'note',
+              entryType: 'epistaxis_event',
+              entryTypeVersion: const EntryTypeVersion(1, 0),
+              libFormatVersion: const DataFormatVersion(2, 0),
+              eventType: 'Event',
+              sequenceNumber: seq,
+              data: const <String, dynamic>{},
+              metadata: const <String, dynamic>{},
+              initiator: const UserInitiator('u'),
+              clientTimestamp: entry.value,
+              eventHash: 'hash-${entry.key}',
+              flowToken: 'flow-recorded',
+            ),
+          );
+          await securityStoreOf(backend).writeInTxn(
+            txn,
+            EventSecurityContext(eventId: entry.key, recordedAt: entry.value),
+          );
+        });
+      }
+    }
+
+    Set<String> idsOf(Iterable<EventSecurityContext> rows) => <String>{
+      for (final r in rows) r.eventId,
+    };
+
+    // Verifies: EVS-PRD-portability/C
+    // Verifies: EVS-DEV-postgres-backend/D
+    test(
+      'findOlderThanInTxn and findUnredactedOlderThanInTxn include a '
+      'record at the cutoff and exclude one a microsecond after it',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        await seed(backend);
+        final store = securityStoreOf(backend);
+        await backend.transaction((txn) async {
+          expect(idsOf(await store.findOlderThanInTxn(txn, at)), <String>{
+            'rec-before',
+            'rec-at',
+          });
+          expect(
+            idsOf(await store.findUnredactedOlderThanInTxn(txn, at)),
+            <String>{'rec-before', 'rec-at'},
+          );
+          expect(
+            idsOf(await store.findOlderThanInTxn(txn, justBefore)),
+            <String>{'rec-before'},
+          );
+          expect(
+            idsOf(await store.findUnredactedOlderThanInTxn(txn, justAfter)),
+            <String>{'rec-before', 'rec-at', 'rec-after'},
+          );
+        });
+      },
+    );
+
+    // Verifies: EVS-PRD-portability/C
+    // Verifies: EVS-DEV-postgres-backend/D
+    test('queryAudit from and to include a record at the bound and exclude '
+        'one a microsecond outside it', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await seed(backend);
+      Future<Set<String>> audit({DateTime? from, DateTime? to}) async =>
+          <String>{
+            for (final r in (await backend.queryAudit(
+              flowToken: 'flow-recorded',
+              from: from,
+              to: to,
+            )).rows)
+              r.event.eventId,
+          };
+      expect(await audit(from: at), <String>{'rec-at', 'rec-after'});
+      expect(await audit(from: justAfter), <String>{'rec-after'});
+      expect(await audit(to: at), <String>{'rec-before', 'rec-at'});
+      expect(await audit(to: justBefore), <String>{'rec-before'});
+      expect(await audit(from: at, to: at), <String>{'rec-at'});
     });
   });
 }

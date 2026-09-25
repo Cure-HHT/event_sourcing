@@ -7,7 +7,7 @@
 
 import 'package:event_sourcing/event_sourcing.dart';
 
-import 'envelope.dart';
+import 'package:reaction/src/wire/envelope.dart';
 
 /// JSON codec for the substrate's [DispatchResult]. The substrate type
 /// carries either a typed result + emitted event IDs (on success /
@@ -15,14 +15,14 @@ import 'envelope.dart';
 /// execution denials), or a [Permission] (on authorization denial).
 ///
 /// Wire shapes per variant (all carry a `type` discriminator):
-///   success              + result (jsonable) + emittedEventIds (List<String>)
+///   success              + result (jsonable) + emittedEventIds (`List<String>`)
 ///   unknown_action       + requestedName
 ///   parse_denied         + error (string; lossy — see below)
 ///   validation_denied    + error (string; lossy — see below)
 ///   authorization_denied + permission ({name, scopeClass: nullable})
 ///   execution_failed     + error (string; lossy — see below)
 ///   idempotency_hit      + cachedResult (jsonable) + priorEmittedEventIds
-///                          (List<String>)
+///                          (`List<String>`)
 ///   idempotency_mismatch + actionName + idempotencyKey
 ///                          + cachedRawInputHash + submittedRawInputHash
 ///                          (SHA-256 hex of the canonical-JSON inputs;

@@ -12,8 +12,8 @@
 // Implements: EVS-DEV-postgres-backend/D
 // fills the second SecurityContext
 //   sidecar implementation needed for the Postgres backend to support
-//   the substrate's full action-dispatch path. The `security_context`
-//   DDL is emitted by `ensurePostgresSchema` alongside the events table.
+//   the substrate's full action-dispatch path. `PostgresBackend.provision`
+//   creates the `security_context` table with the rest of the schema.
 
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_backend.dart';
 import 'package:event_sourcing/src/storage/postgres/postgres_txn.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 import 'package:postgres/postgres.dart';
 
 /// Postgres-backed `SecurityContextStore`. Persists one row per event in
@@ -56,6 +57,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     return EventSecurityContext.fromJson(_asJsonMap(result.first[0]));
   }
 
+  @internal
   @override
   Future<void> writeInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
@@ -73,6 +75,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     );
   }
 
+  @internal
   @override
   Future<void> upsertInTxn(Transaction txn, EventSecurityContext row) async {
     final session = _session(txn);
@@ -94,6 +97,7 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
     );
   }
 
+  @internal
   @override
   Future<void> deleteInTxn(Transaction txn, String eventId) async {
     final session = _session(txn);
@@ -166,6 +170,14 @@ class PostgresSecurityContextStore extends MutableSecurityContextStore {
         'txn',
         'PostgresSecurityContextStore requires a PostgresTxn produced by '
             'PostgresBackend.transaction(); received ${txn.runtimeType}',
+      );
+    }
+    // Implements: EVS-DEV-postgres-backend/L
+    // a transaction handle is honoured only by the backend that minted it.
+    if (!identical(txn.owner, backend)) {
+      throw StateError(
+        'PostgresSecurityContextStore: Transaction was produced by a '
+        'different PostgresBackend instance; refusing to apply it.',
       );
     }
     return txn.session;

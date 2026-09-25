@@ -15,17 +15,12 @@ import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:meta/meta.dart' show internal;
 
 /// Change record returned by [AggregateFold.applyEvent] and
-/// [TableFold.applyEvent]. Collected by [ProjectionInterpreter.applyEvent]
-/// and returned to [EventStore.append] for post-commit subscriber notification.
+/// `TableFold.applyEvent`. Collected by `ProjectionInterpreter.applyEvent`
+/// and returned to `EventStore.append` for post-commit subscriber notification.
 class AggregateFoldChange {
-  final String viewName;
-  final String aggregateId;
-  final Map<String, Object?>? newValue; // null = tombstoned
-  final int sequence;
-  final String cause;
-  final bool isTombstone;
   AggregateFoldChange({
     required this.viewName,
     required this.aggregateId,
@@ -34,6 +29,12 @@ class AggregateFoldChange {
     required this.cause,
     required this.isTombstone,
   });
+  final String viewName;
+  final String aggregateId;
+  final Map<String, Object?>? newValue; // null = tombstoned
+  final int sequence;
+  final String cause;
+  final bool isTombstone;
 }
 
 class AggregateFold {
@@ -48,6 +49,7 @@ class AggregateFold {
   /// Returns an [AggregateFoldChange] describing the mutation for subscriber
   /// notification, or `null` when the event was a tombstone for a row that
   /// did not exist (no change occurred).
+  @internal
   static Future<AggregateFoldChange?> applyEvent({
     required Transaction txn,
     required StorageBackend backend,

@@ -1,24 +1,34 @@
 // Verifies: EVS-PRD-destinations/C+D
-// exercises runHistoricalReplay via
-// setStartDate: events matching a destination's filter are enqueued in FIFO
-// order (C), replay runs in the same transaction so batches survive restart
-// without duplication (D).
+// exercises the historical replay a first
+// activation requests: setStartDate records the request and the next fill
+// enqueues every matching event in FIFO order (C), committing the items, the
+// advanced position and the cleared request together so batches survive
+// restart without duplication (D).
 import 'package:event_sourcing/src/destinations/destination_registry.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
+import 'package:event_sourcing/src/storage/source.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
-import 'package:event_sourcing/src/sync/fill_batch.dart';
+import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast.dart' as sembast;
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/native_destination.dart';
+import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
+
+/// The source `buildAuditedRegistryDeps` opens its event store under.
+const Source _source = Source(
+  hopId: 'mobile-device',
+  identifier: 'test-device',
+  softwareVersion: 'test@1.0.0',
+);
 
 /// Fresh in-memory SembastBackend per test.
 Future<SembastBackend> _openBackend(String path) async {
@@ -45,8 +55,8 @@ Future<StoredEvent> _appendEvent(
       aggregateId: aggregateId,
       aggregateType: 'note',
       entryType: entryType,
-      entryTypeVersion: 1,
-      libFormatVersion: 1,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: const DataFormatVersion(2, 0),
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -81,7 +91,7 @@ Future<List<Map<String, Object?>>> _readAllFifoRows(
 }
 
 void main() {
-  group('runHistoricalReplay() via setStartDate', () {
+  group('historical replay requested by setStartDate', () {
     late SembastBackend backend;
     late DestinationRegistry registry;
     var dbCounter = 0;
@@ -90,10 +100,7 @@ void main() {
       dbCounter += 1;
       backend = await _openBackend('historical-replay-$dbCounter.db');
       final deps = await buildAuditedRegistryDeps(backend);
-      registry = DestinationRegistry(
-        backend: backend,
-        eventStore: deps.eventStore,
-      );
+      registry = DestinationRegistry(eventStore: deps.eventStore);
     });
 
     tearDown(() async {
@@ -124,6 +131,9 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
+      // The operation enqueues nothing itself; the next fill replays.
+      expect(await _readAllFifoRows(backend, 'x'), isEmpty);
+      await fillForTest(dest, backend: backend, source: _source);
 
       // batchCapacity = 2 → rows of 2, 2, 1 for 5 events.
       final rows = await _readAllFifoRows(backend, 'x');
@@ -136,8 +146,12 @@ void main() {
       for (final r in rows) {
         expect(r['final_status'], isNull);
       }
-      // fill_cursor advanced to the last replayed event's sequence_number.
-      expect(await backend.readFillCursor('x'), 5);
+      // The fill that performed the replay then advanced the position past
+      // the registry's audit events, which the filter rejects.
+      expect(
+        await backend.readFillCursor('x'),
+        (await backend.findAllEvents()).last.sequenceNumber,
+      );
     });
 
     // No replay runs for a future startDate. Events accumulate in the
@@ -161,6 +175,7 @@ void main() {
         DateTime.now().add(const Duration(days: 1)),
         initiator: _testInit,
       );
+      await fillForTest(dest, backend: backend, source: _source);
 
       expect(await backend.readFifoHead('x'), isNull);
       // fill_cursor untouched — replay did not run.
@@ -195,12 +210,14 @@ void main() {
       final dest = FakeDestination(id: 'x', batchCapacity: 3);
       await registry.addDestination(dest, initiator: _testInit);
 
-      // setStartDate(past): replay enqueues the 3 existing events.
+      // setStartDate(past) requests the replay; the next fill enqueues the
+      // 3 existing events.
       await registry.setStartDate(
         'x',
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
+      await fillForTest(dest, backend: backend, source: _source);
 
       // Replay must land a FIFO row with exactly the 3 seeded events,
       // and advance fill_cursor past them.
@@ -211,7 +228,10 @@ void main() {
         'e2',
         'e3',
       ]);
-      expect(await backend.readFillCursor('x'), 3);
+      expect(
+        await backend.readFillCursor('x'),
+        (await backend.findAllEvents()).last.sequenceNumber,
+      );
 
       // Two more events appended AFTER replay (simulates the concurrent
       // record() serialized after the replay transaction).
@@ -227,7 +247,7 @@ void main() {
       // Live fillBatch picks up the two new events. Passes a now-clock
       // that's past every event's timestamp so the window is open.
       final schedule = await registry.scheduleOf('x');
-      await fillBatch(
+      await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
@@ -309,6 +329,7 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
+      await fillForTest(native, backend: backend, source: _source);
 
       final rows = await _readAllFifoRows(backend, 'native');
       expect(rows, hasLength(1));
@@ -372,6 +393,7 @@ void main() {
         DateTime.now().subtract(const Duration(hours: 1)),
         initiator: _testInit,
       );
+      await fillForTest(auditMirror, backend: backend, source: _source);
 
       final rows = await _readAllFifoRows(backend, 'audit_mirror');
       expect(

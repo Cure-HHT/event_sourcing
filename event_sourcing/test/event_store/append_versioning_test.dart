@@ -1,8 +1,8 @@
 // Verifies: EVS-DEV-append-stamps-registered-version/A
 // substrate stamps
-//   entry_type_version from the registry's registeredVersion on every local
+//   entry_type_version with the registered major and minor on every local
 //   append; also verifies that lib_format_version is stamped from
-//   StoredEvent.currentLibFormatVersion (EVS-PRD-event-log/A: immutable
+//   LibVersion.dataFormat (EVS-PRD-event-log/A: immutable
 //   log record carries all version metadata at write-time).
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +23,7 @@ Future<EventStore> _bootstrap() async {
     entryTypes: <EntryTypeDefinition>[
       const EntryTypeDefinition(
         id: 'demo_note',
-        registeredVersion: 5,
+        registeredVersion: EntryTypeVersion(5, 0),
         name: 'demo_note',
       ),
     ],
@@ -49,10 +49,10 @@ void main() {
       );
       expect(stored, isNotNull);
       // Registry says registeredVersion=5; substrate stamps that, not 1.
-      expect(stored!.entryTypeVersion, 5);
+      expect(stored!.entryTypeVersion, const EntryTypeVersion(5, 0));
     });
 
-    test('lib_format_version stamped from currentLibFormatVersion', () async {
+    test('lib_format_version stamped from the data-format version', () async {
       final es = await _bootstrap();
       final stored = await es.append(
         entryType: 'demo_note',
@@ -63,7 +63,7 @@ void main() {
         initiator: const UserInitiator('u-1'),
       );
       expect(stored, isNotNull);
-      expect(stored!.libFormatVersion, StoredEvent.currentLibFormatVersion);
+      expect(stored!.libFormatVersion, LibVersion.dataFormat);
     });
 
     // Note: the substrate stamps entry_type_version from the registry's

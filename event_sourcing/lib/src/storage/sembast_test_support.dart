@@ -26,6 +26,7 @@ extension SembastBackendTestSupport on SembastBackend {
   // for it via this extension, and the analyzer flags non-test callers
   // through the @visibleForTesting annotation.
   /// Underlying sembast [Database] handle. Visible for tests only.
+  @internal
   @visibleForTesting
   Database get databaseForTesting => _db;
 }

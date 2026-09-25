@@ -12,7 +12,7 @@
 
 import 'package:canonical_json_jcs/canonical_json_jcs.dart';
 
-import '../actions/scope_value.dart';
+import 'package:event_sourcing/src/actions/scope_value.dart';
 
 /// Canonical-JSON encoding of the (user_id, role, scope) tuple. Used as
 /// the aggregate id for `role_assigned` and `role_unassigned` events so

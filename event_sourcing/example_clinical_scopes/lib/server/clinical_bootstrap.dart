@@ -138,32 +138,33 @@ Future<BootstrapResult> bootstrap() async {
   final backend = SembastBackend(database: db);
 
   // --- Entry types ---
-  final entryTypes = EntryTypeRegistry();
-  for (final definition in kSystemEntryTypes) {
-    entryTypes.register(definition);
-  }
-  entryTypes
+  // EventStore.open registers the library's reserved system entry types.
+  final entryTypes = EntryTypeRegistry()
     ..register(
       const EntryTypeDefinition(
         id: 'participant',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Participant',
       ),
     )
     ..register(
-      const EntryTypeDefinition(id: 'site', registeredVersion: 1, name: 'Site'),
+      const EntryTypeDefinition(
+        id: 'site',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'Site',
+      ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'role_permission_grant',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Role-Permission Grant',
       ),
     )
     ..register(
       const EntryTypeDefinition(
         id: 'user_role_scope',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'User-Role-Scope Assignment',
       ),
     )
@@ -171,7 +172,7 @@ Future<BootstrapResult> bootstrap() async {
     ..register(
       const EntryTypeDefinition(
         id: 'action_denial',
-        registeredVersion: 1,
+        registeredVersion: EntryTypeVersion(1, 0),
         name: 'Action Denial',
       ),
     );
