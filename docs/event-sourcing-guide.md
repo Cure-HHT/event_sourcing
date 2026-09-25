@@ -621,9 +621,9 @@ one).
 
 `onBootProgress` is optional (`bootHealth` above stands for the server's
 own health tracker). The open reports its boot to it -- the
-phase (`BootPhase.checks`, `promotion`, `catchUp`, `complete`), the units
-of the phase done and its total, and the time since the open began -- so a
-server can answer a health probe while a long boot runs (see "Start-up and
+phase (its checks, and its completion) and the time since the open
+began -- so a server can answer a health probe while the boot waits for
+its locks (see "Start-up and
 readiness probes" below). The observer runs synchronously inside the boot,
 and on Postgres the boot holds every instance's appends back while it runs,
 so it must only record: its future is not awaited, what it throws is
@@ -1144,14 +1144,20 @@ On Postgres the boot transaction's first statement locks the table
 holding the sequence counter, which every append writes, so the appends
 of a revision serving the same database wait for the boot to commit
 rather than abort it. That wait lasts for the whole boot transaction: its
-reads of the library-version events and the stored view targets, its
-checks, and any promotion and re-derivation it performs. A release whose
-minor bump promotes a large view, or that adds a view over events already
-in the log, pauses the serving revision's appends for as long as the
-promotion or the re-derivation takes, in proportion to the rows promoted
-or the events re-derived -- measure it on a copy of production data and
-roll such a release out when that pause is acceptable. On the web the
-boot holds back the other tabs' writes to the database the same way.
+reads of the library-version events, the latest event and the stored view
+targets, its checks, and its seeding and recording of convergence gaps. The
+boot re-derives no view row: a view that must be promoted to a newer minor,
+or that was added over events already in the log, converges after the open
+returns, in transactions of at most 200 ms, each ordered against the
+appends and paced so the appends keep most of the database's time
+(`spec/dev-view-convergence.md`, `spec/dev-view-convergence-scheduling.md`).
+While a view converges, reads report it as converging, return only its
+settled rows and name the rest as pending; the library's own permission
+checks refuse with a transient error until the permission views they read
+are current (`spec/dev-converging-view-reads.md`). Read the convergence
+state, or await it with a deadline, before you act on a view you need
+whole. On the web the boot holds back the other tabs' writes to the
+database the same way.
 `bootLockWait` (default 60 s; on the web the `SembastBackend`
 constructor's) bounds each wait of a boot: for the boot lock another boot
 or a provisioning holds, and for the lock that holds the writes back. It
@@ -1173,20 +1179,12 @@ taken before the switch, or a roll-forward. Evolve compatibly where you
 can: add an optional field as a minor step, and make a real reshape a
 new entry type that you append instead of the old one.
 
-Never forward a database's own events back to it. Every destination audit
-event (a registration, a date change, a recovery, a deletion, a wedge)
-records the identity of the database that appended it, and a receiver
-refuses an ingested destination audit that names its own database but that
-it does not hold (`IngestReservedEventRefused` with reason
-`namesReceiverDatabase`); an own event it still holds is refused as
-`IngestIdentityMismatch`. So a peer's destination that carries the
-receiver's own events back to it wedges whether or not the receiver's
-database was ever restored from a backup; a restore only changes which of
-the two refusals the peer sees. The fix is that destination's filter:
-leave out the events that originated at the receiver (for example with a
-filter predicate on the event's first provenance entry), then recover the
-wedged head with `tombstoneAndRefill`, which rebuilds the destination's
-pending items under the new filter and loses nothing.
+A database never receives its own events back. A destination delivers only
+the events its own database authored, and every ingest entry point refuses
+an event whose originator entry names the receiving database, held or not.
+A database restored from a backup gets its lost events back through the
+delivery channel's recovery instead (see "Delivery channels, and either end
+going back in time").
 
 ### Schema evolution: entry types and promoters
 
@@ -1229,13 +1227,15 @@ within a major. Make any other change a major step.
 
 Two paths exercise the promoters:
 
-- **Boot-time snapshot promotion.** When `EventStore.open` finds a
+- **Snapshot promotion after the open.** When `EventStore.open` finds a
   view whose stored target version for an entry type is below the
   registered one -- after an upgrade, or after a build of an older
-  minor folded into it -- it re-derives the view's affected rows from
-  the log: it folds their events again, each promoted through the
-  chain to the registered version, and records the new target. The
-  re-derived rows are the rows `rebuildView` produces.
+  minor folded into it -- it records a promotion gap, and view
+  convergence re-derives the view's affected rows from the log after
+  the open returns: it folds their events again, each promoted through
+  the chain to the registered version. The re-derived rows are the rows
+  `rebuildView` produces, and until they are re-derived the view reports
+  itself as converging.
 - **Fold-time event promotion.** When an event of an older version is
   folded -- one ingested from an older peer (see below), or one an
   older build appended -- the substrate runs the promoter chain on
@@ -1255,26 +1255,18 @@ Both paths exist because the schema-evolution discipline says "the log
 is canonical; you can reconstruct any past state by replaying the
 events through the current promoter chain."
 
-A view is folded only by the builds that register it, and the views
-catch up with the log at the next open. Registering a new view, or a
-new entry type in a view's interest, on a database that already holds
-events of that type re-derives the view from the log in the boot
-transaction. A build that stores an event of an entry type without
-folding it into a view another build registers -- the serving revision
-beside a canary that adds a view -- marks that view behind the log, and
-the next open of a build that registers the view re-derives it. Until
-that open the view lacks those events; `rebuildView` fills it at any
-time.
-
-Catch-up follows the entry types a view's interest names. A view whose
-interest names none -- one that selects by aggregate type, as
-`SubscriptionFilter(aggregateTypes: {...})` does, or matches every
-entry type -- is not caught up: registered over events already in the
-log it starts empty, and the events a build that does not register it
-stores stay out of it. The same holds when two builds' interests for one
-view differ only in aggregate types or in `includeSystemEvents`. Run
-`rebuildView` for such a view once no build that lacks it, or holds the
-narrower interest, still serves the database.
+A view is folded only by the builds that register it, and a view behind
+the log converges after the open of a build that registers it. Registering a
+new view, or a new entry type in a view's interest, on a database that
+already holds events of that type records a catch-up gap at the boot. A
+build that stores an event without folding it into a view another build
+registers -- the serving revision beside a canary that adds a view --
+records a catch-up gap for that view, and the build that registers the view
+converges it in the background. A view whose interest names no entry type
+has a whole-view pair, so it converges too. Two builds whose interests for
+one view differ only in aggregate types, in `includeSystemEvents` or in a
+predicate record nothing for each other; run `rebuildView` for such a view
+once no build holding the narrower interest still serves the database.
 
 ### Provenance: where an event has been
 
@@ -1338,6 +1330,12 @@ Activating that machinery — canonicalization rules: per-aggregate-type
 rules saying who is the canonical authority for that aggregate, who can
 approve another deployment's edits, and how conflicts resolve — is the
 multi-source roadmap item (`spec/roadmap/multi-source-editing.md`).
+
+### Delivery channels, and either end going back in time
+
+A destination that serializes natively is a delivery channel between your database and the receiver. The library numbers every delivery on it and links each to the one before, and the receiver accepts only the delivery that follows the last one it accepted. The receiver's acknowledgement carries its record of the channel, and your destination's transport must return it intact: a `SendOk` without it wedges the destination. Your destination must also implement the pull and report operations. After every acquisition of the drain lock, the library checks in with each receiver before it sends. When a receiver was restored to an earlier point, the library delivers again what it lost and records a rewind event. When your database was restored from a backup, the library recovers its own lost events from the receiver -- including those on a channel of an earlier registration of the same destination -- keeping their identity and hash, and records a skip event naming where your history branched; the skip event goes to every receiver. You run nothing by hand for either. The recovery trusts the receiver not to invent events under your database's identity. Two live copies of one database are not supported: when the library detects them on a channel, it stops, and the receiver closes the channel for both until an operator retires one. A destination whose receiver is not this library -- a third-party format built by your transform -- is not a channel: the library cannot tell whether that system lost deliveries, and reconciling with it is your application's job. Serve deliveries, pulls and reports with the library's receiver endpoint, passing it the sender database identities your authentication binds to the caller; do not hand-build batch envelopes or download responses. A reset or reinstalled device is a new sender; if it restores its predecessor's data, use the library's restore operation, which records the succession. A destination forwards only the events its own database authored, never the events it ingested or recovered, so each database delivers its own events to every receiver that needs them.
+
+When a restored database had appended edits before it learned of the restore, an entry edited on both sides of the fork is served as conflicted, with both states, until your application appends a reconciliation carrying the state the user chose. Edits of a conflicted entry are refused meanwhile; drafts are not.
 
 ### Hash chain and ALCOA+
 
@@ -1921,18 +1919,15 @@ deployment pipeline can compare the new build's `LibVersion.dataFormat`
 major with the serving one's before it starts a canary. The lock-session
 requirement covers the guard's locks as well as the drain lock.
 
-A boot that promotes view rows or re-derives a view pauses every
-instance's appends while it runs, and `bootLockWait` must exceed the
-longest boot: "The library records its own version in the log" above has
-the details, and "Start-up and readiness probes" below keeps such a boot
-from being killed. After a restore from a backup, never forward the
-restored database's own events back to it; the same section says what a
-peer that does is refused with and how to recover its destination.
+The boot pauses every instance's appends only for its checks and its
+recording of convergence gaps, and `bootLockWait` must exceed that: "The
+library records its own version in the log" above has the details. Views
+the boot finds behind converge after the open.
 
 #### Start-up and readiness probes
 
-A boot that promotes or re-derives views can take minutes, and a boot
-killed part-way rolls back and pauses the database's appends again when it
+A boot can wait for another instance's boot lock, and a boot killed
+part-way rolls back and pauses the database's appends again when it
 restarts. A server therefore listens before it opens its event store and
 answers two probes, as the Postgres example server does
 (`event_sourcing/example_action_permissions/lib/server/boot_health.dart`):
@@ -1940,17 +1935,17 @@ answers two probes, as the Postgres example server does
 - `/livez` answers 200 as soon as the process listens. Point the
   platform's startup and liveness probes at it, so a long boot is never
   killed.
-- `/health` answers 503 with the boot's phase, the percentage of the phase
-  done and an estimate of the time left, from the reports of
-  `onBootProgress`, and 200 once the event store is open and the server
+- `/health` answers 503 with the boot's phase and the time since the open
+  began, from the reports of `onBootProgress`, and 200 once the event
+  store is open and the server
   serves. Point the readiness probe at it, so no traffic arrives before
   then. Readiness is the return of the bootstrap, not the boot's
   `complete` report, which means only that the store opened.
 
 During `checks`, which also covers the wait for another instance's boot
 lock, no further report arrives, so the endpoint reads elapsed time from
-its own clock. The percentage and the estimate are approximate when a
-phase re-derives both aggregate and table views. The observer only
+its own clock. Report the convergence progress of each view beside it,
+so an operator sees which views are not yet current. The observer only
 records: it runs synchronously inside the boot (its own work delays the
 boot and, on Postgres, every instance's appends), and a call from it into
 an event store while the boot runs throws `StateError`.

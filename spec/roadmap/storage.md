@@ -102,21 +102,24 @@ and the hash chain's per-installation linearity is what makes integrity
 verifiable in the first place — so any partitioning impl is a downstream
 extension under the same trust-boundary discipline, not a free lunch.
 
-## Closing consumer access to internal storage members
+## Keeping the library's storage credentials from application code
 
-**Baseline.** Every `StorageBackend` member that writes, every raw
-handle to the database or to an engine transaction, and every event-store
-operation that appends a reserved system event, is marked `@internal`, so
-a consumer's call to one is an analyzer error (`EVS-PRD-destinations/K`). The guarantee is stated as a precondition of
-the storage trust boundary (`EVS-PRD-destinations/L`): the consumer
-constructs the backend and holds it, on Sembast it also holds the
-`Database` it opened, and a direct write to the library's persisted state
-is invisible to the library.
+**Baseline.** The library opens the storage of the backends it ships from a description the application supplies. No object it hands the application writes the library's persisted state, appends a reserved event or yields a storage handle (`EVS-PRD-storage-barrier`). On Postgres it refuses a database on which a role outside the owner and the declared library roles may write its tables.
 
-**Remaining.** A run-time barrier: for example, a capability-scoped
-backend handle that the library keeps and the consumer never receives,
-exposing to the consumer only the reads, `transaction` and `close`, and a
-Sembast construction path in which the library opens the database itself.
+The library cannot stop these writers (`EVS-PRD-destinations/L`):
+
+- Code in the application's process. The storage description carries the credentials of the library's Postgres roles or the location of its Sembast database, and the process holds them, so such code can open its own connection or handle with them and write the library's tables. Sembast also hands the handle already open on a location to a second open of that location in the same isolate.
+- The database's administrators: the owner, superusers, and holders of `CREATEROLE` or of the admin option over a library role.
+- On the standalone Dart VM, `dart:mirrors` and the service protocol, which can read the library's private state.
+- On the web, script on the page, which can walk a compiled Dart object's fields and open the library's IndexedDB database by name.
+- A build with assertions enabled, whose test seams and test-only constructor are live.
+- A backend the application supplies, which its constructor holds.
+
+**Remaining.** Take the credentials out of the application's reach. Candidates:
+
+- the library runs its storage in an isolate of its own, whose credentials the application's isolates never receive;
+- the library reads its credentials from a source the application does not otherwise read, such as a secret mounted for the library alone;
+- the test seams and the test-only constructor move into a separate test-support library that production builds do not depend on.
 
 ## A browser tab whose database handle cannot commit
 
@@ -134,11 +137,7 @@ transaction on the handle fails at once. A delivery cycle over that
 handle stops, releases the drain lock so another tab drains, and reports
 the exception as `SyncCycle.stopCause`; the application reopens.
 
-**Remaining.** Recover without the application. The defect lies in
-sembast's reload, which updates a handle's revision after a delta reload
-but not after a full one; once it is fixed upstream the bound only
-guards. The library cannot reopen the database itself, because the
-application opens it and hands the library the handle.
+**Remaining.** Recover without the application. The defect lies in sembast's reload, which updates a handle's revision after a delta reload but not after a full one. Once it is fixed upstream, the bound only guards. The library opens the database itself, from the application's description, so it can close the stale handle and open a new one on the same location. What remains is doing so under the tab's generation registration and drain lock, and telling the event store's live subscribers that the store reopened.
 
 ## Verifying the inputs the generation guard and the drain lock trust
 

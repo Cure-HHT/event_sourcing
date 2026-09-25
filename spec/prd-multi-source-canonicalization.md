@@ -37,22 +37,16 @@ F. A non-canonical event SHALL remain visible in the log and in subscriptions; t
 
 **Why is this in the substrate, not the application?** The library is the only component with the necessary visibility — it sees every event, it runs the materializer, it evaluates the rules. Pushing canonicalization to the application would require every consumer to reimplement multi-source resolution, with all the audit-divergence risks that entails. Concentrating it in the substrate keeps the audit story uniform across consumers.
 
+**Branches of one writer and successions are not canonicalization.** Canonicalization decides between the events of different authorities. Two other cases look similar but are not canonicalization. A database restored from a backup can hold two branches of its own history of one aggregate: the library records the fork in a skip event, and its default views serve the aggregate as conflicted until the writer reconciles it (EVS-PRD-branch-conflicts). A reset device that restores its predecessor's data and declares a succession continues the predecessor's authorship: the library's default interpretation treats the predecessor and its successor as one writer of the aggregates the predecessor wrote (EVS-PRD-delivery-channel). Neither case introduces a second authority. Both stay within the default rule's single-source semantics, and the causal parents every event carries record the history each case leaves.
+
 ## Status
 
-This PRD pins the rule grammar (assertions A–F). The substrate retains
-the per-event authority-identity and ordering seams the rules would
-evaluate, but the canonicalization layer itself is unbuilt: no rule
-events are emitted or interpreted, and the single-source-per-aggregate-type
-invariant holds (the `single-source-per-aggregate-type today`
-architectural commitment in CLAUDE.md is in force). Building the
-canonicalization layer — and the scenarios it unlocks
-(`docs/scenarios/supply-chain.md`, `iot-sensor-network.md`,
-`retail-pos.md`, whose cross-authority consolidations single-source
-deployments cannot serve end-to-end) — is recorded in
-`spec/roadmap/multi-source-editing.md`.
+This PRD pins the rule grammar (assertions A–F). The substrate keeps the per-event authority identity, the ordering and the causal parents that the rules would evaluate, and it detects and records the conflicts a restore leaves within one writer's history. The canonicalization layer itself is unbuilt: no rule events are emitted or interpreted, and the single-source-per-aggregate-type invariant holds (the `single-source-per-aggregate-type today` architectural commitment in CLAUDE.md is in force). Building the canonicalization layer, and the scenarios it unlocks (`docs/scenarios/supply-chain.md`, `iot-sensor-network.md`, `retail-pos.md`, whose cross-authority consolidations single-source deployments cannot serve end-to-end), is recorded in `spec/roadmap/multi-source-editing.md`.
 
 ## Changelog
 
+- 2026-09-25 | ccf88a3b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: restore branches of one writer and successions are not canonicalization. Status: causal parents and restore conflicts exist
 - 2026-08-10 | ccf88a3b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 3e087d41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 

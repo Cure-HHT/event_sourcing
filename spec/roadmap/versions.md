@@ -5,35 +5,19 @@ data-format version and the entry-type versions, and the data generation
 the incompatible-generation guard compares
 (`spec/dev-version-compatibility.md`).
 
-## The appending library version on every event
-
-**Baseline.** Every open by a build of another package or data-format
-version appends a library-version event, so the log records which versions
-opened the database and in what order (`EVS-DEV-event-store-open`). While
-two builds of one data-format major share a database -- a canary, a rolling
-deploy, a rollback -- the log does not record which of them appended a
-given event: the latest library-version event before event N names the
-last open, not the appender of N.
-
-**Remaining.** Record the appending library's version on every locally
-appended event, for example as an optional field of the originator
-provenance entry beside the application's software version, covered by the
-hash chain. It changes the `provenance` package, its requirement and codecs,
-and the stored event shape, so it ships with a data-format step.
-
 ## Projection specifications as part of the data generation
 
 **Baseline.** The data generation the guard compares is the data-format
 major and each registered entry type's major. A change to a projection
 specification is not versioned: two builds with different specifications
 for one view do not conflict, and a view is caught up with the log only
-for the entry types its interest names (`spec/roadmap/projections.md`).
+for the entry types its interest names and for a whole-view pair (`spec/roadmap/projections.md`).
 
 **Remaining.** Version each projection specification (a declared version,
 or a digest of its definition) as a component of the data generation, so
 that builds that fold one view differently are refused side by side, the
 same way builds of different entry-type majors are, and a changed
-definition re-derives the view at the next open.
+definition makes the view converge again after the next open.
 
 ## Reading an older data-format major
 

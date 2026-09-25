@@ -33,8 +33,12 @@ E. The library SHALL publish the events, view changes and queue changes of a com
 
 **What "once" does and does not promise.** Assertion E governs the publication step: one committed transaction is published once. It is not an exactly-once delivery promise to a subscriber. A new aggregate-mode subscriber attaches its live listener before it reads its snapshot, so a change committed during that read can reach it both in the snapshot and as a delta; assertion D (at-least-once) governs that case. The library also appends some of its own records outside the publishing path -- the record of a rejected ingest batch, the library-version transition event, and the audits of the boot-time snapshot promotion -- and those are not published live; a subscriber reads them from the log. When a connection fails after the database committed but before the commit was acknowledged, the library cannot know the outcome and publishes nothing; the committed event is again read from the log.
 
+**Materialized state carries its integrity status.** Every row a subscription to materialized state delivers carries the library's `$integrity` object: conflicted or unconflicted, and whether it is possibly incomplete. A conflicted row holds a state per branch and none at the top level. The subscription maps each branch on its own and never hands a conflicted row to the consumer's mapper as a single state (EVS-DEV-branch-conflicts). A consumer that ignores the status therefore cannot mistake an open conflict for a resolved entry. Separately, a subscription on a view that is still converging delivers only settled rows and reports the rest as pending (EVS-DEV-converging-view-reads).
+
 ## Changelog
 
+- 2026-09-25 | 026033a7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: materialized-state subscriptions deliver each row's integrity status, and only settled rows of a converging view
 - 2026-09-23 | 026033a7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of C: publication of a committed transaction waits behind a lower in-flight first sequence of the same store; a failed or re-run transaction releases its place
 - 2026-09-23 | 026033a7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

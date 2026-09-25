@@ -27,6 +27,8 @@ C. The materializer's rules SHALL themselves be events recorded in the log; the 
 
 **Multi-source readiness.** The rules-as-events seam is what admits multi-source canonicalization later (see EVS-PRD-multi-source-canonicalization). The default rule preserves single-source semantics — only events from the aggregate's originating authority fold into state. Multi-source semantics are activated by additional rules expressed over event authorities, recorded as events on the same log; the materializer code path is identical in either case.
 
+**Branch conflicts and determinism.** A view's rows also depend on the skip events and reconciliations the log holds. An aggregate for which both branches of a recorded fork wrote a version is served as conflicted, with each branch's state, and the events a reconciliation supersedes fold into no row (EVS-PRD-branch-conflicts). These rules read only the log, so materialization stays deterministic: two holders of the same events derive the same conflicted, possibly-incomplete and unconflicted rows, and a rebuild derives what the incremental fold did.
+
 ## Future work
 
 Deferred projection primitives (a `TimeBucketProjectionSpec` for
@@ -35,6 +37,8 @@ in `spec/roadmap/projections.md`.
 
 ## Changelog
 
+- 2026-09-25 | 88f90336 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: branch conflicts are part of the deterministic materialization
 - 2026-08-10 | 88f90336 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 02028dcf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 

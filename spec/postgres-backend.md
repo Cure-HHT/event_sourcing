@@ -111,13 +111,11 @@ operates on. The tables are:
   `(view_name TEXT, row_key TEXT)` with `row_data JSONB` payload and an
   `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
   `view_name = ?` ordered by `row_key`.
-- **`view_target_versions`** — the per-view target-version map
-  maintained by `EventStore.open`'s snapshot-promotion pass.
-  One row per (view, entry type); columns `view_name TEXT`,
-  `entry_type TEXT`, `target_major INTEGER`, `target_minor INTEGER`,
-  and `behind BOOLEAN` (the view catch-up mark: true while the view is
-  behind the log for that entry type), keyed by
-  `(view_name, entry_type)`.
+- **`view_target_versions`** — the per-view target-version map. One row per (view, entry type) the view's interest names, and one whole-view row, with entry type `*` and no target, per view whose interest names no entry type. Columns: `view_name TEXT`, `entry_type TEXT`, `target_major INTEGER` and `target_minor INTEGER` (null on a whole-view row); keyed by `(view_name, entry_type)`.
+- **`view_convergence_gaps`** — each pair's convergence gaps, keyed by `(view_name, entry_type, kind)` with `kind TEXT` (`catch_up` or `promotion`). Columns: `token BIGINT`, `from_seq BIGINT`, `whole_log BOOLEAN`, and, for a promotion gap, `version_limited BOOLEAN`, `round_major INTEGER`, `round_minor INTEGER`, `prior_major INTEGER` and `prior_minor INTEGER`.
+- **`view_convergence_aggregates`** — the aggregates a gap or a round names, has planned or holds as re-derived, keyed by `(view_name, entry_type, kind, holder, row_key)` with `holder TEXT` (`gap` or `round`) and a `state TEXT` column (`named`, `planned` or `rederived`).
+- **`view_convergence_rounds`** — one row per view with a round in progress: `view_name TEXT` (the key), `stamp BIGINT`, the gaps and tokens it took (`taken JSONB`), `round_from_seq BIGINT`, `planned_through_seq BIGINT` (null once planning has finished), `table_deleted BOOLEAN`, `refold_through_seq BIGINT`, `units_done BIGINT`, `units_counted BIGINT`, `began_at TIMESTAMPTZ`, `longest_txn_ms INTEGER`, `failures INTEGER` and `last_error TEXT`.
+- **`library_roles`** — the runtime and lock roles the deployment declared at provisioning, one row per role with its kind (`runtime` or `lock`); only the owner writes it, and opening a backend reads it (EVS-DEV-postgres-backend/P).
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
   one queue item: `entry_id` (TEXT UNIQUE), the events it carries
@@ -193,8 +191,8 @@ The library assumes three kinds of database role, and the deployment
 creates them (EVS-DEV-postgres-backend/K):
 
 - **Owner.** Owns the schema and the tables. Provisioning
-  (`PostgresBackend.provision`, or `open(provisionSchema: true)` in
-  development) runs as this role, in its own deployment step; it is the
+  (`PostgresBackend.provision`, which also records the declared runtime and
+  lock roles) runs as this role, in its own deployment step; it is the
   one library operation the runtime role cannot perform. No process serves
   traffic as the owner: the owner can disable or drop the queue table's
   guard and rewrite the log.
@@ -237,15 +235,24 @@ on a table the provisioning added.
 The library is built and tested against PostgreSQL 16; that is the
 supported server major.
 
-Grants cannot separate the library from the application that embeds it
-(they share one process and one connection); they separate the process
-from the schema. The library's delivery guarantees still rest on the
-storage precondition (EVS-PRD-destinations/L). The queue table carries a
-database guard (above) that refuses changes outside the shapes of the
-library's writes; `backend_state`, which holds the fill positions,
-schedules, replay requests, wedge records, halt requests, send fences,
-refill guards, the drain epoch, the drainer's declaration and heartbeat,
-the generation records and the database identity, has none.
+Grants cannot separate the library from the application that embeds it, because the application supplies the credentials of the library's roles in the storage description. They separate the process from the schema, and every other role from the library's tables.
+
+Opening a backend checks the grants and memberships the server records. It refuses a role not declared at provisioning, a runtime or lock role that could change the schema, and a database on which a role outside the owner and the declared roles may write a library table (through a grant, `pg_write_all_data`, or membership in the owner or a declared role) (EVS-DEV-postgres-backend/M+N+P).
+
+What remains is the storage precondition (EVS-PRD-destinations/L): code that connects with the library's credentials, and the database's administrators, meaning the owner, superusers, and roles holding `CREATEROLE` or the admin option over a library role.
+
+The queue table carries a database guard (above) that refuses changes outside the shapes of the library's writes. `backend_state` has no such guard. It holds the fill positions, schedules, replay requests, wedge records, halt requests, send fences, refill guards, the drain epoch, the drainer's declaration and heartbeat, the generation records and the database identity.
+
+### An application's own tables
+
+An application that keeps tables of its own in the same database (EVS-DEV-postgres-backend/O):
+
+- creates a schema of its own, which the library does not provision, and keeps its tables there;
+- connects under an application role of its own, through a pool it opens itself, never through the library's;
+- grants the application role no privilege on the library's tables beyond `SELECT`, and no membership that lets it inherit or set a library role, the owner or `pg_write_all_data`;
+- on a server before Postgres 15, revokes `CREATE` on the library's schema from `PUBLIC`.
+
+The database then refuses the application role every insert, update, delete and truncation of a library table. A grant that would allow one makes the library refuse to open the database.
 
 ### Runtime role privileges
 
@@ -258,6 +265,10 @@ the generation records and the database identity, has none.
 | `backend_state` | SELECT, INSERT, UPDATE, DELETE |
 | `security_context` | SELECT, INSERT, UPDATE, DELETE |
 | `idempotency` | SELECT, INSERT, UPDATE, DELETE |
+| `view_convergence_gaps` | SELECT, INSERT, UPDATE, DELETE |
+| `view_convergence_aggregates` | SELECT, INSERT, UPDATE, DELETE |
+| `view_convergence_rounds` | SELECT, INSERT, UPDATE, DELETE |
+| `library_roles` | SELECT |
 
 Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on
 `backend_state` also covers the table lock a re-run transaction takes and
