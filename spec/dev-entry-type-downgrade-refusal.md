@@ -11,7 +11,7 @@ How the substrate detects and refuses to open a datastore under an `EntryTypeReg
 
 A. The substrate SHALL throw `EntryTypeVersionDowngradeError` from `EventStore.open` when, for any registered entry type, the registered major is below the major of the highest stored target in `view_target_versions` for that entry type, or when the database's recorded generation holds a higher major for that entry type.
 
-B. The downgrade-refusal check SHALL run before any write of the boot transaction, including the library-version event, view-target-versions seeding, and the raised targets and convergence gaps the boot records.
+B. The downgrade-refusal check SHALL run before any write of the boot transaction, including the library-version event, the registry audit event, view-target-versions seeding, and the raised targets and convergence gaps the boot records.
 
 C. The error SHALL carry the offending entry type's id, the registered version, and the highest stored target version, each as a major and a minor number, in a form callers can inspect for diagnostic logging.
 
@@ -25,6 +25,8 @@ C. The error SHALL carry the offending entry type's id, the registered version, 
 
 ## Changelog
 
+- 2026-09-25 | 06ca2ff3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Amend B: the boot's writes include the registry audit event (references: event_store.dart, boot_conformance.dart)
 - 2026-09-25 | 472aa00e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend B: the boot's writes are the library-version event, seeding, and the raised targets and convergence gaps it records
 - 2026-09-23 | ee97c1d7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
@@ -36,4 +38,4 @@ C. The error SHALL carry the offending entry type's id, the registered version, 
 - 2026-08-10 | 3e482dbc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 7b577371 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Entry-type version downgrade refusal* | **Hash**: 472aa00e
+*End* *Entry-type version downgrade refusal* | **Hash**: 06ca2ff3

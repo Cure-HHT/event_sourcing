@@ -17,8 +17,11 @@ privileges. Provisioning records which runtime and lock roles the deployment
 declares. Opening refuses an undeclared role, a runtime or lock role that
 could change the schema, and a database on which a role outside the owner
 and the declared roles may write the library's tables or act as one of those
-roles. An application keeps tables of its own in a schema of its own, under
-a role of its own that holds no write privilege on the library's tables.
+roles. Every transaction the library runs sets its search path, for that
+transaction, to the library's schema, which the storage description names,
+so no other schema decides what its SQL resolves to. An application keeps tables of its
+own in a schema of its own, under a role of its own that holds no write
+privilege on the library's tables.
 
 ## Assertions
 
@@ -64,7 +67,7 @@ I. Provisioning SHALL refuse, writing nothing, when a live instance
    registered on the database requires a schema version below the minimum
    compatible version the provisioning would record.
 
-J. `PostgresBackend` SHALL hold its generation locks, the drain lock and its view convergence leases
+J. `PostgresBackend` SHALL hold its generation locks, the drain lock and its convergence lease
    on one dedicated lock session, verified at open, and again for every replacement, to be a
    single server session reaching the pool's server, database and schema,
    configured with keepalives, no idle-session timeout and bounded connect
@@ -77,17 +80,22 @@ K. The library SHALL document the privileges its Postgres runtime role needs on 
 
 L. `PostgresBackend` and `SembastBackend` SHALL refuse with `StateError` a `Transaction` handle that a different backend instance produced, including one still live within its own `transaction()` body.
 
-M. `PostgresBackend.open` SHALL refuse the database, before it registers a generation and naming the role and the privilege, in any of these cases:
+M. `PostgresBackend.open` SHALL refuse the database, before it registers a generation and naming the role and the privilege, in any of these cases, where a library table is any table in the library's schema:
 
 - a role other than the owner of the library's tables and the declared library roles holds a grant of `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `TRIGGER` or `REFERENCES` on a library table or on a column of one, or of `USAGE` or `UPDATE` on a sequence in the library's schema;
 - such a role can inherit the privileges of, or set its role to, `pg_write_all_data`, the owner of the library's tables or a declared library role;
-- `PUBLIC` holds any privilege on a library table, or `CREATE` on the library's schema.
+- `PUBLIC` holds any privilege on a library table;
+- a role other than the owner of the library's tables, `PUBLIC` included, holds `CREATE` on the library's schema.
 
-N. `PostgresBackend.open` SHALL refuse, before it registers a generation and naming the role and the attribute, when the role its pool or its lock session connects as owns the library's schema or one of its tables, can inherit the privileges of or set its role to the owner of the library's tables, holds `SUPERUSER` or `CREATEROLE` directly or through a role it can inherit or set, or holds `CREATE` on the library's schema.
+N. `PostgresBackend.open` SHALL refuse, before it registers a generation and naming the role and the attribute, when the role its pool or its lock session connects as owns the library's schema or one of its tables, can inherit the privileges of or set its role to the owner of the library's tables, or holds `SUPERUSER` or `CREATEROLE` directly or through a role it can inherit or set.
 
-O. The library SHALL document, beside the runtime role's privileges, a setup for an application's own tables in the library's database that grants the application role no privilege on a library table beyond `SELECT` and no membership through which it can inherit or set a declared library role, the owner of the library's tables or `pg_write_all_data`, and that revokes `CREATE` on the library's schema from `PUBLIC`.
+O. The library SHALL document, beside the runtime role's privileges, a setup for an application's own tables in the library's database that grants the application role no privilege on a library table beyond `SELECT` and no membership through which it can inherit or set a declared library role, the owner of the library's tables or `pg_write_all_data`.
 
 P. `PostgresBackend.provision` SHALL record, in a table of the library's schema that only the owner can write, the runtime and lock roles the deployment declares, and `PostgresBackend.open` SHALL refuse, before it registers a generation, when the role its pool or its lock session connects as is not a declared role of the matching kind.
+
+Q. Every statement the library runs on a Postgres database -- through its pool, on its lock session and for provisioning -- SHALL run inside a transaction whose first statement sets the search path, for that transaction only, to exactly the schema the storage description names, `pg_catalog` and `pg_temp`, in that order.
+
+R. `PostgresBackend.open` SHALL refuse, before it registers a generation and naming both schemas, when the current schema inside a library transaction is not the schema the storage description names.
 
 ## Rationale
 
@@ -129,7 +137,7 @@ in one transaction that leaves the database as it was if any step fails.
 It takes the boot lock the guard takes, so two provisionings never run DDL
 at once (the second finds the schema at its version), and no instance boots
 while the schema changes under it. The deployment creates the schema itself
-(the first schema on the role's search path) and its grants; the library
+(the one the storage description names) and its grants; the library
 creates the tables in it. The schema version pair versions the DDL, not the
 data: a data-format minor that adds DDL adds a step that raises the schema
 version and keeps the minimum, and a data-format major is provisioned only
@@ -148,9 +156,9 @@ deployed stop-then-start.
 
 **Why one dedicated lock session, one operation at a time (assertion J)?**
 Session-level advisory locks belong to the server session that took them.
-The pool hands out connections per transaction, and a transaction-mode
-pooler routes separate statements to different server sessions, so a lock
-taken there lands on a session the library cannot address again. The lock
+The pool's path may run through a transaction-mode pooler, which routes
+separate transactions to different server sessions, so a lock taken there
+lands on a session the library cannot address again. The lock
 session is one connection held for the backend's lifetime, checked at open:
 three separate statements must reach one server session carrying a setting
 the first made, and it must reach the pool's database and schema. Names
@@ -187,31 +195,29 @@ anything; when it cannot (the lock role may not end its own sessions), it
 registers nothing, reports the requirement, and retries. The lock role must
 be allowed to end its own sessions, which the role that owns them is.
 
-**Why a runtime role that owns nothing (assertion K)?** Postgres grants cannot separate the library from the application that embeds it: they share one process and one connection. What grants can separate is the process from the schema. The role that owns the tables can do anything to them, including disabling or dropping the queue table's guard (`EVS-DEV-destination-drain/S`) and rewriting the log, so the process runs as a role that neither owns nor can create them and holds only the table privileges the library's operations use: `SELECT` and `INSERT` on the log, which is therefore append-only for it, and `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the other tables. Provisioning creates the tables and so runs as the owning role, in its own deployment step (assertion G); it is the one library operation the runtime role cannot perform. The separation holds only if the runtime role cannot become the owner or create objects in the schema: it does not own the schema, is not a member of the owning role, holds neither `SUPERUSER` nor `CREATEROLE` nor membership in any role that carries them, and the schema grants `CREATE` to no role but the owner (a server's default `public` schema grants it to every role on some Postgres majors, so the deployment revokes it). The grants are a separate step from provisioning, which commits its DDL on its own, so a deployment provisions, then grants, and only then starts the instances of the new build. Reporting uses a read-only role holding `SELECT`, and no person holds write access. This split is a deployment concern: the library states the privileges once, as `postgresRuntimeRoleGrants` and in `spec/postgres-backend.md`, and every library operation other than provisioning is exercised under exactly those privileges, in a schema set up as the documentation describes. The lock session runs as the runtime role unless the deployment gives it another; for another role, `USAGE` on the schema and the runtime role's privileges on `backend_state` suffice, with the right to end its own sessions (assertion J), which it has as their owner.
+**Why a runtime role that owns nothing (assertion K)?** Postgres grants cannot separate the library from the application that embeds it: they share one process and one connection. What grants can separate is the process from the schema. The role that owns the tables can do anything to them, including disabling or dropping the queue table's guard (`EVS-DEV-destination-drain/S`) and rewriting the log, so the process runs as a role that neither owns nor can create them and holds only the table privileges the library's operations use: `SELECT` and `INSERT` on the log, which is therefore append-only for it, and `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the other tables. Provisioning creates the tables and so runs as the owning role, in its own deployment step (assertion G); it is the one library operation the runtime role cannot perform. The separation holds only while the runtime role cannot become the owner or create objects in the schema (assertions M and N). The grants are a separate step from provisioning, which commits its DDL on its own, so a deployment provisions, then grants, and only then starts the instances of the new build. Reporting uses a read-only role holding `SELECT`, and no person holds write access. This split is a deployment concern: the library states the privileges once, as `postgresRuntimeRoleGrants` and in `spec/postgres-backend.md`, and every library operation other than provisioning is exercised under exactly those privileges, in a schema set up as the documentation describes. The lock session runs as the runtime role unless the deployment gives it another; for another role, `USAGE` on the schema and the runtime role's privileges on `backend_state` suffice, with the right to end its own sessions (assertion J), which it has as their owner.
 
 **Why refuse a foreign write grant at open (assertion M)?** The application process holds the credentials of the roles it gives the library, so grants cannot keep that process out of the library's tables, but they can keep every other role out, and the refusal makes the deployment's grants a checked property instead of a documented one.
 
-The check reads what the server records: explicit table, column and sequence privileges, and memberships. It also reads membership in `pg_write_all_data`, the predefined role that writes every table without a table grant, and membership in the owner of the library's tables, which carries every privilege ownership does. `SELECT` is not a write and is admitted, so reporting keeps its read-only role. `REFERENCES` and `TRIGGER` are refused because a foreign key onto a library table can block the library's own deletes and updates, and a trigger can change or refuse its writes. `USAGE` or `UPDATE` on a sequence lets a role move it.
+The check reads what the server records: explicit table, column and sequence privileges, and memberships. It also reads membership in `pg_write_all_data`, the predefined role that writes every table without a table grant, and membership in the owner of the library's tables, which carries every privilege ownership does. `SELECT` is not a write and is admitted, so reporting keeps its read-only role. `CREATE` on the library's schema is refused for every role but the owner, `PUBLIC` included (which holds it on the `public` schema before Postgres 15): a role that can create objects there can create a table, a function or an operator that the library's SQL resolves to, and so run code as the library's role. A library table is any table in the library's schema, so the check needs no list of tables, and a table added by a later schema version is covered without a change to it. `REFERENCES` and `TRIGGER` are refused because a foreign key onto a library table can block the library's own deletes and updates, and a trigger can change or refuse its writes. `USAGE` or `UPDATE` on a sequence lets a role move it.
 
 A membership held only with the admin option grants neither inheritance nor set. On Postgres 16 a role that creates another receives that membership, and it is an administrative right like `CREATEROLE`. Neither can be refused without refusing every hosted database, because a hosting platform's administrative role holds them. Their holders are therefore named, beside the owner and superusers, as the database's administrators that the storage precondition excludes (EVS-PRD-destinations/L).
 
 The check runs at open. A grant made while an instance runs is seen at the next open of any instance, which is why deployments grant only in their deployment step.
 
-**Why refuse a runtime role that can change the schema (assertion N)?** The separation of assertion K holds only while the runtime and lock roles cannot become the owner or create objects in the schema. The refusal checks:
+**Why refuse a runtime role that can change the schema (assertion N)?** The separation of assertion K holds only while the runtime and lock roles cannot become the owner: they own nothing in the schema, are not members of the owning role, and hold `SUPERUSER` or `CREATEROLE` neither directly nor through a membership (a hosting platform's administrative role included). `CREATE` on the schema is refused for them with every other role but the owner (assertion M). Development and tests provision as the owner and open as a declared runtime role, as a deployment does.
 
-- ownership of the schema and its tables;
-- membership in the owning role;
-- the `SUPERUSER` and `CREATEROLE` attributes, held directly or through an inheritable or settable membership (this includes a hosting platform's administrative role, so a role created as a platform identity carrying such a membership is refused);
-- `CREATE` on the schema.
-
-Before Postgres 15, `PUBLIC` holds `CREATE` on the `public` schema, so a deployment on such a server revokes it (assertion O) or provisions the library into a schema of its own. Development and tests provision as the owner and open as a declared runtime role, as a deployment does.
+**Why a search path set in every transaction (assertions Q and R)?** The library's SQL names tables, functions and operators without a schema, so the search path in effect decides what they resolve to. Under the server's default (`"$user", public`), any role holding `CREATE` on the database, an application role included, can create a schema named after the runtime role and fill it with tables of the library's names; the library would then open and write those, and its grant checks would read them. With the path set to the library's schema, `pg_catalog` and `pg_temp`, no other schema takes part in resolution, whoever may create one, and the library's schema admits objects from its owner alone (assertion M). The library's schema comes first because provisioning's DDL creates the tables there; `pg_temp` comes last so a temporary table cannot shadow a library table. A setting made for the session would reach only the server session it ran on: behind a transaction-mode pooler the pool's next transaction runs on another server session, under that session's setting. A setting made as the first statement of each transaction, for that transaction only, travels with the transaction to whatever server session runs it, so the pool's path needs no session guarantee, and the lock session's statements are covered the same way. The first statement calls `pg_catalog.set_config` with local scope, so it resolves before any path is set, and the schema name reaches it only as a bound value, quoted as an identifier, never as SQL text. Setting one value is simpler to enforce and test than qualifying every identifier, and it also covers functions and operators. The server skips a schema in the path that does not exist, so a description naming a missing schema would resolve nothing of the library's; open reads the current schema back inside a library transaction and refuses a mismatch (assertion R).
 
 **Why declared roles (assertion P)?** Instances of one deployment may connect under different roles: a canary or a blue-green deployment beside the serving instances, a credential rotated by swapping roles, or a separate delivery process. If the admitted set were the opener's own roles, each such instance would find the other's grants foreign and refuse. Provisioning, run as the owner, records the roles the deployment declares; every instance admits them all and refuses a role that is not declared. A role rotation declares the new role, deploys it, and retires the old role with a second provisioning once no instance uses it.
 
-**Why a documented setup for an application's own tables (assertion O)?** An application often keeps state of its own beside the library's, an idempotency store or a job table for instance. Opening its own connection under a role of its own, in a schema of its own, gives it that without any access to the library's tables: the database refuses the application role's writes to them whatever the application's code does, and assertion M refuses a database whose grants would let it write them. The application role reads the library's tables only if the deployment grants it `SELECT`. The library's idempotency table stays in the library's schema. Only the idempotency store the library builds over its own storage (EVS-DEV-storage-capability) writes it.
+**Why a documented setup for an application's own tables (assertion O)?** An application often keeps state of its own beside the library's, an idempotency store or a job table for instance. A connection of its own, under a role of its own, in a schema of its own, gives it that while the database refuses that role every write to the library's tables, and assertion M refuses a database whose grants would allow one. The library's idempotency table stays in the library's schema, written only by the idempotency store the library builds over its own storage (EVS-DEV-storage-capability).
 
 ## Changelog
 
+- 2026-09-25 | 686483cf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | a91ecdf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the lock session carries the one convergence lease of the database. Add Q, R: every statement runs inside a transaction whose first statement sets the search path, for that transaction only, to the schema the storage description names, then pg_catalog and pg_temp, and open refuses when the current schema inside a library transaction is another. Amend M: a library table is any table in the library's schema, and CREATE on the schema is refused for every role but the owner, PUBLIC included. N no longer lists CREATE on the schema (M covers it); O no longer lists the PUBLIC revoke
 - 2026-09-25 | c87576f9 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the lock session also carries the view convergence leases. Add M-P: open refuses a database on which a role outside the owner and the declared library roles may write the library's tables or act as one of those roles, and a runtime or lock role that can change the schema; the documented setup for an application's own tables; provisioning records the declared library roles and open refuses an undeclared role
 - 2026-09-24 | 793c6039 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -225,4 +231,4 @@ Before Postgres 15, `PUBLIC` holds `CREATE` on the `public` schema, so a deploym
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: c87576f9
+*End* *Postgres backend reference impl* | **Hash**: 686483cf

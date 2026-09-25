@@ -11,7 +11,7 @@ the incompatible-generation guard compares
 major and each registered entry type's major. A change to a projection
 specification is not versioned: two builds with different specifications
 for one view do not conflict, and a view is caught up with the log only
-for the entry types its interest names and for a whole-view pair (`spec/roadmap/projections.md`).
+for the entry types its interest names and for a whole-view row (`spec/roadmap/projections.md`).
 
 **Remaining.** Version each projection specification (a declared version,
 or a digest of its definition) as a component of the data generation, so

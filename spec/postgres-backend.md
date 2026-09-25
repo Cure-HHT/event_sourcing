@@ -112,16 +112,18 @@ operates on. The tables are:
   `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
   `view_name = ?` ordered by `row_key`.
 - **`view_target_versions`** — the per-view target-version map. One row per (view, entry type) the view's interest names, and one whole-view row, with entry type `*` and no target, per view whose interest names no entry type. Columns: `view_name TEXT`, `entry_type TEXT`, `target_major INTEGER` and `target_minor INTEGER` (null on a whole-view row); keyed by `(view_name, entry_type)`.
-- **`view_convergence_gaps`** — each pair's convergence gaps, keyed by `(view_name, entry_type, kind)` with `kind TEXT` (`catch_up` or `promotion`). Columns: `token BIGINT`, `from_seq BIGINT`, `whole_log BOOLEAN`, and, for a promotion gap, `version_limited BOOLEAN`, `round_major INTEGER`, `round_minor INTEGER`, `prior_major INTEGER` and `prior_minor INTEGER`.
-- **`view_convergence_aggregates`** — the aggregates a gap or a round names, has planned or holds as re-derived, keyed by `(view_name, entry_type, kind, holder, row_key)` with `holder TEXT` (`gap` or `round`) and a `state TEXT` column (`named`, `planned` or `rederived`).
-- **`view_convergence_rounds`** — one row per view with a round in progress: `view_name TEXT` (the key), `stamp BIGINT`, the gaps and tokens it took (`taken JSONB`), `round_from_seq BIGINT`, `planned_through_seq BIGINT` (null once planning has finished), `table_deleted BOOLEAN`, `refold_through_seq BIGINT`, `units_done BIGINT`, `units_counted BIGINT`, `began_at TIMESTAMPTZ`, `longest_txn_ms INTEGER`, `failures INTEGER` and `last_error TEXT`.
+- **`view_convergence_gaps`** — the convergence gaps: at most one catch-up gap per view and one promotion gap per (view, entry type). Keyed by `(view_name, entry_type, kind)`, with `kind TEXT` (`catch_up` or `promotion`) and `entry_type` set to `*` on a catch-up gap. Columns: `position BIGINT` (the scan position of a whole-log gap on an aggregate view, or the refold position on a table view), `whole_log BOOLEAN`, and, on a promotion gap, `round_major INTEGER`, `round_minor INTEGER`, `prior_major INTEGER` and `prior_minor INTEGER`.
+- **`view_convergence_aggregates`** — the aggregates a gap names or holds as re-derived, keyed by `(view_name, entry_type, kind, row_key)` with `state TEXT` (`named` or `rederived`).
 - **`library_roles`** — the runtime and lock roles the deployment declared at provisioning, one row per role with its kind (`runtime` or `lock`); only the owner writes it, and opening a backend reads it (EVS-DEV-postgres-backend/P).
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
   one queue item: `entry_id` (TEXT UNIQUE), the events it carries
   (`event_ids` JSONB, `event_id_first_seq`, `event_id_last_seq`), how it
   was built (`wire_format`, `transform_version`, `wire_payload`,
-  `envelope_metadata`), `enqueued_at`, and its delivery bookkeeping:
+  `envelope_metadata`), `enqueued_at`, its place on its delivery channel
+  (`delivery_number` and `delivery_hash`), the withheld-parent record of
+  the events it carries (`parent_withheld`, a JSONB array of booleans in
+  the order of `event_ids`), and its delivery bookkeeping:
   `attempts` (a JSONB array of recorded attempts), `final_status` (null
   while pending, then `sent`, `wedged` or `tombstoned`) and `sent_at`.
   The table is guarded (EVS-DEV-destination-drain/S): a CHECK
@@ -148,8 +150,9 @@ operates on. The tables are:
   database's generation record and the records that map the generation
   guard's lock keys back to their components, the drain epoch
   (`drain_epoch`), the drainer's declaration (`drainer_declaration`) and
-  heartbeat (`drain_heartbeat`), and each destination's refill guard
-  (`refill_guard_<destination>`)). Columns
+  heartbeat (`drain_heartbeat`), each destination's refill guard
+  (`refill_guard_<destination>`), and every other record the library keeps
+  beside its log that no table above holds). Columns
   `key TEXT PRIMARY KEY`, `value JSONB`.
 - **`security_context`** — the persisted role/permission/scope snapshot
   the substrate maintains for closed-under-events authorization
@@ -219,10 +222,22 @@ become the owner or create objects in the schema. Each of them:
   membership, and check its attributes and memberships on the platform's
   server;
 - holds no `CREATE` on the schema: the schema grants `CREATE` to no role
-  but the owner. A server's default `public` schema grants `CREATE` to
-  every role on Postgres majors before 15, so a deployment on `public`
-  runs `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner
-  creates grants nothing to `PUBLIC`.
+  but the owner, and `open` refuses it otherwise. A server's default
+  `public` schema grants `CREATE` to every role on Postgres majors before
+  15, so a deployment on `public` runs
+  `REVOKE CREATE ON SCHEMA public FROM PUBLIC`; a schema the owner creates
+  grants nothing to `PUBLIC`.
+
+The library's schema is the one the storage description names. Every
+statement the library runs, provisioning's included, runs in a transaction
+whose first statement sets the search path, for that transaction only, to
+exactly that schema, `pg_catalog` and `pg_temp`, and `open` refuses when the
+current schema is another (EVS-DEV-postgres-backend/Q+R). No schema but the
+library's decides what its SQL resolves to, so a role that may create
+schemas in the database (an application role, for instance) cannot put
+tables of the library's names in front of it. Because the setting travels
+with each transaction, the pool's connections may run through a
+transaction-mode pooler; only the lock session must be one server session.
 
 The order of a deployment is: create the schema for the owner and grant
 the runtime and lock roles `USAGE` on it; provision as the owner; grant
@@ -237,7 +252,7 @@ supported server major.
 
 Grants cannot separate the library from the application that embeds it, because the application supplies the credentials of the library's roles in the storage description. They separate the process from the schema, and every other role from the library's tables.
 
-Opening a backend checks the grants and memberships the server records. It refuses a role not declared at provisioning, a runtime or lock role that could change the schema, and a database on which a role outside the owner and the declared roles may write a library table (through a grant, `pg_write_all_data`, or membership in the owner or a declared role) (EVS-DEV-postgres-backend/M+N+P).
+Opening a backend checks the grants and memberships the server records. It refuses a role not declared at provisioning, a runtime or lock role that could change the schema, a role other than the owner holding `CREATE` on the library's schema, and a database on which a role outside the owner and the declared roles may write a table of the library's schema (through a grant, `pg_write_all_data`, or membership in the owner or a declared role) (EVS-DEV-postgres-backend/M+N+P).
 
 What remains is the storage precondition (EVS-PRD-destinations/L): code that connects with the library's credentials, and the database's administrators, meaning the owner, superusers, and roles holding `CREATEROLE` or the admin option over a library role.
 
@@ -250,7 +265,7 @@ An application that keeps tables of its own in the same database (EVS-DEV-postgr
 - creates a schema of its own, which the library does not provision, and keeps its tables there;
 - connects under an application role of its own, through a pool it opens itself, never through the library's;
 - grants the application role no privilege on the library's tables beyond `SELECT`, and no membership that lets it inherit or set a library role, the owner or `pg_write_all_data`;
-- on a server before Postgres 15, revokes `CREATE` on the library's schema from `PUBLIC`.
+- on a server before Postgres 15 with the library in the `public` schema, revokes `CREATE` on it from `PUBLIC`, which the library otherwise refuses.
 
 The database then refuses the application role every insert, update, delete and truncation of a library table. A grant that would allow one makes the library refuse to open the database.
 
@@ -267,7 +282,6 @@ The database then refuses the application role every insert, update, delete and 
 | `idempotency` | SELECT, INSERT, UPDATE, DELETE |
 | `view_convergence_gaps` | SELECT, INSERT, UPDATE, DELETE |
 | `view_convergence_aggregates` | SELECT, INSERT, UPDATE, DELETE |
-| `view_convergence_rounds` | SELECT, INSERT, UPDATE, DELETE |
 | `library_roles` | SELECT |
 
 Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on

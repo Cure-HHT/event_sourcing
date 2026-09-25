@@ -77,3 +77,23 @@ the drainer appends when it honours it, and recovers. It cannot be one
 transaction, because it waits out any send in flight; it needs a bound on
 the wait, and a defined outcome when the destination has no head (the
 request stays open) or another operator acts in between.
+
+## Storing a large recovery in resumable chunks
+
+**Baseline (what exists).** A sender-behind resume stores its skip event
+and every event it recovers in one transaction, and a succession stores
+the succession event and every restored event in one transaction
+(`EVS-DEV-delivery-resume`, `EVS-DEV-sender-succession`). Every stored
+event extends the database's storage chain, so the sender's appends
+wait while that transaction commits, for as long as the recovery is
+large.
+
+**Remaining.** Store the skip (or succession) event first, recording
+the whole range, and the recovered events after it in bounded chunks,
+with a persisted record of the recovery in progress that the next
+check-in continues after a crash, so that no recovered event is stored
+without its skip. While the record stands, an eligible append on an
+aggregate the recovery has not finished storing would name a parent the
+recovered branch supersedes, so it needs a transient refusal, and the
+skip's conflict set must be computed from the checked pull rather than
+from events the sender holds.

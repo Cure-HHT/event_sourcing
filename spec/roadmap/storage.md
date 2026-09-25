@@ -121,6 +121,12 @@ The library cannot stop these writers (`EVS-PRD-destinations/L`):
 - the library reads its credentials from a source the application does not otherwise read, such as a secret mounted for the library alone;
 - the test seams and the test-only constructor move into a separate test-support library that production builds do not depend on.
 
+## Encryption at rest for Sembast databases
+
+**Baseline.** The Sembast storage description names a location and takes no code (`EVS-DEV-storage-capability/A`). A Sembast database is as confidential as the platform keeps the files or the origin's IndexedDB: the application relies on the operating system's or the browser's storage encryption.
+
+**Remaining.** Encrypt the records the library stores. A sembast codec does this, but it is code in the persistence path that sees and can alter every record, so accepting one from the application widens the storage trust input and needs architectural review. Candidates: a codec the library ships, keyed by a secret the description carries, so no application code enters the persistence path; or an application-supplied codec named in the trust boundaries beside the backend.
+
 ## A browser tab whose database handle cannot commit
 
 **Baseline (what exists).** sembast_web compacts a database when a

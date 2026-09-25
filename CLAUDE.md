@@ -153,7 +153,7 @@ These commitments shape the library's design.
   DataInvalidation targets software. Multi-editor work likely subsumes
   DataInvalidation.
 - **Reactive substrate intent.** Ingest-always + filters + at-least-
-  once delivery + per-aggregate-per-Source ordering. This is realized by
+  once delivery + per-aggregate-per-origin ordering. This is realized by
   a unified `subscribe<T>(filter, mode)` primitive (modes:
   `Events`, `AggregateMode<T>`; `View<T>` deferred) and the declarative
   projection interpreter described above. Cross-process resume /
@@ -179,15 +179,25 @@ the substrate's hard guarantees. They are tamper-evident and absolute:
 
 - The event at sequence N has hash H
 - The hash chain from genesis to N is intact: each database's storage chain
-  has no break, and each database's origin chain forks only where one of its
-  skip events lists the fork's successors
+  has no break, and each database's origin chain forks, or reuses an origin
+  position, only within the range of positions one of its skip events
+  records, or where a security finding records the anomaly
+- A security finding records that a named database detected a named
+  integrity anomaly, with the hashes, positions and records it compared
 - The event names, as its causal parents, the versions of its aggregate the
   library stamped for it
-- The provenance entries say the event passed through hops A → B → C
-  with attribution to initiators I₁, I₂, I₃ at times t₁, t₂, t₃
+- The provenance entries say which database authored the event and
+  which databases stored it after (a receiver, and the author again when
+  it recovers its own event, or a successor that restores it), with
+  attribution to initiators and times
 - The append of this event was atomic with its row writes inside the
   same transaction
-- Per-aggregate-per-Source order is preserved
+- The events of one aggregate that one database wrote on one branch of
+  its origin chain are stored in the order it wrote them whenever they
+  reach the log through one path (its own appends, one delivery channel,
+  one recovery, one restore)
+- Each delivery a receiver accepted on a channel follows the one before
+  it, by number and hash link
 
 ALCOA+ alignment lives entirely at this layer. The cryptographic and
 structural facts are what regulators can be defended against.
@@ -211,10 +221,13 @@ They are useful defaults, not unique truths:
 - A version follows the latest eligible version of its aggregate, and an
   annotation is about the current one (the substrate could equally track
   causality per field, or not at all)
-- An aggregate for which both sides of a recorded branch point wrote a
+- An aggregate for which both branches of a recorded fork wrote a
   version is conflicted, with both branches' states, until a reconciliation
   closes it, and the reconciliation's state supersedes both branches (the
   substrate could equally serve the latest branch, or merge the two)
+- An aggregate a held security finding names is folded as usual and marked
+  as having an outstanding finding (the substrate could equally withhold
+  it, or ignore the finding)
 
 The library bundles these as primitives because most consumers want
 them, but they don't carry the same epistemic weight as Layer 1.
@@ -294,10 +307,9 @@ The currently-trusted inputs are:
   its own operations. That state is the destination queues, the views
   the library materializes, the records it keeps beside them (fill
   positions, schedules, replay requests, wedge records, halt requests,
-  send fences, refill guards, the sender channel records, succession
-  delivery requests, the working copies of a receiver's channel records
-  and closures, the chain index, the per-aggregate causal working
-  copies, the registry check record, the database identity, the
+  send fences, refill guards, the sender channel records, the chain
+  index, the per-aggregate causal working copies (latest eligible version and open
+  conflict records), the registry check record, the database identity, the
   generation records, the declared library roles, the view convergence
   records, the fencing epoch and the declared configuration), and the
   security context it stores beside each event.
@@ -310,13 +322,18 @@ The currently-trusted inputs are:
   a safety net and adds no trusted input.
   The library opens the storage of the backends it ships from a
   description the application supplies and keeps the writing access. No
-  object it hands the application writes its persisted state, appends a
-  reserved event, publishes, or yields a database, pool, session or
-  engine transaction; Dart's library privacy enforces this at run time
-  (`EVS-PRD-storage-barrier`). On Postgres it refuses to open a database
-  on which a role outside the owner and the declared library roles may
-  write its tables or act as one of those roles
-  (`EVS-DEV-postgres-backend/M`).
+  object it hands the application writes its persisted state or appends
+  a reserved event outside the library's closed lists of public
+  operations, publishes, or yields a database, pool, session or engine
+  transaction; Dart's library privacy enforces this at run time
+  (`EVS-PRD-storage-barrier`). On Postgres every transaction the library
+  runs sets its search path, for that transaction only, to the schema
+  the description names (so the pool may run through a transaction-mode
+  pooler; only the lock session must be one server session), and the
+  library refuses to open a database on which a role outside the owner
+  and the declared library roles may write its tables, create objects
+  in its schema, or act as one of those roles
+  (`EVS-DEV-postgres-backend/M`, `EVS-DEV-postgres-backend/Q`).
   A backend the application constructs and supplies is held by the
   application. Its internal members are guarded by the analyzer alone,
   and a backend in another package keeps that guard only by marking its
@@ -327,13 +344,11 @@ The currently-trusted inputs are:
   storage description the application supplies. They are trusted to be
   used by no code but the library: code that uses them opens its own
   connection or handle, which the run-time barrier does not reach
-  (`EVS-PRD-destinations/L`). When the description carries a Sembast
-  codec, the codec encodes and decodes every record the library stores
-  and is trusted like the backend. This is an unaudited deployment input
+  (`EVS-PRD-destinations/L`). This is an unaudited deployment input
   with no pluggable interface (`spec/roadmap/storage.md`).
 - **Deployment-supplied Postgres lock-session path.** The connection a
   `PostgresBackend` holds its generation locks, the drain lock and its
-  view convergence leases on
+  convergence lease on
   (`lockUrl`, or the pool's URL) is trusted to be one server session reaching the pool's
   server, database and schema (a direct connection or a session-mode
   proxy that resets sessions, never a transaction-mode pooler), to carry
@@ -342,9 +357,9 @@ The currently-trusted inputs are:
   when it replaces a lost lock session (one server session, the same
   database and schema, and a lock the pool takes visible to the lock
   session, so the same server) and documents the rest
-  (`EVS-DEV-postgres-backend/J`). No guarantee rests on a convergence
-  lease: round stamps and gap tokens decide what a convergence
-  transaction may write. An unaudited boundary with no
+  (`EVS-DEV-postgres-backend/J`). No guarantee rests on the convergence
+  lease: the database orders every convergence transaction against every
+  writer of the convergence gaps, so a lost lease costs duplicated work. An unaudited boundary with no
   pluggable interface (`spec/roadmap/storage.md`).
 - **The browser's lock manager (Web Locks).** On the web the
   incompatible-generation guard and the drain lock run on
@@ -396,16 +411,25 @@ The currently-trusted inputs are:
   receiver behind it are also trusted to carry the receiver's channel
   record back on every acknowledgement and refusal, and to serve the
   check-in, recovery and restore pulls (`EVS-PRD-delivery-channel`). The
-  sender checks that a served delivery chains from its own retained
-  deliveries (or from delivery 1), recomputes to its hash and carries
+  sender checks that a served delivery chains from its own record of the
+  channel (or from delivery 1, in a succession), recomputes to its hash and carries
   events that verify, and records every adjustment a record causes in the
   log; those checks prove consistency, not authorship, because the hashes
   are unkeyed and nothing is signed. The receiver is therefore trusted
   not to fabricate events carrying the sender's identity (or a
   predecessor's, in a succession), and to serve every delivery it
   accepted: a recovery and a restore store what it serves as that
-  identity's history. A record the receiver cannot serve wedges the
-  channel rather than being skipped.
+  identity's history. A served delivery that fails a check, or that the
+  receiver cannot serve, is recorded as a security finding and the
+  served data is stored as served; a record no automatic path explains
+  re-anchors the channel with a finding at each end; no channel stops
+  for an integrity reason (`EVS-DEV-security-findings`). Each database
+  identity is assumed to have one live copy at a time: a second live
+  copy (a cloned file, or a restored backup run beside the original) is
+  detected, not prevented. Both copies keep delivering, and the
+  anomalies where their events meet (a copy recovering a skip event of
+  its own identity it never appended, forks and reused positions no
+  skip covers) are recorded as findings in the logs that meet them.
   The conflict records a skip event carries, and the branch states the
   default views show for them, are computed from the events a recovery's
   receiver served, so they rest on the same trust: a receiver that
@@ -448,12 +472,16 @@ The currently-trusted inputs are:
   `TrustingAuthValidator` (dev/test); production deployments supply
   their own validator or middleware that closes the
   Principal-on-faith gap for that deployment.
-  The library's receiver endpoint (`EVS-DEV-delivery-channel/M`) takes
+  The library's receiver endpoint (`EVS-DEV-delivery-receiver/N`) takes
   from that flow the set of sender database identities a caller may
-  deliver for, read and report for; the flow is trusted to bind each
-  caller to the right identities, since that binding decides which
-  channels a caller reaches, which channels it can close, and which
-  successions a receiver accepts (`EVS-DEV-sender-succession/C`).
+  deliver for and read; every operation that accepts a native delivery
+  takes it, the event store's batch ingest included. The flow is trusted
+  to bind each caller to the right identities, since that binding decides
+  which channels a caller reaches and which successions a receiver
+  accepts (`EVS-DEV-sender-succession/F`); every receiver a successor
+  delivers to must bind the successor's caller to its predecessor too,
+  or it refuses the succession, an authentication refusal on which the
+  successor's delivery waits.
 
 Everything else — projection rules (`ProjectionSpec`), promoter rules
 (`PromoterSpec`), policy logic (in-lib in 0.x, see Architectural
