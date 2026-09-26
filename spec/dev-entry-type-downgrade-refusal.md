@@ -5,26 +5,26 @@
 
 ## Purpose
 
-How the substrate detects and refuses to open a datastore under an `EntryTypeRegistry` whose registered major for any entry type is lower than the major of the highest version recorded in the corresponding `view_target_versions` rows. Versions are a major and a minor number (see EVS-DEV-version-compatibility); a higher stored minor of the registered major is not a downgrade. The refusal protects already-promoted views from regressing to a stale schema and runs before any boot-time mutation (see EVS-DEV-event-store-open).
+How the substrate refuses to open a datastore under an `EntryTypeRegistry` whose registered major for any entry type is lower than the highest major an earlier boot of the database registered for it, as the database's generation record holds it (EVS-DEV-version-compatibility). Versions are a major and a minor number; a higher recorded minor of the registered major is not a downgrade. The refusal keeps a build from folding or appending events of an entry type in a shape older than events the database already holds, and it is decided with the boot's other refusals, before the boot writes anything (EVS-DEV-event-store-open).
 
 ## Assertions
 
-A. The substrate SHALL throw `EntryTypeVersionDowngradeError` from `EventStore.open` when, for any registered entry type, the registered major is below the major of the highest stored target in `view_target_versions` for that entry type, or when the database's recorded generation holds a higher major for that entry type.
+A. The substrate SHALL throw `EntryTypeVersionDowngradeError` from `EventStore.open` when, for any registered entry type, the database's recorded generation holds a higher major for that entry type than the registered major.
 
-B. The downgrade-refusal check SHALL run before any write of the boot transaction, including the library-version event, the registry audit event, view-target-versions seeding, and the raised targets and convergence gaps the boot records.
+B. <RETIRED> The refusal is decided before the boot's first write, with every other refusal of the boot.
 
-C. The error SHALL carry the offending entry type's id, the registered version, and the highest stored target version, each as a major and a minor number, in a form callers can inspect for diagnostic logging.
+C. The error SHALL carry the offending entry type's id, the registered version as a major and a minor number, and the recorded major, in a form callers can inspect for diagnostic logging.
 
 ## Rationale
 
-**Why before any write?** A failed downgrade-check after partial seeding would leave `view_target_versions` rows seeded at the new (lower) major, contradicting the data of the higher major already in the views, and one after the library-version event would leave the log recording a version that never opened the database. Refusing before the boot's first write preserves the invariant that the stored target major is at or above the major of every event folded into the view, and keeps the log's record of opens exact (see EVS-DEV-event-store-open).
+**Why the generation record?** Every committed boot merges into the record the highest major it registered for every entry type, whether or not a view names it, so the record is the one place that knows every major the database has been opened with. A view copy is created only by such a boot, so no copy holds a major the record lacks, and the refusal needs no reading of views.
 
-**Why also the recorded generation (assertion A)?** Stored view targets exist only for the entry types some view names, so an entry type no view names would never be checked against them. The database's generation record holds the highest major every committed boot registered for every entry type, whether or not a view names it, so a build that registers a lower major is refused after a stop-then-start major bump even when no view folds that entry type (EVS-DEV-version-compatibility/I).
-
-**Why compare majors only?** Majors only rise. A minor may move either way within a major, because a minor step only adds fields with defaults (its promoters are `DefaultField` only): a build of an older minor reads rows promoted to a newer minor of its major. When such a build folds, it lowers the stored target to its own minor (EVS-DEV-version-compatibility/E), so the next open under the newer minor re-promotes what it folded. A higher major is refused because downgrading across a major would require inverse promoters, and the major-step primitives `RenameField` and `DropField` are shape-changers that are not invertible without information loss.
+**Why compare majors only?** Majors only rise. A minor may move either way within a major, because a minor step only adds fields with defaults (its promoters are `DefaultField` only): a build of an older minor reads and appends events its major's newer minors read too, and folds into a copy of its own definition (EVS-DEV-view-convergence). A higher major is refused because downgrading across a major would require inverse promoters, and the major-step primitives `RenameField` and `DropField` are shape-changers that are not invertible without information loss.
 
 ## Changelog
 
+- 2026-09-25 | 3adaac55 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Amend A and C: the refusal compares the registered major with the major the generation record holds; stored view targets no longer exist (views are stored per copy), and the error carries the recorded major (A and C are cited by event_store.dart, generation_record_test.dart, postgres_generation_guard_test.dart and version_compatibility_conformance.dart; the error's fromVersion and recordedByOpen fields and its view_target_versions message contradict the amended C). Retire B: the ordering before the boot's first write is stated with every other refusal of the boot (B is cited by event_store.dart and boot_conformance.dart)
 - 2026-09-25 | 06ca2ff3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Amend B: the boot's writes include the registry audit event (references: event_store.dart, boot_conformance.dart)
 - 2026-09-25 | 472aa00e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -38,4 +38,4 @@ C. The error SHALL carry the offending entry type's id, the registered version, 
 - 2026-08-10 | 3e482dbc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 7b577371 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Entry-type version downgrade refusal* | **Hash**: 06ca2ff3
+*End* *Entry-type version downgrade refusal* | **Hash**: 3adaac55

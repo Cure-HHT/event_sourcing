@@ -4,50 +4,60 @@
 
 A destination's queue marks an item sent when the receiver acknowledges it, and the drainer does not send it again. Either end can later move back in time: a receiver restored from a backup, restored to a point in time, or failed over to a replica that had not received the latest commits; a sending device restored from a backup of its database. Either move silently separates what the sender believes it delivered from what the receiver holds. This file specifies how the library detects such a move from the delivery channel itself and records it truthfully in the log.
 
-The library realigns a channel automatically on the common, safe paths: a lost acknowledgement, a receiver behind the sender, and a sender behind the receiver, the last two combined when both moved. Every other inconsistency is an integrity anomaly: the side that detects it records a security finding (`EVS-DEV-security-findings`), stores what it received as it received it, and delivery continues. A channel no automatic path realigns re-anchors: the sender sends a break delivery that follows the receiver's record and states the break, and the receiver accepts it and records its own finding. No channel stops for an integrity reason. How an application interprets the recorded facts is left to it.
+The library realigns a channel automatically on the two common, safe paths: a lost acknowledgement, and a receiver behind the sender, which gets the deliveries it lacks again exactly as they were sent. A receiver ahead of the sender, naming a delivery the sender never attempted, reveals a sender that went back in time: the sender records a security finding (`EVS-DEV-security-findings`) and keeps delivering, and the application rebuilds it from the receiver as a successor. Every other inconsistency is recorded as a security finding by the side that detects it. A channel that no automatic path realigns continues on a new generation, numbered from delivery 1 and filled again from the start of the sender's log. No channel stops for an integrity reason. How an application interprets the recorded facts is left to it.
 
 ### Terms
 
-- **Channel.** One registration of a natively serializing destination on one sending database, identified by the sending database's identity (`EVS-DEV-event-store-open/F`), the destination identifier and the registration identifier (the event identifier of the registration event). A destination deleted and registered again starts a new channel; the old one ends.
+- **Channel.** One generation of one registration of a natively serializing destination on one sending database, identified by the sending database's identity (`EVS-DEV-event-store-open/F`), the destination identifier, the registration identifier (the event identifier of the registration event) and the generation. A destination deleted and registered again starts a new registration; the old one ends.
+- **Generation.** A counter of a registration's channels, 1 for the first. The sender starts the next generation when no automatic path realigns the current one.
 - **Delivery.** One batch envelope the drainer sends on a channel. It carries at least one event.
 - **Delivery number.** The position of an accepted delivery in its channel, counted from 1 with no gaps. The channel numbers deliveries, not events, so a destination's filter leaves no gap in the numbering.
 - **Link.** The delivery hash of the delivery a delivery follows; null for delivery 1.
-- **Delivery hash.** The SHA-256 of the canonical form of the channel, the delivery number, the link, the hashes of the events the delivery carries, for each of them whether one of its causal parents was withheld from the channel, and the break the delivery states, if any.
+- **Delivery attributes.** An object a delivery carries beside its events, holding the optional per-delivery facts a later release of the data-format major adds. The delivery hash covers it and the receiver keeps it as carried.
+- **Delivery hash.** The SHA-256 of the canonical form of the channel, the delivery number, the link, the hashes of the events the delivery carries and the delivery attributes.
 - **Receiver record.** The number and hash of the last delivery the receiver accepted on a channel (number 0 and a null hash before the first). The receiver derives it from its own log and returns it with every acknowledgement and every refusal.
-- **Sender channel record.** The receiver record as the sender last established it; the next delivery is numbered from it.
-- **Retained delivery.** At a delivery number, the delivery the sender's queue last marked sent at that number on the channel, with its number and hash, from an item enqueued no earlier than the break of the channel's latest re-anchor. A re-anchor therefore ends the retention of every delivery sent before it, and at each number at most one delivery is retained. A delivery the sender holds only because a recovery brought its events back is not retained.
-- **Resume item.** A queue item a resume or a re-anchor enqueued: a resend of a retained delivery, a skip event, a break, or an earlier resume event a re-anchor sends again.
-- **Check-in.** A pull that asks the receiver for its record of the channel, and for the channels it holds for the sending database under the destination's identifier, before anything is sent.
-- **Resume.** An automatic realignment of a channel to the receiver record, recorded in one **resume event**. A resume after the receiver fell behind resends the retained deliveries the receiver lacks. A resume after the sender fell behind recovers the deliveries the sender lacks from the receiver; its resume event is the **skip event**.
-- **Re-anchor.** The realignment of a channel that no resume explains: a security finding, and a **break delivery** that follows the receiver record and states the sender channel record it replaces.
-- **Succession.** A database that has authored no application events restores a reset sender's deliveries from a receiver and declares itself that sender's successor. A database's **succession lineage** is the identities it succeeded, transitively, as the succession events a log holds state them.
+- **Sender channel record.** The registration's current generation, the receiver record the sender last established on it, and the receiver database identity that answered on it (none before the first response); the next delivery is numbered from it.
+- **Channel's receiver database.** The receiver database identity the sender channel record holds, or, while it holds none, whichever database responds.
+- **Attempted delivery.** A delivery, with its number and hash, that the send fence record names or that an attempt recorded on a queue item of the registration (pending, wedged or tombstoned) carries.
+- **Retained delivery.** At a delivery number, the delivery the sender's queue last marked sent at that number under the registration's current generation, with its number and hash. A number the sender adopted from a lost acknowledgement, with no item marked sent at it, has no retained delivery.
+- **Resume.** The realignment of a channel whose receiver fell behind: the retained deliveries it lacks are sent again exactly as sent, recorded in one **resume event**.
+- **Sender regression.** A receiver record ahead of the sender's: the receiver accepted deliveries the sender no longer knows it sent.
+- **Succession.** A database that has authored no application events restores a predecessor sender's deliveries from a receiver and declares itself that sender's successor. A database's **succession lineage** is the identities it succeeded, transitively, as the succession events a log holds state them.
 
 ### How a receiver record is read
 
 ```text
-receiver record R, sender channel record S
+receiver record R (with a response to a delivery) from database B,
+sender channel record S (holding receiver identity S.receiver, if any),
+delivery in flight D (number S.number + 1)
 
-  R == S ...................................... in step: send
-  R names the delivery in flight .............. lost acknowledgement:
-                                                 mark it sent, S := R
+  S.receiver held and B != S.receiver ....... channel_unexplained
+                                               finding, new generation
+  otherwise, in this order:
+  R.number == S.number + 1 and R names an
+    attempted delivery ...................... acknowledged (or a lost
+                                               acknowledgement): S := R,
+                                               S.receiver := B, and mark
+                                               the head sent when R
+                                               names D
+  R == S .................................... in step: nothing to realign
   R.number < S.number, every number in
     (R.number, S.number] retained, and the
-    retained R.number + 1 links to R.hash ..... receiver behind:
-                                                 resend them as sent
-  R.number > S.number and the receiver's
-    delivery at S.number has S's hash
-    (null at number 0) ........................ sender behind:
-                                                 recover (S, R], skip
-                                                 event first
-  anything else, or R from another
-    receiver database ......................... finding, re-anchor:
-                                                 break delivery after R,
-                                                 refill from the start
+    retained R.number + 1 links to R.hash ... receiver behind: resend
+                                               them exactly as sent
+  R.number > S.number and R names no
+    attempted delivery ...................... sender regression:
+                                               sender_regressed finding,
+                                               new generation
+  anything else (a record at or below S
+    that calls for no resend, or above
+    S + 1 naming a superseded attempt) ...... channel_unexplained
+                                               finding, new generation
 ```
 
 ### Reading order
 
-`EVS-PRD-delivery-channel` states what the library guarantees. `EVS-DEV-delivery-channel` fixes the sender's side of a channel: the delivery hash, the numbering, the envelope and how responses are read. `EVS-DEV-delivery-receiver` fixes the receiver's check, its audit, its record, its findings and its endpoint. `EVS-DEV-delivery-resume` fixes the check-in, the reading of a receiver record and the two resumes; `EVS-DEV-channel-findings` fixes the sender's findings and the re-anchor; `EVS-DEV-resume-event` fixes what the resume events record. `EVS-DEV-sender-succession` fixes succession. The drainer, halt and recovery mechanics these build on are `EVS-DEV-destination-drain` and `EVS-DEV-destination-drain-lock`. The finding event is specified in `spec/dev-security-findings.md`. The verification of origin chains across a recorded fork, and the causal parents whose withheld-parent record a delivery carries, are specified in `spec/causal-history.md`; the branch conflicts a skip event records are specified in `spec/branch-conflicts.md`.
+`EVS-PRD-delivery-channel` states what the library guarantees. `EVS-DEV-delivery-channel` fixes the sender's side of a channel: the delivery hash, the numbering, the envelope and how responses are read. `EVS-DEV-delivery-receiver` fixes the receiver's check, its audit, its record, its findings and its endpoint. `EVS-DEV-delivery-resume` fixes the reading of a receiver record, the resume and the new generation; `EVS-DEV-resume-event` fixes the resume event and the reserved entry types. `EVS-DEV-sender-succession` fixes succession, the path by which an application rebuilds a regressed sender. The drainer and recovery mechanics these build on are `EVS-DEV-destination-drain` and `EVS-DEV-destination-drain-lock`. The finding event is specified in `spec/dev-security-findings.md`; the verification of origin chains, and the causal parents every event carries, in `spec/causal-history.md`.
 
 ## EVS-PRD-delivery-channel: Delivery channel continuity
 
@@ -56,13 +66,13 @@ receiver record R, sender channel record S
 
 ### Purpose
 
-A delivery channel is the path from one sending database to one receiver through one registration of a destination that uses the library's native batch format. The library numbers the deliveries on each channel and links each to the one before, the receiver accepts only the delivery that follows the last one it accepted, and the receiver's record of the channel, derived from its own log, returns to the sender with every acknowledgement. When one end has moved back in time on a path the library can realign safely, it realigns the channel and records the realignment in the log. In every other case it records a security finding and re-anchors the channel, so delivery always continues. A database that has authored nothing and takes over a reset sender's data declares the succession in the log. A destination whose receiver is not this library does not use the native batch format and is outside this requirement.
+A delivery channel is the path from one sending database to one receiver through one registration of a destination that uses the library's native batch format. The library numbers the deliveries on each channel and links each to the one before, the receiver accepts only the delivery that follows the last one it accepted, and the receiver's record of the channel, derived from its own log, returns to the sender with every acknowledgement and refusal. When the receiver has fallen behind, the library sends it again what it lacks and records the resume in the log. When the sender has fallen behind, or the two records admit no automatic explanation, the library records a security finding and continues on a new generation of the channel, so delivery always continues. A database that has authored nothing and takes over a predecessor sender's data declares the succession in the log. A destination whose receiver is not this library does not use the native batch format and is outside this requirement.
 
 ### Assertions
 
-A. The library SHALL treat each registration of a destination that uses the library's native batch format, on each sending database, as one delivery channel, identified by the sending database's identity, the destination identifier and the registration.
+A. The library SHALL treat each generation of each registration of a destination that uses the library's native batch format, on each sending database, as one delivery channel, identified by the sending database's identity, the destination identifier, the registration and the generation.
 
-B. Every delivery the library sends on a channel SHALL carry a delivery number one greater than the number of the last delivery the sender knows the receiver accepted on that channel, the delivery hash of that delivery as its link, and its own delivery hash, which covers the channel, the number, the link, the hash of every event the delivery carries, the record of which of those events has a causal parent withheld from the channel, and the break the delivery states, if any.
+B. Every delivery the library sends on a channel SHALL carry a delivery number one greater than the number of the last delivery the sender knows the receiver accepted on that channel, the delivery hash of that delivery as its link, and its own delivery hash, which covers the channel, the number, the link, the hash of every event the delivery carries and the delivery's attributes.
 
 C. A receiver SHALL accept a delivery on a channel only when its number is one greater than, and its link equals the hash of, the last delivery it accepted on that channel, and SHALL refuse every other delivery, other than a re-presentation of that last delivery, with a refusal naming its record of the channel.
 
@@ -70,72 +80,78 @@ D. The receiver's record of each channel (the number and the hash of the last de
 
 E. Every acknowledgement of a delivery and every refusal of one SHALL carry the receiver's record of the channel.
 
-F. The sender SHALL mark a queued item delivered only on a receiver record, returned with an acknowledgement, a refusal or a check-in, that names the delivery the sender made of that item.
+F. The sender SHALL mark a queued item delivered only on a receiver record, returned with an acknowledgement or a refusal, that names the delivery the sender made of that item.
 
-G. After the sending process opens the database, and whenever the drain lock passes to it from another process, the library SHALL send nothing on a channel until it has obtained the receiver's record of that channel and committed what that record calls for.
+G. <RETIRED> The receiver's record reaches the sender on every acknowledgement and refusal (assertion E), with no separate pull before sending.
 
 H. When the receiver's record is behind the sender's record, the sender retains a delivery for every number above the receiver's record up to its own, and the first of those links to the receiver's record, the library SHALL send again, on the channel, every retained delivery after the receiver's record, each with the events, number, link and hash it was first sent with, and SHALL record the resume as one event in the log.
 
-I. When the sender's record is a delivery the receiver holds, or is number 0, and the receiver's record is ahead of it, the library SHALL recover from the receiver, before it sends anything further on the channel, every event of the deliveries after the sender's record that the sender does not hold, keeping each event's identity, sealed hash and predecessor link, and SHALL append none of them as a new event.
+I. When a receiver record from the channel's receiver database is ahead of the sender's record and names no delivery the sender attempted on the channel, the library SHALL record a security finding of sender regression naming both records.
 
-J. The library SHALL commit, in the transaction that stores the events a recovery brings back and before storing any of them, exactly one skip event that records the channel, the receiver record the channel resumes after, the deliveries recovered, the origin positions of the events recovered, the origin positions of the abandoned range the recovery does not bring back, the highest event of the sender's origin chain the served deliveries and the sender's own delivery record prove shared as the branch point, the abandoned head of that chain, and the aggregates in conflict.
+J. <RETIRED> A sender regression is recorded as a finding (assertion I) and the channel continues on a new generation (assertion X); the application rebuilds the sender as a successor (assertion Q).
 
-K. The library SHALL send a skip event as the first delivery on the channel it resumes.
+K. <RETIRED> A sender regression is recorded as a finding (assertion I); no resume event of the sender's own is delivered.
 
-L. When both ends of a channel have moved back in time, the library SHALL resume the channel after the later of the two records, having recovered to the sender or sent again to the receiver what that end lacks, and SHALL record nothing for deliveries that neither end holds.
+L. When both ends of a channel have moved back in time, the library SHALL realign the channel by sending again the retained deliveries the receiver lacks where the sender retains them and they link to the receiver's record, and by a new generation otherwise, and SHALL record nothing for deliveries that neither end holds.
 
-M. <RETIRED> A receiver record that no automatic path explains re-anchors the channel with a security finding (assertion X).
+M. <RETIRED> A receiver record that no automatic path explains continues the channel on a new generation with a security finding (assertion X).
 
-N. <RETIRED> A recovery that brings back a resume event of the recovering database's own identity records a security finding and continues (EVS-DEV-channel-findings).
+N. <RETIRED> A sender regression is recorded as a security finding (assertion I).
 
 O. <RETIRED> A resume called for again proceeds as any resume; each is an event in the sender's log.
 
-P. The library SHALL provide a receiver endpoint that accepts deliveries and serves, to a caller the deployment authenticates for the channel's sender, the receiver's record of a channel, the channels it holds for that sender and for the identities that sender succeeded, and the deliveries of a range of a channel, reconstructed from the receiver's event log.
+P. The library SHALL provide a receiver endpoint that accepts deliveries and serves, to a caller the deployment authenticates for the channel's sender, the channels it holds for that sender and for the identities that sender succeeded, each with the receiver's record of it, and the deliveries of a range of a channel, reconstructed from the receiver's event log.
 
 Q. A database that has authored no event of an application entry type and restores a predecessor sender's deliveries from a receiver SHALL record, in the transaction that stores them, a reserved succession event naming the predecessor's identity and, for each channel it restores, the last delivery it restores.
 
 R. The library SHALL refuse, before storing anything, a restore of a predecessor's deliveries into a database that has authored an event of an application entry type.
 
-S. After a receiver accepts a succession, it SHALL record a security finding for each later delivery it accepts from the predecessor sender.
+S. <RETIRED> A delivery from a predecessor sender after its succession is accepted as any delivery; where its events meet the successor's, ingest records the forks and reused positions as security findings.
 
 T. The library's default interpretation of authorship SHALL TREAT the events a successor authors after its succession event as continuing the authorship of the predecessor that event names.
 
-U. The library SHALL deliver each skip event, each succession event and each security finding on every channel of the sending database, whatever that destination's filter.
+U. The library SHALL deliver each succession event and each security finding on every channel of the sending database, whatever that destination's filter.
 
-V. The library SHALL deliver an event a recovery brought back on every other channel of the sending database whose filter selects it, and SHALL NOT deliver it on the channel it was recovered from other than in the refill of a re-anchor of that channel.
+V. <RETIRED> A successor's restored events are its predecessor's and are not delivered on the successor's channels (EVS-DEV-destination-drain).
 
 W. <RETIRED> A second live copy of a sending database produces security findings where its events meet the other copy's, and delivery continues (assertions X and Z).
 
-X. When a receiver record equals neither the sender's record nor the delivery in flight and calls for no resume, or comes from another receiver database than the channel's, the library SHALL record a security finding naming both records and SHALL send, as the channel's next delivery, a break delivery that follows the receiver's record and states the sender's record it replaces.
+X. When a receiver record is not the sender's record, is not numbered one above the sender's record naming a delivery the sender attempted at that number, and calls for no resend of retained deliveries, or comes from another receiver database than the channel's, the library SHALL continue the registration on a new generation, numbered from delivery 1 and filled again from the start of the sending database's log.
 
-Y. A receiver SHALL accept a break delivery that follows its record of the channel, and SHALL record a security finding naming the break in the transaction that accepts it.
+Y. <RETIRED> A new generation starts at delivery 1 and every receiver accepts it as a channel of its own (assertions A and C).
 
 Z. The library SHALL NOT stop a delivery channel, nor refuse other than as a transient failure a delivery that follows the receiver's record, because of an integrity anomaly, and SHALL record each integrity anomaly it detects on a channel as a security finding.
 
 ### Rationale
 
-**What the channel is (assertion A).** A delivery is a statement between two databases. The sender is the database identity, minted inside the database and checked at every open (`EVS-DEV-event-store-open/F`), so a backup restore brings back the same sender gone back in time, while a reset or a reinstall is a new sender. A destination deleted and registered again starts a new channel at delivery 1 (`EVS-PRD-destinations/O`). A destination that serializes through an application transform has no receiver of this library.
+**What the channel is (assertion A).** A delivery is a statement between two databases. The sender is the database identity, minted inside the database and checked at every open (`EVS-DEV-event-store-open/F`), so a backup restore brings back the same sender gone back in time, while a reset or a reinstall is a new sender. A destination deleted and registered again starts a new registration at generation 1 (`EVS-PRD-destinations/O`). The generation lets a registration start its numbering again without a special delivery: to a receiver, a new generation is a channel it has not seen. A destination that serializes through an application transform has no receiver of this library.
 
-**Why number and link deliveries, and derive the record from the log (assertions B to F)?** A filter leaves gaps in the events by design, so the channel numbers what it sends, and the link binds each delivery to its predecessor's content. The Layer 1 claim, under the storage precondition (`EVS-PRD-destinations/L`), is that every delivery a receiver accepted follows the one before it by number and link; a break follows the receiver's record like any delivery, so the claim has no exception. Derived from the log, the receiver's record goes back exactly as far as the events do after a restore; returned on every response, it tells the sender of a receiver's move at its next delivery. Marking an item delivered only on a record naming its delivery makes the acknowledgement evidence rather than a status code.
+**Why number and link deliveries, and derive the record from the log (assertions B to F)?** A filter leaves gaps in the events by design, so the channel numbers what it sends, and the link binds each delivery to its predecessor's content. The Layer 1 claim, under the storage precondition (`EVS-PRD-destinations/L`), is that every delivery a receiver accepted follows the one before it on its channel by number and link. Derived from the log, the receiver's record goes back exactly as far as the events do after a restore; returned on every response, it tells the sender of a move at its next delivery, with no polling. A sender restored while idle learns of it when it next delivers. Marking an item delivered only on a record naming its delivery makes the acknowledgement evidence rather than a status code. A record naming, at the number after the sender's record, a delivery the sender attempted there is the truth about where the channel stands, even when the item that carried it was wedged and recovered, or retired, before the acknowledgement arrived: the sender adopts it, and the events of that delivery that it filled again are delivered again and admitted idempotently. A record ahead naming a delivery the sender never attempted reads as a regression. A record further ahead naming an attempt the sender made before a resume or a new generation moved its record back shows a receiver that came forward again (a failover back to a copy that held it); no automatic path explains it, so it is recorded as unexplained and the channel continues on a new generation. The delivery attributes are covered by the hash and kept as carried, so a later release of the same data-format major can add per-delivery facts that every receiver of that major stores and serves.
 
-**Why check in (assertion G)?** A restored sender cannot know it at boot, and an idle one would not otherwise talk to its receiver. A check-in at each process start, and whenever another process held the drain lock since, costs one request per channel. A database restored under a running process is caught at its next delivery, whose refusal carries the receiver's record.
+**Why resend exactly (assertion H)?** A receiver behind gets the retained deliveries again exactly as sent, nothing filtered again; the first links to the receiver's record, which proves the common point by content, and the receiver's chain of deliveries is again the sender's.
 
-**The automatic paths (assertions H to L).** A receiver behind gets the retained deliveries again exactly as sent, nothing filtered again; the first links to the receiver's record, which proves the common point. A sender behind recovers its lost events as the events they are, since appending them again would forge a second authorship. The skip event makes the fork explicit; it is committed with the recovered events and stored before them, so no holder sees a recovered event unexplained, and it is sent first, so the receiver learns of the fork before it meets the continuing branch. When both ends moved back, each gets what it lacks, and deliveries neither end holds are unknown to both, so their numbers are used again.
+**Why a sender regression is a finding, not a recovery (assertions I, L and X)?** A record is compared only with the records of the database that answered on the channel; a record from any other database is a different receiver, which assertion X routes to a new generation. A sender restored from an older copy of its database has forgotten events it authored and delivered, and may have authored new ones at the same positions. Recovering them into the same identity would need the library to decide which history continues. It does not decide: the sender records the regression and keeps delivering on a new generation, the receiver stores everything as it arrives and records the forks and reused positions where the two histories overlap, and the application rebuilds the sender from the receiver as a successor (assertions Q to T), a fresh database holding everything the receiver holds. When both ends moved back, the resend covers what the receiver lacks, the rebuild what the sender lacks, and deliveries neither end holds are unknown to both, so their numbers are used again. A sender restored from a backup taken before its destination was registered registers it again under a new registration, a channel at generation 1 whose receiver record is 0, so no sender regression is recorded at the sender: the receiver's fork and reused-position findings are the only record of it, and the application reads them to decide on a rebuild. A receiver that moves back after a successor restored from it no longer holds the predecessor deliveries between its record and the one the succession event names, and nobody sends them again: the predecessor is retired, and the successor delivers only what it authored. The succession event reaches the receiver again on the successor's channels, and the receiver records the gap as a security finding naming the channel and both records; the deliveries between are held by the successor, and a person reconciles them.
 
-**Why record and re-anchor rather than stop (assertions X to Z)?** Anything outside the automatic paths (a clone, tampering, a second restore, a receiver restored to a point the sender cannot resend from, a different receiver database) needs a judgement the library has no basis for. A stop would hold the sender's records until a person acts, while a device's storage can be lost meanwhile, so the library records the facts and keeps delivering. The break states, as the next delivery, where the two ends' histories diverged, and each end records its own finding. A delivery whose delivery hash does not recompute is refused as transient, with a finding, so the sender sends it again. Such a delivery never verified at the receiver, so its refusal is a transport failure, not an integrity stop: when every resend fails the same way, the retry budget runs out and the queue head wedges with the ordinary budget-exhausted cause, and the operator's recovery of the wedged head is the exit (`EVS-PRD-destinations`). An event the receiver cannot store as an event is kept in a finding and the rest of the delivery accepted. The only other refusals are a caller the deployment does not authenticate for the sender, and permanent failures of the application's validation or the data format, which wedge the queue head with an operator or upgrade exit (`EVS-PRD-destinations`).
+**Why record and continue rather than stop (assertions X and Z)?** Anything else (a clone, tampering, a receiver restored to a point the sender cannot resend from, a different receiver database) needs a judgement the library has no basis for. A stop would hold the sender's records until a person acts, while a device's storage can be lost meanwhile, so the library records both records and continues on a new generation. The new generation refills from the start of the sender's log, and idempotent ingest admits only what the receiver lacks; the cost is proportional to the channel's history and paid only on an anomaly. A delivery whose delivery hash does not recompute is refused as transient, with a finding at the receiver, so the sender sends it again and a copy damaged in transit is replaced. A mismatch that repeats on every resend comes from the sender's computation or from a hop that rewrites every batch the same way; the retry budget runs out and the queue head wedges with the ordinary budget-exhausted cause. Recovering the head alone does not end it, because the refill computes the same hash; the exit is correcting the build or the transport and then the operator's recovery of the head (`EVS-PRD-destinations`). The receiver's finding and the sender's wedge event record the episode at both ends. An event the receiver cannot store as an event is kept in a finding and the rest of the delivery accepted. The only other refusals are a caller the deployment does not authenticate for the sender, and permanent failures of the application's validation or the data format, which wedge the queue head with an operator or upgrade exit (`EVS-PRD-destinations`).
 
-**One live copy per database identity.** A restore replaces the database it restores. A second live copy (a cloned file, or a restored backup run beside the original) is detected, not prevented: both copies keep delivering, the automatic paths realign the channel as their deliveries meet, and the anomalies (a skip event of its own identity a copy never appended, forks and reused positions no skip covers) are findings where they are met. A person reads them and decides which copy lives. Until then the copies can realign the channel back and forth, each delivery of one making the other a sender behind that recovers it, with a skip and a finding each time; the library accepts this, since it is bounded by the copies' own activity and every step of it is recorded.
+**One live source per database identity.** The delivery guarantees assume each sender identity has one live source at a time: a restore replaces the database it restores, and a successor replaces its predecessor. A second live source (a cloned file, or a restored backup run beside the original) is detected, not prevented. Each copy's deliveries make the other's records look regressed or unexplained, so each records findings and starts new generations, and where their events meet the receiver records forks and reused positions (`EVS-PRD-hash-chain-integrity`). A person reads the findings and decides which copy lives. The churn is bounded by the copies' own activity, and every step is recorded.
 
-**Why the library's own receiver endpoint (assertion P)?** A recovery can use what the receiver serves only as far as it can check it, so the endpoint serves every delivery reconstructed from the receiver's log. The deployment's authentication maps a caller to the sender identities it may deliver for and read.
+**Why the library's own receiver endpoint (assertion P)?** A succession restore can use what the receiver serves only as far as it can check it, so the endpoint serves every delivery reconstructed from the receiver's log. The deployment's authentication maps a caller to the sender identities it may deliver for and read.
 
-**Why succession only into a database that has authored nothing (assertions Q to T)?** A reset device that restores its predecessor's data would otherwise read as a second editor of it; the succession event states the continuity. A database that has authored application events has a history of its own that may overlap, so the restore is refused: a precondition of the operation, not an integrity check. A later delivery from the predecessor is a second live source, accepted and recorded. Continuity of authorship is a Layer 2 convention over the Layer 1 succession event.
+**Why succession only into a database that has authored nothing (assertions Q, R and T)?** A rebuilt, reset or reinstalled device that restores its predecessor's data would otherwise read as a second editor of it; the succession event states the continuity. A database that has authored application events has a history of its own that may overlap, so the restore is refused: a precondition of the operation, not an integrity check. Continuity of authorship is a Layer 2 convention over the Layer 1 succession event. Deciding to rebuild a regressed sender is the application's; the library offers the restore.
 
-**Why every channel (assertions U and V)?** A restore affects the sender's whole origin chain and every anomaly it found concerns what its receivers hold, so skip, succession and finding events reach every receiver. A recovered event is this database's own, which its other receivers may never have received; it goes back on the channel it came from only when that channel re-anchors, since its receiver may then have lost it.
+**Why every channel (assertion U)?** A succession concerns the sender's whole history, and every finding a sender records concerns what its receivers hold, so both reach every receiver whatever it filters.
 
-**Trust.** The receiver's record and every served delivery are claims by an authenticated endpoint. The sender's checks of a served delivery prove consistency with its own delivery record, not authorship: the hashes are unkeyed and nothing is signed. A failed check is a finding and the data is stored as served. The receiver is trusted not to fabricate events under the sender's or a predecessor's identity, to serve every delivery it accepted, and not to claim a record ahead of its log; every realignment a record causes is an event in the sender's log, so a wrong claim is attributable. The destination transport, extended to records and served deliveries, and the deployment's authentication binding a caller to sender identities, are the trusted inputs this widens.
+**Trust.** The receiver's record and every served delivery are claims by an authenticated endpoint. The successor's checks of a served delivery prove consistency with the chain of deliveries, not authorship: the hashes are unkeyed and nothing is signed. A failed check is a finding and the data is stored as served. The receiver is trusted not to fabricate events under a predecessor's identity, to serve every delivery it accepted, and not to claim a record ahead of its log; a record ahead of the sender's is recorded as a finding in the sender's log, so a wrong claim is attributable. The destination transport, extended to records and served deliveries, and the deployment's authentication binding a caller to sender identities, are the trusted inputs this widens.
 
 ### Changelog
 
+- 2026-09-26 | c4286b3d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | X: a record that is not the sender's, not the adopted next delivery and calls for no resend continues on a new generation, so a record naming an attempt superseded by a resume or a new generation no longer stalls the channel. Rationale: a record ahead naming a superseded attempt is unexplained, not a regression; a sender restored from before its destination's registration is recorded only by the receiver's fork and reuse findings; a receiver that moves back after a succession records the gap as a finding. No code or test references X
+- 2026-09-25 | 95ecd28b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | 3318f73c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | I: only a record from the channel's receiver database that names no delivery the sender attempted is a sender regression. X: a record naming any delivery the sender attempted is not unexplained. Terms: the sender channel record holds the answering receiver identity; the channel's receiver database; attempted delivery. Rationale: a record naming an attempted delivery is adopted; a persistent delivery hash mismatch ends only once the build or transport is corrected. No code or test references I or X
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: A and B: a channel is one generation of a registration, and the delivery hash covers the delivery attributes in place of the withheld-parent record and the break. F: no check-in. Retire G (no check-in; the record rides every response), J, K and V (no recovery under the sender's own identity and no skip event), S (no predecessor-live finding) and Y (no break delivery). I: a receiver record ahead of the sender's is a sender regression recorded as a finding. L: a double regression realigns by the resend or a new generation, the rebuild as a successor covering the sender. P: the endpoint serves the channel listing with records and the deliveries of a range. U: succession events and findings reach every channel. X: a record no automatic path explains continues the registration on a new generation filled again from the start. Rationale rewritten. No code or test references any of these letters
 - 2026-09-25 | 0bbd7c97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: a persistent delivery_hash_mismatch is a transport failure that ends in the budget-exhausted wedge with the operator's recovery as its exit, not an integrity stop; two live copies may realign a channel back and forth, accepted as bounded by their activity. No assertion changes
 - 2026-09-25 | 0bbd7c97 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -158,7 +174,7 @@ Z. The library SHALL NOT stop a delivery channel, nor refuse other than as a tra
 - 2026-09-25 | d37d0854 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-X: delivery channels, gap-free numbering and linking with the withheld-parent record under the delivery hash, the receiver's log-derived record on every acknowledgement and refusal, the check-in after each drain-lock acquisition with the receiver's list of the sender's channels, resumes after receiver and sender regression with the rewind and skip events, recovery of a sender's own events including those on lost channels, double regression, the repeated-record and shared-channel wedges, the receiver endpoint, coalesced refusal records and the default delivery-channels view, sender succession, skip and succession events on every channel, and the closing of lost and shared channels
 
-*End* *Delivery channel continuity* | **Hash**: 0bbd7c97
+*End* *Delivery channel continuity* | **Hash**: c4286b3d
 
 ## EVS-DEV-delivery-channel: Delivery channel sender mechanics
 
@@ -175,13 +191,13 @@ A. The library SHALL apply the channel mechanics to every destination that seria
 
 B. The library SHALL refuse, before anything is written, to register a destination that serializes natively and does not implement the channel pull operation.
 
-C. The library SHALL compute a delivery's hash as the SHA-256, in lowercase hexadecimal, of the canonical JSON of an object with exactly the keys `channel` (an object with exactly `sender_database_id`, `destination_id` and `registration_id`), `delivery_number`, `previous_delivery_hash` (null for delivery 1), `event_hashes` (the `event_hash` of each event the delivery carries, in the order it carries them), `parent_withheld` (for each event the delivery carries, in the same order, the boolean the delivery records for whether one of its parents was withheld from the channel) and `break` (null, or the sender channel record the delivery's break replaces, as an object with exactly `delivery_number` and `delivery_hash`).
+C. The library SHALL compute a delivery's hash as the SHA-256, in lowercase hexadecimal, of the canonical JSON of an object with exactly the keys `channel` (an object with exactly `sender_database_id`, `destination_id`, `registration_id` and `generation`), `delivery_number`, `previous_delivery_hash` (null for delivery 1), `event_hashes` (the `event_hash` of each event the delivery carries, in the order it carries them) and `attributes` (the delivery's attributes object, as carried).
 
-D. The library SHALL keep, for each channel, a sender channel record holding the number and hash of the receiver record the sender last established, the receiver database identity the receiver's first response named, the drain epoch of the channel's last completed check-in, and the queue position of the break item and the fill position rewound from of the channel's latest re-anchor, written when the registration is written with number 0, a null hash, no receiver identity, no check-in epoch and no re-anchor.
+D. The library SHALL keep, for each registration of a destination that serializes natively, a sender channel record holding the current generation, the number and hash of the receiver record the sender last established on it, and the receiver database identity that answered on the current generation, written when the registration is written with generation 1, number 0, a null hash and no receiver identity.
 
-E. The library SHALL change a sender channel record only in a transaction that commits, on that channel, a send outcome, a check-in decision, a resume or a re-anchor.
+E. The library SHALL change a sender channel record only in a transaction that commits, on that registration, a send outcome, a resume or a new generation.
 
-F. The fill SHALL record on each queue item, when it enqueues it, the withheld-parent record of the events it carries.
+F. <RETIRED> A delivery carries its attributes object (assertions C and K); the library sends it empty.
 
 G. The drainer SHALL assign a delivery's number (the sender channel record's number plus one) and link (the record's hash) in the pre-send fence transaction, from the sender channel record read there.
 
@@ -189,13 +205,13 @@ H. The drainer SHALL start a send only when the sender channel record its pre-se
 
 I. The drainer SHALL write a delivery's number and delivery hash in the send fence record its pre-send fence transaction writes and on the attempt the send produces.
 
-J. The change that marks a queue item sent SHALL record the delivery number and delivery hash it was acknowledged under.
+J. The change that marks a queue item sent SHALL record the generation, delivery number and delivery hash it was acknowledged under.
 
-K. A native batch envelope SHALL carry exactly the keys `batch_format_version` (`"3"`), `batch_id`, `sender_hop`, `sender_identifier`, `sender_software_version`, `sent_at`, `channel` (an object with exactly `sender_database_id`, `destination_id` and `registration_id`), `delivery_number`, `previous_delivery_hash`, `delivery_hash`, `events` (at least one), `parent_withheld` (one boolean per event, in the order of `events`) and `break` (as the delivery hash covers it).
+K. A native batch envelope SHALL carry exactly the keys `batch_format_version` (`"3"`), `batch_id`, `sender_hop`, `sender_identifier`, `sender_software_version`, `sent_at`, `channel` (an object with exactly `sender_database_id`, `destination_id`, `registration_id` and `generation`), `delivery_number`, `previous_delivery_hash`, `delivery_hash`, `events` (at least one) and `attributes` (an object, empty in every delivery the library sends).
 
 L. The library SHALL provide the decoder that maps a receiver's acknowledgement or refusal body to the send outcome it states.
 
-M. For a destination that serializes natively, the drainer SHALL mark the head sent only on a receiver record, returned with any response to a delivery or with a check-in, whose delivery number and delivery hash are those of the delivery it sent.
+M. For a destination that serializes natively, the drainer SHALL mark the head sent only on a receiver record, returned with any response to a delivery, whose delivery number and delivery hash are those of the delivery it sent.
 
 N. The drainer SHALL handle an accepting outcome carrying another record, and an `out_of_sequence` refusal, as a receiver record returned for that delivery, never as a permanent failure.
 
@@ -203,7 +219,7 @@ O. <RETIRED> A receiver refuses a delivery only out of sequence, for its caller'
 
 P. <RETIRED> A receiver accepts an unrecorded fork and records a security finding (EVS-DEV-chain-verification).
 
-Q. The drainer SHALL wedge the head with cause `acknowledgement_invalid`, in the transaction that records the attempt, on an accepting outcome that carries no record.
+Q. For a destination that serializes natively, the drainer SHALL wedge the head with cause `acknowledgement_invalid`, in the transaction that records the attempt, on an accepting outcome that carries no record.
 
 R. The library SHALL provide the decoder that maps a pull response to one of: served, a transient failure or a permanent failure, and a destination's pull operation SHALL report through that decoder's outcomes.
 
@@ -211,16 +227,22 @@ S. The library's decoder of a receiver's acknowledgement or refusal body SHALL m
 
 ### Rationale
 
-**Why natively serializing destinations only (assertions A and B)?** Only a receiver running this library derives a record from its log; a natively serializing destination that cannot pull could never check in, so it is refused at registration.
+**Why natively serializing destinations only, each with a pull (assertions A and B)?** Only a receiver running this library derives a record from its log. The pull is how a successor restores a predecessor's deliveries through a destination it registers (`EVS-DEV-sender-succession`), so a natively serializing destination that cannot pull is refused at registration.
 
-**Why this hash, record and envelope (assertions C to E and K)?** The receiver recomputes the hash from the envelope, and a verifier from the receiver's accepted-delivery audit, which keeps every hashed field; the break is hashed so its statement travels under the chain. The sender channel record holds what the drainer decides by and changes only with the outcome it reflects. The format step is part of the data-format major step (`EVS-DEV-version-compatibility/C`).
+**Why this hash, record and envelope (assertions C to E and K)?** The receiver recomputes the hash from the envelope, and a verifier from the receiver's accepted-delivery audit, which keeps every hashed field. The generation is in the channel, so deliveries of two generations never share a hash. The attributes object is hashed and kept whatever it holds, so a later release of the same data-format major adds per-delivery facts to it without a format step; the library sends it empty. The sender channel record holds what the drainer decides by and changes only with the outcome it reflects. The format step is part of the data-format major step (`EVS-DEV-version-compatibility/C`).
 
-**Why number at the fence (assertions F to J)?** A number fixed at enqueue would be consumed by every item a resume retires unsent. Assigned at the pre-send fence, it makes every retry carry the same number, link and hash, and a resend after the same record reproduce the retained delivery exactly. The send fence record names the delivery in flight, which is how a lost acknowledgement is recognised.
+**Why number at the fence (assertions G to J)?** A number fixed at enqueue would be consumed by every item a resume retires unsent. The sent item records its generation as well, so a resume reads retained deliveries of the current generation only. Assigned at the pre-send fence, it makes every retry carry the same number, link and hash, and a resend after the same record reproduce the retained delivery exactly. The send fence record names the delivery in flight, which is how a lost acknowledgement is recognised: the retry is a re-presentation, and the receiver's answer names it.
 
-**What the responses mean (assertions L to N and Q to S)?** A record naming a delivery is the only evidence the receiver accepted it, so a transport that returns success and drops the body wedges the head. An out-of-sequence refusal states where the channel stands (`EVS-DEV-delivery-resume`). A `delivery_hash_mismatch` refusal is transient, so the same delivery is sent again: the delivery never verified at the receiver, which makes it a transport failure, and one that persists ends in the budget-exhausted wedge with the operator's recovery of the head as its exit, not in an integrity stop. A `rejected` refusal is a permanent failure the drain wedges on, with an operator or upgrade exit (`EVS-DEV-destination-drain/J`): an undecodable batch, the application's validation, or an unsupported data-format major. No integrity anomaly produces a refusal. A pull that fails permanently is told apart from one worth repeating.
+**What the responses mean (assertions L to N and Q to S)?** A record naming a delivery is the only evidence the receiver accepted it, so a transport that returns success and drops the body wedges the head. An out-of-sequence refusal states where the channel stands (`EVS-DEV-delivery-resume`). A `delivery_hash_mismatch` refusal is transient, so the same delivery is sent again: the delivery never verified at the receiver, so a copy damaged in transit is replaced. One that persists comes from the sender's build or a hop that rewrites every batch alike; it ends in the budget-exhausted wedge, and its exit is correcting the build or the transport, then the operator's recovery of the head, since a refill computes the same hash. A `rejected` refusal is a permanent failure the drain wedges on, with an operator or upgrade exit (`EVS-DEV-destination-drain/J`): an undecodable batch, the application's validation, or an unsupported data-format major. No integrity anomaly produces a refusal. A pull that fails permanently is told apart from one worth repeating.
 
 ### Changelog
 
+- 2026-09-26 | 29357550 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | J: the sent item records the generation it was acknowledged under. Q: scoped to destinations that serialize natively. No code or test references J or Q
+- 2026-09-25 | 613fa092 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | 8146b4bd | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | D: the receiver identity is the one that answered on the current generation. Rationale of S: a persistent delivery hash mismatch ends once the build or transport is corrected. No code or test references D
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: C and K: the channel carries its generation, and the hash and envelope carry an `attributes` object in place of `parent_withheld` and `break`. D and E: the sender channel record keeps the generation, with no check-in epoch or re-anchor fields, and changes with a send outcome, a resume or a new generation. Retire F (no withheld-parent record). M: no check-in. Rationale: the pull serves succession restores. No code or test references any of these letters
 - 2026-09-25 | f5ac34be | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale of S: a persistent delivery_hash_mismatch ends in the budget-exhausted wedge, a transport failure with an operator exit, not an integrity stop. No assertion changes
 - 2026-09-25 | f5ac34be | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -241,7 +263,7 @@ S. The library's decoder of a receiver's acknowledgement or refusal body SHALL m
 - 2026-09-25 | c3b44c16 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-R: natively serializing destinations are channels and implement the pull and report, the delivery hash covering the withheld-parent record, the sender channel record with the receiver's identity, number and link assigned at the pre-send fence and written to the send fence record, the esd/batch@3 envelope, the receiver's check including closed channels, its accepted-delivery audit and per-event stamp, its record, closure and working copy with a check that walks each channel's chain, the acknowledgement and refusal bodies naming the receiver and the fork_unrecorded refusal, and their mapping in the drain, the coalesced refusal audit, the declarative default delivery-channels view, the authenticated receiver endpoint with its log-derived pull, channel listing and shared-channel report, the pull outcomes, and the three receiver audit event types
 
-*End* *Delivery channel sender mechanics* | **Hash**: f5ac34be
+*End* *Delivery channel sender mechanics* | **Hash**: 29357550
 
 ## EVS-DEV-delivery-receiver: Delivery channel receiver mechanics
 
@@ -254,7 +276,7 @@ This requirement holds the receiver's side of a delivery channel: the checks of 
 
 ### Assertions
 
-A. Ingest SHALL refuse, by name and before any write, a batch that is not in the native batch format, one whose `parent_withheld` does not hold exactly one boolean per event, and one that carries no event.
+A. Ingest SHALL refuse, by name and before any write, a batch that is not in the native batch format, one whose `attributes` is not an object, and one that carries no event.
 
 B. The receiver SHALL read its record of a delivery's channel inside the transaction that ingests the delivery and before any write.
 
@@ -262,17 +284,17 @@ C. The receiver SHALL acknowledge, appending no event, a delivery whose number a
 
 D. The receiver SHALL refuse, with an out-of-sequence refusal naming its record, every other delivery whose number is not the record's number plus one or whose link is not the record's hash.
 
-E. <RETIRED> A delivery from a superseded sender is accepted with a security finding (assertion U).
+E. <RETIRED> A delivery from a predecessor sender is accepted as any delivery (EVS-PRD-delivery-channel).
 
 F. <RETIRED> A delivery carrying an event of another originator is accepted with a security finding (assertion T).
 
-G. In the transaction that accepts a delivery, the receiver SHALL append exactly one reserved ingest audit of event type `ingest.delivery_accepted` whose data carries exactly `database_id` (the receiver), `channel`, `delivery_number`, `delivery_hash`, `previous_delivery_hash`, `event_ids`, `event_hashes` (the identifier and the hash of each event the delivery carried, as carried and in its order), `parent_withheld` and `break` (as the delivery carried them).
+G. In the transaction that accepts a delivery, the receiver SHALL append exactly one reserved ingest audit of event type `ingest.delivery_accepted` whose data carries exactly `database_id` (the receiver), `channel`, `delivery_number`, `delivery_hash`, `previous_delivery_hash`, `event_ids`, `event_hashes` (the identifier and the hash of each event the delivery carried, as carried and in its order) and `attributes` (as the delivery carried it).
 
-H. The receiver SHALL record a `delivery` object carrying exactly the channel, `delivery_number` and `parent_withheld` (the delivery's boolean for that event) in the provenance entry it stamps on each event it ingests from a delivery.
+H. The receiver SHALL record a `delivery` object carrying exactly the channel and `delivery_number` in the provenance entry it stamps on each event it ingests from a delivery.
 
-I. The receiver's record of a channel SHALL be the `delivery_number` and `delivery_hash` of the `ingest.delivery_accepted` audit with the highest number among those naming that channel that the receiver authored, or number 0 and a null hash when there is none, read from that audit event as the chain index locates it by channel.
+I. The receiver's record of a channel SHALL be the `delivery_number` and `delivery_hash` of the `ingest.delivery_accepted` audit with the highest number among those naming that channel that the receiver authored, or number 0 and a null hash when there is none.
 
-J. <RETIRED> The receiver reads its record from the log through the chain index (assertion I), which the chain verification checks against the log.
+J. <RETIRED> The receiver reads its record from its accepted-delivery audits (assertion I).
 
 K. <RETIRED> The receiver's delivery checks keep each channel's accepted audits gap-free, and the chain verification detects a later change to them.
 
@@ -282,40 +304,48 @@ M. The receiver endpoint SHALL answer a refused delivery with a refusal carrying
 
 N. Every operation of the library that accepts a native delivery, and the receiver endpoint's pull, SHALL refuse, before any read of a channel and any write, a delivery or a pull naming a channel whose sender database is not in the set of sender database identities the deployment's authentication states the caller may act for.
 
-O. The receiver endpoint's pull SHALL return the receiver's database identity, the receiver's record of the named channel, the delivery hash of the receiver's `ingest.delivery_accepted` audit for each delivery number the pull names within that record, and, for each delivery of the range it asks for, the delivery's number, link, hash, withheld-parent record and break and, in the order that audit lists them, the stored record of each event it names, or, for an event it holds only in a security finding's evidence, the record that evidence carries.
+O. The receiver endpoint's pull SHALL return the receiver's database identity, the receiver's record of the named channel, and, for each delivery of the range it asks for, the delivery's number, link, hash and attributes and, in the order its `ingest.delivery_accepted` audit lists them, the stored record of each event it names, or, for an event it holds only in a security finding's evidence, the record that evidence carries.
 
-P. The receiver endpoint's pull SHALL answer, naming the delivery, that it cannot serve a delivery within its record for which it holds no accepted audit or holds neither as an event nor in a security finding's evidence every event the audit names.
+P. The receiver endpoint's pull SHALL answer, naming the delivery, that it cannot serve a delivery above its record of the channel, and one within its record for which it holds no accepted audit or holds neither as an event nor in a security finding's evidence every event the audit names.
 
-Q. <RETIRED> A pull naming a superseded sender is served as any pull.
+Q. <RETIRED> A pull naming a predecessor sender is served as any pull.
 
-R. The receiver endpoint's pull SHALL, when asked for the channels of a sender database, optionally under one destination identifier, list each channel its log records of that sender and of every identity in that sender's succession lineage as the receiver's succession events state it, each with the receiver's record of it.
+R. The receiver endpoint's pull SHALL, when asked for the channels of a sender database, list each channel, of every generation, that its log records of that sender and of every identity in that sender's succession lineage as the receiver's succession events state it, each with the receiver's record of it.
 
 S. The library SHALL declare `ingest.delivery_accepted` as an event type of its reserved ingest audit entry type, and SHALL append it only through the ingest of a delivery.
 
 T. The receiver SHALL accept a delivery carrying an event whose originator entry or last provenance entry does not name the channel's sender database, recording for each such event a security finding of kind `foreign_event` naming the channel, the delivery number and the event.
 
-U. The receiver SHALL accept a delivery from a sender database that a succession its log holds names as predecessor, recording a security finding of kind `predecessor_live` naming the channel, the delivery number and the successor.
+U. <RETIRED> A delivery from a predecessor sender is accepted as any delivery; ingest records forks and reused positions where its events meet the successor's.
 
-V. In the transaction that accepts a delivery whose `break` is not null, the receiver SHALL record a security finding of kind `channel_break` naming the channel, the break's sender record and the receiver record the delivery follows.
+V. <RETIRED> A new generation is a channel the receiver has not seen, accepted from delivery 1 (assertion D).
 
-W. The receiver SHALL refuse with refusal `delivery_hash_mismatch` a batch whose `delivery_hash` is not the hash of its channel, number, link, events, withheld-parent record and break, and SHALL record for it, in a transaction that writes nothing else, a security finding of kind `delivery_hash_mismatch` naming the channel, the delivery number, the carried delivery hash and the hash it recomputes to.
+W. The receiver SHALL refuse with refusal `delivery_hash_mismatch` a batch whose `delivery_hash` is not the hash of its channel, number, link, events and attributes, and SHALL record for it, in a transaction that writes nothing else, a security finding of kind `delivery_hash_mismatch` naming the channel, the delivery number, the carried delivery hash and the hash it recomputes to.
+
+X. The receiver SHALL accept a delivery whatever names its `attributes` object holds, keeping that object as the delivery carried it in the delivery hash it recomputes, in its `ingest.delivery_accepted` audit and in the deliveries its pull serves.
 
 ### Rationale
 
 **Why these checks (assertions A to D and W)?** A batch that does not decode or cover its events cannot be tied to a delivery of the channel, so it is a `rejected` refusal. A batch whose delivery hash does not recompute was changed on the way or computed wrongly; the receiver records the finding and refuses it as transient, so the sender sends it again and a copy damaged in transit is replaced by a sound one, the finding recorded once however often the same batch arrives. The channel check runs inside the ingest transaction, so racing deliveries of one channel serialize; a re-presentation of the last accepted delivery is a retry and is acknowledged; the out-of-sequence refusal returns the record the sender realigns to.
 
-**Why an audit per delivery, a stamp per event, and the index (assertions G to I)?** The record must be derivable from the log for every delivery, including one whose events the receiver already holds. The audit lists each event with its hash as sent, so a pull or a verifier recomputes the delivery hash from the log. Only audits the receiver authored count, and the chain index, checked against the log by the chain verification (`EVS-DEV-chain-verification`), locates the latest one per channel without a scan.
+**Why an audit per delivery and a stamp per event (assertions G to I)?** The record must be derivable from the log for every delivery, including one whose events the receiver already holds. The audit lists each event with its hash as sent, and the attributes as carried, so a pull or a verifier recomputes the delivery hash from the log. Only audits the receiver authored count. The backend's indexes locate the latest audit of a channel.
 
 **Why these responses, authenticated by sender identity (assertions L to N)?** Every response names the receiver's identity, so a sender can tell that another database answered. Every accepting operation takes the set of sender identities the deployment's authentication grants the caller, so no handler lets one sender deliver on, or read, another's channel; an unauthenticated caller's claims are refused, not recorded.
 
-**Why serve from the log (assertions O, P and R)?** View rows omit deleted entries and events no view folds, so a recovery served from them would restore another history. The channel listing shows a check-in the channels the sender does not know, and a successor what to restore across its predecessor's lineage.
+**Why serve from the log (assertions O, P and R)?** View rows omit deleted entries and events no view folds, so a restore served from them would restore another history. A delivery above the receiver's record, which a receiver that moved back after listing the channel no longer holds, is answered as one it cannot serve. The channel listing shows a successor what to restore across its predecessor's lineage and every generation of its channels.
 
-**Why accept and record (assertions T to V)?** A channel carries only what its sender authored or recovered as its own (`EVS-PRD-destinations/C`), and a succeeded predecessor has no live source. An event of another originator, or a predecessor's delivery, contradicts the channel; it may be tampering or a clone, so the receiver stores it as received and records the fact. A break is recorded from the receiver's side too, so each end's log holds the divergence it saw.
+**Why accept and record (assertion T)?** A channel carries only what its sender authored (`EVS-PRD-destinations/C`). An event of another originator contradicts the channel; it may be tampering or a clone, so the receiver stores it as received and records the fact.
+
+**Why keep attributes it does not know (assertion X)?** A later release of the same data-format major adds per-delivery facts as attributes. A receiver that dropped or refused one would break the delivery hash, or the sender's delivery, for a fact it does not need to interpret; keeping the object as carried lets it store and serve that fact until a release that reads it.
 
 **Why a declared audit type (assertion S)?** The public append operations refuse it and ingest checks its shape (`EVS-DEV-destination-drain/L`).
 
 ### Changelog
 
+- 2026-09-26 | 21c20c41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | P: the pull answers that it cannot serve a delivery above its record. No code or test references P
+- 2026-09-25 | cec0f804 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: A, G, O and W: `attributes` in place of `parent_withheld` and `break`. H: the per-event `delivery` object carries no `parent_withheld`. I: the record is read from the latest authored audit, with no library-kept index. R: the listing covers every generation, with no destination filter. Retire U (no predecessor-live finding) and V (no break delivery). Add X: a receiver keeps, hashes and serves delivery attributes it does not know. No code or test references any of these letters
 - 2026-09-25 | d6e1707c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | A: a delivery hash that does not recompute is no longer a rejected refusal; add W: it is refused as delivery_hash_mismatch with a security finding. M: the delivery_hash_mismatch refusal value. O and P: an event held only in a security finding's evidence is served from it. No code or test references any of these letters
 - 2026-09-25 | a9ec85b4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -327,87 +357,89 @@ W. The receiver SHALL refuse with refusal `delivery_hash_mismatch` a batch whose
 - 2026-09-25 | 84eed41c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-S: the receiver's side of a delivery channel, split from EVS-DEV-delivery-channel into single-obligation assertions: the envelope checks, the channel check in the ingest transaction, the accepted-delivery audit and per-event stamp, the log-derived record, its working copy and the chain check, the response bodies, authentication by sender identity, the log-derived pull, and a channel listing that covers the sender's succession lineage; remove the refusal audit and the default delivery-channels view
 
-*End* *Delivery channel receiver mechanics* | **Hash**: d6e1707c
+*End* *Delivery channel receiver mechanics* | **Hash**: 21c20c41
 
-## EVS-DEV-delivery-resume: Channel check-in and resume
+## EVS-DEV-delivery-resume: Channel resume and new generation
 
 **Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-delivery-channel
 
 ### Purpose
 
-This requirement holds what the drainer does with a receiver record: the check-in that holds a channel, the reading of a record against the sender's own, the marking of a delivery whose acknowledgement was lost, the resume after the receiver fell behind with its resend, the recovery after the sender fell behind with its skip event, and the keeping of resume items through an operator's recovery.
+This requirement holds what the drainer does with a receiver record: the marking of a delivery whose acknowledgement was lost, the resume after the receiver fell behind with its resend, and the new generation, with its security finding, that the drainer starts on every other record that does not match its own.
 
 ### Assertions
 
-A. The drainer SHALL start no send on a channel until it has committed a check-in decision for that channel after the latest of these points: the process opening the database, an acquisition of the drain lock by an epoch that is not one greater than the last epoch this process held, and an operator's recovery of the channel's wedged head.
+A. <RETIRED> The drainer reads the receiver's record from the response to each delivery (EVS-DEV-delivery-channel).
 
-B. The drainer SHALL check a channel in by a pull naming the sender channel record's number and asking for the channels the receiver holds for the sending database under the destination's identifier.
+B. <RETIRED> The receiver's record reaches the drainer with each response (EVS-DEV-delivery-channel).
 
-C. While a channel awaits a check-in response, the drainer SHALL keep it held, continuing to fill it and to honour halt requests on it.
+C. <RETIRED> A channel is never held for its receiver's record, which reaches the drainer with each response (EVS-DEV-delivery-channel).
 
-D. The drainer SHALL repeat a check-in that fails transiently under the destination's retry policy.
+D. <RETIRED> A delivery that fails transiently is retried under the destination's retry policy (EVS-DEV-destination-drain).
 
-E. The drainer SHALL write the check-in epoch only in the transaction that commits the decision the check-in's response calls for.
+E. <RETIRED> The sender channel record changes with a send outcome, a resume or a new generation (EVS-DEV-delivery-channel).
 
-F. The library's read of delivery status SHALL report each held channel.
+F. <RETIRED> The delivery status read reports no held channel; a channel's state is its sender channel record (EVS-DEV-delivery-channel).
 
-G. <RETIRED> A response from another receiver database re-anchors the channel (EVS-DEV-channel-findings).
+G. <RETIRED> A response from another receiver database starts a new generation (assertion Y).
 
-H. On a receiver record whose number and hash are those of the delivery the send fence record names for the pending head, the drainer SHALL, in one transaction, set the sender channel record to the receiver record and mark the pending head sent under that delivery.
+H. On a receiver record from the channel's receiver database whose number is the sender channel record's number plus one and whose hash is the delivery hash of a delivery the send fence record names or an attempt recorded on a queue item of the registration carries, the drainer SHALL, in one transaction, set the sender channel record's number and hash to the receiver record's and its receiver identity to the responding one, and, when the record names the delivery the send fence record names for the pending head, mark the pending head sent under that delivery.
 
 I. The drainer SHALL resume the channel as a receiver behind on a receiver record whose number is below the sender channel record's when the sender retains a delivery for every number above the record's up to the sender channel record's and the retained delivery numbered one above the record's links to the record's hash.
 
-J. <RETIRED> A receiver record below the sender's that assertion I does not resume from re-anchors the channel (EVS-DEV-channel-findings).
+J. <RETIRED> A receiver record below the sender's that assertion I does not resume from starts a new generation (assertion Y).
 
-K. The drainer SHALL resume the channel as a sender behind on a receiver record whose number is above the sender channel record's when the receiver's hash at the sender channel record's number, as the check-in reported it or a pull the drainer makes for it returns, is the sender channel record's hash, or is null at number 0, which needs no report.
+K. On a receiver record from the channel's receiver database whose number is above the sender channel record's and that names neither a delivery the send fence record names nor one an attempt recorded on a queue item of the registration carries, the drainer SHALL start a new generation of the registration, recording a security finding of kind `sender_regressed`.
 
-L. <RETIRED> A receiver record that calls for no resume re-anchors the channel (EVS-DEV-channel-findings).
+L. <RETIRED> A receiver record that calls for no resume starts a new generation (assertions K and Y).
 
-M. A receiver-behind resume SHALL enqueue, in ascending delivery-number order, one queue item marked as a resume item per delivery number above the receiver record up to the sender channel record's, carrying the events, withheld-parent record and break of the retained delivery with that number in its order.
+M. A receiver-behind resume SHALL enqueue, in ascending delivery-number order, one queue item per delivery number above the receiver record up to the sender channel record's, carrying the events and attributes of the retained delivery with that number in its order.
 
-N. The drainer SHALL commit a receiver-behind resume in one transaction that verifies the drain lock and that retires the channel's pending items, deleting each that carries no attempt and tombstoning each that carries attempts, rewinds the fill position below the lowest event they carry, enqueues the resume items, sets the sender channel record to the receiver record and appends a resume event of direction `receiver_behind`.
+N. The drainer SHALL commit a receiver-behind resume in one transaction that verifies the drain lock and that retires the channel's pending items, deleting each that carries no attempt and tombstoning each that carries attempts, rewinds the fill position below the lowest event they carry, removes the registration's transform failure record, enqueues the resend items, sets the sender channel record to the receiver record and appends a resume event.
 
-O. On a sender behind, the drainer SHALL pull every delivery numbered above the sender channel record and up to the receiver record, and SHALL check, in number order, that each delivery's link chains from the sender channel record's hash, that each recomputes to its hash, and that every event it carries passes ingest's integrity verification, names the sender's own database identity in its originator entry, and carries as its last entry the receiver's, whose arrival hash is the hash the delivery lists for that event and to which the event, with that entry removed and its sequence number restored to the entry's origin sequence number, hashes.
+O. <RETIRED> A sender regression starts a new generation with a finding (assertion K); nothing is pulled from the receiver under the sender's own identity.
 
-P. A recovery SHALL store each served event whose sealed hash names no event the sender holds, in ascending order of origin position, as the receiver served it with the sender's own provenance entry appended (naming the sender's database identity and recording the channel and delivery number it was recovered from), under a new local sequence number.
+P. <RETIRED> A sender regression starts a new generation with a finding (assertion K); nothing is pulled from the receiver under the sender's own identity.
 
-Q. A sender-behind resume SHALL enqueue its skip event alone as the channel's next item, marked as a resume item.
+Q. <RETIRED> A sender regression starts a new generation with a finding (assertion K).
 
-R. The drainer SHALL commit a sender-behind resume in one transaction that verifies the drain lock and that appends the skip event before storing the recovered events, stores them, retires the channel's pending items, deleting each that carries no attempt and tombstoning each that carries attempts, rewinds the fill position below the lowest event they carry, enqueues the skip event and sets the sender channel record to the receiver record.
+R. <RETIRED> A sender regression starts a new generation with a finding (assertion K).
 
-S. In the transaction of an operator's recovery of a channel's wedged head, the library SHALL enqueue again, in their order and ahead of every item a later fill enqueues, the wedged head when it is marked as a resume item and each pending item behind it so marked, each marked as a resume item and carrying the events, withheld-parent record and break it carried.
+S. <RETIRED> An operator's recovery of a wedged resend item rewinds the fill position below the events it carried, and the fill enqueues them again (EVS-DEV-destination-drain).
 
-T. <RETIRED> A channel of the sender that its log does not record is a security finding, and nothing is recovered from it (EVS-DEV-channel-findings).
+T. <RETIRED> A channel the sender does not know is not examined; a new generation is started only for the checked channel's own record.
 
-U. <RETIRED> A check-in that finds a channel the sender does not know decides the checked-in channel as its receiver record calls for (EVS-DEV-channel-findings).
+U. <RETIRED> A channel the sender does not know is not examined; a new generation is started only for the checked channel's own record.
 
-V. When a check-in's pull reports a permanent failure, the drainer SHALL wedge the channel's pending head with cause `check_in_failed`, and while no head is pending SHALL keep the channel held.
+V. <RETIRED> A pull that fails permanently wedges the operation that made it (EVS-DEV-delivery-channel).
 
-W. The drainer SHALL read as the retained delivery at a delivery number the delivery its queue last marked sent at that number on the channel from an item enqueued no earlier than the break item the sender channel record names, or from any item when it names none, and SHALL read no delivery as retained at a number where there is no such delivery.
+W. The drainer SHALL read as the retained delivery at a delivery number the delivery its queue last marked sent at that number under the registration's current generation, and SHALL read no delivery as retained at a number where there is none.
 
-X. In the transaction of a receiver-behind or a sender-behind resume, the drainer SHALL enqueue again, after the items the resume enqueues and in their order, each pending item the resume retires that carries a skip event or a break, marked as a resume item and carrying the events and withheld-parent record it carried and no break.
+X. <RETIRED> A new generation retires the pending items and refills from the start of the log (assertion Z).
+
+Y. On a response naming a receiver database identity other than the one the sender channel record holds, when it holds one, or on a receiver record from the channel's receiver database that is not the sender channel record, calls for no receiver-behind resume, and either has a number not above the sender channel record's or has a number more than one above it and names a delivery the send fence record names or one an attempt recorded on a queue item of the registration carries, the drainer SHALL start a new generation of the registration, recording a security finding of kind `channel_unexplained`.
+
+Z. The drainer SHALL start a new generation in one transaction that verifies the drain lock and that appends the security finding the record calls for, under the detector role `sender`, naming the channel, the sender channel record, the receiver record and the recorded and responding receiver database identities; retires the registration's pending items, deleting each that carries no attempt and tombstoning each that carries attempts; rewinds the registration's fill position to the start of the log; removes the registration's transform failure record; and sets the sender channel record to the next generation, number 0, a null hash and the responding receiver identity.
 
 ### Rationale
 
-**Why hold per channel until a check-in (assertions A to F)?** The drain epoch rises at every acquisition of the drain lock (`EVS-DEV-destination-drain-lock/A`), so a process sees whether another held the lock in between; only then, after an open, or after an operator recovered the head, can the channel have moved unseen. The epoch is written only with the decision, so a drainer that stops part way checks in again. The hold is per channel and reported (`EVS-DEV-destination-drain/T`).
+**Why this reading (assertions H, I, K and Y)?** A record naming the delivery the send fence names is that delivery's acknowledgement (`EVS-PRD-destinations/J`), whether it arrives with the first response or with the answer to a re-presentation after the first response was lost. A record naming another delivery the sender attempted at that number is equally true: the receiver accepted it although its acknowledgement never arrived, and the item that carried it was since wedged and recovered, halted for a reconfiguration, or retired by a resume. The sender adopts the record and marks nothing sent, since the item that carried the delivery is no longer pending; its events were filled again and are delivered again after the record, which idempotent ingest admits. No item is marked sent at an adopted number, so a later resume finds no retained delivery there and starts a new generation instead. A record more than one ahead that names a delivery the sender attempted names one a resume or a new generation has since moved the sender's record back past: the receiver came forward again (a failover back to a copy that held it), which no automatic path explains, and it is not a regression, since the sender knows it sent that delivery. The first response on a generation names the receiver that the sender compares every later response with; before it, any receiver is the channel's. A receiver behind is resumed when every delivery it lacks can be resent exactly and the first links to its record, which proves the common point by content. A receiver ahead has accepted deliveries the sender does not know it sent: the sender went back in time, or another copy of it delivered. Every other record, and a response from another receiver database, admits no automatic explanation. The receiver's record reaches the drainer with every response, so no pull precedes sending.
 
-**Why this reading (assertions H, I and K)?** A record naming the delivery the send fence names is that delivery's acknowledgement (`EVS-PRD-destinations/J`); a delivery an earlier resume retired never matches. A receiver behind is resumed when every delivery it lacks can be resent exactly and the first links to its record, which proves the common point by content. A receiver ahead whose delivery at the sender's number carries the sender's hash holds everything the sender does; at number 0 both hashes are null. Every other record re-anchors (`EVS-DEV-channel-findings`).
+**Why new resend items (assertions M and N)?** A sent item never changes status (`EVS-DEV-destination-drain/B`), so a resend is a new item carrying the retained delivery's events and attributes, which the fence numbers to the retained hash. Pending items were never accepted, so they are retired and refilled; one with attempts is tombstoned to keep them (`EVS-PRD-destinations/J`). The transform failure record goes with the rewind, as it does on an operator's recovery, so failures counted before the rewind spend nothing of the budget of what the refill evaluates; a new generation removes it for the same reason. An operator's recovery of a wedged resend item rewinds the fill below its events, so they are enqueued again by the fill; the receiver is behind and accepts whatever follows its record.
 
-**Why new resume items (assertions M, N and S)?** A sent item never changes status (`EVS-DEV-destination-drain/B`), so a resend is a new item carrying the retained delivery's events, withheld-parent record and break, which the fence numbers to the retained hash. Pending items were never accepted, so they are retired and refilled; one with attempts is tombstoned to keep them (`EVS-PRD-destinations/J`). An operator's recovery refills from the log, which would re-filter a resend and never enqueues a skip or a break, so it enqueues the resume items again, first.
+**Why the last delivery sent at a number in the current generation (assertion W)?** A resume reads retained deliveries only at numbers up to the sender channel record's. Every earlier generation used the same numbers, so the sent item records its generation and only the current generation's deliveries are read. Within a generation a number repeats only through a resend, which is identical. A number the sender adopted from a lost acknowledgement has no item marked sent at it and is not retained, so a receiver behind it is not resumed and the channel continues on a new generation.
 
-**Why these checks (assertion O)?** A recovery admits events of the sender's own identity, which ingest records as an anomaly, so it checks each against its own channel: the chain, each hash, ingest's integrity verification and the reconstruction of the event as the receiver accepted it. A failed check is a finding and the event is still stored as served (`EVS-DEV-channel-findings`).
-
-**Why one transaction, skip event first (assertions P to R)?** A recovered event keeps its identity, sealed hash and predecessor link and gains the sender's own entry; its origin position may be one the continuing branch reuses, so it takes a new local sequence number. The skip is appended first in the same transaction, so no recovered event is held without its skip and on every channel the skip precedes the recovered events (`EVS-DEV-destination-drain/X`). A recovery that fails to commit stores nothing and is repeated at the next check-in. A recovery holds back the sender's appends while it commits; storing a large one in resumable chunks is recorded in `spec/roadmap/sync.md`.
-
-**Why one retained delivery per number (assertion W)?** A re-anchor numbers the channel again from the receiver's record, so the queue can hold sent items at one number from before and after it; only the deliveries since the latest re-anchor are on the chain the receiver accepted. Within that span a number repeats only through a resend, and the one sent last is the one the receiver was last given. Reading the retained delivery this way gives the receiver-behind reading, the resend and the resend check one delivery at each number.
-
-**Why keep a pending skip or break through a resume (assertion X)?** A resume retires the channel's pending items because they were never accepted and the fill enqueues them again, but the fill never enqueues a skip event or a break on its own channel. A skip or break retired unsent would never reach that receiver, which would then meet the fork the skip records without it. The resume therefore enqueues them again behind its own items, as an operator's recovery does. A retired break goes again without its break: the resume has realigned the channel on an automatic path, so the break no longer states the record the delivery replaces, and a receiver would record a sender record the channel had already moved past. Its finding still travels, naming both records, as a re-anchor sends earlier breaks.
-
-**Why wedge on a permanent pull failure (assertion V)?** A pull that reaches no receiver endpoint of this library is a deployment fault, not an integrity anomaly, so it takes the drain's permanent-failure path with an operator exit.
+**Why a new generation with a finding (assertions K, Y and Z)?** A receiver ahead has accepted a delivery the sender never attempted. The sender cannot prove a common point, and only a delivery that follows the receiver's record would be accepted. Rather than guess, it records both records and both receiver identities in a finding and starts the channel again: the next generation is a channel the receiver has not seen, numbered from 1, and the fill starts again from the beginning of the sender's log, so the receiver can lack none of the sender's events; idempotent ingest admits only what it lacks, and records forks and reused positions where the sender's history differs from what it holds. The finding is an event of the sender's log, which the fill delivers on every channel. A sender restored to before a generation it started may start one the receiver already holds; the receiver's record of it then starts the next, with a finding of its own.
 
 ### Changelog
 
+- 2026-09-26 | 0409f85d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Y: a record not above the sender channel record, or more than one above it naming an attempted delivery, that is not the sender channel record and calls for no resume starts a new generation with `channel_unexplained`, so no record leaves a channel without a rule. W: a retained delivery is read only from items marked sent under the current generation, so an adopted number is not retained. N and Z: the resume and the new generation remove the transform failure record. C and F: the retired notes name where their subject is stated. No code or test references any of these letters
+- 2026-09-25 | 3fcf0d7d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | 86c9bb4a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | H: a record from the channel's receiver database naming, at the next number, any delivery the sender attempted (the send fence record's, or an attempt on a pending, wedged or tombstoned item) sets the sender channel record and adopts the responding receiver identity, and marks the head sent only when it names the head's delivery. K: a sender regression is a record ahead naming no attempted delivery. Y: another receiver identity is unexplained only when the sender channel record holds one. No code or test references H, K or Y
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: title; retire A to F and V (no check-in or hold), O, P, Q, R and X (no sender-behind recovery, skip event or break), and S (an operator's recovery refills a wedged resend). K: a receiver record ahead of the sender's starts a new generation with a `sender_regressed` finding. M and N: resend items carry attributes and no resume mark; the resume event has no direction. W: the retained delivery is the last one sent at the number on the registration. Add Y: a record no automatic path explains starts a new generation with a `channel_unexplained` finding; add Z: the new generation's transaction. No code or test references any of these letters. Z: the finding is recorded under the detector role `sender`
 - 2026-09-25 | 2bbafa9b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | X: a retired break enqueued again after a resume carries no break, so a receiver records no sender record the channel has moved past; its finding still travels. No code or test references X
 - 2026-09-25 | 6c0875ec | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -430,97 +462,45 @@ X. In the transaction of a receiver-behind or a sender-behind resume, the draine
 - 2026-09-25 | 5d6fd499 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-T: the per-epoch check-in and hold with a repeated check-in once a blocking halt or wedge is cleared, the classification of a receiver record and of lost channels, adoption of a delivery whose outcome was not recorded, the common point of each recovered channel, verified recovery of a sender's own events stored in origin order and left out of the views until a skip records them, the library's channel stop through a halt of purpose channel_stop with a skip over what a partial recovery stored, the resume halt and the resume recovery, the rewind and skip events with the channels they recovered, sealed branch points and the forks by successor, and how the branch point, abandoned head and recovered and unrecovered positions are determined, the reserved resume and succession entry types, the receiver's check of a resume event and its closing of recovered lost channels, the repeated-record, closed-channel, superseded, succession-refused and fork-unrecorded wedges, independent channels, the cancellation of a stale resume request, the shared-channel report, and the hold of a channel while another channel to the same receiver is mid-resume
 
-*End* *Channel check-in and resume* | **Hash**: 2bbafa9b
+*End* *Channel resume and new generation* | **Hash**: 0409f85d
 
-## EVS-DEV-channel-findings: Channel findings and re-anchoring
-
-**Level**: DEV | **Status**: Active | **Implements**: -
-**Refines**: EVS-PRD-delivery-channel
-
-### Purpose
-
-This requirement holds the security findings a sender records about a channel and the re-anchor that realigns a channel no resume explains: the finding and break a re-anchor commits, the unknown channels a check-in reveals, a resend that no longer matches, and the checks of a recovery that fail.
-
-### Assertions
-
-A. The drainer SHALL re-anchor a channel on a receiver record that names a receiver database identity other than the one the sender channel record holds, and on one from the channel's receiver that equals neither the sender channel record nor the delivery in flight and calls for no resume.
-
-B. The drainer SHALL commit a re-anchor in one transaction that verifies the drain lock and that appends a security finding of kind `channel_unexplained` naming the channel, the sender channel record, the receiver record and the recorded and responding receiver database identities; retires the channel's pending items, deleting each that carries no attempt and tombstoning each that carries attempts; rewinds the channel's fill position to its start; enqueues that finding alone as the channel's next item, marked as a resume item and carrying as its break the sender channel record; enqueues after it, in ascending local sequence order, each marked as a resume item carrying no break, every skip event naming the channel's registration whose originator entry names the sender and whose last provenance entry is that entry or the sender's own recovery entry, and every earlier `channel_unexplained` finding a re-anchor of that registration enqueued as its break; and sets the sender channel record to the receiver record, its receiver identity to the responding one, and its re-anchor to the break item's queue position and the fill position the re-anchor rewound from.
-
-C. The drainer SHALL send each queue item with the envelope's `break` set to the break the item carries, and null for an item that carries none.
-
-D. For each channel a check-in lists under the destination's identifier whose sender is the checking database and whose registration identifier names no registration event in the sender's log whose originator entry names the sender and whose last provenance entry is that entry or the sender's own recovery entry, the drainer SHALL append, in the transaction that commits the check-in's decision, a security finding of kind `unknown_channel` naming that channel, and SHALL recover nothing from that channel.
-
-E. When the delivery hash of a resend item, computed at the pre-send fence over the item's channel, number, events, withheld-parent record and break with the link of the retained delivery with that number in place of the link the fence assigns, differs from that retained delivery's delivery hash, the drainer SHALL append, in that fence transaction, a security finding of kind `resend_mismatch` naming the channel, the number, the retained delivery hash and the hash so computed, and SHALL send the item as the fence computes it.
-
-F. For each served delivery or event that fails a check of a sender-behind pull, for each delivery within the receiver's record that the receiver answers it cannot serve, and for each served resume or succession event whose originator entry names the sender's database identity and whose sealed hash names no event the sender holds, the drainer SHALL record a security finding, of kind `hash_mismatch` for an event whose hash or an arrival hash does not recompute, of kind `recovery_unverified` naming the check that failed for every other failed check, or of kind `own_resume_recovered`, naming, for the last two, the channel, the delivery number and, where one applies, the event and its sealed hash.
-
-G. The drainer SHALL store a served event for which it records a finding of a sender-behind pull as it stores every other served event, when the event is one it can store as an event.
-
-### Rationale
-
-**Why re-anchor, and refill from the start (assertions A to C)?** A record no resume explains leaves no point the sender can prove shared, and only a delivery that follows the receiver's record will be accepted. The sender records both records and both receiver identities, and its finding is the break: the next delivery on the channel, whose hash covers the sender's record it replaces. The receiver may lack any of the sender's events, so the fill starts again and idempotent ingest admits only what is missing; the cost is proportional to the channel's history and paid only on an anomaly. What the fill never enqueues on the channel goes too: the channel's own skip events and earlier breaks are sent right after the break, so the receiver holds each skip before it meets the continuing branch again, and the refill carries the events recovered from the channel (`EVS-DEV-destination-drain/W`), which a receiver restored past the recovery no longer holds. The break item marks where the retained deliveries start again.
-
-**Why unknown channels are recorded, not recovered (assertion D)?** A receiver can hold a channel of this sender its log does not know: a restore to before a registration, or another copy of the sender. Only a registration the sender holds as its own, appended or recovered, makes a channel known: an audit of the sender's identity that arrived by ingest is a clone's or a tamperer's statement, stored beside its finding, and neither it nor such a skip event steers the sender's channels. Recovering from it would be guessing at a history. The finding names the channel alone, not the receiver's record of it, which moves while another copy delivers on it, so one unknown channel is one finding. The checked-in channel continues as its own record calls for. The listing also names the channels of the sender's predecessors, whose registrations a successor never holds; a predecessor's channel is not the sender's to explain, and a predecessor still delivering is recorded where it is met, by the receiver.
-
-**Why record and store what does not verify (assertions E to G)?** A resend that no longer hashes as sent means the sender's own record changed; it is recorded and sent as held. Every later resend of the same resume links to the changed hash and so hashes differently too, so each resend is checked over its own content under the link it was retained with: a single alteration records one finding, the resends after it that are as retained record none, and a second alteration in the same resume records its own. The hash computed under the retained link depends only on the resend's content, so the finding's identity is the same however often the resume is repeated. A served delivery that does not chain or recompute, an event that fails a check, a delivery the receiver cannot serve, and a resume or succession event of the sender's own identity it does not hold (a second live copy, or a restore to before one of its own resumes or its succession) are facts about what the receiver holds; the served events are stored as served, beside the findings, and the recovery completes.
-
-### Changelog
-
-- 2026-09-25 | 3d2bc8f3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | B and D: a re-anchor re-sends, and a check-in counts as known, only the skip and registration events the sender holds as its own (originator entry names it, last provenance entry is that entry or its own recovery entry), since ingest stores an event of the sender's own identity it does not hold. No code or test references B or D. E: each resend is hashed over its content under the retained delivery's link and compared with the retained hash, so a second independent alteration in one resume is recorded too and a single alteration still records one finding. No code or test references E
-- 2026-09-25 | 57efe00e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | 103bd46b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | D: unknown_channel applies only to listed channels whose sender is the checking database, so a successor records none for its predecessors' channels. E: resend_mismatch is recorded only for a resend whose link is the retained delivery's link, so an alteration records one finding, not one per later resend. F: own_resume_recovered also covers a served succession event of the sender's own identity that it does not hold. No code or test references D, E or F
-- 2026-09-25 | 040fa13d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | B: a re-anchor enqueues after its break the channel's skip events and earlier breaks, and records its break item and rewound-from fill position. D: an unknown_channel finding names the channel alone. F: a hash that does not recompute is a hash_mismatch finding. G: a served record that cannot be stored as an event is kept in a finding. No code or test references any of these letters
-- 2026-09-25 | b5572dbc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | 877c5dad | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
-- 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-G: the re-anchor of a channel no resume explains, with its `channel_unexplained` finding sent as a break delivery and a refill from the channel's start; `unknown_channel`, `resend_mismatch`, `own_resume_recovered` and `recovery_unverified` findings, and served events stored as served
-
-*End* *Channel findings and re-anchoring* | **Hash**: 3d2bc8f3
-
-## EVS-DEV-resume-event: Resume and channel records
+## EVS-DEV-resume-event: Resume and succession event types
 
 **Level**: DEV | **Status**: Active | **Implements**: -
 **Refines**: EVS-PRD-delivery-channel
 
 ### Purpose
 
-This requirement holds the shape of the events the sender appends about its channels: the resume event with the skip keys, how the branch point, abandoned head and unrecovered positions are determined, and the reserved entry types.
+This requirement holds the shape of the resume event the sender appends when its receiver fell behind, and the reserved entry types of the resume and succession events.
 
 ### Assertions
 
-A. The resume event SHALL carry exactly `id` (the destination), `database_id` (the sender), `registration_id`, `direction` (`receiver_behind` or `sender_behind`), `resume_after` (the receiver record, as an object with exactly `delivery_number` and `delivery_hash`), `previous_record` (the sender channel record before the resume, in that shape), `drainer_epoch`, and the skip keys, each null for direction `receiver_behind`.
+A. The resume event SHALL carry exactly `id` (the destination), `database_id` (the sender), `registration_id`, `generation`, `resume_after` (the receiver record, as an object with exactly `delivery_number` and `delivery_hash`), `previous_record` (the sender channel record's number and hash before the resume, in that shape) and `drainer_epoch`.
 
-B. The skip keys SHALL be exactly `recovered_deliveries` (an object with exactly `first` and `last`, the delivery numbers the recovery pulled), `recovered_sequences` (the ascending inclusive ranges `[first, last]` of the origin positions of the events the recovery stored), `unrecovered_sequences`, `branch_point` and `abandoned_head` (each an object with exactly `sequence_number`, the event's origin position, and `event_hash`, its sealed hash; `abandoned_head` null exactly when the recovery stored no event, and `branch_point` null when the recovery stored no event or no event is proven shared), and `conflicted_aggregates`.
+B. <RETIRED> A resume records only the receiver-behind realignment (assertion A).
 
-C. A skip event's `unrecovered_sequences` SHALL be the ascending inclusive ranges of the origin positions above the branch point, or above 0 when the branch point is null, and up to the abandoned head, that `recovered_sequences` does not hold, and no range when the abandoned head is null.
+C. <RETIRED> A resume records only the receiver-behind realignment (assertion A).
 
-D. The drainer SHALL determine the abandoned head as the event with the highest origin position among the events the recovery stores.
+D. <RETIRED> A resume records only the receiver-behind realignment (assertion A).
 
-E. The drainer SHALL determine the branch point as the event with the highest origin position below the abandoned head among the events the sender holds as authored that are proven shared, each by a served event with that event's identity and sealed hash, by the retained delivery whose number and hash are those of the sender channel record the resume starts from carrying it, or by the predecessor link of the lowest-positioned event the recovery stores naming it, and as null when no such event is proven shared.
+E. <RETIRED> A resume records only the receiver-behind realignment (assertion A).
 
-F. <RETIRED> A skip event records its forks and reused origin positions as the range above its branch point and up to its abandoned head.
+F. <RETIRED> A resume records only the receiver-behind realignment (assertion A).
 
-G. <RETIRED> A channel the sender does not know is recorded as a security finding (EVS-DEV-channel-findings).
+G. <RETIRED> A channel whose records do not match starts a new generation with a security finding (EVS-DEV-delivery-resume).
 
 H. The library SHALL declare the resume event and the succession event as reserved destination audit entry types, `system.destination_channel_resumed` and `system.destination_sender_succeeded`, each with an event type of its own.
 
 ### Rationale
 
-**Why these resume event fields (assertions A and B)?** They state, from the sender's log alone, what the resume did; positions are ranges because a recovery can bring back thousands, and each recovered event names the channel and delivery it came from.
-
-**Why unrecovered positions as the range less what was recovered (assertion C)?** Every position of the abandoned range the recovery did not bring back is listed, whether the sender holds a continuing event there or nothing: a filtered-out event, an unserved delivery and a reused position all show. It does not claim an event of the chain ever sat there.
-
-**Why this branch point and abandoned head (assertions D and E)?** The sender cannot tell an authored event its backup kept from one it appended after the restore, so the branch point is the highest authored event it can prove lies on both branches: one a served delivery carries under the same identity and sealed hash, one of its retained delivery at the record the resume starts from, or the predecessor of the lowest recovered event. Each proven event lies at or below the true fork, so the branch point may be lower than the fork, or null, never higher; a lower one widens the accepted range and counts more authored events as continuing, the price of not guessing. Positions are recorded with sealed hashes, because the sender's stored hash of a recovered event is its own re-stamp.
-
-**Why a range, not a list of forks?** A legitimate restore's forks and reused positions all lie above the branch point and, for the lowest event of each fork and every reused position, at or below the abandoned head, so any holder checks each fork and reuse against the range, in whatever order it received the events, and records a finding for any the range does not cover (`EVS-DEV-chain-verification`). A skip appended with nothing else after the restore is itself a successor at the fork, inside its own range.
+**Why these resume event fields (assertion A)?** They state, from the sender's log alone, which channel was resumed, from which record to which, and by which drainer; the resend items carry the events.
 
 **Why reserved destination audits (assertion H)?** Each records an operation on one destination of one database, so the destination-audit shape rules and ingest checks apply (`EVS-DEV-destination-drain/H`, `K`, `L`).
 
 ### Changelog
 
+- 2026-09-25 | cf99714e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: title; A: the resume event records only a receiver-behind resume and carries the generation, with no direction or skip keys; retire B to E (no skip keys, branch point or abandoned head). No code or test references any of these letters
 - 2026-09-25 | 0de54883 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | 7d87fc16 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | C: `unrecovered_sequences` is every position of the abandoned range that `recovered_sequences` does not hold. No code or test references C
@@ -533,7 +513,7 @@ H. The library SHALL declare the resume event and the succession event as reserv
 - 2026-09-25 | 0ed5489a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-H: the resume event and its skip keys, split from EVS-DEV-delivery-resume, with `unrecovered_sequences` defined as the abandoned positions at which the sender holds no recovered event, the abandoned head, the branch point, the forks by successor, the unknown-channels event and the reserved entry types
 
-*End* *Resume and channel records* | **Hash**: 0de54883
+*End* *Resume and succession event types* | **Hash**: cf99714e
 
 ## EVS-DEV-sender-succession: Sender succession
 
@@ -542,17 +522,17 @@ H. The library SHALL declare the resume event and the succession event as reserv
 
 ### Purpose
 
-This requirement holds how a database that has authored no application events restores a predecessor sender's deliveries from a receiver, the succession event it appends, how a receiver accepts it and what it records, the lineage the library derives from succession events, and the restores the library refuses.
+This requirement holds how a database that has authored no application events restores a predecessor sender's deliveries from a receiver, the succession event it appends, how a receiver accepts it and the finding it records when the succession names deliveries it no longer holds, the lineage the library derives from succession events, and the restores the library refuses. It is the path by which an application rebuilds a sender that went back in time, and a reset or reinstalled device takes over its predecessor's data.
 
 ### Assertions
 
 A. The library SHALL offer a restore operation that, through the pull of a destination registered in the successor, obtains the channels the receiver lists for a named predecessor database and pulls each listed channel's deliveries from 1 up to the receiver's record of it.
 
-B. The restore operation SHALL check that every pulled channel's deliveries chain by link from delivery 1 (whose link is null), that each recomputes to its hash, and that every event it carries passes ingest's integrity verification, names the channel's sender in its originator entry, and carries as its last entry the receiver's, whose arrival hash is the hash the delivery lists for that event, and SHALL record a security finding of kind `hash_mismatch` for each event whose hash or an arrival hash does not recompute and of kind `recovery_unverified` for each delivery or event that fails another check.
+B. The restore operation SHALL check that every pulled channel's deliveries chain by link from delivery 1 (whose link is null), that each recomputes to its hash, and that every event it carries recomputes to its event hash, names the channel's sender in its originator entry, and carries as its last entry the receiver's, whose arrival hash is the hash the delivery lists for that event, and SHALL record, under the detector role `restore`, a security finding of kind `hash_mismatch` for each event whose hash or an arrival hash does not recompute and of kind `restore_unverified` for each delivery, and each event other than a record it keeps in an `event_malformed` finding, that fails another check.
 
-C. The restore operation SHALL store, in one transaction, every carried event the successor does not hold, as served, in lineage order with the earliest predecessor first and, within each identity, in ascending order of origin position, each with the successor's provenance entry appended recording the channel and delivery number it was pulled from.
+C. The restore operation SHALL store, in one transaction, every carried event the successor does not hold, as served, in lineage order with the earliest predecessor first, within each identity in ascending order of origin position, and at one origin position in ascending order of the registration identifier, generation and delivery number of the lowest pulled delivery carrying the event, each with the successor's provenance entry appended recording the channel and delivery number it was pulled from.
 
-D. The library SHALL append the succession event only in the transaction in which the restore operation stores the predecessor's events, with data carrying exactly `id` and `registration_id` (the successor's destination the restore pulled through), `database_id` (the successor), `predecessor_database_id`, and `predecessor_channels` (for each channel restored, an object with exactly `channel` (an object with exactly `sender_database_id`, `destination_id` and `registration_id`), `delivery_number` and `delivery_hash`, the last delivery restored).
+D. The library SHALL append the succession event only in the transaction in which the restore operation stores the predecessor's events, with data carrying exactly `id` and `registration_id` (the successor's destination the restore pulled through), `database_id` (the successor), `predecessor_database_id`, and `predecessor_channels` (for each channel restored, an object with exactly `channel` (an object with exactly `sender_database_id`, `destination_id`, `registration_id` and `generation`), `delivery_number` and `delivery_hash`, the last delivery restored).
 
 E. A receiver SHALL handle a delivered succession event it already holds as it handles any event it already holds, applying no succession check to it.
 
@@ -560,24 +540,40 @@ F. A receiver SHALL refuse, as it refuses a caller it does not authenticate for 
 
 G. The library SHALL offer a read of the succession lineage of a sender database identity, derived solely from the succession events the log holds: the predecessors it succeeded, transitively, and its successor, if any.
 
-H. The restore operation SHALL refuse, before storing anything, a restore into a successor whose log holds an event of an application entry type it authored, one into a successor whose log holds a succession event it authored, one naming the successor's own identity, and one for which the receiver lists no channel.
+H. The restore operation SHALL refuse, before storing anything, a restore into a successor whose log holds an event of an application entry type it authored, one into a successor whose log holds a succession event it authored, one naming the successor's own identity, one for which the receiver lists no channel, and one for which a pull answers that it cannot serve a delivery the restore asks for.
 
-I. A receiver SHALL accept a succession event it does not hold, recording a security finding of kind `succession_contradicted` naming the succession and the contradiction, when a succession its log holds already names the predecessor, when, for a channel the event names that the receiver's log records, the receiver's own record of that channel is other than the named delivery, or when its log holds a channel of the predecessor, or of an identity in the predecessor's succession lineage, that the event does not name.
+I. <RETIRED> A receiver accepts a succession event it does not hold as any event; where the predecessor's and the successor's events meet, ingest records forks and reused positions.
+
+J. <RETIRED> The restore's predecessor, fork and reused-position findings are stated with ingest's in the chain verification requirement (`spec/causal-history.md`).
+
+K. A receiver that stores a succession event it does not hold SHALL record, for each channel the event's `predecessor_channels` names of which the receiver holds an accepted delivery and whose named delivery number is above the receiver's record of that channel, one security finding of kind `succession_ahead` naming the channel, the receiver's record and the named delivery, in the transaction that stores the succession event, and SHALL store the succession event as received.
 
 ### Rationale
 
-**Why restore every listed channel from delivery 1 (assertions A and B)?** The successor holds none of its predecessor's history, so delivery 1's null link anchors the chain that binds what is served to each channel as the receiver holds it: consistency, not authorship (`EVS-PRD-delivery-channel`, Trust). The listing covers the predecessor's lineage, so a device reset twice restores what its predecessor restored. A failed check is a finding and the events are stored as served.
+**Why restore every listed channel from delivery 1 (assertions A and B)?** The successor holds none of its predecessor's history, so delivery 1's null link anchors the chain that binds what is served to each channel as the receiver holds it: consistency, not authorship (`EVS-PRD-delivery-channel`, Trust). The listing covers every generation of the predecessor's channels and its lineage, so a sender that went back in time is rebuilt with everything its receiver holds, both sides of any fork included, and a device reset twice restores what its predecessor restored. A failed check is a finding and the events are stored as served.
 
-**Why one transaction, in lineage and origin order (assertions C and D)?** Each identity's write order per aggregate then holds in the successor's log (`EVS-PRD-event-log/C`), and a restore happened whole, with its succession recorded, or not at all. The public append operations refuse every reserved entry type (`EVS-DEV-destination-drain/L`), so no operation can claim a succession otherwise; the succession event reaches every channel (`EVS-DEV-destination-drain/X`).
+**Why one transaction, in lineage and origin order (assertions C and D)?** Each identity's write order per aggregate on each branch of its origin chain then holds in the successor's log (`EVS-PRD-event-log/C`), every event follows the predecessor it links to, and events of two branches at one origin position are stored in one order every restore of the same listing reproduces. A restore happened whole, with its succession recorded, or not at all. The public append operations refuse every reserved entry type (`EVS-DEV-destination-drain/L`), so no operation can claim a succession otherwise; the succession event reaches every channel (`EVS-DEV-destination-drain/X`). A restore holds back the successor's appends while it commits; a successor that has authored nothing has none to hold back. Storing a large restore in resumable chunks is recorded in `spec/roadmap/sync.md`.
 
-**Why these receiver rules (assertions E, F and I)?** A succession met a second time is a duplicate. A caller not authenticated for both identities is refused, so one sender's credential cannot take over another's data. A predecessor already succeeded, a named delivery other than the receiver's record of a channel it holds (the predecessor delivered after the restore), or a channel the event does not name (the successor did not restore what this receiver holds) are contradictions the receiver records, accepting the succession. The succession event travels on every channel of the successor, so it reaches receivers that never held a channel it names; such a receiver has no record of that channel to compare, and the difference is no contradiction.
+**Why these receiver rules (assertions E and F)?** A succession met a second time is a duplicate. A caller not authenticated for both identities is refused, so one sender's credential cannot take over another's data. Two other situations are the application's choice, and the library records nothing for them: a predecessor still delivering, whose later events extend its own origin chain on its own channels without forking it, and a restore that did not cover every channel a receiver holds.
 
-**Why a lineage read (assertion G)?** The Layer 2 continuity of authorship (`EVS-PRD-delivery-channel/T`) needs one reading of a lineage, shared by the verification, the conflict rules and the channel listing, derived solely from succession events.
+**Why record a succession ahead of the receiver (assertion K)?** A receiver that moved back after a successor restored from it no longer holds the predecessor deliveries between its record and the one the succession names. Nobody sends them again: the predecessor is retired, and the successor delivers only what it authored (`EVS-DEV-destination-drain/V`). The succession event states what the receiver held when the successor restored, so the receiver compares it with its own record when it stores the event and records the gap as a finding, then continues. The deliveries between are held by the successor, and a person reconciles them. A receiver that holds no accepted delivery of a named channel may never have been that channel's receiver, so it records nothing for it.
 
-**Why refuse these restores (assertion H)?** A successor with application events or a succession of its own has a history the restore would merge with another; a person decides. It is a precondition of the operation, checked in the restore's one transaction, not an integrity check.
+**Why the restore checks the origin chains?** A regressed sender's predecessor delivered two histories that overlap: the events its receiver held from before the regression, and those it authored again at the same positions afterwards. The receiver recorded the overlap in its own log, but those findings are the receiver's and are not among the predecessor's deliveries. The restore therefore applies ingest's predecessor, fork and reused-position checks to what it stores (EVS-DEV-chain-verification), meets the overlap again and records it in the successor's log under the role `restore`, so the successor's default views mark the forked aggregates as they do at the receiver (`EVS-PRD-materializer`), and its stamping of causal parents starts from a recorded fork, not an unrecorded one.
+
+**Why a lineage read (assertion G)?** The Layer 2 continuity of authorship (`EVS-PRD-delivery-channel/T`) needs one reading of a lineage, shared by canonicalization and the channel listing, derived solely from succession events.
+
+**Why refuse these restores (assertion H)?** A successor with application events or a succession of its own has a history the restore would merge with another; a person decides. A pull that cannot serve a delivery the listing named (the receiver moved back since it listed the channel, or lost an event) would leave a gap in what the succession event claims; the restore stores nothing and the application retries. It is a precondition of the operation, checked in the restore's one transaction, not an integrity check. Deciding when to rebuild a regressed sender (for example, once its queue has delivered what it held, so the receiver holds it too) is the application's.
 
 ### Changelog
 
+- 2026-09-26 | c24246dc | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | 65cb86a0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | B: the kind `recovery_unverified` is named `restore_unverified`, and a record kept in an `event_malformed` finding records no `restore_unverified`. H: a restore refuses when a pull cannot serve a delivery it asks for. Add K: a receiver storing a succession event that names a delivery above its record of a channel it holds records a `succession_ahead` finding. Rationale: the lineage read is shared by canonicalization and the channel listing. No code or test references B, H or K
+- 2026-09-25 | 7e365328 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | aeb85756 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-25 | 7e729461 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | B: events are checked against their event hash, not an unnamed set of ingest checks. C: events at one origin position are ordered by the registration, generation and delivery number of the lowest delivery carrying them. Retire J: the restore's predecessor, fork and reused-position findings are stated once, with ingest's, in EVS-DEV-chain-verification/K and /L. Rationale of E and F: a predecessor still delivering after its succession is not detected, since it forks nothing. No code or test references B, C or J
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Simplification: D: the channel carries its generation. Retire I (no succession-contradicted finding). Purpose and Rationale: succession is how an application rebuilds a regressed sender. No code or test references any of these letters. B: the restore records its findings under the detector role `restore`
 - 2026-09-25 | 3905d868 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | I: the delivery comparison applies only to named channels the receiver's log records, so a receiver that never held a named channel records no contradiction. No code or test references I
 - 2026-09-25 | f2ffa392 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -594,4 +590,4 @@ I. A receiver SHALL accept a succession event it does not hold, recording a secu
 - 2026-09-25 | 50a1ab00 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-D: the restore of a predecessor's channels, closed ones included, verified from delivery 1 and stored in origin order across channels, the succession event appended only in the transaction that completes the restore and never over aggregates the successor already authored on, delivered through a succession delivery request the drainer's fill performs, the receiver's acceptance of a succession, and the succession lineage read
 
-*End* *Sender succession* | **Hash**: 3905d868
+*End* *Sender succession* | **Hash**: c24246dc

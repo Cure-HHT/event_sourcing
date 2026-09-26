@@ -13,7 +13,7 @@ A. The dispatcher SHALL accept an optional opaque correlation token on an action
 
 B. The dispatcher SHALL thread that token onto every event it appends during that dispatch (including denial events).
 
-C. The token SHALL be preserved unchanged when an event carrying it is delivered to, ingested by, recovered from or restored from another deployment.
+C. The token SHALL be preserved unchanged when an event carrying it is delivered to, ingested by or restored from another deployment.
 
 D. The token SHALL be opaque to the substrate — neither parsed nor interpreted — and SHALL exclude cleartext one-time passwords, recovery tokens, and session tokens.
 
@@ -23,9 +23,11 @@ Correlation across non-event-sourced gaps needs a token minted on an originating
 
 ## Changelog
 
+- 2026-09-25 | 784df968 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | C: no path recovers a database's own events; delivery, ingest and restore remain. Code or tests citing C are listed in the integration report
 - 2026-09-25 | 9bd2b75a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend C: the token is preserved across delivery, ingest, recovery and restore; deployments do not relay events they ingested
 - 2026-08-10 | 45a08e62 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | a02a8238 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Flow Correlation Token* | **Hash**: 9bd2b75a
+*End* *Flow Correlation Token* | **Hash**: 784df968

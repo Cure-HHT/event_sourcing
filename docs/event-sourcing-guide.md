@@ -120,8 +120,8 @@ absolute. The library guarantees them:
 - The event at sequence N has hash H.
 - The hash chain from genesis to N is intact (tamper-evident).
 - The provenance entries record which database authored the event and
-  which databases stored it after (a receiver, the author again when it
-  recovers its own event, or a successor that restores it), with
+  which databases stored it after (a receiver, or a successor that
+  restores it), with
   attribution to initiators and times.
 - The events of one aggregate that one database wrote on one branch of its
   origin chain are stored in the order it wrote them, whenever they reach
@@ -1035,7 +1035,7 @@ that are not part of your payload:
 - **`causal`** — the event's kind (`version` or `annotation`), whether a
   later event may name it as a parent (`eligible`), the versions of its
   aggregate it follows (`parents`: the aggregate's latest eligible
-  version, or none), and `reconciles` (null). The entry type's
+  version, or none). The entry type's
   `EventTypeDeclaration` for the event type (in the definition's
   `declarations`) decides kind and eligibility, an eligible version when
   it declares none; the substrate stamps the object and producers cannot
@@ -1198,11 +1198,12 @@ library-version event, and it is for tests only.
 
 The same boot runs the "entry-type downgrade refusal", before it writes
 anything: if any registered entry type's major is less than the major
-of the highest version the substrate has recorded for that type
-(tracked in the `view_target_versions` table), the open fails. The
+recorded for that type in the database's generation record, the open
+fails. The
 substrate will not silently re-interpret an event under an older major.
 A build registering an older minor of the same major opens: minor steps
-only add fields with defaults, so it reads rows a newer minor promoted.
+only add fields with defaults, and it folds its views into copies of its
+own.
 
 The same boot also checks the database's generation record: the
 highest data generation any committed boot registered. A build of another
@@ -1216,18 +1217,23 @@ On Postgres the boot transaction's first statement locks the table
 holding the sequence counter, which every append writes, so the appends
 of a revision serving the same database wait for the boot to commit
 rather than abort it. That wait lasts for the whole boot transaction: its
-reads of the library-version and registry audit events, the latest event and the stored view
-targets, its checks, and its seeding and recording of convergence gaps. The
-boot re-derives no view row: a view that must be promoted to a newer minor,
-or that was added over events already in the log, converges after the open
-returns, in transactions of at most 200 ms, each ordered against the
-appends, one converging instance at a time per database, and paced so the appends keep most of the database's time
-(`spec/dev-view-convergence.md`, `spec/dev-view-convergence-scheduling.md`).
+reads of the library-version and registry audit events, the latest event and the
+view copies' records, its checks, and its creating and marking of view
+copies. The boot folds no view row. The library stores a view per
+definition: a view whose definition is new or changed, a newer minor of an
+entry type it folds included, gets a new copy that catches up with the log
+after the open returns, in transactions of at most 200 ms, each ordered
+against the appends, one at a time per copy whatever the number of
+instances (`spec/dev-view-convergence.md`). Catch-up transactions lock
+the sequence counter's table in a mode that does not conflict with other
+catch-ups, so an append waits at most one 200 ms bound however many
+instances or copies are catching up, and a view becomes converging only
+when an event its own definition folds is stored past its watermark.
 While a view converges, reads report it as converging, return only its
 settled rows and name the rest as pending; the library's own permission
 checks refuse with a transient error until the permission views they read
-are current (`spec/dev-converging-view-reads.md`). Read the convergence
-state, or await it with a deadline, before you act on a view you need
+are current (`spec/dev-converging-view-reads.md`). Read a view's
+convergence state and progress before you act on a view you need
 whole. On the web the boot holds back the other tabs' writes to the
 database the same way.
 `bootLockWait` (default 60 s; on the web the `SembastBackend`
@@ -1256,9 +1262,9 @@ destination delivers only the events its own database authored, so an
 event whose originator entry names the receiving database arriving through
 ingest is a clone's or a tamperer's: ingest records a security finding for
 it, held or not, and stores it when it is not held. A database restored
-from a backup gets its lost events back through the delivery channel's
-recovery instead (see "Delivery channels, and either end going back in
-time").
+from a backup gets its lost events back by being rebuilt as a successor
+that restores them from its receiver (see "Delivery channels, and either
+end going back in time").
 
 ### Schema evolution: entry types and promoters
 
@@ -1301,15 +1307,12 @@ within a major. Make any other change a major step.
 
 Two paths exercise the promoters:
 
-- **Snapshot promotion after the open.** When `EventStore.open` finds a
-  view whose stored target version for an entry type is below the
-  registered one -- after an upgrade, or after a build of an older
-  minor folded into it -- it records a promotion gap, and view
-  convergence re-derives the view's affected rows from the log after
-  the open returns: it folds their events again, each promoted through
-  the chain to the registered version. The re-derived rows are the rows
-  `rebuildView` produces, and until they are re-derived the view reports
-  itself as converging.
+- **Catch-up of a new copy.** A newer minor of an entry type a view
+  folds is a new view definition, so after an upgrade the view gets a
+  new copy that starts empty and folds the log from the start after the
+  open returns, each event promoted through the chain to the registered
+  version. The rows are the rows `rebuildView` produces, and until the
+  copy is current the view reports itself as converging.
 - **Fold-time event promotion.** When an event of an older version is
   folded -- one ingested from an older peer (see below), or one an
   older build appended -- the substrate runs the promoter chain on
@@ -1329,18 +1332,14 @@ Both paths exist because the schema-evolution discipline says "the log
 is canonical; you can reconstruct any past state by replaying the
 events through the current promoter chain."
 
-A view is folded only by the builds that register it, and a view behind
-the log converges after the open of a build that registers it. Registering a
-new view, or a new entry type in a view's interest, on a database that
-already holds events of that type records a catch-up gap at the boot. A
-build that stores an event without folding it into a view another build
-registers -- the serving revision beside a canary that adds a view --
-records a catch-up gap for that view, and the build that registers the view
-converges it in the background. A view whose interest names no entry type
-has a whole-view row, so it converges too. Two builds whose interests for
-one view differ only in aggregate types, in `includeSystemEvents` or in a
-predicate record nothing for each other; run `rebuildView` for such a view
-once no build holding the narrower interest still serves the database.
+Builds that define a view alike share one copy of it and fold into it as
+they store events. A build whose definition differs -- a canary that adds
+a view, or changes a view's interest or shape -- folds a copy of its own,
+which catches up in the background while the copy the serving revision
+folds stays as it is; a copy no running build registers is deleted. An
+interest predicate or a table view's row functions are not part of the
+definition the library compares, so run `rebuildView` after changing only
+such a function.
 
 ### Provenance: where an event has been
 
@@ -1413,9 +1412,9 @@ multi-source roadmap item (`spec/roadmap/multi-source-editing.md`).
 
 ### Delivery channels, and either end going back in time
 
-A destination that serializes natively is a delivery channel between your database and the receiver. The library numbers every delivery on it and links each to the one before, and the receiver accepts only the delivery that follows the last one it accepted. The receiver's acknowledgement carries its record of the channel, and your destination's transport must return it intact: a `SendOk` without it wedges the destination. Your destination must also implement the pull operation. When your process starts, and whenever another process held the drain lock since, the library checks in with each receiver before it sends. It realigns a channel on its own in the safe cases: when a receiver was restored to an earlier point, it sends again exactly the deliveries the receiver lost and records a resume event; when your database was restored from a backup, it recovers its own lost events from the receiver, keeping their identity and hash, records a skip event naming the last point it can prove both histories share, when it can prove one, and delivers the recovered events to your other destinations whose filters select them. The recovery commits in one transaction, so your appends wait for it while it commits. Skip events, succession events and security findings go to every receiver whatever its filter; the resume event recorded when a receiver fell behind follows the destination's filter. Every other inconsistency -- the two ends disagree about a delivery both should hold, the receiver answers from a different database, a second live copy of your database delivers on the channel, a receiver holds a channel your log does not know, an event whose hash does not verify, a fork no skip event covers -- is a security finding: the side that detects it appends one reserved finding event with its evidence, stores what it received as it received it, and keeps delivering. A channel no safe path realigns re-anchors: your database sends a break delivery that follows the receiver's record, and the receiver records its own finding; the library then sends the channel's skip events again, delivers every event the destination selects again, the events it recovered from that receiver included, and the receiver keeps only what it lacks. After a re-anchor, only the deliveries sent since count as retained for a later resend. No channel stops for an integrity reason. The library's default views mark every entry a finding names (`$integrity.security_findings`), and the mark stays; reviewing and clearing findings is not part of the library yet. Run the chain verification operation when you choose, over a range from the last position you verified or over the whole log; it holds nothing your appends wait for, walks up to the last event stored when it starts, and records a finding for each anomaly it reports. One anomaly is one finding at the database that detects it: a fork, a reused position or a hash that does not verify carries the same evidence whether ingest, a recovery or the walk meets it, and a restore's fork whose events share one position is recorded once, as the reused position. A full walk of a large log is slow, so run it where your deployment can afford it, such as a maintenance window. The recovery trusts the receiver not to invent events under your database's identity. A destination whose receiver is not this library -- a third-party format built by your transform -- is not a channel: the library cannot tell whether that system lost deliveries, and reconciling with it is your application's job. Serve deliveries and pulls with the library's receiver endpoint, passing it the sender database identities your authentication binds to the caller; do not hand-build batch envelopes or download responses. A reset or reinstalled device is a new sender; before it authors any entry of its own, it can restore its predecessor's data with the library's restore operation, which records the succession. A restore into a database that has already authored entries is refused, for a person to decide. The restore brings back the predecessor's whole succession lineage, so a device reset twice restores everything its predecessors delivered. Every receiver your successor delivers to must authenticate the successor's caller for the predecessor as well, or it refuses the succession; a receiver whose log contradicts the succession (it holds a channel of the predecessor the restore did not bring back, or the predecessor delivered after the restore) accepts it and records a security finding. A destination never forwards the events its database ingested or restored from another sender.
+A destination that serializes natively is a delivery channel between your database and the receiver. The library numbers every delivery on it and links each to the one before, and the receiver accepts only the delivery that follows the last one it accepted. The receiver's acknowledgement and refusal carry its record of the channel, and your destination's transport must return it intact: a `SendOk` without it wedges the destination. There is no separate polling. The library realigns a channel on its own in the safe cases: a lost acknowledgement is recognised when the retry's answer names the delivery in flight, and when a receiver was restored to an earlier point, the library sends again exactly the deliveries the receiver lost and records a resume event, which follows the destination's filter. When the receiver's record is ahead of yours and names a delivery your database never attempted, your database went back in time (a device restored from an older copy): the library records a `sender_regressed` security finding and keeps delivering, and your application then rebuilds the device as a successor (below). Every other record no safe path explains -- the two ends disagree about a delivery both should hold, or the receiver answers from a different database -- records a `channel_unexplained` finding, and the channel starts a new generation: its deliveries start again at 1 and the destination refills from the start of your log, and the receiver keeps only what it lacks. Succession events and security findings go to every receiver whatever its filter. Every other integrity anomaly -- an event whose hash does not verify, a fork or a reused origin position, a second live copy of your database delivering -- is a security finding too: the side that detects it appends one reserved finding event with its evidence, stores what it received as it received it, and keeps delivering. No channel stops for an integrity reason. Each detector records an anomaly once: ingest, the chain walk and the sender each record what they detect, so one anomaly may appear once per detector. Run the chain verification operation when you choose, over a range from the last position you verified or over the whole log; it holds nothing your appends wait for, walks up to the last event stored when it starts, and records a finding for each anomaly it reports. A full walk of a large log is slow, so run it where your deployment can afford it, such as a maintenance window. A destination whose receiver is not this library -- a third-party format built by your transform -- is not a channel: the library cannot tell whether that system lost deliveries, and reconciling with it is your application's job. Serve deliveries and restore pulls with the library's receiver endpoint, passing it the sender database identities your authentication binds to the caller; do not hand-build batch envelopes or download responses; your destination implements the pull operation the restore uses. A reset, reinstalled or rebuilt device is a new sender; before it authors any entry of its own, it restores its predecessor's data with the library's restore operation, which records the succession. A restore into a database that has already authored entries is refused. The restore brings back the predecessor's whole succession lineage, every channel and generation the receiver holds, so a device reset twice restores everything its predecessors delivered. The restore trusts the receiver not to invent events under the predecessor's identity. Every receiver your successor delivers to must authenticate the successor's caller for the predecessor as well, or it refuses the succession. A destination never forwards the events its database ingested or restored from another sender.
 
-When a restored database had appended edits before it learned of the restore, an entry edited on both sides of the fork is served as conflicted, with both states, until your application appends a reconciliation carrying the state the user chose. Edits of a conflicted entry, versions and eligible annotations alike, are refused meanwhile; drafts are not. The branch point is the latest event the library can prove both histories share, which a destination's filter can leave below the real fork, and which is absent when nothing proves one. Every edit your database made after the branch point, or every edit when there is none, counts as continuing, so an entry can be reported conflicted when the library cannot prove that an edit came before the backup; a conflict is never hidden, and the person reconciling sees both states. The library's own decisions that read a conflicted entry, the authorization policy's reads of roles and grants among them, refuse with a typed refusal naming the entry and the skip event, and record nothing, until the entry is reconciled.
+When a restored database had appended edits before it learned of the restore, its receivers hold both histories. Each fork, and each origin position both histories use, is recorded as a security finding, and the default views fold every entry the findings reach as usual and mark it, in the row's `$integrity.security_findings`, as having an outstanding finding; the mark reaches every entry with an event of that database at or above the fork's lowest position. The mark stays; reviewing and clearing findings is not part of the library yet. The restored device itself records a sender-regressed finding and keeps delivering; rebuild it as a successor that restores everything its receiver holds.
 
 ### Hash chain and ALCOA+
 
@@ -2000,9 +1999,9 @@ major with the serving one's before it starts a canary. The lock-session
 requirement covers the guard's locks as well as the drain lock.
 
 The boot pauses every instance's appends only for its checks and its
-recording of convergence gaps, and `bootLockWait` must exceed that: "The
-library records its own version in the log" above has the details. Views
-the boot finds behind converge after the open.
+creating and marking of view copies, and `bootLockWait` must exceed that:
+"The library records its own version in the log" above has the details.
+New view copies catch up after the open.
 
 #### Start-up and readiness probes
 
@@ -2024,7 +2023,7 @@ answers two probes, as the Postgres example server does
 
 During `checks`, which also covers the wait for another instance's boot
 lock, no further report arrives, so the endpoint reads elapsed time from
-its own clock. Report the convergence progress of each view beside it,
+its own clock. Report each view's catch-up progress beside it,
 so an operator sees which views are not yet current. The observer only
 records: it runs synchronously inside the boot (its own work delays the
 boot and, on Postgres, every instance's appends), and a call from it into
@@ -2033,9 +2032,18 @@ an event store while the boot runs throws `StateError`.
 #### Halting, recovering and rebuilding a destination
 
 The drainer wedges a queue head when the receiver refuses it permanently
-or its retry budget runs out, and appends a `system.destination_wedged`
-event in the same transaction, recording the destination, the item, the
-cause and the attempt count (a fact in the log). Every event store folds
+or its retry budget runs out -- an attempt bound and a time bound, the
+time counted between recorded attempts, each gap capped at the retry
+curve's delay plus the delivery cycle's cadence, so time asleep, offline
+or declined does not count -- and appends a
+`system.destination_wedged` event in the same transaction, recording the
+destination, the item, the cause, the attempt count and both bounds (a
+fact in the log). A transform that keeps failing is retried within the
+same budget and then wedges its destination under the cause
+`transform_failed`. A send outcome stating that no delivery was attempted
+(the receiver in a cooldown, say) records no attempt and spends no
+budget. Fill and drain failures logged at severe level reach standard
+error by default. Every event store folds
 the library's default destination-wedges view from the wedge events and
 the events that end a wedge: its default interpretation of which
 destinations are wedged now. A wedged head halts delivery on that

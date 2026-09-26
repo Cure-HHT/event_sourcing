@@ -67,7 +67,7 @@ I. Provisioning SHALL refuse, writing nothing, when a live instance
    registered on the database requires a schema version below the minimum
    compatible version the provisioning would record.
 
-J. `PostgresBackend` SHALL hold its generation locks, the drain lock and its convergence lease
+J. `PostgresBackend` SHALL hold its generation locks, including the registrations of the view definitions it registers, and the drain lock
    on one dedicated lock session, verified at open, and again for every replacement, to be a
    single server session reaching the pool's server, database and schema,
    configured with keepalives, no idle-session timeout and bounded connect
@@ -215,6 +215,8 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 
 ## Changelog
 
+- 2026-09-25 | 3f6c533e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: no convergence lease; the generation locks include the registrations of the view definitions the instance registers. J is cited by code and tests (listed in the integration report)
 - 2026-09-25 | 686483cf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | a91ecdf5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Amend J: the lock session carries the one convergence lease of the database. Add Q, R: every statement runs inside a transaction whose first statement sets the search path, for that transaction only, to the schema the storage description names, then pg_catalog and pg_temp, and open refuses when the current schema inside a library transaction is another. Amend M: a library table is any table in the library's schema, and CREATE on the schema is refused for every role but the owner, PUBLIC included. N no longer lists CREATE on the schema (M covers it); O no longer lists the PUBLIC revoke
@@ -231,4 +233,4 @@ The check runs at open. A grant made while an instance runs is seen at the next 
 - 2026-08-10 | 4e78d64b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e69b5a15 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Postgres backend reference impl* | **Hash**: 686483cf
+*End* *Postgres backend reference impl* | **Hash**: 3f6c533e

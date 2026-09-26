@@ -15,7 +15,7 @@ A. The library SHALL persist events in an append-only, immutable log.
 
 B. The library SHALL preserve a stable total order over all stored events such that the relative position of any two events remains fixed for the lifetime of the log.
 
-C. The library SHALL store the events of one aggregate that one authority wrote on one branch of its origin chain in the order that authority wrote them, whenever they reach the log through one path: the authority's own appends, one delivery channel, one recovery of its own events, or one restore of a predecessor's events.
+C. The library SHALL store the events of one aggregate that one authority wrote on one branch of its origin chain in the order that authority wrote them, whenever they reach the log through one path: the authority's own appends, one delivery channel, or one restore of a predecessor's events.
 
 D. The library SHALL allow consumers to read events from the log in order, from any specified starting position.
 
@@ -41,7 +41,7 @@ G. When the storage layer runs a write more than once before one run commits, th
 
 **Per-aggregate ordering under multi-source.** When events for a single aggregate originate from more than one authority — a participant on phone and tablet, a coordinator editing a participant's entry — each authority's contributions retain their write order within the aggregate. Cross-authority resolution for the aggregate is handled by the canonicalization rules in EVS-PRD-multi-source-canonicalization, not by the log's ordering primitives. The log preserves order; canonicalization decides which ordered events become canonical.
 
-**Per-aggregate ordering across a recorded branch point, and across paths (assertion C).** A database restored from a backup can hold two histories of one aggregate: the branch it continued on after the restore, and the branch it abandoned, recovered from a receiver and stored after it. Each branch keeps its own write order, and the log's total order places the recovered branch where it was stored. That position records when the database recovered the branch, not when the branch was written. Which versions an event follows is recorded in its causal parents (EVS-PRD-hash-chain-integrity). The default views serve an aggregate for which both branches wrote a version as conflicted until a reconciliation closes it (EVS-PRD-branch-conflicts), and they never fold the two branches by their position in the log. Events that reach the log through different paths, such as two channels of one sender, are stored as they arrive. Each path keeps its authority's order, and the withheld-parent record in each delivery marks an aggregate whose parent came by another path.
+**Per-aggregate ordering across a fork, and across paths (assertion C).** A database that went back in time and appended forks its origin chain: its receivers can hold two histories of one aggregate. Each keeps its writer's order, and the log's total order places each event where it was stored. Which versions an event follows is recorded in its causal parents (EVS-PRD-hash-chain-integrity); the fork is recorded as a security finding, and the default views mark the aggregates it reaches (EVS-PRD-materializer). Events that reach the log through different paths, such as two channels of one sender, are stored as they arrive, and each path keeps its authority's order.
 
 **Why must library-generated events be filterable?** The library records the events it generates itself — boot-version transitions, registry snapshots, retention and redaction audits — in the same log as the application's, so the audit trail is single and complete. But they are the library's own vocabulary, not the application's, and they are noise to most views. A consumer writing an ordinary view should not have to learn that vocabulary to keep them out, so a filter that does not ask for them does not receive them.
 
@@ -49,6 +49,8 @@ The opt-in matters as much as the default. An audit or forensic view is a legiti
 
 ## Changelog
 
+- 2026-09-25 | e50ef232 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | C: no path recovers a database's own events. Rationale of C: a fork is a security finding and the default views mark the aggregates it reaches; no branch conflicts, reconciliation or withheld-parent record
 - 2026-09-25 | 28294145 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend C: write order is preserved per branch of an authority's origin chain and per path of arrival. Rationale: per-aggregate order across a recorded branch point and across paths
 - 2026-09-23 | f8de0379 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
@@ -62,4 +64,4 @@ The opt-in matters as much as the default. An audit or forensic view is a legiti
 - 2026-08-10 | 06d5104c | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | e710dcce | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Event Log* | **Hash**: 28294145
+*End* *Event Log* | **Hash**: e50ef232

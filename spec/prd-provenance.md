@@ -5,7 +5,7 @@
 
 ## Purpose
 
-The `provenance` package provides the value types and pure-functional operations for the chain of hops an event traverses on its way through a multi-tier deployment. Every event carries its own provenance chain alongside the event payload; the chain grows at each deployment that stamps it: the originator that appends it, each receiver that ingests it, and a sender that recovers it from a receiver or a successor that restores it, so any later observer can answer "where has this event been, and when?" from the event itself.
+The `provenance` package provides the value types and pure-functional operations for the chain of hops an event traverses on its way through a multi-tier deployment. Every event carries its own provenance chain alongside the event payload; the chain grows at each deployment that stamps it: the originator that appends it, each receiver that ingests it, and a successor that restores it from a receiver, so any later observer can answer "where has this event been, and when?" from the event itself.
 
 The package is intentionally narrow — types and pure functions, no I/O, no transport. It is a pure-Dart utility usable independently of the rest of the event-sourcing stack.
 
@@ -23,7 +23,7 @@ E. When the package decodes an entry from JSON and encodes it again, the encoded
 
 ## Rationale
 
-**Why an explicit chain on every event?** An event moves between deployments: from its originator to each receiver of its channels, and back to a restored sender or a successor from a receiver. Downstream auditors need to answer "this event arrived here -- where did it come from, and through what software versions?" Embedding the answer in the event itself keeps audit decisions self-contained: a single event in hand carries its full transit history. A deployment delivers only the events it authored, so an event reaches a receiver in one hop from its originator; the chain grows past two entries only when a recovery or a restore brings an event back.
+**Why an explicit chain on every event?** An event moves between deployments: from its originator to each receiver of its channels, and back to a successor from a receiver. Downstream auditors need to answer "this event arrived here -- where did it come from, and through what software versions?" Embedding the answer in the event itself keeps audit decisions self-contained: a single event in hand carries its full transit history. A deployment delivers only the events it authored, so an event reaches a receiver in one hop from its originator; the chain grows past two entries only when a restore brings an event back.
 
 **Why immutability and pure-functional append?** Provenance entries are themselves audit data. A chain that can be silently mutated downstream offers an attacker the same surface as a mutable event log. Pure-functional append gives strong static guarantees that no hop can rewrite earlier entries.
 
@@ -35,6 +35,10 @@ E. When the package decodes an entry from JSON and encodes it again, the encoded
 
 ## Changelog
 
+- 2026-09-26 | d9fe1da3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: an event returns to a successor from a receiver; no restored sender recovers its own. No assertion changes
+- 2026-09-25 | d9fe1da3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Purpose and Rationale: only a successor's restore brings an event back from a receiver; no sender recovers its own events
 - 2026-09-25 | d9fe1da3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Amend A: an entry records the version of the library that stamped it; add E: a decode and re-encode keeps exactly the decoded keys. Purpose and Rationale: the chain grows at the originator, each receiver, and a recovering sender or restoring successor; deployments deliver only the events they authored
 - 2026-08-10 | 3a037c9e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash

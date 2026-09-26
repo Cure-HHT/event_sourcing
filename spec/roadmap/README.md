@@ -23,12 +23,12 @@ names, frozen semantics).
   database handle cannot commit, verifying the inputs the generation
   guard and the drain lock trust, keeping or removing `readEventsReverse`.
 - `permissions.md` — permission-model extensions.
-- `projections.md` — projection/materializer primitives; views that
-  catch up with the log whatever their interest.
+- `projections.md` — projection/materializer primitives; view
+  fingerprints that cover code.
 - `sync.md` — sync/destination layer: inbound tombstone propagation,
   detecting undeclared delivery-configuration changes, a recovery that
   skips the wedged item, rebuilding a destination in one call, storing
-  a large recovery in resumable chunks.
+  a large succession restore in resumable chunks.
 - `versions.md` — versions and the data generation: projection
   specifications in the data generation, reading an older data-format
   major.

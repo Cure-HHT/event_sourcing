@@ -107,13 +107,21 @@ operates on. The tables are:
   filter combinations enumerated in
   `EVS-DEV-find-all-events-extended-filters` and the boot's read of the
   library-version events.
-- **`view_rows`** — single table for every materialized view, keyed by
-  `(view_name TEXT, row_key TEXT)` with `row_data JSONB` payload and an
-  `updated_at TIMESTAMPTZ` audit column. `findViewRows` walks
-  `view_name = ?` ordered by `row_key`.
-- **`view_target_versions`** — the per-view target-version map. One row per (view, entry type) the view's interest names, and one whole-view row, with entry type `*` and no target, per view whose interest names no entry type. Columns: `view_name TEXT`, `entry_type TEXT`, `target_major INTEGER` and `target_minor INTEGER` (null on a whole-view row); keyed by `(view_name, entry_type)`.
-- **`view_convergence_gaps`** — the convergence gaps: at most one catch-up gap per view and one promotion gap per (view, entry type). Keyed by `(view_name, entry_type, kind)`, with `kind TEXT` (`catch_up` or `promotion`) and `entry_type` set to `*` on a catch-up gap. Columns: `position BIGINT` (the scan position of a whole-log gap on an aggregate view, or the refold position on a table view), `whole_log BOOLEAN`, and, on a promotion gap, `round_major INTEGER`, `round_minor INTEGER`, `prior_major INTEGER` and `prior_minor INTEGER`.
-- **`view_convergence_aggregates`** — the aggregates a gap names or holds as re-derived, keyed by `(view_name, entry_type, kind, row_key)` with `state TEXT` (`named` or `rederived`).
+  The chain lookups are columns of the same row, written by the insert
+  that stores the event and read from the stored copy's provenance:
+  `origin_database_id`, `sealed_hash` and `origin_position`, and
+  `held_as_authored_by` (the holding database when it holds the copy as
+  authored, otherwise null), with the event's `causal` object (JSONB).
+  Non-unique indexes over the sealed hash, the predecessor and the origin
+  position of each originating database, the events held as authored,
+  and the eligible versions of each aggregate serve the latest authored
+  event, the latest eligible version and the lookups ingest and the chain
+  verification make; the library keeps no index table of its own.
+- **`view_rows`** — single table for every stored copy of every
+  materialized view, keyed by `(copy_id TEXT, row_key TEXT)` with
+  `row_data JSONB` payload and an `updated_at TIMESTAMPTZ` audit column.
+  `findViewRows` walks `copy_id = ?` ordered by `row_key`.
+- **`view_copies`** — one row per stored copy of a view, keyed by `copy_id TEXT`. Columns: `view_name TEXT`, `fingerprint TEXT` (the digest of the view's definition), `watermark BIGINT` (the log position the copy has folded through), `marked_for_deletion BOOLEAN` and `created_at TIMESTAMPTZ`; at most one row per `fingerprint` is not marked for deletion.
 - **`library_roles`** — the runtime and lock roles the deployment declared at provisioning, one row per role with its kind (`runtime` or `lock`); only the owner writes it, and opening a backend reads it (EVS-DEV-postgres-backend/P).
 - **`fifo_entries`** — single table for every outbound FIFO queue,
   keyed by `(destination_id TEXT, sequence_in_queue BIGINT)`. Each row is
@@ -121,9 +129,10 @@ operates on. The tables are:
   (`event_ids` JSONB, `event_id_first_seq`, `event_id_last_seq`), how it
   was built (`wire_format`, `transform_version`, `wire_payload`,
   `envelope_metadata`), `enqueued_at`, its place on its delivery channel
-  (`delivery_number` and `delivery_hash`), the withheld-parent record of
-  the events it carries (`parent_withheld`, a JSONB array of booleans in
-  the order of `event_ids`), and its delivery bookkeeping:
+  (`delivery_number` and `delivery_hash`, and the `delivery_generation` it was
+  acknowledged under), whether the fill enqueued it
+  as transform-failed (`transform_failed BOOLEAN`), and its delivery
+  bookkeeping:
   `attempts` (a JSONB array of recorded attempts), `final_status` (null
   while pending, then `sent`, `wedged` or `tombstoned`) and `sent_at`.
   The table is guarded (EVS-DEV-destination-drain/S): a CHECK
@@ -275,13 +284,11 @@ The database then refuses the application role every insert, update, delete and 
 | --- | --- |
 | `events` | SELECT, INSERT |
 | `view_rows` | SELECT, INSERT, UPDATE, DELETE |
-| `view_target_versions` | SELECT, INSERT, UPDATE, DELETE |
+| `view_copies` | SELECT, INSERT, UPDATE, DELETE |
 | `fifo_entries` | SELECT, INSERT, UPDATE, DELETE |
 | `backend_state` | SELECT, INSERT, UPDATE, DELETE |
 | `security_context` | SELECT, INSERT, UPDATE, DELETE |
 | `idempotency` | SELECT, INSERT, UPDATE, DELETE |
-| `view_convergence_gaps` | SELECT, INSERT, UPDATE, DELETE |
-| `view_convergence_aggregates` | SELECT, INSERT, UPDATE, DELETE |
 | `library_roles` | SELECT |
 
 Besides these, the runtime role holds `USAGE` on the schema. `UPDATE` on

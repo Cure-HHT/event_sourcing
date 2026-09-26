@@ -16,8 +16,10 @@ mark stays for as long as the finding is held.
 a person's decision through a public operation, naming the
 `finding_id` it clears and recording the reason. The default views
 drop the mark of an aggregate once every finding naming it is cleared.
-It is a new reserved entry type, so it ships as a data-format minor
-step: a build that does not know it stores it and keeps the mark.
+It is a new reserved entry type, in the reserved entry-type namespace
+(`EVS-DEV-destination-drain/L`), so it ships as a data-format minor
+step: a build that does not know it stores it and keeps the mark, and
+no release's public append accepts it from application code.
 Open points: who may clear (a permission of the role/permission/scope
 model), whether a receiver may clear a sender's finding or only one it
 detected, and whether a clearing event travels on every channel as a

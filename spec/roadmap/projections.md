@@ -48,14 +48,8 @@ Open design questions to settle when it is built:
   across entry-type versions, so bucket assignment must compose with the
   promoter chain.
 
-## Views that catch up with the log, whatever their interest
+## View fingerprints that cover code
 
-**Baseline.** A view converges with the log for the entry types its interest names (EVS-DEV-version-compatibility, EVS-DEV-view-convergence): a build that stores an event of such an entry type without folding it into a view another build registers records a catch-up gap on that view, and a view registered over events already in the log is re-derived after its first open. A view whose interest names no entry type has a whole-view row, for which a build lacking the view records every event it stores. Two builds whose interests for one view differ only in aggregate types, in `includeSystemEvents` or in a predicate record nothing for each other, and a whole-view row carries no version, so a promotion of an entry type such a view folds is not tracked for it. The equality a read reports is stated under that precondition (EVS-DEV-converging-view-reads/E), and such a view needs `rebuildView` once no build holding the narrower interest, or an older minor, still serves the database.
+**Baseline.** A view is stored per fingerprint of its definition (EVS-DEV-view-convergence), and the fingerprint covers what the library can read of the definition: its shape, its declared event types and derived fields, its interest's declared sets and the registered entry-type versions. An interest predicate, and a table view's row-key and row-data functions, are code the library cannot digest, so two builds that differ only there share one copy, and the equality a read reports holds only while they agree (EVS-DEV-converging-view-reads). A deployment that changes only such a function runs `rebuildView` once no build with the other function still serves the database.
 
-**Remaining.** Converge every registered view whatever its interest. The stored state must record, per view, which interest last derived it (for example a digest of the interest, which a predicate closure prevents), so that a boot can tell a view derived under another interest from one that is current, and a build that stores an event must record a gap for a view whose stored interest differs from its own even when it registers the view; and a whole-view row must record the versions of the entry types its view has folded, so that a promotion of one of them is tracked.
-
-## Splitting the re-derivation of one large aggregate
-
-**Baseline.** View convergence re-derives an aggregate's row in one convergence transaction (EVS-DEV-view-convergence-scheduling), so an aggregate whose events alone take longer than the 200 ms bound to fold holds that transaction, and every append waiting on it, for that long. The progress report names the view and records its longest convergence transaction.
-
-**Remaining.** Re-derive one aggregate across several transactions, keeping the partial row outside the view until the last one commits, if a deployment's aggregates grow large enough for the single transaction to break the one-second append bound.
+**Remaining.** Make a change to such a function a new copy: a revision the definition declares and the fingerprint covers, or named functions from a registry the library can identify, so that a changed function is caught up like any other changed definition.
