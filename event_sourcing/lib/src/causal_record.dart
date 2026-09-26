@@ -1,8 +1,7 @@
 // Implements: EVS-DEV-causal-parents/A
-// the causal object every event record carries: exactly kind, eligible,
+// the causal object every event record carries: exactly kind, eligible and
 //   parents (ascending by event identifier, each exactly event_id and
-//   event_hash) and reconciles (null, or a non-empty list of the same
-//   references in ascending order).
+//   event_hash).
 
 import 'package:collection/collection.dart';
 
@@ -63,26 +62,20 @@ class CausalRef {
 }
 
 /// The `causal` object of an event record: its kind, its eligibility to be
-/// named as a parent, the versions of its aggregate it follows, and, for a
-/// reconciliation, the skip events it closes.
+/// named as a parent, and the versions of its aggregate it follows.
 class CausalRecord {
   /// A causal record built by the library. Throws [ArgumentError] when
-  /// [parents] or [reconciles] is not in strictly ascending order of event
-  /// identifier, when a reference has an empty identifier or hash, or when
-  /// [reconciles] is an empty list.
+  /// [parents] is not in strictly ascending order of event identifier, or
+  /// when a reference has an empty identifier or hash.
   factory CausalRecord({
     required CausalKind kind,
     required bool eligible,
     required List<CausalRef> parents,
-    List<CausalRef>? reconciles,
   }) {
     final json = <String, Object?>{
       'kind': kind.wireName,
       'eligible': eligible,
       'parents': <Object?>[for (final p in parents) p.toJson()],
-      'reconciles': reconciles == null
-          ? null
-          : <Object?>[for (final r in reconciles) r.toJson()],
     };
     try {
       return CausalRecord.fromJson(json);
@@ -91,21 +84,14 @@ class CausalRecord {
     }
   }
 
-  const CausalRecord._(
-    this.kind,
-    this.eligible,
-    this.parents,
-    this.reconciles,
-    this._json,
-  );
+  const CausalRecord._(this.kind, this.eligible, this.parents, this._json);
 
   /// Decodes a `causal` object. Throws [FormatException], naming the field,
-  /// unless [json] is an object with exactly the keys `kind`, `eligible`,
-  /// `parents` and `reconciles`, `kind` is `version` or `annotation`,
-  /// `eligible` is a boolean, `parents` is a list and `reconciles` null or a
-  /// non-empty list, each list in strictly ascending order of event
-  /// identifier and each of its items an object with exactly a non-empty
-  /// string `event_id` and a non-empty string `event_hash`.
+  /// unless [json] is an object with exactly the keys `kind`, `eligible` and
+  /// `parents`, `kind` is `version` or `annotation`, `eligible` is a
+  /// boolean, and `parents` is a list in strictly ascending order of event
+  /// identifier, each of its items an object with exactly a non-empty string
+  /// `event_id` and a non-empty string `event_hash`.
   factory CausalRecord.fromJson(Object? json) {
     if (json is! Map) {
       throw const FormatException('causal: expected an object');
@@ -134,33 +120,17 @@ class CausalRecord {
       );
     }
     final parents = _refs(json['parents'], 'causal.parents');
-    final rawReconciles = json['reconciles'];
-    List<CausalRef>? reconciles;
-    if (rawReconciles != null) {
-      reconciles = _refs(rawReconciles, 'causal.reconciles');
-      if (reconciles.isEmpty) {
-        throw const FormatException(
-          'causal.reconciles: expected null or a non-empty list',
-        );
-      }
-    }
     return CausalRecord._(
       kind,
       eligible,
       List<CausalRef>.unmodifiable(parents),
-      reconciles == null ? null : List<CausalRef>.unmodifiable(reconciles),
       Map<String, Object?>.unmodifiable(
         json.map((k, v) => MapEntry(k as String, v)),
       ),
     );
   }
 
-  static const Set<String> _keys = <String>{
-    'kind',
-    'eligible',
-    'parents',
-    'reconciles',
-  };
+  static const Set<String> _keys = <String>{'kind', 'eligible', 'parents'};
 
   static const Set<String> _refKeys = <String>{'event_id', 'event_hash'};
 
@@ -212,10 +182,6 @@ class CausalRecord {
   /// of event identifier.
   final List<CausalRef> parents;
 
-  /// The skip events a reconciliation closes, in ascending order of event
-  /// identifier; null for an event that is not a reconciliation.
-  final List<CausalRef>? reconciles;
-
   final Map<String, Object?> _json;
 
   /// The `causal` object as it was decoded, or as the library built it.
@@ -226,21 +192,17 @@ class CausalRecord {
       other is CausalRecord &&
       other.kind == kind &&
       other.eligible == eligible &&
-      const ListEquality<CausalRef>().equals(other.parents, parents) &&
-      const ListEquality<CausalRef>().equals(other.reconciles, reconciles);
+      const ListEquality<CausalRef>().equals(other.parents, parents);
 
   @override
   int get hashCode => Object.hash(
     kind,
     eligible,
     const ListEquality<CausalRef>().hash(parents),
-    reconciles == null
-        ? null
-        : const ListEquality<CausalRef>().hash(reconciles),
   );
 
   @override
   String toString() =>
       'CausalRecord(${kind.wireName}, eligible: $eligible, '
-      'parents: $parents, reconciles: $reconciles)';
+      'parents: $parents)';
 }

@@ -473,7 +473,6 @@ void runProvenanceStampingScenarios({
           'kind': 'version',
           'eligible': true,
           'parents': <Object?>[],
-          'reconciles': null,
         },
       };
       record['event_hash'] = canonicalEventHash(record);

@@ -31,9 +31,12 @@ const String _noteType = 'shape_note';
 /// edited. A new kind of reserved event is a new reserved entry type (a
 /// data-format minor step), recorded by adding its entry; a changed shape
 /// is recorded under the next data-format major.
-/// The values of the enumerated fields of reserved events, by data-format
-/// major: a value added, removed or renamed is a data-format major step, so
-/// the entry for the running major changes only when that major is new.
+/// The values of the enumerated fields of reserved events that a build of
+/// each data-format major knows, by major. A later release of the major may
+/// add a value (a minor step: every build of the major stores and folds an
+/// event carrying a value it does not know verbatim), but never removes or
+/// renames one, so every value recorded for the running major is one this
+/// build knows.
 const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
     <int, Map<String, List<String>>>{
       2: <String, List<String>>{
@@ -51,6 +54,25 @@ const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
           'retry_budget_exhausted',
         ],
         'purpose': <String>['pause', 'reconfigure'],
+        'kind': <String>[
+          'channel_unexplained',
+          'delivery_hash_mismatch',
+          'event_malformed',
+          'foreign_event',
+          'fork_unrecorded',
+          'hash_mismatch',
+          'identity_mismatch',
+          'own_event_ingested',
+          'parent_invalid',
+          'parents_not_stamped',
+          'position_reused',
+          'predecessor_break',
+          'restore_unverified',
+          'sender_regressed',
+          'sequence_missing',
+          'storage_link_break',
+          'succession_ahead',
+        ],
       },
     };
 
@@ -195,6 +217,10 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
           '_lib',
           <String>['finalized'],
         ],
+        'system.security_finding': <Object>[
+          'security_finding',
+          <String>['security_finding_recorded'],
+        ],
       },
     };
 
@@ -299,7 +325,12 @@ void main() {
       }, recorded);
     });
 
-    test('enumerated field values are fixed within a data-format major', () {
+    // Verifies: EVS-DEV-destination-drain/L
+    // an enumerated value of a reserved event is never removed or renamed
+    //   within a data-format major: this build knows every value recorded
+    //   for its major.
+    test('this build knows every enumerated value recorded for its '
+        'data-format major', () {
       final recorded =
           _enumeratedValuesByDataFormatMajor[LibVersion.dataFormat.major];
       expect(
@@ -309,10 +340,15 @@ void main() {
             'record the enumerated field values of data-format major '
             '${LibVersion.dataFormat.major}',
       );
-      expect(<String, List<String>>{
-        'cause': <String>[for (final c in WedgeCause.values) c.wire]..sort(),
-        'purpose': <String>[for (final p in HaltPurpose.values) p.wire]..sort(),
-      }, recorded);
+      final known = <String, List<String>>{
+        'cause': <String>[for (final c in WedgeCause.values) c.wire],
+        'purpose': <String>[for (final p in HaltPurpose.values) p.wire],
+        'kind': <String>[for (final k in FindingKind.values) k.wire],
+      };
+      expect(known.keys.toSet(), recorded!.keys.toSet());
+      for (final field in recorded.entries) {
+        expect(known[field.key], containsAll(field.value), reason: field.key);
+      }
     });
 
     test('the ingest audit declares only the duplicate-received event type; '

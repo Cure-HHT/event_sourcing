@@ -5,6 +5,8 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/verification/chain_walk.dart'
+    show hashMismatchEvidence;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -105,8 +107,10 @@ void main() {
 
     // Verifies: EVS-DEV-version-compatibility/J
     // Verifies: EVS-PRD-hash-chain-integrity/A
+    // Verifies: EVS-DEV-chain-verification/P
     test('a forwarder that rewrites a version breaks the chain at the next '
-        'hop, and the next hop refuses the event', () async {
+        'hop, and the next hop stores the event with a hash_mismatch '
+        'finding', () async {
       final origin = await _openStore('origin');
       final relay = await _openStore('relay');
       final receiver = await _openStore('receiver');
@@ -125,23 +129,29 @@ void main() {
         ),
       };
       for (final entry in tampered.entries) {
-        final verdict = await receiver.verifyEventChain(entry.value);
-        expect(verdict.isValid, isFalse, reason: entry.key);
-        final eventsBefore = (await receiver.reader.findAllEvents()).length;
-        await expectLater(
-          receiver.ingestEvent(entry.value),
-          throwsA(isA<IngestChainBroken>()),
+        final mismatches = hashMismatchEvidence(entry.value);
+        expect(mismatches, isNotEmpty, reason: entry.key);
+        final next = await _openStore(
+          'receiver-${entry.key.replaceAll(' ', '-')}',
+        );
+        final outcome = await next.ingestEvent(entry.value);
+        expect(
+          outcome.outcome,
+          IngestOutcome.ingestedWithFinding,
           reason: entry.key,
         );
+        final findings = await next.reader.findAllEvents(
+          entryType: kSecurityFindingEntryType,
+        );
         expect(
-          (await receiver.reader.findAllEvents()).length,
-          eventsBefore,
-          reason: entry.key,
+          findings.map((f) => f.data['kind']),
+          <String>[for (final _ in mismatches) 'hash_mismatch'],
+          reason: '${entry.key}: one finding per hash that does not recompute',
         );
       }
 
       // The untampered copy verifies and ingests.
-      expect((await receiver.verifyEventChain(forwarded)).isValid, isTrue);
+      expect(hashMismatchEvidence(forwarded), isEmpty);
       await receiver.ingestEvent(forwarded);
       final stored = await receiver.reader.findEventById(event.eventId);
       expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 2));
@@ -176,7 +186,6 @@ void main() {
           'parents': <Object?>[
             <String, Object?>{'event_id': 'p-1', 'event_hash': 'h-1'},
           ],
-          'reconciles': null,
         },
         'metadata': <String, Object?>{'provenance': <Object?>[]},
         'event_hash': 'ignored',
@@ -186,8 +195,7 @@ void main() {
       const canonical =
           '{"aggregate_id":"agg-g",'
           '"causal":{"eligible":true,"kind":"version",'
-          '"parents":[{"event_hash":"h-1","event_id":"p-1"}],'
-          '"reconciles":null},'
+          '"parents":[{"event_hash":"h-1","event_id":"p-1"}]},'
           '"client_timestamp":"2026-09-01T12:00:00.000Z",'
           '"data":{"title":"g"},'
           '"entry_type":"golden_note",'
@@ -202,11 +210,11 @@ void main() {
           '"sequence_number":7}';
       expect(
         sha256.convert(utf8.encode(canonical)).toString(),
-        'c1d9cdfb64bfd8864381c96e23b057438292c4a3e91ac2cab3708139471772ec',
+        '7e2711ec92786e45f8c4e3651c6d6e5de215a4ab92834537f0af1d32ef0b2ecc',
       );
       expect(
         canonicalEventHash(record),
-        'c1d9cdfb64bfd8864381c96e23b057438292c4a3e91ac2cab3708139471772ec',
+        '7e2711ec92786e45f8c4e3651c6d6e5de215a4ab92834537f0af1d32ef0b2ecc',
       );
     });
   });

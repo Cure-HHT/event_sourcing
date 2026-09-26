@@ -1,10 +1,9 @@
 // Backend-agnostic scenarios for the causal record the library stamps on
 // every append and carries unchanged on ingest: kind and eligibility come
 // from the entry type's declaration for the event type (reserved event
-// types being ineligible annotations), reconciles is null, and parents name
-// the aggregate's latest eligible version, read from the per-aggregate
-// working copy the storing transaction keeps, ingested events counted by
-// their recorded causal. Run on Sembast by
+// types being ineligible annotations), and parents name the aggregate's
+// latest eligible version in the appending database's log, read inside the
+// append transaction, ingested events counted by their recorded causal. Run on Sembast by
 // test/event_store/causal_stamping_test.dart and on Postgres by
 // test/storage/postgres/postgres_causal_stamping_test.dart.
 //
@@ -112,7 +111,11 @@ void _expectCausal(
   expect(causal!.kind, kind, reason: event.eventType);
   expect(causal.eligible, eligible, reason: event.eventType);
   expect(causal.parents, parents, reason: event.eventType);
-  expect(causal.reconciles, isNull, reason: event.eventType);
+  expect(
+    causal.toJson().keys,
+    unorderedEquals(<String>['kind', 'eligible', 'parents']),
+    reason: event.eventType,
+  );
 }
 
 /// Runs the causal-stamping scenarios. [openDatabase] and

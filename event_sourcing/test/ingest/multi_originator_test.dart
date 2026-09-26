@@ -8,8 +8,8 @@
 // Chain 2 ingest_sequence_number and
 //   previous_ingest_hash thread monotonically across interleaved originators
 // Verifies: EVS-PRD-hash-chain-integrity/B
-// verifyIngestChain and
-//   verifyEventChain return ok=true over a multi-originator log
+// the chain verification finds nothing over a multi-originator log, over
+//   the whole log and over each event's own range
 // Verifies: EVS-PRD-ingest/E
 // locally-ingested events from distinct
 //   originators participate in the same Chain 2 (unified ingest sequence)
@@ -250,24 +250,28 @@ void main() {
           expect(storedA1.aggregateId, equals(eA1.aggregateId));
           expect(storedB1.aggregateId, equals(eB1.aggregateId));
 
-          // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
-          final ingestVerdict = await destination.store.verifyIngestChain();
+          // Assertion: the chain verification of the whole log is valid.
+          final ingestVerdict = await destination.store.reader.verifyChains();
           expect(
             ingestVerdict.isValid,
             isTrue,
-            reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
+            reason:
+                'the chain verification failures: ${ingestVerdict.findings}',
           );
-          expect(ingestVerdict.failures, isEmpty);
+          expect(ingestVerdict.findings, isEmpty);
 
-          // Assertion: Chain 1 (verifyEventChain) passes for every stored event.
+          // Assertion: the verification of each event's own range is valid.
           for (final stored in [storedA1, storedB1, storedA2, storedB2]) {
-            final verdict = await destination.store.verifyEventChain(stored);
+            final verdict = await destination.store.reader.verifyChains(
+              from: stored.sequenceNumber,
+              to: stored.sequenceNumber,
+            );
             expect(
               verdict.isValid,
               isTrue,
               reason:
-                  'verifyEventChain failed for ${stored.eventId}: '
-                  '${verdict.failures}',
+                  'the chain verification failed for ${stored.eventId}: '
+                  '${verdict.findings}',
             );
           }
         } finally {
@@ -461,24 +465,28 @@ void main() {
             isEmpty,
           );
 
-          // Assertion: Chain 2 (verifyIngestChain) returns ok=true.
-          final ingestVerdict = await destination.store.verifyIngestChain();
+          // Assertion: the chain verification of the whole log is valid.
+          final ingestVerdict = await destination.store.reader.verifyChains();
           expect(
             ingestVerdict.isValid,
             isTrue,
-            reason: 'verifyIngestChain failures: ${ingestVerdict.failures}',
+            reason:
+                'the chain verification failures: ${ingestVerdict.findings}',
           );
-          expect(ingestVerdict.failures, isEmpty);
+          expect(ingestVerdict.findings, isEmpty);
 
-          // Assertion: Chain 1 (verifyEventChain) passes for every stored event.
+          // Assertion: the verification of each event's own range is valid.
           for (final stored in [storedA1, storedA2, storedB1, storedB2]) {
-            final verdict = await destination.store.verifyEventChain(stored);
+            final verdict = await destination.store.reader.verifyChains(
+              from: stored.sequenceNumber,
+              to: stored.sequenceNumber,
+            );
             expect(
               verdict.isValid,
               isTrue,
               reason:
-                  'verifyEventChain failed for ${stored.eventId}: '
-                  '${verdict.failures}',
+                  'the chain verification failed for ${stored.eventId}: '
+                  '${verdict.findings}',
             );
           }
         } finally {

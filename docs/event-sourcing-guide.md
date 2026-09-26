@@ -952,6 +952,19 @@ substrate's event-row storage uses snake_case keys (`aggregate_id`,
 etc.) — those are stored events, not projection rows. The
 projection-row convention is the one you write mappers against.
 
+Every row of an aggregate or table projection also carries the reserved
+key `$integrity`, an object whose `security_findings` lists, in ascending
+order, the identities of the security findings that mark the row's
+aggregate (for a table row, the aggregate whose event produced it). The
+list is empty unless the database recorded or received a finding about
+that data: an event whose hash did not recompute, or a reused origin
+position or a fork of the database that authored it. A marked row is
+folded exactly as any other; the mark says the log holds data the
+library could not verify, and leaves judging it to a person. Keys
+beginning with `$` are reserved for such marks: an append whose data
+holds one at the top level, and a projection whose key path, column or
+derived field name begins with one, are refused.
+
 ## Subscribing to state
 
 Once your app is up, you read state through `eventStore.subscribe<T>`:
@@ -1378,8 +1391,17 @@ design:
   An event that fails a check is stored as received, and ingest appends
   a reserved security finding recording exactly what failed, with the
   hashes and positions it compared; delivery continues. The chain
-  verification operation's `ChainVerdict` lists the same kinds of
-  finding for the stored log, and the operation records each of them.
+  verification operation, `verifyChains`, walks the stored log (or a
+  range of it) and returns a `ChainVerificationVerdict` listing each
+  anomaly it finds by kind and evidence: a hash that does not recompute, a
+  broken storage-chain link, a local sequence number holding no event, a
+  broken predecessor, a fork or a reused origin position, an invalid
+  causal parent, and an authored event whose parents are not those the
+  library stamps. An open event store records each as a security finding
+  under the role `walk`, once; `reader.verifyChains` computes the same
+  verdict and records nothing. The walk holds no transaction an append
+  waits for, and events appended while it runs are left to the next
+  one.
 - Reserved system events (the library's own audits, such as a destination
   wedge) are appended only by the library: `append` and `appendInTxn`
   refuse their entry types. Ingest admits a peer's reserved event only in

@@ -398,8 +398,10 @@ void main() {
       }
     });
 
-    test('batch with identity-mismatching subject rolls back entirely '
-        '', () async {
+    // Verifies: EVS-DEV-security-findings/G
+    // Verifies: EVS-PRD-ingest/G
+    test('batch with an identity-mismatching subject keeps it in a finding '
+        'and admits the rest', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -421,9 +423,6 @@ void main() {
         );
         expect(e1, isNotNull);
         await dest.store.ingestEvent(e1!);
-
-        // Capture destination's local sequence counter after first ingest.
-        final seqBefore = await dest.backend.readSequenceCounter();
 
         // 2. Build a divergent e1 (same event_id, different content, sealed
         //    with the canonical hash of that content).
@@ -463,33 +462,35 @@ void main() {
         );
         final bytes = envelope.encode();
 
-        // 5. ingestBatch must throw IngestIdentityMismatch.
-        await expectLater(
-          () => dest.store.ingestBatch(
-            bytes,
-            wireFormat: BatchEnvelope.wireFormat,
-          ),
-          throwsA(
-            isA<IngestIdentityMismatch>().having(
-              (e) => e.eventId,
-              'eventId',
-              e1.eventId,
-            ),
-          ),
+        // 5. ingestBatch keeps the divergent e1 in a finding.
+        final result = await dest.store.ingestBatch(
+          bytes,
+          wireFormat: BatchEnvelope.wireFormat,
+        );
+        expect(result.events.map((e) => e.outcome), <IngestOutcome>[
+          IngestOutcome.ingested,
+          IngestOutcome.keptInFinding,
+          IngestOutcome.ingested,
+        ]);
+        final findings = await dest.backend.findAllEvents(
+          entryType: kSecurityFindingEntryType,
+        );
+        expect(findings.single.data['kind'], 'identity_mismatch');
+        expect(
+          (await dest.backend.findEventById(e1.eventId))!.data,
+          e1.data,
+          reason: 'the held copy stays',
         );
 
-        // 6. Destination's local sequence counter is UNCHANGED (rollback).
-        expect(await dest.backend.readSequenceCounter(), equals(seqBefore));
-
-        // 7. e2 and e3 are NOT stored (rolled back).
+        // 7. e2 and e3 are stored.
         final storedE2 = await dest.backend.transaction(
           (txn) async => dest.backend.findEventByIdInTxn(txn, e2.eventId),
         );
         final storedE3 = await dest.backend.transaction(
           (txn) async => dest.backend.findEventByIdInTxn(txn, e3.eventId),
         );
-        expect(storedE2, isNull);
-        expect(storedE3, isNull);
+        expect(storedE2, isNotNull);
+        expect(storedE3, isNotNull);
 
         // 8. No duplicate_received audit events emitted.
         final auditEvents = await dest.backend.findEventsForAggregate(

@@ -26,6 +26,7 @@ import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
 import 'record_fixtures.dart';
+import 'row_marks.dart';
 import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
@@ -101,6 +102,16 @@ class _Store {
   Future<List<StoredEvent>> events({String? entryType}) =>
       backend.findAllEvents(entryType: entryType);
 
+  /// [snapshot] with the security findings left out of the log.
+  Future<Map<String, Object?>> snapshotBesideFindings() async =>
+      <String, Object?>{
+        ...await snapshot(),
+        'events': <String>[
+          for (final e in await events())
+            if (e.entryType != kSecurityFindingEntryType) e.eventId,
+        ],
+      };
+
   /// What a refused operation must leave unchanged: the log, the view and
   /// the queue heads.
   Future<Map<String, Object?>> snapshot() async => <String, Object?>{
@@ -145,14 +156,18 @@ Future<_Store> _openPeer(int n) async {
 var _forged = 0;
 
 /// An event as a peer sends it, with one origin provenance entry stamped
-/// by the database `peer-db`, the causal object of an aggregate's first
-/// version, and the canonical hash of its record: the shape of [data], [entryType],
-/// [aggregateType] and [eventType] is whatever the test gives.
+/// by the database [originDatabaseId] (`peer-db` by default), the causal
+/// object of an aggregate's first version, and the canonical hash of its
+/// record: the shape of [data], [entryType], [aggregateType] and
+/// [eventType] is whatever the test gives. Its origin position and its
+/// predecessor hash are its own, and the predecessor names no event, so
+/// events built here form no fork among themselves.
 StoredEvent forgedEvent({
   required String entryType,
   required String aggregateType,
   required String eventType,
   required Map<String, Object?> data,
+  String originDatabaseId = 'peer-db',
 }) {
   _forged += 1;
   final now = DateTime.utc(2026, 9, 1, 12, 0, _forged % 60);
@@ -174,7 +189,7 @@ StoredEvent forgedEvent({
           receivedAt: now,
           identifier: _peerSource.identifier,
           softwareVersion: _peerSource.softwareVersion,
-          databaseId: 'peer-db',
+          databaseId: originDatabaseId,
           libraryVersion: kPeerLibraryVersion,
         ).toJson(),
       ],
@@ -182,7 +197,7 @@ StoredEvent forgedEvent({
     'initiator': const AutomationInitiator(service: 'peer').toJson(),
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
-    'previous_event_hash': null,
+    'previous_event_hash': 'unheld-predecessor-$_forged',
     'causal': kRootVersionCausalJson,
   };
   record['event_hash'] = canonicalEventHash(record);
@@ -256,10 +271,44 @@ _ingestPaths = <String, Future<void> Function(EventStore, List<StoredEvent>)>{
   },
 };
 
-Matcher _refused(ReservedEventRefusal reason, {String? eventId}) =>
-    isA<IngestReservedEventRefused>()
-        .having((e) => e.reason, 'reason', reason)
-        .having((e) => e.eventId, 'eventId', eventId ?? anything);
+/// The reasons of the `event_malformed` findings [backend]'s database
+/// recorded about the record of [event].
+Future<List<Object?>> _malformedReasons(
+  StorageBackend backend,
+  StoredEvent event,
+) async => <Object?>[
+  for (final f in await backend.findAllEvents(
+    entryType: kSecurityFindingEntryType,
+  ))
+    if (f.data['kind'] == 'event_malformed' &&
+        ((f.data['evidence']! as Map)['record']! as Map)['event_id'] ==
+            event.eventId)
+      (f.data['evidence']! as Map)['reason'],
+];
+
+/// The kinds of the security findings [backend]'s database recorded that
+/// name [eventId] in their evidence.
+Future<List<Object?>> _findingKindsNaming(
+  StorageBackend backend,
+  String eventId,
+) async => <Object?>[
+  for (final f in await backend.findAllEvents(
+    entryType: kSecurityFindingEntryType,
+  ))
+    if ((f.data['evidence']! as Map)['event_id'] == eventId) f.data['kind'],
+];
+
+/// The identities of the findings whose evidence names [eventId].
+Future<List<String>> _findingIdsNaming(
+  StorageBackend backend,
+  String eventId,
+) async => <String>[
+  for (final f in await backend.findAllEvents(
+    entryType: kSecurityFindingEntryType,
+  ))
+    if ((f.data['evidence']! as Map)['event_id'] == eventId)
+      f.data['finding_id']! as String,
+];
 
 /// Run every destination-wedges view scenario against a database
 /// [databaseFactory] builds fresh for each test (a null database skips the
@@ -340,6 +389,7 @@ void runDestinationWedgesViewScenarios(
             ...wedge.data,
             'aggregateId': key,
             'sequence': wedge.sequenceNumber,
+            ...kUnmarked,
           },
         });
         expect(wedge.data['row_id'], rowId);
@@ -647,6 +697,7 @@ void runDestinationWedgesViewScenarios(
             'database_id': 'peer-db',
             'aggregateId': 'peer-db|s',
             'sequence': stored.sequenceNumber,
+            ...kUnmarked,
           },
         });
         await expectWedgesViewMatchesQueue(r.store);
@@ -807,9 +858,10 @@ void runDestinationWedgesViewScenarios(
           // Verifies: EVS-DEV-destination-drain/L
           // an ingested reserved destination audit whose destination
           //   identifier or database identity is missing, empty, not a
-          //   string, or contains `|` is refused as malformed, before any
-          //   write, and the same batch without it ingests.
-          test('${path.key} refuses a wedge event with ${c.key}', () async {
+          //   string, or contains `|` is stored as no event and kept in an
+          //   event_malformed finding, and the rest of the batch ingests.
+          test('${path.key} keeps a wedge event with ${c.key} in a finding '
+              'and admits the rest', () async {
             if (!available) return;
             final good = forgedEvent(
               entryType: kDestinationWedgedEntryType,
@@ -823,20 +875,11 @@ void runDestinationWedgesViewScenarios(
               eventType: kDestinationWedgedEventType,
               data: c.value(r.store.databaseId),
             );
-            // Through ingestEvent each event commits on its own, so the good
-            // one commits before the bad one is refused.
-            final batch = path.key == 'ingestBatch';
-            if (!batch) await path.value(r.store, <StoredEvent>[good]);
-            final before = await r.snapshot();
-            await expectLater(
-              path.value(r.store, <StoredEvent>[if (batch) good, bad]),
-              throwsA(
-                _refused(ReservedEventRefusal.malformed, eventId: bad.eventId),
-              ),
-            );
-            expect(await r.snapshot(), before);
-            await r.expectCounterUnchanged();
-            if (batch) await path.value(r.store, <StoredEvent>[good]);
+            await path.value(r.store, <StoredEvent>[good, bad]);
+            expect(await r.backend.findEventById(bad.eventId), isNull);
+            expect(await _malformedReasons(r.backend, bad), <String>[
+              'audit_identity_invalid',
+            ]);
             expect(
               (await wedgesViewRows(r.backend)).keys,
               contains('peer-db|good'),
@@ -857,103 +900,120 @@ void runDestinationWedgesViewScenarios(
           // Verifies: EVS-DEV-destination-drain/L
           // a reserved entry type carrying an aggregate type or event type
           //   the library does not declare for it (here the wedge event's
-          //   pair, naming a healthy local destination) is refused as a
-          //   shape mismatch before any write, whether or not it carries a
-          //   destination identifier; the view gains no row.
-          test(
-            '${path.key} refuses other reserved types in the wedge '
-            "event's shape (${withId ? 'with' : 'without'} data.id)",
-            () async {
-              if (!available) return;
-              await r.queued(FakeDestination(id: 'healthy'));
-              for (final id in nonAudit) {
-                final before = await r.snapshot();
-                final forged = forgedEvent(
-                  entryType: id,
-                  aggregateType: kDestinationAuditAggregateType,
-                  eventType: kDestinationWedgedEventType,
-                  data: wedgeData(
-                    destinationId: 'healthy',
-                    databaseId: r.store.databaseId,
-                    remove: withId ? const <String>{} : const <String>{'id'},
-                  ),
-                );
-                await expectLater(
-                  path.value(r.store, <StoredEvent>[forged]),
-                  throwsA(
-                    _refused(
-                      ReservedEventRefusal.shapeMismatch,
-                      eventId: forged.eventId,
-                    ),
-                  ),
-                  reason: id,
-                );
-                expect(await r.snapshot(), before, reason: id);
-                expect(await wedgesViewRows(r.backend), isEmpty, reason: id);
-              }
-              await r.expectCounterUnchanged();
-              await expectWedgesViewMatchesQueue(r.store);
-            },
-          );
+          //   pair, naming a healthy local destination) is stored as no event
+          //   and kept in a finding naming reserved_type_undeclared, whether
+          //   or not it carries a destination identifier; the view gains no
+          //   row.
+          test('${path.key} keeps other reserved types in the wedge '
+              "event's shape in a finding (${withId ? 'with' : 'without'} "
+              'data.id)', () async {
+            if (!available) return;
+            await r.queued(FakeDestination(id: 'healthy'));
+            for (final id in nonAudit) {
+              final before = await r.snapshotBesideFindings();
+              final forged = forgedEvent(
+                entryType: id,
+                aggregateType: kDestinationAuditAggregateType,
+                eventType: kDestinationWedgedEventType,
+                data: wedgeData(
+                  destinationId: 'healthy',
+                  databaseId: r.store.databaseId,
+                  remove: withId ? const <String>{} : const <String>{'id'},
+                ),
+              );
+              await path.value(r.store, <StoredEvent>[forged]);
+              expect(await _malformedReasons(r.backend, forged), <String>[
+                'reserved_type_undeclared',
+              ], reason: id);
+              expect(await r.snapshotBesideFindings(), before, reason: id);
+              expect(await wedgesViewRows(r.backend), isEmpty, reason: id);
+            }
+            await expectWedgesViewMatchesQueue(r.store);
+          });
         }
 
         // Verifies: EVS-DEV-destination-drain/L
         // a reserved destination audit type under a foreign aggregate type
-        //   is refused as a shape mismatch.
-        test('${path.key} refuses a wedge event under another aggregate '
-            'type', () async {
+        //   is stored as no event and kept in a finding naming
+        //   reserved_type_undeclared.
+        test('${path.key} keeps a wedge event under another aggregate '
+            'type in a finding', () async {
           if (!available) return;
-          final before = await r.snapshot();
+          final before = await r.snapshotBesideFindings();
           final forged = forgedEvent(
             entryType: kDestinationWedgedEntryType,
             aggregateType: 'note',
             eventType: kDestinationWedgedEventType,
             data: wedgeData(destinationId: 'x', databaseId: 'peer-db'),
           );
-          await expectLater(
-            path.value(r.store, <StoredEvent>[forged]),
-            throwsA(_refused(ReservedEventRefusal.shapeMismatch)),
-          );
-          expect(await r.snapshot(), before);
+          await path.value(r.store, <StoredEvent>[forged]);
+          expect(await _malformedReasons(r.backend, forged), <String>[
+            'reserved_type_undeclared',
+          ]);
+          expect(await r.snapshotBesideFindings(), before);
         });
 
         // Verifies: EVS-DEV-destination-drain/L
-        // an ingested destination audit naming the receiver's own database,
-        //   which the receiver does not hold, is refused and the view row
-        //   stays.
-        test(
-          '${path.key} refuses a recovery naming the receiver database',
-          () async {
-            if (!available) return;
-            final row = await r.wedge(FakeDestination(id: 'x'));
-            final before = await r.snapshot();
-            final forged = forgedEvent(
-              entryType: kDestinationWedgeRecoveredEntryType,
-              aggregateType: kDestinationAuditAggregateType,
-              eventType: kDestinationWedgeRecoveredEventType,
-              data: <String, Object?>{
-                'id': 'x',
-                'database_id': r.store.databaseId,
-                'row_id': row,
-              },
-            );
-            await expectLater(
-              path.value(r.store, <StoredEvent>[forged]),
-              throwsA(
-                _refused(
-                  ReservedEventRefusal.namesReceiverDatabase,
-                  eventId: forged.eventId,
-                ),
-              ),
-            );
-            expect(await r.snapshot(), before);
-            expect((await wedgesViewRows(r.backend)).keys, <String>[
-              '${r.store.databaseId}|x',
-            ]);
-            await r.expectCounterUnchanged();
-            await expectWedgesViewMatchesQueue(r.store);
-          },
-        );
+        // an ingested destination audit a peer originated that names the
+        //   receiver's own database is stored as no event and kept in a
+        //   finding naming audit_identity_invalid; the view row stays.
+        test('${path.key} keeps a peer recovery naming the receiver database '
+            'in a finding', () async {
+          if (!available) return;
+          final row = await r.wedge(FakeDestination(id: 'x'));
+          final before = await r.snapshotBesideFindings();
+          final forged = forgedEvent(
+            entryType: kDestinationWedgeRecoveredEntryType,
+            aggregateType: kDestinationAuditAggregateType,
+            eventType: kDestinationWedgeRecoveredEventType,
+            data: <String, Object?>{
+              'id': 'x',
+              'database_id': r.store.databaseId,
+              'row_id': row,
+            },
+          );
+          await path.value(r.store, <StoredEvent>[forged]);
+          expect(await _malformedReasons(r.backend, forged), <String>[
+            'audit_identity_invalid',
+          ]);
+          expect(await r.snapshotBesideFindings(), before);
+          expect((await wedgesViewRows(r.backend)).keys, <String>[
+            '${r.store.databaseId}|x',
+          ]);
+          await expectWedgesViewMatchesQueue(r.store);
+        });
+
+        // Verifies: EVS-DEV-destination-drain/L
+        // Verifies: EVS-PRD-destinations/S
+        // a well-formed destination audit of the receiver's own identity
+        //   that the receiver does not hold is stored as received with one
+        //   own_event_ingested finding, and the default view does not fold
+        //   it: the row stays.
+        test('${path.key} stores an own recovery it does not hold and the view '
+            'does not fold it', () async {
+          if (!available) return;
+          final row = await r.wedge(FakeDestination(id: 'x'));
+          final forged = forgedEvent(
+            entryType: kDestinationWedgeRecoveredEntryType,
+            aggregateType: kDestinationAuditAggregateType,
+            eventType: kDestinationWedgeRecoveredEventType,
+            data: <String, Object?>{
+              'id': 'x',
+              'database_id': r.store.databaseId,
+              'row_id': row,
+            },
+            originDatabaseId: r.store.databaseId,
+          );
+          await path.value(r.store, <StoredEvent>[forged]);
+          expect(await r.backend.findEventById(forged.eventId), isNotNull);
+          expect(await _findingKindsNaming(r.backend, forged.eventId), <String>[
+            'own_event_ingested',
+          ]);
+          expect((await wedgesViewRows(r.backend)).keys, <String>[
+            '${r.store.databaseId}|x',
+          ]);
+          await expectWedgesViewMatchesQueue(r.store);
+        });
 
         // Verifies: EVS-DEV-destination-drain/L
         // an event the receiver already holds is not refused by the
@@ -978,23 +1038,32 @@ void runDestinationWedgesViewScenarios(
         });
 
         // Verifies: EVS-DEV-destination-drain/L
-        // the receiver's own destination audit presented back to it is held,
-        //   so the receiver-database refusal does not apply; the existing
-        //   identity check decides it.
-        test(
-          '${path.key} leaves a held own audit to the identity check',
-          () async {
-            if (!available) return;
-            await r.wedge(FakeDestination(id: 'x'));
-            final own = (await r.events(
-              entryType: kDestinationWedgedEntryType,
-            )).single;
-            await expectLater(
-              path.value(r.store, <StoredEvent>[own]),
-              throwsA(isA<IngestIdentityMismatch>()),
-            );
-          },
-        );
+        // the receiver's own destination audit presented back to it is held:
+        //   nothing is stored, and one own_event_ingested finding records
+        //   it.
+        test('${path.key} records a held own audit it receives', () async {
+          if (!available) return;
+          await r.wedge(FakeDestination(id: 'x'));
+          final own = (await r.events(
+            entryType: kDestinationWedgedEntryType,
+          )).single;
+          final rows = await wedgesViewRows(r.backend);
+          await path.value(r.store, <StoredEvent>[own]);
+          expect(
+            await r.events(entryType: kDestinationWedgedEntryType),
+            hasLength(1),
+          );
+          expect(await _findingKindsNaming(r.backend, own.eventId), <String>[
+            'own_event_ingested',
+          ]);
+          // The finding names the audit's aggregate, so the default view
+          // marks its row.
+          final ids = await _findingIdsNaming(r.backend, own.eventId);
+          expect(await wedgesViewRows(r.backend), <String, Object?>{
+            for (final entry in rows.entries)
+              entry.key: <String, Object?>{...entry.value, ...markedBy(ids)},
+          });
+        });
 
         // Verifies: EVS-DEV-destination-drain/L
         // a user entry type under the destination audit aggregate type,
@@ -1369,6 +1438,40 @@ void runDestinationWedgesViewScenarios(
           expect(await r.snapshot(), before);
         });
       }
+
+      // Verifies: EVS-DEV-destination-drain/M
+      // Verifies: EVS-DEV-destination-drain/L
+      // a caller registry holding an entry type in the reserved namespace
+      //   that the library does not declare is refused before anything is
+      //   written.
+      test(
+        'an undeclared entry type in the reserved namespace is refused',
+        () async {
+          if (!available) return;
+          final before = await r.snapshot();
+          final entryTypes = EntryTypeRegistry()
+            ..register(_noteDef)
+            ..register(
+              const EntryTypeDefinition(
+                id: 'system.anything_new',
+                registeredVersion: EntryTypeVersion(1, 0),
+                name: 'Anything New',
+              ),
+            );
+          await expectLater(
+            openStore(entryTypes: entryTypes),
+            throwsA(
+              isA<ArgumentError>().having(
+                (e) => e.message.toString(),
+                'message',
+                allOf(contains('reserved'), contains('system.anything_new')),
+              ),
+            ),
+          );
+          expect(entryTypes.all(), hasLength(2), reason: 'registry untouched');
+          expect(await r.snapshot(), before);
+        },
+      );
 
       // Verifies: EVS-DEV-destination-drain/M
       // a sealed projection registry that lacks the default view is refused

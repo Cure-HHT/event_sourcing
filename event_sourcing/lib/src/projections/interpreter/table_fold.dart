@@ -8,6 +8,7 @@
 // the fold is deterministic: upsert on
 //   insert, delete on remove, no-op on absent row; applying the same events
 //   in the same order from the same state yields identical results.
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -16,12 +17,17 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:meta/meta.dart' show internal;
 
 class TableFold {
+  /// Applies one [event] to the table view of [spec], inside [txn]: an
+  /// insert event upserts the row its key extracts, stamped with
+  /// [integrity], the findings that mark the event's aggregate; a remove
+  /// event deletes it.
   @internal
   static Future<AggregateFoldChange?> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required TableProjectionSpec spec,
     required StoredEvent event,
+    required List<String> integrity,
   }) async {
     if (spec.insertEventTypes.contains(event.eventType)) {
       final key = spec.rowKey.extract(event);
@@ -38,6 +44,10 @@ class TableFold {
         ...spec.rowData.extract(event),
         'aggregateId': keyStr,
         'sequence': event.sequenceNumber,
+        // Implements: EVS-PRD-materializer/F
+        // a table row carries `$integrity`, the ascending ids of the
+        //   findings that mark the aggregate whose event produced its key.
+        kIntegrityRowKey: integrityValue(integrity),
       };
       await backend.upsertViewRowInTxn(txn, spec.viewName, keyStr, row);
       return AggregateFoldChange(

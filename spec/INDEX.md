@@ -14,7 +14,7 @@
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
 | EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
 | EVS-PRD-delivery-channel              | Delivery channel continuity     | delivery-continuity.md               | c4286b3d |
-| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 941dee91 |
+| EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 4f6634d8 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | e50ef232 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | 5e9d9d6e |
 | EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | dd17064b |
@@ -52,7 +52,7 @@
 | EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 6c2b3476 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3adaac55 |
-| EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | a4b16ae0 |
+| EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | 4e97d8b7 |
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | c0da95f6 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 784df968 |

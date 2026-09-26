@@ -262,6 +262,21 @@ jobs:
       - name: Causal stamping on Postgres
         run: flutter test test/storage/postgres/postgres_causal_stamping_test.dart
         working-directory: event_sourcing
+      - name: Security findings and forward-compatible reserved events on Postgres
+        run: flutter test test/storage/postgres/postgres_security_finding_test.dart
+        working-directory: event_sourcing
+      - name: Ingest findings about the received record on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_record_findings_test.dart
+        working-directory: event_sourcing
+      - name: Ingest findings about chain structure on Postgres
+        run: flutter test test/storage/postgres/postgres_ingest_chain_findings_test.dart
+        working-directory: event_sourcing
+      - name: Chain verification on Postgres
+        run: flutter test test/storage/postgres/postgres_chain_verification_test.dart
+        working-directory: event_sourcing
+      - name: Outstanding-finding mark of the default views on Postgres
+        run: flutter test test/storage/postgres/postgres_outstanding_finding_mark_test.dart
+        working-directory: event_sourcing
       - name: Storage reader transactions run read-only on Postgres
         run: flutter test test/storage/postgres/postgres_reader_read_only_test.dart
         working-directory: event_sourcing

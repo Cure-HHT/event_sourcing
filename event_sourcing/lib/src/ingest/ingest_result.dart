@@ -10,32 +10,54 @@
 //   hash of the event as stored after the receiver's provenance hop was appended,
 //   enabling callers to thread Chain 2 linkage checks
 
-/// Outcome of a single subject event's processing inside `ingestBatch` or
-/// `ingestEvent`.
+/// Outcome of a single received record's processing inside `ingestBatch`
+/// or `ingestEvent`.
 enum IngestOutcome {
   /// New event, stored with a fresh receiver provenance entry.
   ingested,
 
-  /// Known event — identity matched, no mutation; a duplicate_received
-  /// audit event was emitted separately.
+  /// New event, stored as received with a fresh receiver provenance entry,
+  /// with the security findings [PerEventIngestOutcome.findingIds] names
+  /// recorded about it.
+  ingestedWithFinding,
+
+  /// Known event: held under the sealed hash it arrived with, so nothing is
+  /// stored for it; a duplicate_received audit event was emitted
+  /// separately. [PerEventIngestOutcome.findingIds] names any finding
+  /// recorded about it.
   duplicate,
+
+  /// A record the library does not store as an event: no event is stored
+  /// for it, and the security finding [PerEventIngestOutcome.findingIds]
+  /// names keeps it in full.
+  keptInFinding,
 }
 
-/// Per-event outcome from a single ingest call.
+/// Per-record outcome from a single ingest call.
 class PerEventIngestOutcome {
   const PerEventIngestOutcome({
     required this.eventId,
     required this.outcome,
     required this.resultHash,
+    this.findingIds = const <String>[],
   });
 
-  final String eventId;
+  /// The record's `event_id`, or null when the record carries none as a
+  /// string.
+  final String? eventId;
   final IngestOutcome outcome;
 
-  /// The stored `event_hash` after processing: for `ingested`, this is the
-  /// hash the receiver computed post-provenance-append; for `duplicate`,
-  /// this is the stored copy's current `event_hash` (unchanged).
-  final String resultHash;
+  /// The stored `event_hash` after processing: for `ingested` and
+  /// `ingestedWithFinding`, this is the hash the receiver computed
+  /// post-provenance-append; for `duplicate`, this is the stored copy's
+  /// current `event_hash` (unchanged); null for `keptInFinding`, which
+  /// stores no event.
+  final String? resultHash;
+
+  /// The identities of the security findings ingest recorded about this
+  /// record, or found already held with the same identity, in the order it
+  /// met them; empty when it met no anomaly.
+  final List<String> findingIds;
 }
 
 /// Result of `ingestBatch`.

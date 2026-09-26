@@ -612,10 +612,10 @@ void main() {
       'null': null,
       'not an object': 'version',
       'an extra key': <String, Object?>{...kRootVersionCausalJson, 'extra': 1},
-      'a missing key': <String, Object?>{
-        'kind': 'version',
-        'eligible': true,
-        'parents': <Object?>[],
+      'a missing key': <String, Object?>{'kind': 'version', 'eligible': true},
+      'a reconciles key': <String, Object?>{
+        ...kRootVersionCausalJson,
+        'reconciles': null,
       },
       'parents out of order': <String, Object?>{
         ...kRootVersionCausalJson,

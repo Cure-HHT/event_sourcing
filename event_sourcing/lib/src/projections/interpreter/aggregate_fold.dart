@@ -10,6 +10,7 @@
 //   same initial state yields byte-identical results (Merge.applyDeepDelta
 //   is deterministic; metadata stamps are taken from event fields, not wall
 //   clock).
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/primitives/merge.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -44,6 +45,8 @@ class AggregateFold {
   /// - recursive merge of event.data with null-as-clear,
   /// - apply derived fields,
   /// - stamp metadata,
+  /// - stamp `$integrity` with [integrity], the findings that mark the
+  ///   aggregate, last so it wins over every other key,
   /// - delete row if event.eventType is in spec.tombstoneEventTypes.
   ///
   /// Returns an [AggregateFoldChange] describing the mutation for subscriber
@@ -55,6 +58,7 @@ class AggregateFold {
     required StorageBackend backend,
     required AggregateProjectionSpec spec,
     required StoredEvent event,
+    required List<String> integrity,
   }) async {
     if (spec.tombstoneEventTypes.contains(event.eventType)) {
       final existing = await backend.readViewRowInTxn(
@@ -106,6 +110,10 @@ class AggregateFold {
         firstEventTimestamp: firstEventTimestamp,
       );
     }
+    // Implements: EVS-PRD-materializer/F
+    // every row carries `$integrity`, the ascending ids of the findings
+    //   that mark its aggregate.
+    next[kIntegrityRowKey] = integrityValue(integrity);
 
     final immutableNext = Map<String, Object?>.unmodifiable(next);
     await backend.upsertViewRowInTxn(

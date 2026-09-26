@@ -9,6 +9,98 @@ refuses it by name with `DatabaseResetRequiredError`, and it must be reset. A Po
 created by an earlier release is dropped and provisioned again with
 `PostgresBackend.provision`.
 
+### Security findings and forward-compatible reserved events
+
+- A reserved entry type `system.security_finding` (aggregate type
+  `security_finding`, event type `security_finding_recorded`, an ineligible
+  annotation) records an integrity anomaly: its data carries exactly
+  `finding_id`, `kind`, `evidence`, `aggregates` and `detector`. The
+  identity is the SHA-256 of the canonical JSON of the detecting database,
+  the detector's role (`FindingRole`), the kind (`FindingKind`) and the
+  evidence, whose keys are fixed per kind; each detector records an anomaly
+  once. On Postgres a partial index over the finding events serves that
+  lookup.
+- Ingest records every anomaly in a received record as a security finding,
+  under the detector role `ingest`, in the ingest transaction, and admits
+  the rest of the delivery: a hash that does not recompute
+  (`hash_mismatch`, event stored as received); an identifier held under
+  another sealed hash (`identity_mismatch`, record kept in the finding); a
+  record the library does not store as an event (`event_malformed`, record
+  kept, with the reason `record_malformed`, `reserved_type_undeclared` or
+  `audit_identity_invalid`), which includes a malformed client timestamp or
+  `received_at`, a missing `causal` object or provenance field, and a
+  top-level data key beginning with `$`; and an event whose originator
+  provenance entry names the receiving database (`own_event_ingested`,
+  stored as received when not held). `IngestChainBroken`,
+  `IngestIdentityMismatch`, `IngestReservedEventRefused` and
+  `ReservedEventRefusal` are removed. `IngestOutcome` gains
+  `ingestedWithFinding` and `keptInFinding`; `PerEventIngestOutcome` gains
+  `findingIds`, and its `eventId` and `resultHash` are nullable. A security
+  finding another database originated is stored as any event.
+- Ingest checks the origin-chain structure of every event it stores,
+  against the held events including those stored earlier in the same
+  transaction, and stores the event as received with a finding: a
+  predecessor hash naming a held event another database originated, or one
+  of the same database at an origin position not below the event's
+  (`predecessor_break`); a held event of the same database at the event's
+  origin position (`position_reused`); and a held event of the same
+  database carrying the same predecessor hash at another origin position
+  (`fork_unrecorded`). A fork whose successors share one position is
+  recorded only as the reuse; a predecessor naming no held event records
+  nothing.
+- `EventStore.verifyChains({from, to})` replaces `verifyEventChain` and
+  `verifyIngestChain`; `ChainVerificationVerdict` and
+  `ChainVerificationFinding` replace `ChainVerdict`, `ChainFailure` and
+  `ChainFailureKind`. It walks the range (the whole log by default; a lower
+  bound of 0 is the first local sequence number, and the upper bound is
+  fixed at the highest stored when it starts) and checks every stored
+  event's hashes, its storage-chain link (the first event of the range
+  against the event before it), the local sequence numbers holding no
+  event (`sequence_missing`), its predecessor (`predecessor_break`), the
+  forks and reused origin positions it takes part in, each reported once,
+  its causal parents (`parent_invalid`) and, for an event the database
+  authored, the parents the stamping rule yields (`parents_not_stamped`).
+  The verdict also counts predecessor hashes naming no held event. Each
+  finding is recorded as a security finding under the role `walk`, in a
+  short transaction of its own after the reads, once per detector.
+  `StorageReader.verifyChains` returns the same verdict and records
+  nothing. A negative bound or an inverted range throws `ArgumentError`
+  before anything is read. The reads hold no transaction an append waits
+  for: on Postgres one `REPEATABLE READ READ ONLY` snapshot on its own pool
+  session, on Sembast reads outside any transaction. A `StorageBackend`
+  implements the new `nonBlockingRead`.
+- Every row of an aggregate or table view carries the reserved key
+  `$integrity`, an object holding `security_findings`: the ascending
+  identities of the held security findings that mark the row's aggregate
+  (for a table row, the aggregate whose event produced it), empty when
+  none does. A finding marks the aggregates it names when the database
+  holds it as authored; a received finding marks only the aggregates its
+  originating database authored events of. A `position_reused` or
+  `fork_unrecorded` finding about a database marks every aggregate holding
+  an event of that database at or above the reused position, or the
+  fork's lowest position, events stored later included. Every view folds
+  every finding, whatever its interest, and `rebuildView` derives the same
+  marks. An append whose data holds a top-level key beginning with `$`
+  throws `ArgumentError`, and `ProjectionRegistry.register` refuses a
+  projection whose key path, column or derived field name begins with `$`.
+  A `StorageBackend` implements `findSecurityFindingsInTxn` and
+  `findEventsFromOriginPositionInTxn`.
+- The default destination-wedges view folds no event whose originating
+  database is the holding database and that the holding database does not
+  hold as authored.
+- The reserved entry-type namespace is every id beginning with `system.`
+  plus six fixed ids (`isReservedEntryType`,
+  `kReservedFixedEntryTypeIds`): the public appends refuse, and an open
+  refuses a registry holding, any entry type of the namespace the library
+  does not declare.
+- `WedgeCause` and `HaltPurpose` are open values rather than enums:
+  `fromWire` carries a value this build does not know verbatim (`isKnown`
+  is false) instead of throwing, so wedge records, halt requests and
+  events a newer build of the same data-format major wrote read without
+  failing. `requestHalt` refuses a purpose this build does not know. A
+  wedge of an unknown halt purpose is recovered with no configuration
+  check.
+
 ### Delivery: one drainer per database
 
 - Within what its storage backend's drain lock supports, at most one
@@ -152,27 +244,26 @@ created by an earlier release is dropped and provisioned again with
   reserved id or the view's name under any other definition, or a sealed
   projection registry without the view, is refused. Remove manual
   `kSystemEntryTypes` registration loops.
-- Ingest refuses reserved events outside their declared shapes, malformed
-  destination audits, and destination audits naming the receiver's own
-  database that it does not hold: `IngestReservedEventRefused` with
-  `ReservedEventRefusal`.
+- Ingest stores no event for a reserved event outside its declared shape
+  or a destination audit whose identifiers are malformed or whose database
+  identity is not its originating database, and keeps the record in an
+  `event_malformed` security finding.
 - `IngestDataFormatIncompatible` replaces `IngestLibFormatVersionAhead`, and
   `ingestEvent` applies the version checks too. New
   `IngestEntryTypeVersionUnpromotable`: an event of a lower version that a
   view's promoter steps do not lead from is refused by name, before any
-  write. A malformed event version is reported as `IngestDecodeFailure`.
+  write. A record with a malformed event version is kept in an
+  `event_malformed` security finding.
 - Ingest verifies every event's own hash, whatever the length of its
-  provenance, and refuses the event before any write when it differs from
-  its `event_hash` (`ingestBatch` refuses the whole batch). `ingestBatch`
+  provenance, and stores an event whose hash differs from its `event_hash`
+  as received, with a `hash_mismatch` security finding. `ingestBatch`
   hashes each record exactly as the envelope carried it, not the parsed
   event;
   `ingestEvent` hashes `incoming.toMap()` of the event its caller parsed.
   An event with only its origin provenance entry is checked too, so a sender
   that builds events by hand seals each record with `canonicalEventHash`
-  (now exported) after its last change; an invented `event_hash` is refused.
-  `IngestChainBroken` carries the failing link's `kind`
-  (`ChainFailureKind`), whose new `eventHashMismatch` names this refusal,
-  and `verifyEventChain` reports the same failure. The hash is an unkeyed
+  (now exported) after its last change; an invented `event_hash` is
+  recorded as a finding. The hash is an unkeyed
   SHA-256 and does not cover `aggregate_type`; an incoming event's
   `previous_event_hash` is not checked against the upstream log.
 - `StoredEvent.fromMap` keeps every field the event hash covers as the
@@ -219,13 +310,16 @@ created by an earlier release is dropped and provisioned again with
 - Every provenance entry the library stamps carries `database_id` (the
   database that stamped it) and `library_version` (the package version
   that stamped it), and every event carries a `causal` object (`kind`,
-  `eligible`, `parents`, `reconciles`). The event hash covers both. A
+  `eligible`, `parents`). The event hash covers both. A
   record any of whose provenance entries lacks either field, or carries
   one that is not a non-empty string, or that carries no `causal` object
   of exactly that shape, is malformed: `StoredEvent.fromMap` throws a
   `FormatException` naming the field, `appendEvent` and every read refuse
   it, and both ingest entry points refuse it with `IngestDecodeFailure`
   before any write.
+- `CausalRecord` has no `reconciles` member and its constructor takes no
+  `reconciles` argument: a `causal` object carrying a `reconciles` key,
+  whatever its value, is malformed and refused naming the key.
 - Both ingest entry points refuse an event of another data-format major
   with `IngestDataFormatIncompatible` before any other check of its
   record, so an event a build of data format 2 sent is refused by its
@@ -312,7 +406,21 @@ created by an earlier release is dropped and provisioned again with
     `listSchedules`, `listSchedulesTxn`;
   - views and reads: `markViewTargetBehindInTxn`,
     `clearViewTargetBehindInTxn`, `readViewTargetBehindInTxn`,
-    `readViewTargetsForEntryTypeInTxn`, `readEventsReverseInTxn`.
+    `readViewTargetsForEntryTypeInTxn`, `readEventsReverseInTxn`;
+  - chain lookups, reads over the log that return stored events:
+    `readLatestHeldAsAuthoredInTxn`, `findEventsBySealedHashInTxn`,
+    `findEventsByPredecessorInTxn`, `findEventsByOriginPositionInTxn`,
+    `readLatestEligibleVersionInTxn`. The library keeps no index of its
+    own for them: `PostgresBackend` serves them from columns and
+    non-unique indexes of the events table, and `SembastBackend` stores
+    each event under its local sequence number, keeps one record of the
+    latest sequence the database authored (read back by that key) and
+    scans the events for the rest.
+  - `holdsSecurityFindingInTxn`, whether the database holds any security
+    finding, which the outstanding-finding marks read before any finding:
+    `PostgresBackend` probes the partial index over the finding events,
+    and `SembastBackend` keeps one record, set when the first finding is
+    stored.
 - Removed: `appendAttempt`, `markFinal`, `writeFillCursor`,
   `deleteFifoStoreTxn`, and the non-transactional `enqueueFifo` and
   `writeSchedule`. `setFinalStatusTxn` takes a non-null status and allows

@@ -6,6 +6,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart'
     show SembastBackendTestSupport;
+import 'package:event_sourcing/src/verification/chain_walk.dart'
+    show hashMismatchEvidence;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -89,10 +91,7 @@ void main() {
     record['metadata'] = metadata;
 
     expect(canonicalEventHash(record), isNot(event.eventHash));
-    final verdict = await store.verifyEventChain(
-      StoredEvent.fromMap(record, 0),
-    );
-    expect(verdict.isValid, isFalse);
+    expect(hashMismatchEvidence(StoredEvent.fromMap(record, 0)), isNotEmpty);
   });
 
   var counter = 0;

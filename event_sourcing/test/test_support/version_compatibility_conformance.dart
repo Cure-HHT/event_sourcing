@@ -1355,12 +1355,16 @@ void runVersionCompatibilityScenarios(
       });
 
       // Verifies: EVS-DEV-version-compatibility/D
-      test('ingestBatch refuses an event with a malformed version as a decode '
-          'failure naming the field, before any write', () async {
+      // Verifies: EVS-DEV-security-findings/O
+      test('ingestBatch keeps an event with a malformed version in an '
+          'event_malformed finding, storing no event for it', () async {
         if (db == null) return;
         final receiver = await openReceiver();
-        final eventsBefore = (await receiver.reader.findAllEvents()).length;
-        final counterBefore = await receiver.reader.readSequenceCounter();
+        Future<List<String>> besideFindings() async => <String>[
+          for (final e in await receiver.reader.findAllEvents())
+            if (e.entryType != kSecurityFindingEntryType) e.eventId,
+        ];
+        final eventsBefore = await besideFindings();
         final malformed = <String, Map<String, Object?>>{
           'entry_type_version': <String, Object?>{'major': 0, 'minor': 0},
           'lib_format_version': <String, Object?>{
@@ -1375,22 +1379,31 @@ void runVersionCompatibilityScenarios(
               data: const <String, Object?>{'title': 'malformed'},
             ).toMap(),
           )..[field.key] = field.value;
-          await expectLater(
-            receiver.ingestBatch(
-              _batchOfMaps(<Map<String, Object?>>[map]),
-              wireFormat: BatchEnvelope.wireFormat,
-            ),
-            throwsA(
-              isA<IngestDecodeFailure>().having(
-                (e) => e.message,
-                'message',
-                contains(field.key),
-              ),
-            ),
+          final result = await receiver.ingestBatch(
+            _batchOfMaps(<Map<String, Object?>>[map]),
+            wireFormat: BatchEnvelope.wireFormat,
+          );
+          expect(
+            result.events.single.outcome,
+            IngestOutcome.keptInFinding,
+            reason: field.key,
+          );
+          final findings = await receiver.reader.findAllEvents(
+            entryType: kSecurityFindingEntryType,
+          );
+          expect(
+            findings.last.data['kind'],
+            'event_malformed',
+            reason: field.key,
+          );
+          expect(
+            ((findings.last.data['evidence']! as Map)['record']!
+                as Map)[field.key],
+            field.value,
+            reason: field.key,
           );
         }
-        expect((await receiver.reader.findAllEvents()).length, eventsBefore);
-        expect(await receiver.reader.readSequenceCounter(), counterBefore);
+        expect(await besideFindings(), eventsBefore);
       });
 
       // Verifies: EVS-DEV-version-compatibility/D

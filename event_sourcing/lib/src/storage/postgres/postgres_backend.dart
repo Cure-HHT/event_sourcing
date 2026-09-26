@@ -39,7 +39,6 @@ import 'dart:math' show Random, min;
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
-import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -49,10 +48,12 @@ import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kSecurityFindingEntryType, kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
-import 'package:event_sourcing/src/storage/chain_index_entry.dart';
+import 'package:event_sourcing/src/storage/chain_coordinates.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -998,6 +999,43 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
+  /// Runs [body] in one `REPEATABLE READ READ ONLY` transaction on a pool
+  /// session of its own: one snapshot of the log, taken by its first read,
+  /// that no writer waits for and that makes no writer's commit fail (a
+  /// serializable reader could). Its first statement sets the search path
+  /// as [transaction]'s does; it takes no part in the generation fence,
+  /// and the server refuses any write in it. [body] runs once: a
+  /// repeatable-read transaction that only reads fails no serialization.
+  // Implements: EVS-DEV-chain-verification/S
+  // on Postgres the chain verification reads in one read-only snapshot, and
+  //   readers never block writers.
+  // Implements: EVS-DEV-postgres-backend/Q
+  // the snapshot's first statement pins the search path, for the
+  //   transaction only, to the library's schema, pg_catalog and pg_temp.
+  @override
+  @internal
+  Future<T> nonBlockingRead<T>(
+    Future<T> Function(Transaction reads) body,
+  ) async {
+    refuseCallFromBootProgressObserver('PostgresBackend.nonBlockingRead');
+    _checkOpen();
+    return _pool.runTx<T>(
+      (tx) async {
+        final wrapper = _PostgresTxn(tx, owner: this);
+        try {
+          await tx.execute(postgresSearchPathStatement(_schema));
+          return await body(wrapper);
+        } finally {
+          wrapper._invalidate();
+        }
+      },
+      settings: TransactionSettings(
+        isolationLevel: IsolationLevel.repeatableRead,
+        accessMode: AccessMode.readOnly,
+      ),
+    );
+  }
+
   /// Runs `EventStore.open`'s boot as one `SERIALIZABLE` transaction that,
   /// after setting its search path (see [transaction]) and before its first
   /// query, locks the `backend_state` table in `SHARE ROW EXCLUSIVE` mode.
@@ -1165,10 +1203,12 @@ class PostgresBackend extends StorageBackend {
     }
     event.requireWellFormedRecord();
     final record = event.toMap();
-    // Implements: EVS-DEV-chain-verification/N
-    // the insert that stores the event writes its chain index columns, so
-    //   the index is written only in the storing transaction.
-    final index = ChainIndexEntry.of(event);
+    // Implements: EVS-DEV-chain-verification/A
+    // the insert stores the originating database, sealed hash and origin
+    //   position the stored copy yields, which the chain lookups match on;
+    //   held_as_authored_by is set only when the copy's sole provenance
+    //   entry names this database.
+    final index = ChainCoordinates.of(event);
     await session.execute(
       Sql.named('''
         INSERT INTO events (
@@ -1190,7 +1230,11 @@ class PostgresBackend extends StorageBackend {
           @clientTs:timestamptz, @clientTsText,
           @eventHash, @flowToken, @prevHash, @unknown:jsonb,
           @originDb, @sealedHash, @originPosition::bigint,
-          @heldAsAuthoredBy, @causal:jsonb
+          CASE WHEN @heldAsAuthoredBy::text = (
+            SELECT value #>> '{}' FROM backend_state
+            WHERE key = '$_databaseIdKey'
+          ) THEN @heldAsAuthoredBy::text END,
+          @causal:jsonb
         )
       '''),
       parameters: {
@@ -2987,29 +3031,15 @@ class PostgresBackend extends StorageBackend {
   /// and each later page twice as many, up to [_reverseScanPageSize], so a
   /// caller that stops after the first few events reads little.
 
-  // -------- Chain index --------
+  // -------- Chain lookups --------
   //
-  // The chain index is a set of columns of the events table, written by
-  // [appendEvent]'s insert, and the indexes behind each lookup below.
+  // Reads over the events table, served by the columns [appendEvent]'s
+  // insert writes and the database's non-unique indexes over them
+  // (`events_sealed_hash_idx`, `events_predecessor_idx`,
+  // `events_origin_position_idx`, `events_held_as_authored_idx`,
+  // `events_latest_eligible_idx`).
 
-  static const String _chainIndexColumns =
-      'sequence_number, event_id, origin_database_id, sealed_hash, '
-      'origin_position, previous_event_hash, held_as_authored_by';
-
-  static ChainIndexEntry _chainIndexEntryFromRow(ResultRow row) {
-    final m = row.toColumnMap();
-    return ChainIndexEntry(
-      sequenceNumber: m['sequence_number'] as int,
-      eventId: m['event_id'] as String,
-      originatingDatabaseId: m['origin_database_id'] as String?,
-      sealedHash: m['sealed_hash'] as String?,
-      originPosition: m['origin_position'] as int?,
-      previousEventHash: m['previous_event_hash'] as String?,
-      heldAsAuthoredBy: m['held_as_authored_by'] as String?,
-    );
-  }
-
-  Future<List<ChainIndexEntry>> _readChainIndex(
+  Future<List<StoredEvent>> _findEventsWhere(
     Transaction txn,
     String where,
     Map<String, Object?> parameters,
@@ -3017,47 +3047,48 @@ class PostgresBackend extends StorageBackend {
     final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named(
-        'SELECT $_chainIndexColumns FROM events WHERE $where '
-        'ORDER BY sequence_number ASC',
+        'SELECT * FROM events WHERE $where ORDER BY sequence_number ASC',
       ),
       parameters: parameters,
     );
-    return result.map(_chainIndexEntryFromRow).toList(growable: false);
+    return result.map(_storedEventFromRow).toList(growable: false);
   }
 
+  // Implements: EVS-DEV-chain-verification/B
+  // the latest event the database holds as authored is one probe of the
+  //   held-as-authored index, read inside the append's transaction.
   @override
   @internal
-  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+  Future<StoredEvent?> readLatestHeldAsAuthoredInTxn(
     Transaction txn,
     String databaseId,
   ) async {
     final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named(
-        'SELECT $_chainIndexColumns FROM events '
+        'SELECT * FROM events '
         'WHERE held_as_authored_by = @db '
         'ORDER BY sequence_number DESC LIMIT 1',
       ),
       parameters: {'db': databaseId},
     );
-    return result.isEmpty ? null : _chainIndexEntryFromRow(result.first);
+    return result.isEmpty ? null : _storedEventFromRow(result.first);
   }
 
   // Implements: EVS-DEV-causal-parents/H
-  // the working copy of an aggregate's latest eligible version is the
-  //   partial index over the events whose recorded causal says an eligible
-  //   version, which the insert that stores each event writes; the predicate
-  //   is the index's own, so the lookup is one index probe.
+  // the latest eligible version is one probe of the partial index over the
+  //   events whose recorded causal says an eligible version; the predicate
+  //   is the index's own.
   @override
   @internal
-  Future<CausalRef?> readLatestEligibleVersionInTxn(
+  Future<StoredEvent?> readLatestEligibleVersionInTxn(
     Transaction txn,
     String aggregateId,
   ) async {
     final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
-        SELECT event_id, sealed_hash FROM events
+        SELECT * FROM events
         WHERE aggregate_id = @agg
           AND (causal ->> 'kind') = 'version'
           AND (causal -> 'eligible') = 'true'::jsonb
@@ -3067,36 +3098,57 @@ class PostgresBackend extends StorageBackend {
       '''),
       parameters: {'agg': aggregateId},
     );
-    if (result.isEmpty) return null;
-    final m = result.first.toColumnMap();
-    return CausalRef(
-      eventId: m['event_id']! as String,
-      eventHash: m['sealed_hash']! as String,
+    return result.isEmpty ? null : _storedEventFromRow(result.first);
+  }
+
+  // Implements: EVS-DEV-security-findings/E
+  // on Postgres the lookup is one probe of the partial index over the
+  //   finding events' identity and the database that holds each as
+  //   authored; the entry type is written inline so the planner matches the
+  //   index predicate.
+  @override
+  @internal
+  Future<bool> holdsAuthoredSecurityFindingInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String findingId,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT 1 FROM events '
+        "WHERE entry_type = '$kSecurityFindingEntryType' "
+        "AND (data ->> 'finding_id') = @id "
+        'AND held_as_authored_by = @db '
+        'LIMIT 1',
+      ),
+      parameters: {'id': findingId, 'db': databaseId},
     );
+    return result.isNotEmpty;
   }
 
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+  Future<List<StoredEvent>> findEventsBySealedHashInTxn(
     Transaction txn,
     String sealedHash,
-  ) => _readChainIndex(txn, 'sealed_hash = @h', {'h': sealedHash});
+  ) => _findEventsWhere(txn, 'sealed_hash = @h', {'h': sealedHash});
 
   // A null predecessor is matched with IS NULL, which the index serves; an
   // IS NOT DISTINCT FROM comparison would not use it.
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+  Future<List<StoredEvent>> findEventsByPredecessorInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required String? previousEventHash,
   }) => previousEventHash == null
-      ? _readChainIndex(
+      ? _findEventsWhere(
           txn,
           'origin_database_id = @db AND previous_event_hash IS NULL',
           {'db': originatingDatabaseId},
         )
-      : _readChainIndex(
+      : _findEventsWhere(
           txn,
           'origin_database_id = @db AND previous_event_hash = @p',
           {'db': originatingDatabaseId, 'p': previousEventHash},
@@ -3104,15 +3156,56 @@ class PostgresBackend extends StorageBackend {
 
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+  Future<List<StoredEvent>> findEventsByOriginPositionInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required int originPosition,
-  }) => _readChainIndex(
+  }) => _findEventsWhere(
     txn,
     'origin_database_id = @db AND origin_position = @pos::bigint',
     {'db': originatingDatabaseId, 'pos': originPosition},
   );
+
+  // The range of one database's origin positions is served by the
+  // origin-position index.
+  @override
+  @internal
+  Future<List<StoredEvent>> findEventsFromOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int fromPosition,
+  }) => _findEventsWhere(
+    txn,
+    'origin_database_id = @db AND origin_position >= @pos::bigint',
+    {'db': originatingDatabaseId, 'pos': fromPosition},
+  );
+
+  // One probe of the partial index over the finding events; the entry type
+  // is written inline so the planner matches the index predicate.
+  @override
+  @internal
+  Future<bool> holdsSecurityFindingInTxn(Transaction txn) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT 1 FROM events '
+        "WHERE entry_type = '$kSecurityFindingEntryType' "
+        'AND event_type = @type '
+        'LIMIT 1',
+      ),
+      parameters: {'type': kSecurityFindingRecordedEventType},
+    );
+    return result.isNotEmpty;
+  }
+
+  // The findings are served by the (event_type, sequence_number) index.
+  @override
+  @internal
+  Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn) =>
+      _findEventsWhere(txn, 'event_type = @type AND entry_type = @entry', {
+        'type': kSecurityFindingRecordedEventType,
+        'entry': kSecurityFindingEntryType,
+      });
 
   @override
   @internal

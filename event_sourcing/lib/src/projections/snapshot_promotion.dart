@@ -60,6 +60,7 @@ import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show EntryTypeVersionDowngradeError;
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
@@ -540,6 +541,7 @@ Future<Set<String>> _refoldAggregates({
   required Set<String> aggregateIds,
   BootPhaseProgress? progress,
 }) async {
+  await IntegrityMarks.beginReplay(txn, backend);
   final present = <String>{};
   for (final aggregateId in aggregateIds.toList()..sort()) {
     await backend.deleteViewRowInTxn(txn, spec.viewName, aggregateId);
@@ -608,6 +610,7 @@ Future<void> _refoldWholeTable({
   BootPhaseProgress? progress,
 }) async {
   await backend.clearViewInTxn(txn, spec.viewName);
+  await IntegrityMarks.beginReplay(txn, backend);
   var reached = 0;
   int? lastSeq;
   while (true) {
@@ -618,14 +621,17 @@ Future<void> _refoldWholeTable({
     );
     if (chunk.isEmpty) break;
     for (final event in chunk) {
-      if (!spec.interest.matches(event)) continue;
+      // An event the view does not fold still folds into its
+      // outstanding-finding marks.
       await ProjectionInterpreter.foldIntoView(
         txn: txn,
         backend: backend,
         spec: spec,
         promoters: promoters,
         event: event,
-        version: _foldVersion(entryTypes, event),
+        version: spec.interest.matches(event)
+            ? _foldVersion(entryTypes, event)
+            : null,
       );
     }
     final at = chunk.last.sequenceNumber < counted

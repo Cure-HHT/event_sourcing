@@ -95,7 +95,7 @@ import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_draft.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
-import 'package:event_sourcing/src/ingest/chain_verdict.dart';
+import 'package:event_sourcing/src/ingest/chain_checks.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
@@ -103,6 +103,7 @@ import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/logging.dart';
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
@@ -113,10 +114,12 @@ import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/security_details.dart';
+import 'package:event_sourcing/src/security/security_finding.dart';
 import 'package:event_sourcing/src/security/security_retention_policy.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/chain_coordinates.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/event_hash.dart';
@@ -142,11 +145,14 @@ import 'package:event_sourcing/src/sync/clock.dart';
 import 'package:event_sourcing/src/sync/declared_configuration.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
+import 'package:event_sourcing/src/verification/chain_verification_verdict.dart';
+import 'package:event_sourcing/src/verification/chain_walk.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:provenance/provenance.dart';
 import 'package:uuid/uuid.dart';
 
+part 'actions/action_dispatcher.dart';
 // Implements: EVS-DEV-storage-capability/C
 // the library's writers that take a handed-out object -- the bootstrap, the
 //   destination registry, the delivery cycle and its fill and drain, the
@@ -165,12 +171,11 @@ import 'package:uuid/uuid.dart';
 //   its parts are the event store's side of that surface.
 part 'bootstrap.dart';
 part 'destinations/destination_registry.dart';
-part 'sync/sync_cycle.dart';
+part 'projections/rebuild.dart';
 part 'sync/drain.dart';
 part 'sync/fill_batch.dart';
 part 'sync/historical_replay.dart';
-part 'projections/rebuild.dart';
-part 'actions/action_dispatcher.dart';
+part 'sync/sync_cycle.dart';
 
 /// The delivery cycle's trigger, held in an event store's trigger slot.
 typedef _DeliveryTrigger = Future<void> Function();
@@ -747,6 +752,22 @@ class EventStore {
     EntryTypeRegistry entryTypes,
     ProjectionRegistry projections,
   ) {
+    // Implements: EVS-DEV-destination-drain/L
+    // an open refuses a registry holding an entry type of the reserved
+    //   namespace that the library does not declare.
+    for (final held in entryTypes.all()) {
+      if (isReservedEntryType(held.id) &&
+          !kReservedSystemEntryTypeIds.contains(held.id)) {
+        throw ArgumentError.value(
+          held.id,
+          'entryTypes',
+          'entryType id "${held.id}" is in the reserved entry-type namespace '
+              '(every id beginning with "system." and '
+              '${kReservedFixedEntryTypeIds.join(', ')}), which only the '
+              'library declares',
+        );
+      }
+    }
     for (final definition in kSystemEntryTypes) {
       final held = entryTypes.byId(definition.id);
       if (held != null && !identical(held, definition)) {
@@ -1475,9 +1496,10 @@ class EventStore {
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event of [entryType].
   ///
-  /// Throws [ArgumentError], appending nothing, when [entryType] is a
-  /// reserved system entry type ([kReservedSystemEntryTypeIds]): only the
-  /// library appends reserved system events.
+  /// Throws [ArgumentError], appending nothing, when [entryType] lies in
+  /// the reserved entry-type namespace ([isReservedEntryType]): only the
+  /// library appends reserved system events; and when [data] holds a
+  /// top-level key beginning with `$`, which the default views reserve.
   ///
   /// The library stamps `entry_type_version` with the registered major and
   /// minor (`EntryTypeDefinition.registeredVersion` for [entryType]) and
@@ -1534,18 +1556,20 @@ class EventStore {
     return event;
   }
 
-  /// Throws [ArgumentError] when [entryType] is a reserved system entry
-  /// type: the public append operations never append one.
+  /// Throws [ArgumentError] when [entryType] lies in the reserved
+  /// namespace ([isReservedEntryType]), declared by this release or not: the
+  /// public append operations never append one.
   // Implements: EVS-DEV-destination-drain/L
-  // the event store's public append operations refuse reserved system entry
-  //   types.
+  // the event store's public append operations refuse every entry type in
+  //   the reserved namespace.
   static void _refuseReservedEntryType(String entryType) {
-    if (kReservedSystemEntryTypeIds.contains(entryType)) {
+    if (isReservedEntryType(entryType)) {
       throw ArgumentError.value(
         entryType,
         'entryType',
-        'is a reserved system entry type; only the library appends reserved '
-            'system events',
+        'is in the reserved entry-type namespace (every id beginning with '
+            '"system." and ${kReservedFixedEntryTypeIds.join(', ')}); only '
+            'the library appends reserved system events',
       );
     }
   }
@@ -1597,6 +1621,138 @@ class EventStore {
       checkpointReason: null,
       changeReason: null,
       dedupeByContent: dedupeByContent,
+    );
+  }
+
+  /// Verifies this database's log over the local sequence numbers [from] to
+  /// [to], both inclusive, and records what it finds.
+  ///
+  /// It checks every event stored in the range, whatever path stored it:
+  /// its hashes, its storage-chain link (the first event of the range
+  /// against the event before it), the local sequence numbers holding no
+  /// event, its origin-chain predecessor, the forks and reused origin
+  /// positions it takes part in (each once), and its causal parents. An
+  /// omitted lower bound, or 0, is the first local sequence number; the
+  /// upper bound is the highest local sequence number stored when the
+  /// verification starts, or [to] when that is lower, so events stored
+  /// meanwhile are left to the next verification.
+  ///
+  /// The reads hold no transaction an append waits for. After them, each
+  /// finding the returned verdict lists is recorded as a security finding
+  /// under the detector role `walk`, in a short transaction of its own,
+  /// unless this database already holds it: a second verification of the
+  /// same log records nothing more. [StorageReader.verifyChains] returns
+  /// the same verdict and records nothing.
+  ///
+  /// Throws [ArgumentError], before reading any event, for a negative bound
+  /// or a lower bound above the upper.
+  // Implements: EVS-PRD-hash-chain-integrity/C+F
+  // any holder of the log verifies its storage chain and every origin-chain
+  //   link it can resolve, from the log alone, the first event of a range
+  //   included.
+  // Implements: EVS-DEV-chain-verification/R
+  // each finding of the verdict is recorded as a security finding of its
+  //   kind and evidence, in a write transaction of its own committed after
+  //   the read.
+  // Implements: EVS-DEV-security-findings/Q
+  // the chain verification records its findings under the detector role
+  //   walk.
+  // Implements: EVS-PRD-hash-chain-integrity/J
+  // the operation run on an open event store records each anomaly once per
+  //   detector.
+  Future<ChainVerificationVerdict> verifyChains({int? from, int? to}) =>
+      _verifyChains(from: from, to: to);
+
+  Future<ChainVerificationVerdict> _verifyChains({
+    int? from,
+    int? to,
+    int pageSize = kChainWalkPageSize,
+    Future<void> Function()? afterPage,
+  }) async {
+    refuseCallFromBootProgressObserver('EventStore.verifyChains');
+    final verdict = await verifyChainsOver(
+      _backend,
+      from: from,
+      to: to,
+      pageSize: pageSize,
+      afterPage: afterPage,
+    );
+    for (final finding in verdict.findings) {
+      await _runInTxnWithPublish<void>((txn, collector) async {
+        await _recordFindingInTxn(
+          txn,
+          collector,
+          role: FindingRole.walk,
+          kind: finding.kind,
+          evidence: finding.evidence,
+          aggregates: await recordedAggregatesInTxn(_backend, txn, finding),
+        );
+      });
+    }
+    return verdict;
+  }
+
+  /// Record, inside [txn], the security finding of [kind] with [evidence]
+  /// that this database detected in [role], naming [aggregates]: append a
+  /// `system.security_finding` event, whose aggregate is the finding's
+  /// identity, unless this database already holds as authored a finding
+  /// with the same identity, read inside [txn]. Returns the appended event,
+  /// or null when such a finding is held. The finding commits with the
+  /// detection point's outcome, in [txn].
+  ///
+  /// Throws [ArgumentError], appending nothing, when [kind] is not a kind
+  /// the library records or [evidence] is not exactly the evidence its kind
+  /// fixes.
+  // Implements: EVS-DEV-security-findings/B+C+H
+  // a finding carries its identity, kind, fixed evidence, the aggregates in
+  //   ascending order and its detector; the library records only the listed
+  //   kinds.
+  // Implements: EVS-DEV-security-findings/E
+  // a finding is appended only when, read inside the appending transaction,
+  //   the detecting database holds as authored no finding with its identity;
+  //   a received finding carrying the identity does not match.
+  // Implements: EVS-DEV-security-findings/F
+  // the finding is appended in the transaction of the detection point's
+  //   outcome.
+  Future<StoredEvent?> _recordFindingInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required FindingRole role,
+    required FindingKind kind,
+    required Map<String, Object?> evidence,
+    required Iterable<String> aggregates,
+  }) async {
+    checkFindingEvidence(kind, evidence);
+    final findingId = securityFindingId(
+      databaseId: databaseId,
+      role: role,
+      kind: kind,
+      evidence: evidence,
+    );
+    if (await _backend.holdsAuthoredSecurityFindingInTxn(
+      txn,
+      databaseId: databaseId,
+      findingId: findingId,
+    )) {
+      return null;
+    }
+    return _appendReservedInTxn(
+      txn,
+      collector,
+      entryType: kSecurityFindingEntryType,
+      aggregateId: findingId,
+      aggregateType: kSecurityFindingAggregateType,
+      eventType: kSecurityFindingRecordedEventType,
+      data: securityFindingData(
+        findingId: findingId,
+        kind: kind,
+        evidence: evidence,
+        aggregates: aggregates,
+        databaseId: databaseId,
+        role: role,
+        libraryVersion: _build().version,
+      ),
+      initiator: _kSecurityFindingInitiator,
     );
   }
 
@@ -1770,6 +1926,25 @@ class EventStore {
     }
   }
 
+  /// Throws [ArgumentError], naming the key, when [data] holds a top-level
+  /// key beginning with `$`: the default views reserve the prefix for the
+  /// keys they stamp on every row.
+  // Implements: EVS-PRD-materializer/H
+  // an append whose data holds a top-level key beginning with `$` is
+  //   refused by name before any write.
+  static void _refuseReservedDataKey(Map<String, Object?> data) {
+    for (final key in data.keys) {
+      if (key.startsWith(r'$')) {
+        throw ArgumentError.value(
+          key,
+          'data',
+          'holds the top-level key "$key"; keys beginning with "\$" are '
+              'reserved for the keys the default views stamp on every row',
+        );
+      }
+    }
+  }
+
   /// Transactional companion to [append]: appends inside the transaction
   /// of a [runTransaction] body, so the append commits atomically with the
   /// body's other work (for example a configuration change and the audit
@@ -1788,8 +1963,8 @@ class EventStore {
   ///
   /// Validates inputs via [_validateAppendInputs] before doing any work,
   /// so direct callers do not need to pre-validate. Throws [ArgumentError],
-  /// appending nothing, when [entryType] is a reserved system entry type
-  /// ([kReservedSystemEntryTypeIds]): only the library appends reserved
+  /// appending nothing, when [entryType] lies in the reserved entry-type
+  /// namespace ([isReservedEntryType]): only the library appends reserved
   /// system events.
   ///
   /// Runs the projection interpreter inside the same transaction as the
@@ -1883,6 +2058,7 @@ class EventStore {
       aggregateType: aggregateType,
       eventType: eventType,
     );
+    _refuseReservedDataKey(data);
 
     final def = entryTypes.byId(entryType)!;
     // Implements: EVS-DEV-append-stamps-registered-version
@@ -2034,75 +2210,83 @@ class EventStore {
   // Destination-role (ingest) write path
   // -----------------------------------------------------------------------
 
-  /// Process-local ingest. Opens its own transaction and delegates to
-  /// [_ingestOneInTxn] with `batchContext: null`.
+  /// Process-local ingest of one event, in a transaction of its own: the
+  /// handling [ingestBatch] gives each record of a delivery, applied to the
+  /// record [incoming] writes (`incoming.toMap()`).
   ///
-  /// Accepts an [incoming] StoredEvent, refuses an incompatible data-format
-  /// or entry-type version ([IngestDataFormatIncompatible],
-  /// [IngestEntryTypeVersionAhead]) and a reserved system event the library
-  /// does not append ([IngestReservedEventRefused]), verifies Chain 1 (the
-  /// event's own hash against its content and every hop's arrival hash,
-  /// refusing with [IngestChainBroken]), checks
-  /// idempotency
-  /// by event_id, stamps a receiver ProvenanceEntry with Chain 2 fields
-  /// (`batch_context = null`), recomputes `event_hash`, and persists.
+  /// Refuses, before any write, an event of another data-format major
+  /// ([IngestDataFormatIncompatible]), and an entry-type version above the
+  /// registered major or one a view it folds into cannot promote
+  /// ([IngestEntryTypeVersionAhead], [IngestEntryTypeVersionUnpromotable]).
+  /// Every other anomaly is recorded as a security finding in the same
+  /// transaction, as [ingestBatch] states, and the returned outcome says
+  /// whether the event was stored, found held, or kept in a finding.
   ///
-  /// The caller already holds the parsed event, so its hash is checked over
-  /// `incoming.toMap()`. For an event parsed with [StoredEvent.fromMap] that
-  /// is the record it was parsed from, as far as the hash reaches: parsing
-  /// keeps every hashed field as the record spelled it.
-  ///
-  /// An event whose client timestamp, or a provenance entry's
-  /// `received_at`, is not one a record may carry throws
-  /// [IngestDecodeFailure] naming the field, before any write; an event
-  /// parsed with [StoredEvent.fromMap] was already refused there. So is an
-  /// event with a provenance entry lacking `database_id` or
-  /// `library_version`, or with no `causal` object. An event of another
-  /// data-format major is refused with [IngestDataFormatIncompatible]
-  /// before any of these checks.
-  // Implements: EVS-DEV-event-record/A+C+H
-  // both ingest entry points refuse a malformed client timestamp or
-  //   received_at, or a provenance entry lacking database_id or
-  //   library_version, as a decode failure naming the field, before any
-  //   write.
-  // Implements: EVS-DEV-causal-parents/B
-  // both ingest entry points refuse an event with no causal object of the
-  //   exact shape, naming the field, before any write.
+  /// For an event parsed with [StoredEvent.fromMap], `incoming.toMap()` is
+  /// the record it was parsed from as far as the hash reaches: parsing keeps
+  /// every hashed field as the record spelled it.
   // Implements: EVS-DEV-version-compatibility/Q
   // ingestEvent refuses another data-format major before any check of the
   //   rest of the event's record.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
-    try {
-      incoming.requireWellFormedRecord();
-    } on FormatException catch (e) {
-      throw IngestDecodeFailure('event ${incoming.eventId}: ${e.message}');
-    }
-    return _runInTxnWithPublish((txn, collector) async {
-      return _ingestOneInTxn(
+    final record = Map<String, Object?>.from(incoming.toMap());
+    return _runInTxnWithPublish((txn, collector) {
+      return _ingestRecordInTxn(
         txn,
-        incoming,
+        record,
+        parsed: incoming,
         batchContext: null,
         collector: collector,
       );
     });
   }
 
-  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope,
-  /// runs every subject event through [_ingestOneInTxn] inside a single
-  /// transaction, and stamps each with a [BatchContext] referencing this
-  /// batch. Throws [IngestDecodeFailure] for any unsupported [wireFormat] or
-  /// malformed bytes; throws the refusal of any event, [ingestEvent]'s
-  /// refusals included, rolling back the whole batch; throws [IngestIdentityMismatch] (rolling back the whole
-  /// batch) if any subject has a hash conflict with an already-stored event.
+  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope
+  /// and handles every record it carries, in order, inside one transaction,
+  /// stamping each stored event with a [BatchContext] referencing this
+  /// batch. Throws [IngestDecodeFailure] for an unsupported [wireFormat] or
+  /// bytes that do not decode as a batch, and the version refusals
+  /// [ingestEvent] names, rolling back the whole batch.
   ///
-  /// Each event's `event_hash` is checked against the canonical hash of its
-  /// record exactly as the envelope carried it, not of the parsed event. The
-  /// parsed event keeps every hashed field as that record spelled it, so
-  /// the stored copy, and the copy a later delivery forwards, hash as the
-  /// record did.
+  /// Each record is handled on its own, and every anomaly in it is
+  /// recorded, under the detector role `ingest`, as a security finding in
+  /// the batch's transaction, while the rest of the batch is admitted:
   ///
-  /// See design spec §2.5.
+  /// - a record whose `event_hash`, or a receiver entry's arrival hash, does
+  ///   not recompute over the record as the envelope carried it is stored
+  ///   as received, with a `hash_mismatch` finding per hash;
+  /// - a record whose identifier the receiver holds under another sealed
+  ///   hash is not stored, and an `identity_mismatch` finding carries it in
+  ///   full;
+  /// - a record the library does not store as an event (malformed, a
+  ///   declared reserved entry type in a shape it does not have, or a
+  ///   destination audit whose identifiers are not well formed or whose
+  ///   database identity is not its originating database) is not stored,
+  ///   and an `event_malformed` finding carries it in full with the reason;
+  /// - a record whose originator provenance entry names this database is
+  ///   stored as received when this database does not hold it and can store
+  ///   it, and records an `own_event_ingested` finding, which carries the
+  ///   record in full only when it is neither held nor stored.
+  /// - a record stored as an event whose predecessor hash is the sealed
+  ///   hash of a held event another database originated, or of one of its
+  ///   own database at an origin position not below its own, records a
+  ///   `predecessor_break` finding; one at an origin position a held event
+  ///   of its database with another identifier occupies records a
+  ///   `position_reused` finding; and one whose predecessor hash such an
+  ///   event at another origin position carries records a `fork_unrecorded`
+  ///   finding. The held events include those stored earlier in the batch.
+  ///
+  /// A record the receiver holds under the sealed hash it arrived with is a
+  /// duplicate: nothing is stored for it and a duplicate_received audit
+  /// event is appended. A security finding another database originated is
+  /// stored as any event.
+  ///
+  /// Each record's `event_hash` is checked against the canonical hash of
+  /// the record exactly as the envelope carried it, not of the parsed
+  /// event. The parsed event keeps every hashed field as that record spelled
+  /// it, so the stored copy, and the copy a later delivery forwards, hash as
+  /// the record did.
   Future<IngestBatchResult> ingestBatch(
     Uint8List bytes, {
     required String wireFormat,
@@ -2122,19 +2306,8 @@ class EventStore {
       //   the result lists the committed run's outcomes only.
       outcomes.clear();
       for (var i = 0; i < envelope.events.length; i++) {
-        final eventMap = envelope.events[i];
-        _refuseOtherDataFormatMajorOfRecord(eventMap);
-        final StoredEvent storedEvent;
-        try {
-          storedEvent = StoredEvent.fromMap(
-            Map<String, Object?>.from(eventMap),
-            0,
-          );
-        } on FormatException catch (e) {
-          throw IngestDecodeFailure(
-            'batch ${envelope.batchId} event $i: ${e.message}',
-          );
-        }
+        final record = envelope.events[i];
+        _refuseOtherDataFormatMajorOfRecord(record);
         final batchContext = BatchContext(
           batchId: envelope.batchId,
           batchPosition: i,
@@ -2142,14 +2315,15 @@ class EventStore {
           batchWireBytesHash: wireBytesHash,
           batchWireFormat: BatchEnvelope.wireFormat,
         );
-        final outcome = await _ingestOneInTxn(
-          txn,
-          storedEvent,
-          batchContext: batchContext,
-          collector: collector,
-          wireRecord: eventMap,
+        outcomes.add(
+          await _ingestRecordInTxn(
+            txn,
+            record,
+            parsed: null,
+            batchContext: batchContext,
+            collector: collector,
+          ),
         );
-        outcomes.add(outcome);
       }
     });
 
@@ -2201,135 +2375,190 @@ class EventStore {
     );
   }
 
-  /// Per-event ingest logic, called from both [ingestEvent] and the
-  /// `ingestBatch` loop.
+  /// Handles one received [record] inside [txn], for [ingestEvent] and each
+  /// record of [ingestBatch]: stores it as received, finds it held, or keeps
+  /// it in a security finding, and records every finding it meets, as
+  /// [ingestBatch] states.
   ///
-  /// [batchContext] is non-null when called from `ingestBatch`, null when
-  /// called from [ingestEvent]. [wireRecord] is the record [incoming] was
-  /// parsed from, as the batch envelope carried it; the event's own hash is
-  /// checked over it when given.
-  Future<PerEventIngestOutcome> _ingestOneInTxn(
+  /// [parsed] is the event [record] was written from, when the caller holds
+  /// one ([ingestEvent]); otherwise [record] is parsed here, and a record
+  /// that does not parse is one the library does not store as an event.
+  /// [batchContext] is non-null for a record of a batch.
+  // Implements: EVS-PRD-ingest/G
+  // every record of a delivery is admitted whatever its content or the
+  //   outcome of the integrity checks, other than a record the library cannot
+  //   store as an event, which is kept in full in a security finding; the
+  //   rest of the delivery is admitted.
+  // Implements: EVS-DEV-security-findings/F
+  // every finding ingest records is appended in the ingest transaction that
+  //   commits the record's outcome.
+  // Implements: EVS-DEV-security-findings/Q
+  // ingest records its findings under the detector role ingest.
+  Future<PerEventIngestOutcome> _ingestRecordInTxn(
     Transaction txn,
-    StoredEvent incoming, {
+    Map<String, Object?> record, {
+    required StoredEvent? parsed,
     required BatchContext? batchContext,
-    PublishCollector? collector,
-    Map<String, Object?>? wireRecord,
+    required PublishCollector collector,
   }) async {
-    // 0. Version compatibility, before any read or write: the data-format
-    //    major must equal this build's, and the entry-type major must not be
-    //    above the registered one. A same-major event is accepted at any
-    //    minor.
-    // Implements: EVS-DEV-version-compatibility/D
-    // every ingest entry point (ingestEvent and each event of ingestBatch)
-    //   refuses a different data-format major or a higher entry-type major
-    //   before any write.
-    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
-    // An entry type this build does not register is accepted at any
-    // version: it is stored as it is and folds under its own version.
-    final def = entryTypes.byId(incoming.entryType);
-    if (def != null &&
-        incoming.entryTypeVersion.major > def.registeredVersion.major) {
-      throw IngestEntryTypeVersionAhead(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        wireVersion: incoming.entryTypeVersion,
-        receiverVersion: def.registeredVersion,
+    final rawEventId = record['event_id'];
+    final eventId = rawEventId is String ? rawEventId : null;
+    final findingIds = <String>[];
+    Future<void> find(
+      FindingKind kind,
+      Map<String, Object?> evidence,
+      List<String> aggregates,
+    ) async {
+      findingIds.add(
+        await _recordIngestFindingInTxn(
+          txn,
+          collector,
+          kind: kind,
+          evidence: evidence,
+          aggregates: aggregates,
+        ),
       );
     }
-    // Implements: EVS-DEV-version-compatibility/D
-    // an event below the registered version that a view it folds into has
-    //   no promoter path for is refused by name before any write.
-    if (def != null && incoming.entryTypeVersion < def.registeredVersion) {
-      for (final spec in projections.all()) {
-        if (!spec.interest.matches(incoming)) continue;
-        final gap = promoters.chainGap(
-          viewName: spec.viewName,
-          entryType: incoming.entryType,
-          fromVersion: incoming.entryTypeVersion,
-          toVersion: def.registeredVersion,
-        );
-        if (gap != null) {
-          throw IngestEntryTypeVersionUnpromotable(
-            eventId: incoming.eventId,
-            entryType: incoming.entryType,
-            viewName: spec.viewName,
-            wireVersion: incoming.entryTypeVersion,
-            receiverVersion: def.registeredVersion,
-            reason: gap,
-          );
-        }
+
+    // Implements: EVS-DEV-chain-verification/Q
+    // an event of the receiver's own identity is recognised by its
+    //   originator provenance entry, never by the data it carries.
+    final originator = _originatorDatabaseOfRecord(record);
+    final isOwn = originator == databaseId;
+
+    // 1. Parse, and decide whether the library can store the record as an
+    //    event.
+    StoredEvent? event;
+    String? unstorable;
+    if (originator == null) {
+      unstorable = _kRecordMalformed;
+    } else {
+      try {
+        event = (parsed ?? StoredEvent.fromMap(record, 0))
+          ..requireWellFormedRecord();
+      } on FormatException {
+        event = null;
+        unstorable = _kRecordMalformed;
       }
     }
-
-    // 0b. Reserved system events: only shapes the library appends, before
-    //     any read or write.
-    _refuseUndeclaredReservedEvent(incoming);
-
-    // 1. Chain 1: the event's own hash against its content, then each
-    //    hop's arrival hash.
-    final verdict = _verifyChainOn(incoming, wireRecord: wireRecord);
-    if (!verdict.isValid) {
-      final failure = verdict.failures.first;
-      throw IngestChainBroken(
-        eventId: incoming.eventId,
-        kind: failure.kind,
-        hopIndex: failure.position,
-        expectedHash: failure.expectedHash,
-        actualHash: failure.actualHash,
-      );
+    if (event != null) {
+      _refuseUnadmittedVersion(event);
+      unstorable = _unstorableReason(event, originator!);
     }
 
-    // 2. Idempotency check by event_id.
-    final existing = await _backend.findEventByIdInTxn(txn, incoming.eventId);
-    if (existing != null) {
-      // Event already present — compare arrival_hash for identity check.
-      final existingProv = (existing.metadata['provenance'] as List<Object?>)
-          .cast<Map<String, Object?>>();
-      final thisHopEntry = existingProv.last;
-      final storedArrivalHash = thisHopEntry['arrival_hash'] as String?;
-      if (storedArrivalHash == incoming.eventHash) {
-        // Duplicate — emit audit event, return duplicate outcome.
-        await _emitDuplicateReceivedInTxn(
-          txn,
-          subjectEventId: incoming.eventId,
-          subjectEventHashOnRecord: existing.eventHash,
-          batchContext: batchContext,
-          collector: collector,
-        );
+    final held = eventId == null
+        ? null
+        : await _backend.findEventByIdInTxn(txn, eventId);
+    // Implements: EVS-DEV-security-findings/B
+    // a finding about a received record names the aggregate of the event
+    //   the receiver holds under the record's identifier, and no aggregate
+    //   when it holds none: a record kept in full is not an event it holds.
+    final heldAggregates = <String>[if (held != null) held.aggregateId];
+
+    // 2. A record the library does not store as an event.
+    // Implements: EVS-DEV-security-findings/O
+    // a received record the library does not store as an event (malformed,
+    //   a declared reserved entry type in a shape it does not declare, or a
+    //   destination audit whose identifiers are not well formed or whose
+    //   database identity is not its originating database) is kept in full
+    //   in an event_malformed finding naming the reason, other than a record
+    //   of the receiver's own identity; no event is stored for it.
+    // Implements: EVS-DEV-causal-parents/B
+    // a record with no causal object of the exact shape is stored as no
+    //   event and kept in a finding.
+    // Implements: EVS-DEV-event-record/H
+    // a record whose provenance entry lacks database_id or library_version
+    //   is stored as no event and kept in a finding.
+    // Implements: EVS-PRD-materializer/H
+    // the ingest part: a record ingest receives whose data holds a top-level
+    //   key beginning with `$` is stored as no event, and the finding names
+    //   the reason. The append and registration parts are refused where
+    //   they are made.
+    if (unstorable != null) {
+      if (isOwn) {
+        await find(FindingKind.ownEventIngested, <String, Object?>{
+          'event_id': eventId,
+          'sealed_hash': _sealedHashOfRecord(record),
+          'record': held == null ? record : null,
+        }, heldAggregates);
+      } else {
+        await find(FindingKind.eventMalformed, <String, Object?>{
+          'reason': unstorable,
+          'record': record,
+        }, heldAggregates);
+      }
+      final heldOwn = isOwn ? held : null;
+      return PerEventIngestOutcome(
+        eventId: eventId,
+        outcome: heldOwn == null
+            ? IngestOutcome.keptInFinding
+            : IngestOutcome.duplicate,
+        resultHash: heldOwn?.eventHash,
+        findingIds: findingIds,
+      );
+    }
+    final incoming = event!;
+
+    // 3. Every hash the record carries, recomputed over the record as it
+    //    arrived.
+    // Implements: EVS-DEV-chain-verification/P
+    // an event whose event_hash, or a receiver entry's arrival hash, does
+    //   not recompute is stored as received with a hash_mismatch finding
+    //   naming the event, the hash it carries and the hash it recomputes to.
+    // Implements: EVS-PRD-ingest/D
+    // each received event's hash chain is verified, and an event whose
+    //   chain does not verify is admitted as received with a finding.
+    final hashEvidence = hashMismatchEvidence(incoming, wireRecord: record);
+
+    // 4. An identifier the receiver holds.
+    if (held != null) {
+      final heldSealed = ChainCoordinates.of(held).sealedHash;
+      if (heldSealed != ChainCoordinates.of(incoming).sealedHash) {
+        // Implements: EVS-DEV-security-findings/G
+        // an event whose identifier the receiver holds under another sealed
+        //   hash is not stored; an identity_mismatch finding carries the
+        //   received record in full.
+        await find(FindingKind.identityMismatch, <String, Object?>{
+          'event_id': incoming.eventId,
+          'held_hash': heldSealed,
+          'record': record,
+        }, heldAggregates);
+        if (isOwn) await _findOwnEvent(find, incoming, heldAggregates);
         return PerEventIngestOutcome(
           eventId: incoming.eventId,
-          outcome: IngestOutcome.duplicate,
-          resultHash: existing.eventHash,
-        );
-      } else {
-        throw IngestIdentityMismatch(
-          eventId: incoming.eventId,
-          incomingHash: incoming.eventHash,
-          storedArrivalHash: storedArrivalHash ?? '(null)',
+          outcome: IngestOutcome.keptInFinding,
+          resultHash: null,
+          findingIds: findingIds,
         );
       }
-    }
-
-    // 2b. A destination audit naming this database that this database does
-    //     not hold is not one it appended and still has.
-    // Implements: EVS-DEV-destination-drain/L
-    // ingest refuses, before any write, a reserved destination audit event
-    //   that names the receiver's own database and that the receiver does not
-    //   already hold.
-    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
-        incoming.data['database_id'] == databaseId) {
-      throw IngestReservedEventRefused(
+      // Implements: EVS-PRD-ingest/F
+      // re-presenting an event already admitted stores nothing.
+      await _emitDuplicateReceivedInTxn(
+        txn,
+        subjectEventId: incoming.eventId,
+        subjectEventHashOnRecord: held.eventHash,
+        batchContext: batchContext,
+        collector: collector,
+      );
+      for (final evidence in hashEvidence) {
+        await find(FindingKind.hashMismatch, evidence, heldAggregates);
+      }
+      if (isOwn) await _findOwnEvent(find, incoming, heldAggregates);
+      return PerEventIngestOutcome(
         eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.namesReceiverDatabase,
+        outcome: IngestOutcome.duplicate,
+        resultHash: held.eventHash,
+        findingIds: findingIds,
       );
     }
 
-    // 3. New event — reserve a fresh local sequence_number, capture the
-    //    originator's wire-supplied sequence_number, and stamp receiver
-    //    provenance. Under the unified event store, "Chain 2 ordering"
-    //    is the local sequence_number; the previous-ingest tail hash is
-    //    the prior event in this destination's log.
+    // 5. A new event: reserve a fresh local sequence number, capture the
+    //    originator's wire-supplied sequence number, and stamp the receiver
+    //    entry.
+    // Implements: EVS-DEV-security-findings/I
+    // a security finding another database originated reaches this step as
+    //   any event does, whatever its kind and detector, and no rule beyond
+    //   ingest's own applies to it.
     final originSeq = incoming.sequenceNumber;
     final localSeq = await _backend.nextSequenceNumber(txn);
     // Implements: EVS-DEV-chain-verification/C
@@ -2353,293 +2582,230 @@ class EventStore {
       libraryVersion: _build().version,
       databaseId: databaseId,
     );
-
-    // 4. Build the updated event with the local sequence_number and
-    //    appended receiver provenance, then recompute the event hash.
     final updatedEvent = _appendReceiverProvenance(
       incoming,
       receiverEntry,
       localSeq: localSeq,
     );
-
-    // 5. Persist via the same path as origin appends.
     await _backend.appendEvent(txn, updatedEvent);
-    collector?._add(updatedEvent);
+    collector._add(updatedEvent);
 
-    // 6. Fire the projection interpreter symmetric with the local-append path.
-    //    The interpreter runs inside the same transaction as `appendEvent`,
-    //    applying all registered ProjectionSpecs whose interest filter matches
-    //    the event. A throw propagates out and rolls back the entire ingest
-    //    transaction (all-or-nothing batch atomicity).
+    // The projection interpreter runs inside the same transaction, as on
+    // the local-append path; a throw rolls back the whole ingest.
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
       backend: _backend,
       event: updatedEvent,
     );
-    if (collector != null && rowChanges.isNotEmpty) {
-      collector._addRowChanges(rowChanges);
-    }
+    if (rowChanges.isNotEmpty) collector._addRowChanges(rowChanges);
 
+    // 6. The findings about the stored event, recorded after it so that
+    //    each names its aggregate.
+    final stored = <String>[updatedEvent.aggregateId];
+    for (final evidence in hashEvidence) {
+      await find(FindingKind.hashMismatch, evidence, stored);
+    }
+    // Implements: EVS-PRD-ingest/H
+    // an event whose originator entry names the receiving database is
+    //   stored as received when the receiver does not hold it, with a
+    //   finding.
+    if (isOwn) await _findOwnEvent(find, incoming, stored);
+    // Implements: EVS-DEV-chain-verification/K+L
+    // every event ingest stores is checked for a broken predecessor, a
+    //   reused origin position and a fork inside the ingest transaction, so
+    //   the events stored earlier in it count, and is stored whatever the
+    //   checks find.
+    for (final found in await chainStructureFindingsInTxn(
+      _backend,
+      txn,
+      updatedEvent,
+    )) {
+      await find(found.kind, found.evidence, found.aggregates);
+    }
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,
-      outcome: IngestOutcome.ingested,
+      outcome: findingIds.isEmpty
+          ? IngestOutcome.ingested
+          : IngestOutcome.ingestedWithFinding,
       resultHash: updatedEvent.eventHash,
+      findingIds: findingIds,
     );
   }
 
-  /// Throws [IngestReservedEventRefused] when [incoming] is of a reserved
-  /// system entry type and is not in a shape the library appends: its
-  /// aggregate type and event type must be declared for its entry type
-  /// ([ReservedEventRefusal.shapeMismatch]), and a destination audit event
-  /// must carry a destination identifier and a database identity, each a
-  /// non-empty string without `|` ([ReservedEventRefusal.malformed]). Reads
-  /// and writes nothing.
-  // Implements: EVS-DEV-destination-drain/L
-  // ingest refuses, with a named reason and before any write, an event of a
-  //   reserved entry type whose aggregate type or event type is not one the
-  //   library declares for that entry type, and an event of a reserved
-  //   destination audit entry type whose destination identifier or database
-  //   identity is missing, empty, not a string, or contains '|'.
-  static void _refuseUndeclaredReservedEvent(StoredEvent incoming) {
-    final shape = kReservedEventShapes[incoming.entryType];
-    if (shape == null) return;
-    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
-      throw IngestReservedEventRefused(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.shapeMismatch,
-      );
-    }
-    if (!kDestinationAuditEntryTypes.contains(incoming.entryType)) return;
-    if (!isWellFormedDestinationAuditData(incoming.data)) {
-      throw IngestReservedEventRefused(
-        eventId: incoming.eventId,
-        entryType: incoming.entryType,
-        reason: ReservedEventRefusal.malformed,
-      );
-    }
-  }
+  /// Records, through [find], the `own_event_ingested` finding for
+  /// [incoming], an event of this database's own identity that ingest held
+  /// or stored, so the finding carries no record.
+  // Implements: EVS-DEV-chain-verification/Q
+  // an incoming event whose originator entry names the receiving database
+  //   records one own_event_ingested finding naming the event and its sealed
+  //   hash, held or not, and no event_malformed finding.
+  static Future<void> _findOwnEvent(
+    Future<void> Function(FindingKind, Map<String, Object?>, List<String>) find,
+    StoredEvent incoming,
+    List<String> aggregates,
+  ) => find(FindingKind.ownEventIngested, <String, Object?>{
+    'event_id': incoming.eventId,
+    'sealed_hash': ChainCoordinates.of(incoming).sealedHash,
+    'record': null,
+  }, aggregates);
 
-  // -----------------------------------------------------------------------
-  // Verification APIs
-  // -----------------------------------------------------------------------
-
-  /// Walk Chain 1 on [event]: check that its `event_hash` is the canonical
-  /// hash of its content, then walk `metadata.provenance` backward from tail
-  /// to origin. Non-throwing; returns a [ChainVerdict] with `ok=true` when the
-  /// event's hash and every `arrival_hash` match the hash recomputed at that
-  /// hop, `ok=false` otherwise with a list of [ChainFailure] instances
-  /// describing each broken link. An origin-only event (single-entry
-  /// provenance) has no inter-hop link; its own hash is still checked.
-  ///
-  /// See design spec §2.11.
-  Future<ChainVerdict> verifyEventChain(StoredEvent event) async {
-    return _verifyChainOn(event);
-  }
-
-  /// Walk Chain 2 on this destination's event log from [fromSequenceNumber]
-  /// to [toSequenceNumber] (inclusive). When [toSequenceNumber] is null,
-  /// walks through the current tail. Throws [ArgumentError] if
-  /// `fromSequenceNumber > toSequenceNumber`. Non-throwing otherwise; returns
-  /// a [ChainVerdict] with `ok=true` when every `previous_ingest_hash` equals
-  /// the stored `event_hash` of the prior ingest-stamped event in the range.
-  ///
-  /// The "Chain 2 ordering" is the local `sequence_number`, which the last
-  /// provenance entry of every event this database stores records as
-  /// `ingest_sequence_number`. An event whose last provenance entry records
-  /// none is skipped.
-  ///
-  /// See design spec §2.11.
-  Future<ChainVerdict> verifyIngestChain({
-    int fromSequenceNumber = 0,
-    int? toSequenceNumber,
+  /// Records, inside [txn], the security finding of [kind] with [evidence]
+  /// that ingest detected, naming [aggregates], unless this database holds
+  /// it as authored already; returns its identity either way.
+  Future<String> _recordIngestFindingInTxn(
+    Transaction txn,
+    PublishCollector collector, {
+    required FindingKind kind,
+    required Map<String, Object?> evidence,
+    required List<String> aggregates,
   }) async {
-    final allEvents = await _backend.findAllEvents();
-    final ingestStamped = <StoredEvent>[];
-    for (final event in allEvents) {
-      final ingestSeq = _ingestSeqOf(event);
-      if (ingestSeq != null) {
-        ingestStamped.add(event);
-      }
-    }
-    final tailSeq = ingestStamped.isEmpty
-        ? 0
-        : _ingestSeqOf(ingestStamped.last)!;
-    final upperBound = toSequenceNumber ?? tailSeq;
-    if (fromSequenceNumber > upperBound) {
-      throw ArgumentError(
-        'fromSequenceNumber ($fromSequenceNumber) must be <= '
-        'toSequenceNumber ($upperBound)',
+    await _recordFindingInTxn(
+      txn,
+      collector,
+      role: FindingRole.ingest,
+      kind: kind,
+      evidence: evidence,
+      aggregates: aggregates,
+    );
+    return securityFindingId(
+      databaseId: databaseId,
+      role: FindingRole.ingest,
+      kind: kind,
+      evidence: evidence,
+    );
+  }
+
+  /// Throws, before the record is written, when [incoming]'s entry-type
+  /// version is above the major this build registers for its entry type
+  /// ([IngestEntryTypeVersionAhead]), or below it with no promoter path for
+  /// a view it folds into ([IngestEntryTypeVersionUnpromotable]). An entry
+  /// type this build does not register is accepted at any version: it is
+  /// stored as it is and folds under its own version.
+  // Implements: EVS-DEV-version-compatibility/D
+  // every ingest entry point refuses a higher entry-type major, and an
+  //   event below the registered version that a view it folds into has no
+  //   promoter path for, by name before any write.
+  void _refuseUnadmittedVersion(StoredEvent incoming) {
+    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
+    final def = entryTypes.byId(incoming.entryType);
+    if (def == null) return;
+    if (incoming.entryTypeVersion.major > def.registeredVersion.major) {
+      throw IngestEntryTypeVersionAhead(
+        eventId: incoming.eventId,
+        entryType: incoming.entryType,
+        wireVersion: incoming.entryTypeVersion,
+        receiverVersion: def.registeredVersion,
       );
     }
-    final failures = <ChainFailure>[];
-    StoredEvent? prev;
-    for (final event in ingestStamped) {
-      final thisSeq = _ingestSeqOf(event)!;
-      if (thisSeq < fromSequenceNumber) continue;
-      if (thisSeq > upperBound) break;
-      if (thisSeq <= fromSequenceNumber) {
-        // Anchor at the start of the range — not verified against
-        // anything before it.
-        prev = event;
-        continue;
-      }
-      final lastEntry = _lastProvenanceEntry(event)!;
-      final previousIngestHash = lastEntry['previous_ingest_hash'] as String?;
-      final expected = prev?.eventHash;
-      if (previousIngestHash != expected) {
-        failures.add(
-          ChainFailure(
-            position: thisSeq,
-            kind: ChainFailureKind.previousIngestHashMismatch,
-            expectedHash: expected ?? '(null)',
-            actualHash: previousIngestHash ?? '(null)',
-          ),
+    if (!(incoming.entryTypeVersion < def.registeredVersion)) return;
+    for (final spec in projections.all()) {
+      if (!spec.interest.matches(incoming)) continue;
+      final gap = promoters.chainGap(
+        viewName: spec.viewName,
+        entryType: incoming.entryType,
+        fromVersion: incoming.entryTypeVersion,
+        toVersion: def.registeredVersion,
+      );
+      if (gap != null) {
+        throw IngestEntryTypeVersionUnpromotable(
+          eventId: incoming.eventId,
+          entryType: incoming.entryType,
+          viewName: spec.viewName,
+          wireVersion: incoming.entryTypeVersion,
+          receiverVersion: def.registeredVersion,
+          reason: gap,
         );
       }
-      prev = event;
     }
-    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
   }
 
-  /// Extract the last provenance entry of [event] as a typed map, or `null`
-  /// when provenance is absent or empty. Shared by [_ingestSeqOf] and
-  /// [verifyIngestChain] to avoid duplicating the same map-shape navigation.
-  Map<String, Object?>? _lastProvenanceEntry(StoredEvent event) {
-    final provenanceRaw = event.metadata['provenance'];
-    if (provenanceRaw is! List || provenanceRaw.isEmpty) return null;
-    final last = provenanceRaw.last;
-    if (last is! Map<String, Object?>) return null;
-    return last;
-  }
-
-  /// Extract the `ingest_sequence_number` from the last provenance entry of
-  /// [event], or `null` when that entry records none. Used by
-  /// [verifyIngestChain] to identify each event's position in Chain 2.
-  int? _ingestSeqOf(StoredEvent event) =>
-      _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
-
-  /// Walk Chain 1 on [event].metadata.provenance and return a non-throwing
-  /// verdict. Used by [ingestEvent] and [verifyEventChain]. The event's own
-  /// hash is checked over [wireRecord] when given (the record as a batch
-  /// envelope carried it), else over `event.toMap()`.
-  ChainVerdict _verifyChainOn(
-    StoredEvent event, {
-    Map<String, Object?>? wireRecord,
-  }) {
-    final provenanceRaw = event.metadata['provenance'];
-    if (provenanceRaw is! List) {
-      return const ChainVerdict(
-        isValid: false,
-        failures: <ChainFailure>[
-          ChainFailure(
-            position: -1,
-            kind: ChainFailureKind.provenanceMissing,
-            expectedHash: '(list)',
-            actualHash: '(missing or non-list)',
-          ),
-        ],
-      );
+  /// The reason the library does not store [incoming], a parsed record
+  /// that [originator] originated, as an event, or null when it can:
+  ///
+  /// - `record_malformed`: its data holds a top-level key beginning with
+  ///   `$`, which the views reserve; or its provenance does not place it in
+  ///   an origin chain and a storage chain (an entry that is not an object,
+  ///   a receiver entry without an arrival hash, a first receiver entry
+  ///   without the origin position, or a later-hop entry before the last
+  ///   without its local position);
+  /// - `reserved_type_undeclared`: it is of a reserved entry type this
+  ///   release declares, under an aggregate type or event type the library
+  ///   does not declare for it;
+  /// - `audit_identity_invalid`: it is a destination audit whose destination
+  ///   identifier or database identity is missing, empty, not a string or
+  ///   contains `|`, or whose database identity is not [originator].
+  ///
+  /// A reserved entry type this release does not declare, or a reserved
+  /// event carrying an enumerated value it does not know, is stored.
+  // Implements: EVS-DEV-destination-drain/L
+  // ingest stores no event for a received event of a declared reserved
+  //   entry type in an aggregate type or event type the library does not
+  //   declare for it, or for a destination audit whose identifiers are not
+  //   well formed or whose database identity is not its originating
+  //   database; an undeclared reserved entry type or an unknown enumerated
+  //   value is stored as received.
+  static String? _unstorableReason(StoredEvent incoming, String originator) {
+    if (incoming.data.keys.any((key) => key.startsWith(r'$'))) {
+      return _kRecordMalformed;
     }
-    final provenance = provenanceRaw.cast<Map<String, Object?>>();
-    if (provenance.isEmpty) {
-      return const ChainVerdict(
-        isValid: false,
-        failures: <ChainFailure>[
-          ChainFailure(
-            position: -1,
-            kind: ChainFailureKind.provenanceMissing,
-            expectedHash: '(non-empty)',
-            actualHash: '(empty)',
-          ),
-        ],
-      );
-    }
-    final failures = <ChainFailure>[];
-    // Implements: EVS-PRD-ingest/D
-    // the event's own hash is recomputed from the record as it arrived,
-    //   whatever the length of its provenance, so an event whose
-    //   `event_hash` is not the hash of that record is refused before any
-    //   write.
-    // Implements: EVS-PRD-hash-chain-integrity/A
-    // the hash an event states must be the canonical hash of its content.
-    //
-    // `event_hash` is the hash the last hop stored the record under: the
-    // originator's for an origin-only event, the last receiver's for a
-    // relayed one. Each hop seals the record it holds (its own provenance
-    // entry and its own `sequence_number` included) and a delivery sends
-    // that stored record. A batch's record is hashed exactly as the
-    // envelope carried it; `StoredEvent.fromMap` keeps every hashed field
-    // as the record spelled it, so a parsed event's `toMap()` hashes the
-    // same, and so does the copy this hop stores and forwards. The hops
-    // below the last are covered by the arrival-hash walk that follows,
-    // which rebuilds each earlier hop's record from the same fields.
-    //
-    // Limits: the hash is an unkeyed SHA-256, so the check detects a change
-    // made without recomputing every hash it affects, not a forger who
-    // recomputes them. `aggregate_type` is outside the hash input.
-    // `previous_event_hash` is not checked against the event before it in
-    // the upstream log.
-    final recomputedTail = _eventHash(wireRecord ?? event.toMap());
-    if (recomputedTail != event.eventHash) {
-      failures.add(
-        ChainFailure(
-          position: provenance.length - 1,
-          kind: ChainFailureKind.eventHashMismatch,
-          expectedHash: event.eventHash,
-          actualHash: recomputedTail,
-        ),
-      );
-    }
-    // Walk from tail back to hop 1: each receiver hop's `arrival_hash` is
-    // the hash of the record as the hop before it stored it.
-    //
-    // Each receiver hop reassigns the stored event's `sequence_number` to
-    // its local counter. To recompute the hash at hop k-1,
-    // substitute the seq that was on the event when hop k-1 stored it:
-    //
-    //   - For k == 1 (recomputing the origin's hash): use the originator's
-    //     wire-supplied seq, preserved on provenance[1].origin_sequence_number.
-    //   - For k > 1 (recomputing a prior receiver hop's hash): use that
-    //     prior hop's reassigned local seq, recorded as
-    //     provenance[k-1].ingest_sequence_number.
-    for (var k = provenance.length - 1; k > 0; k--) {
+    final provenance = incoming.metadata['provenance'];
+    if (provenance is! List) return _kRecordMalformed;
+    for (var k = 0; k < provenance.length; k++) {
       final entry = provenance[k];
-      final expected = entry['arrival_hash'] as String?;
-      if (expected == null) {
-        failures.add(
-          ChainFailure(
-            position: k,
-            kind: ChainFailureKind.arrivalHashMismatch,
-            expectedHash: '(non-null)',
-            actualHash: '(null)',
-          ),
-        );
-        continue;
+      if (entry is! Map) return _kRecordMalformed;
+      if (k == 0) continue;
+      if (entry['arrival_hash'] is! String) return _kRecordMalformed;
+      if (k == 1 && entry['origin_sequence_number'] is! int) {
+        return _kRecordMalformed;
       }
-      final int? seqAtHopBefore;
-      if (k == 1) {
-        seqAtHopBefore = entry['origin_sequence_number'] as int?;
-      } else {
-        seqAtHopBefore = provenance[k - 1]['ingest_sequence_number'] as int?;
-      }
-      final recomputed = _hashWithProvenanceSlice(
-        event,
-        provenance.sublist(0, k),
-        sequenceNumberOverride: seqAtHopBefore,
-      );
-      if (recomputed != expected) {
-        failures.add(
-          ChainFailure(
-            position: k,
-            kind: ChainFailureKind.arrivalHashMismatch,
-            expectedHash: expected,
-            actualHash: recomputed,
-          ),
-        );
+      if (k < provenance.length - 1 &&
+          entry['ingest_sequence_number'] is! int) {
+        return _kRecordMalformed;
       }
     }
-    return ChainVerdict(isValid: failures.isEmpty, failures: failures);
+    final shape = kReservedEventShapes[incoming.entryType];
+    if (shape == null) return null;
+    if (!shape.admits(incoming.aggregateType, incoming.eventType)) {
+      return 'reserved_type_undeclared';
+    }
+    if (kDestinationAuditEntryTypes.contains(incoming.entryType) &&
+        (!isWellFormedDestinationAuditData(incoming.data) ||
+            incoming.data['database_id'] != originator)) {
+      return 'audit_identity_invalid';
+    }
+    return null;
+  }
+
+  /// The database identity [record]'s originator provenance entry names,
+  /// or null when its metadata carries no provenance list whose first entry
+  /// is an object naming a database as a non-empty string.
+  static String? _originatorDatabaseOfRecord(Map<String, Object?> record) {
+    final metadata = record['metadata'];
+    if (metadata is! Map) return null;
+    final provenance = metadata['provenance'];
+    if (provenance is! List || provenance.isEmpty) return null;
+    final first = provenance.first;
+    if (first is! Map) return null;
+    final id = first['database_id'];
+    return id is String && id.isNotEmpty ? id : null;
+  }
+
+  /// The hash [record]'s originating database sealed it under, read from
+  /// the record as it arrived: its `event_hash` when its provenance holds
+  /// one entry, otherwise its second entry's arrival hash; null when the
+  /// record carries none as a string.
+  static String? _sealedHashOfRecord(Map<String, Object?> record) {
+    final metadata = record['metadata'];
+    final provenance = metadata is Map ? metadata['provenance'] : null;
+    if (provenance is! List || provenance.isEmpty) return null;
+    final Object? hash;
+    if (provenance.length == 1) {
+      hash = record['event_hash'];
+    } else {
+      final second = provenance[1];
+      hash = second is Map ? second['arrival_hash'] : null;
+    }
+    return hash is String ? hash : null;
   }
 
   // Implements: EVS-DEV-flow-token/C
@@ -2675,29 +2841,6 @@ class EventStore {
     final newHash = _eventHash(recordMap);
     recordMap['event_hash'] = newHash;
     return StoredEvent.fromMap(recordMap, localSeq);
-  }
-
-  /// Compute the hash that an event would have with its provenance replaced
-  /// by [provenanceSlice] and (optionally) `sequence_number` overridden to
-  /// [sequenceNumberOverride]. Used by [_verifyChainOn] to reconstruct what
-  /// each intermediate hop's `event_hash` was, accounting for the receiver-
-  /// side reassignment of `sequence_number`.
-  String _hashWithProvenanceSlice(
-    StoredEvent event,
-    List<Map<String, Object?>> provenanceSlice, {
-    int? sequenceNumberOverride,
-  }) {
-    final recordMap = Map<String, Object?>.from(event.toMap());
-    final newMetadata = <String, Object?>{
-      ...event.metadata,
-      'provenance': provenanceSlice,
-    };
-    recordMap['metadata'] = newMetadata;
-    if (sequenceNumberOverride != null) {
-      recordMap['sequence_number'] = sequenceNumberOverride;
-    }
-    recordMap.remove('event_hash');
-    return _eventHash(recordMap);
   }
 
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
@@ -2743,6 +2886,91 @@ class EventStore {
 /// Fixed initiator used for substrate-emitted lib_version events.
 const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 
+/// The reason an `event_malformed` finding names for a record that is not
+/// an event record of this data format.
+const String _kRecordMalformed = 'record_malformed';
+
+/// The initiator of every security finding the library records.
+const _kSecurityFindingInitiator = AutomationInitiator(
+  service: 'event_sourcing',
+);
+
+/// [EventStore.verifyChains] on [store], reading the log [pageSize] events
+/// at a time and awaiting [afterPage] after each page it read, for the
+/// library's own tests of what the verification reads and when. In a build
+/// with assertions disabled it throws [StateError] before it reads.
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the chain verification refuses in a build
+//   with assertions disabled.
+@internal
+@visibleForTesting
+Future<ChainVerificationVerdict> verifyChainsForTest(
+  EventStore store, {
+  int? from,
+  int? to,
+  int pageSize = kChainWalkPageSize,
+  Future<void> Function()? afterPage,
+}) {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'verifyChainsForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._verifyChains(
+    from: from,
+    to: to,
+    pageSize: pageSize,
+    afterPage: afterPage,
+  );
+}
+
+/// The event store's recording of a security finding inside [txn], as a
+/// detection point runs it, for the library's own tests of the finding's
+/// shape, identity and once-per-detector rule: the recording is private to
+/// the event store's Dart library, and the detection points, which share
+/// that library, are its only production callers. In a build with
+/// assertions disabled it throws [StateError] before it touches [txn].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to the finding record refuses in a build with
+//   assertions disabled, so it changes nothing the library writes there.
+@internal
+@visibleForTesting
+Future<StoredEvent?> recordFindingInTxnForTest(
+  EventStore store,
+  Transaction txn,
+  PublishCollector collector, {
+  required FindingRole role,
+  required FindingKind kind,
+  required Map<String, Object?> evidence,
+  required Iterable<String> aggregates,
+}) async {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'recordFindingInTxnForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._recordFindingInTxn(
+    txn,
+    collector,
+    role: role,
+    kind: kind,
+    evidence: evidence,
+    aggregates: aggregates,
+  );
+}
+
 /// Canonical event hash used by every raw-record-map append site; see
 /// [canonicalEventHash].
 String _canonicalEventHash(Map<String, Object?> recordMap) =>
@@ -2780,37 +3008,31 @@ Future<_ChainLinks> _reserveChainLinksInTxn(
 ) async {
   final sequenceNumber = await backend.nextSequenceNumber(txn);
   final previousIngestHash = await backend.readLatestEventHash(txn);
-  // Implements: EVS-DEV-chain-verification/N
-  // the append reads its predecessor from the chain index, not the log.
   final latestAuthored = await backend.readLatestHeldAsAuthoredInTxn(
     txn,
     databaseId,
   );
   return (
     sequenceNumber: sequenceNumber,
-    previousEventHash: latestAuthored?.sealedHash,
+    previousEventHash: latestAuthored == null
+        ? null
+        : _sealedHashOf(latestAuthored),
     previousIngestHash: previousIngestHash,
   );
 }
 
 /// The causal record of an event appended on [aggregateId] under
-/// [declaration], read inside [txn]: the declared kind and eligibility,
-/// `reconciles` null, and as `parents` the aggregate's latest eligible
-/// version from the causal working copy, or none when the database holds
-/// none.
-///
-/// This is the stamping rule for an event that is not a reconciliation, on
-/// an aggregate with no open conflict record, which is every event the
-/// library appends.
+/// [declaration], read inside [txn]: the declared kind and eligibility, and
+/// as `parents` the aggregate's latest eligible version in the database's
+/// log, named by its sealed hash, or none when the database holds none.
 // Implements: EVS-DEV-causal-parents/F
 // kind and eligible are stamped from the appended entry type's declaration
-//   for the appended event type, and parents and reconciles by the stamping
-//   rule, inside the append transaction.
+//   for the appended event type, and parents by the stamping rule, inside
+//   the append transaction.
 // Implements: EVS-DEV-causal-parents/H
-// reconciles is null and parents names the aggregate's latest eligible
-//   version in the appending database's log, or nothing when it holds none;
-//   the value is read from the per-aggregate working copy the storing
-//   transactions keep.
+// parents names the aggregate's latest eligible version in the appending
+//   database's log, or nothing when it holds none, read from the log inside
+//   the append transaction.
 Future<CausalRecord> _stampCausalInTxn(
   StorageBackend backend,
   Transaction txn, {
@@ -2821,8 +3043,28 @@ Future<CausalRecord> _stampCausalInTxn(
   return CausalRecord(
     kind: declaration.kind,
     eligible: declaration.eligible,
-    parents: <CausalRef>[?latest],
+    parents: <CausalRef>[
+      if (latest != null)
+        CausalRef(eventId: latest.eventId, eventHash: _sealedHashOf(latest)),
+    ],
   );
+}
+
+/// The sealed hash of [stored], a copy the backend returned from the log.
+/// Throws [StateError] when its provenance yields none: every copy the
+/// library stores carries the entries it is read from.
+// Implements: EVS-DEV-chain-verification/A
+// predecessor hashes and causal parents name the sealed hash, never a
+//   holder's re-stamped event_hash.
+String _sealedHashOf(StoredEvent stored) {
+  final sealed = ChainCoordinates.of(stored).sealedHash;
+  if (sealed == null) {
+    throw StateError(
+      'stored event ${stored.eventId} at sequence ${stored.sequenceNumber} '
+      'yields no sealed hash',
+    );
+  }
+  return sealed;
 }
 
 /// The declaration of [eventType] by the reserved entry type [entryType],
@@ -3293,6 +3535,15 @@ final class _StorageReader implements StorageReader {
   @override
   Future<Map<String, DestinationSchedule>> listSchedules() =>
       _backend.listSchedules();
+
+  // Implements: EVS-DEV-chain-verification/R
+  // a verifier that holds only the log computes the same verdict and
+  //   appends nothing.
+  @override
+  Future<ChainVerificationVerdict> verifyChains({int? from, int? to}) {
+    refuseCallFromBootProgressObserver('StorageReader.verifyChains');
+    return verifyChainsOver(_backend, from: from, to: to);
+  }
 
   @override
   Future<PagedAudit> queryAudit({

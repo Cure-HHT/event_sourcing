@@ -1,10 +1,7 @@
-// Verifies: EVS-PRD-ingest/D
-// chain verification rejects an event with a
-//   tampered arrival_hash; IngestChainBroken is thrown with hopIndex equal
-//   to the tampered position; no side effects land (transaction rolls back)
-// Verifies: EVS-PRD-hash-chain-integrity/C
-// chain integrity is verifiable
-//   by any holder; tampering is detected at the ingest boundary
+// Chain verification at the ingest boundary: an event whose receiver
+// arrival hash does not recompute is stored as received with a
+// hash_mismatch finding, and a record whose receiver entry carries no
+// arrival hash is kept in an event_malformed finding.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,16 +59,23 @@ Future<_Fixture> _openStore({
 // ---------------------------------------------------------------------------
 
 void main() {
+  Future<List<StoredEvent>> findings(_Fixture f) =>
+      f.backend.findAllEvents(entryType: kSecurityFindingEntryType);
+
   group('EventStore.ingestEvent — chain broken', () {
-    test('ingesting event with tampered arrival_hash at hop 1 throws '
-        'IngestChainBroken with hopIndex=1', () async {
+    // Verifies: EVS-PRD-ingest/D
+    // Verifies: EVS-DEV-chain-verification/P
+    // Verifies: EVS-PRD-hash-chain-integrity/C
+    test('an event with a tampered arrival_hash at hop 1 is stored as '
+        'received with one hash_mismatch finding naming both hashes', () async {
       // Simulate a 2-hop chain:
       //   originator → intermediate → (attempt to go to) third
       //
       // Step 1: originator produces an event.
       // Step 2: intermediate ingests it (provenance grows to length 2).
       // Step 3: tamper provenance[1].arrival_hash on the intermediate copy.
-      // Step 4: third destination tries to ingest the tampered event → throws.
+      // Step 4: third destination ingests the tampered event and records
+      //         the broken link.
 
       final orig = await _openStore(
         hopId: 'mobile-device',
@@ -131,25 +135,21 @@ void main() {
         tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
-        // 4. Third destination must throw IngestChainBroken at hopIndex=1.
-        await expectLater(
-          () => third.store.ingestEvent(tampered),
-          throwsA(
-            isA<IngestChainBroken>()
-                .having((e) => e.eventId, 'eventId', original.eventId)
-                .having(
-                  (e) => e.kind,
-                  'kind',
-                  ChainFailureKind.arrivalHashMismatch,
-                )
-                .having((e) => e.hopIndex, 'hopIndex', 1),
-          ),
-        );
-
-        // No side effects: third's event log is empty (no events landed
-        // because the rejected ingest rolled back the transaction).
-        expect(await third.backend.readSequenceCounter(), equals(0));
-        expect(await third.backend.findAllEvents(), isEmpty);
+        // 4. Third destination stores the event as received and records
+        //    the broken arrival hash.
+        final outcome = await third.store.ingestEvent(tampered);
+        expect(outcome.outcome, IngestOutcome.ingestedWithFinding);
+        final stored = await third.backend.findEventById(original.eventId);
+        expect(stored, isNotNull);
+        final recorded = await findings(third);
+        expect(recorded, hasLength(1));
+        expect(recorded.single.data['kind'], 'hash_mismatch');
+        expect(recorded.single.data['evidence'], <String, Object?>{
+          'event_id': original.eventId,
+          'carried_hash': 'tampered-arrival-hash-00000000000000000000',
+          'recomputed_hash': original.eventHash,
+        });
+        expect(recorded.single.data['aggregates'], <String>['agg-chain']);
       } finally {
         await orig.close();
         await inter.close();
@@ -157,8 +157,9 @@ void main() {
       }
     });
 
-    test('hand-crafted event with missing arrival_hash at hop 1 throws '
-        'IngestChainBroken with hopIndex=1', () async {
+    // Verifies: EVS-DEV-security-findings/O
+    test('a hand-crafted event with no arrival_hash at hop 1 is kept in one '
+        'event_malformed finding and not stored', () async {
       // Construct a synthetic 2-hop provenance where provenance[1] has
       // no arrival_hash key (null-equivalent for a receiver entry).
       final dest = await _openStore(hopId: 'control-server');
@@ -208,17 +209,18 @@ void main() {
         recordMap['event_hash'] = canonicalEventHash(recordMap);
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);
 
-        await expectLater(
-          () => dest.store.ingestEvent(syntheticEvent),
-          throwsA(
-            isA<IngestChainBroken>()
-                .having(
-                  (e) => e.kind,
-                  'kind',
-                  ChainFailureKind.arrivalHashMismatch,
-                )
-                .having((e) => e.hopIndex, 'hopIndex', 1),
-          ),
+        final outcome = await dest.store.ingestEvent(syntheticEvent);
+        expect(outcome.outcome, IngestOutcome.keptInFinding);
+        expect(
+          await dest.backend.findEventById('test-chain-null-arrival'),
+          isNull,
+        );
+        final recorded = await findings(dest);
+        expect(recorded, hasLength(1));
+        expect(recorded.single.data['kind'], 'event_malformed');
+        expect(
+          (recorded.single.data['evidence']! as Map)['reason'],
+          'record_malformed',
         );
       } finally {
         await dest.close();

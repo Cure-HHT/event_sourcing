@@ -10,10 +10,12 @@ import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kSecurityFindingEntryType, kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
-import 'package:event_sourcing/src/storage/chain_index_entry.dart';
+import 'package:event_sourcing/src/storage/chain_coordinates.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -308,6 +310,28 @@ class SembastBackend extends StorageBackend {
     return result;
   }
 
+  /// Runs [body] with a handle whose reads run through the database outside
+  /// any transaction: sembast's reads take no lock, so they neither wait
+  /// for a transaction nor hold one back, and they see only committed
+  /// records. The handle is refused after [body] returns, and by every
+  /// write.
+  // Implements: EVS-DEV-chain-verification/S
+  // on Sembast the chain verification reads through the database outside
+  //   any transaction, so it takes no lock an append waits for.
+  @override
+  @internal
+  Future<T> nonBlockingRead<T>(
+    Future<T> Function(Transaction reads) body,
+  ) async {
+    refuseCallFromBootProgressObserver('SembastBackend.nonBlockingRead');
+    final handle = _SembastTxn._nonBlocking(_database(), this);
+    try {
+      return await body(handle);
+    } finally {
+      handle._invalidate();
+    }
+  }
+
   // Implements: EVS-DEV-postgres-backend/L
   // a handle another backend instance produced is refused.
   _SembastTxn _requireValidTxn(Transaction txn) {
@@ -369,8 +393,19 @@ class SembastBackend extends StorageBackend {
       );
     }
     event.requireWellFormedRecord();
-    await _eventStore.add(t._sembastTxn, event.toMap());
-    await _writeChainIndexInTxn(t._sembastTxn, event);
+    // Each event is stored under its local sequence number, so the chain
+    // lookups read an event of a known sequence by its key.
+    final stored = await _eventStore
+        .record(event.sequenceNumber)
+        .add(t._sembastTxn, event.toMap());
+    if (stored == null) {
+      throw StateError(
+        'appendEvent: an event is already stored under sequence '
+        '${event.sequenceNumber}',
+      );
+    }
+    await _recordLatestAuthoredInTxn(t._sembastTxn, event);
+    await _recordFindingHeldInTxn(t._sembastTxn, event);
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
     t._postCommit.add(() {
@@ -403,7 +438,7 @@ class SembastBackend extends StorageBackend {
       filter: Filter.equals('aggregate_id', aggregateId),
       sortOrders: [SortOrder('sequence_number')],
     );
-    final records = await _eventStore.find(t._sembastTxn, finder: finder);
+    final records = await _eventStore.find(t._reads, finder: finder);
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
   }
 
@@ -570,7 +605,7 @@ class SembastBackend extends StorageBackend {
   }) async {
     final t = _requireValidTxn(txn);
     final records = await _eventStore.find(
-      t._sembastTxn,
+      t._reads,
       finder: Finder(
         filter: _composeFindAllEventsFilter(
           afterSequence: afterSequence,
@@ -600,172 +635,267 @@ class SembastBackend extends StorageBackend {
     }
   }
 
-  // -------- Chain index --------
+  // -------- Chain lookups --------
   //
-  // The chain index lives in its own store of small records, one per
-  // lookup key, each written by [appendEvent] in the storing transaction:
-  //
-  // - `sealed:<sealed hash>`: the entries of the events sealed under it;
-  // - `predecessor:<[originating database, previous hash]>`: the entries of
-  //   that database's events naming that predecessor, null included;
-  // - `position:<[originating database, origin position]>`: the entries of
-  //   that database's events at that origin position;
-  // - `authored:<database>`: the entry of the latest event that database
-  //   holds as authored;
-  // - `eligible:<aggregate>`: the event identifier and sealed hash of the
-  //   aggregate's latest eligible version, the causal working copy.
-  //
-  // A list record holds its entries in ascending local sequence number,
-  // the order the appends write them in. A lookup reads one record by its
-  // key; nothing scans the log or the index.
+  // One record, `latest_authored_sequence` in `backend_state`, holds the
+  // local sequence number of the latest event this database holds as
+  // authored; [appendEvent] writes it in the transaction that stores such
+  // an event, and the event is read by its key, the sequence it is stored
+  // under. Every other lookup scans the event store inside the caller's
+  // transaction, so it sees the events stored earlier in it; only ingest,
+  // the restore and the chain verification make them.
 
-  static const _chainIndexStoreName = 'chain_index';
+  static const _latestAuthoredSequenceKey = 'latest_authored_sequence';
 
-  final StoreRef<String, Map<String, Object?>> _chainIndexStore =
-      stringMapStoreFactory.store(_chainIndexStoreName);
+  /// The `backend_state` record, true once the database holds a security
+  /// finding, so the marks learn that none is held without a scan of the
+  /// log. Findings are never removed, so it is never cleared.
+  static const _securityFindingHeldKey = 'security_finding_held';
 
-  static String _sealedKey(String sealedHash) => 'sealed:$sealedHash';
+  /// The chain coordinates of the stored record [value].
+  static ChainCoordinates _coordinatesOf(Map<String, Object?> value) {
+    final metadata = value['metadata'];
+    return ChainCoordinates.fromFields(
+      sequenceNumber: value['sequence_number']! as int,
+      eventId: value['event_id']! as String,
+      eventHash: value['event_hash']! as String,
+      previousEventHash: value['previous_event_hash'] as String?,
+      provenance: metadata is Map ? metadata['provenance'] : null,
+    );
+  }
 
-  static String _predecessorKey(String originDb, String? previousEventHash) =>
-      'predecessor:${jsonEncode(<Object?>[originDb, previousEventHash])}';
-
-  static String _positionKey(String originDb, int originPosition) =>
-      'position:${jsonEncode(<Object?>[originDb, originPosition])}';
-
-  static String _authoredKey(String databaseId) => 'authored:$databaseId';
-
-  static String _eligibleKey(String aggregateId) => 'eligible:$aggregateId';
-
-  /// Writes the chain index entry of [event] inside [txn].
-  // Implements: EVS-DEV-chain-verification/N
-  // the index entries of a stored event are written in the transaction
-  //   that stores it, under every key its lookups read.
-  Future<void> _writeChainIndexInTxn(
+  /// Writes the latest-authored record when [event], just stored in [txn],
+  /// is held as authored: its provenance holds one entry, naming this
+  /// database.
+  // Implements: EVS-DEV-chain-verification/B
+  // the record of the latest event the database holds as authored is
+  //   written in the transaction that stores such an event, so the append
+  //   reads its predecessor inside its own transaction.
+  // Implements: EVS-PRD-destinations/L
+  // on Sembast the record of the latest sequence the database authored is
+  //   the one chain record the backend persists beside the log.
+  Future<void> _recordLatestAuthoredInTxn(
     sembast.Transaction txn,
     StoredEvent event,
   ) async {
-    final entry = ChainIndexEntry.of(event);
-    final json = entry.toJson();
-    final originDb = entry.originatingDatabaseId;
-    final listKeys = <String>[
-      if (entry.sealedHash != null) _sealedKey(entry.sealedHash!),
-      if (originDb != null) ...[
-        _predecessorKey(originDb, entry.previousEventHash),
-        if (entry.originPosition != null)
-          _positionKey(originDb, entry.originPosition!),
-      ],
-    ];
-    for (final key in listKeys) {
-      final record = _chainIndexStore.record(key);
-      final existing = await record.get(txn);
-      await record.put(txn, <String, Object?>{
-        'entries': <Object?>[
-          ...?(existing?['entries'] as List<Object?>?),
-          json,
-        ],
-      });
-    }
-    final authoredBy = entry.heldAsAuthoredBy;
-    if (authoredBy != null) {
-      await _chainIndexStore.record(_authoredKey(authoredBy)).put(
-        txn,
-        <String, Object?>{'entry': json},
-      );
-    }
-    // Implements: EVS-DEV-causal-parents/H
-    // the working copy of the aggregate's latest eligible version advances
-    //   to a stored event whose recorded causal says an eligible version,
-    //   in the transaction that stores it; annotations and ineligible events
-    //   leave it as it was.
-    final causal = event.causal;
-    final sealedHash = entry.sealedHash;
-    if (causal != null &&
-        causal.kind == CausalKind.version &&
-        causal.eligible &&
-        sealedHash != null) {
-      await _chainIndexStore
-          .record(_eligibleKey(event.aggregateId))
-          .put(
-            txn,
-            CausalRef(eventId: event.eventId, eventHash: sealedHash).toJson(),
-          );
-    }
+    final authoredBy = ChainCoordinates.of(event).heldAsAuthoredBy;
+    if (authoredBy == null) return;
+    final holder = await _backendStateStore.record(_databaseIdKey).get(txn);
+    if (holder != authoredBy) return;
+    await _backendStateStore
+        .record(_latestAuthoredSequenceKey)
+        .put(txn, event.sequenceNumber);
   }
 
-  Future<List<ChainIndexEntry>> _readChainIndexList(
+  /// Writes the finding-held record when [event], just stored in [txn], is
+  /// a security finding, authored or received.
+  // Implements: EVS-PRD-destinations/L
+  // on Sembast the record of whether the database holds a security finding
+  //   is written in the transaction that stores the first one.
+  Future<void> _recordFindingHeldInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    if (!_isSecurityFinding(event.entryType, event.eventType)) return;
+    final record = _backendStateStore.record(_securityFindingHeldKey);
+    if (await record.get(txn) == true) return;
+    await record.put(txn, true);
+  }
+
+  static bool _isSecurityFinding(Object? entryType, Object? eventType) =>
+      entryType == kSecurityFindingEntryType &&
+      eventType == kSecurityFindingRecordedEventType;
+
+  /// The stored events of [txn] whose record satisfies [matches], in
+  /// ascending local sequence number.
+  Future<List<StoredEvent>> _scanEventsInTxn(
     Transaction txn,
-    String key,
+    bool Function(Map<String, Object?> value) matches,
   ) async {
     final t = _requireValidTxn(txn);
-    final value = await _chainIndexStore.record(key).get(t._sembastTxn);
-    final entries = value?['entries'] as List<Object?>?;
-    if (entries == null) return const <ChainIndexEntry>[];
-    return <ChainIndexEntry>[
-      for (final e in entries)
-        ChainIndexEntry.fromJson(Map<String, Object?>.from(e! as Map)),
+    final records = await _eventStore.find(
+      t._reads,
+      finder: Finder(
+        filter: Filter.custom(
+          (record) => matches(record.value! as Map<String, Object?>),
+        ),
+        sortOrders: [SortOrder('sequence_number')],
+      ),
+    );
+    return <StoredEvent>[
+      for (final r in records)
+        StoredEvent.fromMap(Map<String, Object?>.from(r.value), r.key),
     ];
   }
 
   @override
   @internal
-  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+  Future<StoredEvent?> readLatestHeldAsAuthoredInTxn(
     Transaction txn,
     String databaseId,
   ) async {
     final t = _requireValidTxn(txn);
-    final value = await _chainIndexStore
-        .record(_authoredKey(databaseId))
+    final holder = await _backendStateStore
+        .record(_databaseIdKey)
         .get(t._sembastTxn);
-    final entry = value?['entry'];
-    if (entry == null) return null;
-    return ChainIndexEntry.fromJson(Map<String, Object?>.from(entry as Map));
+    if (holder != databaseId) return null;
+    final sequence = await _backendStateStore
+        .record(_latestAuthoredSequenceKey)
+        .get(t._sembastTxn);
+    if (sequence == null) return null;
+    final value = await _eventStore.record(sequence as int).get(t._sembastTxn);
+    if (value == null || value['sequence_number'] != sequence) {
+      throw StateError(
+        'the latest event this database authored is recorded at sequence '
+        '$sequence, and no event of that sequence is stored under it',
+      );
+    }
+    return StoredEvent.fromMap(Map<String, Object?>.from(value), sequence);
   }
 
+  // Implements: EVS-DEV-causal-parents/H
+  // the latest eligible version is read from the log: the aggregate's
+  //   events are scanned, newest first, for one whose recorded causal says
+  //   an eligible version.
   @override
   @internal
-  Future<CausalRef?> readLatestEligibleVersionInTxn(
+  Future<StoredEvent?> readLatestEligibleVersionInTxn(
     Transaction txn,
     String aggregateId,
   ) async {
     final t = _requireValidTxn(txn);
-    final value = await _chainIndexStore
-        .record(_eligibleKey(aggregateId))
-        .get(t._sembastTxn);
-    if (value == null) return null;
-    return CausalRef(
-      eventId: value['event_id']! as String,
-      eventHash: value['event_hash']! as String,
+    final record = await _eventStore.findFirst(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.equals('aggregate_id', aggregateId),
+          Filter.equals('causal.kind', CausalKind.version.wireName),
+          Filter.equals('causal.eligible', true),
+          Filter.custom(
+            (record) =>
+                _coordinatesOf(
+                  record.value! as Map<String, Object?>,
+                ).sealedHash !=
+                null,
+          ),
+        ]),
+        sortOrders: [SortOrder('sequence_number', false)],
+      ),
     );
+    if (record == null) return null;
+    return StoredEvent.fromMap(
+      Map<String, Object?>.from(record.value),
+      record.key,
+    );
+  }
+
+  // Implements: EVS-DEV-security-findings/E
+  // on Sembast the lookup scans the finding events carrying the identity
+  //   for one the database holds as authored.
+  @override
+  @internal
+  Future<bool> holdsAuthoredSecurityFindingInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String findingId,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final record = await _eventStore.findFirst(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.equals('entry_type', kSecurityFindingEntryType),
+          Filter.equals('data.finding_id', findingId),
+          Filter.custom(
+            (record) =>
+                _coordinatesOf(
+                  record.value! as Map<String, Object?>,
+                ).heldAsAuthoredBy ==
+                databaseId,
+          ),
+        ]),
+      ),
+    );
+    return record != null;
   }
 
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+  Future<List<StoredEvent>> findEventsBySealedHashInTxn(
     Transaction txn,
     String sealedHash,
-  ) => _readChainIndexList(txn, _sealedKey(sealedHash));
+  ) => _scanEventsInTxn(
+    txn,
+    (value) => _coordinatesOf(value).sealedHash == sealedHash,
+  );
 
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+  Future<List<StoredEvent>> findEventsByPredecessorInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required String? previousEventHash,
-  }) => _readChainIndexList(
-    txn,
-    _predecessorKey(originatingDatabaseId, previousEventHash),
-  );
+  }) => _scanEventsInTxn(txn, (value) {
+    final coordinates = _coordinatesOf(value);
+    return coordinates.originatingDatabaseId == originatingDatabaseId &&
+        coordinates.previousEventHash == previousEventHash;
+  });
 
   @override
   @internal
-  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+  Future<List<StoredEvent>> findEventsByOriginPositionInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required int originPosition,
-  }) => _readChainIndexList(
-    txn,
-    _positionKey(originatingDatabaseId, originPosition),
-  );
+  }) => _scanEventsInTxn(txn, (value) {
+    final coordinates = _coordinatesOf(value);
+    return coordinates.originatingDatabaseId == originatingDatabaseId &&
+        coordinates.originPosition == originPosition;
+  });
+
+  @override
+  @internal
+  Future<List<StoredEvent>> findEventsFromOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int fromPosition,
+  }) => _scanEventsInTxn(txn, (value) {
+    final coordinates = _coordinatesOf(value);
+    final position = coordinates.originPosition;
+    return coordinates.originatingDatabaseId == originatingDatabaseId &&
+        position != null &&
+        position >= fromPosition;
+  });
+
+  @override
+  @internal
+  Future<bool> holdsSecurityFindingInTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    return await _backendStateStore
+            .record(_securityFindingHeldKey)
+            .get(t._reads) ==
+        true;
+  }
+
+  @override
+  @internal
+  Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final records = await _eventStore.find(
+      t._reads,
+      finder: Finder(
+        filter: Filter.and(<Filter>[
+          Filter.equals('event_type', kSecurityFindingRecordedEventType),
+          Filter.equals('entry_type', kSecurityFindingEntryType),
+        ]),
+        sortOrders: [SortOrder('sequence_number')],
+      ),
+    );
+    return <StoredEvent>[
+      for (final r in records)
+        StoredEvent.fromMap(Map<String, Object?>.from(r.value), r.key),
+    ];
+  }
 
   /// Page size of [readEventsReverseInTxn].
   static const int _reverseScanInTxnPageSize = 256;
@@ -788,7 +918,7 @@ class SembastBackend extends StorageBackend {
           Filter.lessThan('sequence_number', lastSeenSequence),
       ];
       final records = await _eventStore.find(
-        t._sembastTxn,
+        t._reads,
         finder: Finder(
           filter: filters.isEmpty
               ? null
@@ -1568,9 +1698,7 @@ class SembastBackend extends StorageBackend {
   @internal
   Future<String?> readDatabaseIdTxn(Transaction txn) async {
     final t = _requireValidTxn(txn);
-    final value = await _backendStateStore
-        .record(_databaseIdKey)
-        .get(t._sembastTxn);
+    final value = await _backendStateStore.record(_databaseIdKey).get(t._reads);
     if (value == null) return null;
     if (value is! String || value.isEmpty) {
       throw StateError(
@@ -2476,7 +2604,7 @@ class SembastBackend extends StorageBackend {
   ) async {
     final t = _requireValidTxn(txn);
     final finder = Finder(filter: Filter.equals('event_id', eventId), limit: 1);
-    final record = await _eventStore.findFirst(t._sembastTxn, finder: finder);
+    final record = await _eventStore.findFirst(t._reads, finder: finder);
     if (record == null) return null;
     return StoredEvent.fromMap(
       Map<String, Object?>.from(record.value),
@@ -2661,8 +2789,36 @@ class SembastBackend extends StorageBackend {
 }
 
 class _SembastTxn extends Transaction {
-  _SembastTxn._(this._sembastTxn, this._owner);
-  final sembast.Transaction _sembastTxn;
+  _SembastTxn._(sembast.Transaction txn, this._owner)
+    : _txn = txn,
+      _reads = txn;
+
+  /// A handle whose reads run through [database] outside any transaction,
+  /// and which every write refuses.
+  _SembastTxn._nonBlocking(Database database, this._owner)
+    : _txn = null,
+      _reads = database;
+
+  /// The sembast transaction of this run, or null for a non-blocking read
+  /// handle.
+  final sembast.Transaction? _txn;
+
+  /// What the reads a non-blocking read handle accepts run through: the
+  /// sembast transaction, or the database outside any transaction.
+  final DatabaseClient _reads;
+
+  /// The sembast transaction every other read and every write runs in.
+  /// Throws [StateError] for a non-blocking read handle.
+  sembast.Transaction get _sembastTxn {
+    final txn = _txn;
+    if (txn == null) {
+      throw StateError(
+        'a SembastBackend non-blocking read handle reads the event log only '
+        'and writes nothing',
+      );
+    }
+    return txn;
+  }
 
   /// The backend whose `transaction()` produced this handle.
   final SembastBackend _owner;

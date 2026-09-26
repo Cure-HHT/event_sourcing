@@ -1,15 +1,20 @@
 // Backend-agnostic scenarios for the event-hash check at ingest: every
-// ingested event's `event_hash` must be the canonical hash of the record it
-// arrives as, whatever the length of its provenance, and a refused event
-// leaves the log and the sequence counter as they were. Sembast runs them
+// ingested event's `event_hash` is checked against the canonical hash of the
+// record it arrives as, whatever the length of its provenance; an event
+// whose hash does not recompute is stored as received with a hash_mismatch
+// finding, and a record the library does not store as an event is kept in
+// an event_malformed finding with nothing else written. Sembast runs them
 // from test/ingest/ingest_hash_test.dart and Postgres from
 // test/storage/postgres/postgres_ingest_hash_test.dart.
 //
 // This file exposes [runIngestHashScenarios] and registers no `main()` of
 // its own. Traceability lives on the individual tests.
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/verification/chain_walk.dart'
+    show hashMismatchEvidence;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -19,17 +24,40 @@ import 'record_fixtures.dart';
 /// Marks a field the record leaves out.
 const Object _absentValue = Object();
 
-/// The refusal of a malformed record naming [field]: a decode failure from
-/// `ingestBatch`, or the [FormatException] of the parse that precedes
-/// `ingestEvent`.
-Matcher _decodeRefusalNaming(String field) => anyOf(
-  isA<IngestDecodeFailure>().having(
-    (e) => e.message,
-    'message',
-    contains(field),
-  ),
-  isA<FormatException>().having((e) => e.message, 'message', contains(field)),
-);
+/// The refusal of the parse that precedes `ingestEvent` of a malformed
+/// record, naming [field].
+Matcher _parseRefusalNaming(String field) =>
+    isA<FormatException>().having((e) => e.message, 'message', contains(field));
+
+/// [record] as the receiver decodes it from a delivery: JSON-encoded and
+/// decoded again.
+Map<String, Object?> _asReceived(Map<String, Object?> record) =>
+    (jsonDecode(jsonEncode(record)) as Map).cast<String, Object?>();
+
+/// A `hash_mismatch` finding's kind and evidence: the event [eventId], the
+/// hash it [carried] and the hash its record [recomputed] to.
+Map<String, Object?> _hashMismatch({
+  required String eventId,
+  required String carried,
+  required String recomputed,
+}) => <String, Object?>{
+  'kind': 'hash_mismatch',
+  'evidence': <String, Object?>{
+    'event_id': eventId,
+    'carried_hash': carried,
+    'recomputed_hash': recomputed,
+  },
+};
+
+/// The peer's originator provenance entry.
+Map<String, Object?> _peerEntry() => ProvenanceEntry(
+  hop: _peerSource.hopId,
+  receivedAt: DateTime.utc(2026, 9, 1, 12),
+  identifier: _peerSource.identifier,
+  softwareVersion: _peerSource.softwareVersion,
+  databaseId: kPeerDatabaseId,
+  libraryVersion: kPeerLibraryVersion,
+).toJson();
 
 const Initiator _init = AutomationInitiator(service: 'ingest-hash-scenarios');
 const String _noteType = 'hash_note';
@@ -62,11 +90,12 @@ const Map<String, Object?> _rootVersion = <String, Object?>{
   'kind': 'version',
   'eligible': true,
   'parents': <Object?>[],
-  'reconciles': null,
 };
 
 /// An event as a peer sends it, with one origin provenance entry and an
-/// `event_hash` that is the canonical hash of the record.
+/// `event_hash` that is the canonical hash of the record. Its origin
+/// position and its predecessor hash are its own, and the predecessor names
+/// no event, so events built here form no fork among themselves.
 StoredEvent _originEvent({Map<String, Object?>? data}) {
   _built += 1;
   final now = DateTime.utc(2026, 9, 1, 12, 0, _built % 60);
@@ -96,7 +125,7 @@ StoredEvent _originEvent({Map<String, Object?>? data}) {
     'initiator': const UserInitiator('peer-user').toJson(),
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
-    'previous_event_hash': null,
+    'previous_event_hash': 'unheld-predecessor-$_built',
     'causal': _rootVersion,
   };
   record['event_hash'] = canonicalEventHash(record);
@@ -185,7 +214,6 @@ Map<String, Object?> _spelledRecord({
       'parents': <Object?>[
         <String, Object?>{'event_id': 'hash-parent', 'event_hash': 'h-parent'},
       ],
-      'reconciles': null,
     },
   };
   record['event_hash'] = canonicalEventHash(record);
@@ -422,21 +450,6 @@ _ingestPaths = <String, Future<void> Function(EventStore, List<StoredEvent>)>{
   },
 };
 
-Matcher _eventHashRefused(StoredEvent event) => isA<IngestChainBroken>()
-    .having((e) => e.eventId, 'eventId', event.eventId)
-    .having((e) => e.kind, 'kind', ChainFailureKind.eventHashMismatch)
-    .having(
-      (e) => e.hopIndex,
-      'hopIndex',
-      (event.metadata['provenance']! as List).length - 1,
-    )
-    .having((e) => e.expectedHash, 'expectedHash', event.eventHash)
-    .having(
-      (e) => e.actualHash,
-      'actualHash',
-      canonicalEventHash(event.toMap()),
-    );
-
 /// An event store on its own in-memory Sembast database.
 Future<EventStore> _openSembastStore(String name, Source source) async {
   final db = await newDatabaseFactoryMemory().openDatabase(name);
@@ -487,14 +500,57 @@ void runIngestHashScenarios(
       if (available) await db.close();
     });
 
-    /// The log and the sequence counter, which a refused ingest leaves as
-    /// they were.
-    Future<Map<String, Object?>> snapshot() async => <String, Object?>{
-      'events': <String>[
-        for (final e in await backend.findAllEvents()) e.eventId,
-      ],
-      'counter': await backend.readSequenceCounter(),
-    };
+    /// The event identifiers of the log, the security findings left out.
+    Future<List<String>> logBesideFindings() async => <String>[
+      for (final e in await backend.findAllEvents())
+        if (e.entryType != kSecurityFindingEntryType) e.eventId,
+    ];
+
+    /// The kind and evidence of every security finding the store under
+    /// test recorded, in log order.
+    Future<List<Map<String, Object?>>> findings() async =>
+        <Map<String, Object?>>[
+          for (final e in await backend.findAllEvents(
+            entryType: kSecurityFindingEntryType,
+          ))
+            <String, Object?>{
+              'kind': e.data['kind'],
+              'evidence': e.data['evidence'],
+            },
+        ];
+
+    /// Delivers the malformed [record] on the path [pathKey] names:
+    /// `ingestBatch` stores no event for it and keeps it in full in one
+    /// `event_malformed` finding; a record that does not parse never
+    /// reaches `ingestEvent`, whose caller's parse refuses it naming
+    /// [field].
+    Future<void> expectKeptInFinding(
+      String pathKey,
+      Map<String, Object?> record,
+      String field,
+    ) async {
+      if (pathKey != 'ingestBatch') {
+        expect(
+          () => StoredEvent.fromMap(record, 0),
+          throwsA(_parseRefusalNaming(field)),
+        );
+        return;
+      }
+      final before = await logBesideFindings();
+      final countBefore = (await findings()).length;
+      await _recordIngestPaths[pathKey]!(store, <Map<String, Object?>>[record]);
+      expect(await logBesideFindings(), before);
+      final recorded = await findings();
+      expect(recorded.skip(countBefore), <Map<String, Object?>>[
+        <String, Object?>{
+          'kind': 'event_malformed',
+          'evidence': <String, Object?>{
+            'reason': 'record_malformed',
+            'record': _asReceived(record),
+          },
+        },
+      ]);
+    }
 
     /// A note a peer appended, relayed through another deployment: the
     /// relay's stored copy, with the peer's origin entry and the relay's
@@ -585,7 +641,7 @@ void runIngestHashScenarios(
               stored.eventId,
             ))!;
             expect((forwarded.metadata['provenance']! as List).length, 3);
-            expect((await next.verifyEventChain(forwarded)).isValid, isTrue);
+            expect((await next.reader.verifyChains()).isValid, isTrue);
             final forwardedMap = forwarded.toMap();
             for (final key in <String>[
               'entry_type_version',
@@ -600,67 +656,33 @@ void runIngestHashScenarios(
 
         for (final malformed in _malformedTimestamps.entries) {
           // Verifies: EVS-DEV-event-record/A
-          test('refuses an event whose client timestamp has '
-              '${malformed.key} as a malformed record naming the field, '
-              'writing nothing', () async {
+          // Verifies: EVS-DEV-security-findings/O
+          test('keeps an event whose client timestamp has '
+              '${malformed.key} in an event_malformed finding, storing no '
+              'event', () async {
             if (!available) return;
             final record = _spelledRecord(
               clientTimestamp: malformed.value,
               receivedAt: '2026-09-01T12:00:00Z',
               initiator: _peerUser,
             );
-            final before = await snapshot();
-            await expectLater(
-              path.value(store, <Map<String, Object?>>[record]),
-              throwsA(
-                anyOf(
-                  isA<IngestDecodeFailure>().having(
-                    (e) => e.message,
-                    'message',
-                    contains('"client_timestamp"'),
-                  ),
-                  isA<FormatException>().having(
-                    (e) => e.message,
-                    'message',
-                    contains('"client_timestamp"'),
-                  ),
-                ),
-              ),
-            );
-            expect(await snapshot(), before);
+            await expectKeptInFinding(path.key, record, '"client_timestamp"');
           });
         }
 
         for (final malformed in _malformedTimestamps.entries) {
           // Verifies: EVS-DEV-event-record/C
-          test('refuses an event whose provenance received_at has '
-              '${malformed.key} as a malformed record naming the field, '
-              'writing nothing', () async {
+          // Verifies: EVS-DEV-security-findings/O
+          test('keeps an event whose provenance received_at has '
+              '${malformed.key} in an event_malformed finding, storing no '
+              'event', () async {
             if (!available) return;
             final record = _spelledRecord(
               clientTimestamp: '2026-09-01T12:00:00Z',
               receivedAt: malformed.value,
               initiator: _peerUser,
             );
-            final before = await snapshot();
-            await expectLater(
-              path.value(store, <Map<String, Object?>>[record]),
-              throwsA(
-                anyOf(
-                  isA<IngestDecodeFailure>().having(
-                    (e) => e.message,
-                    'message',
-                    contains('"received_at"'),
-                  ),
-                  isA<FormatException>().having(
-                    (e) => e.message,
-                    'message',
-                    contains('"received_at"'),
-                  ),
-                ),
-              ),
-            );
-            expect(await snapshot(), before);
+            await expectKeptInFinding(path.key, record, '"received_at"');
           });
         }
 
@@ -670,38 +692,37 @@ void runIngestHashScenarios(
             'empty': '',
           }.entries) {
             // Verifies: EVS-DEV-event-record/H
-            test('refuses an event whose provenance entry has ${value.key} '
-                '$field as a malformed record naming the field, writing '
-                'nothing', () async {
-              if (!available) return;
-              final record = _spelledRecord(
-                clientTimestamp: '2026-09-01T12:00:00Z',
-                initiator: _peerUser,
-              );
-              final metadata = record['metadata']! as Map<String, Object?>;
-              final entry =
-                  (metadata['provenance']! as List).single
-                      as Map<String, Object?>;
-              if (identical(value.value, _absentValue)) {
-                entry.remove(field);
-              } else {
-                entry[field] = value.value;
-              }
-              record['event_hash'] = canonicalEventHash(record);
-              final before = await snapshot();
-              await expectLater(
-                path.value(store, <Map<String, Object?>>[record]),
-                throwsA(_decodeRefusalNaming('"$field"')),
-              );
-              expect(await snapshot(), before);
-            });
+            // Verifies: EVS-DEV-security-findings/O
+            test(
+              'keeps an event whose provenance entry has ${value.key} '
+              '$field in an event_malformed finding, storing no event',
+              () async {
+                if (!available) return;
+                final record = _spelledRecord(
+                  clientTimestamp: '2026-09-01T12:00:00Z',
+                  initiator: _peerUser,
+                );
+                final metadata = record['metadata']! as Map<String, Object?>;
+                final entry =
+                    (metadata['provenance']! as List).single
+                        as Map<String, Object?>;
+                if (identical(value.value, _absentValue)) {
+                  entry.remove(field);
+                } else {
+                  entry[field] = value.value;
+                }
+                record['event_hash'] = canonicalEventHash(record);
+                await expectKeptInFinding(path.key, record, '"$field"');
+              },
+            );
           }
         }
 
         // Verifies: EVS-DEV-causal-parents/B
-        test('refuses an event with no causal object, or one with a key '
-            'outside its shape, as a malformed record naming the field, '
-            'writing nothing', () async {
+        // Verifies: EVS-DEV-security-findings/O
+        test('keeps an event with no causal object, or one with a key '
+            'outside its shape, in an event_malformed finding, storing no '
+            'event', () async {
           if (!available) return;
           for (final causal in <String, Object?>{
             'no causal': _absentValue,
@@ -720,13 +741,7 @@ void runIngestHashScenarios(
               record['causal'] = causal.value;
             }
             record['event_hash'] = canonicalEventHash(record);
-            final before = await snapshot();
-            await expectLater(
-              path.value(store, <Map<String, Object?>>[record]),
-              throwsA(_decodeRefusalNaming('causal')),
-              reason: causal.key,
-            );
-            expect(await snapshot(), before, reason: causal.key);
+            await expectKeptInFinding(path.key, record, 'causal');
           }
         });
 
@@ -734,8 +749,9 @@ void runIngestHashScenarios(
           // Verifies: EVS-PRD-ingest/D
           // Verifies: EVS-PRD-hash-chain-integrity/A
           // Verifies: EVS-DEV-event-record/K
-          test('refuses an event whose ${tamper.key} changed after it was '
-              'sealed, writing nothing', () async {
+          // Verifies: EVS-DEV-chain-verification/P
+          test('stores an event whose ${tamper.key} changed after it was '
+              'sealed as received, with one hash_mismatch finding', () async {
             if (!available) return;
             final record = _spelledRecord(
               clientTimestamp: '2026-09-01T12:00:00Z',
@@ -754,35 +770,24 @@ void runIngestHashScenarios(
               isNot(record['event_hash']),
               reason: 'the change is to a hashed field',
             );
-            final before = await snapshot();
-            await expectLater(
-              path.value(store, <Map<String, Object?>>[tampered]),
-              throwsA(
-                isA<IngestChainBroken>()
-                    .having(
-                      (e) => e.kind,
-                      'kind',
-                      ChainFailureKind.eventHashMismatch,
-                    )
-                    .having(
-                      (e) => e.expectedHash,
-                      'expectedHash',
-                      record['event_hash'],
-                    )
-                    .having(
-                      (e) => e.actualHash,
-                      'actualHash',
-                      canonicalEventHash(tampered),
-                    ),
-              ),
+            await path.value(store, <Map<String, Object?>>[tampered]);
+            final stored = await backend.findEventById(
+              tampered['event_id']! as String,
             );
-            expect(await snapshot(), before);
+            expect(stored, isNotNull, reason: 'stored as received');
+            expect(await findings(), <Map<String, Object?>>[
+              _hashMismatch(
+                eventId: tampered['event_id']! as String,
+                carried: record['event_hash']! as String,
+                recomputed: canonicalEventHash(tampered),
+              ),
+            ]);
           });
         }
 
-        // Verifies: EVS-PRD-ingest/D
-        test('refuses an event whose metadata is null as missing its '
-            'provenance, writing nothing', () async {
+        // Verifies: EVS-DEV-security-findings/O
+        test('keeps an event whose metadata is null, and so carries no '
+            'provenance, in an event_malformed finding', () async {
           if (!available) return;
           final record = <String, Object?>{
             ..._spelledRecord(
@@ -792,68 +797,35 @@ void runIngestHashScenarios(
             'metadata': null,
           };
           record['event_hash'] = canonicalEventHash(record);
-          final before = await snapshot();
-          await expectLater(
-            path.value(store, <Map<String, Object?>>[record]),
-            throwsA(
-              isA<IngestChainBroken>().having(
-                (e) => e.kind,
-                'kind',
-                ChainFailureKind.provenanceMissing,
-              ),
-            ),
+          final before = await logBesideFindings();
+          await path.value(store, <Map<String, Object?>>[record]);
+          expect(await logBesideFindings(), before);
+          final recorded = await findings();
+          expect(recorded, hasLength(1));
+          expect(recorded.single['kind'], 'event_malformed');
+          expect(
+            (recorded.single['evidence']! as Map)['reason'],
+            'record_malformed',
           );
-          expect(await snapshot(), before);
         });
       });
     }
 
-    // Verifies: EVS-DEV-event-record/A
-    test('ingestEvent refuses an event built with a client timestamp outside '
-        'the four-digit years as a decode failure naming the field, writing '
-        'nothing', () async {
-      if (!available) return;
-      final event = StoredEvent.synthetic(
-        eventId: 'hash-far-future',
-        aggregateId: 'hash-far-future',
-        aggregateType: 'note',
-        entryType: _noteType,
-        initiator: const UserInitiator('peer-user'),
-        clientTimestamp: DateTime.utc(10000),
-        eventHash: 'unsealed',
-        metadata: <String, dynamic>{
-          'provenance': <Map<String, Object?>>[
-            ProvenanceEntry(
-              hop: _peerSource.hopId,
-              receivedAt: DateTime.utc(2026, 9, 1, 12),
-              identifier: _peerSource.identifier,
-              softwareVersion: _peerSource.softwareVersion,
-              databaseId: kPeerDatabaseId,
-              libraryVersion: kPeerLibraryVersion,
-            ).toJson(),
-          ],
-        },
-      );
-      final before = await snapshot();
-      await expectLater(
-        store.ingestEvent(event),
-        throwsA(
-          isA<IngestDecodeFailure>().having(
-            (e) => e.message,
-            'message',
-            contains('"client_timestamp"'),
+    final constructed = <String, StoredEvent Function()>{
+      'a client timestamp outside the four-digit years': () =>
+          StoredEvent.synthetic(
+            eventId: 'hash-far-future',
+            aggregateId: 'hash-far-future',
+            aggregateType: 'note',
+            entryType: _noteType,
+            initiator: const UserInitiator('peer-user'),
+            clientTimestamp: DateTime.utc(10000),
+            eventHash: 'unsealed',
+            metadata: <String, dynamic>{
+              'provenance': <Map<String, Object?>>[_peerEntry()],
+            },
           ),
-        ),
-      );
-      expect(await snapshot(), before);
-    });
-
-    // Verifies: EVS-DEV-event-record/C
-    test('ingestEvent refuses an event built with a provenance received_at '
-        'without an offset as a decode failure naming the field, writing '
-        'nothing', () async {
-      if (!available) return;
-      final event = StoredEvent.synthetic(
+      'a provenance received_at without an offset': () => StoredEvent.synthetic(
         eventId: 'hash-offsetless-received-at',
         aggregateId: 'hash-offsetless-received-at',
         aggregateType: 'note',
@@ -864,97 +836,69 @@ void runIngestHashScenarios(
         metadata: <String, dynamic>{
           'provenance': <Map<String, Object?>>[
             <String, Object?>{
-              ...ProvenanceEntry(
-                hop: _peerSource.hopId,
-                receivedAt: DateTime.utc(2026, 9, 1, 12),
-                identifier: _peerSource.identifier,
-                softwareVersion: _peerSource.softwareVersion,
-                databaseId: kPeerDatabaseId,
-                libraryVersion: kPeerLibraryVersion,
-              ).toJson(),
+              ..._peerEntry(),
               'received_at': '2026-09-01T12:00:00',
             },
           ],
         },
-      );
-      final before = await snapshot();
-      await expectLater(
-        store.ingestEvent(event),
-        throwsA(
-          isA<IngestDecodeFailure>().having(
-            (e) => e.message,
-            'message',
-            contains('"received_at"'),
-          ),
-        ),
-      );
-      expect(await snapshot(), before);
-    });
-
-    // Verifies: EVS-DEV-event-record/H
-    // Verifies: EVS-DEV-causal-parents/B
-    test('ingestEvent refuses an event built with no causal object, or with '
-        'a provenance entry lacking library_version, as a decode failure '
-        'naming the field, writing nothing', () async {
-      if (!available) return;
-      final entry = ProvenanceEntry(
-        hop: _peerSource.hopId,
-        receivedAt: DateTime.utc(2026, 9, 1, 12),
-        identifier: _peerSource.identifier,
-        softwareVersion: _peerSource.softwareVersion,
-        databaseId: kPeerDatabaseId,
-        libraryVersion: kPeerLibraryVersion,
-      ).toJson();
-      final cases = <String, StoredEvent>{
-        'causal': StoredEvent(
-          key: 0,
-          eventId: 'hash-no-causal',
-          aggregateId: 'hash-no-causal',
-          aggregateType: 'note',
-          entryType: _noteType,
-          entryTypeVersion: _noteDef.registeredVersion,
-          libFormatVersion: LibVersion.dataFormat,
-          eventType: 'finalized',
-          sequenceNumber: 1,
-          data: const <String, dynamic>{},
-          metadata: <String, dynamic>{
-            'provenance': <Map<String, Object?>>[entry],
-          },
-          initiator: const UserInitiator('peer-user'),
-          clientTimestamp: DateTime.utc(2026, 9, 1, 12),
-          eventHash: 'unsealed',
-        ),
-        'library_version': StoredEvent.synthetic(
-          eventId: 'hash-no-library-version',
-          aggregateId: 'hash-no-library-version',
-          aggregateType: 'note',
-          entryType: _noteType,
-          initiator: const UserInitiator('peer-user'),
-          clientTimestamp: DateTime.utc(2026, 9, 1, 12),
-          eventHash: 'unsealed',
-          metadata: <String, dynamic>{
-            'provenance': <Map<String, Object?>>[
-              <String, Object?>{...entry}..remove('library_version'),
-            ],
-          },
-        ),
-      };
-      for (final c in cases.entries) {
-        final before = await snapshot();
-        await expectLater(
-          store.ingestEvent(c.value),
-          throwsA(
-            isA<IngestDecodeFailure>().having(
-              (e) => e.message,
-              'message',
-              contains('"${c.key}"'),
-            ),
-          ),
-          reason: c.key,
-        );
-        expect(await snapshot(), before, reason: c.key);
-      }
-    });
+      ),
+      'no causal object': () => StoredEvent(
+        key: 0,
+        eventId: 'hash-no-causal',
+        aggregateId: 'hash-no-causal',
+        aggregateType: 'note',
+        entryType: _noteType,
+        entryTypeVersion: _noteDef.registeredVersion,
+        libFormatVersion: LibVersion.dataFormat,
+        eventType: 'finalized',
+        sequenceNumber: 1,
+        data: const <String, dynamic>{},
+        metadata: <String, dynamic>{
+          'provenance': <Map<String, Object?>>[_peerEntry()],
+        },
+        initiator: const UserInitiator('peer-user'),
+        clientTimestamp: DateTime.utc(2026, 9, 1, 12),
+        eventHash: 'unsealed',
+      ),
+      'a provenance entry lacking library_version': () => StoredEvent.synthetic(
+        eventId: 'hash-no-library-version',
+        aggregateId: 'hash-no-library-version',
+        aggregateType: 'note',
+        entryType: _noteType,
+        initiator: const UserInitiator('peer-user'),
+        clientTimestamp: DateTime.utc(2026, 9, 1, 12),
+        eventHash: 'unsealed',
+        metadata: <String, dynamic>{
+          'provenance': <Map<String, Object?>>[
+            <String, Object?>{..._peerEntry()}..remove('library_version'),
+          ],
+        },
+      ),
+    };
+    for (final c in constructed.entries) {
+      // Verifies: EVS-DEV-event-record/A
+      // Verifies: EVS-DEV-event-record/C
+      // Verifies: EVS-DEV-event-record/H
+      // Verifies: EVS-DEV-causal-parents/B
+      // Verifies: EVS-DEV-security-findings/O
+      test('ingestEvent keeps an event built with ${c.key} in an '
+          'event_malformed finding carrying the record it writes, storing '
+          'no event', () async {
+        if (!available) return;
+        final event = c.value();
+        final before = await logBesideFindings();
+        final outcome = await store.ingestEvent(event);
+        expect(outcome.outcome, IngestOutcome.keptInFinding);
+        expect(await logBesideFindings(), before);
+        final recorded = await findings();
+        expect(recorded, hasLength(1));
+        expect(recorded.single['kind'], 'event_malformed');
+        expect(recorded.single['evidence'], <String, Object?>{
+          'reason': 'record_malformed',
+          'record': _asReceived(Map<String, Object?>.from(event.toMap())),
+        });
+      });
+    }
 
     // Verifies: EVS-PRD-ingest/D
     // Verifies: EVS-PRD-hash-chain-integrity/D
@@ -983,7 +927,8 @@ void runIngestHashScenarios(
       expect(canonicalEventHash(storedMap), stored.eventHash);
 
       final receiver = await downstream();
-      await receiver.ingestEvent(stored);
+      final outcome = await receiver.ingestEvent(stored);
+      expect(outcome.outcome, IngestOutcome.ingested);
       expect(await receiver.reader.findEventById(stored.eventId), isNotNull);
     });
 
@@ -999,14 +944,15 @@ void runIngestHashScenarios(
         endsWith('Z'),
       );
       final next = await downstream();
-      await next.ingestEvent(stored);
+      final outcome = await next.ingestEvent(stored);
+      expect(outcome.outcome, IngestOutcome.ingested);
       expect(await next.reader.findEventById(stored.eventId), isNotNull);
     });
 
     // A change confined to the last hop's own provenance entry, or to the
     // sequence number the last hop assigned, leaves every arrival hash
     // below it intact: the arrival-hash walk alone admits it, and only the
-    // event-hash check refuses it.
+    // event-hash check records it.
     final lastHopTampers = <String, Map<String, Object?> Function(StoredEvent)>{
       "the last hop's received_at": (e) =>
           _withLastHop(e, 'received_at', '2020-01-01T00:00:00.000Z'),
@@ -1019,26 +965,39 @@ void runIngestHashScenarios(
     for (final tamper in lastHopTampers.entries) {
       // Verifies: EVS-PRD-ingest/D
       // Verifies: EVS-PRD-hash-chain-integrity/A
-      test('refuses a relayed event with ${tamper.key} changed, which only '
-          'the event-hash check catches, writing nothing', () async {
-        if (!available) return;
-        final relayed = await relayedEvent();
-        final event = _altered(relayed, tamper.value(relayed));
-        final verdict = await store.verifyEventChain(event);
-        expect(
-          verdict.failures.map((f) => f.kind),
-          <ChainFailureKind>[ChainFailureKind.eventHashMismatch],
-          reason: 'every arrival hash still verifies',
-        );
-        final before = await snapshot();
-        for (final ingest in _ingestPaths.values) {
-          await expectLater(
-            ingest(store, <StoredEvent>[event]),
-            throwsA(_eventHashRefused(event)),
+      // Verifies: EVS-DEV-chain-verification/P
+      test(
+        'stores a relayed event with ${tamper.key} changed, which only '
+        'the event-hash check catches, with one hash_mismatch finding',
+        () async {
+          if (!available) return;
+          final relayed = await relayedEvent();
+          final event = _altered(relayed, tamper.value(relayed));
+          expect(
+            hashMismatchEvidence(event).map((e) => e['carried_hash']),
+            <String>[event.eventHash],
+            reason: 'every arrival hash still verifies',
           );
-        }
-        expect(await snapshot(), before);
-      });
+          for (final ingest in _ingestPaths.values) {
+            await ingest(store, <StoredEvent>[event]);
+          }
+          expect(
+            await findings(),
+            <Map<String, Object?>>[
+              _hashMismatch(
+                eventId: event.eventId,
+                carried: event.eventHash,
+                recomputed: canonicalEventHash(event.toMap()),
+              ),
+            ],
+            reason: 'the second path finds the event held and the finding too',
+          );
+          expect(
+            (await logBesideFindings()).where((id) => id == event.eventId),
+            hasLength(1),
+          );
+        },
+      );
     }
 
     for (final path in _ingestPaths.entries) {
@@ -1053,6 +1012,7 @@ void runIngestHashScenarios(
             await path.value(store, <StoredEvent>[event]);
             final stored = (await backend.findEventById(event.eventId))!;
             expect(canonicalEventHash(stored.toMap()), stored.eventHash);
+            expect(await findings(), isEmpty);
           },
         );
 
@@ -1064,89 +1024,97 @@ void runIngestHashScenarios(
           final stored = (await backend.findEventById(event.eventId))!;
           expect((stored.metadata['provenance']! as List).length, 3);
           expect(canonicalEventHash(stored.toMap()), stored.eventHash);
+          expect(await findings(), isEmpty);
         });
 
-        // Verifies: EVS-PRD-ingest/D
-        // Verifies: EVS-PRD-hash-chain-integrity/A
-        test('refuses a first-hop event whose hash is not the hash of its '
-            'content, writing nothing', () async {
-          if (!available) return;
-          final event = _altered(_originEvent(), <String, Object?>{
-            'event_hash': 'not-the-hash-of-this-event',
+        final altered = <String, Future<StoredEvent> Function()>{
+          'a first-hop event whose hash is not the hash of its content':
+              () async => _altered(_originEvent(), <String, Object?>{
+                'event_hash': 'not-the-hash-of-this-event',
+              }),
+          'a first-hop event with a field changed after hashing': () async =>
+              _altered(_originEvent(), <String, Object?>{
+                'data': <String, Object?>{'title': 'tampered'},
+              }),
+          'a relayed event with a field changed after its last hop': () async =>
+              _altered(await relayedEvent(), <String, Object?>{
+                'data': <String, Object?>{'title': 'tampered'},
+              }),
+        };
+        for (final c in altered.entries) {
+          // Verifies: EVS-PRD-ingest/D
+          // Verifies: EVS-PRD-hash-chain-integrity/A
+          // Verifies: EVS-DEV-chain-verification/P
+          test('stores ${c.key} as received, with one hash_mismatch '
+              'finding', () async {
+            if (!available) return;
+            final event = await c.value();
+            await path.value(store, <StoredEvent>[event]);
+            final stored = await backend.findEventById(event.eventId);
+            expect(stored!.data, event.data, reason: 'stored as received');
+            // One finding per hash that does not recompute: a change to the
+            // content of a relayed event also breaks the arrival hashes
+            // below its last hop.
+            final mismatches = hashMismatchEvidence(event);
+            expect(mismatches, isNotEmpty);
+            expect(await findings(), <Map<String, Object?>>[
+              for (final m in mismatches)
+                _hashMismatch(
+                  eventId: event.eventId,
+                  carried: m['carried_hash']! as String,
+                  recomputed: m['recomputed_hash']! as String,
+                ),
+            ]);
+            expect(
+              (await findings()).first,
+              _hashMismatch(
+                eventId: event.eventId,
+                carried: event.eventHash,
+                recomputed: canonicalEventHash(event.toMap()),
+              ),
+            );
           });
-          final before = await snapshot();
-          await expectLater(
-            path.value(store, <StoredEvent>[event]),
-            throwsA(_eventHashRefused(event)),
-          );
-          expect(await snapshot(), before);
-        });
-
-        // Verifies: EVS-PRD-ingest/D
-        // Verifies: EVS-PRD-hash-chain-integrity/A
-        test('refuses a first-hop event with a field changed after hashing, '
-            'writing nothing', () async {
-          if (!available) return;
-          final event = _altered(_originEvent(), <String, Object?>{
-            'data': <String, Object?>{'title': 'tampered'},
-          });
-          final before = await snapshot();
-          await expectLater(
-            path.value(store, <StoredEvent>[event]),
-            throwsA(_eventHashRefused(event)),
-          );
-          expect(await snapshot(), before);
-        });
-
-        // Verifies: EVS-PRD-ingest/D
-        test('refuses a relayed event with a field changed after its last hop, '
-            'writing nothing', () async {
-          if (!available) return;
-          final event = _altered(await relayedEvent(), <String, Object?>{
-            'data': <String, Object?>{'title': 'tampered'},
-          });
-          final before = await snapshot();
-          await expectLater(
-            path.value(store, <StoredEvent>[event]),
-            throwsA(_eventHashRefused(event)),
-          );
-          expect(await snapshot(), before);
-        });
+        }
       });
     }
 
     // Verifies: EVS-PRD-ingest/D
-    test('ingestBatch refuses a whole batch when one first-hop event does not '
-        'verify, writing nothing', () async {
+    // Verifies: EVS-PRD-ingest/G
+    test('ingestBatch admits every event of a batch in which one first-hop '
+        'event does not verify, recording one finding', () async {
       if (!available) return;
       final good = _originEvent();
       final bad = _altered(_originEvent(), <String, Object?>{
         'event_hash': 'not-the-hash-of-this-event',
       });
       final alsoGood = _originEvent();
-      final before = await snapshot();
-      await expectLater(
-        store.ingestBatch(
-          _batchOf(<StoredEvent>[good, bad, alsoGood]),
-          wireFormat: BatchEnvelope.wireFormat,
-        ),
-        throwsA(_eventHashRefused(bad)),
+      final result = await store.ingestBatch(
+        _batchOf(<StoredEvent>[good, bad, alsoGood]),
+        wireFormat: BatchEnvelope.wireFormat,
       );
-      expect(await snapshot(), before);
-      expect(await backend.findEventById(good.eventId), isNull);
+      expect(result.events.map((e) => e.outcome), <IngestOutcome>[
+        IngestOutcome.ingested,
+        IngestOutcome.ingestedWithFinding,
+        IngestOutcome.ingested,
+      ]);
+      for (final e in <StoredEvent>[good, bad, alsoGood]) {
+        expect(await backend.findEventById(e.eventId), isNotNull);
+      }
+      expect(await findings(), hasLength(1));
     });
 
     // Verifies: EVS-PRD-hash-chain-integrity/A
-    test('verifyEventChain reports an event whose hash is not the hash of '
+    test('the hash check reports an event whose hash is not the hash of '
         'its content', () async {
       if (!available) return;
       final event = _altered(_originEvent(), <String, Object?>{
         'data': <String, Object?>{'title': 'tampered'},
       });
-      final verdict = await store.verifyEventChain(event);
-      expect(verdict.isValid, isFalse);
-      expect(verdict.failures.single.kind, ChainFailureKind.eventHashMismatch);
-      expect((await store.verifyEventChain(_originEvent())).isValid, isTrue);
+      expect(
+        hashMismatchEvidence(event).map((e) => e['carried_hash']),
+        <String>[event.eventHash],
+      );
+      expect(hashMismatchEvidence(_originEvent()), isEmpty);
     });
   });
 }

@@ -92,6 +92,8 @@ const _functionTyped = <String, String>{
       "the consumer's transaction body; every write it can reach is internal",
   'PostgresBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'PostgresBackend.nonBlockingRead(body)':
+      "internal: the chain verification's reads, in a read-only snapshot",
   'PostgresBackend.readOnlyTransaction(body)':
       "internal: the storage reader's body, in a READ ONLY transaction",
   'PostgresBackend.transaction(body)':
@@ -107,10 +109,15 @@ const _functionTyped = <String, String>{
       'scoped read',
   'SembastBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'SembastBackend.nonBlockingRead(body)':
+      "internal: the chain verification's reads, outside any transaction",
   'SembastBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'StorageBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'StorageBackend.nonBlockingRead(body)':
+      "internal: the chain verification's reads, holding nothing an append "
+      'waits for',
   'StorageBackend.readOnlyTransaction(body)':
       "internal: the storage reader's body, in a transaction for reads only",
   'StorageBackend.transaction(body)':
@@ -277,6 +284,9 @@ const _mustBeInternal = <String, String>{
   'drain': 'drains a queue outside the delivery cycle',
   'wedgeHeadInTxnForTest':
       'wedges a queue head outside the drainer; refuses without assertions',
+  'recordFindingInTxnForTest':
+      'appends a security finding outside a detection point; refuses '
+      'without assertions',
   'honourHaltById':
       'wedges a queue head for a halt request outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
@@ -420,6 +430,7 @@ const _topLevelOperations = <String, String>{
   'denialParseDenied': 'builds an event draft; changes nothing',
   'denialUnknownAction': 'builds an event draft; changes nothing',
   'denialValidationDenied': 'builds an event draft; changes nothing',
+  'isReservedEntryType': 'pure function; changes nothing',
   'matchScopeClass': 'pure function; changes nothing',
   'rebuildView':
       'replays a view from the log through the projection interpreter at '
@@ -615,6 +626,7 @@ class PostgresSecurityContextStore {
 
 Future<void> drain() async {}
 Future<void> wedgeHeadInTxnForTest() async {}
+Future<void> recordFindingInTxnForTest() async {}
 Future<void> honourHaltById() async {}
 Future<void> fillBatch() async {}
 Future<void> writeQueueItemsTxn() async {}

@@ -30,16 +30,24 @@ const stateKinds = <String, String>{
   'fill positions': 'fill positions',
   'schedules': 'schedules',
   'replay requests': 'replay requests',
+  'transform failure records': 'transform failure records',
   'wedge records': 'wedge records',
   'halt requests': 'halt requests',
   'send fences': 'send fences',
   'refill guards': 'refill guards',
-  'chain index': 'the chain index',
-  'causal working copies': 'the per-aggregate causal working copies',
+  'sender channel records': 'the sender channel records',
+  'latest sequence the database authored':
+      'on Sembast the record of the latest sequence the database authored',
+  'holds a security finding':
+      'on Sembast the record of whether the database holds a security finding',
   'registry check record': 'the registry check record',
   'database identity': 'the database identity',
   'generation records': 'the generation records',
-  'catch-up marks': 'the view catch-up marks',
+  'declared library roles': 'the declared library roles',
+  "view copies' identities": "the view copies' identities",
+  'definition fingerprints': "the view copies' definition fingerprints",
+  'fold watermarks': "the view copies' fold watermarks",
+  'deletion marks': "the view copies' deletion marks",
   'fencing epoch': 'the fencing epoch',
   'declared configuration': 'the declared configuration',
   'security context': 'the security context stored beside each event',
@@ -80,12 +88,15 @@ String? preconditionProblem(
 const _stateStatement =
     'Its persisted state (destination queues, the views it materializes, the '
     'records it keeps beside them, such as fill positions, schedules, replay '
-    'requests, wedge records, halt requests, send fences, refill guards, the '
-    'chain index, the per-aggregate causal working copies, the registry '
-    'check record, the database identity, the generation records, '
-    'the view catch-up marks, the fencing epoch and the declared '
-    'configuration, and the security context it stores beside each event) '
-    "changes only through the library's operations";
+    'requests, transform failure records, wedge records, halt requests, send '
+    'fences, refill guards, the sender channel records of its delivery '
+    'channels, on Sembast the record of the latest sequence the database '
+    'authored and the record of whether it holds a security finding, the '
+    'registry check record, the database identity, the generation records, '
+    "the declared library roles, the view copies' identities, definition "
+    'fingerprints, fold watermarks and deletion marks, the fencing epoch and '
+    'the declared configuration, and the security context it stores beside '
+    "each event) changes only through the library's operations";
 
 /// The full statement of the precondition, which the matcher accepts.
 const _fullStatement =

@@ -101,7 +101,7 @@ void runStorageBackendConformanceTests(
     _registerQueueRecordTests(() => backend, () => initialized);
     _registerBackendStateTests(() => backend, () => initialized);
     _registerEventByIdTests(() => backend, () => initialized);
-    _registerChainIndexTests(() => backend, () => initialized);
+    _registerChainLookupTests(() => backend, () => initialized);
     _registerDrainLockTests(() => backend, () => initialized, reopen);
     _registerEventVersionColumnTests(
       () => backend,
@@ -4011,14 +4011,14 @@ void _registerEventByIdTests(
   });
 }
 
-// -------- Chain index subgroup --------
+// -------- Chain lookup subgroup --------
 //
-// appendEvent writes each stored event's chain index entry in the storing
-// transaction; the lookups by sealed hash, by predecessor, by origin
-// position and of the latest event held as authored read it back inside a
-// transaction.
+// The lookups by sealed hash, by predecessor, by origin position, of the
+// latest event held as authored and of an aggregate's latest eligible
+// version are reads over the log inside a transaction: they see the events
+// stored earlier in it and none a rolled-back transaction stored.
 
-/// The originating database of the remote events the chain index cases
+/// The originating database of the remote events the chain lookup cases
 /// store as ingested.
 const _remoteDb = 'db-remote';
 
@@ -4029,10 +4029,12 @@ StoredEvent _authoredEvent(
   required String eventId,
   required String databaseId,
   String? previousEventHash,
+  String aggregateId = 'agg-chain',
+  CausalRecord? causal,
 }) => StoredEvent(
   key: 0,
   eventId: eventId,
-  aggregateId: 'agg-chain',
+  aggregateId: aggregateId,
   aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: const EntryTypeVersion(1, 0),
@@ -4056,7 +4058,7 @@ StoredEvent _authoredEvent(
   clientTimestamp: DateTime.utc(2026, 4, 26),
   eventHash: 'sealed-$eventId',
   previousEventHash: previousEventHash,
-  causal: kRootVersionCausal,
+  causal: causal ?? kRootVersionCausal,
 );
 
 /// A copy of an event [originDb] authored at [originPosition] under
@@ -4069,10 +4071,12 @@ StoredEvent _receivedEvent(
   required int originPosition,
   required String holderDb,
   String? previousEventHash,
+  String aggregateId = 'agg-chain',
+  CausalRecord? causal,
 }) => StoredEvent(
   key: 0,
   eventId: eventId,
-  aggregateId: 'agg-chain',
+  aggregateId: aggregateId,
   aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: const EntryTypeVersion(1, 0),
@@ -4107,25 +4111,34 @@ StoredEvent _receivedEvent(
   clientTimestamp: DateTime.utc(2026, 4, 26),
   eventHash: 'restamped-$eventId',
   previousEventHash: previousEventHash,
-  causal: kRootVersionCausal,
+  causal: causal ?? kRootVersionCausal,
 );
 
 /// Mints the database identity of [backend] and returns it.
 Future<String> _holderIdentity(StorageBackend backend) =>
     backend.transaction(backend.readOrCreateDatabaseIdTxn);
 
-/// Reads, in one transaction, the result of every chain index lookup.
-Future<T> _readIndex<T>(
+/// Runs [read] in one transaction of [backend].
+Future<T> _readLookups<T>(
   StorageBackend backend,
   Future<T> Function(Transaction txn) read,
 ) => backend.transaction(read);
 
-void _registerChainIndexTests(
+/// The identifiers of [events], in order.
+List<String> _ids(Iterable<StoredEvent> events) =>
+    events.map((e) => e.eventId).toList();
+
+/// A causal record of [kind] and [eligible] naming no parent.
+CausalRecord _causal(CausalKind kind, {required bool eligible}) =>
+    CausalRecord(kind: kind, eligible: eligible, parents: const <CausalRef>[]);
+
+void _registerChainLookupTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
-  group('chain index', () {
-    // Verifies: EVS-DEV-chain-verification/N
+  group('chain lookups', () {
+    // Verifies: EVS-DEV-chain-verification/A
+    // Verifies: EVS-DEV-chain-verification/B
     test('each lookup returns the stored event after an append', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -4143,63 +4156,93 @@ void _registerChainIndexTests(
           previousEventHash: 'sealed-a1',
         ),
       );
-      final firstEntry = ChainIndexEntry(
-        sequenceNumber: first.sequenceNumber,
-        eventId: 'a1',
-        originatingDatabaseId: holder,
-        sealedHash: 'sealed-a1',
-        originPosition: first.sequenceNumber,
-        previousEventHash: null,
-        heldAsAuthoredBy: holder,
+      await _readLookups(backend, (txn) async {
+        final bySealed = await backend.findEventsBySealedHashInTxn(
+          txn,
+          'sealed-a2',
+        );
+        expect(bySealed.map((e) => e.toMap()), [second.toMap()]);
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              originPosition: first.sequenceNumber,
+            ),
+          ),
+          ['a1'],
+        );
+        final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
+        expect(latest?.toMap(), second.toMap());
+      });
+    });
+
+    // Verifies: EVS-DEV-chain-verification/A
+    test('a null predecessor matches the events of that database that name '
+        'none, and no other', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
       );
-      final secondEntry = ChainIndexEntry(
-        sequenceNumber: second.sequenceNumber,
-        eventId: 'a2',
-        originatingDatabaseId: holder,
-        sealedHash: 'sealed-a2',
-        originPosition: second.sequenceNumber,
-        previousEventHash: 'sealed-a1',
-        heldAsAuthoredBy: holder,
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'a2',
+          databaseId: holder,
+          previousEventHash: 'sealed-a1',
+        ),
       );
-      await _readIndex(backend, (txn) async {
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r1',
+          originDb: _remoteDb,
+          originPosition: 1,
+          holderDb: holder,
+        ),
+      );
+      await _readLookups(backend, (txn) async {
         expect(
-          await backend.findChainIndexBySealedHashInTxn(txn, 'sealed-a2'),
-          [secondEntry],
-        );
-        expect(
-          await backend.findChainIndexByPredecessorInTxn(
-            txn,
-            originatingDatabaseId: holder,
-            previousEventHash: null,
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: null,
+            ),
           ),
-          [firstEntry],
+          ['a1'],
         );
         expect(
-          await backend.findChainIndexByPredecessorInTxn(
-            txn,
-            originatingDatabaseId: holder,
-            previousEventHash: 'sealed-a1',
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              previousEventHash: null,
+            ),
           ),
-          [secondEntry],
-        );
-        expect(
-          await backend.findChainIndexByOriginPositionInTxn(
-            txn,
-            originatingDatabaseId: holder,
-            originPosition: first.sequenceNumber,
-          ),
-          [firstEntry],
-        );
-        expect(
-          await backend.readLatestHeldAsAuthoredInTxn(txn, holder),
-          secondEntry,
+          ['r1'],
         );
       });
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
-    test('each lookup returns the stored event after an ingest, by its '
-        'sealed hash and origin position, not its re-stamped ones', () async {
+    // Verifies: EVS-DEV-chain-verification/A
+    test('an ingested copy is found by its sealed hash and origin position, '
+        'not its re-stamped ones', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final holder = await _holderIdentity(backend);
@@ -4218,34 +4261,27 @@ void _registerChainIndexTests(
           previousEventHash: 'sealed-r6',
         ),
       );
-      final entry = ChainIndexEntry(
-        sequenceNumber: received.sequenceNumber,
-        eventId: 'r7',
-        originatingDatabaseId: _remoteDb,
-        sealedHash: 'sealed-r7',
-        originPosition: 7,
-        previousEventHash: 'sealed-r6',
-        heldAsAuthoredBy: null,
-      );
-      await _readIndex(backend, (txn) async {
+      await _readLookups(backend, (txn) async {
         expect(
-          await backend.findChainIndexBySealedHashInTxn(txn, 'sealed-r7'),
-          [entry],
+          _ids(await backend.findEventsBySealedHashInTxn(txn, 'sealed-r7')),
+          ['r7'],
         );
         expect(
-          await backend.findChainIndexBySealedHashInTxn(txn, 'restamped-r7'),
+          await backend.findEventsBySealedHashInTxn(txn, 'restamped-r7'),
           isEmpty,
         );
         expect(
-          await backend.findChainIndexByPredecessorInTxn(
-            txn,
-            originatingDatabaseId: _remoteDb,
-            previousEventHash: 'sealed-r6',
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              previousEventHash: 'sealed-r6',
+            ),
           ),
-          [entry],
+          ['r7'],
         );
         expect(
-          await backend.findChainIndexByPredecessorInTxn(
+          await backend.findEventsByPredecessorInTxn(
             txn,
             originatingDatabaseId: holder,
             previousEventHash: 'sealed-r6',
@@ -4253,15 +4289,17 @@ void _registerChainIndexTests(
           isEmpty,
         );
         expect(
-          await backend.findChainIndexByOriginPositionInTxn(
-            txn,
-            originatingDatabaseId: _remoteDb,
-            originPosition: 7,
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              originPosition: 7,
+            ),
           ),
-          [entry],
+          ['r7'],
         );
         expect(
-          await backend.findChainIndexByOriginPositionInTxn(
+          await backend.findEventsByOriginPositionInTxn(
             txn,
             originatingDatabaseId: _remoteDb,
             originPosition: received.sequenceNumber,
@@ -4271,10 +4309,10 @@ void _registerChainIndexTests(
       });
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
     // Verifies: EVS-DEV-chain-verification/B
-    test('the latest event held as authored ignores ingested and recovered '
-        'copies stored after it', () async {
+    test('the latest event held as authored ignores ingested copies, copies '
+        'of its own events stored with a receiver entry, and one-entry copies '
+        'naming another database', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final holder = await _holderIdentity(backend);
@@ -4292,40 +4330,42 @@ void _registerChainIndexTests(
           holderDb: holder,
         ),
       );
-      // A copy of an event the holder authored, stored back through a
-      // recovery: two entries, so not held as authored.
       await _appendBuilt(
         backend,
         (seq) => _receivedEvent(
           seq,
-          eventId: 'own-recovered',
+          eventId: 'own-received',
           originDb: holder,
           originPosition: 40,
           holderDb: holder,
         ),
       );
-      // A one-entry copy naming another database is held as authored by
-      // that database, not by the holder.
       await _appendBuilt(
         backend,
         (seq) => _authoredEvent(seq, eventId: 'foreign', databaseId: _remoteDb),
       );
-      await _readIndex(backend, (txn) async {
+      await _readLookups(backend, (txn) async {
         final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
         expect(latest?.eventId, 'a1');
         expect(latest?.sequenceNumber, authored.sequenceNumber);
-        expect(latest?.sealedHash, 'sealed-a1');
+        expect(latest?.eventHash, 'sealed-a1');
+        // Held as authored means naming the holding database: a one-entry
+        // copy naming another database is held as authored by no one here.
+        expect(
+          await backend.readLatestHeldAsAuthoredInTxn(txn, _remoteDb),
+          isNull,
+        );
       });
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
+    // Verifies: EVS-DEV-chain-verification/B
     test('the latest event held as authored is null while the database '
         'holds none', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final holder = await _holderIdentity(backend);
       expect(
-        await _readIndex(
+        await _readLookups(
           backend,
           (txn) => backend.readLatestHeldAsAuthoredInTxn(txn, holder),
         ),
@@ -4342,7 +4382,7 @@ void _registerChainIndexTests(
         ),
       );
       expect(
-        await _readIndex(
+        await _readLookups(
           backend,
           (txn) => backend.readLatestHeldAsAuthoredInTxn(txn, holder),
         ),
@@ -4350,9 +4390,10 @@ void _registerChainIndexTests(
       );
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
-    test('a lookup inside the storing transaction sees the entry of an event '
-        'appended earlier in it', () async {
+    // Verifies: EVS-DEV-chain-verification/B
+    // Verifies: EVS-DEV-causal-parents/H
+    test('a lookup inside the storing transaction sees an event stored '
+        'earlier in it', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final holder = await _holderIdentity(backend);
@@ -4364,6 +4405,13 @@ void _registerChainIndexTests(
         );
         final latest = await backend.readLatestHeldAsAuthoredInTxn(txn, holder);
         expect(latest?.eventId, 'a1');
+        expect(
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a1',
+        );
         final s2 = await backend.nextSequenceNumber(txn);
         await backend.appendEvent(
           txn,
@@ -4371,7 +4419,7 @@ void _registerChainIndexTests(
             s2,
             eventId: 'a2',
             databaseId: holder,
-            previousEventHash: latest?.sealedHash,
+            previousEventHash: latest?.eventHash,
           ),
         );
         expect(
@@ -4379,32 +4427,66 @@ void _registerChainIndexTests(
           'a2',
         );
         expect(
-          (await backend.findChainIndexBySealedHashInTxn(
-            txn,
-            'sealed-a2',
-          )).map((e) => e.eventId),
+          _ids(await backend.findEventsBySealedHashInTxn(txn, 'sealed-a2')),
           ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByPredecessorInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: holder,
+              originPosition: s2,
+            ),
+          ),
+          ['a2'],
+        );
+        expect(
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a2',
         );
       });
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
-    test('a rolled-back transaction leaves no index entry', () async {
+    // Verifies: EVS-DEV-chain-verification/B
+    // Verifies: EVS-DEV-causal-parents/H
+    test('a rolled-back transaction leaves every lookup as it was', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
       final holder = await _holderIdentity(backend);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(seq, eventId: 'a1', databaseId: holder),
+      );
       await expectLater(
         backend.transaction((txn) async {
-          final s1 = await backend.nextSequenceNumber(txn);
-          await backend.appendEvent(
-            txn,
-            _authoredEvent(s1, eventId: 'a1', databaseId: holder),
-          );
           final s2 = await backend.nextSequenceNumber(txn);
           await backend.appendEvent(
             txn,
-            _receivedEvent(
+            _authoredEvent(
               s2,
+              eventId: 'a2',
+              databaseId: holder,
+              previousEventHash: 'sealed-a1',
+            ),
+          );
+          final s3 = await backend.nextSequenceNumber(txn);
+          await backend.appendEvent(
+            txn,
+            _receivedEvent(
+              s3,
               eventId: 'r1',
               originDb: _remoteDb,
               originPosition: 1,
@@ -4415,29 +4497,36 @@ void _registerChainIndexTests(
         }),
         throwsStateError,
       );
-      await _readIndex(backend, (txn) async {
+      await _readLookups(backend, (txn) async {
         expect(
-          await backend.readLatestHeldAsAuthoredInTxn(txn, holder),
-          isNull,
+          (await backend.readLatestHeldAsAuthoredInTxn(txn, holder))?.eventId,
+          'a1',
         );
         expect(
-          await backend.findChainIndexBySealedHashInTxn(txn, 'sealed-a1'),
+          (await backend.readLatestEligibleVersionInTxn(
+            txn,
+            'agg-chain',
+          ))?.eventId,
+          'a1',
+        );
+        expect(
+          await backend.findEventsBySealedHashInTxn(txn, 'sealed-a2'),
           isEmpty,
         );
         expect(
-          await backend.findChainIndexBySealedHashInTxn(txn, 'sealed-r1'),
+          await backend.findEventsBySealedHashInTxn(txn, 'sealed-r1'),
           isEmpty,
         );
         expect(
-          await backend.findChainIndexByPredecessorInTxn(
+          await backend.findEventsByPredecessorInTxn(
             txn,
             originatingDatabaseId: holder,
-            previousEventHash: null,
+            previousEventHash: 'sealed-a1',
           ),
           isEmpty,
         );
         expect(
-          await backend.findChainIndexByOriginPositionInTxn(
+          await backend.findEventsByOriginPositionInTxn(
             txn,
             originatingDatabaseId: _remoteDb,
             originPosition: 1,
@@ -4447,8 +4536,8 @@ void _registerChainIndexTests(
       });
     });
 
-    // Verifies: EVS-DEV-chain-verification/N
-    test('a fork and a reused origin position are both indexed, in local '
+    // Verifies: EVS-DEV-chain-verification/A
+    test('a fork and a reused origin position are both returned, in local '
         'sequence order', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
@@ -4475,24 +4564,129 @@ void _registerChainIndexTests(
           previousEventHash: 'sealed-r4',
         ),
       );
-      await _readIndex(backend, (txn) async {
+      final three = await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r6-fork',
+          originDb: _remoteDb,
+          originPosition: 6,
+          holderDb: holder,
+          previousEventHash: 'sealed-r4',
+        ),
+      );
+      await _readLookups(backend, (txn) async {
         expect(
-          (await backend.findChainIndexByPredecessorInTxn(
+          (await backend.findEventsByPredecessorInTxn(
             txn,
             originatingDatabaseId: _remoteDb,
             previousEventHash: 'sealed-r4',
           )).map((e) => e.sequenceNumber),
-          [one.sequenceNumber, two.sequenceNumber],
+          [one.sequenceNumber, two.sequenceNumber, three.sequenceNumber],
         );
         expect(
-          (await backend.findChainIndexByOriginPositionInTxn(
-            txn,
-            originatingDatabaseId: _remoteDb,
-            originPosition: 5,
-          )).map((e) => e.eventId),
+          _ids(
+            await backend.findEventsByOriginPositionInTxn(
+              txn,
+              originatingDatabaseId: _remoteDb,
+              originPosition: 5,
+            ),
+          ),
           ['r5', 'r5-again'],
         );
       });
+    });
+
+    // Verifies: EVS-DEV-causal-parents/H
+    test('the latest eligible version skips annotations, ineligible events '
+        'and other aggregates, and counts ingested copies', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final holder = await _holderIdentity(backend);
+      Future<void> read(String? expected) => _readLookups(backend, (txn) async {
+        final latest = await backend.readLatestEligibleVersionInTxn(
+          txn,
+          'agg-e',
+        );
+        expect(latest?.eventId, expected);
+      });
+
+      await read(null);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'draft',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: false),
+        ),
+      );
+      await read(null);
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'v1',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'note',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.annotation, eligible: false),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'eligible-note',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.annotation, eligible: true),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'draft-2',
+          databaseId: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: false),
+        ),
+      );
+      await _appendBuilt(
+        backend,
+        (seq) => _authoredEvent(
+          seq,
+          eventId: 'other-aggregate',
+          databaseId: holder,
+          aggregateId: 'agg-other',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await read('v1');
+      await _appendBuilt(
+        backend,
+        (seq) => _receivedEvent(
+          seq,
+          eventId: 'r-v2',
+          originDb: _remoteDb,
+          originPosition: 3,
+          holderDb: holder,
+          aggregateId: 'agg-e',
+          causal: _causal(CausalKind.version, eligible: true),
+        ),
+      );
+      await read('r-v2');
     });
   });
 }

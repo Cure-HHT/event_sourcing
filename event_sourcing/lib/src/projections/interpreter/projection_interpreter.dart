@@ -37,6 +37,7 @@
 //   neither folds the event into nor registers for the entry type is marked
 //   behind the log in the fold's own transaction.
 import 'package:event_sourcing/src/entry_type_registry.dart';
+import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
@@ -59,7 +60,9 @@ class ProjectionInterpreter {
   final PromoterRegistry promoters;
   final EntryTypeRegistry entryTypes;
 
-  /// Apply [event] to all matching projection specs inside [txn].
+  /// Apply [event] to all matching projection specs inside [txn], and fold
+  /// it into the outstanding-finding marks of every registered view,
+  /// whatever its interest (see [foldIntoView]).
   ///
   /// The fold decides by the event's entry-type version against the
   /// registered version of its entry type: an event of a lower major, or of
@@ -111,7 +114,21 @@ class ProjectionInterpreter {
 
     final changes = <AggregateFoldChange>[];
     for (final spec in projections.all()) {
-      if (!spec.interest.matches(event)) continue;
+      // Every view folds every event into its outstanding-finding marks;
+      // only a view whose interest matches folds the event's data.
+      if (!spec.interest.matches(event)) {
+        changes.addAll(
+          await foldIntoView(
+            txn: txn,
+            backend: backend,
+            spec: spec,
+            promoters: promoters,
+            event: event,
+            version: null,
+          ),
+        );
+        continue;
+      }
 
       if (def != null) {
         final stored = await backend.readViewTargetVersionInTxn(
@@ -131,15 +148,16 @@ class ProjectionInterpreter {
         }
       }
 
-      final change = await foldIntoView(
-        txn: txn,
-        backend: backend,
-        spec: spec,
-        promoters: promoters,
-        event: event,
-        version: registeredVersion,
+      changes.addAll(
+        await foldIntoView(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          promoters: promoters,
+          event: event,
+          version: registeredVersion,
+        ),
       );
-      if (change != null) changes.add(change);
     }
 
     // A stored target of this entry type whose view this build neither
@@ -162,7 +180,9 @@ class ProjectionInterpreter {
   }
 
   /// Folds [event] into the view of [spec] under [version], the version
-  /// the view folds the event's entry type under, inside [txn].
+  /// the view folds the event's entry type under, inside [txn]; with a
+  /// null [version], a view that does not fold the event's data, only its
+  /// outstanding-finding marks.
   ///
   /// The one fold step every fold path shares -- the interpreter, a
   /// rebuild and boot promotion -- so they derive the same rows from the
@@ -174,18 +194,26 @@ class ProjectionInterpreter {
   /// event of a higher major throws [StateError] before anything is
   /// written.
   ///
-  /// Returns the fold's change record, or null when the fold changed
-  /// nothing.
+  /// Whatever [version], the step then refreshes the `$integrity` of the
+  /// view's rows whose marks the event may change (a security finding the
+  /// event is, or an event that reaches a held finding), so every view
+  /// folds every finding whatever its interest, in log order.
+  ///
+  /// Returns the change records of the rows the step changed.
+  // Implements: EVS-PRD-materializer/G
+  // every view folds each security finding into the marks of the rows the
+  //   finding marks, whatever its interest, in log order with the events it
+  //   folds.
   @internal
-  static Future<AggregateFoldChange?> foldIntoView({
+  static Future<List<AggregateFoldChange>> foldIntoView({
     required Transaction txn,
     required StorageBackend backend,
     required ProjectionSpec spec,
     required PromoterRegistry promoters,
     required StoredEvent event,
-    required EntryTypeVersion version,
+    required EntryTypeVersion? version,
   }) async {
-    if (event.entryTypeVersion.major > version.major) {
+    if (version != null && event.entryTypeVersion.major > version.major) {
       throw StateError(
         'ProjectionInterpreter: event ${event.eventId} of entry type '
         '"${event.entryType}" is at version ${event.entryTypeVersion}, a '
@@ -193,41 +221,138 @@ class ProjectionInterpreter {
         'folds it under; this build cannot fold it.',
       );
     }
-    var eventForFold = event;
-    if (event.entryTypeVersion < version) {
-      final existingRow = switch (spec) {
-        AggregateProjectionSpec() => await backend.readViewRowInTxn(
-          txn,
-          spec.viewName,
-          event.aggregateId,
+    final marks = await IntegrityMarks.forEvent(txn, backend, event);
+    final changes = <AggregateFoldChange>[];
+    if (version != null) {
+      var eventForFold = event;
+      if (event.entryTypeVersion < version) {
+        final existingRow = switch (spec) {
+          AggregateProjectionSpec() => await backend.readViewRowInTxn(
+            txn,
+            spec.viewName,
+            event.aggregateId,
+          ),
+          TableProjectionSpec() => null,
+        };
+        eventForFold = event.withData(
+          PromoterExecutor.promote(
+            registry: promoters,
+            viewName: spec.viewName,
+            entryType: event.entryType,
+            fromVersion: event.entryTypeVersion,
+            toVersion: version,
+            payload: event.data,
+            existingRow: existingRow,
+          ),
+        );
+      }
+      final change = await switch (spec) {
+        AggregateProjectionSpec() => AggregateFold.applyEvent(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          event: eventForFold,
+          integrity: marks.own,
         ),
-        TableProjectionSpec() => null,
+        TableProjectionSpec() => TableFold.applyEvent(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          event: eventForFold,
+          integrity: marks.own,
+        ),
       };
-      eventForFold = event.withData(
-        PromoterExecutor.promote(
-          registry: promoters,
-          viewName: spec.viewName,
-          entryType: event.entryType,
-          fromVersion: event.entryTypeVersion,
-          toVersion: version,
-          payload: event.data,
-          existingRow: existingRow,
+      if (change != null) changes.add(change);
+    }
+    if (marks.refresh.isNotEmpty) {
+      changes.addAll(
+        await _refreshMarks(
+          txn: txn,
+          backend: backend,
+          spec: spec,
+          refresh: marks.refresh,
+          event: event,
         ),
       );
     }
-    return switch (spec) {
-      AggregateProjectionSpec() => AggregateFold.applyEvent(
-        txn: txn,
-        backend: backend,
-        spec: spec,
-        event: eventForFold,
-      ),
-      TableProjectionSpec() => TableFold.applyEvent(
-        txn: txn,
-        backend: backend,
-        spec: spec,
-        event: eventForFold,
-      ),
-    };
+    return changes;
+  }
+
+  /// Rewrites the `$integrity` of every row of the view of [spec] whose
+  /// aggregate [refresh] names (for a table view, every row an event of
+  /// that aggregate produced) and whose marks differ, and returns their
+  /// change records, caused by [event].
+  static Future<List<AggregateFoldChange>> _refreshMarks({
+    required Transaction txn,
+    required StorageBackend backend,
+    required ProjectionSpec spec,
+    required Map<String, List<String>> refresh,
+    required StoredEvent event,
+  }) async {
+    final changes = <AggregateFoldChange>[];
+    Future<void> rewrite(
+      String key,
+      Map<String, Object?> row,
+      List<String> ids,
+    ) async {
+      final held = integrityFindingIdsOf(row);
+      if (held != null && _sameIds(held, ids)) return;
+      final next = Map<String, Object?>.unmodifiable(<String, Object?>{
+        ...row,
+        kIntegrityRowKey: integrityValue(ids),
+      });
+      await backend.upsertViewRowInTxn(txn, spec.viewName, key, next);
+      changes.add(
+        AggregateFoldChange(
+          viewName: spec.viewName,
+          aggregateId: key,
+          newValue: next,
+          sequence: event.sequenceNumber,
+          cause: event.eventType,
+          isTombstone: false,
+        ),
+      );
+    }
+
+    switch (spec) {
+      case AggregateProjectionSpec():
+        for (final entry in refresh.entries) {
+          final row = await backend.readViewRowInTxn(
+            txn,
+            spec.viewName,
+            entry.key,
+          );
+          if (row != null) await rewrite(entry.key, row, entry.value);
+        }
+      case TableProjectionSpec():
+        // A table row records the local sequence number of the event that
+        // produced it; the rows of an aggregate are those its events
+        // produced.
+        final producedBy = <int, List<String>>{};
+        for (final entry in refresh.entries) {
+          for (final e in await backend.findEventsForAggregateInTxn(
+            txn,
+            entry.key,
+          )) {
+            producedBy[e.sequenceNumber] = entry.value;
+          }
+        }
+        for (final row in await backend.findViewRowsInTxn(txn, spec.viewName)) {
+          final sequence = row['sequence'];
+          final key = row['aggregateId'];
+          if (sequence is! int || key is! String) continue;
+          final ids = producedBy[sequence];
+          if (ids != null) await rewrite(key, row, ids);
+        }
+    }
+    return changes;
+  }
+
+  static bool _sameIds(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 }

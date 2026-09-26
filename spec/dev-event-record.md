@@ -14,11 +14,11 @@ An event is stored and sent as a record: a JSON object whose fields the event ha
 
 ## Assertions
 
-A. The library SHALL accept a record's client timestamp only as an ISO 8601 date-time with a four-digit year, a month, day, hour, minute and second each within its calendar range, and an explicit UTC offset -- `Z`, or a sign, hours and optional minutes of at most 23 hours and 59 minutes -- and SHALL refuse a record carrying any other client timestamp as malformed, naming the field: on every ingest entry point before any write, and on every append and read.
+A. The library SHALL accept a record's client timestamp only as an ISO 8601 date-time with a four-digit year, a month, day, hour, minute and second each within its calendar range, and an explicit UTC offset -- `Z`, or a sign, hours and optional minutes of at most 23 hours and 59 minutes -- and SHALL treat a record carrying any other client timestamp as malformed: every ingest entry point and the restore SHALL store no event for it, and every append and read SHALL refuse it, naming the field.
 
 B. When the library reads, stores or forwards a record, it SHALL keep every key of the record's initiator and of its entry-type and data-format version maps, and every top-level key it does not read, exactly as the record carries them.
 
-C. The library SHALL accept the `received_at` of a provenance entry only in the timestamp form assertion A states: the `provenance` package's entry decoder SHALL refuse any other `received_at`, naming the field, and the library SHALL refuse a record whose provenance carries one as malformed, naming the field, on every ingest entry point before any write, and on every append and read.
+C. The library SHALL accept the `received_at` of a provenance entry only in the timestamp form assertion A states: the `provenance` package's entry decoder SHALL refuse any other `received_at`, naming the field, and the library SHALL treat a record whose provenance carries one as malformed: every ingest entry point and the restore SHALL store no event for it, and every append and read SHALL refuse it, naming the field.
 
 D. The library SHALL record, as `database_id` in every provenance entry it stamps (the originator entry of each event it appends and the entry it adds to each event it ingests or restores), the identity of the database that stamps it.
 
@@ -42,7 +42,7 @@ K. The library SHALL include an event's `causal` object in the content from whic
 
 **Why a four-digit year and calendar ranges (assertion A)?** The Dart parser accepts a signed year of up to six digits, and on the native runtime a year beyond the range of its time value wraps to a different instant; the Postgres `TIMESTAMPTZ` range begins in 4714 BC. A four-digit year keeps every accepted timestamp inside the range both backends store and every runtime reads alike, with an offset shifting it at most a day past either end. The same parser rolls an out-of-range field over -- 30 February to 2 March, hour 24 to the next day, a 60th second to the next minute -- so a record naming an impossible time would be read as a different, possible one. Refusing it leaves each accepted timestamp one instant, the one its fields name.
 
-**Why refuse on append and read as well as at ingest (assertion A)?** The library writes every time it stamps in UTC, and an event built in code with a local time is written in UTC too, so every record the library writes carries an accepted timestamp. A stored record that does not was not written by this data format, and reading it would give the host-dependent instant the rule exists to prevent. At ingest the refusal comes before any write, like the other decode failures, so a malformed record leaves the log as it was.
+**Why refuse on append and read, and store no event at ingest (assertion A)?** The library writes every time it stamps in UTC, and an event built in code with a local time is written in UTC too, so every record the library writes carries an accepted timestamp. A stored record that does not was not written by this data format, and reading it would give the host-dependent instant the rule exists to prevent, so append and read refuse it. A record that arrives at ingest or restore with one is stored as no event: the record is kept in full in a security finding (`EVS-DEV-security-findings`) and the rest of its delivery is admitted, so a malformed record never enters the log as an event and the delivery it came in does not stop.
 
 **Why keep the keys a build does not read (assertion B)?** Within a data-format major, a later release may add optional fields (EVS-DEV-version-compatibility, Rationale for assertions A to D). The initiator and the two version maps are hashed as the record spells them, so a build that dropped a key it does not model would change the record's hash, and the copy it stored or relayed would no longer verify. Keeping them verbatim lets a record of a later minor verify, store and relay unchanged through an earlier build; the build reads the numbers and the fields it models and carries the rest. A top-level key outside the record's declared fields is not covered by the event hash (EVS-PRD-hash-chain-integrity, Rationale). It is kept, stored and forwarded as it arrived, so a field a later release adds there survives a relay, but nothing attests it: a hop can change or drop it undetected. A field that must be attested belongs inside a hashed structure -- the data, the metadata or the initiator -- which every build of the major hashes whole.
 
@@ -66,6 +66,8 @@ The application's own version stays in `software_version`. The data-format versi
 
 ## Changelog
 
+- 2026-09-26 | 4e97d8b7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | A and C: ingest and the restore store no event for a record with a malformed client timestamp or received_at, keeping it in a security finding, instead of refusing the delivery; append and read still refuse it, naming the field. The implementation and its tests already behave this way
 - 2026-09-26 | a4b16ae0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | H: a refusal names the field. H is cited by code and tests, and its obligation is unchanged
 - 2026-09-25 | e0a2ee22 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -83,4 +85,4 @@ The application's own version stays in `software_version`. The data-format versi
 - 2026-09-24 | f24e0c04 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-B: a client timestamp carries a four-digit year, in-range calendar fields and an explicit offset; the initiator, the version maps and unread top-level keys are kept as the record carries them
 
-*End* *The event record as read, stored and sent* | **Hash**: a4b16ae0
+*End* *The event record as read, stored and sent* | **Hash**: 4e97d8b7

@@ -5,6 +5,7 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
+import 'package:event_sourcing/src/verification/chain_verification_verdict.dart';
 import 'package:event_sourcing/src/versions.dart';
 
 /// Reads of the storage an event store runs on: the event log, the views,
@@ -163,6 +164,13 @@ abstract interface class StorageReader {
 
   /// Every stored destination schedule, by destination id.
   Future<Map<String, DestinationSchedule>> listSchedules();
+
+  /// The verdict `EventStore.verifyChains` returns over the local
+  /// sequence numbers [from] to [to], computed from the log alone and
+  /// recording nothing: the reads hold no transaction an append waits for.
+  /// Throws [ArgumentError], before reading any event, for a negative bound
+  /// or a lower bound above the upper.
+  Future<ChainVerificationVerdict> verifyChains({int? from, int? to});
 
   /// The events joined with their security contexts, filtered and paged
   /// as the backend's `queryAudit` documents.

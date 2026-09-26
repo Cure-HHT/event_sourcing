@@ -1,10 +1,6 @@
-// Verifies: EVS-PRD-ingest/D
-// IngestIdentityMismatch thrown when incoming
-//   event_hash differs from stored arrival_hash for the same event_id;
-//   transaction rolls back — no side effects
-// Verifies: EVS-PRD-ingest/F
-// idempotency: divergent re-presentation is
-//   rejected, not silently accepted as a duplicate
+// An event arriving under an identifier the receiver holds under another
+// sealed hash is kept in full in an identity_mismatch finding; the held copy
+// stays.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -61,63 +57,74 @@ Future<_Fixture> _openStore({
 
 void main() {
   group('EventStore.ingestEvent — identity mismatch', () {
-    test(
-      'same event_id but different event_hash throws IngestIdentityMismatch',
-      () async {
-        final orig = await _openStore(hopId: 'mobile-device');
-        final dest = await _openStore(
-          hopId: 'control-server',
-          identifier: 'control-1',
-          softwareVersion: 'control@0.1.0',
+    // Verifies: EVS-DEV-security-findings/G
+    // Verifies: EVS-PRD-ingest/F
+    test('same event_id under a different sealed hash is kept in full in one '
+        'identity_mismatch finding and not stored', () async {
+      final orig = await _openStore(hopId: 'mobile-device');
+      final dest = await _openStore(
+        hopId: 'control-server',
+        identifier: 'control-1',
+        softwareVersion: 'control@0.1.0',
+      );
+
+      try {
+        // 1. Originate an event and ingest it.
+        final e1 = await orig.store.append(
+          entryType: 'epistaxis_event',
+          aggregateId: 'agg-mismatch',
+          aggregateType: 'note',
+          eventType: 'finalized',
+          data: const {
+            'answers': {'severity': 'mild'},
+          },
+          initiator: const UserInitiator('u1'),
+        );
+        expect(e1, isNotNull);
+        await dest.store.ingestEvent(e1!);
+
+        // 2. Build a divergent copy: same event_id, different content,
+        //    sealed with the canonical hash of that content.
+        final tamperedMap = e1.toMap();
+        tamperedMap['data'] = const {
+          'answers': {'severity': 'severe'},
+        };
+        final divergentHash = canonicalEventHash(tamperedMap);
+        tamperedMap['event_hash'] = divergentHash;
+        final tampered = StoredEvent.fromMap(tamperedMap, 0);
+
+        // 3. Re-ingest with the divergent copy: kept in a finding.
+        final outcome = await dest.store.ingestEvent(tampered);
+        expect(outcome.outcome, IngestOutcome.keptInFinding);
+        expect(outcome.resultHash, isNull);
+        final findings = await dest.backend.findAllEvents(
+          entryType: kSecurityFindingEntryType,
+        );
+        expect(findings, hasLength(1));
+        expect(findings.single.data['kind'], 'identity_mismatch');
+        expect(findings.single.data['evidence'], <String, Object?>{
+          'event_id': e1.eventId,
+          'held_hash': e1.eventHash,
+          'record': tampered.toMap(),
+        });
+        expect(findings.single.data['aggregates'], <String>['agg-mismatch']);
+        expect(
+          (findings.single.data['evidence']! as Map)['record'],
+          containsPair('event_hash', divergentHash),
         );
 
-        try {
-          // 1. Originate an event and ingest it.
-          final e1 = await orig.store.append(
-            entryType: 'epistaxis_event',
-            aggregateId: 'agg-mismatch',
-            aggregateType: 'note',
-            eventType: 'finalized',
-            data: const {
-              'answers': {'severity': 'mild'},
-            },
-            initiator: const UserInitiator('u1'),
-          );
-          expect(e1, isNotNull);
-          await dest.store.ingestEvent(e1!);
+        // 4. The held copy stays: its data is the first history's.
+        final held = await dest.backend.findEventById(e1.eventId);
+        expect(held!.data, e1.data);
+      } finally {
+        await orig.close();
+        await dest.close();
+      }
+    });
 
-          // 2. Build a divergent copy: same event_id, different content,
-          //    sealed with the canonical hash of that content.
-          final tamperedMap = e1.toMap();
-          tamperedMap['data'] = const {
-            'answers': {'severity': 'severe'},
-          };
-          final divergentHash = canonicalEventHash(tamperedMap);
-          tamperedMap['event_hash'] = divergentHash;
-          final tampered = StoredEvent.fromMap(tamperedMap, 0);
-
-          // 3. Re-ingest with mismatched hash must throw.
-          await expectLater(
-            () => dest.store.ingestEvent(tampered),
-            throwsA(
-              isA<IngestIdentityMismatch>()
-                  .having((e) => e.eventId, 'eventId', e1.eventId)
-                  .having((e) => e.incomingHash, 'incomingHash', divergentHash),
-            ),
-          );
-
-          // 4. No new events landed — destination's local sequence counter
-          // remains at 1 (first ingest only).
-          expect(await dest.backend.readSequenceCounter(), equals(1));
-        } finally {
-          await orig.close();
-          await dest.close();
-        }
-      },
-    );
-
-    test('identity mismatch: no ingest-audit events emitted '
-        '(transaction rolled back)', () async {
+    // Verifies: EVS-DEV-security-findings/G
+    test('identity mismatch: no ingest-audit events emitted, since the '
+        'record is not a duplicate', () async {
       final orig = await _openStore(hopId: 'mobile-device');
       final dest = await _openStore(
         hopId: 'control-server',
@@ -144,16 +151,10 @@ void main() {
         tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
-        // Should throw.
-        Object? thrown;
-        try {
-          await dest.store.ingestEvent(tampered);
-        } catch (e) {
-          thrown = e;
-        }
-        expect(thrown, isA<IngestIdentityMismatch>());
+        final outcome = await dest.store.ingestEvent(tampered);
+        expect(outcome.outcome, IngestOutcome.keptInFinding);
 
-        // No ingest.duplicate_received events (throw path, not dup path).
+        // No ingest.duplicate_received events (finding path, not dup path).
         final auditEvents = await dest.backend.findEventsForAggregate(
           'ingest-audit:control-server',
         );

@@ -18,6 +18,11 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<T> nonBlockingRead<T>(Future<T> Function(Transaction reads) body) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
   Future<AppendResult> appendEvent(Transaction txn, StoredEvent event) =>
       throw UnimplementedError();
 
@@ -408,28 +413,36 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+  Future<StoredEvent?> readLatestHeldAsAuthoredInTxn(
     Transaction txn,
     String databaseId,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<CausalRef?> readLatestEligibleVersionInTxn(
+  Future<StoredEvent?> readLatestEligibleVersionInTxn(
     Transaction txn,
     String aggregateId,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+  Future<bool> holdsAuthoredSecurityFindingInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String findingId,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsBySealedHashInTxn(
     Transaction txn,
     String sealedHash,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+  Future<List<StoredEvent>> findEventsByPredecessorInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required String? previousEventHash,
@@ -437,11 +450,29 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
-  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+  Future<List<StoredEvent>> findEventsByOriginPositionInTxn(
     Transaction txn, {
     required String originatingDatabaseId,
     required int originPosition,
   }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findEventsFromOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int fromPosition,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<bool> holdsSecurityFindingInTxn(Transaction txn) =>
+      throw UnimplementedError();
 
   @override
   Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(

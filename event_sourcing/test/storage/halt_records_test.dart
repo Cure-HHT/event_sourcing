@@ -1,6 +1,6 @@
 // Verifies: EVS-DEV-destination-drain/Q
-// a halt request records one of two purposes, each with its recorded
-//   string, and an unknown string is refused.
+// this build appends a halt request with one of two purposes, each with its
+//   recorded string.
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -19,13 +19,40 @@ void main() {
       }
     });
 
-    test('refuses an unknown purpose', () {
-      expect(() => HaltPurpose.fromWire('Pause'), throwsFormatException);
-      expect(() => HaltPurpose.fromWire(''), throwsFormatException);
+    // Verifies: EVS-DEV-destination-drain/L
+    // a purpose this build does not know is carried verbatim, equal to
+    //   itself and to no purpose it knows.
+    test('carries an unknown purpose verbatim', () {
+      final future = HaltPurpose.fromWire('future_purpose');
+      expect(future.wire, 'future_purpose');
+      expect(future.isKnown, isFalse);
+      expect(future, HaltPurpose.fromWire('future_purpose'));
+      expect(future.hashCode, HaltPurpose.fromWire('future_purpose').hashCode);
+      expect(HaltPurpose.fromWire('Pause'), isNot(HaltPurpose.pause));
+      expect(HaltPurpose.values, isNot(contains(future)));
+      for (final purpose in HaltPurpose.values) {
+        expect(purpose.isKnown, isTrue);
+        expect(HaltPurpose.fromWire(purpose.wire), same(purpose));
+      }
     });
   });
 
   group('HaltRequest', () {
+    // Verifies: EVS-DEV-destination-drain/L
+    // a stored halt request whose purpose this build does not know reads
+    //   back with the purpose verbatim.
+    test('reads a request of an unknown purpose back verbatim', () {
+      final json = <String, Object?>{
+        'request_event_id': 'e-1',
+        'requested_at': '2026-04-01T02:03:04.005006Z',
+        'purpose': 'future_purpose',
+        'requested_by': const UserInitiator('operator').toJson(),
+      };
+      final read = HaltRequest.fromJson(json);
+      expect(read.purpose.wire, 'future_purpose');
+      expect(read.toJson(), json);
+    });
+
     final request = HaltRequest(
       requestEventId: 'e-1',
       requestedAt: DateTime.utc(2026, 4, 1, 2, 3, 4, 5, 6),
@@ -60,7 +87,6 @@ void main() {
         {...valid}..remove('request_event_id'),
         {...valid, 'request_event_id': ''},
         {...valid, 'requested_at': 5},
-        {...valid, 'purpose': 'unknown'},
         {...valid, 'purpose': null},
         {...valid, 'requested_by': 'operator'},
       ]) {

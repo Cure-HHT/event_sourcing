@@ -2,12 +2,14 @@
 // the ordered migration list whose steps provisioning applies: version 1
 //   holds the tables of the log, the views, the queues and the sidecars;
 //   version 2 adds the declared library roles and keeps the minimum;
-//   version 3 adds the chain index columns and indexes, the causal column
+//   version 3 adds the chain lookup columns and indexes, the causal column
 //   and the latest-eligible-version index to the events table and raises
 //   the minimum to itself.
-// Implements: EVS-DEV-chain-verification/N
-// the chain index on Postgres: columns of the events table, written by
-//   the insert that stores each event, and the indexes its lookups read.
+// Implements: EVS-DEV-chain-verification/A
+// the chain lookups on Postgres: columns of the events table holding the
+//   originating database, sealed hash and origin position each stored copy
+//   yields, written by the insert that stores it, and the non-unique
+//   indexes the lookups read.
 // Implements: EVS-DEV-postgres-backend/P
 // the `library_roles` table in the library's schema, created by the owner,
 //   in which provisioning records the declared runtime and lock roles.
@@ -15,6 +17,8 @@
 // the queue table's status check and the `fifo_entries_guard` triggers,
 //   created by provisioning with the table they guard.
 
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kSecurityFindingEntryType;
 import 'package:event_sourcing/src/storage/postgres/postgres_migration.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:meta/meta.dart' show internal;
@@ -75,18 +79,19 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
     minCompatibleVersion: 1,
     ddl: <String>[_libraryRolesTable],
   ),
-  // A build before this step inserts events without their chain index and
+  // A build before this step inserts events without their chain lookup and
   // causal columns, so the step raises the minimum: such a build refuses the
-  // database rather than leave the index behind the log.
+  // database rather than store events the lookups cannot find.
   PostgresMigrationStep(
     toVersion: 3,
     minCompatibleVersion: 3,
     ddl: <String>[
-      _eventsChainIndexColumns,
+      _eventsChainLookupColumns,
       _eventsSealedHashIdx,
       _eventsPredecessorIdx,
       _eventsOriginPositionIdx,
       _eventsHeldAsAuthoredIdx,
+      _eventsSecurityFindingIdx,
       _eventsCausalColumn,
       _eventsLatestEligibleIdx,
     ],
@@ -161,18 +166,19 @@ CREATE INDEX IF NOT EXISTS events_type_seq_idx
   ON events (event_type, sequence_number)
 ''';
 
-// --- Chain index ----------------------------------------------------------
+// --- Chain lookups --------------------------------------------------------
 
-// The chain index: for each stored event its originating database, sealed
-// hash and origin position (read from the stored copy's provenance) beside
-// its `previous_event_hash` column, and the database that holds it as
-// authored when that is the holding database (the originating database of a
-// copy whose provenance holds exactly one entry, null for every other copy).
-// The insert that stores the event writes them; the runtime role holds no
-// UPDATE on the table, so nothing changes them afterwards. A column the
-// stored copy does not yield is null. No index is unique: the log holds
-// forks and reused origin positions as received.
-const String _eventsChainIndexColumns = '''
+// The chain lookup columns: for each stored event its originating database,
+// sealed hash and origin position (read from the stored copy's provenance)
+// beside its `previous_event_hash` column, and the holding database when it
+// holds the copy as authored (the copy's provenance holds exactly one entry,
+// naming the holding database), null for every other copy. The insert that
+// stores the event writes them; the runtime role holds no UPDATE on the
+// table, so nothing changes them afterwards. A column the stored copy does
+// not yield is null. No index is unique: the log holds forks and reused
+// origin positions as received. The library keeps no index table of its
+// own.
+const String _eventsChainLookupColumns = '''
 ALTER TABLE events
   ADD COLUMN IF NOT EXISTS origin_database_id   TEXT,
   ADD COLUMN IF NOT EXISTS sealed_hash          TEXT,
@@ -201,6 +207,17 @@ CREATE INDEX IF NOT EXISTS events_held_as_authored_idx
   WHERE held_as_authored_by IS NOT NULL
 ''';
 
+// The security findings each database holds as authored, by identity: the
+// partial index serves the once-per-detector lookup, which the library
+// runs inside the transaction that would append a finding. Not unique: a
+// uniqueness violation would fail the detection point's transaction.
+const String _eventsSecurityFindingIdx =
+    '''
+CREATE INDEX IF NOT EXISTS events_security_finding_idx
+  ON events (held_as_authored_by, (data ->> 'finding_id'))
+  WHERE entry_type = '$kSecurityFindingEntryType'
+''';
+
 // --- Causal record and the latest eligible version ----------------------
 
 // The event's `causal` object as the record carries it; null for a record
@@ -210,11 +227,10 @@ ALTER TABLE events
   ADD COLUMN IF NOT EXISTS causal JSONB
 ''';
 
-// The per-aggregate working copy of the latest eligible version: a partial
-// index over the events whose recorded `causal` says an eligible version,
-// so the event of an aggregate with the highest local sequence number
-// among them is one index probe. The insert that stores each event writes
-// it, and nothing else does. The predicate is the one
+// The latest eligible version of each aggregate: a partial index over the
+// events whose recorded `causal` says an eligible version, so the event of
+// an aggregate with the highest local sequence number among them is one
+// index probe. The predicate is the one
 // `PostgresBackend.readLatestEligibleVersionInTxn` queries with.
 const String _eventsLatestEligibleIdx = '''
 CREATE INDEX IF NOT EXISTS events_latest_eligible_idx

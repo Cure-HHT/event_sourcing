@@ -67,6 +67,7 @@ void main() {
             txn: txn,
             backend: backend,
             spec: _spec,
+            integrity: const <String>[],
             event: _ev('e1', 'finalized', {
               'answers': {'q1': 'yes', 'date_of_event': '2026-04-01'},
             }, ts: DateTime.utc(2026, 5, 9)),
@@ -91,6 +92,7 @@ void main() {
             txn: txn,
             backend: backend,
             spec: _spec,
+            integrity: const <String>[],
             event: _ev('e1', 'checkpoint', {
               'answers': {'q1': 'yes', 'q2': 'no'},
             }),
@@ -99,6 +101,7 @@ void main() {
             txn: txn,
             backend: backend,
             spec: _spec,
+            integrity: const <String>[],
             event: _ev('e1', 'checkpoint', {
               'answers': {'q2': null},
             }),
@@ -119,6 +122,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('e1', 'finalized', {
             'answers': {'q1': 'yes'},
           }),
@@ -127,6 +131,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('e1', 'tombstone', {}),
         );
       });

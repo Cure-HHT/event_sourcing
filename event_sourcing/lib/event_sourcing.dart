@@ -208,20 +208,14 @@ export 'src/event_store.dart'
         bootstrapEventStore,
         rebuildView;
 
-// Ingest types — error types, result types, and chain verdict.
+// Ingest types — error types and result types.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
-export 'src/ingest/chain_verdict.dart'
-    show ChainFailure, ChainFailureKind, ChainVerdict;
 export 'src/ingest/ingest_errors.dart'
     show
-        IngestChainBroken,
         IngestDataFormatIncompatible,
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
-        IngestEntryTypeVersionUnpromotable,
-        IngestIdentityMismatch,
-        IngestReservedEventRefused,
-        ReservedEventRefusal;
+        IngestEntryTypeVersionUnpromotable;
 export 'src/ingest/ingest_result.dart'
     show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
 
@@ -325,6 +319,7 @@ export 'src/security/event_security_context.dart' show EventSecurityContext;
 export 'src/security/security_context_store.dart'
     show AuditRow, PagedAudit, SecurityContextStore;
 export 'src/security/security_details.dart' show SecurityDetails;
+export 'src/security/security_finding.dart' show FindingKind, FindingRole;
 export 'src/security/security_retention_policy.dart'
     show SecurityRetentionPolicy;
 export 'src/security/system_entry_types.dart'
@@ -364,7 +359,13 @@ export 'src/security/system_entry_types.dart'
         // Substrate-internal lib-version boot events.
         kLibVersionChangedEntryType,
         kLibVersionInitializedEntryType,
-        // Aggregates over all of the above.
+        // Security findings: entry type, aggregate type and event type.
+        kSecurityFindingAggregateType,
+        kSecurityFindingEntryType,
+        kSecurityFindingRecordedEventType,
+        // Aggregates over all of the above, and the reserved namespace.
+        isReservedEntryType,
+        kReservedFixedEntryTypeIds,
         kReservedSystemEntryTypeIds,
         kSystemEntryTypes;
 
@@ -375,7 +376,6 @@ export 'src/security/system_entry_types.dart'
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/boot_check.dart' show BootCheck;
-export 'src/storage/chain_index_entry.dart' show ChainIndexEntry;
 export 'src/storage/drain_lock.dart'
     show
         DrainLock,
@@ -460,6 +460,8 @@ export 'src/sync/clock.dart' show Clock;
 export 'src/sync/declared_configuration.dart'
     show configurationFingerprint, declaredConfiguration;
 export 'src/sync/sync_policy.dart' show SyncPolicy;
+export 'src/verification/chain_verification_verdict.dart'
+    show ChainVerificationFinding, ChainVerificationVerdict;
 
 // Versions — entry-type versions and the library's data-format version.
 export 'src/versions.dart' show DataFormatVersion, EntryTypeVersion;

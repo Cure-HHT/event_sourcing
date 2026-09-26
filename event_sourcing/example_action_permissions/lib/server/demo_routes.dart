@@ -256,17 +256,10 @@ class DemoRoutes {
   /// queue head.
   Future<Response> _deliveryHalt(Request req) =>
       _asOperator(req, (operator, body) async {
-        final purposeWire = _stringField(body, 'purpose') ?? 'pause';
-        final HaltPurpose purpose;
-        try {
-          purpose = HaltPurpose.fromWire(purposeWire);
-        } on FormatException {
-          throw ArgumentError.value(
-            purposeWire,
-            'purpose',
-            'must be pause or reconfigure',
-          );
-        }
+        // The library refuses a purpose it does not request.
+        final purpose = HaltPurpose.fromWire(
+          _stringField(body, 'purpose') ?? 'pause',
+        );
         final requestEventId = await components.destinations.requestHalt(
           _stringField(body, 'destinationId') ?? '',
           initiator: UserInitiator(operator.userId),

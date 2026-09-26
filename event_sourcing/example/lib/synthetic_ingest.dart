@@ -11,8 +11,9 @@ import 'package:uuid/uuid.dart';
 /// reassigns a fresh local `sequence_number`.
 ///
 /// The event is sealed as an originator seals it: its `event_hash` is
-/// `canonicalEventHash` of the record, which the receiver recomputes and
-/// refuses the event (`IngestChainBroken`) when it differs.
+/// `canonicalEventHash` of the record, which the receiver recomputes; when
+/// it differs, the receiver stores the event as received and records a
+/// `hash_mismatch` security finding about it.
 class SyntheticBatchBuilder {
   SyntheticBatchBuilder({
     this.senderHop = 'remote-mobile-1',

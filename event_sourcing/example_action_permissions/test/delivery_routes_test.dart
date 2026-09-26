@@ -340,7 +340,7 @@ void runDeliveryRoutesTests(
       expect(r.statusCode, 409);
       expect(
         (await _json(r))['error'],
-        contains('must be pause or reconfigure'),
+        contains('is not a halt purpose this library requests'),
       );
       expect(await w.snapshot(), before);
     });

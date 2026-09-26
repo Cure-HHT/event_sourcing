@@ -278,8 +278,17 @@ class _World {
   }
 }
 
+/// The `backend_state` records a stored event, or a stored security
+/// finding, advances, left out of a snapshot compared beside the findings.
+const Set<String> _advancedByEveryEvent = <String>{
+  'sequence_counter',
+  'latest_authored_sequence',
+  'security_finding_held',
+};
+
 /// Run every operator-halt scenario against a database [databaseFactory]
 /// builds fresh for each test (a null database skips the test).
+
 void runOperatorHaltScenarios(
   Future<QueueTestDatabase?> Function() databaseFactory, {
   required String label,
@@ -2120,45 +2129,74 @@ void runOperatorHaltScenarios(
             },
           };
 
-      Matcher refusedWith(ReservedEventRefusal reason) =>
-          isA<IngestReservedEventRefused>().having(
-            (e) => e.reason,
-            'reason',
-            reason,
-          );
+      /// The snapshot of [destId] with the security findings left out of
+      /// the log, and without the records every stored event advances (the
+      /// sequence counter and the latest authored sequence) or a stored
+      /// finding sets (whether a security finding is held).
+      Future<Map<String, Object?>> besideFindings(String destId) async {
+        final findings = <String>{
+          for (final e in await w.events(kSecurityFindingEntryType)) e.eventId,
+        };
+        final snapshot = await w.snapshot(destId);
+        return <String, Object?>{
+          ...snapshot,
+          'events': <Object?>[
+            for (final id in snapshot['events']! as List)
+              if (!findings.contains(id)) id,
+          ],
+          'state_keys': <Object?>[
+            for (final k in snapshot['state_keys']! as List)
+              if (!_advancedByEveryEvent.contains(k)) k,
+          ],
+        };
+      }
+
+      /// The reasons of the `event_malformed` findings recorded about the
+      /// record of [event].
+      Future<List<Object?>> malformedReasons(
+        StoredEvent event,
+      ) async => <Object?>[
+        for (final f in await w.events(kSecurityFindingEntryType))
+          if (f.data['kind'] == 'event_malformed' &&
+              ((f.data['evidence']! as Map)['record']! as Map)['event_id'] ==
+                  event.eventId)
+            (f.data['evidence']! as Map)['reason'],
+      ];
 
       for (final type in types.entries) {
         for (final path in paths.entries) {
           for (final c in malformed.entries) {
             // Verifies: EVS-DEV-destination-drain/L
             // a halt event whose destination identifier or database identity
-            //   is missing, empty or not a string is refused as malformed,
-            //   with nothing written.
-            test('${path.key} refuses ${type.value} with ${c.key}', () async {
+            //   is missing, empty or not a string is stored as no event and
+            //   kept in a finding naming audit_identity_invalid.
+            test('${path.key} keeps ${type.value} with ${c.key} in a '
+                'finding', () async {
               if (!available) return;
-              final before = await w.snapshot('x');
+              final before = await besideFindings('x');
               final bad = forgedEvent(
                 entryType: type.key,
                 aggregateType: kDestinationAuditAggregateType,
                 eventType: type.value,
                 data: c.value,
               );
-              await expectLater(
-                path.value(w.store, <StoredEvent>[bad]),
-                throwsA(refusedWith(ReservedEventRefusal.malformed)),
-              );
-              expect(await w.snapshot('x'), before);
+              await path.value(w.store, <StoredEvent>[bad]);
+              expect(await malformedReasons(bad), <String>[
+                'audit_identity_invalid',
+              ]);
+              expect(await besideFindings('x'), before);
             });
           }
 
           // Verifies: EVS-DEV-destination-drain/L
-          // a halt event naming the receiver's own database that the
-          //   receiver does not hold is refused, with nothing written.
-          test('${path.key} refuses ${type.value} naming the receiver '
-              'database', () async {
+          // a halt event a peer originated that names the receiver's own
+          //   database is stored as no event and kept in a finding naming
+          //   audit_identity_invalid; the receiver's halt state is unchanged.
+          test('${path.key} keeps a peer ${type.value} naming the receiver '
+              'database in a finding', () async {
             if (!available) return;
             await w.activate(FakeDestination(id: 'x'));
-            final before = await w.snapshot('x');
+            final before = await besideFindings('x');
             final forged = forgedEvent(
               entryType: type.key,
               aggregateType: kDestinationAuditAggregateType,
@@ -2170,11 +2208,11 @@ void runOperatorHaltScenarios(
                 'halt_request_event_id': 'r',
               },
             );
-            await expectLater(
-              path.value(w.store, <StoredEvent>[forged]),
-              throwsA(refusedWith(ReservedEventRefusal.namesReceiverDatabase)),
-            );
-            expect(await w.snapshot('x'), before);
+            await path.value(w.store, <StoredEvent>[forged]);
+            expect(await malformedReasons(forged), <String>[
+              'audit_identity_invalid',
+            ]);
+            expect(await besideFindings('x'), before);
             await w.agree(<String>['x']);
           });
 

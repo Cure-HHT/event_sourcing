@@ -5,7 +5,10 @@
 // Implements: EVS-PRD-materializer/B
 // rebuild is deterministic and
 //   idempotent: the same log + same targetVersionByEntryType always produces
-//   identical view rows.
+//   identical view rows, outstanding-finding marks included.
+// Implements: EVS-PRD-materializer/G
+// the rebuild folds every event of the log through the fold step, so the
+//   view folds each security finding whatever its interest, in log order.
 // Implements: EVS-PRD-materializer/C
 // (partial) — the strict-superset check
 //   and explicit targetVersionByEntryType map ensure the rebuild's scope is
@@ -110,6 +113,7 @@ Future<int> rebuildView({
       await backend.writeViewTargetVersionInTxn(txn, viewName, e.key, e.value);
     }
 
+    await IntegrityMarks.beginReplay(txn, backend);
     var processed = 0;
     int? lastSeq;
     while (true) {
@@ -121,14 +125,15 @@ Future<int> rebuildView({
       if (chunk.isEmpty) break;
 
       for (final event in chunk) {
-        if (!spec.interest.matches(event)) continue;
-        final tgt = targetVersionByEntryType[event.entryType];
-        if (tgt == null) continue;
+        final tgt = spec.interest.matches(event)
+            ? targetVersionByEntryType[event.entryType]
+            : null;
 
         // The fold step of the projection interpreter, under the target:
         // a lower version is promoted, each default decided against the
         // row being rebuilt; an equal or higher minor folds unchanged; a
-        // higher major throws, rolling the rebuild back.
+        // higher major throws, rolling the rebuild back. An event the view
+        // does not fold still folds into its outstanding-finding marks.
         await ProjectionInterpreter.foldIntoView(
           txn: txn,
           backend: backend,
@@ -137,7 +142,7 @@ Future<int> rebuildView({
           event: event,
           version: tgt,
         );
-        processed++;
+        if (tgt != null) processed++;
       }
 
       if (chunk.length < _rebuildChunkSize) break;

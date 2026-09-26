@@ -180,7 +180,12 @@ Two declarative shapes, interpreted by the substrate:
   (`WholePayload` / `SelectedFields` / `PayloadField`).
 
 Rows carry substrate-stamped columns (`aggregateId`, `sequence`,
-`latestEventId`, `updatedAt`, `firstEventTimestamp`). Schema evolution
+`latestEventId`, `updatedAt`, `firstEventTimestamp`) and the reserved
+`$integrity` key: the security findings that mark the row's aggregate as
+having an outstanding finding (a Layer 2 convention; the row is folded as
+usual). Keys beginning with `$` are reserved: an append whose data holds
+one at the top level, and a projection naming one, are refused. Schema
+evolution
 uses `PromoterSpec` chains of shape-changing primitives (`RenameField`,
 `DefaultField`, `DropField`) applied at boot-time snapshot promotion and
 ingest-time event promotion.
@@ -280,15 +285,18 @@ database file opened by one isolate of one process
 
 The trust in the storage seam has a precondition: the library's delivery
 guarantees, its views and its security-context records hold only while its
-persisted state (destination queues, the views it materializes, the
-records it keeps beside them, such as fill positions, schedules, replay
-requests, wedge records, halt requests, send fences, refill guards, the
-chain index, the per-aggregate causal working copies, the registry check
-record, the database identity, the generation records, the view catch-up
+persisted state (destination queues, the views it materializes, the records
+it keeps beside them, such as fill positions, schedules, replay requests,
+transform failure records, wedge records, halt requests, send fences, refill
+guards, the sender channel records of its delivery channels, on Sembast the
+record of the latest sequence the database authored and the record of
+whether it holds a security finding, the registry check record, the database
+identity, the generation records, the declared library roles, the view
+copies' identities, definition fingerprints, fold watermarks and deletion
 marks, the fencing epoch and the declared configuration, and the security
-context it stores beside each event) changes only through the
-library's operations, and reserved system events are appended only by the
-library's own operations. The event store's
+context it stores beside each event) changes only through the library's
+operations, and reserved system events are appended only by the library's
+own operations. The event store's
 reserved append operations are `@internal`, and so is every
 `StorageBackend` member that writes; a consumer uses the reads, `transaction` (for its own reads;
 an event-store append runs only inside `EventStore.runTransaction`) and
@@ -380,16 +388,27 @@ deployment — see the guide's "Advanced" chapter for detail:
   by the appending database's identity and the destination, removed by
   the recovery or deletion that ends the wedge. Only the library appends
   reserved system events such as these: `append` and `appendInTxn` refuse
-  them, and ingest refuses one in a shape the library does not append
-  (`IngestReservedEventRefused`).
+  them, and ingest stores no event for one in a shape the library does not
+  append, keeping the record in a security finding.
 - **Cross-installation ingest** — a `Destination` is the outbound
-  transport; the inbound ingest path verifies the hash chain against
-  what's stored, extends the provenance chain, and admits events into the
-  same log (flowing into projections identically to local appends).
+  transport; the inbound ingest path verifies each event's hashes, extends
+  the provenance chain, and admits events into the same log (flowing into
+  projections identically to local appends). An anomaly (a hash that does
+  not recompute, an identifier held under another hash, a record the
+  library cannot store as an event, an event of the receiver's own
+  identity) is recorded as a security finding (`system.security_finding`)
+  in the same transaction, and the rest of the delivery is admitted.
   0.x treats one source per aggregate type as canonical; multi-source
   canonicalization is designed but dormant.
-- **Verification** — `verifyEventChain` / `verifyIngestChain` recompute
-  the hash chains from the stored log alone and return a `ChainVerdict`.
+- **Verification** — `verifyChains({from, to})` walks a range of the
+  stored log (the whole log by default): every event's hashes, the storage
+  chain (the first event of the range included), the local sequence
+  numbers holding no event, each origin chain's predecessors, forks and
+  reused origin positions, and causal parents. It returns a
+  `ChainVerificationVerdict` and records each finding as a security finding
+  under the role `walk`, once. It holds no transaction an append waits
+  for, and fixes its upper bound when it starts. `reader.verifyChains`
+  returns the same verdict and records nothing.
 
 ## Cross-process deployments
 

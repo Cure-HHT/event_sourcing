@@ -26,6 +26,29 @@ Future<EventStoreBundle> _bootstrapHub(String path) async {
   );
 }
 
+/// The security findings [store] holds.
+Future<List<Map<String, Object?>>> _findings(EventStore store) async =>
+    <Map<String, Object?>>[
+      for (final e in await store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      ))
+        Map<String, Object?>.from(e.data),
+    ];
+
+/// [envelope] carrying [events] in place of its own.
+BatchEnvelope _withEvents(
+  BatchEnvelope envelope,
+  List<Map<String, Object?>> events,
+) => BatchEnvelope(
+  batchFormatVersion: envelope.batchFormatVersion,
+  batchId: envelope.batchId,
+  senderHop: envelope.senderHop,
+  senderIdentifier: envelope.senderIdentifier,
+  senderSoftwareVersion: envelope.senderSoftwareVersion,
+  sentAt: envelope.sentAt,
+  events: events,
+);
+
 WirePayload _wirePayload(Uint8List bytes) => WirePayload(
   bytes: bytes,
   contentType: BatchEnvelope.wireFormat,
@@ -129,26 +152,49 @@ void main() {
       expect(result, isA<SendPermanent>());
     });
 
-    for (final reason in ReservedEventRefusal.values) {
-      test(
-        'IngestReservedEventRefused (${reason.name}) -> SendPermanent',
-        () async {
-          final stub = _ThrowingEventStore(
-            IngestReservedEventRefused(
-              eventId: 'e-1',
-              entryType: kDestinationWedgedEntryType,
-              reason: reason,
-            ),
-          );
-          final bridge = DownstreamBridge(stub);
-          final result = await bridge.deliver(
-            _wirePayload(Uint8List.fromList(<int>[1])),
-          );
-          expect(result, isA<SendPermanent>());
-          expect((result as SendPermanent).error, contains(reason.name));
-        },
+    test(
+      'a record whose hash does not recompute returns SendOk; the hub '
+      'stores it as received with a hash_mismatch security finding',
+      () async {
+        final hub = await _bootstrapHub(nextPath());
+        final bridge = DownstreamBridge(hub.eventStore);
+        final sealed = SyntheticBatchBuilder().buildSingleEventBatch();
+        final tampered = Map<String, Object?>.from(sealed.events.single)
+          ..['event_hash'] = 'f' * 64;
+        final eventId = tampered['event_id']! as String;
+        final result = await bridge.deliver(
+          _wirePayload(_withEvents(sealed, [tampered]).encode()),
+        );
+        expect(result, isA<SendOk>());
+        expect(
+          await hub.eventStore.reader.findEventById(eventId),
+          isNotNull,
+          reason: 'the suspect event is stored as received',
+        );
+        final findings = await _findings(hub.eventStore);
+        expect(findings.map((f) => f['kind']), <String>['hash_mismatch']);
+        expect(findings.single['aggregates'], <String>['remote-aggregate-1']);
+      },
+    );
+
+    test('a declared reserved entry type under an aggregate type the library '
+        'does not declare for it returns SendOk; the hub keeps the record in '
+        'an event_malformed security finding', () async {
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
+      final sealed = SyntheticBatchBuilder().buildSingleEventBatch(
+        entryType: kSecurityFindingEntryType,
       );
-    }
+      final eventId = sealed.events.single['event_id']! as String;
+      final result = await bridge.deliver(_wirePayload(sealed.encode()));
+      expect(result, isA<SendOk>());
+      expect(await hub.eventStore.reader.findEventById(eventId), isNull);
+      final findings = await _findings(hub.eventStore);
+      expect(findings.map((f) => f['kind']), <String>['event_malformed']);
+      final evidence = findings.single['evidence']! as Map;
+      expect(evidence['reason'], 'reserved_type_undeclared');
+      expect((evidence['record']! as Map)['event_id'], eventId);
+    });
   });
 }
 

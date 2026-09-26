@@ -302,12 +302,13 @@ The currently-trusted inputs are:
   For a database opened over a storage backend the application supplied,
   they also hold only while its persisted state changes only through the
   library's operations and reserved system events are appended only by
-  its own operations. That state is the destination queues, the views
+  the library's own operations. That state is the destination queues, the views
   the library materializes, the records it keeps beside them (fill
   positions, schedules, replay requests, transform failure records,
   wedge records, halt requests, send fences, refill guards, the sender
   channel records, on Sembast the record of the latest sequence the
-  database authored, the registry check record, the database
+  database authored and the record of whether it holds a security
+  finding, the registry check record, the database
   identity, the generation records, the declared library roles, the
   view copies' identities, definition fingerprints, fold watermarks and
   deletion marks, the fencing epoch and the declared configuration), and

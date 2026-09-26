@@ -19,10 +19,23 @@ BootProgress.new: constructor BootProgress({required BootPhase phase, required i
 BootProgress.phase: field BootPhase phase
 BootProgress.toString: String toString()
 BootProgress.total: field int total
-ChainVerdict.failures: field List<ChainFailure> failures
-ChainVerdict.isValid: field bool isValid
-ChainVerdict.new: constructor ChainVerdict({required bool isValid, required List<ChainFailure> failures})
-ChainVerdict.valid: static field ChainVerdict valid
+ChainVerificationFinding.==: bool ==(Object other)
+ChainVerificationFinding.aggregates: field List<String> aggregates
+ChainVerificationFinding.evidence: field Map<String, Object?> evidence
+ChainVerificationFinding.hashCode: int get hashCode
+ChainVerificationFinding.kind: field FindingKind kind
+ChainVerificationFinding.new: constructor ChainVerificationFinding({required FindingKind kind, required Map<String, Object?> evidence, required List<String> aggregates})
+ChainVerificationFinding.toJson: Map<String, Object?> toJson()
+ChainVerificationFinding.toString: String toString()
+ChainVerificationVerdict.==: bool ==(Object other)
+ChainVerificationVerdict.findings: field List<ChainVerificationFinding> findings
+ChainVerificationVerdict.from: field int from
+ChainVerificationVerdict.hashCode: int get hashCode
+ChainVerificationVerdict.isValid: bool get isValid
+ChainVerificationVerdict.new: constructor ChainVerificationVerdict({required int from, required int to, required List<ChainVerificationFinding> findings, required int unresolvedPredecessors})
+ChainVerificationVerdict.to: field int to
+ChainVerificationVerdict.toString: String toString()
+ChainVerificationVerdict.unresolvedPredecessors: field int unresolvedPredecessors
 DeliveryStatus.destinations: field Map<String, DestinationDeliveryStatus> destinations
 DeliveryStatus.drainer: field DrainerDeclaration? drainer
 DeliveryStatus.heartbeat: field DrainHeartbeat? heartbeat
@@ -86,8 +99,7 @@ EventStore.runTransaction: Future<T> runTransaction<T>(Future<T> Function(Transa
 EventStore.securityContexts: field SecurityContextStore securityContexts
 EventStore.source: field Source source
 EventStore.subscribe: Stream<Update<T>> subscribe<T>(SubscriptionFilter filter, SubscriptionMode<T> mode)
-EventStore.verifyEventChain: Future<ChainVerdict> verifyEventChain(StoredEvent event)
-EventStore.verifyIngestChain: Future<ChainVerdict> verifyIngestChain({int fromSequenceNumber = 0, int? toSequenceNumber})
+EventStore.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 EventStoreBundle.destinations: field DestinationRegistry destinations
 EventStoreBundle.entryTypes: field EntryTypeRegistry entryTypes
 EventStoreBundle.eventStore: field EventStore eventStore
@@ -101,10 +113,11 @@ IdempotencyStore.sweepExpired: Future<int> sweepExpired({DateTime? before})
 IngestBatchResult.batchId: field String batchId
 IngestBatchResult.events: field List<PerEventIngestOutcome> events
 IngestBatchResult.new: constructor IngestBatchResult({required String batchId, required List<PerEventIngestOutcome> events})
-PerEventIngestOutcome.eventId: field String eventId
-PerEventIngestOutcome.new: constructor PerEventIngestOutcome({required String eventId, required IngestOutcome outcome, required String resultHash})
+PerEventIngestOutcome.eventId: field String? eventId
+PerEventIngestOutcome.findingIds: field List<String> findingIds
+PerEventIngestOutcome.new: constructor PerEventIngestOutcome({required String? eventId, required IngestOutcome outcome, required String? resultHash, List<String> findingIds = const <String>[]})
 PerEventIngestOutcome.outcome: field IngestOutcome outcome
-PerEventIngestOutcome.resultHash: field String resultHash
+PerEventIngestOutcome.resultHash: field String? resultHash
 PostgresIdempotencyStore.listEntries: Future<List<IdempotencyEntry>> listEntries()
 PostgresIdempotencyStore.lookup: Future<IdempotencyEntry?> lookup(String actionName, String principalId, String key, {DateTime? now})
 PostgresIdempotencyStore.over: constructor PostgresIdempotencyStore.over(Pool<void> pool)
@@ -161,6 +174,7 @@ StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn(
 StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
 StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
 StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
+StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()
 StoredEvent.aggregateId: field String aggregateId
 StoredEvent.aggregateType: field String aggregateType
@@ -245,4 +259,5 @@ _StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn
 _StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
 _StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
 _StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
+_StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 _StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()

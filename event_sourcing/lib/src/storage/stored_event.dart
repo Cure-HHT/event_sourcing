@@ -400,11 +400,12 @@ class StoredEvent {
   /// parsed from a record passes unless its metadata was changed since; one
   /// built with the constructor fails when any of these does not hold.
   // Implements: EVS-DEV-event-record/H
-  // every append and ingestEvent refuse an event whose provenance entry
-  //   lacks database_id or library_version, naming the field.
+  // every append refuses, naming the field, and ingestEvent stores no event
+  //   for, an event whose provenance entry lacks database_id or
+  //   library_version.
   // Implements: EVS-DEV-causal-parents/B
-  // every append and ingestEvent refuse an event that carries no causal
-  //   object, naming the field.
+  // every append refuses, naming the field, and ingestEvent stores no event
+  //   for, an event that carries no causal object.
   @internal
   void requireWellFormedRecord() {
     if (causal == null) {

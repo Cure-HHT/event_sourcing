@@ -736,8 +736,9 @@ class DestinationRegistry {
   /// configuration again), restart the drainer with a changed
   /// `configurationVersion`, so its fill proceeds and removes the guard, or
   /// delete the destination. `DestinationRegistry.readDeliveryStatus` shows
-  /// the guard. A wedge with no halt purpose, or purpose
-  /// [HaltPurpose.pause], is recoverable at any time.
+  /// the guard. A wedge with no halt purpose, with purpose
+  /// [HaltPurpose.pause], or with a purpose this build does not know, is
+  /// recoverable at any time.
   ///
   /// The recovery event records the drain epoch, the configuration the
   /// lock holder declares for the destination and its fingerprint (null
@@ -814,7 +815,9 @@ class DestinationRegistry {
     // recovery of a reconfigure halt is refused while the drain-lock holder
     //   declares the configuration recorded when the halt was honoured, or
     //   has declared none since the lock changed hands; an accepted one
-    //   leaves a refill guard, recorded in the recovery event.
+    //   leaves a refill guard, recorded in the recovery event. A wedge whose
+    //   halt purpose is any other, one this build does not know included,
+    //   is recovered with no configuration check.
     final wedge = await _backend.readWedgeRecordTxn(txn, destinationId);
     final epoch = await _backend.readDrainEpochTxn(txn);
     final stored = await _backend.readDrainerDeclarationTxn(txn);
@@ -1000,8 +1003,9 @@ class DestinationRegistry {
   /// wedge consumes the open request, whatever its cause, and records it.
   ///
   /// Refused, with nothing written but the registry check record:
-  /// - `ArgumentError` when the database holds no schedule for
-  ///   [destinationId];
+  /// - `ArgumentError` when [purpose] is not one this build requests a halt
+  ///   with ([HaltPurpose.values]), or when the database holds no schedule
+  ///   for [destinationId];
   /// - `StateError` while a request is open for the destination, or while
   ///   its queue head is wedged (the halt is already in effect).
   ///
@@ -1020,6 +1024,25 @@ class DestinationRegistry {
     required HaltPurpose purpose,
   }) => _run<String>('requestHalt', (txn, collector) async {
     const op = 'requestHalt';
+    // Implements: EVS-DEV-destination-drain/Q
+    // a halt request event records the purpose pause or reconfigure; a
+    //   purpose this build does not know is read, never requested.
+    if (!purpose.isKnown) {
+      return _decideWithoutChange<String>(
+        txn,
+        op: op,
+        destinationId: destinationId,
+        check: 'refused_unknown_purpose',
+        outcome: _Refused<String>(
+          ArgumentError.value(
+            purpose.wire,
+            'purpose',
+            'is not a halt purpose this library requests '
+                '(${HaltPurpose.values.map((p) => p.wire).join(', ')})',
+          ),
+        ),
+      );
+    }
     final schedule = await _backend.readScheduleTxn(txn, destinationId);
     if (schedule == null) return _refuseUnknown<String>(txn, op, destinationId);
     final open = await _backend.readHaltRequestTxn(txn, destinationId);
@@ -1183,8 +1206,9 @@ class DestinationRegistry {
 
   /// [request] with its request event, when the log holds a
   /// `system.destination_halt_requested` event with its identifier that
-  /// names [destinationId] and this registry's database and records a known
-  /// purpose; null otherwise.
+  /// names [destinationId] and this registry's database and records a
+  /// purpose; null otherwise. A purpose this build does not know is carried
+  /// verbatim, and the request is honoured as a halt.
   Future<_VerifiedHalt?> _verifiedHaltTxn(
     Transaction txn,
     String destinationId,
@@ -1202,11 +1226,7 @@ class DestinationRegistry {
     }
     final purpose = event.data['purpose'];
     if (purpose is! String) return null;
-    try {
-      return _VerifiedHalt(request, event, HaltPurpose.fromWire(purpose));
-    } on FormatException {
-      return null;
-    }
+    return _VerifiedHalt(request, event, HaltPurpose.fromWire(purpose));
   }
 
   /// Wedge [destinationId]'s pending queue head [rowId] inside [txn]: mark

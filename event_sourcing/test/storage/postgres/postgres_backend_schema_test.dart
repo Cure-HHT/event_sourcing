@@ -52,6 +52,83 @@ void main() {
       );
     });
 
+    // Verifies: EVS-DEV-postgres-backend/G
+    // Verifies: EVS-DEV-chain-verification/B
+    // Verifies: EVS-DEV-causal-parents/H
+    test('provisioning creates the non-unique event-table indexes the chain '
+        'lookups and the latest eligible version read', () async {
+      await db.provision();
+
+      final conn = await db.connectAdmin();
+      addTearDown(conn.close);
+
+      final rows = await conn.execute(
+        Sql.named(
+          'SELECT indexname, indexdef FROM pg_indexes '
+          'WHERE schemaname = current_schema() AND tablename = @t',
+        ),
+        parameters: {'t': 'events'},
+      );
+      final defs = <String, String>{
+        for (final r in rows) r[0]! as String: r[1]! as String,
+      };
+      const expected = <String, List<String>>{
+        'events_sealed_hash_idx': ['sealed_hash', 'sequence_number'],
+        'events_predecessor_idx': [
+          'origin_database_id',
+          'previous_event_hash',
+          'sequence_number',
+        ],
+        'events_origin_position_idx': [
+          'origin_database_id',
+          'origin_position',
+          'sequence_number',
+        ],
+        'events_held_as_authored_idx': [
+          'held_as_authored_by',
+          'sequence_number',
+        ],
+        'events_latest_eligible_idx': ['aggregate_id', 'sequence_number'],
+      };
+      for (final entry in expected.entries) {
+        final def = defs[entry.key];
+        expect(def, isNotNull, reason: '${entry.key} is missing');
+        expect(def, isNot(contains('UNIQUE')), reason: entry.key);
+        for (final column in entry.value) {
+          expect(def, contains(column), reason: entry.key);
+        }
+      }
+      expect(defs['events_latest_eligible_idx'], contains("'version'"));
+    });
+
+    // Verifies: EVS-DEV-security-findings/E
+    // the once-per-detector lookup is served by a non-unique partial index
+    //   over the finding events' holder and identity.
+    test(
+      'provisioning creates the non-unique security-finding index',
+      () async {
+        await db.provision();
+
+        final conn = await db.connectAdmin();
+        addTearDown(conn.close);
+
+        final rows = await conn.execute(
+          Sql.named(
+            'SELECT indexdef FROM pg_indexes '
+            'WHERE schemaname = current_schema() AND tablename = @t '
+            'AND indexname = @i',
+          ),
+          parameters: {'t': 'events', 'i': 'events_security_finding_idx'},
+        );
+        expect(rows, hasLength(1), reason: 'events_security_finding_idx');
+        final def = rows.single[0]! as String;
+        expect(def, isNot(contains('UNIQUE')));
+        expect(def, contains('held_as_authored_by'));
+        expect(def, contains('finding_id'));
+        expect(def, contains("'system.security_finding'"));
+      },
+    );
+
     test('view_rows has the JSONB-blob shape with composite PK', () async {
       final backend = await db.open(provision: true);
       addTearDown(backend.close);

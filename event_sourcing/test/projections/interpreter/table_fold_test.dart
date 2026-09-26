@@ -61,6 +61,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('permission_granted', {
             'role': 'admin',
             'permission': 'users.invite',
@@ -92,6 +93,7 @@ void main() {
             txn: txn,
             backend: backend,
             spec: _spec,
+            integrity: const <String>[],
             event: _ev('permission_granted', {
               'role': 'admin',
               'permission': 'users.invite',
@@ -136,6 +138,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('permission_granted', {
             'role': 'editor',
             'permission': 'notes.edit',
@@ -157,6 +160,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('permission_granted', {
             'role': 'admin',
             'permission': 'users.invite',
@@ -167,6 +171,7 @@ void main() {
           txn: txn,
           backend: backend,
           spec: _spec,
+          integrity: const <String>[],
           event: _ev('permission_revoked', {
             'role': 'admin',
             'permission': 'users.invite',
@@ -194,6 +199,7 @@ void main() {
             txn: txn,
             backend: backend,
             spec: _spec,
+            integrity: const <String>[],
             event: _ev('permission_revoked', {
               'role': 'admin',
               'permission': 'users.invite',

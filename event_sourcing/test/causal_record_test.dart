@@ -10,12 +10,10 @@ Map<String, Object?> _valid({
   Object? kind = 'version',
   Object? eligible = true,
   Object? parents,
-  Object? reconciles,
 }) => <String, Object?>{
   'kind': kind,
   'eligible': eligible,
   'parents': parents ?? <Object?>[_ref('a'), _ref('b')],
-  'reconciles': reconciles,
 };
 
 Matcher _refusedNaming(String field) => throwsA(
@@ -25,13 +23,12 @@ Matcher _refusedNaming(String field) => throwsA(
 void main() {
   group('CausalRecord.fromJson accepts the causal shape', () {
     // Verifies: EVS-DEV-causal-parents/A
-    test('a version with ascending parents and no reconciles', () {
+    test('a version with ascending parents', () {
       final record = CausalRecord.fromJson(_valid());
       expect(record.kind, CausalKind.version);
       expect(record.eligible, isTrue);
       expect(record.parents.map((p) => p.eventId), <String>['a', 'b']);
       expect(record.parents.first.eventHash, 'hash-a');
-      expect(record.reconciles, isNull);
     });
 
     // Verifies: EVS-DEV-causal-parents/A
@@ -45,16 +42,9 @@ void main() {
     });
 
     // Verifies: EVS-DEV-causal-parents/A
-    test('a reconciliation naming skip events in ascending order', () {
-      final record = CausalRecord.fromJson(
-        _valid(reconciles: <Object?>[_ref('s1'), _ref('s2')]),
-      );
-      expect(record.reconciles!.map((r) => r.eventId), <String>['s1', 's2']);
-    });
-
-    // Verifies: EVS-DEV-causal-parents/A
-    test('toJson emits the decoded map verbatim', () {
-      final json = _valid(reconciles: <Object?>[_ref('s1')]);
+    test('toJson emits the decoded map verbatim, holding exactly kind, '
+        'eligible and parents', () {
+      final json = _valid();
       final record = CausalRecord.fromJson(json);
       expect(record.toJson(), json);
 
@@ -69,8 +59,15 @@ void main() {
         'parents': <Object?>[
           <String, Object?>{'event_id': 'a', 'event_hash': 'h'},
         ],
-        'reconciles': null,
       });
+      expect(
+        built.toJson().keys,
+        unorderedEquals(<String>['kind', 'eligible', 'parents']),
+      );
+      expect(
+        record.toJson().keys,
+        unorderedEquals(<String>['kind', 'eligible', 'parents']),
+      );
       expect(CausalRecord.fromJson(built.toJson()), built);
     });
   });
@@ -85,8 +82,8 @@ void main() {
     // Verifies: EVS-DEV-causal-parents/A
     test('a missing or extra key', () {
       expect(
-        () => CausalRecord.fromJson(_valid()..remove('reconciles')),
-        _refusedNaming('causal.reconciles'),
+        () => CausalRecord.fromJson(_valid()..remove('parents')),
+        _refusedNaming('causal.parents'),
       );
       expect(
         () => CausalRecord.fromJson(_valid()..remove('kind')),
@@ -172,7 +169,7 @@ void main() {
     });
 
     // Verifies: EVS-DEV-causal-parents/A
-    test('parents or reconciles not in ascending event_id order', () {
+    test('parents not in ascending event_id order', () {
       expect(
         () => CausalRecord.fromJson(
           _valid(parents: <Object?>[_ref('b'), _ref('a')]),
@@ -185,30 +182,26 @@ void main() {
         ),
         _refusedNaming('causal.parents[1]'),
       );
-      expect(
-        () => CausalRecord.fromJson(
-          _valid(reconciles: <Object?>[_ref('s2'), _ref('s1')]),
-        ),
-        _refusedNaming('causal.reconciles[1]'),
-      );
     });
 
     // Verifies: EVS-DEV-causal-parents/A
-    test('an empty or malformed reconciles list', () {
-      expect(
-        () => CausalRecord.fromJson(_valid(reconciles: <Object?>[])),
-        _refusedNaming('causal.reconciles'),
-      );
-      expect(
-        () => CausalRecord.fromJson(_valid(reconciles: 's1')),
-        _refusedNaming('causal.reconciles'),
-      );
+    test('a reconciles key, whatever its value', () {
+      for (final value in <Object?>[
+        null,
+        <Object?>[],
+        <Object?>[_ref('s1')],
+      ]) {
+        expect(
+          () => CausalRecord.fromJson(_valid()..['reconciles'] = value),
+          _refusedNaming('causal.reconciles'),
+        );
+      }
     });
   });
 
   group('the CausalRecord constructor', () {
     // Verifies: EVS-DEV-causal-parents/A
-    test('refuses parents out of order and an empty reconciles', () {
+    test('refuses parents out of order', () {
       expect(
         () => CausalRecord(
           kind: CausalKind.version,
@@ -217,15 +210,6 @@ void main() {
             CausalRef(eventId: 'b', eventHash: 'h'),
             CausalRef(eventId: 'a', eventHash: 'h'),
           ],
-        ),
-        throwsArgumentError,
-      );
-      expect(
-        () => CausalRecord(
-          kind: CausalKind.version,
-          eligible: true,
-          parents: const <CausalRef>[],
-          reconciles: const <CausalRef>[],
         ),
         throwsArgumentError,
       );

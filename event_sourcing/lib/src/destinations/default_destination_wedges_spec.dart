@@ -2,7 +2,8 @@
 // the library's default destination-wedges view TREATS a destination of a
 //   database as wedged from the wedge event that names it until a recovery
 //   event or a deletion event that names it, deriving its rows solely from
-//   those events.
+//   those events, other than those whose originating database is the
+//   holding database and that it does not hold as authored.
 // Implements: EVS-DEV-destination-drain/M
 // the library's default destination-wedges view KEYS its rows by the
 //   database identity the event names together with the destination
@@ -12,6 +13,7 @@ import 'package:event_sourcing/src/projections/primitives/row_data.dart';
 import 'package:event_sourcing/src/projections/primitives/row_key.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
+import 'package:event_sourcing/src/storage/stored_event.dart';
 
 /// The library's default destination-wedges view: a Table view with one row
 /// per wedged destination, folded from the wedge events and the recovery and
@@ -41,6 +43,11 @@ import 'package:event_sourcing/src/security/system_entry_types.dart';
 /// the peer's queue only when the peer forwards all three event types in
 /// order. `StorageBackend.wedgedFifos` reads the local queues themselves.
 ///
+/// The view folds no event whose originating database is the holding
+/// database and that the holding database does not hold as authored: a
+/// copy of the holding database's own audit that reached it by ingest
+/// steers none of its rows.
+///
 /// `EventStore.open` registers this spec; a consumer never needs to. A
 /// projection registry passed to `open` may hold this same object under the
 /// view name, and no other spec.
@@ -59,6 +66,7 @@ const TableProjectionSpec defaultDestinationWedgesSpec = TableProjectionSpec(
       kDestinationDeletedEventType,
     },
     aggregateTypes: <String>{kDestinationAuditAggregateType},
+    predicate: _notReceivedFromOwnIdentity,
   ),
   insertEventTypes: <String>{kDestinationWedgedEventType},
   removeEventTypes: <String>{
@@ -89,3 +97,19 @@ const TableProjectionSpec defaultDestinationWedgesSpec = TableProjectionSpec(
     'configuration',
   ]),
 );
+
+/// False for a stored copy of an event the holding database's own identity
+/// originated that the holding database does not hold as authored: its
+/// provenance holds more than the originator entry, and its last entry,
+/// which the holding database stamped when it stored the copy, names the
+/// database the originator entry names. Such a copy reached the log by
+/// ingest (a second live copy of the database appended it, or a peer forged
+/// it), and the view folds none of it.
+bool _notReceivedFromOwnIdentity(StoredEvent event) {
+  final provenance = event.metadata['provenance'];
+  if (provenance is! List || provenance.length < 2) return true;
+  final first = provenance.first;
+  final last = provenance.last;
+  if (first is! Map || last is! Map) return true;
+  return first['database_id'] != last['database_id'];
+}

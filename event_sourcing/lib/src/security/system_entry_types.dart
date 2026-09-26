@@ -214,12 +214,54 @@ const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
 @internal
 const String kViewSnapshotPromotedEventType = 'finalized';
 
-/// Reserved set of ids. `EventStore.open` registers every definition of
-/// [kSystemEntryTypes] the caller's registry lacks, and refuses
-/// (`ArgumentError` with an explicit "reserved" message) a caller registry
-/// that holds one of these ids under any definition but the library's own.
-/// The event store's public append operations refuse every one of them:
-/// only the library appends reserved system events.
+/// Reserved id for the security finding a detection point records when it
+/// meets an integrity anomaly.
+// Implements: EVS-DEV-security-findings/A
+// the reserved entry type system.security_finding, with the one event type
+//   security_finding_recorded.
+const String kSecurityFindingEntryType = 'system.security_finding';
+
+/// Aggregate type of every security finding
+/// ([kSecurityFindingEntryType]). The aggregate id is the finding's
+/// `finding_id`.
+const String kSecurityFindingAggregateType = 'security_finding';
+
+/// Event type of the security finding ([kSecurityFindingEntryType]).
+const String kSecurityFindingRecordedEventType = 'security_finding_recorded';
+
+/// The reserved entry types outside the `system.` prefix. With every
+/// identifier beginning with `system.`, they form the reserved namespace
+/// ([isReservedEntryType]), which no later release extends.
+const Set<String> kReservedFixedEntryTypeIds = <String>{
+  kSecurityContextRedactedEntryType,
+  kSecurityContextCompactedEntryType,
+  kSecurityContextPurgedEntryType,
+  kLibVersionInitializedEntryType,
+  kLibVersionChangedEntryType,
+  kIngestAuditEntryType,
+};
+
+/// Whether [entryType] is reserved for the library: it begins with
+/// `system.`, is one of [kReservedFixedEntryTypeIds], or is a reserved entry
+/// type this release declares ([kReservedSystemEntryTypeIds]). An entry type
+/// in the namespace that no release this build knows declares is reserved
+/// all the same: a later release of the data-format major may declare it.
+// Implements: EVS-DEV-destination-drain/L
+// the reserved entry-type namespace is every identifier beginning with
+//   system. together with the six fixed identifiers.
+bool isReservedEntryType(String entryType) =>
+    entryType.startsWith('system.') ||
+    kReservedFixedEntryTypeIds.contains(entryType) ||
+    kReservedSystemEntryTypeIds.contains(entryType);
+
+/// The reserved entry types this release declares. `EventStore.open`
+/// registers every definition of [kSystemEntryTypes] the caller's registry
+/// lacks, and refuses (`ArgumentError` with an explicit "reserved" message)
+/// a caller registry that holds one of these ids under any definition but
+/// the library's own, or any other entry type of the reserved namespace
+/// ([isReservedEntryType]). The event store's public append operations
+/// refuse every entry type of the namespace: only the library appends
+/// reserved system events.
 ///
 /// Also includes the substrate-internal lib-version boot events
 /// (`lib_version_initialized`, `lib_version_changed`) so that
@@ -244,10 +286,12 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kLibVersionChangedEntryType,
   kIngestAuditEntryType,
   kViewSnapshotPromotedEntryType,
+  kSecurityFindingEntryType,
 };
 
 /// The reserved system entry-type definitions covering security-
-/// context lifecycle events (redacted / compacted / purged), config-
+/// context lifecycle events (redacted / compacted / purged), security
+/// findings, config-
 /// change audit events (destination registration / start_date / end_date /
 /// deletion / wedge recovery / halt request / halt cancellation, plus
 /// retention-policy-applied per-sweep), the drainer's destination wedge
@@ -485,6 +529,18 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
       ),
     ],
   ),
+  EntryTypeDefinition(
+    id: kSecurityFindingEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Security Finding',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityFindingRecordedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
 ];
 
 /// The one aggregate type and the event types the library appends a
@@ -507,8 +563,8 @@ class ReservedEventShape {
 // Implements: EVS-DEV-destination-drain/L
 // the library declares the aggregate type and event types of every
 //   reserved entry type, changing them only with a data-format major step;
-//   every library emitter appends in a declared shape, and ingest refuses a
-//   reserved event in any other shape.
+//   every library emitter appends in a declared shape, and ingest stores no
+//   event for a reserved event of a declared entry type in any other shape.
 /// The declared shape of every reserved system entry type, keyed by entry
 /// type id: the library appends each reserved entry type only with its
 /// aggregate type and one of its event types, and no two reserved entry
@@ -591,6 +647,10 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
       kViewSnapshotPromotedEntryType: ReservedEventShape(
         kLibAggregateType,
         <String>{kViewSnapshotPromotedEventType},
+      ),
+      kSecurityFindingEntryType: ReservedEventShape(
+        kSecurityFindingAggregateType,
+        <String>{kSecurityFindingRecordedEventType},
       ),
     };
 

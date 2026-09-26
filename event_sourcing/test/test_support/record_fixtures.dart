@@ -18,7 +18,6 @@ const Map<String, Object?> kRootVersionCausalJson = <String, Object?>{
   'kind': 'version',
   'eligible': true,
   'parents': <Object?>[],
-  'reconciles': null,
 };
 
 /// [kRootVersionCausalJson] decoded.
