@@ -10,6 +10,7 @@
 
 import 'package:provenance/src/batch_context.dart';
 import 'package:provenance/src/iso8601_instant.dart';
+import 'package:provenance/src/provenance_delivery.dart';
 
 /// One hop's attribution in a cross-system event's chain-of-custody.
 ///
@@ -35,7 +36,7 @@ import 'package:provenance/src/iso8601_instant.dart';
 // received_at timestamp form enforced at the JSON boundary;
 // identifier and software_version shapes are caller obligations by design.
 // arrival_hash, previous_ingest_hash, ingest_sequence_number, batch_context,
-// origin_sequence_number.
+// origin_sequence_number, delivery.
 class ProvenanceEntry {
   const ProvenanceEntry({
     required this.hop,
@@ -50,6 +51,7 @@ class ProvenanceEntry {
     this.originSequenceNumber,
     this.libraryVersion,
     this.databaseId,
+    this.delivery,
   }) : _source = null;
 
   const ProvenanceEntry._decoded({
@@ -65,6 +67,7 @@ class ProvenanceEntry {
     required this.originSequenceNumber,
     required this.libraryVersion,
     required this.databaseId,
+    required this.delivery,
     required Map<String, Object?> source,
   }) : _source = source;
 
@@ -112,6 +115,16 @@ class ProvenanceEntry {
       }
       batchContext = BatchContext.fromJson(batchContextRaw);
     }
+    final deliveryRaw = json['delivery'];
+    ProvenanceDelivery? delivery;
+    if (deliveryRaw != null) {
+      if (deliveryRaw is! Map<String, Object?>) {
+        throw const FormatException(
+          'ProvenanceEntry: "delivery" must be an object when present',
+        );
+      }
+      delivery = ProvenanceDelivery.fromJson(deliveryRaw);
+    }
     return ProvenanceEntry._decoded(
       hop: hop,
       receivedAt: receivedAt,
@@ -125,6 +138,7 @@ class ProvenanceEntry {
       originSequenceNumber: originSequenceNumber,
       libraryVersion: libraryVersion,
       databaseId: databaseId,
+      delivery: delivery,
       source: _deepCopy(json) as Map<String, Object?>,
     );
   }
@@ -171,6 +185,11 @@ class ProvenanceEntry {
   /// stamped it.
   final String? databaseId;
 
+  /// The delivery the stamping receiver ingested the event from, on a
+  /// receiver-hop entry of an event ingested from a native delivery; null
+  /// otherwise.
+  final ProvenanceDelivery? delivery;
+
   /// The JSON this entry was decoded from, deep-copied at decode; null for
   /// an entry built with the constructor.
   final Map<String, Object?>? _source;
@@ -202,6 +221,7 @@ class ProvenanceEntry {
       'origin_sequence_number': originSequenceNumber,
     if (libraryVersion != null) 'library_version': libraryVersion,
     if (databaseId != null) 'database_id': databaseId,
+    if (delivery != null) 'delivery': delivery!.toJson(),
   };
 
   @override
@@ -219,7 +239,8 @@ class ProvenanceEntry {
           batchContext == other.batchContext &&
           originSequenceNumber == other.originSequenceNumber &&
           libraryVersion == other.libraryVersion &&
-          databaseId == other.databaseId;
+          databaseId == other.databaseId &&
+          delivery == other.delivery;
 
   @override
   int get hashCode => Object.hash(
@@ -235,6 +256,7 @@ class ProvenanceEntry {
     originSequenceNumber,
     libraryVersion,
     databaseId,
+    delivery,
   );
 
   @override
@@ -251,7 +273,8 @@ class ProvenanceEntry {
       'batchContext: $batchContext, '
       'originSequenceNumber: $originSequenceNumber, '
       'libraryVersion: $libraryVersion, '
-      'databaseId: $databaseId)';
+      'databaseId: $databaseId, '
+      'delivery: $delivery)';
 }
 
 String _requireString(Map<String, Object?> json, String key) {

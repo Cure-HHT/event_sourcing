@@ -12,7 +12,9 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
         checkReservedAppend,
         kDestinationAuditAggregateType,
         kDestinationAuditEntryTypes,
+        kIngestAuditAggregateType,
         kIngestAuditEntryType,
+        kIngestDeliveryAcceptedEventType,
         kReservedEventShapes;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -49,6 +51,7 @@ const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
       },
       3: <String, List<String>>{
         'cause': <String>[
+          'acknowledgement_invalid',
           'operator_halt',
           'permanent_refusal',
           'retry_budget_exhausted',
@@ -211,7 +214,7 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
         ],
         'ingest-audit': <Object>[
           'ingest-audit',
-          <String>['ingest.duplicate_received'],
+          <String>['ingest.delivery_accepted', 'ingest.duplicate_received'],
         ],
         'view_snapshot_promoted': <Object>[
           '_lib',
@@ -220,6 +223,14 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
         'system.security_finding': <Object>[
           'security_finding',
           <String>['security_finding_recorded'],
+        ],
+        'system.destination_channel_resumed': <Object>[
+          'system_destination',
+          <String>['destination_channel_resumed'],
+        ],
+        'system.destination_sender_succeeded': <Object>[
+          'system_destination',
+          <String>['destination_sender_succeeded'],
         ],
       },
     };
@@ -294,6 +305,10 @@ void main() {
         kDestinationWedgedEntryType: kDestinationWedgedEventType,
         kDestinationHaltRequestedEntryType: kDestinationHaltRequestedEventType,
         kDestinationHaltCancelledEntryType: kDestinationHaltCancelledEventType,
+        kDestinationChannelResumedEntryType:
+            kDestinationChannelResumedEventType,
+        kDestinationSenderSucceededEntryType:
+            kDestinationSenderSucceededEventType,
       };
       expect(kDestinationAuditEntryTypes.toSet(), byKind.keys.toSet());
       expect(kDestinationAuditEntryTypes.toSet(), <String>{
@@ -351,11 +366,17 @@ void main() {
       }
     });
 
-    test('the ingest audit declares only the duplicate-received event type; '
-        'no reserved shape admits ingest.batch_rejected', () {
+    // Verifies: EVS-DEV-delivery-receiver/S
+    // ingest.delivery_accepted is an event type of the reserved ingest audit
+    //   entry type.
+    test('the ingest audit declares the duplicate-received and the '
+        'delivery-accepted event types; no reserved shape admits '
+        'ingest.batch_rejected', () {
       expect(kReservedEventShapes[kIngestAuditEntryType]!.eventTypes, <String>{
         'ingest.duplicate_received',
+        'ingest.delivery_accepted',
       });
+      expect(kIngestDeliveryAcceptedEventType, 'ingest.delivery_accepted');
       for (final shape in kReservedEventShapes.values) {
         expect(
           shape.admits(shape.aggregateType, 'ingest.batch_rejected'),
@@ -377,6 +398,154 @@ void main() {
         kReservedEventShapes[kSecurityContextPurgedEntryType]!.eventTypes,
         <String>{kSecurityContextPurgedEventType},
       );
+    });
+  });
+
+  group('delivery channel reserved declarations', () {
+    const newTypes = <String, (String, String)>{
+      kIngestAuditEntryType: (
+        kIngestAuditAggregateType,
+        kIngestDeliveryAcceptedEventType,
+      ),
+      kDestinationChannelResumedEntryType: (
+        kDestinationAuditAggregateType,
+        kDestinationChannelResumedEventType,
+      ),
+      kDestinationSenderSucceededEntryType: (
+        kDestinationAuditAggregateType,
+        kDestinationSenderSucceededEventType,
+      ),
+    };
+
+    // Verifies: EVS-DEV-resume-event/H
+    // the resume event and the succession event are reserved destination
+    //   audit entry types, system.destination_channel_resumed and
+    //   system.destination_sender_succeeded, each with its own event type.
+    test('the resume and succession events are reserved destination audits '
+        'with event types of their own', () {
+      expect(
+        kDestinationChannelResumedEntryType,
+        'system.destination_channel_resumed',
+      );
+      expect(
+        kDestinationSenderSucceededEntryType,
+        'system.destination_sender_succeeded',
+      );
+      expect(
+        kDestinationChannelResumedEventType,
+        isNot(kDestinationSenderSucceededEventType),
+      );
+      for (final id in <String>[
+        kDestinationChannelResumedEntryType,
+        kDestinationSenderSucceededEntryType,
+      ]) {
+        expect(isReservedEntryType(id), isTrue, reason: id);
+        expect(kReservedSystemEntryTypeIds, contains(id));
+        expect(kDestinationAuditEntryTypes, contains(id));
+      }
+    });
+
+    // Verifies: EVS-DEV-delivery-receiver/S
+    // ingest.delivery_accepted belongs to the reserved ingest audit, which
+    //   the public append operations refuse.
+    test('the public append refuses each new reserved type', () async {
+      final db = await newDatabaseFactoryMemory().openDatabase(
+        'reserved-channel-${DateTime.now().microsecondsSinceEpoch}.db',
+      );
+      final backend = SembastBackend(database: db);
+      addTearDown(backend.close);
+      final store = await EventStore.open(
+        storage: ApplicationSuppliedStorage(
+          backend,
+          SembastSecurityContextStore(backend: backend),
+        ),
+        entryTypes: EntryTypeRegistry(),
+        source: const Source(
+          hopId: 'server',
+          identifier: 'channel-install',
+          softwareVersion: 'test@1.0.0',
+        ),
+      );
+      addTearDown(store.close);
+      for (final entry in newTypes.entries) {
+        await expectLater(
+          store.append(
+            entryType: entry.key,
+            aggregateId: 'a',
+            aggregateType: entry.value.$1,
+            eventType: entry.value.$2,
+            data: const <String, Object?>{'id': 'x', 'database_id': 'db'},
+            initiator: const UserInitiator('u'),
+          ),
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message.toString(),
+              'message',
+              contains('reserved entry-type namespace'),
+            ),
+          ),
+          reason: entry.key,
+        );
+        expect(await store.reader.findAllEvents(entryType: entry.key), isEmpty);
+      }
+    });
+
+    test('the reserved append checks the shape of each new type', () {
+      for (final entry in newTypes.entries) {
+        checkReservedAppend(
+          entryType: entry.key,
+          aggregateType: entry.value.$1,
+          eventType: entry.value.$2,
+          data: const <String, Object?>{'id': 'x', 'database_id': 'db'},
+        );
+        expect(
+          () => checkReservedAppend(
+            entryType: entry.key,
+            aggregateType: 'note',
+            eventType: entry.value.$2,
+            data: const <String, Object?>{'id': 'x', 'database_id': 'db'},
+          ),
+          throwsArgumentError,
+          reason: entry.key,
+        );
+      }
+      // A per-channel ingest audit aggregate id is admitted: the shape
+      // constrains the aggregate type and event type only.
+      expect(
+        kReservedEventShapes[kIngestAuditEntryType]!.admits(
+          kIngestAuditAggregateType,
+          kIngestDeliveryAcceptedEventType,
+        ),
+        isTrue,
+      );
+      for (final id in <String>[
+        kDestinationChannelResumedEntryType,
+        kDestinationSenderSucceededEntryType,
+      ]) {
+        expect(
+          () => checkReservedAppend(
+            entryType: id,
+            aggregateType: kDestinationAuditAggregateType,
+            eventType: kReservedEventShapes[id]!.eventTypes.single,
+            data: const <String, Object?>{'id': 'x'},
+          ),
+          throwsArgumentError,
+          reason: '$id without a database identity',
+        );
+      }
+    });
+
+    // Verifies: EVS-PRD-destinations/Q
+    // the wedge event can record an acceptance that carries no receiver
+    //   record as its cause.
+    test('the acknowledgement_invalid wedge cause', () {
+      expect(WedgeCause.acknowledgementInvalid.wire, 'acknowledgement_invalid');
+      expect(WedgeCause.values, contains(WedgeCause.acknowledgementInvalid));
+      expect(
+        WedgeCause.fromWire('acknowledgement_invalid'),
+        WedgeCause.acknowledgementInvalid,
+      );
+      expect(WedgeCause.acknowledgementInvalid.isKnown, isTrue);
     });
   });
 

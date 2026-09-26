@@ -5,6 +5,10 @@
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/event_store.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show
+        kDestinationChannelResumedEntryType,
+        kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -387,3 +391,12 @@ Future<void> fillWithScheduleForTest(
     flushHeld: flushHeld,
   );
 }
+
+/// Not yet built: the destination audit kinds no operation of this build
+/// appends (the drainer's resume event and the restore's succession
+/// event), so no fixture can append one. Fixtures that append one audit of
+/// every kind leave them out; delete this set when they have emitters.
+const Set<String> destinationAuditsWithoutEmitter = <String>{
+  kDestinationChannelResumedEntryType,
+  kDestinationSenderSucceededEntryType,
+};

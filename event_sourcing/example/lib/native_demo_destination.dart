@@ -75,6 +75,10 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   bool get serializesNatively => true;
 
+  // The demo's in-process hub serves no pull.
+  @override
+  ChannelPull? get channelPull => null;
+
   @override
   String get wireFormat => 'esd/batch@2';
 

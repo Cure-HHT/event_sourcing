@@ -295,7 +295,8 @@ void main() {
 
       final destinationAuditEntryTypes = kReservedSystemEntryTypeIds
           .where((id) => id.startsWith('system.destination_'))
-          .toSet();
+          .toSet()
+          .difference(destinationAuditsWithoutEmitter);
       final audits = (await backend.findAllEvents())
           .where((e) => destinationAuditEntryTypes.contains(e.entryType))
           .toList();

@@ -298,10 +298,12 @@ Future<void> drain(
 
     final attempt = _attemptFromResult(result, now());
     // head.attempts.length is the count before this attempt.
+    // A receiver's answer carrying its record is recorded as a transient
+    // attempt: this drainer marks the head sent only on SendOk.
     final cause = switch (result) {
       SendOk() => null,
       SendPermanent() => WedgeCause.permanentRefusal,
-      SendTransient() =>
+      SendTransient() || SendAnswered() =>
         head.attempts.length + 1 >= effective.maxAttempts
             ? WedgeCause.retryBudgetExhausted
             : null,
@@ -672,6 +674,12 @@ AttemptResult _attemptFromResult(SendResult result, DateTime attemptedAt) {
         attemptedAt: attemptedAt,
         outcome: 'permanent',
         errorMessage: error,
+      );
+    case SendAnswered(:final response):
+      return AttemptResult(
+        attemptedAt: attemptedAt,
+        outcome: 'transient',
+        errorMessage: 'receiver answered: $response',
       );
   }
 }

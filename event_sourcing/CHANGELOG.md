@@ -101,6 +101,45 @@ created by an earlier release is dropped and provisioned again with
   wedge of an unknown halt purpose is recovered with no configuration
   check.
 
+### Delivery channel: wire shapes and codecs
+
+- `DeliveryChannel` (sending database, destination, registration and
+  generation) and `DeliveryRecord` (delivery number and hash; number 0 and
+  a null hash before the first delivery). `computeDeliveryHash` is the
+  lowercase-hex SHA-256 of the canonical JSON of exactly `channel`,
+  `delivery_number`, `previous_delivery_hash`, `event_hashes` and
+  `attributes`.
+- `DeliveryEnvelope` is the `esd/batch@3` envelope: exactly
+  `batch_format_version` (`"3"`), `batch_id`, `sender_hop`,
+  `sender_identifier`, `sender_software_version`, `sent_at`, `channel`,
+  `delivery_number`, `previous_delivery_hash`, `delivery_hash`, `events`
+  (at least one) and `attributes` (an object, kept and hashed as carried
+  whatever it holds). Its decoder refuses by name
+  (`IngestDecodeFailure.reason`): `batch_format_unsupported`,
+  `attributes_not_object`, `batch_empty` and `batch_malformed`.
+- Receiver answers: `ReceiverAcknowledgement` (`accepted` or
+  `represented`) and `ReceiverRefusal` (`out_of_sequence`,
+  `delivery_hash_mismatch`, or `rejected` with its reason and refused
+  event), each carrying the channel, the receiver's database identity and
+  its record. `decodeReceiverAnswer` maps a body to a `SendResult`: the
+  new `SendAnswered` for an acknowledgement or an `out_of_sequence`
+  refusal, `SendTransient` for `delivery_hash_mismatch`, `SendPermanent`
+  for `rejected`, and `SendOk` (an answer with no record) for a body that
+  is not a receiver answer. The drainer records `SendAnswered` as a
+  transient attempt.
+- Pull: `Destination.channelPull` (null by default), the requests
+  `ChannelListingPull` and `DeliveryRangePull`, the served bodies
+  `ChannelListing` and `DeliveryRange`, the `PullRefusal` body, and
+  `decodePullResponse` mapping a body to `PullServed`, `PullTransient` or
+  `PullPermanent`.
+- `WedgeCause.acknowledgementInvalid` (`acknowledgement_invalid`).
+- Reserved declarations: `ingest.delivery_accepted` on the `ingest-audit`
+  entry type, and the destination audits
+  `system.destination_channel_resumed` (event type
+  `destination_channel_resumed`) and `system.destination_sender_succeeded`
+  (event type `destination_sender_succeeded`), each an ineligible
+  annotation.
+
 ### Delivery: one drainer per database
 
 - Within what its storage backend's drain lock supports, at most one

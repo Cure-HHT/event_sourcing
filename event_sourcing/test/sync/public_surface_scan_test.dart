@@ -75,6 +75,11 @@ const _functionTyped = <String, String>{
   'ContainmentResolver.new(findRowsInTxn)':
       'known unenumerated input: reads the containment rows an '
       'authorization decision uses',
+  'Destination.channelPull (getter)':
+      "the destination's pull from its receiver endpoint: transport under "
+      'the Destination trust entry, whose receiver is trusted to serve every '
+      'delivery it accepted; what it serves is checked by the operation that '
+      'pulls',
   'EventStore.open(clock)':
       'stamps the client timestamp the log records as event data; decides '
       'nothing the library derives',
@@ -418,9 +423,12 @@ const _topLevelOperations = <String, String>{
       'appends the role-assignment seed through the event store',
   'canonicalEventHash': 'pure function; changes nothing',
   'classifyStorageException': 'pure function; changes nothing',
+  'computeDeliveryHash': 'pure function; changes nothing',
   'computeRoleAssignmentAggregateId': 'pure function; changes nothing',
   'configurationFingerprint': 'pure function; changes nothing',
   'declaredConfiguration': 'pure function; changes nothing',
+  'decodePullResponse': 'pure function; changes nothing',
+  'decodeReceiverAnswer': 'pure function; changes nothing',
   'deleteSembastDatabase':
       'deletes the Sembast database a description names, refused while an '
       'event store of the isolate holds it open',

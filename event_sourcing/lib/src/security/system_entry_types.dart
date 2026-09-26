@@ -76,6 +76,22 @@ const String kDestinationHaltRequestedEntryType =
 const String kDestinationHaltCancelledEntryType =
     'system.destination_halt_cancelled';
 
+/// Reserved id for the resume event the drainer appends when it resends to
+/// a receiver that fell behind the retained deliveries it lacks.
+// Implements: EVS-DEV-resume-event/H
+// the resume event is the reserved destination audit entry type
+//   system.destination_channel_resumed, with an event type of its own.
+const String kDestinationChannelResumedEntryType =
+    'system.destination_channel_resumed';
+
+/// Reserved id for the succession event a successor appends in the
+/// transaction that stores the predecessor sender's restored deliveries.
+// Implements: EVS-DEV-resume-event/H
+// the succession event is the reserved destination audit entry type
+//   system.destination_sender_succeeded, with an event type of its own.
+const String kDestinationSenderSucceededEntryType =
+    'system.destination_sender_succeeded';
+
 // Implements: EVS-DEV-destination-drain/H
 // each kind of destination audit event carries
 //   an event type distinct from every other kind's, so a declarative filter
@@ -117,8 +133,18 @@ const String kDestinationHaltRequestedEventType = 'destination_halt_requested';
 /// ([kDestinationHaltCancelledEntryType]).
 const String kDestinationHaltCancelledEventType = 'destination_halt_cancelled';
 
+/// Event type of the resume event ([kDestinationChannelResumedEntryType]).
+const String kDestinationChannelResumedEventType =
+    'destination_channel_resumed';
+
+/// Event type of the succession event
+/// ([kDestinationSenderSucceededEntryType]).
+const String kDestinationSenderSucceededEventType =
+    'destination_sender_succeeded';
+
 /// Every destination audit entry type: the registry's configuration,
-/// recovery and halt audits and the drainer's wedge event. Each carries the
+/// recovery and halt audits, the drainer's wedge and resume events and the
+/// succession event. Each carries the
 /// destination identifier in `data['id']` and the appending database's
 /// identity in `data['database_id']`.
 @internal
@@ -131,6 +157,8 @@ const List<String> kDestinationAuditEntryTypes = <String>[
   kDestinationWedgedEntryType,
   kDestinationHaltRequestedEntryType,
   kDestinationHaltCancelledEntryType,
+  kDestinationChannelResumedEntryType,
+  kDestinationSenderSucceededEntryType,
 ];
 
 /// Reserved id for the retention-policy-applied audit event emitted by
@@ -192,9 +220,10 @@ const String kLibVersionInitializedEntryType = 'lib_version_initialized';
 //   internal and must not be admitted to destinations as user events.
 const String kLibVersionChangedEntryType = 'lib_version_changed';
 
-/// Reserved id for the raw-path ingest-audit event emitted by
-/// `_emitDuplicateReceivedInTxn`. Registered here so the raw-path caller
-/// can read `registeredVersion` from the registry instead of hardcoding.
+/// Reserved id for the ingest audits: the duplicate-received audit and the
+/// accepted-delivery audit a receiver appends for each delivery it
+/// accepts. Registered here so the raw-path caller can read
+/// `registeredVersion` from the registry instead of hardcoding.
 const String kIngestAuditEntryType = 'ingest-audit';
 
 /// Aggregate type of the ingest audits ([kIngestAuditEntryType]).
@@ -204,6 +233,15 @@ const String kIngestAuditAggregateType = 'ingest-audit';
 /// Event type of the ingest audit recording a duplicate received.
 @internal
 const String kIngestDuplicateReceivedEventType = 'ingest.duplicate_received';
+
+/// Event type of the accepted-delivery audit a receiver appends, in the
+/// transaction that accepts a delivery, on its per-channel ingest audit
+/// aggregate.
+// Implements: EVS-DEV-delivery-receiver/S
+// ingest.delivery_accepted is an event type of the reserved ingest audit
+//   entry type.
+@internal
+const String kIngestDeliveryAcceptedEventType = 'ingest.delivery_accepted';
 
 /// Reserved id for the boot-time view-snapshot-promotion audit event
 /// emitted by the snapshot-promotion pass.
@@ -287,6 +325,8 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kIngestAuditEntryType,
   kViewSnapshotPromotedEntryType,
   kSecurityFindingEntryType,
+  kDestinationChannelResumedEntryType,
+  kDestinationSenderSucceededEntryType,
 };
 
 /// The reserved system entry-type definitions covering security-
@@ -515,6 +555,11 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
         kind: CausalKind.annotation,
         eligible: false,
       ),
+      EventTypeDeclaration(
+        eventType: kIngestDeliveryAcceptedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
     ],
   ),
   EntryTypeDefinition(
@@ -536,6 +581,30 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     declarations: <EventTypeDeclaration>[
       EventTypeDeclaration(
         eventType: kSecurityFindingRecordedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationChannelResumedEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Channel Resumed',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationChannelResumedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
+  ),
+  EntryTypeDefinition(
+    id: kDestinationSenderSucceededEntryType,
+    registeredVersion: EntryTypeVersion(1, 0),
+    name: 'Destination Sender Succeeded',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationSenderSucceededEventType,
         kind: CausalKind.annotation,
         eligible: false,
       ),
@@ -640,9 +709,14 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
         kLibAggregateType,
         <String>{kLibVersionChangedEntryType},
       ),
+      // The shape constrains the aggregate type only: each accepted-delivery
+      // audit is appended on its channel's own aggregate id.
       kIngestAuditEntryType: ReservedEventShape(
         kIngestAuditAggregateType,
-        <String>{kIngestDuplicateReceivedEventType},
+        <String>{
+          kIngestDuplicateReceivedEventType,
+          kIngestDeliveryAcceptedEventType,
+        },
       ),
       kViewSnapshotPromotedEntryType: ReservedEventShape(
         kLibAggregateType,
@@ -651,6 +725,14 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
       kSecurityFindingEntryType: ReservedEventShape(
         kSecurityFindingAggregateType,
         <String>{kSecurityFindingRecordedEventType},
+      ),
+      kDestinationChannelResumedEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationChannelResumedEventType},
+      ),
+      kDestinationSenderSucceededEntryType: ReservedEventShape(
+        kDestinationAuditAggregateType,
+        <String>{kDestinationSenderSucceededEventType},
       ),
     };
 

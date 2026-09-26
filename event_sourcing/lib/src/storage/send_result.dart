@@ -1,8 +1,12 @@
+import 'package:event_sourcing/src/destinations/receiver_response.dart';
+
 /// Categorized outcome of a single `destination.send()` call.
 ///
-/// The drain loop switches on the three subclasses:
+/// The drain loop switches on the four subclasses:
 /// - [SendOk]: the payload was delivered; mark the FIFO head `sent` and
 ///   continue draining.
+/// - [SendAnswered]: a receiver of the native batch format answered with
+///   its record of the delivery's channel.
 /// - [SendTransient]: retry later per SyncPolicy; `httpStatus` optional
 ///   because not every destination is HTTP-based.
 /// - [SendPermanent]: the payload will never be accepted as-is; mark the
@@ -31,6 +35,31 @@ class SendOk extends SendResult {
 
   @override
   String toString() => 'SendOk()';
+}
+
+/// A receiver of the native batch format answered a delivery with an
+/// acknowledgement or an `out_of_sequence` refusal, carrying its record of
+/// the delivery's channel ([decodeReceiverAnswer]). A destination that
+/// serializes natively reports every answer it receives this way; one that
+/// does not never returns it.
+// Implements: EVS-DEV-delivery-channel/L
+// the send outcome that carries the receiver's answer and its record.
+class SendAnswered extends SendResult {
+  const SendAnswered(this.response);
+
+  /// The receiver's answer.
+  final ReceiverResponse response;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendAnswered && response == other.response;
+
+  @override
+  int get hashCode => Object.hash(SendAnswered, response);
+
+  @override
+  String toString() => 'SendAnswered($response)';
 }
 
 /// The destination is temporarily unable to accept the payload. The drain

@@ -75,8 +75,8 @@ void main() {
     // deliberate decision rather than an incidental one. A change here means a
     // library-generated entry type was added; confirm it belongs in the set
     // that filters gate.
-    test('the reserved id set is the discriminator and has 18 members', () {
-      expect(kReservedSystemEntryTypeIds, hasLength(18));
+    test('the reserved id set is the discriminator and has 20 members', () {
+      expect(kReservedSystemEntryTypeIds, hasLength(20));
     });
 
     test('reserved ids are registered so a filter can resolve them', () {

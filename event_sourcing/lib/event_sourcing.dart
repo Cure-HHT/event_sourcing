@@ -181,6 +181,30 @@ export 'src/destinations/destination.dart' show Destination;
 export 'src/destinations/destination_schedule.dart'
     show DestinationSchedule, SetEndDateResult, TombstoneAndRefillResult;
 export 'src/destinations/halt_purpose.dart' show HaltPurpose;
+export 'src/destinations/receiver_response.dart'
+    show
+        AcknowledgementOutcome,
+        ChannelListing,
+        ChannelListingPull,
+        ChannelPull,
+        DeliveryRange,
+        DeliveryRangePull,
+        ListedChannel,
+        PullOutcome,
+        PullPermanent,
+        PullRefusal,
+        PullRefusalKind,
+        PullRequest,
+        PullResponse,
+        PullServed,
+        PullTransient,
+        ReceiverAcknowledgement,
+        ReceiverRefusal,
+        ReceiverResponse,
+        RefusalKind,
+        ServedDelivery,
+        decodePullResponse,
+        decodeReceiverAnswer;
 export 'src/destinations/subscription_filter.dart'
     show SubscriptionFilter, SubscriptionPredicate;
 export 'src/destinations/wedge_cause.dart' show WedgeCause;
@@ -210,6 +234,9 @@ export 'src/event_store.dart'
 
 // Ingest types — error types and result types.
 export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
+export 'src/ingest/delivery_channel.dart'
+    show DeliveryChannel, DeliveryRecord, computeDeliveryHash;
+export 'src/ingest/delivery_envelope.dart' show DeliveryEnvelope;
 export 'src/ingest/ingest_errors.dart'
     show
         IngestDataFormatIncompatible,
@@ -336,6 +363,8 @@ export 'src/security/system_entry_types.dart'
         // Destination-mutation audits: entry types, their aggregate type and
         // the per-kind event types they are appended under.
         kDestinationAuditAggregateType,
+        kDestinationChannelResumedEntryType,
+        kDestinationChannelResumedEventType,
         kDestinationDeletedEntryType,
         kDestinationDeletedEventType,
         kDestinationEndDateSetEntryType,
@@ -346,6 +375,8 @@ export 'src/security/system_entry_types.dart'
         kDestinationHaltRequestedEventType,
         kDestinationRegisteredEntryType,
         kDestinationRegisteredEventType,
+        kDestinationSenderSucceededEntryType,
+        kDestinationSenderSucceededEventType,
         kDestinationStartDateSetEntryType,
         kDestinationStartDateSetEventType,
         kDestinationWedgeRecoveredEntryType,
@@ -420,7 +451,7 @@ export 'src/storage/queue_records.dart'
 export 'src/storage/sembast_backend.dart'
     show SembastBackend, SembastSecurityContextStore;
 export 'src/storage/send_result.dart'
-    show SendResult, SendOk, SendTransient, SendPermanent;
+    show SendResult, SendOk, SendAnswered, SendTransient, SendPermanent;
 export 'src/storage/source.dart' show Source;
 export 'src/storage/storage_backend.dart' show StorageBackend;
 export 'src/storage/storage_description.dart'

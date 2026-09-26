@@ -1,7 +1,8 @@
 // Implements: EVS-PRD-destinations/Q
-// the wedge event records why the drainer
-//   wedged the head: a permanent failure the delivery implementation
-//   reported, an exhausted retry budget, or an operator halt.
+// the wedge event records why the drainer wedged the head: a permanent
+//   failure the delivery implementation reported, an exhausted retry
+//   budget, an operator halt, or an acceptance that carries no receiver
+//   record.
 // Implements: EVS-PRD-portability/C
 // a pure Dart value type; serialises
 //   identically on every Dart-supported runtime.
@@ -54,11 +55,20 @@ final class WedgeCause {
   /// same.
   static const operatorHalt = WedgeCause._('operator_halt', isKnown: true);
 
+  /// The delivery implementation of a destination that serializes natively
+  /// reported an acceptance that carries no receiver record (`SendOk`): the
+  /// receiver's answer is the only evidence it accepted the delivery.
+  static const acknowledgementInvalid = WedgeCause._(
+    'acknowledgement_invalid',
+    isKnown: true,
+  );
+
   /// Every cause this build wedges with.
   static const List<WedgeCause> values = <WedgeCause>[
     permanentRefusal,
     retryBudgetExhausted,
     operatorHalt,
+    acknowledgementInvalid,
   ];
 
   /// The string recorded in the wedge event and the wedge record. A later

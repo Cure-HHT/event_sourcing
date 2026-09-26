@@ -4,16 +4,43 @@
 
 import 'package:event_sourcing/src/versions.dart';
 
-/// Thrown by `EventStore.ingestBatch` and `BatchEnvelope.decode` when the
-/// input bytes cannot be parsed as a well-formed `esd/batch@2` envelope
-/// (malformed JSON, wrong shape, unsupported format version, missing
-/// required fields). A record inside a well-formed envelope that the library
-/// cannot store as an event is kept in a security finding instead.
+/// Thrown by `EventStore.ingestBatch`, `BatchEnvelope.decode` and
+/// `DeliveryEnvelope.decode` when the input bytes cannot be parsed as a
+/// well-formed batch envelope (malformed JSON, wrong shape, unsupported
+/// format version, missing required fields). A record inside a well-formed
+/// envelope that the library cannot store as an event is kept in a security
+/// finding instead.
+///
+/// [reason] names the refusal: one of [formatUnsupported],
+/// [attributesNotObject], [noEvents] and [malformed]. It is the reason a
+/// receiver's `rejected` refusal carries.
+// Implements: EVS-DEV-delivery-receiver/A
+// a batch that is not in the native batch format, one whose attributes is
+//   not an object and one that carries no event are refused, each by its
+//   own name.
 class IngestDecodeFailure implements Exception {
-  const IngestDecodeFailure(this.message);
+  const IngestDecodeFailure(this.message, {this.reason = malformed});
+
+  /// The batch is not in the format the decoder reads.
+  static const String formatUnsupported = 'batch_format_unsupported';
+
+  /// The batch's `attributes` is not a JSON object.
+  static const String attributesNotObject = 'attributes_not_object';
+
+  /// The batch carries no event.
+  static const String noEvents = 'batch_empty';
+
+  /// Every other malformedness: bytes that are not UTF-8 JSON, a missing,
+  /// extra or mistyped field.
+  static const String malformed = 'batch_malformed';
+
   final String message;
+
+  /// The name of the refusal.
+  final String reason;
+
   @override
-  String toString() => 'IngestDecodeFailure: $message';
+  String toString() => 'IngestDecodeFailure($reason): $message';
 }
 
 /// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an

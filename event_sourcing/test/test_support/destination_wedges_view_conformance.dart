@@ -555,7 +555,9 @@ void runDestinationWedgesViewScenarios(
           ];
           expect(
             audits.map((e) => e.entryType).toSet(),
-            kDestinationAuditEntryTypes.toSet(),
+            kDestinationAuditEntryTypes.toSet().difference(
+              destinationAuditsWithoutEmitter,
+            ),
             reason: 'one audit of every kind',
           );
           for (final audit in audits) {
@@ -1301,7 +1303,9 @@ void runDestinationWedgesViewScenarios(
           containsAll(<String>[
             kLibVersionInitializedEntryType,
             kEntryTypeRegistryInitializedEntryType,
-            ...kDestinationAuditEntryTypes,
+            ...kDestinationAuditEntryTypes.where(
+              (id) => !destinationAuditsWithoutEmitter.contains(id),
+            ),
             kSecurityContextRedactedEntryType,
             kSecurityContextCompactedEntryType,
             kSecurityContextPurgedEntryType,

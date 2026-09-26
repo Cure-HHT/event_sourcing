@@ -2,6 +2,7 @@
 // Destination abstract interface:
 // declares the per-destination event-selection filter (B) and the
 // app-supplied delivery implementation contract (transform + send, E).
+import 'package:event_sourcing/src/destinations/receiver_response.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
@@ -88,6 +89,17 @@ abstract class Destination {
   /// CSV or Rave EDC XML), `fillBatch` invokes [transform] and persists the
   /// resulting [WirePayload] verbatim with `envelope_metadata: null`.
   bool get serializesNatively => false;
+
+  /// The destination's pull from the receiver endpoint it delivers to: a
+  /// channel listing of a sender database, or a range of a channel's
+  /// deliveries, reported through [decodePullResponse]'s outcomes (a
+  /// transport failure as [PullTransient] or [PullPermanent]). A
+  /// destination that serializes natively provides it; null (the default)
+  /// for a destination that does not implement it.
+  // Implements: EVS-DEV-delivery-channel/R
+  // a destination's pull operation reports through the pull decoder's
+  //   outcomes.
+  ChannelPull? get channelPull => null;
 
   /// Destination-owned batching rule. Invoked by `fillBatch` once per
   /// candidate event under consideration: returning `true` adds
