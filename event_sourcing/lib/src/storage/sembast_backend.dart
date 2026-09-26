@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -12,6 +13,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/chain_index_entry.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -366,8 +368,9 @@ class SembastBackend extends StorageBackend {
         'appendEvent consumes a reservation, it does not create one.)',
       );
     }
-    event.requireRecordTimestamps();
+    event.requireWellFormedRecord();
     await _eventStore.add(t._sembastTxn, event.toMap());
+    await _writeChainIndexInTxn(t._sembastTxn, event);
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
     t._postCommit.add(() {
@@ -596,6 +599,173 @@ class SembastBackend extends StorageBackend {
       yield StoredEvent.fromMap(r.value, r.key);
     }
   }
+
+  // -------- Chain index --------
+  //
+  // The chain index lives in its own store of small records, one per
+  // lookup key, each written by [appendEvent] in the storing transaction:
+  //
+  // - `sealed:<sealed hash>`: the entries of the events sealed under it;
+  // - `predecessor:<[originating database, previous hash]>`: the entries of
+  //   that database's events naming that predecessor, null included;
+  // - `position:<[originating database, origin position]>`: the entries of
+  //   that database's events at that origin position;
+  // - `authored:<database>`: the entry of the latest event that database
+  //   holds as authored;
+  // - `eligible:<aggregate>`: the event identifier and sealed hash of the
+  //   aggregate's latest eligible version, the causal working copy.
+  //
+  // A list record holds its entries in ascending local sequence number,
+  // the order the appends write them in. A lookup reads one record by its
+  // key; nothing scans the log or the index.
+
+  static const _chainIndexStoreName = 'chain_index';
+
+  final StoreRef<String, Map<String, Object?>> _chainIndexStore =
+      stringMapStoreFactory.store(_chainIndexStoreName);
+
+  static String _sealedKey(String sealedHash) => 'sealed:$sealedHash';
+
+  static String _predecessorKey(String originDb, String? previousEventHash) =>
+      'predecessor:${jsonEncode(<Object?>[originDb, previousEventHash])}';
+
+  static String _positionKey(String originDb, int originPosition) =>
+      'position:${jsonEncode(<Object?>[originDb, originPosition])}';
+
+  static String _authoredKey(String databaseId) => 'authored:$databaseId';
+
+  static String _eligibleKey(String aggregateId) => 'eligible:$aggregateId';
+
+  /// Writes the chain index entry of [event] inside [txn].
+  // Implements: EVS-DEV-chain-verification/N
+  // the index entries of a stored event are written in the transaction
+  //   that stores it, under every key its lookups read.
+  Future<void> _writeChainIndexInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    final entry = ChainIndexEntry.of(event);
+    final json = entry.toJson();
+    final originDb = entry.originatingDatabaseId;
+    final listKeys = <String>[
+      if (entry.sealedHash != null) _sealedKey(entry.sealedHash!),
+      if (originDb != null) ...[
+        _predecessorKey(originDb, entry.previousEventHash),
+        if (entry.originPosition != null)
+          _positionKey(originDb, entry.originPosition!),
+      ],
+    ];
+    for (final key in listKeys) {
+      final record = _chainIndexStore.record(key);
+      final existing = await record.get(txn);
+      await record.put(txn, <String, Object?>{
+        'entries': <Object?>[
+          ...?(existing?['entries'] as List<Object?>?),
+          json,
+        ],
+      });
+    }
+    final authoredBy = entry.heldAsAuthoredBy;
+    if (authoredBy != null) {
+      await _chainIndexStore.record(_authoredKey(authoredBy)).put(
+        txn,
+        <String, Object?>{'entry': json},
+      );
+    }
+    // Implements: EVS-DEV-causal-parents/H
+    // the working copy of the aggregate's latest eligible version advances
+    //   to a stored event whose recorded causal says an eligible version,
+    //   in the transaction that stores it; annotations and ineligible events
+    //   leave it as it was.
+    final causal = event.causal;
+    final sealedHash = entry.sealedHash;
+    if (causal != null &&
+        causal.kind == CausalKind.version &&
+        causal.eligible &&
+        sealedHash != null) {
+      await _chainIndexStore
+          .record(_eligibleKey(event.aggregateId))
+          .put(
+            txn,
+            CausalRef(eventId: event.eventId, eventHash: sealedHash).toJson(),
+          );
+    }
+  }
+
+  Future<List<ChainIndexEntry>> _readChainIndexList(
+    Transaction txn,
+    String key,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _chainIndexStore.record(key).get(t._sembastTxn);
+    final entries = value?['entries'] as List<Object?>?;
+    if (entries == null) return const <ChainIndexEntry>[];
+    return <ChainIndexEntry>[
+      for (final e in entries)
+        ChainIndexEntry.fromJson(Map<String, Object?>.from(e! as Map)),
+    ];
+  }
+
+  @override
+  @internal
+  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+    Transaction txn,
+    String databaseId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _chainIndexStore
+        .record(_authoredKey(databaseId))
+        .get(t._sembastTxn);
+    final entry = value?['entry'];
+    if (entry == null) return null;
+    return ChainIndexEntry.fromJson(Map<String, Object?>.from(entry as Map));
+  }
+
+  @override
+  @internal
+  Future<CausalRef?> readLatestEligibleVersionInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _chainIndexStore
+        .record(_eligibleKey(aggregateId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return CausalRef(
+      eventId: value['event_id']! as String,
+      eventHash: value['event_hash']! as String,
+    );
+  }
+
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  ) => _readChainIndexList(txn, _sealedKey(sealedHash));
+
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => _readChainIndexList(
+    txn,
+    _predecessorKey(originatingDatabaseId, previousEventHash),
+  );
+
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  }) => _readChainIndexList(
+    txn,
+    _positionKey(originatingDatabaseId, originPosition),
+  );
 
   /// Page size of [readEventsReverseInTxn].
   static const int _reverseScanInTxnPageSize = 256;

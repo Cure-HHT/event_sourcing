@@ -12,6 +12,8 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
+
+import 'record_fixtures.dart';
 import 'test_backends.dart';
 
 /// One database the scenarios open several backends over, as several
@@ -1110,9 +1112,9 @@ void runVersionCompatibilityScenarios(
                 LibVersion.dataFormat,
               ),
         ),
-        'data format 3.0': (
+        'the next data-format major': (
           const EntryTypeVersion(1, 4),
-          const DataFormatVersion(3, 0),
+          DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
           isA<IngestDataFormatIncompatible>(),
         ),
         'entry type 2.0 under 1.4': (
@@ -1162,17 +1164,18 @@ void runVersionCompatibilityScenarios(
         }
 
         // Verifies: EVS-DEV-version-compatibility/D
-        test('${path.key} accepts data format 2.7', () async {
+        test('${path.key} accepts a later minor of the data format', () async {
           if (db == null) return;
           final receiver = await openReceiver();
+          final laterMinor = DataFormatVersion(LibVersion.dataFormat.major, 7);
           final event = _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 4),
-            dataFormat: const DataFormatVersion(2, 7),
+            dataFormat: laterMinor,
             data: const <String, Object?>{'title': 'peer'},
           );
           await path.value(receiver, event);
           final stored = await receiver.reader.findEventById(event.eventId);
-          expect(stored!.libFormatVersion, const DataFormatVersion(2, 7));
+          expect(stored!.libFormatVersion, laterMinor);
         });
 
         // Verifies: EVS-DEV-version-compatibility/D
@@ -1216,9 +1219,9 @@ void runVersionCompatibilityScenarios(
       // A batch whose later event is refused commits nothing, not even the
       // compatible event staged before it.
       final laterRefusals = <String, (EntryTypeVersion, DataFormatVersion)>{
-        'data format 3.0': (
+        'the next data-format major': (
           const EntryTypeVersion(1, 4),
-          const DataFormatVersion(3, 0),
+          DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
         ),
         'entry type 2.0 under 1.4': (
           const EntryTypeVersion(2, 0),
@@ -1324,6 +1327,33 @@ void runVersionCompatibilityScenarios(
         });
       }
 
+      // Verifies: EVS-DEV-version-compatibility/Q
+      test('an event of data format 2.0 that also lacks library_version and '
+          'causal is refused on every ingest entry point naming data-format '
+          'major 2, not a missing field, before any write', () async {
+        if (db == null) return;
+        final receiver = await openReceiver();
+        final eventsBefore = (await receiver.reader.findAllEvents()).length;
+        final counterBefore = await receiver.reader.readSequenceCounter();
+        final record = _dataFormat2Record();
+        final refusal = isA<IngestDataFormatIncompatible>()
+            .having((e) => e.wireFormat.major, 'wireFormat.major', 2)
+            .having((e) => e.toString(), 'toString', contains('2.0'));
+        await expectLater(
+          receiver.ingestBatch(
+            _batchOfMaps(<Map<String, Object?>>[record]),
+            wireFormat: BatchEnvelope.wireFormat,
+          ),
+          throwsA(refusal),
+        );
+        await expectLater(
+          receiver.ingestEvent(_dataFormat2Event(record)),
+          throwsA(refusal),
+        );
+        expect((await receiver.reader.findAllEvents()).length, eventsBefore);
+        expect(await receiver.reader.readSequenceCounter(), counterBefore);
+      });
+
       // Verifies: EVS-DEV-version-compatibility/D
       test('ingestBatch refuses an event with a malformed version as a decode '
           'failure naming the field, before any write', () async {
@@ -1333,7 +1363,9 @@ void runVersionCompatibilityScenarios(
         final counterBefore = await receiver.reader.readSequenceCounter();
         final malformed = <String, Map<String, Object?>>{
           'entry_type_version': <String, Object?>{'major': 0, 'minor': 0},
-          'lib_format_version': <String, Object?>{'major': 2},
+          'lib_format_version': <String, Object?>{
+            'major': LibVersion.dataFormat.major,
+          },
         };
         for (final field in malformed.entries) {
           final map = Map<String, Object?>.from(
@@ -1435,6 +1467,8 @@ StoredEvent _peerEvent({
           receivedAt: now,
           identifier: 'peer-install',
           softwareVersion: 'peer@1',
+          databaseId: kPeerDatabaseId,
+          libraryVersion: kPeerLibraryVersion,
         ).toJson(),
       ],
     },
@@ -1442,10 +1476,53 @@ StoredEvent _peerEvent({
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': kRootVersionCausalJson,
   };
   record['event_hash'] = canonicalEventHash(record);
   return StoredEvent.fromMap(record, 0);
 }
+
+/// A record as a build of data format 2.0 sent it: its provenance entry
+/// carries no `library_version` and no `database_id`, and it carries no
+/// `causal` object.
+Map<String, Object?> _dataFormat2Record() {
+  final record = Map<String, Object?>.from(
+    _peerEvent(
+      entryTypeVersion: const EntryTypeVersion(1, 4),
+      dataFormat: const DataFormatVersion(2, 0),
+      data: const <String, Object?>{'title': 'data format 2'},
+    ).toMap(),
+  )..remove('causal');
+  final metadata = Map<String, Object?>.from(record['metadata']! as Map);
+  metadata['provenance'] = <Map<String, Object?>>[
+    for (final entry in metadata['provenance']! as List)
+      Map<String, Object?>.from(entry as Map)
+        ..remove('library_version')
+        ..remove('database_id'),
+  ];
+  record['metadata'] = metadata;
+  record['event_hash'] = canonicalEventHash(record);
+  return record;
+}
+
+/// [record], a record of data format 2.0, as an event built in process,
+/// without the parse that refuses its shape.
+StoredEvent _dataFormat2Event(Map<String, Object?> record) => StoredEvent(
+  key: 0,
+  eventId: record['event_id']! as String,
+  aggregateId: record['aggregate_id']! as String,
+  aggregateType: record['aggregate_type']! as String,
+  entryType: record['entry_type']! as String,
+  entryTypeVersion: EntryTypeVersion.fromJson(record['entry_type_version']),
+  libFormatVersion: DataFormatVersion.fromJson(record['lib_format_version']),
+  eventType: record['event_type']! as String,
+  sequenceNumber: record['sequence_number']! as int,
+  data: Map<String, dynamic>.from(record['data']! as Map),
+  metadata: Map<String, dynamic>.from(record['metadata']! as Map),
+  initiator: const UserInitiator('peer-user'),
+  clientTimestamp: DateTime.parse(record['client_timestamp']! as String),
+  eventHash: record['event_hash']! as String,
+);
 
 Uint8List _batchOf(StoredEvent event, {String? batchFormatVersion}) =>
     _batchOfMaps(<Map<String, Object?>>[

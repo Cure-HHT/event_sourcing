@@ -37,6 +37,13 @@ abstract class BootTestDatabase {
   /// is opened.
   Future<void> writeEarlierFormatShape();
 
+  /// Rewrites every stored event, bypassing the library, as a build of data
+  /// format 2.0 stored it: its `lib_format_version` is 2.0, its provenance
+  /// entries carry no `database_id` and no `library_version`, and it
+  /// carries no `causal` object. With [keepFields], only its
+  /// `lib_format_version` is rewritten.
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false});
+
   /// Stops the instance [store] belongs to, as a stop-then-start deployment
   /// stops the old revision before the new one opens: on Postgres, where
   /// each instance holds its own connections and generation locks, it
@@ -58,7 +65,10 @@ const _kSpec = AggregateProjectionSpec(
 );
 
 /// The newer build of the same data-format major every scenario plays.
-const _kNewer = (version: '0.6.0', dataFormat: DataFormatVersion(2, 1));
+final _kNewer = (version: '0.6.0', dataFormat: LibVersion.dataFormat.nextMinor);
+
+/// The data format of the next major, which no build of this one opens.
+final _kNextMajor = DataFormatVersion(LibVersion.dataFormat.major + 1, 0);
 
 /// The compiled build.
 const _kCompiled = (
@@ -238,6 +248,10 @@ class _MemoryPeerDatabase implements BootTestDatabase {
   Future<void> writeEarlierFormatShape() => throw UnimplementedError();
 
   @override
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false}) =>
+      throw UnimplementedError();
+
+  @override
   Future<void> stop(EventStore store) async {}
 
   @override
@@ -336,7 +350,7 @@ void runBootScenarios(
         await seedLibVersionEventForTest(
           backend,
           version: '9.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
           databaseId: 'not-the-stored-one',
         );
         final before = await _Snapshot.of(backend);
@@ -484,7 +498,7 @@ void runBootScenarios(
           testBackendOf(first),
           eventType: LibVersionEvents.changed,
           version: '9.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
         );
         final backend = await db!.openBackend();
         await expectLater(
@@ -620,6 +634,53 @@ void runBootScenarios(
       });
     });
 
+    group('a database a build of data format 2 wrote', () {
+      for (final generation in <String, (bool, bool)>{
+        'its latest event': (false, false),
+        'its latest event and its generation record': (true, false),
+        'its latest event, carrying every field this data format reads,': (
+          false,
+          true,
+        ),
+      }.entries) {
+        // Verifies: EVS-DEV-version-compatibility/O
+        test('${generation.key} in data format 2 refuses the open with '
+            'DatabaseResetRequiredError, before any write', () async {
+          if (db == null) return;
+          final first = await _open(db!, await db!.openBackend());
+          await _appendNote(first, 'n1');
+          final (writeGeneration, keepFields) = generation.value;
+          if (writeGeneration) {
+            final backend = testBackendOf(first);
+            await backend.transaction(
+              (txn) => backend.writeDataGenerationTxn(
+                txn,
+                GenerationRecord(
+                  dataFormatMajor: 2,
+                  entryTypeMajors: const <String, int>{_kType: 1},
+                ),
+              ),
+            );
+          }
+          await db!.stop(first);
+          await db!.rewriteEventsAsDataFormat2(keepFields: keepFields);
+          final backend = await db!.openBackend();
+          final counter = await backend.readSequenceCounter();
+          await expectLater(
+            _open(db!, backend),
+            throwsA(
+              isA<DatabaseResetRequiredError>().having(
+                (e) => e.message,
+                'message',
+                contains('data format'),
+              ),
+            ),
+          );
+          expect(await backend.readSequenceCounter(), counter);
+        });
+      }
+    });
+
     group('data-format compatibility', () {
       // Verifies: EVS-DEV-event-store-open/C
       // Verifies: EVS-DEV-event-store-open/D
@@ -665,8 +726,8 @@ void runBootScenarios(
       });
 
       for (final recorded in <DataFormatVersion>[
-        const DataFormatVersion(3, 0),
-        const DataFormatVersion(1, 4),
+        _kNextMajor,
+        DataFormatVersion(LibVersion.dataFormat.major - 1, 4),
       ]) {
         // Verifies: EVS-DEV-event-store-open/D
         test('a latest recorded data format $recorded is refused with both '
@@ -731,7 +792,7 @@ void runBootScenarios(
           backend,
           eventType: LibVersionEvents.changed,
           version: '7.0.0',
-          dataFormat: const DataFormatVersion(3, 0),
+          dataFormat: _kNextMajor,
         );
         final before = await _Snapshot.of(backend);
         await expectLater(

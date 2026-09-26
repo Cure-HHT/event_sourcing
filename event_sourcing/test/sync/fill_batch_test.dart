@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -29,6 +30,7 @@ import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/native_destination.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/record_fixtures.dart';
 import '../test_support/registry_with_audit.dart';
 
 const Initiator _testInit = AutomationInitiator(service: 'test-bootstrap');
@@ -59,7 +61,7 @@ Future<StoredEvent> _appendEvent(
       aggregateType: 'note',
       entryType: entryType,
       entryTypeVersion: const EntryTypeVersion(1, 0),
-      libFormatVersion: const DataFormatVersion(2, 0),
+      libFormatVersion: LibVersion.dataFormat,
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -67,6 +69,7 @@ Future<StoredEvent> _appendEvent(
       initiator: const UserInitiator('u'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',
+      causal: kRootVersionCausal,
     );
     await backend.appendEvent(txn, event);
     return event;

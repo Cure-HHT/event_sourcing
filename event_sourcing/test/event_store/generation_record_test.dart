@@ -224,10 +224,10 @@ void main() {
     test('after a build of another data-format major opened, the compiled '
         'build is refused', () async {
       await runWithDeliveryTestHooks(
-        const DeliveryTestHooks(
+        DeliveryTestHooks(
           buildDeclaration: (
             version: '9.0.0',
-            dataFormat: DataFormatVersion(3, 0),
+            dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
           ),
         ),
         () async => (await _open(path)).close(),

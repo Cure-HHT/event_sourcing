@@ -7,6 +7,8 @@ import 'package:event_sourcing/src/projections/interpreter/projection_interprete
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/record_fixtures.dart';
+
 const _kType = 'note';
 const _kView = 'notes';
 
@@ -78,7 +80,7 @@ StoredEvent _event(int seq, EntryTypeVersion version) => StoredEvent(
   aggregateType: 'note',
   entryType: _kType,
   entryTypeVersion: version,
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: 'finalized',
   sequenceNumber: seq,
   data: const <String, dynamic>{'title': 't'},
@@ -86,6 +88,7 @@ StoredEvent _event(int seq, EntryTypeVersion version) => StoredEvent(
   initiator: const UserInitiator('u'),
   clientTimestamp: DateTime.utc(2026),
   eventHash: 'h$seq',
+  causal: kRootVersionCausal,
 );
 
 Future<Map<String, Object?>?> _fold(
@@ -179,7 +182,7 @@ void main() {
       aggregateType: 'note',
       entryType: _kType,
       entryTypeVersion: version,
-      libFormatVersion: const DataFormatVersion(2, 0),
+      libFormatVersion: LibVersion.dataFormat,
       eventType: 'finalized',
       sequenceNumber: seq,
       data: data,
@@ -187,6 +190,7 @@ void main() {
       initiator: const UserInitiator('u'),
       clientTimestamp: DateTime.utc(2026),
       eventHash: 'hd$seq',
+      causal: kRootVersionCausal,
     );
 
     // Verifies: EVS-DEV-ingest-promotes-before-fold/A

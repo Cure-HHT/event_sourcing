@@ -17,6 +17,8 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+
+import '../test_support/record_fixtures.dart';
 import '../test_support/test_backends.dart';
 
 // ---------------------------------------------------------------------------
@@ -98,7 +100,7 @@ Future<void> _appendEvent(
         aggregateType: 'SampleAggregate',
         entryType: entryType,
         entryTypeVersion: const EntryTypeVersion(1, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
+        libFormatVersion: LibVersion.dataFormat,
         eventType: eventType,
         sequenceNumber: seq,
         data: data,
@@ -106,6 +108,7 @@ Future<void> _appendEvent(
         initiator: const UserInitiator('u1'),
         clientTimestamp: clientTimestamp,
         eventHash: 'hash-$eventId',
+        causal: kRootVersionCausal,
       ),
     );
   });

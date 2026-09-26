@@ -156,7 +156,7 @@ void main() {
       DeliveryTestHooks(
         buildDeclaration: (
           version: '0.6.0',
-          dataFormat: const DataFormatVersion(2, 1),
+          dataFormat: LibVersion.dataFormat.nextMinor,
         ),
         onBootBodyRun: () => bootRuns++,
       ),

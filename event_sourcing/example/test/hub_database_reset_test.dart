@@ -69,7 +69,10 @@ void main() {
     final message = databaseResetMessage(
       DataFormatIncompatibleError(
         recordedPackageVersion: '9.0.0',
-        recordedDataFormat: const DataFormatVersion(3, 0),
+        recordedDataFormat: DataFormatVersion(
+          LibVersion.dataFormat.major + 1,
+          0,
+        ),
         packageVersion: LibVersion.version,
         dataFormat: LibVersion.dataFormat,
       ),

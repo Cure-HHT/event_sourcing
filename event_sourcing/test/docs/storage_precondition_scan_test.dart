@@ -34,6 +34,8 @@ const stateKinds = <String, String>{
   'halt requests': 'halt requests',
   'send fences': 'send fences',
   'refill guards': 'refill guards',
+  'chain index': 'the chain index',
+  'causal working copies': 'the per-aggregate causal working copies',
   'registry check record': 'the registry check record',
   'database identity': 'the database identity',
   'generation records': 'the generation records',
@@ -79,7 +81,8 @@ const _stateStatement =
     'Its persisted state (destination queues, the views it materializes, the '
     'records it keeps beside them, such as fill positions, schedules, replay '
     'requests, wedge records, halt requests, send fences, refill guards, the '
-    'registry check record, the database identity, the generation records, '
+    'chain index, the per-aggregate causal working copies, the registry '
+    'check record, the database identity, the generation records, '
     'the view catch-up marks, the fencing epoch and the declared '
     'configuration, and the security context it stores beside each event) '
     "changes only through the library's operations";

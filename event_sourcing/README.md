@@ -283,9 +283,10 @@ guarantees, its views and its security-context records hold only while its
 persisted state (destination queues, the views it materializes, the
 records it keeps beside them, such as fill positions, schedules, replay
 requests, wedge records, halt requests, send fences, refill guards, the
-registry check record, the database identity, the generation records, the
-view catch-up marks, the fencing epoch and the declared configuration, and
-the security context it stores beside each event) changes only through the
+chain index, the per-aggregate causal working copies, the registry check
+record, the database identity, the generation records, the view catch-up
+marks, the fencing epoch and the declared configuration, and the security
+context it stores beside each event) changes only through the
 library's operations, and reserved system events are appended only by the
 library's own operations. The event store's
 reserved append operations are `@internal`, and so is every
@@ -331,7 +332,9 @@ deployment — see the guide's "Advanced" chapter for detail:
 
 - **Per-event metadata** — sequence number, `event_id`, `event_hash` +
   `previous_event_hash` (the chain), `entry_type_version`,
-  `lib_format_version`, provenance, and action correlation ids. Optional
+  `lib_format_version`, the `causal` object, provenance (each entry naming
+  the database and library version that stamped it), and action
+  correlation ids. Optional
   `SecurityDetails` (IP / user-agent / session) persist to a *separate*
   security-context store keyed by `event_id`, keeping request PII out of
   the event record.

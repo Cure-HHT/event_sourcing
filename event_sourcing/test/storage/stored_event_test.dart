@@ -13,13 +13,15 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/record_fixtures.dart';
+
 Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
   'event_id': 'e',
   'aggregate_id': 'a',
   'aggregate_type': 'note',
   'entry_type': 'epistaxis_event',
   'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
-  'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
+  'lib_format_version': LibVersion.dataFormat.toJson(),
   'event_type': 'finalized',
   'sequence_number': 1,
   'data': const {
@@ -30,6 +32,7 @@ Map<String, Object?> _minimalMap({Object? initiator, Object? flowToken}) => {
   'flow_token': flowToken,
   'client_timestamp': '2026-04-22T00:00:00.000Z',
   'event_hash': 'h',
+  'causal': kRootVersionCausalJson,
 };
 
 Map<String, Object?> _validEventMap() => <String, Object?>{
@@ -47,8 +50,12 @@ Map<String, Object?> _validEventMap() => <String, Object?>{
   'event_hash': 'hash-1',
   'previous_event_hash': null,
   'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
-  'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
+  'lib_format_version': LibVersion.dataFormat.toJson(),
+  'causal': kRootVersionCausalJson,
 };
+
+/// Marks a key the record leaves out.
+const Object _absent = Object();
 
 void main() {
   group('StoredEvent storage shape', () {
@@ -102,7 +109,11 @@ void main() {
         'metadata': <String, Object?>{
           'change_reason': 'initial',
           'provenance': <Object?>[
-            <String, Object?>{'hop': 'mobile'},
+            <String, Object?>{
+              'hop': 'mobile',
+              'database_id': kPeerDatabaseId,
+              'library_version': kPeerLibraryVersion,
+            },
           ],
         },
         'flow_token': 'invite:ABC',
@@ -262,8 +273,9 @@ void main() {
     });
 
     // Verifies: EVS-DEV-version-compatibility/C
-    test('the data-format version of this build is 2.0', () {
-      expect(LibVersion.dataFormat, const DataFormatVersion(2, 0));
+    // Verifies: EVS-DEV-version-compatibility/N
+    test('the data-format version of this build is 3.0', () {
+      expect(LibVersion.dataFormat, const DataFormatVersion(3, 0));
     });
   });
 
@@ -343,7 +355,7 @@ void main() {
 
     // Verifies: EVS-DEV-event-record/A
     test('an event built with a local clientTimestamp writes it in UTC, and '
-        'one outside the four-digit years fails requireRecordTimestamps', () {
+        'one outside the four-digit years fails requireWellFormedRecord', () {
       final local = DateTime(2026, 9, 1, 12);
       final ev = StoredEvent.synthetic(
         eventId: 'e',
@@ -356,7 +368,7 @@ void main() {
       final written = ev.toMap()['client_timestamp']! as String;
       expect(written, endsWith('Z'));
       expect(DateTime.parse(written).isAtSameMomentAs(local), isTrue);
-      ev.requireRecordTimestamps();
+      ev.requireWellFormedRecord();
       expect(
         StoredEvent.fromMap(<String, Object?>{
           ...ev.toMap(),
@@ -373,7 +385,7 @@ void main() {
         eventHash: 'h',
       );
       expect(
-        far.requireRecordTimestamps,
+        far.requireWellFormedRecord,
         throwsA(
           isA<FormatException>().having(
             (e) => e.message,
@@ -395,12 +407,16 @@ void main() {
                 'received_at': '2026-04-26T00:00:00.000Z',
                 'identifier': 'device-1',
                 'software_version': 'app@1.0.0',
+                'database_id': kPeerDatabaseId,
+                'library_version': kPeerLibraryVersion,
               },
               <String, Object?>{
                 'hop': 'relay',
                 'received_at': receivedAt,
                 'identifier': 'relay-1',
                 'software_version': 'relay@1.0.0',
+                'database_id': 'relay-database',
+                'library_version': kPeerLibraryVersion,
               },
             ],
           };
@@ -445,7 +461,7 @@ void main() {
 
     // Verifies: EVS-DEV-event-record/C
     test('an event built with a provenance received_at without an offset '
-        'fails requireRecordTimestamps naming received_at', () {
+        'fails requireWellFormedRecord naming received_at', () {
       final ev = StoredEvent.synthetic(
         eventId: 'e',
         aggregateId: 'a',
@@ -460,17 +476,206 @@ void main() {
               'received_at': '2026-09-01T12:00:00',
               'identifier': 'device-1',
               'software_version': 'app@1.0.0',
+              'database_id': kPeerDatabaseId,
+              'library_version': kPeerLibraryVersion,
             },
           ],
         },
       );
       expect(
-        ev.requireRecordTimestamps,
+        ev.requireWellFormedRecord,
         throwsA(
           isA<FormatException>().having(
             (e) => e.message,
             'message',
             contains('"received_at"'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('provenance entry fields', () {
+    Map<String, Object?> entry(int i) => <String, Object?>{
+      'hop': 'hop-$i',
+      'received_at': '2026-04-26T00:00:0$i.000Z',
+      'identifier': 'install-$i',
+      'software_version': 'app@1.0.0',
+      'database_id': 'database-$i',
+      'library_version': kPeerLibraryVersion,
+    };
+
+    /// A valid record whose provenance holds two entries, the one at
+    /// [index] with [field] set to [value], or removed when [remove].
+    Map<String, Object?> withEntryField(
+      int index,
+      String field, {
+      Object? value,
+      bool remove = false,
+    }) {
+      final entries = <Map<String, Object?>>[entry(0), entry(1)];
+      if (remove) {
+        entries[index].remove(field);
+      } else {
+        entries[index][field] = value;
+      }
+      return _validEventMap()
+        ..['metadata'] = <String, Object?>{'provenance': entries};
+    }
+
+    final malformed = <String, ({Object? value, bool remove})>{
+      'missing': (value: null, remove: true),
+      'null': (value: null, remove: false),
+      'empty': (value: '', remove: false),
+      'a number': (value: 7, remove: false),
+    };
+
+    // Verifies: EVS-DEV-event-record/H
+    test('fromMap refuses a record any of whose provenance entries lacks '
+        'database_id or library_version, or carries one that is not a '
+        'non-empty string, naming the field', () {
+      for (final field in <String>['database_id', 'library_version']) {
+        for (final index in <int>[0, 1]) {
+          for (final c in malformed.entries) {
+            expect(
+              () => StoredEvent.fromMap(
+                withEntryField(
+                  index,
+                  field,
+                  value: c.value.value,
+                  remove: c.value.remove,
+                ),
+                0,
+              ),
+              throwsA(
+                isA<FormatException>().having(
+                  (e) => e.message,
+                  'message',
+                  allOf(contains('"$field"'), contains('provenance[$index]')),
+                ),
+              ),
+              reason: '$field ${c.key} in entry $index',
+            );
+          }
+        }
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/H
+    test('an event built with a provenance entry lacking library_version or '
+        'with an empty database_id fails requireWellFormedRecord naming the '
+        'field', () {
+      for (final field in <String>['database_id', 'library_version']) {
+        final metadata = withEntryField(1, field, value: '')['metadata'];
+        final ev = StoredEvent.synthetic(
+          eventId: 'e',
+          aggregateId: 'a',
+          entryType: 'note',
+          initiator: const UserInitiator('u'),
+          clientTimestamp: DateTime.utc(2026, 9, 1),
+          eventHash: 'h',
+          metadata: Map<String, dynamic>.from(metadata! as Map),
+        );
+        expect(
+          ev.requireWellFormedRecord,
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('"$field"'),
+            ),
+          ),
+          reason: field,
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-event-record/H
+    test(
+      'fromMap admits entries carrying both fields as non-empty strings',
+      () {
+        final record = _validEventMap()
+          ..['metadata'] = <String, Object?>{
+            'provenance': <Object?>[entry(0), entry(1)],
+          };
+        expect(
+          StoredEvent.fromMap(record, 0).toMap()['metadata'],
+          record['metadata'],
+        );
+      },
+    );
+  });
+
+  group('the causal object', () {
+    final malformed = <String, Object?>{
+      'missing': _absent,
+      'null': null,
+      'not an object': 'version',
+      'an extra key': <String, Object?>{...kRootVersionCausalJson, 'extra': 1},
+      'a missing key': <String, Object?>{
+        'kind': 'version',
+        'eligible': true,
+        'parents': <Object?>[],
+      },
+      'parents out of order': <String, Object?>{
+        ...kRootVersionCausalJson,
+        'parents': <Object?>[
+          <String, Object?>{'event_id': 'b', 'event_hash': 'hb'},
+          <String, Object?>{'event_id': 'a', 'event_hash': 'ha'},
+        ],
+      },
+    };
+
+    // Verifies: EVS-DEV-causal-parents/B
+    test('fromMap refuses a record with no causal object of the exact shape, '
+        'naming the field', () {
+      for (final c in malformed.entries) {
+        final record = _validEventMap();
+        if (identical(c.value, _absent)) {
+          record.remove('causal');
+        } else {
+          record['causal'] = c.value;
+        }
+        expect(
+          () => StoredEvent.fromMap(record, 0),
+          throwsA(
+            isA<FormatException>().having(
+              (e) => e.message,
+              'message',
+              contains('causal'),
+            ),
+          ),
+          reason: c.key,
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-causal-parents/B
+    test('an event built with no causal object fails requireWellFormedRecord '
+        'naming the field', () {
+      final ev = StoredEvent(
+        key: 0,
+        eventId: 'e',
+        aggregateId: 'a',
+        aggregateType: 'note',
+        entryType: 'note',
+        entryTypeVersion: const EntryTypeVersion(1, 0),
+        libFormatVersion: LibVersion.dataFormat,
+        eventType: 'finalized',
+        sequenceNumber: 0,
+        data: const <String, dynamic>{},
+        metadata: const <String, dynamic>{},
+        initiator: const UserInitiator('u'),
+        clientTimestamp: DateTime.utc(2026, 9, 1),
+        eventHash: 'h',
+      );
+      expect(
+        ev.requireWellFormedRecord,
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('"causal"'),
           ),
         ),
       );
@@ -531,6 +736,7 @@ void main() {
         eventHash: 'h1',
         flowToken: null,
         previousEventHash: null,
+        causal: kRootVersionCausal,
       );
 
       final promoted = original.withData(<String, Object?>{

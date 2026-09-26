@@ -2,10 +2,10 @@
 
 ## 0.5.0
 
-This release changes what the library stores and sends (data format 2.0,
+This release changes what the library stores and sends (data format 3.0,
 and the `esd/batch@2` batch envelope). A database written by an earlier
-release does not open: `EventStore.open` refuses it by name with
-`DatabaseResetRequiredError`, and it must be reset. A Postgres schema
+release, or by a build of data format 2, does not open: `EventStore.open`
+refuses it by name with `DatabaseResetRequiredError`, and it must be reset. A Postgres schema
 created by an earlier release is dropped and provisioned again with
 `PostgresBackend.provision`.
 
@@ -183,16 +183,15 @@ created by an earlier release is dropped and provisioned again with
   of the record it does not read (not hashed). Both backends store and
   return all of them, so a received record, its stored copy and the copy a
   relay forwards hash alike, and a record from a later release of data
-  format 2 verifies, stores and relays unchanged. `EntryTypeVersion` and
+  format 3 verifies, stores and relays unchanged. `EntryTypeVersion` and
   `DataFormatVersion.fromJson` read a map by its `major` and `minor` and
   ignore other keys, so library-version events, view targets and boot
-  records a later 2.x release writes open too.
+  records a later 3.x release writes open too.
 - `EventStore.logRejectedBatch` is removed: it appended a reserved
   `ingest.batch_rejected` audit whose content the caller chose. Ingest
   appends only the reserved events of the deliveries it accepts; a
-  refused batch is reported by the exception `ingestBatch` throws. Ingest
-  still admits an `ingest.batch_rejected` event another build of data
-  format 2 appended.
+  refused batch is reported by the exception `ingestBatch` throws. No
+  reserved shape declares `ingest.batch_rejected`, so ingest refuses one.
 - A record's `client_timestamp` must carry a four-digit year, calendar
   fields within their ranges and an explicit offset (`Z` or
   `+/-HH[:]MM`): a timestamp without an offset, a year outside 0000-9999,
@@ -215,12 +214,31 @@ created by an earlier release is dropped and provisioned again with
   zone an injected `clock` returns, and `StoredEvent.toMap` writes the
   `clientTimestamp` of an event built with the constructor in UTC.
 
+### The event record (data format 3.0)
+
+- Every provenance entry the library stamps carries `database_id` (the
+  database that stamped it) and `library_version` (the package version
+  that stamped it), and every event carries a `causal` object (`kind`,
+  `eligible`, `parents`, `reconciles`). The event hash covers both. A
+  record any of whose provenance entries lacks either field, or carries
+  one that is not a non-empty string, or that carries no `causal` object
+  of exactly that shape, is malformed: `StoredEvent.fromMap` throws a
+  `FormatException` naming the field, `appendEvent` and every read refuse
+  it, and both ingest entry points refuse it with `IngestDecodeFailure`
+  before any write.
+- Both ingest entry points refuse an event of another data-format major
+  with `IngestDataFormatIncompatible` before any other check of its
+  record, so an event a build of data format 2 sent is refused by its
+  major, not by the fields it lacks. `EventStore.open` refuses a database
+  whose latest event a build of data format 2 appended with
+  `DatabaseResetRequiredError`, before any write.
+
 ### Versions and the boot
 
 - Versions are major.minor: `EntryTypeVersion` for entry types
   (`registeredVersion`, `PromoterSpec` steps, `rebuildView` targets) and
   `DataFormatVersion` for the library's data format
-  (`LibVersion.dataFormat`, `2.0`, stamped on every event). A minor step's
+  (`LibVersion.dataFormat`, `3.0`, stamped on every event). A minor step's
   promoters may only be `DefaultField` (or none); a rename or drop is a
   major step. The event hash covers both versions. A promoted
   `DefaultField` no longer overwrites a field the row already carries.
@@ -256,6 +274,10 @@ created by an earlier release is dropped and provisioned again with
 
 ### Storage contract
 
+- `StoredEvent` carries the event's `causal` object (`CausalRecord`).
+  `StoredEvent.synthetic` gives an event built without one an eligible
+  version with no parents, so an in-memory `StorageBackend` double's seeded
+  events carry a well-formed `causal`.
 - Every `StorageBackend` member that writes is `@internal` (queue, view,
   view-target, schema-version, fill-position and schedule writers,
   `appendEvent`, `nextSequenceNumber`, and the records this release adds);

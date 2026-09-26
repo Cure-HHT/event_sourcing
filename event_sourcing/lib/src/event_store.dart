@@ -83,6 +83,7 @@ import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:event_sourcing/src/actions/permission.dart';
 import 'package:event_sourcing/src/actions/principal.dart' show UserPrincipal;
 import 'package:event_sourcing/src/actions/scope_value.dart';
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.dart';
 import 'package:event_sourcing/src/destinations/destination.dart';
@@ -892,7 +893,7 @@ class EventStore {
       progress.beginBodyRun();
 
       // -------- Decide: nothing below writes until every refusal ran.
-      await _refuseEarlierFormatEvents(storage, txn);
+      await _refuseEarlierFormatEvents(storage, txn, build.dataFormat);
       final storedId = await storage.readDatabaseIdTxn(txn);
       final LocalLibVersionHistory history;
       try {
@@ -984,6 +985,7 @@ class EventStore {
               'database_id': databaseId,
               'initializedAt': DateTime.now().toUtc().toIso8601String(),
             },
+            databaseId: databaseId,
           );
           versionEventAppended = true;
         }
@@ -1005,6 +1007,7 @@ class EventStore {
               'toDataFormat': build.dataFormat.toJson(),
               'changedAt': DateTime.now().toUtc().toIso8601String(),
             },
+            databaseId: databaseId,
           );
           versionEventAppended = true;
         }
@@ -1042,6 +1045,7 @@ class EventStore {
                 fromVersion: fromVersion,
                 toVersion: toVersion,
                 rowsPromoted: rowsPromoted,
+                databaseId: databaseId,
               );
             },
         progress: progress,
@@ -1078,18 +1082,33 @@ class EventStore {
   }
 
   /// Throws [DatabaseResetRequiredError] when the latest event in the log
-  /// is not in this data format's stored shape.
+  /// is not in this data format's stored shape, or records a data-format
+  /// major below this build's: a build of an earlier data format appended
+  /// it. No build of this data format stores an event of an earlier major,
+  /// since ingest refuses one, so the latest event decides for the log.
+  // Implements: EVS-DEV-version-compatibility/O
+  // the open refuses, before any write, a database holding an event an
+  //   earlier data-format major appended, as one that must be reset.
   static Future<void> _refuseEarlierFormatEvents(
     StorageBackend storage,
     Transaction txn,
+    DataFormatVersion dataFormat,
   ) async {
+    StoredEvent? latest;
     try {
-      await for (final _ in storage.readEventsReverseInTxn(txn)) {
+      await for (final event in storage.readEventsReverseInTxn(txn)) {
+        latest = event;
         break;
       }
     } on FormatException catch (e) {
       throw DatabaseResetRequiredError(
         'its events are not in this data format: ${e.message}',
+      );
+    }
+    if (latest != null && latest.libFormatVersion.major < dataFormat.major) {
+      throw DatabaseResetRequiredError(
+        'its latest event, ${latest.eventId}, was appended by a build of '
+        'data format ${latest.libFormatVersion}',
       );
     }
   }
@@ -1450,6 +1469,8 @@ class EventStore {
   /// unchanged.
   DateTime _now() => (_clock ?? DateTime.now)().toUtc();
 
+  // Implements: EVS-DEV-causal-parents/G
+  // the public append operations take no argument that sets causal.
   /// Append a new event. Returns the persisted `StoredEvent`, or `null`
   /// when `dedupeByContent` is true and the content matches the
   /// aggregate's most recent event of [entryType].
@@ -1872,12 +1893,6 @@ class EventStore {
     final effectiveChangeReason = changeReason ?? 'initial';
 
     final now = _now();
-    final provenance0 = ProvenanceEntry(
-      hop: source.hopId,
-      receivedAt: now,
-      identifier: source.identifier,
-      softwareVersion: source.softwareVersion,
-    );
 
     // dedupe-by-content: compares against the most-recent event of matching
     // entry_type within the aggregate. Multiple entry types may share an
@@ -1913,12 +1928,22 @@ class EventStore {
       if (candidateHash == priorHash) return null;
     }
 
-    // Implements: EVS-PRD-hash-chain-integrity/B
-    // every appended event carries the
-    //   hash of the one before it in its chain, read inside the same
-    //   transaction so the link cannot straddle a concurrent append.
-    final previousHash = await _backend.readLatestEventHash(txn);
-    final sequenceNumber = await _backend.nextSequenceNumber(txn);
+    final links = await _reserveChainLinksInTxn(_backend, txn, databaseId);
+    final sequenceNumber = links.sequenceNumber;
+    final causal = await _stampCausalInTxn(
+      _backend,
+      txn,
+      aggregateId: aggregateId,
+      declaration: def.declarationFor(eventType),
+    );
+    final provenance0 = _originatorEntry(
+      hop: source.hopId,
+      identifier: source.identifier,
+      softwareVersion: source.softwareVersion,
+      receivedAt: now,
+      databaseId: databaseId,
+      links: links,
+    );
     final eventId = _uuid.v4();
 
     final dataMap = <String, Object?>{
@@ -1945,7 +1970,8 @@ class EventStore {
       'initiator': initiator.toJson(),
       'flow_token': flowToken,
       'client_timestamp': provenance0.receivedAt.toIso8601String(),
-      'previous_event_hash': previousHash,
+      'previous_event_hash': links.previousEventHash,
+      'causal': causal.toJson(),
     };
     final eventHash = _eventHash(recordMap);
     recordMap['event_hash'] = eventHash;
@@ -2029,13 +2055,26 @@ class EventStore {
   /// An event whose client timestamp, or a provenance entry's
   /// `received_at`, is not one a record may carry throws
   /// [IngestDecodeFailure] naming the field, before any write; an event
-  /// parsed with [StoredEvent.fromMap] was already refused there.
-  // Implements: EVS-DEV-event-record/A+C
+  /// parsed with [StoredEvent.fromMap] was already refused there. So is an
+  /// event with a provenance entry lacking `database_id` or
+  /// `library_version`, or with no `causal` object. An event of another
+  /// data-format major is refused with [IngestDataFormatIncompatible]
+  /// before any of these checks.
+  // Implements: EVS-DEV-event-record/A+C+H
   // both ingest entry points refuse a malformed client timestamp or
-  //   received_at as a decode failure naming the field, before any write.
+  //   received_at, or a provenance entry lacking database_id or
+  //   library_version, as a decode failure naming the field, before any
+  //   write.
+  // Implements: EVS-DEV-causal-parents/B
+  // both ingest entry points refuse an event with no causal object of the
+  //   exact shape, naming the field, before any write.
+  // Implements: EVS-DEV-version-compatibility/Q
+  // ingestEvent refuses another data-format major before any check of the
+  //   rest of the event's record.
   Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
+    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     try {
-      incoming.requireRecordTimestamps();
+      incoming.requireWellFormedRecord();
     } on FormatException catch (e) {
       throw IngestDecodeFailure('event ${incoming.eventId}: ${e.message}');
     }
@@ -2084,6 +2123,7 @@ class EventStore {
       outcomes.clear();
       for (var i = 0; i < envelope.events.length; i++) {
         final eventMap = envelope.events[i];
+        _refuseOtherDataFormatMajorOfRecord(eventMap);
         final StoredEvent storedEvent;
         try {
           storedEvent = StoredEvent.fromMap(
@@ -2116,6 +2156,51 @@ class EventStore {
     return IngestBatchResult(batchId: envelope.batchId, events: outcomes);
   }
 
+  /// Throws [IngestDataFormatIncompatible] when [version], the data-format
+  /// version of the incoming event [eventId], has a major other than this
+  /// build's.
+  static void _refuseOtherDataFormatMajor(
+    String eventId,
+    DataFormatVersion version,
+  ) {
+    if (version.isCompatibleWith(LibVersion.dataFormat)) return;
+    throw IngestDataFormatIncompatible(
+      eventId: eventId,
+      wireFormat: version,
+      receiverFormat: LibVersion.dataFormat,
+    );
+  }
+
+  /// Throws [IngestDataFormatIncompatible] when [record], an event record
+  /// as a batch envelope carried it, records a data-format major other than
+  /// this build's, reading nothing of the record but `lib_format_version`
+  /// and `event_id`, so the refusal names the major and not a field a
+  /// build of that major did not write. An integer `lib_format_version` is
+  /// the version shape of a data format before 2.0 and names its major. A
+  /// `lib_format_version` this reads no version from is left to
+  /// [StoredEvent.fromMap], which names the field.
+  // Implements: EVS-DEV-version-compatibility/Q
+  // an event of another data-format major is refused by its major before
+  //   any check of the rest of its record.
+  static void _refuseOtherDataFormatMajorOfRecord(Map<String, Object?> record) {
+    final raw = record['lib_format_version'];
+    final DataFormatVersion version;
+    if (raw is int && raw >= 1) {
+      version = DataFormatVersion(raw, 0);
+    } else {
+      try {
+        version = DataFormatVersion.fromJson(raw);
+      } on FormatException {
+        return;
+      }
+    }
+    final eventId = record['event_id'];
+    _refuseOtherDataFormatMajor(
+      eventId is String ? eventId : '(no event_id)',
+      version,
+    );
+  }
+
   /// Per-event ingest logic, called from both [ingestEvent] and the
   /// `ingestBatch` loop.
   ///
@@ -2138,13 +2223,7 @@ class EventStore {
     // every ingest entry point (ingestEvent and each event of ingestBatch)
     //   refuses a different data-format major or a higher entry-type major
     //   before any write.
-    if (!incoming.libFormatVersion.isCompatibleWith(LibVersion.dataFormat)) {
-      throw IngestDataFormatIncompatible(
-        eventId: incoming.eventId,
-        wireFormat: incoming.libFormatVersion,
-        receiverFormat: LibVersion.dataFormat,
-      );
-    }
+    _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     // An entry type this build does not register is accepted at any
     // version: it is stored as it is and folds under its own version.
     final def = entryTypes.byId(incoming.entryType);
@@ -2253,7 +2332,14 @@ class EventStore {
     //    the prior event in this destination's log.
     final originSeq = incoming.sequenceNumber;
     final localSeq = await _backend.nextSequenceNumber(txn);
+    // Implements: EVS-DEV-chain-verification/C
+    // the receiver entry records the event's local sequence number and the
+    //   stored hash of the event at the preceding one, read in this
+    //   transaction.
     final previousTailHash = await _backend.readLatestEventHash(txn);
+    // Implements: EVS-DEV-event-record/D+E
+    // the receiver entry names the receiving database and the library
+    //   version that stamped it.
     final receiverEntry = ProvenanceEntry(
       hop: source.hopId,
       receivedAt: _now(),
@@ -2264,6 +2350,8 @@ class EventStore {
       ingestSequenceNumber: localSeq,
       originSequenceNumber: originSeq,
       batchContext: batchContext,
+      libraryVersion: _build().version,
+      databaseId: databaseId,
     );
 
     // 4. Build the updated event with the local sequence_number and
@@ -2356,11 +2444,10 @@ class EventStore {
   /// a [ChainVerdict] with `ok=true` when every `previous_ingest_hash` equals
   /// the stored `event_hash` of the prior ingest-stamped event in the range.
   ///
-  /// Under the unified event store, the "Chain 2 ordering" is the local
-  /// `sequence_number` (also recorded on the receiver-hop entry as
-  /// `ingest_sequence_number` for symmetry with Chain 2 fields). Events
-  /// without a receiver-stamped top provenance entry — i.e. origin appends
-  /// made by this device — are skipped.
+  /// The "Chain 2 ordering" is the local `sequence_number`, which the last
+  /// provenance entry of every event this database stores records as
+  /// `ingest_sequence_number`. An event whose last provenance entry records
+  /// none is skipped.
   ///
   /// See design spec §2.11.
   Future<ChainVerdict> verifyIngestChain({
@@ -2427,9 +2514,8 @@ class EventStore {
   }
 
   /// Extract the `ingest_sequence_number` from the last provenance entry of
-  /// [event], or `null` when the event was not ingest-stamped (i.e. an
-  /// origin-only event with no receiver hop). Used by [verifyIngestChain]
-  /// to identify each event's position in Chain 2.
+  /// [event], or `null` when that entry records none. Used by
+  /// [verifyIngestChain] to identify each event's position in Chain 2.
   int? _ingestSeqOf(StoredEvent event) =>
       _lastProvenanceEntry(event)?['ingest_sequence_number'] as int?;
 
@@ -2615,7 +2701,7 @@ class EventStore {
   }
 
   /// Emit a receiver-originated `ingest.duplicate_received` audit event
-  /// inside [txn]. Stamped with Chain 2 fields on `provenance[0]`.
+  /// inside [txn], an event this database authors.
   Future<void> _emitDuplicateReceivedInTxn(
     Transaction txn, {
     required String subjectEventId,
@@ -2623,24 +2709,15 @@ class EventStore {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
-    final now = _now();
-    // Reserve a fresh local sequence_number; under the unified store this
-    // value is also the receiver-hop's ingest_sequence_number for Chain 2.
-    final localSeq = await _backend.nextSequenceNumber(txn);
-    final previousTailHash = await _backend.readLatestEventHash(txn);
-    final provenance0 = ProvenanceEntry(
-      hop: source.hopId,
-      receivedAt: now,
-      identifier: source.identifier,
-      softwareVersion: source.softwareVersion,
-      arrivalHash: null,
-      previousIngestHash: previousTailHash,
-      ingestSequenceNumber: localSeq,
-      batchContext: batchContext,
-    );
     await _appendRawInternalEventInTxn(
       txn,
       _backend,
+      databaseId: databaseId,
+      hop: source.hopId,
+      identifier: source.identifier,
+      softwareVersion: source.softwareVersion,
+      receivedAt: _now(),
+      batchContext: batchContext,
       aggregateId: 'ingest-audit:${source.hopId}',
       aggregateType: kIngestAuditAggregateType,
       entryType: kIngestAuditEntryType,
@@ -2653,9 +2730,6 @@ class EventStore {
         'subject_event_hash_on_record': subjectEventHashOnRecord,
       },
       initiator: const AutomationInitiator(service: 'ingest'),
-      provenance0: provenance0,
-      localSeq: localSeq,
-      previousTailHash: previousTailHash,
       uuid: _uuid,
       collector: collector,
     );
@@ -2674,18 +2748,149 @@ const _kLibVersionInitiator = AutomationInitiator(service: 'event_sourcing');
 String _canonicalEventHash(Map<String, Object?> recordMap) =>
     canonicalEventHash(recordMap);
 
-/// Build and append one substrate-internal event to [backend] inside [txn].
+/// The sequence number reserved for an event the database authors, and the
+/// two links it records: its predecessor in the database's origin chain and
+/// its predecessor in the database's storage chain.
+typedef _ChainLinks = ({
+  int sequenceNumber,
+  String? previousEventHash,
+  String? previousIngestHash,
+});
+
+/// Reserves the next local sequence number in [txn] and reads, in the same
+/// transaction, the two links an event the database [databaseId] authors
+/// at it records: the sealed hash of the latest event the database holds
+/// as authored, and the stored hash of the event at the preceding local
+/// sequence number. Appends nothing; the caller appends the event at the
+/// reserved number.
+// Implements: EVS-DEV-chain-verification/B
+// the predecessor hash is the sealed hash of the event with the highest
+//   local sequence number the database holds as authored, or null when it
+//   holds none, read inside the append's transaction.
+// Implements: EVS-PRD-hash-chain-integrity/B
+// every appended event carries the hash of the event its database authored
+//   immediately before it, so the database's authored events form one chain.
+// Implements: EVS-DEV-chain-verification/C
+// the storage link is the stored hash of the event at the preceding local
+//   sequence number, read inside the storing transaction.
+Future<_ChainLinks> _reserveChainLinksInTxn(
+  StorageBackend backend,
+  Transaction txn,
+  String databaseId,
+) async {
+  final sequenceNumber = await backend.nextSequenceNumber(txn);
+  final previousIngestHash = await backend.readLatestEventHash(txn);
+  // Implements: EVS-DEV-chain-verification/N
+  // the append reads its predecessor from the chain index, not the log.
+  final latestAuthored = await backend.readLatestHeldAsAuthoredInTxn(
+    txn,
+    databaseId,
+  );
+  return (
+    sequenceNumber: sequenceNumber,
+    previousEventHash: latestAuthored?.sealedHash,
+    previousIngestHash: previousIngestHash,
+  );
+}
+
+/// The causal record of an event appended on [aggregateId] under
+/// [declaration], read inside [txn]: the declared kind and eligibility,
+/// `reconciles` null, and as `parents` the aggregate's latest eligible
+/// version from the causal working copy, or none when the database holds
+/// none.
 ///
-/// Assembles the record map shared by [EventStore._emitDuplicateReceivedInTxn]
-/// and [_appendLibVersionEventInTxn], hashes it with [_canonicalEventHash],
-/// calls [StorageBackend.appendEvent], and records the event into
-/// [collector] when one is given.
+/// This is the stamping rule for an event that is not a reconciliation, on
+/// an aggregate with no open conflict record, which is every event the
+/// library appends.
+// Implements: EVS-DEV-causal-parents/F
+// kind and eligible are stamped from the appended entry type's declaration
+//   for the appended event type, and parents and reconciles by the stamping
+//   rule, inside the append transaction.
+// Implements: EVS-DEV-causal-parents/H
+// reconciles is null and parents names the aggregate's latest eligible
+//   version in the appending database's log, or nothing when it holds none;
+//   the value is read from the per-aggregate working copy the storing
+//   transactions keep.
+Future<CausalRecord> _stampCausalInTxn(
+  StorageBackend backend,
+  Transaction txn, {
+  required String aggregateId,
+  required EventTypeDeclaration declaration,
+}) async {
+  final latest = await backend.readLatestEligibleVersionInTxn(txn, aggregateId);
+  return CausalRecord(
+    kind: declaration.kind,
+    eligible: declaration.eligible,
+    parents: <CausalRef>[?latest],
+  );
+}
+
+/// The declaration of [eventType] by the reserved entry type [entryType],
+/// read from [kSystemEntryTypes]: the library's raw internal appends run
+/// before an event store, and its registry, exist. Throws [StateError] when
+/// [entryType] is not a reserved entry type.
+// Implements: EVS-DEV-causal-parents/F
+// a raw internal append stamps kind and eligible from its reserved entry
+//   type's declaration for its event type.
+EventTypeDeclaration _reservedDeclaration(String entryType, String eventType) {
+  for (final definition in kSystemEntryTypes) {
+    if (definition.id == entryType) {
+      return definition.declarationFor(eventType);
+    }
+  }
+  throw StateError('$entryType is not a reserved system entry type');
+}
+
+/// The originator entry of an event the database [databaseId] authors at
+/// [links]: attribution to [hop], [identifier] and [softwareVersion], the
+/// database's identity, the library version of this build, and the
+/// event's storage link.
+// Implements: EVS-DEV-event-record/D+E+F
+// the originator entry names the stamping database and the library version
+//   this build declares, which is the compiled package version unless a
+//   test installed a build declaration.
+// Implements: EVS-PRD-provenance/A
+// the entry the library stamps records the library's version.
+// Implements: EVS-DEV-chain-verification/C
+// the originator entry records the event's local sequence number and the
+//   stored hash of the event before it.
+ProvenanceEntry _originatorEntry({
+  required String hop,
+  required String identifier,
+  required String softwareVersion,
+  required DateTime receivedAt,
+  required String databaseId,
+  required _ChainLinks links,
+  BatchContext? batchContext,
+}) => ProvenanceEntry(
+  hop: hop,
+  receivedAt: receivedAt,
+  identifier: identifier,
+  softwareVersion: softwareVersion,
+  ingestSequenceNumber: links.sequenceNumber,
+  previousIngestHash: links.previousIngestHash,
+  batchContext: batchContext,
+  libraryVersion: EventStore._build().version,
+  databaseId: databaseId,
+);
+
+/// Build and append one substrate-internal event, authored by the database
+/// [databaseId], to [backend] inside [txn].
 ///
-/// The caller reserves [localSeq] and [previousTailHash] before this runs,
-/// so that [provenance0] can carry them.
+/// Reserves the event's sequence number and chain links, builds its
+/// originator entry, assembles the record map shared by
+/// [EventStore._emitDuplicateReceivedInTxn], [_appendLibVersionEventInTxn]
+/// and [_appendViewSnapshotPromotedAuditInTxn], hashes it with
+/// [_canonicalEventHash], calls [StorageBackend.appendEvent], and records
+/// the event into [collector] when one is given.
 Future<StoredEvent> _appendRawInternalEventInTxn(
   Transaction txn,
   StorageBackend backend, {
+  required String databaseId,
+  required String hop,
+  required String identifier,
+  required String softwareVersion,
+  required DateTime receivedAt,
   required String aggregateId,
   required String aggregateType,
   required String entryType,
@@ -2693,10 +2898,8 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
   required String eventType,
   required Map<String, Object?> data,
   required Initiator initiator,
-  required ProvenanceEntry provenance0,
-  required int localSeq,
-  required String? previousTailHash,
   required Uuid uuid,
+  BatchContext? batchContext,
   PublishCollector? collector,
 }) async {
   // Every caller passes a shape it takes from the declared-shape constants,
@@ -2707,6 +2910,23 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
     entryType: entryType,
     aggregateType: aggregateType,
     eventType: eventType,
+  );
+  final links = await _reserveChainLinksInTxn(backend, txn, databaseId);
+  final localSeq = links.sequenceNumber;
+  final causal = await _stampCausalInTxn(
+    backend,
+    txn,
+    aggregateId: aggregateId,
+    declaration: _reservedDeclaration(entryType, eventType),
+  );
+  final provenance0 = _originatorEntry(
+    hop: hop,
+    identifier: identifier,
+    softwareVersion: softwareVersion,
+    receivedAt: receivedAt,
+    databaseId: databaseId,
+    links: links,
+    batchContext: batchContext,
   );
   final eventId = uuid.v4();
   final recordMap = <String, Object?>{
@@ -2725,7 +2945,8 @@ Future<StoredEvent> _appendRawInternalEventInTxn(
     'initiator': initiator.toJson(),
     'flow_token': null,
     'client_timestamp': provenance0.receivedAt.toIso8601String(),
-    'previous_event_hash': previousTailHash,
+    'previous_event_hash': links.previousEventHash,
+    'causal': causal.toJson(),
   };
   final eventHash = _canonicalEventHash(recordMap);
   recordMap['event_hash'] = eventHash;
@@ -2753,21 +2974,18 @@ Future<void> _appendLibVersionEventInTxn(
   Transaction txn,
   StorageBackend backend,
   String eventType,
-  Map<String, Object?> data,
-) async {
+  Map<String, Object?> data, {
+  required String databaseId,
+}) async {
   const uuid = Uuid();
-  final now = DateTime.now().toUtc();
-  final localSeq = await backend.nextSequenceNumber(txn);
-  final previousTailHash = await backend.readLatestEventHash(txn);
-  final provenance0 = ProvenanceEntry(
-    hop: 'event_sourcing',
-    receivedAt: now,
-    identifier: 'event_sourcing',
-    softwareVersion: LibVersion.version,
-  );
   await _appendRawInternalEventInTxn(
     txn,
     backend,
+    databaseId: databaseId,
+    hop: 'event_sourcing',
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.version,
+    receivedAt: DateTime.now().toUtc(),
     aggregateId: kLibAggregateType,
     aggregateType: kLibAggregateType,
     entryType: eventType,
@@ -2775,9 +2993,6 @@ Future<void> _appendLibVersionEventInTxn(
     eventType: eventType,
     data: data,
     initiator: _kLibVersionInitiator,
-    provenance0: provenance0,
-    localSeq: localSeq,
-    previousTailHash: previousTailHash,
     uuid: uuid,
   );
 }
@@ -2805,20 +3020,17 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
   required EntryTypeVersion fromVersion,
   required EntryTypeVersion toVersion,
   required int rowsPromoted,
+  required String databaseId,
 }) async {
   const uuid = Uuid();
-  final now = DateTime.now().toUtc();
-  final localSeq = await backend.nextSequenceNumber(txn);
-  final previousTailHash = await backend.readLatestEventHash(txn);
-  final provenance0 = ProvenanceEntry(
-    hop: 'event_sourcing',
-    receivedAt: now,
-    identifier: 'event_sourcing',
-    softwareVersion: LibVersion.version,
-  );
   await _appendRawInternalEventInTxn(
     txn,
     backend,
+    databaseId: databaseId,
+    hop: 'event_sourcing',
+    identifier: 'event_sourcing',
+    softwareVersion: LibVersion.version,
+    receivedAt: DateTime.now().toUtc(),
     aggregateId: kLibAggregateType,
     aggregateType: kLibAggregateType,
     entryType: kViewSnapshotPromotedEntryType,
@@ -2834,9 +3046,6 @@ Future<void> _appendViewSnapshotPromotedAuditInTxn(
       'rowsPromoted': rowsPromoted,
     },
     initiator: _kLibVersionInitiator,
-    provenance0: provenance0,
-    localSeq: localSeq,
-    previousTailHash: previousTailHash,
     uuid: uuid,
   );
 }

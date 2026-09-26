@@ -13,6 +13,7 @@
 //   enqueued in sequence order when the window widens)
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
+import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
@@ -22,6 +23,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/record_fixtures.dart';
 
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
@@ -44,7 +46,7 @@ Future<StoredEvent> _appendEvent(
       aggregateType: 'note',
       entryType: entryType,
       entryTypeVersion: const EntryTypeVersion(1, 0),
-      libFormatVersion: const DataFormatVersion(2, 0),
+      libFormatVersion: LibVersion.dataFormat,
       eventType: 'finalized',
       sequenceNumber: seq,
       data: const <String, dynamic>{},
@@ -52,6 +54,7 @@ Future<StoredEvent> _appendEvent(
       initiator: const UserInitiator('u'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',
+      causal: kRootVersionCausal,
     );
     await backend.appendEvent(txn, event);
     return event;

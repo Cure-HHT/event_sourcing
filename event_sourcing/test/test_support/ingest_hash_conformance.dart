@@ -14,6 +14,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
+import 'record_fixtures.dart';
+
+/// Marks a field the record leaves out.
+const Object _absentValue = Object();
+
+/// The refusal of a malformed record naming [field]: a decode failure from
+/// `ingestBatch`, or the [FormatException] of the parse that precedes
+/// `ingestEvent`.
+Matcher _decodeRefusalNaming(String field) => anyOf(
+  isA<IngestDecodeFailure>().having(
+    (e) => e.message,
+    'message',
+    contains(field),
+  ),
+  isA<FormatException>().having((e) => e.message, 'message', contains(field)),
+);
 
 const Initiator _init = AutomationInitiator(service: 'ingest-hash-scenarios');
 const String _noteType = 'hash_note';
@@ -41,6 +57,14 @@ const EntryTypeDefinition _noteDef = EntryTypeDefinition(
 
 var _built = 0;
 
+/// The causal object of the first version of an aggregate.
+const Map<String, Object?> _rootVersion = <String, Object?>{
+  'kind': 'version',
+  'eligible': true,
+  'parents': <Object?>[],
+  'reconciles': null,
+};
+
 /// An event as a peer sends it, with one origin provenance entry and an
 /// `event_hash` that is the canonical hash of the record.
 StoredEvent _originEvent({Map<String, Object?>? data}) {
@@ -64,6 +88,8 @@ StoredEvent _originEvent({Map<String, Object?>? data}) {
           receivedAt: now,
           identifier: _peerSource.identifier,
           softwareVersion: _peerSource.softwareVersion,
+          databaseId: kPeerDatabaseId,
+          libraryVersion: kPeerLibraryVersion,
         ).toJson(),
       ],
     },
@@ -71,6 +97,7 @@ StoredEvent _originEvent({Map<String, Object?>? data}) {
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': _rootVersion,
   };
   record['event_hash'] = canonicalEventHash(record);
   return StoredEvent.fromMap(record, 0);
@@ -143,6 +170,8 @@ Map<String, Object?> _spelledRecord({
           'received_at': receivedAt ?? clientTimestamp,
           'identifier': _peerSource.identifier,
           'software_version': _peerSource.softwareVersion,
+          'database_id': kPeerDatabaseId,
+          'library_version': kPeerLibraryVersion,
         },
       ],
     },
@@ -150,6 +179,14 @@ Map<String, Object?> _spelledRecord({
     'flow_token': null,
     'client_timestamp': clientTimestamp,
     'previous_event_hash': null,
+    'causal': <String, Object?>{
+      'kind': 'version',
+      'eligible': true,
+      'parents': <Object?>[
+        <String, Object?>{'event_id': 'hash-parent', 'event_hash': 'h-parent'},
+      ],
+      'reconciles': null,
+    },
   };
   record['event_hash'] = canonicalEventHash(record);
   return record;
@@ -300,6 +337,20 @@ _tampers = <String, Map<String, Object?> Function(Map<String, Object?>)>{
   },
   'previous_event_hash': (r) => const <String, Object?>{
     'previous_event_hash': 'some-earlier-hash',
+  },
+  'causal parents': (r) => <String, Object?>{
+    'causal': <String, Object?>{
+      ...(r['causal']! as Map<String, Object?>),
+      'parents': <Object?>[
+        <String, Object?>{'event_id': 'hash-parent', 'event_hash': 'h-other'},
+      ],
+    },
+  },
+  'causal kind': (r) => <String, Object?>{
+    'causal': <String, Object?>{
+      ...(r['causal']! as Map<String, Object?>),
+      'kind': 'annotation',
+    },
   },
   'metadata': (r) => <String, Object?>{
     'metadata': <String, Object?>{
@@ -492,6 +543,7 @@ void runIngestHashScenarios(
           // Verifies: EVS-PRD-ingest/B+D
           // Verifies: EVS-PRD-hash-chain-integrity/A+D
           // Verifies: EVS-DEV-event-record/A+B
+          // Verifies: EVS-DEV-event-record/J
           test('admits an event with ${spelling.key}, stores the record as '
               'it arrived, and a downstream store admits the copy it '
               'forwards', () async {
@@ -515,6 +567,7 @@ void runIngestHashScenarios(
               'entry_type_version',
               'lib_format_version',
               'data',
+              'causal',
               ...spelled.extraFields.keys,
             ]) {
               expect(storedMap[key], record[key], reason: key);
@@ -537,6 +590,7 @@ void runIngestHashScenarios(
             for (final key in <String>[
               'entry_type_version',
               'lib_format_version',
+              'causal',
               ...spelled.extraFields.keys,
             ]) {
               expect(forwardedMap[key], record[key], reason: key);
@@ -610,9 +664,76 @@ void runIngestHashScenarios(
           });
         }
 
+        for (final field in <String>['database_id', 'library_version']) {
+          for (final value in <String, Object?>{
+            'missing': _absentValue,
+            'empty': '',
+          }.entries) {
+            // Verifies: EVS-DEV-event-record/H
+            test('refuses an event whose provenance entry has ${value.key} '
+                '$field as a malformed record naming the field, writing '
+                'nothing', () async {
+              if (!available) return;
+              final record = _spelledRecord(
+                clientTimestamp: '2026-09-01T12:00:00Z',
+                initiator: _peerUser,
+              );
+              final metadata = record['metadata']! as Map<String, Object?>;
+              final entry =
+                  (metadata['provenance']! as List).single
+                      as Map<String, Object?>;
+              if (identical(value.value, _absentValue)) {
+                entry.remove(field);
+              } else {
+                entry[field] = value.value;
+              }
+              record['event_hash'] = canonicalEventHash(record);
+              final before = await snapshot();
+              await expectLater(
+                path.value(store, <Map<String, Object?>>[record]),
+                throwsA(_decodeRefusalNaming('"$field"')),
+              );
+              expect(await snapshot(), before);
+            });
+          }
+        }
+
+        // Verifies: EVS-DEV-causal-parents/B
+        test('refuses an event with no causal object, or one with a key '
+            'outside its shape, as a malformed record naming the field, '
+            'writing nothing', () async {
+          if (!available) return;
+          for (final causal in <String, Object?>{
+            'no causal': _absentValue,
+            'an extra key': <String, Object?>{
+              ...kRootVersionCausalJson,
+              'extra': true,
+            },
+          }.entries) {
+            final record = _spelledRecord(
+              clientTimestamp: '2026-09-01T12:00:00Z',
+              initiator: _peerUser,
+            );
+            if (identical(causal.value, _absentValue)) {
+              record.remove('causal');
+            } else {
+              record['causal'] = causal.value;
+            }
+            record['event_hash'] = canonicalEventHash(record);
+            final before = await snapshot();
+            await expectLater(
+              path.value(store, <Map<String, Object?>>[record]),
+              throwsA(_decodeRefusalNaming('causal')),
+              reason: causal.key,
+            );
+            expect(await snapshot(), before, reason: causal.key);
+          }
+        });
+
         for (final tamper in _tampers.entries) {
           // Verifies: EVS-PRD-ingest/D
           // Verifies: EVS-PRD-hash-chain-integrity/A
+          // Verifies: EVS-DEV-event-record/K
           test('refuses an event whose ${tamper.key} changed after it was '
               'sealed, writing nothing', () async {
             if (!available) return;
@@ -707,6 +828,8 @@ void runIngestHashScenarios(
               receivedAt: DateTime.utc(2026, 9, 1, 12),
               identifier: _peerSource.identifier,
               softwareVersion: _peerSource.softwareVersion,
+              databaseId: kPeerDatabaseId,
+              libraryVersion: kPeerLibraryVersion,
             ).toJson(),
           ],
         },
@@ -746,6 +869,8 @@ void runIngestHashScenarios(
                 receivedAt: DateTime.utc(2026, 9, 1, 12),
                 identifier: _peerSource.identifier,
                 softwareVersion: _peerSource.softwareVersion,
+                databaseId: kPeerDatabaseId,
+                libraryVersion: kPeerLibraryVersion,
               ).toJson(),
               'received_at': '2026-09-01T12:00:00',
             },
@@ -764,6 +889,71 @@ void runIngestHashScenarios(
         ),
       );
       expect(await snapshot(), before);
+    });
+
+    // Verifies: EVS-DEV-event-record/H
+    // Verifies: EVS-DEV-causal-parents/B
+    test('ingestEvent refuses an event built with no causal object, or with '
+        'a provenance entry lacking library_version, as a decode failure '
+        'naming the field, writing nothing', () async {
+      if (!available) return;
+      final entry = ProvenanceEntry(
+        hop: _peerSource.hopId,
+        receivedAt: DateTime.utc(2026, 9, 1, 12),
+        identifier: _peerSource.identifier,
+        softwareVersion: _peerSource.softwareVersion,
+        databaseId: kPeerDatabaseId,
+        libraryVersion: kPeerLibraryVersion,
+      ).toJson();
+      final cases = <String, StoredEvent>{
+        'causal': StoredEvent(
+          key: 0,
+          eventId: 'hash-no-causal',
+          aggregateId: 'hash-no-causal',
+          aggregateType: 'note',
+          entryType: _noteType,
+          entryTypeVersion: _noteDef.registeredVersion,
+          libFormatVersion: LibVersion.dataFormat,
+          eventType: 'finalized',
+          sequenceNumber: 1,
+          data: const <String, dynamic>{},
+          metadata: <String, dynamic>{
+            'provenance': <Map<String, Object?>>[entry],
+          },
+          initiator: const UserInitiator('peer-user'),
+          clientTimestamp: DateTime.utc(2026, 9, 1, 12),
+          eventHash: 'unsealed',
+        ),
+        'library_version': StoredEvent.synthetic(
+          eventId: 'hash-no-library-version',
+          aggregateId: 'hash-no-library-version',
+          aggregateType: 'note',
+          entryType: _noteType,
+          initiator: const UserInitiator('peer-user'),
+          clientTimestamp: DateTime.utc(2026, 9, 1, 12),
+          eventHash: 'unsealed',
+          metadata: <String, dynamic>{
+            'provenance': <Map<String, Object?>>[
+              <String, Object?>{...entry}..remove('library_version'),
+            ],
+          },
+        ),
+      };
+      for (final c in cases.entries) {
+        final before = await snapshot();
+        await expectLater(
+          store.ingestEvent(c.value),
+          throwsA(
+            isA<IngestDecodeFailure>().having(
+              (e) => e.message,
+              'message',
+              contains('"${c.key}"'),
+            ),
+          ),
+          reason: c.key,
+        );
+        expect(await snapshot(), before, reason: c.key);
+      }
     });
 
     // Verifies: EVS-PRD-ingest/D

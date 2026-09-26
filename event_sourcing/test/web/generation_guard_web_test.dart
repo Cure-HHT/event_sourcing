@@ -319,10 +319,10 @@ void main() {
       'compiled build is refused with the database unchanged', () async {
     final name = _freshName();
     await runWithDeliveryTestHooks(
-      const DeliveryTestHooks(
+      DeliveryTestHooks(
         buildDeclaration: (
           version: '9.0.0',
-          dataFormat: DataFormatVersion(3, 0),
+          dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
         ),
       ),
       () async => (await _openTab(name)).close(),

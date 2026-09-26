@@ -97,7 +97,7 @@ void main() {
       );
       final rewrittenFormat = _withVersions(
         event,
-        dataFormat: const DataFormatVersion(2, 1),
+        dataFormat: LibVersion.dataFormat.nextMinor,
       );
       expect(_recomputedHash(rewrittenEntryType), isNot(event.eventHash));
       expect(_recomputedHash(rewrittenFormat), isNot(event.eventHash));
@@ -121,7 +121,7 @@ void main() {
         ),
         'data-format version': _withVersions(
           forwarded,
-          dataFormat: const DataFormatVersion(2, 3),
+          dataFormat: DataFormatVersion(LibVersion.dataFormat.major, 3),
         ),
       };
       for (final entry in tampered.entries) {
@@ -149,9 +149,11 @@ void main() {
     });
   });
 
-  group('the event hash of data format 2.0', () {
+  group('the event hash', () {
     // Verifies: EVS-DEV-version-compatibility/J
     // Verifies: EVS-PRD-hash-chain-integrity/A
+    // Verifies: EVS-PRD-hash-chain-integrity/D
+    // Verifies: EVS-DEV-event-record/K
     test('is the SHA-256 of the JCS form of the hashed fields, pinned by a '
         'fixed vector', () {
       final record = <String, Object?>{
@@ -168,6 +170,14 @@ void main() {
         'flow_token': null,
         'client_timestamp': '2026-09-01T12:00:00.000Z',
         'previous_event_hash': null,
+        'causal': <String, Object?>{
+          'kind': 'version',
+          'eligible': true,
+          'parents': <Object?>[
+            <String, Object?>{'event_id': 'p-1', 'event_hash': 'h-1'},
+          ],
+          'reconciles': null,
+        },
         'metadata': <String, Object?>{'provenance': <Object?>[]},
         'event_hash': 'ignored',
       };
@@ -175,6 +185,9 @@ void main() {
       // event_hash are not hashed.
       const canonical =
           '{"aggregate_id":"agg-g",'
+          '"causal":{"eligible":true,"kind":"version",'
+          '"parents":[{"event_hash":"h-1","event_id":"p-1"}],'
+          '"reconciles":null},'
           '"client_timestamp":"2026-09-01T12:00:00.000Z",'
           '"data":{"title":"g"},'
           '"entry_type":"golden_note",'
@@ -189,11 +202,11 @@ void main() {
           '"sequence_number":7}';
       expect(
         sha256.convert(utf8.encode(canonical)).toString(),
-        '76050980b364317b90490e3ae972ed6100f1977a5aae821ba52b4fda2e536bb2',
+        'c1d9cdfb64bfd8864381c96e23b057438292c4a3e91ac2cab3708139471772ec',
       );
       expect(
         canonicalEventHash(record),
-        '76050980b364317b90490e3ae972ed6100f1977a5aae821ba52b4fda2e536bb2',
+        'c1d9cdfb64bfd8864381c96e23b057438292c4a3e91ac2cab3708139471772ec',
       );
     });
   });

@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
         checkReservedAppend,
         kDestinationAuditAggregateType,
         kDestinationAuditEntryTypes,
+        kIngestAuditEntryType,
         kReservedEventShapes;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -36,6 +37,14 @@ const String _noteType = 'shape_note';
 const Map<int, Map<String, List<String>>> _enumeratedValuesByDataFormatMajor =
     <int, Map<String, List<String>>>{
       2: <String, List<String>>{
+        'cause': <String>[
+          'operator_halt',
+          'permanent_refusal',
+          'retry_budget_exhausted',
+        ],
+        'purpose': <String>['pause', 'reconfigure'],
+      },
+      3: <String, List<String>>{
         'cause': <String>[
           'operator_halt',
           'permanent_refusal',
@@ -117,6 +126,76 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
           <String>['finalized'],
         ],
       },
+      3: <String, List<Object>>{
+        'security_context_redacted': <Object>[
+          'security_context',
+          <String>['security_context_redacted'],
+        ],
+        'security_context_compacted': <Object>[
+          'security_context',
+          <String>['security_context_compacted'],
+        ],
+        'security_context_purged': <Object>[
+          'security_context',
+          <String>['security_context_purged'],
+        ],
+        'system.destination_registered': <Object>[
+          'system_destination',
+          <String>['destination_registered'],
+        ],
+        'system.destination_start_date_set': <Object>[
+          'system_destination',
+          <String>['destination_start_date_set'],
+        ],
+        'system.destination_end_date_set': <Object>[
+          'system_destination',
+          <String>['destination_end_date_set'],
+        ],
+        'system.destination_deleted': <Object>[
+          'system_destination',
+          <String>['destination_deleted'],
+        ],
+        'system.destination_wedge_recovered': <Object>[
+          'system_destination',
+          <String>['destination_wedge_recovered'],
+        ],
+        'system.destination_wedged': <Object>[
+          'system_destination',
+          <String>['destination_wedged'],
+        ],
+        'system.destination_halt_requested': <Object>[
+          'system_destination',
+          <String>['destination_halt_requested'],
+        ],
+        'system.destination_halt_cancelled': <Object>[
+          'system_destination',
+          <String>['destination_halt_cancelled'],
+        ],
+        'system.retention_policy_applied': <Object>[
+          'system_retention',
+          <String>['finalized'],
+        ],
+        'system.entry_type_registry_initialized': <Object>[
+          'system_registry',
+          <String>['finalized'],
+        ],
+        'lib_version_initialized': <Object>[
+          '_lib',
+          <String>['lib_version_initialized'],
+        ],
+        'lib_version_changed': <Object>[
+          '_lib',
+          <String>['lib_version_changed'],
+        ],
+        'ingest-audit': <Object>[
+          'ingest-audit',
+          <String>['ingest.duplicate_received'],
+        ],
+        'view_snapshot_promoted': <Object>[
+          '_lib',
+          <String>['finalized'],
+        ],
+      },
     };
 
 void main() {
@@ -129,6 +208,34 @@ void main() {
       for (final entry in kReservedEventShapes.entries) {
         expect(entry.value.aggregateType, isNotEmpty, reason: entry.key);
         expect(entry.value.eventTypes, isNotEmpty, reason: entry.key);
+      }
+    });
+
+    // Verifies: EVS-DEV-causal-parents/E
+    test('every event type of every reserved entry type is declared an '
+        'ineligible annotation', () {
+      final byId = <String, EntryTypeDefinition>{
+        for (final d in kSystemEntryTypes) d.id: d,
+      };
+      for (final shape in kReservedEventShapes.entries) {
+        final definition = byId[shape.key]!;
+        final declared = <String>{
+          for (final d in definition.declarations) d.eventType,
+        };
+        expect(declared, shape.value.eventTypes, reason: shape.key);
+        for (final eventType in shape.value.eventTypes) {
+          final declaration = definition.declarationFor(eventType);
+          expect(
+            declaration.kind,
+            CausalKind.annotation,
+            reason: '${shape.key}/$eventType',
+          );
+          expect(
+            declaration.eligible,
+            isFalse,
+            reason: '${shape.key}/$eventType',
+          );
+        }
       }
     });
 
@@ -206,6 +313,19 @@ void main() {
         'cause': <String>[for (final c in WedgeCause.values) c.wire]..sort(),
         'purpose': <String>[for (final p in HaltPurpose.values) p.wire]..sort(),
       }, recorded);
+    });
+
+    test('the ingest audit declares only the duplicate-received event type; '
+        'no reserved shape admits ingest.batch_rejected', () {
+      expect(kReservedEventShapes[kIngestAuditEntryType]!.eventTypes, <String>{
+        'ingest.duplicate_received',
+      });
+      for (final shape in kReservedEventShapes.values) {
+        expect(
+          shape.admits(shape.aggregateType, 'ingest.batch_rejected'),
+          isFalse,
+        );
+      }
     });
 
     test('security-context audits carry their own event types', () {

@@ -39,6 +39,7 @@ import 'dart:math' show Random, min;
 
 import 'package:event_sourcing/src/actions/idempotency.dart';
 import 'package:event_sourcing/src/actions/idempotency_store.dart';
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -51,6 +52,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/chain_index_entry.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -1161,8 +1163,12 @@ class PostgresBackend extends StorageBackend {
         'create one.',
       );
     }
-    event.requireRecordTimestamps();
+    event.requireWellFormedRecord();
     final record = event.toMap();
+    // Implements: EVS-DEV-chain-verification/N
+    // the insert that stores the event writes its chain index columns, so
+    //   the index is written only in the storing transaction.
+    final index = ChainIndexEntry.of(event);
     await session.execute(
       Sql.named('''
         INSERT INTO events (
@@ -1172,7 +1178,9 @@ class PostgresBackend extends StorageBackend {
           entry_type_version_json, lib_format_version_json, event_type,
           data, metadata, initiator,
           client_timestamp, client_timestamp_text,
-          event_hash, flow_token, previous_event_hash, unknown_fields
+          event_hash, flow_token, previous_event_hash, unknown_fields,
+          origin_database_id, sealed_hash, origin_position,
+          held_as_authored_by, causal
         ) VALUES (
           @seq, @eventId, @aggId, @aggType, @entryType,
           @entryTypeMajor, @entryTypeMinor,
@@ -1180,10 +1188,17 @@ class PostgresBackend extends StorageBackend {
           @entryTypeJson:jsonb, @libFmtJson:jsonb, @eventType,
           @data:jsonb, @metadata:jsonb, @initiator:jsonb,
           @clientTs:timestamptz, @clientTsText,
-          @eventHash, @flowToken, @prevHash, @unknown:jsonb
+          @eventHash, @flowToken, @prevHash, @unknown:jsonb,
+          @originDb, @sealedHash, @originPosition::bigint,
+          @heldAsAuthoredBy, @causal:jsonb
         )
       '''),
       parameters: {
+        'originDb': index.originatingDatabaseId,
+        'sealedHash': index.sealedHash,
+        'originPosition': index.originPosition,
+        'heldAsAuthoredBy': index.heldAsAuthoredBy,
+        'causal': record['causal'],
         'seq': event.sequenceNumber,
         'eventId': event.eventId,
         'aggId': event.aggregateId,
@@ -1398,9 +1413,9 @@ class PostgresBackend extends StorageBackend {
 
   // Implements: EVS-PRD-event-log/A
   // readLatestEventHash is transactional;
-  //   value reflects writes staged in the same txn so a caller can build
-  //   the next event's previous_event_hash atomically with the append that
-  //   uses it.
+  //   value reflects writes staged in the same txn so a caller can record
+  //   the next stored event's storage-chain link atomically with the append
+  //   that uses it.
   @override
   Future<String?> readLatestEventHash(Transaction txn) async {
     final session = _asPgTxn(txn)._session;
@@ -2971,6 +2986,134 @@ class PostgresBackend extends StorageBackend {
   /// Pages on `sequence_number < @last`. The first page holds 16 events
   /// and each later page twice as many, up to [_reverseScanPageSize], so a
   /// caller that stops after the first few events reads little.
+
+  // -------- Chain index --------
+  //
+  // The chain index is a set of columns of the events table, written by
+  // [appendEvent]'s insert, and the indexes behind each lookup below.
+
+  static const String _chainIndexColumns =
+      'sequence_number, event_id, origin_database_id, sealed_hash, '
+      'origin_position, previous_event_hash, held_as_authored_by';
+
+  static ChainIndexEntry _chainIndexEntryFromRow(ResultRow row) {
+    final m = row.toColumnMap();
+    return ChainIndexEntry(
+      sequenceNumber: m['sequence_number'] as int,
+      eventId: m['event_id'] as String,
+      originatingDatabaseId: m['origin_database_id'] as String?,
+      sealedHash: m['sealed_hash'] as String?,
+      originPosition: m['origin_position'] as int?,
+      previousEventHash: m['previous_event_hash'] as String?,
+      heldAsAuthoredBy: m['held_as_authored_by'] as String?,
+    );
+  }
+
+  Future<List<ChainIndexEntry>> _readChainIndex(
+    Transaction txn,
+    String where,
+    Map<String, Object?> parameters,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT $_chainIndexColumns FROM events WHERE $where '
+        'ORDER BY sequence_number ASC',
+      ),
+      parameters: parameters,
+    );
+    return result.map(_chainIndexEntryFromRow).toList(growable: false);
+  }
+
+  @override
+  @internal
+  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+    Transaction txn,
+    String databaseId,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT $_chainIndexColumns FROM events '
+        'WHERE held_as_authored_by = @db '
+        'ORDER BY sequence_number DESC LIMIT 1',
+      ),
+      parameters: {'db': databaseId},
+    );
+    return result.isEmpty ? null : _chainIndexEntryFromRow(result.first);
+  }
+
+  // Implements: EVS-DEV-causal-parents/H
+  // the working copy of an aggregate's latest eligible version is the
+  //   partial index over the events whose recorded causal says an eligible
+  //   version, which the insert that stores each event writes; the predicate
+  //   is the index's own, so the lookup is one index probe.
+  @override
+  @internal
+  Future<CausalRef?> readLatestEligibleVersionInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT event_id, sealed_hash FROM events
+        WHERE aggregate_id = @agg
+          AND (causal ->> 'kind') = 'version'
+          AND (causal -> 'eligible') = 'true'::jsonb
+          AND sealed_hash IS NOT NULL
+        ORDER BY sequence_number DESC
+        LIMIT 1
+      '''),
+      parameters: {'agg': aggregateId},
+    );
+    if (result.isEmpty) return null;
+    final m = result.first.toColumnMap();
+    return CausalRef(
+      eventId: m['event_id']! as String,
+      eventHash: m['sealed_hash']! as String,
+    );
+  }
+
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  ) => _readChainIndex(txn, 'sealed_hash = @h', {'h': sealedHash});
+
+  // A null predecessor is matched with IS NULL, which the index serves; an
+  // IS NOT DISTINCT FROM comparison would not use it.
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => previousEventHash == null
+      ? _readChainIndex(
+          txn,
+          'origin_database_id = @db AND previous_event_hash IS NULL',
+          {'db': originatingDatabaseId},
+        )
+      : _readChainIndex(
+          txn,
+          'origin_database_id = @db AND previous_event_hash = @p',
+          {'db': originatingDatabaseId, 'p': previousEventHash},
+        );
+
+  @override
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  }) => _readChainIndex(
+    txn,
+    'origin_database_id = @db AND origin_position = @pos::bigint',
+    {'db': originatingDatabaseId, 'pos': originPosition},
+  );
+
   @override
   @internal
   Stream<StoredEvent> readEventsReverseInTxn(
@@ -3277,6 +3420,7 @@ class PostgresBackend extends StorageBackend {
       'client_timestamp': m['client_timestamp_text'],
       'event_hash': m['event_hash'],
       'previous_event_hash': m['previous_event_hash'],
+      if (m['causal'] != null) 'causal': m['causal'],
     }, seq);
   }
 

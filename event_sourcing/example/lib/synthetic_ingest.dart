@@ -18,11 +18,16 @@ class SyntheticBatchBuilder {
     this.senderHop = 'remote-mobile-1',
     this.senderIdentifier = 'remote-device-uuid-demo',
     this.senderSoftwareVersion = 'remote-diary@1.0.0',
+    this.senderDatabaseId = 'remote-database-demo',
   });
 
   final String senderHop;
   final String senderIdentifier;
   final String senderSoftwareVersion;
+
+  /// The identity of the sender's database, which its provenance entry
+  /// names as the database that authored the event.
+  final String senderDatabaseId;
 
   static const _uuid = Uuid();
 
@@ -31,10 +36,12 @@ class SyntheticBatchBuilder {
   ///
   /// The synthetic event is shaped like a "demo_note" finalized append on
   /// the originator: a single origin `ProvenanceEntry` with
-  /// `received_at = now` and the sender's identifier/software_version,
+  /// `received_at = now`, the sender's identifier, software version and
+  /// database identity, and this library's version,
   /// `sequence_number = originSequenceNumber` (defaults to 1001 — high
   /// enough to be visually distinguishable from local sequence numbers
-  /// in the demo), and the canonical hash of the record as its `event_hash`.
+  /// in the demo), the causal object of the aggregate's first version, and
+  /// the canonical hash of the record as its `event_hash`.
   BatchEnvelope buildSingleEventBatch({
     int originSequenceNumber = 1001,
     String aggregateId = 'remote-aggregate-1',
@@ -47,7 +54,7 @@ class SyntheticBatchBuilder {
     // Build the origin provenance entry as raw JSON. The library
     // re-exports `BatchContext` but not `ProvenanceEntry`; rather than
     // pull `package:provenance` in as a direct dep on the example
-    // (just to round-trip a five-field map), the helper writes the
+    // (just to round-trip a six-field map), the helper writes the
     // snake_case shape inline. `ProvenanceEntry.fromJson` (called
     // inside `ingestBatch`) parses this back.
     final originEntry = <String, Object?>{
@@ -55,6 +62,8 @@ class SyntheticBatchBuilder {
       'received_at': now.toIso8601String(),
       'identifier': senderIdentifier,
       'software_version': senderSoftwareVersion,
+      'database_id': senderDatabaseId,
+      'library_version': LibVersion.version,
     };
     final eventId = _uuid.v4();
     final eventMap = <String, Object?>{
@@ -63,7 +72,7 @@ class SyntheticBatchBuilder {
       'aggregate_type': aggregateType,
       'entry_type': entryType,
       'entry_type_version': const EntryTypeVersion(1, 0).toJson(),
-      'lib_format_version': const DataFormatVersion(2, 0).toJson(),
+      'lib_format_version': LibVersion.dataFormat.toJson(),
       'event_type': 'finalized',
       'sequence_number': originSequenceNumber,
       'data': <String, Object?>{
@@ -83,6 +92,11 @@ class SyntheticBatchBuilder {
       'flow_token': null,
       'client_timestamp': now.toIso8601String(),
       'previous_event_hash': null,
+      'causal': CausalRecord(
+        kind: CausalKind.version,
+        eligible: true,
+        parents: const <CausalRef>[],
+      ).toJson(),
     };
     eventMap['event_hash'] = canonicalEventHash(eventMap);
     return BatchEnvelope(

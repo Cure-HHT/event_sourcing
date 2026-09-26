@@ -17,6 +17,8 @@ import 'package:event_sourcing/src/projections/interpreter/projection_interprete
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/record_fixtures.dart';
+
 var _dbCounter = 0;
 
 const _kNoteEntryType = 'note';
@@ -40,7 +42,7 @@ StoredEvent _event({
     aggregateType: 'note',
     entryType: _kNoteEntryType,
     entryTypeVersion: entryTypeVersion,
-    libFormatVersion: const DataFormatVersion(2, 0),
+    libFormatVersion: LibVersion.dataFormat,
     eventType: 'finalized',
     sequenceNumber: seq,
     data: data,
@@ -50,6 +52,7 @@ StoredEvent _event({
     eventHash: 'h$seq',
     flowToken: null,
     previousEventHash: null,
+    causal: kRootVersionCausal,
   );
 }
 

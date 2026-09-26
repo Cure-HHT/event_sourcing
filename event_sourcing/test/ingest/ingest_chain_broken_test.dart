@@ -10,6 +10,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/record_fixtures.dart';
+
 // ---------------------------------------------------------------------------
 // Test fixture helpers
 // ---------------------------------------------------------------------------
@@ -169,6 +171,8 @@ void main() {
             'received_at': now.toIso8601String(),
             'identifier': 'device-1',
             'software_version': 'my_app@1.0.0',
+            'database_id': kPeerDatabaseId,
+            'library_version': kPeerLibraryVersion,
           },
           <String, Object?>{
             // Missing 'arrival_hash' — invalid for a receiver hop.
@@ -176,6 +180,8 @@ void main() {
             'received_at': now.toIso8601String(),
             'identifier': 'intermediate-1',
             'software_version': 'intermediate@1.0.0',
+            'database_id': 'intermediate-database',
+            'library_version': kPeerLibraryVersion,
           },
         ];
         final metadata = <String, Object?>{
@@ -188,7 +194,7 @@ void main() {
           'aggregate_type': 'note',
           'entry_type': 'epistaxis_event',
           'entry_type_version': <String, Object?>{'major': 1, 'minor': 0},
-          'lib_format_version': <String, Object?>{'major': 2, 'minor': 0},
+          'lib_format_version': LibVersion.dataFormat.toJson(),
           'event_type': 'finalized',
           'sequence_number': 1,
           'data': const <String, Object?>{},
@@ -197,6 +203,7 @@ void main() {
           'flow_token': null,
           'client_timestamp': now.toIso8601String(),
           'previous_event_hash': null,
+          'causal': kRootVersionCausalJson,
         };
         recordMap['event_hash'] = canonicalEventHash(recordMap);
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);

@@ -1,5 +1,7 @@
-## Unreleased
+## 0.2.0
 
+* `ProvenanceEntry` models the optional `libraryVersion` (`library_version`), the version of the library that stamped the entry, and `databaseId` (`database_id`), the identity of the database that stamped it. `fromJson` refuses either one when present but not a String, naming the field. Both take part in `==` and `hashCode`.
+* An entry decoded with `fromJson` keeps its source JSON, and `toJson` emits exactly the decoded keys with every value unchanged: a key the type does not model survives, `transform_version` is not added when it was absent, and `received_at` keeps its original spelling. An entry built with the constructor encodes as before, plus the two new fields when set.
 * `parseIso8601Instant(text)` parses an ISO 8601 date-time to the UTC instant it names, and throws `FormatException` unless it has a four-digit year (0000-9999), a month, day, hour, minute and second each within its calendar range (no 30 February, hour 24 or 60th second, which `DateTime.parse` rolls over), and an explicit offset (`Z` or `+/-HH[:]MM`) of at most 23:59.
 * `ProvenanceEntry.fromJson` reads `received_at` with `parseIso8601Instant`: besides a `received_at` without an offset, it refuses one with a year outside 0000-9999 or a calendar field out of range, with a `FormatException` naming `received_at`.
 

@@ -46,6 +46,7 @@ import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:postgres/postgres.dart';
 import 'package:test/test.dart';
 
+import '../../test_support/record_fixtures.dart';
 import 'test_postgres_url.dart';
 
 void main() {
@@ -612,7 +613,7 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   aggregateType: 'note',
   entryType: 'epistaxis_event',
   entryTypeVersion: const EntryTypeVersion(1, 0),
-  libFormatVersion: const DataFormatVersion(2, 0),
+  libFormatVersion: LibVersion.dataFormat,
   eventType: 'Event',
   sequenceNumber: sequenceNumber,
   data: const <String, dynamic>{},
@@ -620,6 +621,7 @@ StoredEvent _event(String eventId, int sequenceNumber) => StoredEvent(
   initiator: const UserInitiator('u'),
   clientTimestamp: DateTime.utc(2026, 4, 22),
   eventHash: 'hash-$eventId',
+  causal: kRootVersionCausal,
 );
 
 EntryTypeDefinition _testEventDef() => const EntryTypeDefinition(

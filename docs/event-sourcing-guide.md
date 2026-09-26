@@ -1025,12 +1025,21 @@ that are not part of your payload:
   order for this installation.
 - **`event_id`** — a UUIDv4 the substrate generates per event.
 - **`event_hash`** — a SHA-256 deterministically derived from the
-  event's canonical-form content, both version fields below included
-  (see `spec/prd-canonical-json.md` for the serialization contract).
-- **`previous_event_hash`** — the hash of the immediately preceding
-  event in the log. This chains the log: any modification, insertion,
-  or deletion of a prior event breaks the chain from that point
-  forward.
+  event's canonical-form content, both version fields, the provenance and
+  the causal object below included (see `spec/prd-canonical-json.md` for
+  the serialization contract).
+- **`previous_event_hash`** — the hash of the event this installation's
+  database authored immediately before it, or null for the first. This
+  chains the events each database authors: any modification, insertion,
+  or deletion of a prior event breaks the chain from that point forward.
+- **`causal`** — the event's kind (`version` or `annotation`), whether a
+  later event may name it as a parent (`eligible`), the versions of its
+  aggregate it follows (`parents`: the aggregate's latest eligible
+  version, or none), and `reconciles` (null). The entry type's
+  `EventTypeDeclaration` for the event type (in the definition's
+  `declarations`) decides kind and eligibility, an eligible version when
+  it declares none; the substrate stamps the object and producers cannot
+  set it.
 - **`entry_type_version`** — the version of the entry type at the time
   this event was appended, a major and a minor number
   (`{"major": 1, "minor": 0}`). Read from the `EntryTypeRegistry` you
@@ -1046,7 +1055,9 @@ that are not part of your payload:
   one.
 - **`metadata.provenance`** — a list of `ProvenanceEntry` records,
   each saying "this event passed through hop X at time T running
-  software version V." The originator appends the first entry; each
+  software version V", naming the database that stamped it
+  (`database_id`) and the `event_sourcing` version that stamped it
+  (`library_version`). The originator appends the first entry; each
   forwarder appends another (more on this below).
 - **`metadata.action_invocation_id`** and **`metadata.action_name`**
   — for events emitted by an action, the dispatcher stamps both so the

@@ -68,6 +68,41 @@ class PostgresBootDatabase implements BootTestDatabase {
   }
 
   @override
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false}) async {
+    final conn = await _db.connectAdmin();
+    try {
+      if (keepFields) {
+        await conn.execute('''
+          UPDATE events SET
+            lib_format_version_major = 2,
+            lib_format_version_minor = 0,
+            lib_format_version_json = '{"major": 2, "minor": 0}'::jsonb
+        ''');
+        return;
+      }
+      await conn.execute('''
+        UPDATE events SET
+          lib_format_version_major = 2,
+          lib_format_version_minor = 0,
+          lib_format_version_json = '{"major": 2, "minor": 0}'::jsonb,
+          causal = NULL,
+          metadata = jsonb_set(
+            metadata,
+            '{provenance}',
+            (SELECT COALESCE(jsonb_agg(
+                entry - 'database_id' - 'library_version' ORDER BY position),
+              '[]'::jsonb)
+             FROM jsonb_array_elements(metadata -> 'provenance')
+               WITH ORDINALITY AS p(entry, position))
+          )
+        WHERE jsonb_typeof(metadata -> 'provenance') = 'array'
+      ''');
+    } finally {
+      await conn.close();
+    }
+  }
+
+  @override
   Future<void> writeEarlierFormatShape() async {
     // The tables as an earlier data format created them: one integer column
     // for each version. The owner creates them, as provisioning would.

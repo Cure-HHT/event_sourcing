@@ -118,20 +118,27 @@ Future<EventStoreBundle> _completeBootstrap(
   const bootstrapInitiator = AutomationInitiator(service: 'lib-bootstrap');
 
   // Emit an event recording the registry's full id->registered_version map
-  // after EventStore construction and before destination registration.
-  // dedupeByContent: same-state reboots no-op; a schema change (an added
-  // entry type, or a raised major or minor) emits a new event. Each install uses
+  // and every entry type's per-event-type declarations, after EventStore
+  // construction and before destination registration. dedupeByContent:
+  // same-state reboots no-op; a schema change (an added entry type, a raised
+  // major or minor, or a changed declaration) emits a new event. Each install uses
   // source.identifier as its aggregate, so there is a single per-installation
   // hash-chained system aggregate spanning bootstrap, destination registry,
   // and retention/redaction audits. No delivery cycle can hold the store's
   // trigger slot yet (its registry is built here), so the audit wakes none.
   // Implements: EVS-DEV-version-compatibility/K
   // the registry audit records every registered entry type's major and minor
-  //   as `M.m`; a changed set, major or minor changes the content, so a new
-  //   audit is appended, and an unchanged registry dedupes to none.
+  //   as `M.m`, and the kind and eligibility it declares for each event
+  //   type; a changed set, major, minor or declaration changes the content,
+  //   so a new audit is appended, and an unchanged registry dedupes to none.
   final registryStateMap = <String, String>{};
+  final declarationsMap = <String, Object?>{};
   for (final definition in typeRegistry.all()) {
     registryStateMap[definition.id] = definition.registeredVersion.toString();
+    declarationsMap[definition.id] = <String, Object?>{
+      for (final declaration in definition.declarations)
+        declaration.eventType: declaration.toJson(),
+    };
   }
   await eventStore.runTransaction(
     (txn, collector) => eventStore._appendReservedInTxn(
@@ -141,7 +148,10 @@ Future<EventStoreBundle> _completeBootstrap(
       aggregateId: source.identifier,
       aggregateType: kRegistryAuditAggregateType,
       eventType: kEntryTypeRegistryInitializedEventType,
-      data: <String, Object?>{'registry': registryStateMap},
+      data: <String, Object?>{
+        'registry': registryStateMap,
+        'declarations': declarationsMap,
+      },
       initiator: bootstrapInitiator,
       dedupeByContent: true,
     ),

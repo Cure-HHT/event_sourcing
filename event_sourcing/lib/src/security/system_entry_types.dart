@@ -13,6 +13,7 @@
 // kLibVersionInitializedEntryType
 //   and kLibVersionChangedEntryType are the boot-version event types emitted
 //   by EventStore.open on first boot and on version transitions respectively.
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
@@ -200,13 +201,6 @@ const String kIngestAuditEntryType = 'ingest-audit';
 @internal
 const String kIngestAuditAggregateType = 'ingest-audit';
 
-/// Event type of the ingest audit recording a rejected batch. No operation
-/// of this build appends it; it stays declared in [kReservedEventShapes],
-/// whose shapes are fixed within a data-format major, so that ingest admits
-/// one appended by another build of the same major.
-@internal
-const String kIngestBatchRejectedEventType = 'ingest.batch_rejected';
-
 /// Event type of the ingest audit recording a duplicate received.
 @internal
 const String kIngestDuplicateReceivedEventType = 'ingest.duplicate_received';
@@ -281,91 +275,215 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 // lib-version boot events
 //   registered here so byId() returns non-null and SubscriptionFilter gates
 //   them correctly, even though they are appended raw (bypassing the registry).
+// Implements: EVS-DEV-causal-parents/E
+// every event type of every reserved entry type (each event type its
+//   kReservedEventShapes entry lists) is declared an ineligible annotation,
+//   so the library's own records never enter an aggregate's causal
+//   structure.
 const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
   EntryTypeDefinition(
     id: kSecurityContextRedactedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Redacted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextRedactedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kSecurityContextCompactedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Compacted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextCompactedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kSecurityContextPurgedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Context Purged',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kSecurityContextPurgedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationRegisteredEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Registered',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationRegisteredEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationStartDateSetEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Start Date Set',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationStartDateSetEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationEndDateSetEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination End Date Set',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationEndDateSetEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationDeletedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Deleted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationDeletedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationWedgeRecoveredEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedge Recovered',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationWedgeRecoveredEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationWedgedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Wedged',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationWedgedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationHaltRequestedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Halt Requested',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHaltRequestedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kDestinationHaltCancelledEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Destination Halt Cancelled',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kDestinationHaltCancelledEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kRetentionPolicyAppliedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Retention Policy Applied',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kRetentionPolicyAppliedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kEntryTypeRegistryInitializedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Entry Type Registry Initialized',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kEntryTypeRegistryInitializedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kLibVersionInitializedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Initialized',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kLibVersionInitializedEntryType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kLibVersionChangedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Lib Version Changed',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kLibVersionChangedEntryType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kIngestAuditEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Ingest Audit',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kIngestDuplicateReceivedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
   EntryTypeDefinition(
     id: kViewSnapshotPromotedEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'View Snapshot Promoted',
+    declarations: <EventTypeDeclaration>[
+      EventTypeDeclaration(
+        eventType: kViewSnapshotPromotedEventType,
+        kind: CausalKind.annotation,
+        eligible: false,
+      ),
+    ],
   ),
 ];
 
@@ -468,10 +586,7 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
       ),
       kIngestAuditEntryType: ReservedEventShape(
         kIngestAuditAggregateType,
-        <String>{
-          kIngestBatchRejectedEventType,
-          kIngestDuplicateReceivedEventType,
-        },
+        <String>{kIngestDuplicateReceivedEventType},
       ),
       kViewSnapshotPromotedEntryType: ReservedEventShape(
         kLibAggregateType,

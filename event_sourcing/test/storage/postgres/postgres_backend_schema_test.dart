@@ -25,10 +25,9 @@ void main() {
 
   group('PostgresBackend schema', () {
     setUp(() async {
-      // Clean slate: drop+recreate public schema so each test sees an
-      // empty database, provisioned by the test itself. The two statements are
-      // issued separately because the postgres client's extended-query
-      // protocol rejects multi-statement strings.
+      // Clean slate: drop and recreate the test schema so each test sees an
+      // empty one, provisioned by the test itself. The admin connection's
+      // search path is that schema, so current_schema() names it.
       await db.reset();
     });
 
@@ -38,7 +37,7 @@ void main() {
       final conn = await db.connectAdmin();
       addTearDown(conn.close);
 
-      final tables = await _listPublicTables(conn);
+      final tables = await _listSchemaTables(conn);
       expect(
         tables,
         containsAll(<String>[
@@ -62,7 +61,7 @@ void main() {
       // Columns + types.
       final cols = await conn.execute(
         'SELECT column_name, data_type FROM information_schema.columns '
-        "WHERE table_schema = 'public' AND table_name = 'view_rows'",
+        "WHERE table_schema = current_schema() AND table_name = 'view_rows'",
       );
       final types = {for (final r in cols) r[0]! as String: r[1]! as String};
       expect(types['view_name'], 'text');
@@ -88,10 +87,10 @@ void main() {
   });
 }
 
-Future<List<String>> _listPublicTables(Connection conn) async {
+Future<List<String>> _listSchemaTables(Connection conn) async {
   final result = await conn.execute(
     'SELECT table_name FROM information_schema.tables '
-    "WHERE table_schema = 'public' ORDER BY table_name",
+    'WHERE table_schema = current_schema() ORDER BY table_name',
   );
   return result.map((row) => row[0]! as String).toList();
 }

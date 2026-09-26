@@ -10,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'package:uuid/uuid.dart';
 
+import '../test_support/record_fixtures.dart';
+
 const _uuid = Uuid();
 
 /// Build an `esd/batch@2` envelope manually with a one-event payload, with
@@ -32,6 +34,8 @@ Uint8List _envelope({
     'received_at': now.toIso8601String(),
     'identifier': senderIdentifier,
     'software_version': senderSoftwareVersion,
+    'database_id': kPeerDatabaseId,
+    'library_version': kPeerLibraryVersion,
   };
   final eventId = _uuid.v4();
   final eventMap = <String, Object?>{
@@ -58,6 +62,7 @@ Uint8List _envelope({
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': kRootVersionCausalJson,
   };
   eventMap['event_hash'] = canonicalEventHash(eventMap);
   final envelope = BatchEnvelope(
@@ -113,7 +118,7 @@ void main() {
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(1, 0),
-        libFormatVersion: const DataFormatVersion(3, 0),
+        libFormatVersion: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
@@ -136,7 +141,7 @@ void main() {
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(5, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
+        libFormatVersion: LibVersion.dataFormat,
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
@@ -156,7 +161,8 @@ void main() {
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(5, 0), // also too high
-        libFormatVersion: const DataFormatVersion(3, 0), // also refused
+        // also refused
+        libFormatVersion: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
       );
       await expectLater(
         ds.eventStore.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
@@ -174,7 +180,7 @@ void main() {
       final bytes = _envelope(
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(3, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
+        libFormatVersion: LibVersion.dataFormat,
       );
       final result = await ds.eventStore.ingestBatch(
         bytes,

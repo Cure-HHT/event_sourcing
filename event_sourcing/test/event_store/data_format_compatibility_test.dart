@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/boot_conformance.dart';
+import '../test_support/record_fixtures.dart';
 import '../test_support/rerunning_sembast_backend.dart';
 
 class _SembastBootDatabase implements BootTestDatabase {
@@ -56,6 +57,25 @@ class _SembastBootDatabase implements BootTestDatabase {
     await StoreRef<String, Object?>(
       'backend_state',
     ).record('sequence_counter').put(_db, 1);
+  }
+
+  @override
+  Future<void> rewriteEventsAsDataFormat2({bool keepFields = false}) async {
+    final events = intMapStoreFactory.store('events');
+    for (final snapshot in await events.find(_db)) {
+      await events
+          .record(snapshot.key)
+          .put(
+            _db,
+            keepFields
+                ? (Map<String, Object?>.from(snapshot.value)
+                    ..['lib_format_version'] = const DataFormatVersion(
+                      2,
+                      0,
+                    ).toJson())
+                : dataFormat2Record(snapshot.value),
+          );
+    }
   }
 
   @override

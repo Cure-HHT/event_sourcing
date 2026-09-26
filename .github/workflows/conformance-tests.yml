@@ -256,6 +256,12 @@ jobs:
       - name: Storage reader and issuer-bound transaction handles on Postgres
         run: flutter test test/storage/postgres/postgres_storage_reader_test.dart
         working-directory: event_sourcing
+      - name: Provenance stamping and chain links on Postgres
+        run: flutter test test/storage/postgres/postgres_provenance_stamping_test.dart
+        working-directory: event_sourcing
+      - name: Causal stamping on Postgres
+        run: flutter test test/storage/postgres/postgres_causal_stamping_test.dart
+        working-directory: event_sourcing
       - name: Storage reader transactions run read-only on Postgres
         run: flutter test test/storage/postgres/postgres_reader_read_only_test.dart
         working-directory: event_sourcing

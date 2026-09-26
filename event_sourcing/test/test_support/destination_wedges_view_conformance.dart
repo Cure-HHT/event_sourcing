@@ -25,6 +25,7 @@ import 'package:sembast/sembast_memory.dart';
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
+import 'record_fixtures.dart';
 import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
 
@@ -143,8 +144,9 @@ Future<_Store> _openPeer(int n) async {
 
 var _forged = 0;
 
-/// An event as a peer sends it, with one origin provenance entry and the
-/// canonical hash of its record: the shape of [data], [entryType],
+/// An event as a peer sends it, with one origin provenance entry stamped
+/// by the database `peer-db`, the causal object of an aggregate's first
+/// version, and the canonical hash of its record: the shape of [data], [entryType],
 /// [aggregateType] and [eventType] is whatever the test gives.
 StoredEvent forgedEvent({
   required String entryType,
@@ -172,6 +174,8 @@ StoredEvent forgedEvent({
           receivedAt: now,
           identifier: _peerSource.identifier,
           softwareVersion: _peerSource.softwareVersion,
+          databaseId: 'peer-db',
+          libraryVersion: kPeerLibraryVersion,
         ).toJson(),
       ],
     },
@@ -179,6 +183,7 @@ StoredEvent forgedEvent({
     'flow_token': null,
     'client_timestamp': now.toIso8601String(),
     'previous_event_hash': null,
+    'causal': kRootVersionCausalJson,
   };
   record['event_hash'] = canonicalEventHash(record);
   return StoredEvent.fromMap(record, 0);

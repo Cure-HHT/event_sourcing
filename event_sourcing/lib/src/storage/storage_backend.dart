@@ -1,3 +1,4 @@
+import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
@@ -5,6 +6,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
+import 'package:event_sourcing/src/storage/chain_index_entry.dart';
 import 'package:event_sourcing/src/storage/drain_lock.dart';
 import 'package:event_sourcing/src/storage/drain_records.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
@@ -63,15 +65,15 @@ import 'package:meta/meta.dart' show internal;
 /// persisted state (destination queues, the views it materializes, the
 /// records it keeps beside them, such as fill positions, schedules, replay
 /// requests, wedge records, halt requests, send fences, refill guards, the
-/// registry check record, the database identity, the generation records,
-/// the view catch-up marks, the fencing epoch and the declared
-/// configuration, and the security context it stores beside each event)
-/// changes only through the library's operations, and reserved system
-/// events are appended only by the library's own operations. The internal
-/// marking, here and on the event store's reserved append operations, is an
-/// analyzer guard, not a barrier: the consumer holds the backend (and, on
-/// Sembast, the database it opened), and a direct write is invisible to the
-/// library.
+/// chain index, the per-aggregate causal working copies, the registry check
+/// record, the database identity, the generation records, the view catch-up
+/// marks, the fencing epoch and the declared configuration, and the
+/// security context it stores beside each event) changes only through the library's operations, and reserved
+/// system events are appended only by the library's own operations. The
+/// internal marking, here and on the event store's reserved append
+/// operations, is an analyzer guard, not a barrier: the consumer holds the
+/// backend (and, on Sembast, the database it opened), and a direct write is
+/// invisible to the library.
 // Implements: EVS-PRD-destinations/K
 // every member that writes a queue, a view,
 //   the persisted delivery state, the event sequence or the schema version
@@ -144,10 +146,19 @@ abstract class StorageBackend {
   /// [event] is stored as [StoredEvent.toMap] writes it, every key that
   /// record carries included, and reads back the same. An event whose
   /// client timestamp, or a provenance entry's `received_at`, is not one a
-  /// record may carry ([StoredEvent.requireRecordTimestamps]) throws
+  /// record may carry ([StoredEvent.requireWellFormedRecord]) throws
   /// [FormatException] and nothing is written.
+  ///
+  /// In the same transaction, [appendEvent] writes the event's chain index
+  /// entry, [ChainIndexEntry.of] of [event], so every stored event has one
+  /// and a rolled-back append leaves none, and, when the `causal` [event]
+  /// carries says an eligible version, makes it its aggregate's latest
+  /// eligible version ([readLatestEligibleVersionInTxn]).
   // Implements: EVS-PRD-event-log/A
   // append to the append-only, immutable log.
+  // Implements: EVS-DEV-chain-verification/N
+  // the chain index entry of every stored event is written only in the
+  //   transaction that stores it, on every path that stores an event.
   // Implements: EVS-DEV-event-record/A+B+C
   // the append refuses a client timestamp or received_at a record may not
   //   carry, and stores every key of the record, returning it unchanged on read.
@@ -213,11 +224,11 @@ abstract class StorageBackend {
   /// or null when the event log is empty. Read inside [txn] so the value
   /// reflects writes already staged in the same transaction body.
   ///
-  /// Provided so that callers computing the hash-chain input for the next
-  /// event (i.e., `previous_event_hash`) can read the tail under the same
-  /// transaction that will append the new event. Reading the tail outside
-  /// the transaction would make the chain vulnerable to a concurrent writer
-  /// stamping a different previous-hash between the read and the commit.
+  /// Provided so that a caller recording the storage-chain link of the next
+  /// stored event (its last provenance entry's `previous_ingest_hash`) can
+  /// read the tail under the same transaction that will store the new
+  /// event. Reading the tail outside the transaction would let a concurrent
+  /// writer store another event between the read and the commit.
   Future<String?> readLatestEventHash(Transaction txn);
 
   /// Events in sequence_number order, read within [txn] so the result
@@ -1064,6 +1075,88 @@ abstract class StorageBackend {
     Transaction txn, {
     Set<String>? eventTypes,
   });
+
+  // -------- Chain index --------
+  //
+  // [appendEvent] writes the chain index entry of every event it stores
+  // ([ChainIndexEntry.of]) in the transaction that stores it, whatever path
+  // stores it; nothing else writes the index. A rolled-back transaction
+  // leaves no entry behind. The lookups below read the index inside a
+  // transaction, so they see the entries of events appended earlier in it.
+  // No lookup refuses a second entry under the same key: the log holds
+  // forks and reused origin positions as received.
+
+  /// The entry of the event with the highest local sequence number among
+  /// the events the database [databaseId] holds as authored (copies whose
+  /// provenance holds exactly one entry, naming [databaseId]), or null when
+  /// it holds none. Read inside [txn].
+  // Implements: EVS-DEV-chain-verification/N
+  // the index holds the holding database's latest event held as authored,
+  //   read inside the storing transaction.
+  @internal
+  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+    Transaction txn,
+    String databaseId,
+  );
+
+  /// The entries of the held events sealed under [sealedHash], in
+  /// ascending local sequence number. Read inside [txn].
+  // Implements: EVS-DEV-chain-verification/N
+  // lookup of held events by sealed hash.
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  );
+
+  /// The entries of the held events of [originatingDatabaseId] whose
+  /// `previous_event_hash` is [previousEventHash] (null matching the
+  /// events that name no predecessor), in ascending local sequence number.
+  /// Read inside [txn].
+  // Implements: EVS-DEV-chain-verification/N
+  // lookup of held events by predecessor hash, null included, within one
+  //   originating database.
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  });
+
+  /// The entries of the held events of [originatingDatabaseId] at origin
+  /// position [originPosition], in ascending local sequence number. Read
+  /// inside [txn].
+  // Implements: EVS-DEV-chain-verification/N
+  // lookup of held events by originating database and origin position.
+  @internal
+  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  });
+
+  // -------- Causal working copy --------
+  //
+  // Beside the chain index, [appendEvent] keeps, per aggregate, the latest
+  // eligible version: the stored event of the aggregate with the highest
+  // local sequence number whose recorded `causal` says an eligible version.
+  // It is written in the transaction that stores such an event, whatever
+  // path stores it, from the causal object the stored copy carries; nothing
+  // else writes it, and a rolled-back transaction leaves it as it was.
+
+  /// The reference, by event identifier and sealed hash, to the latest
+  /// eligible version of the aggregate [aggregateId] this database holds,
+  /// or null when it holds none. Read inside [txn], so it sees the events
+  /// stored earlier in it.
+  // Implements: EVS-DEV-causal-parents/H
+  // the latest eligible version of an aggregate is the held event of that
+  //   aggregate with the highest local sequence number whose recorded causal
+  //   says an eligible version, named by its sealed hash.
+  @internal
+  Future<CausalRef?> readLatestEligibleVersionInTxn(
+    Transaction txn,
+    String aggregateId,
+  );
 
   // -------- Audit query --------
 

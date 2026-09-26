@@ -160,6 +160,9 @@ export 'src/actions/scope_value.dart'
 // the storage backend, EntryTypeRegistry, destinations, security context
 // store, and EventStore. Returns an EventStoreBundle facade.
 
+// Causal record — the causal object every event record carries.
+export 'src/causal_record.dart' show CausalKind, CausalRecord, CausalRef;
+
 // Core configuration
 export 'src/core/config/event_store_config.dart';
 
@@ -185,7 +188,8 @@ export 'src/destinations/wire_payload.dart' show WirePayload;
 
 // Entry Type Registry — maps entry_type ids to EntryTypeDefinition metadata
 // consumed by the materializer and EventStore registry.
-export 'src/entry_type_definition.dart' show EntryTypeDefinition;
+export 'src/entry_type_definition.dart'
+    show EntryTypeDefinition, EventTypeDeclaration;
 export 'src/entry_type_registry.dart' show EntryTypeRegistry;
 
 // EventDraft — input value type for Action.execute return value and
@@ -371,6 +375,7 @@ export 'src/security/system_entry_types.dart'
 export 'src/storage/append_result.dart' show AppendResult;
 export 'src/storage/attempt_result.dart' show AttemptResult;
 export 'src/storage/boot_check.dart' show BootCheck;
+export 'src/storage/chain_index_entry.dart' show ChainIndexEntry;
 export 'src/storage/drain_lock.dart'
     show
         DrainLock,

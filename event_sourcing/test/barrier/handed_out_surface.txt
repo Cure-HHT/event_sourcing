@@ -164,6 +164,7 @@ StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transacti
 StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()
 StoredEvent.aggregateId: field String aggregateId
 StoredEvent.aggregateType: field String aggregateType
+StoredEvent.causal: field CausalRecord? causal
 StoredEvent.clientTimestamp: field DateTime clientTimestamp
 StoredEvent.data: field Map<String, dynamic> data
 StoredEvent.entryType: field String entryType
@@ -174,16 +175,20 @@ StoredEvent.eventType: field String eventType
 StoredEvent.flowToken: field String? flowToken
 StoredEvent.fromMap: constructor StoredEvent.fromMap(Map<String, Object?> map, int key)
 StoredEvent.initiator: field Initiator initiator
+StoredEvent.isHeldAsAuthoredBy: bool isHeldAsAuthoredBy(String databaseId)
 StoredEvent.key: field int key
 StoredEvent.libFormatVersion: field DataFormatVersion libFormatVersion
 StoredEvent.metadata: field Map<String, dynamic> metadata
-StoredEvent.new: constructor StoredEvent({required int key, required String eventId, required String aggregateId, required String aggregateType, required String entryType, required EntryTypeVersion entryTypeVersion, required DataFormatVersion libFormatVersion, required String eventType, required int sequenceNumber, required Map<String, dynamic> data, required Map<String, dynamic> metadata, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, String? flowToken, String? previousEventHash})
+StoredEvent.new: constructor StoredEvent({required int key, required String eventId, required String aggregateId, required String aggregateType, required String entryType, required EntryTypeVersion entryTypeVersion, required DataFormatVersion libFormatVersion, required String eventType, required int sequenceNumber, required Map<String, dynamic> data, required Map<String, dynamic> metadata, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, String? flowToken, String? previousEventHash, CausalRecord? causal})
+StoredEvent.originPosition: int get originPosition
+StoredEvent.originatingDatabaseId: String get originatingDatabaseId
 StoredEvent.originatorHop: ProvenanceEntry get originatorHop
 StoredEvent.previousEventHash: field String? previousEventHash
 StoredEvent.recordKeys: static field Set<String> recordKeys
-StoredEvent.requireRecordTimestamps: void requireRecordTimestamps()
+StoredEvent.requireWellFormedRecord: void requireWellFormedRecord()
+StoredEvent.sealedHash: String get sealedHash
 StoredEvent.sequenceNumber: field int sequenceNumber
-StoredEvent.synthetic: constructor StoredEvent.synthetic({required String eventId, required String aggregateId, required String entryType, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, int key = 0, String aggregateType = '_test', String eventType = 'finalized', int sequenceNumber = 0, Map<String, dynamic>? data, Map<String, dynamic>? metadata, String? flowToken, String? previousEventHash, EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0), DataFormatVersion libFormatVersion = LibVersion.dataFormat})
+StoredEvent.synthetic: constructor StoredEvent.synthetic({required String eventId, required String aggregateId, required String entryType, required Initiator initiator, required DateTime clientTimestamp, required String eventHash, int key = 0, String aggregateType = '_test', String eventType = 'finalized', int sequenceNumber = 0, Map<String, dynamic>? data, Map<String, dynamic>? metadata, String? flowToken, String? previousEventHash, CausalRecord? causal, EntryTypeVersion entryTypeVersion = const EntryTypeVersion(1, 0), DataFormatVersion libFormatVersion = LibVersion.dataFormat})
 StoredEvent.toJson: Map<String, dynamic> toJson()
 StoredEvent.toMap: Map<String, dynamic> toMap()
 StoredEvent.toString: String toString()

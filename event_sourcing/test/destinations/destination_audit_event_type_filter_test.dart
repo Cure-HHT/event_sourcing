@@ -12,6 +12,7 @@ import 'package:sembast/sembast_memory.dart';
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
 import '../test_support/queue_test_support.dart';
+import '../test_support/record_fixtures.dart';
 import '../test_support/test_backends.dart';
 
 const _automation = AutomationInitiator(service: 'test-bootstrap');
@@ -139,7 +140,7 @@ void main() {
         aggregateType: kDestinationAuditAggregateType,
         entryType: 'demo_note',
         entryTypeVersion: const EntryTypeVersion(1, 0),
-        libFormatVersion: const DataFormatVersion(2, 0),
+        libFormatVersion: LibVersion.dataFormat,
         eventType: kDestinationDeletedEventType,
         sequenceNumber: 99,
         data: const <String, dynamic>{'id': 'd'},
@@ -147,6 +148,7 @@ void main() {
         initiator: const UserInitiator('u1'),
         clientTimestamp: DateTime.utc(2026, 4, 26),
         eventHash: 'hash',
+        causal: kRootVersionCausal,
       );
       expect(filter.matches(forged), isFalse);
       expect(

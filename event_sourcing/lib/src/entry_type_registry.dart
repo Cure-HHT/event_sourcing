@@ -26,7 +26,8 @@ class EntryTypeRegistry {
   /// shadowing would let an app declare two competing definitions for the
   /// same entry type and the later one would silently win — so it is
   /// surfaced loudly via `ArgumentError`, leaving the existing
-  /// registration in effect.
+  /// registration in effect. A definition that declares one event type
+  /// twice is refused the same way and is not registered.
   // Implements: EVS-DEV-append-stamps-registered-version/D
   void register(EntryTypeDefinition definition) {
     if (_defs.containsKey(definition.id)) {
@@ -36,7 +37,25 @@ class EntryTypeRegistry {
         'EntryTypeDefinition "${definition.id}" already registered',
       );
     }
+    _refuseDuplicateDeclarations(definition);
     _defs[definition.id] = definition;
+  }
+
+  // Implements: EVS-DEV-causal-parents/D
+  // a definition that declares one event type twice is refused before it is
+  //   registered, so no append or audit reads it.
+  static void _refuseDuplicateDeclarations(EntryTypeDefinition definition) {
+    final seen = <String>{};
+    for (final declaration in definition.declarations) {
+      if (!seen.add(declaration.eventType)) {
+        throw ArgumentError.value(
+          definition.id,
+          'definition.declarations',
+          'EntryTypeDefinition "${definition.id}" declares event type '
+              '"${declaration.eventType}" more than once',
+        );
+      }
+    }
   }
 
   /// Returns the `EntryTypeDefinition` registered under [id], or `null`

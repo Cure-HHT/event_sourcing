@@ -4,6 +4,8 @@
 // Implements: EVS-DEV-version-compatibility/C
 // LibVersion.dataFormat is the library's data-format version, distinct from
 //   the package version.
+// Implements: EVS-DEV-version-compatibility/N
+// the library declares data-format version 3.0.
 import 'package:event_sourcing/src/versions.dart';
 
 /// This build's library versions: its package version ([version]) and its
@@ -32,7 +34,7 @@ class LibVersion {
   /// deployment is a restore from a backup taken before the switch, or a
   /// roll-forward. See [DataFormatVersion] for the rule that decides a minor
   /// or a major bump.
-  static const DataFormatVersion dataFormat = DataFormatVersion(2, 0);
+  static const DataFormatVersion dataFormat = DataFormatVersion(3, 0);
 
   /// Returns negative if [a] < [b], positive if [a] > [b], 0 if equal.
   /// Compares dot-separated integer components left to right; trailing

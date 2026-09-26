@@ -1,7 +1,9 @@
 // The bootstrap-time `system.entry_type_registry_initialized` audit event:
 //
 // - Fresh bootstrap emits exactly one event whose data.registry maps every
-//   registered entry-type id to its registered version, written `M.m`.
+//   registered entry-type id to its registered version, written `M.m`, and
+//   whose data.declarations maps every registered entry-type id to the kind
+//   and eligibility it declares per event type.
 // - Same-version reboot (same backend, same caller-supplied entry types)
 //   no-ops via dedupeByContent — the second bootstrap finds prior content
 //   identical and writes nothing.
@@ -10,6 +12,8 @@
 //       dedupe is broken and a new event lands.
 //     - raising the minor (or the major) of an existing caller entry type
 //       changes the map's value for that key, so a new event lands.
+//     - changing a declared kind or eligibility, or declaring an event
+//       type, changes data.declarations, so a new event lands.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,6 +31,20 @@ EntryTypeDefinition _typeA({
   id: 'demo_note',
   registeredVersion: version,
   name: 'Demo Note',
+);
+
+EntryTypeDefinition _typeAWith(List<EventTypeDeclaration> declarations) =>
+    EntryTypeDefinition(
+      id: 'demo_note',
+      registeredVersion: const EntryTypeVersion(1, 0),
+      name: 'Demo Note',
+      declarations: declarations,
+    );
+
+const EventTypeDeclaration _scoreAnnotation = EventTypeDeclaration(
+  eventType: 'score_recorded',
+  kind: CausalKind.annotation,
+  eligible: false,
 );
 
 EntryTypeDefinition _typeB() => const EntryTypeDefinition(
@@ -103,6 +121,24 @@ void main() {
           );
         }
         expect(registryMap.length, ds.entryTypes.all().length);
+
+        // Every registered entry type appears with the kind and eligibility
+        // it declares per event type; reserved event types are ineligible
+        // annotations, and a caller type declaring none records none.
+        final declarationsData = audit.data['declarations'];
+        expect(declarationsData, isA<Map<String, Object?>>());
+        final declarationsMap = declarationsData as Map<String, Object?>;
+        expect(declarationsMap.length, ds.entryTypes.all().length);
+        expect(declarationsMap['demo_note'], <String, Object?>{});
+        expect(
+          declarationsMap[kEntryTypeRegistryInitializedEntryType],
+          <String, Object?>{
+            'finalized': <String, Object?>{
+              'kind': 'annotation',
+              'eligible': false,
+            },
+          },
+        );
 
         // The audit's own entry type is registered at 1.0 in
         // kSystemEntryTypes.
@@ -290,6 +326,107 @@ void main() {
       final laterMap = audits[1].data['registry'] as Map<String, Object?>;
       expect(earlierMap['demo_note'], '1.0');
       expect(laterMap['demo_note'], '2.0');
+    });
+
+    // Verifies: EVS-DEV-version-compatibility/K
+    test(
+      'a changed declaration emits a new audit event recording it',
+      () async {
+        final factory = newDatabaseFactoryMemory();
+        const path = 'change-declaration.db';
+        final backendA = await _openMemoryBackend(factory, path);
+        await bootstrapEventStore(
+          storage: ApplicationSuppliedStorage(
+            backendA,
+            SembastSecurityContextStore(backend: backendA),
+          ),
+          source: _source,
+          entryTypes: <EntryTypeDefinition>[_typeA()],
+          destinations: const <Destination>[],
+        );
+
+        // Reboot at the same version, declaring one event type an ineligible
+        // annotation: the declarations change, so a new audit lands.
+        final backendB = await _openMemoryBackend(factory, path);
+        await bootstrapEventStore(
+          storage: ApplicationSuppliedStorage(
+            backendB,
+            SembastSecurityContextStore(backend: backendB),
+          ),
+          source: _source,
+          entryTypes: <EntryTypeDefinition>[
+            _typeAWith(const <EventTypeDeclaration>[_scoreAnnotation]),
+          ],
+          destinations: const <Destination>[],
+        );
+
+        final audits = await _eventsOfType(
+          backendB,
+          kEntryTypeRegistryInitializedEntryType,
+        );
+        expect(audits, hasLength(2));
+        final laterRegistry =
+            audits[1].data['registry'] as Map<String, Object?>;
+        expect(laterRegistry['demo_note'], '1.0');
+        final laterDeclarations =
+            audits[1].data['declarations'] as Map<String, Object?>;
+        expect(laterDeclarations['demo_note'], <String, Object?>{
+          'score_recorded': <String, Object?>{
+            'kind': 'annotation',
+            'eligible': false,
+          },
+        });
+
+        // Reboot again with the flipped eligibility of the same event type:
+        // another audit lands.
+        final backendC = await _openMemoryBackend(factory, path);
+        await bootstrapEventStore(
+          storage: ApplicationSuppliedStorage(
+            backendC,
+            SembastSecurityContextStore(backend: backendC),
+          ),
+          source: _source,
+          entryTypes: <EntryTypeDefinition>[
+            _typeAWith(const <EventTypeDeclaration>[
+              EventTypeDeclaration(
+                eventType: 'score_recorded',
+                kind: CausalKind.annotation,
+                eligible: true,
+              ),
+            ]),
+          ],
+          destinations: const <Destination>[],
+        );
+        expect(
+          await _eventsOfType(backendC, kEntryTypeRegistryInitializedEntryType),
+          hasLength(3),
+        );
+      },
+    );
+
+    // Verifies: EVS-DEV-version-compatibility/K
+    test('an unchanged registry with declarations dedupes', () async {
+      final factory = newDatabaseFactoryMemory();
+      const path = 'same-declaration.db';
+      for (var boot = 0; boot < 2; boot++) {
+        final backend = await _openMemoryBackend(factory, path);
+        await bootstrapEventStore(
+          storage: ApplicationSuppliedStorage(
+            backend,
+            SembastSecurityContextStore(backend: backend),
+          ),
+          source: _source,
+          entryTypes: <EntryTypeDefinition>[
+            _typeAWith(const <EventTypeDeclaration>[_scoreAnnotation]),
+          ],
+          destinations: const <Destination>[],
+        );
+      }
+      final backend = await _openMemoryBackend(factory, path);
+      expect(
+        await _eventsOfType(backend, kEntryTypeRegistryInitializedEntryType),
+        hasLength(1),
+      );
     });
   });
 }

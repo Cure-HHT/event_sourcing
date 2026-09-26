@@ -447,10 +447,10 @@ void main() {
       final before = await _snapshot(db);
       await expectLater(
         runWithDeliveryTestHooks(
-          const DeliveryTestHooks(
+          DeliveryTestHooks(
             buildDeclaration: (
               version: '9.0.0',
-              dataFormat: DataFormatVersion(3, 0),
+              dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
             ),
           ),
           () async => _openStore(await open()),
@@ -459,7 +459,7 @@ void main() {
           isA<IncompatibleGenerationException>().having(
             (e) => e.conflictingComponents,
             'components',
-            ['data_format:2'],
+            ['data_format:${LibVersion.dataFormat.major}'],
           ),
         ),
       );
@@ -687,10 +687,10 @@ void main() {
         'build is refused', () async {
       if (db == null) return;
       await runWithDeliveryTestHooks(
-        const DeliveryTestHooks(
+        DeliveryTestHooks(
           buildDeclaration: (
             version: '9.0.0',
-            dataFormat: DataFormatVersion(3, 0),
+            dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
           ),
         ),
         () async => (await _openStore(await open())).close(),
@@ -778,7 +778,7 @@ void main() {
       await seedLibVersionEventForTest(
         seeder,
         version: '7.0.0',
-        dataFormat: const DataFormatVersion(3, 0),
+        dataFormat: DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
       );
       final before = await backendState();
       final backend = await open();

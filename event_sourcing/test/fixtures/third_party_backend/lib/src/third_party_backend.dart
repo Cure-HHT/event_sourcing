@@ -406,6 +406,43 @@ class ThirdPartyBackend extends StorageBackend {
     Set<String>? eventTypes,
   }) => throw UnimplementedError();
 
+  @internal
+  @override
+  Future<ChainIndexEntry?> readLatestHeldAsAuthoredInTxn(
+    Transaction txn,
+    String databaseId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<CausalRef?> readLatestEligibleVersionInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<ChainIndexEntry>> findChainIndexBySealedHashInTxn(
+    Transaction txn,
+    String sealedHash,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<ChainIndexEntry>> findChainIndexByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<ChainIndexEntry>> findChainIndexByOriginPositionInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required int originPosition,
+  }) => throw UnimplementedError();
+
   @override
   Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
     Transaction txn,

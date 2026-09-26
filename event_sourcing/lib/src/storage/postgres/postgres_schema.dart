@@ -1,7 +1,13 @@
 // Implements: EVS-DEV-postgres-backend/G
 // the ordered migration list whose steps provisioning applies: version 1
 //   holds the tables of the log, the views, the queues and the sidecars;
-//   version 2 adds the declared library roles and keeps the minimum.
+//   version 2 adds the declared library roles and keeps the minimum;
+//   version 3 adds the chain index columns and indexes, the causal column
+//   and the latest-eligible-version index to the events table and raises
+//   the minimum to itself.
+// Implements: EVS-DEV-chain-verification/N
+// the chain index on Postgres: columns of the events table, written by
+//   the insert that stores each event, and the indexes its lookups read.
 // Implements: EVS-DEV-postgres-backend/P
 // the `library_roles` table in the library's schema, created by the owner,
 //   in which provisioning records the declared runtime and lock roles.
@@ -22,13 +28,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 2;
+const int postgresSchemaVersion = 3;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 1;
+const int postgresMinCompatibleSchemaVersion = 3;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -68,6 +74,22 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
     toVersion: 2,
     minCompatibleVersion: 1,
     ddl: <String>[_libraryRolesTable],
+  ),
+  // A build before this step inserts events without their chain index and
+  // causal columns, so the step raises the minimum: such a build refuses the
+  // database rather than leave the index behind the log.
+  PostgresMigrationStep(
+    toVersion: 3,
+    minCompatibleVersion: 3,
+    ddl: <String>[
+      _eventsChainIndexColumns,
+      _eventsSealedHashIdx,
+      _eventsPredecessorIdx,
+      _eventsOriginPositionIdx,
+      _eventsHeldAsAuthoredIdx,
+      _eventsCausalColumn,
+      _eventsLatestEligibleIdx,
+    ],
   ),
 ];
 
@@ -137,6 +159,68 @@ CREATE INDEX IF NOT EXISTS events_client_ts_idx
 const String _eventsTypeSeqIdx = '''
 CREATE INDEX IF NOT EXISTS events_type_seq_idx
   ON events (event_type, sequence_number)
+''';
+
+// --- Chain index ----------------------------------------------------------
+
+// The chain index: for each stored event its originating database, sealed
+// hash and origin position (read from the stored copy's provenance) beside
+// its `previous_event_hash` column, and the database that holds it as
+// authored when that is the holding database (the originating database of a
+// copy whose provenance holds exactly one entry, null for every other copy).
+// The insert that stores the event writes them; the runtime role holds no
+// UPDATE on the table, so nothing changes them afterwards. A column the
+// stored copy does not yield is null. No index is unique: the log holds
+// forks and reused origin positions as received.
+const String _eventsChainIndexColumns = '''
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS origin_database_id   TEXT,
+  ADD COLUMN IF NOT EXISTS sealed_hash          TEXT,
+  ADD COLUMN IF NOT EXISTS origin_position      BIGINT,
+  ADD COLUMN IF NOT EXISTS held_as_authored_by  TEXT
+''';
+
+const String _eventsSealedHashIdx = '''
+CREATE INDEX IF NOT EXISTS events_sealed_hash_idx
+  ON events (sealed_hash, sequence_number)
+''';
+
+const String _eventsPredecessorIdx = '''
+CREATE INDEX IF NOT EXISTS events_predecessor_idx
+  ON events (origin_database_id, previous_event_hash, sequence_number)
+''';
+
+const String _eventsOriginPositionIdx = '''
+CREATE INDEX IF NOT EXISTS events_origin_position_idx
+  ON events (origin_database_id, origin_position, sequence_number)
+''';
+
+const String _eventsHeldAsAuthoredIdx = '''
+CREATE INDEX IF NOT EXISTS events_held_as_authored_idx
+  ON events (held_as_authored_by, sequence_number)
+  WHERE held_as_authored_by IS NOT NULL
+''';
+
+// --- Causal record and the latest eligible version ----------------------
+
+// The event's `causal` object as the record carries it; null for a record
+// that carries none.
+const String _eventsCausalColumn = '''
+ALTER TABLE events
+  ADD COLUMN IF NOT EXISTS causal JSONB
+''';
+
+// The per-aggregate working copy of the latest eligible version: a partial
+// index over the events whose recorded `causal` says an eligible version,
+// so the event of an aggregate with the highest local sequence number
+// among them is one index probe. The insert that stores each event writes
+// it, and nothing else does. The predicate is the one
+// `PostgresBackend.readLatestEligibleVersionInTxn` queries with.
+const String _eventsLatestEligibleIdx = '''
+CREATE INDEX IF NOT EXISTS events_latest_eligible_idx
+  ON events (aggregate_id, sequence_number DESC)
+  WHERE (causal ->> 'kind') = 'version'
+    AND (causal -> 'eligible') = 'true'::jsonb
 ''';
 
 // --- View rows ------------------------------------------------------------

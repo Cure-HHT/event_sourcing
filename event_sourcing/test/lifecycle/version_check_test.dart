@@ -41,6 +41,8 @@ StoredEvent _asIngested(StoredEvent event) => StoredEvent.synthetic(
         softwareVersion: 'receiver',
         arrivalHash: event.eventHash,
         ingestSequenceNumber: 9,
+        databaseId: 'receiver-database',
+        libraryVersion: '0.0.0-receiver',
       ).toJson(),
     ],
   },
