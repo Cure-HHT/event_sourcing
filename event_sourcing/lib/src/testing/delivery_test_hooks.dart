@@ -118,11 +118,19 @@ class DeliveryTestHooks {
     this.pageVisibility,
     this.onDeliveryWake,
     this.handDrivenCycle = false,
+    this.severeLogSink,
   });
 
   /// Observes every line the library logs. An exception it throws is
   /// reported and does not reach the code that logged.
   final void Function(LibraryLogRecord record)? onLog;
+
+  /// Replaces where a severe-or-above fill or drain log line is written by
+  /// default ([LibraryLogging.severeToStandardError]): installed, the line
+  /// goes to this sink instead of the process's standard error (the browser
+  /// console on the web), so a test observes the line without touching the
+  /// real sink.
+  final void Function(String line)? severeLogSink;
 
   /// Consulted after the last write of a destination-registry operation
   /// whose audit event is of `entryType` (the audit append, and for a

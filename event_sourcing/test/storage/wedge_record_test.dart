@@ -1,7 +1,8 @@
 // Verifies: EVS-PRD-destinations/Q
-// this build wedges with exactly its four causes (a permanent failure,
-//   an exhausted retry budget, an operator halt and an acceptance carrying
-//   no receiver record), each with its recorded string.
+// this build wedges with exactly its five causes (a permanent failure,
+//   an exhausted retry budget, an operator halt, an acceptance carrying no
+//   receiver record and a transform that kept failing), each with its
+//   recorded string.
 // Verifies: EVS-DEV-destination-drain/I
 // the wedge record's persisted form
 //   round-trips every field and refuses a malformed record.
@@ -10,7 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('WedgeCause', () {
-    test('has the four recorded causes', () {
+    test('has the five recorded causes', () {
       expect(
         <String, WedgeCause>{for (final c in WedgeCause.values) c.wire: c},
         <String, WedgeCause>{
@@ -18,6 +19,7 @@ void main() {
           'retry_budget_exhausted': WedgeCause.retryBudgetExhausted,
           'operator_halt': WedgeCause.operatorHalt,
           'acknowledgement_invalid': WedgeCause.acknowledgementInvalid,
+          'transform_failed': WedgeCause.transformFailed,
         },
       );
       for (final cause in WedgeCause.values) {

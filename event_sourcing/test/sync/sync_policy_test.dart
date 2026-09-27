@@ -192,23 +192,100 @@ void main() {
       expect(fast.backoffFor(10), const Duration(seconds: 10));
     });
 
-    // Verifies: EVS-DEV-destination-drain/J
-    // with assertions enabled, a policy
-    //   whose budget is below one fails when it is built (a build without
-    //   assertions is refused by the delivery cycle instead).
-    test('a budget below one fails the constructor assertion', () {
+    // The constructor accepts a budget below one without throwing; refusal
+    // is the delivery cycle's job (checkRetryBudget), not the value
+    // class's, so the same field can be read back before it reaches a
+    // cycle.
+    test('a budget below one does not throw at construction', () {
       for (final n in <int>[0, -1]) {
-        expect(
-          () => SyncPolicy(
-            initialBackoff: Duration.zero,
-            backoffMultiplier: 1.0,
-            maxBackoff: Duration.zero,
-            jitterFraction: 0.0,
-            maxAttempts: n,
-          ),
-          throwsA(isA<AssertionError>()),
+        final policy = SyncPolicy(
+          initialBackoff: Duration.zero,
+          backoffMultiplier: 1.0,
+          maxBackoff: Duration.zero,
+          jitterFraction: 0.0,
+          maxAttempts: n,
         );
+        expect(policy.maxAttempts, n);
       }
+    });
+  });
+
+  group('SyncPolicy retry time bound', () {
+    // Verifies: EVS-PRD-destinations/W
+    // the policy states its budget as time
+    //   as well as attempts, and defaults gives it a documented value.
+    test('defaults.maxRetryTime == Duration(hours: 24)', () {
+      expect(SyncPolicy.defaults.maxRetryTime, const Duration(hours: 24));
+    });
+
+    // Verifies: EVS-PRD-destinations/W
+    // an omitted maxRetryTime takes the
+    //   defaults' value, so a construction site that names no time bound
+    //   keeps compiling and keeps the default budget.
+    test('maxRetryTime defaults when omitted from a custom policy', () {
+      const custom = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 2.0,
+        maxBackoff: Duration(minutes: 30),
+        jitterFraction: 0.2,
+        maxAttempts: 7,
+      );
+      expect(custom.maxRetryTime, SyncPolicy.defaults.maxRetryTime);
+    });
+
+    // longestDelayAfter(k) is the longest delay the curve allows after the
+    // k-th attempt: the capped baseline with the jitter counted in full,
+    // per the retry-budget Rationale. No assertion covers this helper yet;
+    // it is exercised by the time retry budget's own assertion once that
+    // lands.
+    test('longestDelayAfter(0) is initialBackoff with full jitter', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 2.0,
+        maxBackoff: Duration(seconds: 1000),
+        jitterFraction: 0.25,
+        maxAttempts: 5,
+      );
+      expect(policy.longestDelayAfter(0), const Duration(milliseconds: 12500));
+    });
+
+    test('longestDelayAfter(k) matches the curve below the cap', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 2.0,
+        maxBackoff: Duration(seconds: 1000),
+        jitterFraction: 0.25,
+        maxAttempts: 5,
+      );
+      // baseline at k=2: 10 * 2^2 = 40s; with full +25% jitter: 50s.
+      expect(policy.longestDelayAfter(2), const Duration(seconds: 50));
+    });
+
+    test('longestDelayAfter(k) is capped at maxBackoff plus full jitter', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 2.0,
+        maxBackoff: Duration(seconds: 100),
+        jitterFraction: 0.25,
+        maxAttempts: 20,
+      );
+      // baseline at k=10 would far exceed the 100s cap, so it clamps to
+      // 100s, then the full +25% jitter: 125s.
+      for (final k in [10, 15, 19]) {
+        expect(policy.longestDelayAfter(k), const Duration(seconds: 125));
+      }
+    });
+
+    test('SyncPolicy.defaults.longestDelayAfter matches its own curve', () {
+      // defaults: 60s initial, x5 multiplier, 2h cap, 10% jitter.
+      expect(
+        SyncPolicy.defaults.longestDelayAfter(0),
+        const Duration(milliseconds: 66000),
+      );
+      expect(
+        SyncPolicy.defaults.longestDelayAfter(3),
+        const Duration(milliseconds: 7920000), // 2h cap * 1.1
+      );
     });
   });
 }

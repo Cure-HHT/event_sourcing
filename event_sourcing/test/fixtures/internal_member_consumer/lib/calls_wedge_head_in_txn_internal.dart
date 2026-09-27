@@ -17,6 +17,7 @@ Future<void> wedgeDirectly(DestinationRegistry registry, EventStore store) =>
         rowId: 'row',
         cause: WedgeCause.permanentRefusal,
         maxAttempts: 1,
+        maxRetryMs: null,
         drainerEpoch: 1,
         configuration: null,
         configurationFingerprint: null,

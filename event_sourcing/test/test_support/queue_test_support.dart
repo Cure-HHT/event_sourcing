@@ -267,17 +267,22 @@ Future<T> withTestDrainLock<T>(
 }
 
 /// `drain` under a drain lock the harness takes (see [withTestDrainLock]).
+/// [cadence] defaults to the value `SyncCycle` itself defaults to, so a
+/// scenario that cares about the retry budget's time bound overrides it
+/// explicitly; one that does not may ignore it.
 Future<void> drainForTest(
   Destination destination, {
   required DestinationRegistry registry,
   Clock? clock,
   SyncPolicy? policy,
+  Duration cadence = const Duration(seconds: 15),
 }) => withTestDrainLock(
   testBackendOf(registry.eventStore),
   (lock) => drain(
     destination,
     registry: registry,
     lock: lock,
+    cadence: cadence,
     clock: clock,
     policy: policy,
   ),
@@ -308,6 +313,8 @@ Future<void> fillForTest(
   bool flushHeld = false,
   String? declaredFingerprint,
   String? databaseId,
+  SyncPolicy policy = SyncPolicy.defaults,
+  Duration cadence = const Duration(seconds: 15),
 }) async {
   final resolvedDatabaseId =
       databaseId ?? await harnessDatabaseIdForTest(backend);
@@ -319,6 +326,8 @@ Future<void> fillForTest(
       source: source ?? testFillSource,
       lock: lock,
       clock: clock,
+      policy: policy,
+      cadence: cadence,
       flushHeld: flushHeld,
       declaredFingerprint: declaredFingerprint,
       databaseId: resolvedDatabaseId,
@@ -465,7 +474,13 @@ Future<void> resumeChannelForTest(
     await fillForTest(d, backend: backend, clock: later);
     await withTestDrainLock(
       backend,
-      (lock) => drain(d, registry: registry, lock: lock, clock: later),
+      (lock) => drain(
+        d,
+        registry: registry,
+        lock: lock,
+        cadence: const Duration(seconds: 15),
+        clock: later,
+      ),
       databaseId: databaseId,
     );
   }

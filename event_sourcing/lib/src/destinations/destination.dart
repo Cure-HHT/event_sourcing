@@ -154,10 +154,14 @@ abstract class Destination {
   /// - [SendPermanent] — non-retryable failure (typically 4xx excluding
   ///   rate-limits); drain loop marks the entry wedged and wedges the
   ///   FIFO
+  /// - [SendNotAttempted] — the destination declined to attempt delivery
+  ///   now (a receiver asked it to wait, its transport is paused); the
+  ///   drain loop records no attempt, leaves the entry pending with its
+  ///   attempts unchanged, and sends nothing further on this destination
+  ///   in the same pass.
   ///
   /// How underlying HTTP codes, network errors, and timeouts map into those
-  /// three variants is a per-destination judgment, not dictated by the
-  /// contract.
+  /// variants is a per-destination judgment, not dictated by the contract.
   ///
   /// A destination that serializes natively returns, for every answer its
   /// receiver gives, what [decodeReceiverAnswer] maps the answer's body to

@@ -375,11 +375,13 @@ deployment — see the guide's "Advanced" chapter for detail:
   reads the drainer's declaration and heartbeat and each destination's
   halt request, wedge, refill guard and unserved reason from any process. The delivery configuration the application supplies is trusted
   on faith: the `Destination`'s filter (a predicate closure included) and
-  transform, its send outcomes, the `SyncPolicy` given to
-  `SyncCycle` (statically or through `policyResolver`; its retry curve
-  decides backoff and its attempt budget, at least one, decides when an
-  item wedges), the `clock` given to `SyncCycle` (fill computes its
-  window from it; its readings are not recorded) and the
+  transform, its send outcomes (a send outcome stating that no delivery
+  was attempted records no attempt and spends no budget), the `SyncPolicy`
+  given to `SyncCycle` (statically or through `policyResolver`; its retry
+  curve decides backoff, and its retry budget, an attempt bound of at
+  least one and a non-negative time bound, decides when an item, or a
+  transform that keeps failing, wedges), the `clock` given to `SyncCycle`
+  (fill computes its window from it; its readings are not recorded) and the
   `configurationVersion` (changed whenever code the library cannot read
   changes; the log records it but cannot check it). The wedge event makes
   each wedge decision auditable from the log. Every store folds the

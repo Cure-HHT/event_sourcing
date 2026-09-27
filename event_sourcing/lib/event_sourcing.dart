@@ -256,6 +256,7 @@ export 'src/lifecycle/boot_errors.dart'
         DataFormatIncompatibleError;
 export 'src/lifecycle/boot_progress.dart' show BootPhase, BootProgress;
 export 'src/lifecycle/lib_version.dart' show LibVersion;
+export 'src/logging.dart' show LibraryLogging;
 
 export 'src/permissions/authorization_bootstrap_result.dart'
     show AuthorizationBootstrapResult, PolicyReady, PolicyFailSafe;
@@ -449,11 +450,18 @@ export 'src/storage/queue_records.dart'
         SendFence,
         SenderChannelRecord,
         TrailSweepResult,
+        TransformFailureRecord,
         WedgeRecord;
 export 'src/storage/sembast_backend.dart'
     show SembastBackend, SembastSecurityContextStore;
 export 'src/storage/send_result.dart'
-    show SendResult, SendOk, SendAnswered, SendTransient, SendPermanent;
+    show
+        SendResult,
+        SendOk,
+        SendAnswered,
+        SendTransient,
+        SendPermanent,
+        SendNotAttempted;
 export 'src/storage/source.dart' show Source;
 export 'src/storage/storage_backend.dart' show StorageBackend;
 export 'src/storage/storage_description.dart'

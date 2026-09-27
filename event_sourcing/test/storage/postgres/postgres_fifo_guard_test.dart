@@ -52,6 +52,8 @@ const Map<String, String> _immutableColumns = <String, String>{
   'wire_payload': 'wire_payload = NULL',
   'envelope_metadata': 'envelope_metadata = \'{"b":2}\'::jsonb',
   'enqueued_at': "enqueued_at = enqueued_at + interval '1 day'",
+  'transform_failed': 'transform_failed = true',
+  'transform_failures': 'transform_failures = 5',
 };
 
 /// A recorded attempt, as the drainer writes one.

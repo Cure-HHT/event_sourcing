@@ -675,12 +675,18 @@ List<String> zoneReadRule(
   return violations;
 }
 
-/// No library in [units] other than the internal logger calls `print` or
-/// `dart:developer` `log` directly.
+/// No library in [units] other than the internal logger — `src/logging.dart`
+/// and its platform sinks `src/logging_sink_io.dart` and
+/// `src/logging_sink_web.dart`, which write the severe fill and drain
+/// default it decides on — calls `print` or `dart:developer` `log` directly.
 List<String> directLoggingRule(Map<String, List<CompilationUnit>> units) {
   final violations = <String>[];
   units.forEach((path, trees) {
-    if (path.endsWith('src/logging.dart')) return;
+    if (path.endsWith('src/logging.dart') ||
+        path.endsWith('src/logging_sink_io.dart') ||
+        path.endsWith('src/logging_sink_web.dart')) {
+      return;
+    }
     for (final tree in trees) {
       final visitor = _ZoneAndLogVisitor();
       tree.accept(visitor);

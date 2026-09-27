@@ -1949,6 +1949,10 @@ class PostgresBackend extends StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -1957,53 +1961,80 @@ class PostgresBackend extends StorageBackend {
         'enqueueFifoTxn requires a non-empty batch',
       );
     }
-    // XOR: exactly one payload shape is legal. Reject both null and both
-    // non-null at the boundary so a downstream FIFO row never carries an
-    // ambiguous (wire_payload, envelope_metadata) pair.
-    if ((wirePayload == null) == (nativeEnvelope == null)) {
-      throw ArgumentError(
-        'enqueueFifoTxn requires exactly one of wirePayload or nativeEnvelope '
-        'to be non-null; got '
-        'wirePayload=${wirePayload == null ? "null" : "set"}, '
-        'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
-      );
-    }
     final session = _asPgTxn(txn)._session;
 
-    // Resolve payload columns from the chosen shape. Native rows carry
-    // envelope_metadata + null wire_payload; 3rd-party rows decode the
-    // bytes once (and reject non-Map JSON) and persist the resulting
-    // map under wire_payload.
+    // Resolve payload columns. A transform-failed item carries no payload
+    // and no envelope; every other item is exactly one of the two payload
+    // shapes (XOR enforced below). Native rows carry envelope_metadata +
+    // null wire_payload; 3rd-party rows decode the bytes once (and reject
+    // non-Map JSON) and persist the resulting map under wire_payload.
     Map<String, Object?>? payloadMap;
-    String wireFormat;
-    String? transformVersion;
-    if (nativeEnvelope != null) {
+    String resolvedWireFormat;
+    String? resolvedTransformVersion;
+    if (transformFailed) {
+      if (wirePayload != null || nativeEnvelope != null) {
+        throw ArgumentError(
+          'enqueueFifoTxn: a transform-failed item carries no payload and '
+          'no envelope; got '
+          'wirePayload=${wirePayload == null ? "null" : "set"}, '
+          'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
+        );
+      }
+      if (wireFormat == null) {
+        throw ArgumentError(
+          'enqueueFifoTxn: a transform-failed item needs wireFormat',
+        );
+      }
+      if (transformFailures == null || transformFailures < 1) {
+        throw ArgumentError.value(
+          transformFailures,
+          'transformFailures',
+          'a transform-failed item needs at least one recorded failure',
+        );
+      }
       payloadMap = null;
-      wireFormat = nativeEnvelope.wireFormat;
-      transformVersion = null;
+      resolvedWireFormat = wireFormat;
+      resolvedTransformVersion = transformVersion;
     } else {
-      final wp = wirePayload!;
-      try {
-        final decoded = jsonDecode(utf8.decode(wp.bytes));
-        if (decoded is! Map) {
+      // XOR: exactly one payload shape is legal. Reject both null and both
+      // non-null at the boundary so a downstream FIFO row never carries an
+      // ambiguous (wire_payload, envelope_metadata) pair.
+      if ((wirePayload == null) == (nativeEnvelope == null)) {
+        throw ArgumentError(
+          'enqueueFifoTxn requires exactly one of wirePayload or '
+          'nativeEnvelope to be non-null; got '
+          'wirePayload=${wirePayload == null ? "null" : "set"}, '
+          'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
+        );
+      }
+      if (nativeEnvelope != null) {
+        payloadMap = null;
+        resolvedWireFormat = nativeEnvelope.wireFormat;
+        resolvedTransformVersion = null;
+      } else {
+        final wp = wirePayload!;
+        try {
+          final decoded = jsonDecode(utf8.decode(wp.bytes));
+          if (decoded is! Map) {
+            throw ArgumentError.value(
+              wp,
+              'wirePayload',
+              'enqueueFifoTxn requires wirePayload.bytes to encode a JSON '
+                  'object (Map); got ${decoded.runtimeType}',
+            );
+          }
+          payloadMap = Map<String, Object?>.from(decoded);
+        } on FormatException catch (e) {
           throw ArgumentError.value(
             wp,
             'wirePayload',
-            'enqueueFifoTxn requires wirePayload.bytes to encode a JSON object '
-                '(Map); got ${decoded.runtimeType}',
+            'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
+                '${e.message}',
           );
         }
-        payloadMap = Map<String, Object?>.from(decoded);
-      } on FormatException catch (e) {
-        throw ArgumentError.value(
-          wp,
-          'wirePayload',
-          'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
-              '${e.message}',
-        );
+        resolvedWireFormat = wp.contentType;
+        resolvedTransformVersion = wp.transformVersion;
       }
-      wireFormat = wp.contentType;
-      transformVersion = wp.transformVersion;
     }
 
     // Reserve the next sequence_in_queue from the per-destination
@@ -2046,13 +2077,15 @@ class PostgresBackend extends StorageBackend {
           event_ids, event_id_first_seq, event_id_last_seq,
           wire_format, transform_version, enqueued_at,
           attempts, final_status, sent_at,
-          wire_payload, envelope_metadata
+          wire_payload, envelope_metadata,
+          transform_failed, transform_failures
         ) VALUES (
           @dest, @seq, @entryId,
           @eventIds:jsonb, @firstSeq, @lastSeq,
           @wireFmt, @transformV, @enqueuedAt:timestamptz,
           '[]'::jsonb, NULL, NULL,
-          @wirePayload:jsonb, @envelope:jsonb
+          @wirePayload:jsonb, @envelope:jsonb,
+          @transformFailed, @transformFailures
         )
       '''),
       parameters: {
@@ -2062,11 +2095,13 @@ class PostgresBackend extends StorageBackend {
         'eventIds': eventIds,
         'firstSeq': firstSeq,
         'lastSeq': lastSeq,
-        'wireFmt': wireFormat,
-        'transformV': transformVersion,
+        'wireFmt': resolvedWireFormat,
+        'transformV': resolvedTransformVersion,
         'enqueuedAt': enqueuedAt,
         'wirePayload': payloadMap,
         'envelope': nativeEnvelope?.toMap(),
+        'transformFailed': transformFailed,
+        'transformFailures': transformFailed ? transformFailures : null,
       },
     );
 
@@ -2078,13 +2113,15 @@ class PostgresBackend extends StorageBackend {
       wirePayload: payloadMap == null
           ? null
           : Map<String, Object?>.unmodifiable(payloadMap),
-      wireFormat: wireFormat,
-      transformVersion: transformVersion,
+      wireFormat: resolvedWireFormat,
+      transformVersion: resolvedTransformVersion,
       enqueuedAt: enqueuedAt,
       attempts: const <AttemptResult>[],
       finalStatus: null,
       sentAt: null,
       envelopeMetadata: nativeEnvelope,
+      transformFailed: transformFailed,
+      transformFailures: transformFailed ? transformFailures : null,
     );
   }
 
@@ -2645,6 +2682,35 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
       _deleteStateTxn(txn, 'wedge_$destinationId');
+
+  // -------- Transform failure records --------
+
+  @override
+  @internal
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'transform_failure_$destinationId');
+    return value == null
+        ? null
+        : TransformFailureRecord.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  ) => _writeStateTxn(txn, 'transform_failure_$destinationId', record.toJson());
+
+  @override
+  @internal
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _deleteStateTxn(txn, 'transform_failure_$destinationId');
 
   // -------- Drain lock and drain records --------
 
@@ -3811,6 +3877,8 @@ class PostgresBackend extends StorageBackend {
       deliveryGeneration: m['delivery_generation'] as int?,
       deliveryNumber: m['delivery_number'] as int?,
       deliveryHash: m['delivery_hash'] as String?,
+      transformFailed: (m['transform_failed'] as bool?) ?? false,
+      transformFailures: m['transform_failures'] as int?,
     );
   }
 

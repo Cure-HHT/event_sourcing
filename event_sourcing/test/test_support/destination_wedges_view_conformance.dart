@@ -227,6 +227,7 @@ Map<String, Object?> wedgeData({
     'cause': 'permanent_refusal',
     'attempt_count': 1,
     'max_attempts': 3,
+    'max_retry_ms': const Duration(hours: 24).inMilliseconds,
     'last_outcome': 'permanent',
     'http_status': null,
     'wire_format': 'fake-v1',
@@ -406,6 +407,43 @@ void runDestinationWedgesViewScenarios(
         await expectWedgesViewMatchesQueue(r.store);
         await expectReservedShapes(r.store);
       });
+
+      // Verifies: EVS-DEV-destination-drain/Z
+      // a transform-failed head's wedge shows in the view with no change
+      //   beyond a wedge event's other causes.
+      // Verifies: EVS-PRD-destinations/Q
+      // the row's cause is transform_failed.
+      test(
+        'a transform-failed wedge shows in the view with its cause',
+        () async {
+          if (!available) return;
+          final d = FakeDestination(id: 'tf', script: const <SendResult>[]);
+          final key = '${r.store.databaseId}|tf';
+          await r.registry.addDestination(d, initiator: _init);
+          await r.registry.setStartDate(
+            d.id,
+            DateTime.utc(2026, 1, 1),
+            initiator: _init,
+          );
+          final note = await r.note('tf-note');
+          await r.backend.transaction(
+            (txn) => r.backend.enqueueFifoTxn(
+              txn,
+              d.id,
+              <StoredEvent>[note],
+              transformFailed: true,
+              transformFailures: 4,
+              wireFormat: 'fake-v1',
+            ),
+          );
+          await drainForTest(d, registry: r.registry);
+          final rows = await wedgesViewRows(r.backend);
+          expect(rows.keys, <String>[key]);
+          expect(rows[key]!['cause'], 'transform_failed');
+          expect(rows[key]!['attempt_count'], 4);
+          await expectWedgesViewMatchesQueue(r.store);
+        },
+      );
 
       // Verifies: EVS-PRD-destinations/S
       // the view derives its rows from the wedge, recovery and deletion

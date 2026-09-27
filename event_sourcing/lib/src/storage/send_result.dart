@@ -12,6 +12,8 @@ import 'package:event_sourcing/src/destinations/receiver_response.dart';
 ///   because not every destination is HTTP-based.
 /// - [SendPermanent]: the payload will never be accepted as-is; mark the
 ///   FIFO head `wedged` and halt this destination's FIFO.
+/// - [SendNotAttempted]: the destination did not attempt delivery; the
+///   drain loop records nothing and ends this destination's pass.
 ///
 /// The translation from a raw HTTP or IO response to a [SendResult] is a
 /// per-destination judgment — default categorization is `2xx -> SendOk`,
@@ -106,4 +108,29 @@ class SendPermanent extends SendResult {
 
   @override
   String toString() => 'SendPermanent(error: $error)';
+}
+
+/// The destination did not attempt delivery: its transport declined to
+/// send now (a receiver asked it to wait, a transport is paused), rather
+/// than trying and failing. The drain loop SHALL record no attempt, leave
+/// the FIFO head pending with its recorded attempts unchanged, and send
+/// nothing further on this destination in the same pass.
+// Implements: EVS-DEV-destination-retry-budget/C
+// Implements: EVS-DEV-destination-retry-budget/D
+class SendNotAttempted extends SendResult {
+  const SendNotAttempted({this.reason});
+
+  /// Operator-readable explanation, when the destination has one.
+  final String? reason;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SendNotAttempted && reason == other.reason;
+
+  @override
+  int get hashCode => Object.hash(SendNotAttempted, reason);
+
+  @override
+  String toString() => 'SendNotAttempted(reason: $reason)';
 }

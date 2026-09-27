@@ -55,7 +55,7 @@ V. The fill and every replay SHALL enqueue only events whose originator entry na
 
 W. <RETIRED> A database recovers no event of its own identity from a receiver, so the fill has no recovered event to leave out; the events a destination queues are stated in assertion V.
 
-X. The fill and every replay SHALL enqueue each succession event and each security finding the database appended on every natively serializing destination registration of the database, whatever that destination's filter.
+X. The fill and every replay SHALL enqueue each succession event and each security finding the database appended on every natively serializing destination registration of the database, whatever that destination's filter and whatever that destination's schedule window (its start date, its end date and the fill's upper bound).
 
 Y. When the destination's transform fails on the events a fill would enqueue next, the fill SHALL record the failure in the destination's transform failure record, retry the transform at later passes under the destination's retry curve, and, once the recorded failures have spent the retry budget, enqueue those events as one pending item marked as transform-failed, carrying no payload, and clear the record, in one transaction.
 
@@ -121,6 +121,8 @@ The guard checks the shape of a change, not who makes it, so it cannot tell a ha
 
 ## Changelog
 
+- 2026-09-27 | cc80871d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-27 | - | - | Michael Lewis (<michael@anspar.org>) | Amend X: a natively serializing destination's schedule window (start date, end date and the fill's upper bound) no longer holds back a succession event or a security finding either, alongside its filter. The fill and both replays enqueue such an event as soon as they meet it, whatever the window, without moving the fill position past a deferred ordinary event it stands behind. Code and tests citing X change with it.
 - 2026-09-25 | 7581ccf9 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | e3ed906e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Add Y-Z: a transform that keeps failing is recorded in a transform failure record, retried under the retry budget, then enqueued as a transform-failed item that the drainer wedges with cause `transform_failed`. Amend A and F: deletion and recovery remove the transform failure record. Amend B: a new channel generation also tombstones pending items carrying attempts. Amend E: only the drainer enqueues, through its fill and a receiver-behind resume; no re-anchor, skip event or break, and an operator recovery re-enqueues nothing. Amend I: the wedge event carries `max_retry_ms` beside `max_attempts`, and the transform-failure counts. Amend J: the budget is spent by attempts or by time; a negative time bound is refused. Amend L: the reserved entry types form a namespace (identifiers beginning with `system.` and six fixed identifiers) that the public append refuses whole; entry types in the namespace and enumerated values a later release of the data-format major adds are stored as received with no finding and carried verbatim; only the declared aggregate and event types stay strict; no recovery path. Amend M: an open refuses a registry holding any entry type in the reserved namespace under another definition. Amend V: no own recovery entry. Retire W: no recovered own events. Amend X: succession events and findings on every channel, with no skip or break exception. A, B, E, F, I, J, L, M, V and X are cited by code and tests; I, J, L and M change meaning (a new wedge key, a time-bound budget, open enumerations), V and X narrow, W is cited by no code or test
@@ -164,4 +166,4 @@ The guard checks the shape of a change, not who makes it, so it cannot tell a ha
 - 2026-09-23 | c29a506a | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-23 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-G and U: queue deletion and re-registration, status changes, attempt and outcome atomicity, drainer-only enqueue, recovery, fill compare-and-set, registry decisions in writing transactions
 
-*End* *Destination queue mechanics* | **Hash**: 7581ccf9
+*End* *Destination queue mechanics* | **Hash**: cc80871d

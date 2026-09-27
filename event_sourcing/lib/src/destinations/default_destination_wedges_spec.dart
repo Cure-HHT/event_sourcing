@@ -85,6 +85,7 @@ const TableProjectionSpec defaultDestinationWedgesSpec = TableProjectionSpec(
     'cause',
     'attempt_count',
     'max_attempts',
+    'max_retry_ms',
     'last_outcome',
     'http_status',
     'wire_format',

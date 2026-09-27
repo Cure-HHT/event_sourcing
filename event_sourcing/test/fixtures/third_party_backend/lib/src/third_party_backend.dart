@@ -154,6 +154,10 @@ class ThirdPartyBackend extends StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
   }) => throw UnimplementedError();
 
   @override
@@ -248,6 +252,28 @@ class ThirdPartyBackend extends StorageBackend {
   @override
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId) =>
       throw UnimplementedError();
+
+  @internal
+  @override
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
 
   @internal
   @override

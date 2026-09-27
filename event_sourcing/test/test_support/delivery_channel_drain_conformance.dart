@@ -139,6 +139,9 @@ class _World {
   Future<SenderChannelRecord?> senderRecord(String id) =>
       backend.transaction((txn) => backend.readSenderChannelRecordTxn(txn, id));
 
+  Future<TransformFailureRecord?> transformFailureRecord(String id) => backend
+      .transaction((txn) => backend.readTransformFailureRecordTxn(txn, id));
+
   Future<String> registrationId(String id) async {
     final schedule = await backend.transaction(
       (txn) => backend.readScheduleTxn(txn, id),
@@ -290,6 +293,44 @@ void runDeliveryChannelDrainScenarios(
         );
       },
     );
+
+    // Verifies: EVS-DEV-destination-retry-budget/C
+    // Verifies: EVS-DEV-destination-retry-budget/D
+    test('a destination that declines, then accepts, sends the accepted '
+        'delivery at number 1 with no gap', () async {
+      if (!available) return;
+      final d = NativeDestination(id: 'hub')
+        ..enqueueScript(
+          const SendNotAttempted(reason: 'receiver asked to wait'),
+        );
+      await w.activate(d);
+      await w.note('n1');
+      await w.fill(d);
+
+      await w.drain(d);
+      expect(d.sent, hasLength(1));
+      final pending = (await w.items('hub')).single;
+      expect(pending.finalStatus, isNull);
+      expect(pending.attempts, isEmpty);
+      final senderRecordAfterDecline = await w.senderRecord('hub');
+      expect(senderRecordAfterDecline!.receiverRecord, DeliveryRecord.none);
+
+      await w.drain(d);
+      expect(d.sent, hasLength(2));
+      // Both the declined attempt and the accepted retry carry the same
+      // number and link: nothing was written in between, so the second
+      // fence recomputed exactly what the first one did.
+      final deliveries = _sentDeliveries(d);
+      expect(<int>[for (final x in deliveries) x.deliveryNumber], [1, 1]);
+      for (final x in deliveries) {
+        expect(x.previousDeliveryHash, isNull);
+      }
+
+      final sent = (await w.items('hub')).single;
+      expect(sent.finalStatus, FinalStatus.sent);
+      expect(sent.deliveryNumber, 1);
+      expect(sent.attempts.single.deliveryNumber, 1);
+    });
 
     // Verifies: EVS-DEV-delivery-channel/H
     // a pre-send fence that reads a sender channel record other than the one
@@ -565,9 +606,10 @@ void runDeliveryChannelDrainScenarios(
     //   delivery's events and attributes.
     // Verifies: EVS-DEV-delivery-resume/N
     // the resume retires the pending items (tombstoning one that carries
-    //   attempts), rewinds the fill below their lowest event, enqueues the
-    //   resend items, sets the sender channel record to the receiver's and
-    //   appends one resume event, in one transaction.
+    //   attempts), rewinds the fill below their lowest event, removes the
+    //   transform failure record, enqueues the resend items, sets the
+    //   sender channel record to the receiver's and appends one resume
+    //   event, in one transaction.
     // Verifies: EVS-DEV-delivery-resume/W
     // the retained delivery at a number is the item last marked sent there
     //   under the current generation.
@@ -599,6 +641,18 @@ void runDeliveryChannelDrainScenarios(
       await w.fill(d);
       final pending = (await w.items('hub')).skip(3).toList();
       expect(pending, hasLength(2));
+      // A transform failure record left from before the resume is written
+      // directly here; a receiver-behind resume removes it with the rewind.
+      await w.backend.transaction(
+        (txn) => w.backend.writeTransformFailureRecordTxn(
+          txn,
+          'hub',
+          TransformFailureRecord(
+            failureTimes: [DateTime.utc(2027, 1, 1)],
+            sequenceRange: (firstSeq: 1, lastSeq: 1),
+          ),
+        ),
+      );
       await w.drain(d);
 
       final items = await w.items('hub');
@@ -656,6 +710,7 @@ void runDeliveryChannelDrainScenarios(
       );
       expect(await w.resumeEvents(), hasLength(1));
       expect(await w.findings(), isEmpty);
+      expect(await w.transformFailureRecord('hub'), isNull);
     });
 
     // Verifies: EVS-DEV-delivery-resume/Y
@@ -753,7 +808,8 @@ void runDeliveryChannelDrainScenarios(
     // Verifies: EVS-PRD-delivery-channel/I
     // the finding of sender regression names both records.
     // Verifies: EVS-DEV-delivery-resume/Z
-    // the new generation starts at delivery 1 with the fill at the start.
+    // the new generation starts at delivery 1 with the fill at the start
+    //   and removes the transform failure record.
     test('a record ahead naming nothing attempted records one sender_regressed '
         'finding and starts generation 2 at delivery 1', () async {
       if (!available) return;
@@ -779,6 +835,18 @@ void runDeliveryChannelDrainScenarios(
       await w.fill(d);
       final retiring = (await w.items('hub')).skip(1).toList();
       expect(retiring, hasLength(2));
+      // A transform failure record left from before the new generation is
+      // written directly here; a new generation removes it with the rewind.
+      await w.backend.transaction(
+        (txn) => w.backend.writeTransformFailureRecordTxn(
+          txn,
+          'hub',
+          TransformFailureRecord(
+            failureTimes: [DateTime.utc(2027, 1, 1)],
+            sequenceRange: (firstSeq: 1, lastSeq: 1),
+          ),
+        ),
+      );
       await w.drain(d);
 
       final findings = await w.findings();
@@ -812,6 +880,7 @@ void runDeliveryChannelDrainScenarios(
         FinalStatus.tombstoned,
       );
       expect(after.where((i) => i.entryId == retiring[1].entryId), isEmpty);
+      expect(await w.transformFailureRecord('hub'), isNull);
 
       final sentBefore = d.sent.length;
       await w.deliverAll(d);

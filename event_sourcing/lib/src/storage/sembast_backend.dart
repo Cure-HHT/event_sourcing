@@ -1457,6 +1457,52 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
+  // -------- Transform failure records --------
+
+  static String _transformFailureRecordKey(String destinationId) =>
+      'transform_failure_$destinationId';
+
+  @override
+  @internal
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_transformFailureRecordKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return TransformFailureRecord.fromJson(
+      Map<String, Object?>.from(value as Map),
+    );
+  }
+
+  @override
+  @internal
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_transformFailureRecordKey(destinationId))
+        .put(t._sembastTxn, record.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_transformFailureRecordKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
   // -------- Halt requests --------
 
   static String _haltRequestKey(String destinationId) =>
@@ -2248,6 +2294,10 @@ class SembastBackend extends StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
   }) async {
     if (batch.isEmpty) {
       throw ArgumentError.value(
@@ -2256,16 +2306,81 @@ class SembastBackend extends StorageBackend {
         'enqueueFifoTxn requires a non-empty batch',
       );
     }
-    // XOR enforcement: exactly one payload shape is legal. Reject both
-    // null and both non-null at the boundary so a downstream FIFO row
-    // never carries an ambiguous (wire_payload, envelope_metadata) pair.
-    if ((wirePayload == null) == (nativeEnvelope == null)) {
-      throw ArgumentError(
-        'enqueueFifoTxn requires exactly one of wirePayload or nativeEnvelope '
-        'to be non-null; got '
-        'wirePayload=${wirePayload == null ? "null" : "set"}, '
-        'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
-      );
+    // Resolve the row's wire-format / payload columns. A transform-failed
+    // item carries no payload and no envelope; every other item is exactly
+    // one of the two payload shapes (XOR enforced below), which supplies
+    // wireFormat/transformVersion itself.
+    Map<String, Object?>? payloadMap;
+    String resolvedWireFormat;
+    String? resolvedTransformVersion;
+    if (transformFailed) {
+      if (wirePayload != null || nativeEnvelope != null) {
+        throw ArgumentError(
+          'enqueueFifoTxn: a transform-failed item carries no payload and '
+          'no envelope; got '
+          'wirePayload=${wirePayload == null ? "null" : "set"}, '
+          'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
+        );
+      }
+      if (wireFormat == null) {
+        throw ArgumentError(
+          'enqueueFifoTxn: a transform-failed item needs wireFormat',
+        );
+      }
+      if (transformFailures == null || transformFailures < 1) {
+        throw ArgumentError.value(
+          transformFailures,
+          'transformFailures',
+          'a transform-failed item needs at least one recorded failure',
+        );
+      }
+      payloadMap = null;
+      resolvedWireFormat = wireFormat;
+      resolvedTransformVersion = transformVersion;
+    } else {
+      // XOR enforcement: exactly one payload shape is legal. Reject both
+      // null and both non-null at the boundary so a downstream FIFO row
+      // never carries an ambiguous (wire_payload, envelope_metadata) pair.
+      if ((wirePayload == null) == (nativeEnvelope == null)) {
+        throw ArgumentError(
+          'enqueueFifoTxn requires exactly one of wirePayload or '
+          'nativeEnvelope to be non-null; got '
+          'wirePayload=${wirePayload == null ? "null" : "set"}, '
+          'nativeEnvelope=${nativeEnvelope == null ? "null" : "set"}',
+        );
+      }
+      if (nativeEnvelope != null) {
+        payloadMap = null;
+        resolvedWireFormat = nativeEnvelope.wireFormat;
+        resolvedTransformVersion = null;
+      } else {
+        // 3rd-party: bytes MUST be valid JSON encoding a Map — destinations
+        // that transform to bytes representing a top-level JSON object
+        // conform; other shapes are rejected with ArgumentError rather
+        // than corrupting the FIFO row.
+        final wp = wirePayload!;
+        try {
+          final decoded = jsonDecode(utf8.decode(wp.bytes));
+          if (decoded is! Map) {
+            throw ArgumentError.value(
+              wp,
+              'wirePayload',
+              'enqueueFifoTxn requires wirePayload.bytes to encode a JSON '
+                  'object (Map); got ${decoded.runtimeType}',
+            );
+          }
+          payloadMap = Map<String, Object?>.from(decoded);
+        } on FormatException catch (e) {
+          throw ArgumentError.value(
+            wp,
+            'wirePayload',
+            'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
+                '${e.message}',
+          );
+        }
+        resolvedWireFormat = wp.contentType;
+        resolvedTransformVersion = wp.transformVersion;
+      }
     }
     final t = _requireValidTxn(txn);
     final eventIds = batch.map((e) => e.eventId).toList(growable: false);
@@ -2273,44 +2388,6 @@ class SembastBackend extends StorageBackend {
       firstSeq: batch.first.sequenceNumber,
       lastSeq: batch.last.sequenceNumber,
     );
-    // Resolve the row's wire-format / payload columns from the chosen
-    // payload shape. Native rows carry envelope_metadata; 3rd-party rows
-    // decode the bytes once and persist the resulting JSON map.
-    Map<String, Object?>? payloadMap;
-    String wireFormat;
-    String? transformVersion;
-    if (nativeEnvelope != null) {
-      payloadMap = null;
-      wireFormat = nativeEnvelope.wireFormat;
-      transformVersion = null;
-    } else {
-      // 3rd-party: bytes MUST be valid JSON encoding a Map — destinations
-      // that transform to bytes representing a top-level JSON object
-      // conform; other shapes are rejected with ArgumentError rather
-      // than corrupting the FIFO row.
-      final wp = wirePayload!;
-      try {
-        final decoded = jsonDecode(utf8.decode(wp.bytes));
-        if (decoded is! Map) {
-          throw ArgumentError.value(
-            wp,
-            'wirePayload',
-            'enqueueFifoTxn requires wirePayload.bytes to encode a JSON object '
-                '(Map); got ${decoded.runtimeType}',
-          );
-        }
-        payloadMap = Map<String, Object?>.from(decoded);
-      } on FormatException catch (e) {
-        throw ArgumentError.value(
-          wp,
-          'wirePayload',
-          'enqueueFifoTxn requires wirePayload.bytes to be UTF-8 JSON: '
-              '${e.message}',
-        );
-      }
-      wireFormat = wp.contentType;
-      transformVersion = wp.transformVersion;
-    }
     // Mint a v4 UUID for this row's entry_id. The identifier is opaque
     // and has no relationship to the events the row carries — callers
     // that need event-level correlation use `eventIds` / `sequenceRange`.
@@ -2346,13 +2423,15 @@ class SembastBackend extends StorageBackend {
       sequenceRange: sequenceRange,
       sequenceInQueue: assigned,
       wirePayload: payloadMap,
-      wireFormat: wireFormat,
-      transformVersion: transformVersion,
+      wireFormat: resolvedWireFormat,
+      transformVersion: resolvedTransformVersion,
       enqueuedAt: enqueuedAt,
       attempts: const <AttemptResult>[],
       finalStatus: null,
       sentAt: null,
       envelopeMetadata: nativeEnvelope,
+      transformFailed: transformFailed,
+      transformFailures: transformFailed ? transformFailures : null,
     );
     await store.record(assigned).put(t._sembastTxn, entry.toJson());
     await _registerFifoDestinationSembast(t._sembastTxn, destinationId);

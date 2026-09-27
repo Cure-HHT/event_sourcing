@@ -512,6 +512,22 @@ abstract class StorageBackend {
   /// nativeEnvelope)` pair with `ArgumentError`, and SHALL register the
   /// destination on first use so `hasFifoWedged`/`wedgedFifos` can
   /// iterate all known FIFOs.
+  ///
+  /// A transform-failed flavour, for the fill's enqueue of a batch whose
+  /// transform kept failing until the destination's retry budget was
+  /// exhausted (`EVS-PRD-destinations/X`): [transformFailed] true, both
+  /// [wirePayload] and [nativeEnvelope] null, [transformFailures] the
+  /// count of transform failures the fill recorded for the batch (a
+  /// positive int), and [wireFormat] (with, optionally, [transformVersion])
+  /// the destination's configured wire format (since no payload or
+  /// envelope supplies one). The returned row carries `wire_payload =
+  /// null`, `envelope_metadata = null`, `transform_failed = true` and
+  /// `transform_failures` the given count; its `final_status` is `null`
+  /// (pending), so the drainer wedges it on its next read, without a
+  /// send. Implementations SHALL reject [transformFailed] true together
+  /// with a non-null [wirePayload] or [nativeEnvelope], a null
+  /// [wireFormat], or a [transformFailures] below one, with
+  /// `ArgumentError`.
   @internal
   Future<FifoEntry> enqueueFifoTxn(
     Transaction txn,
@@ -519,6 +535,10 @@ abstract class StorageBackend {
     List<StoredEvent> batch, {
     WirePayload? wirePayload,
     BatchEnvelopeMetadata? nativeEnvelope,
+    bool transformFailed = false,
+    int? transformFailures,
+    String? wireFormat,
+    String? transformVersion,
   });
 
   /// Return the head row of [destinationId]'s FIFO — the first row in
@@ -788,6 +808,39 @@ abstract class StorageBackend {
   /// transaction that ends the wedge.
   @internal
   Future<void> clearWedgeRecordTxn(Transaction txn, String destinationId);
+
+  // -------- Transform failure records --------
+
+  /// Read [destinationId]'s transform failure record inside [txn], or null
+  /// when its transform is not currently failing.
+  ///
+  /// Persisted under `backend_state` key `transform_failure_<destinationId>`.
+  @internal
+  Future<TransformFailureRecord?> readTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [record] as [destinationId]'s transform failure record inside
+  /// [txn], replacing any earlier one. Only the fill writes one, in a
+  /// transaction of its own that changes no other queue state.
+  @internal
+  Future<void> writeTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+    TransformFailureRecord record,
+  );
+
+  /// Delete [destinationId]'s transform failure record inside [txn]. No-op
+  /// when none exists. The fill deletes it when the failing batch enqueues
+  /// as a transform-failed item; deletion, an operator recovery, a
+  /// receiver-behind resume and a new channel generation each delete it too,
+  /// since each rewinds the fill position below the batch it names.
+  @internal
+  Future<void> clearTransformFailureRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
 
   // -------- Halt requests --------
 

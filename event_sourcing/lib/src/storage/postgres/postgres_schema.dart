@@ -34,13 +34,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 4;
+const int postgresSchemaVersion = 5;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 4;
+const int postgresMinCompatibleSchemaVersion = 5;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -107,6 +107,17 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
     ddl: <String>[
       _fifoEntriesDeliveryColumns,
       _fifoEntriesDeliveryIdx,
+      _fifoEntriesGuardFunction,
+    ],
+  ),
+  // A build before this step has no transform_failed/transform_failures
+  // columns, and its guard does not hold them immutable, so the step
+  // raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 5,
+    minCompatibleVersion: 5,
+    ddl: <String>[
+      _fifoEntriesTransformFailedColumns,
       _fifoEntriesGuardFunction,
     ],
   ),
@@ -313,6 +324,15 @@ ALTER TABLE fifo_entries
   ADD COLUMN IF NOT EXISTS delivery_hash        TEXT
 ''';
 
+// A transform-failed item's flag and the transform failures the fill
+// recorded on it: set only by the insert, held immutable by the guard like
+// every other column the item is enqueued with.
+const String _fifoEntriesTransformFailedColumns = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS transform_failed     BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS transform_failures    INTEGER
+''';
+
 // The retained-delivery read: the sent item at a number under a
 // generation, the latest first.
 const String _fifoEntriesDeliveryIdx = '''
@@ -421,6 +441,8 @@ BEGIN
      OR NEW.transform_version IS DISTINCT FROM OLD.transform_version
      OR NEW.wire_payload IS DISTINCT FROM OLD.wire_payload
      OR NEW.envelope_metadata IS DISTINCT FROM OLD.envelope_metadata
+     OR NEW.transform_failed IS DISTINCT FROM OLD.transform_failed
+     OR NEW.transform_failures IS DISTINCT FROM OLD.transform_failures
      OR NEW.enqueued_at IS DISTINCT FROM OLD.enqueued_at THEN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes a column it was enqueued with',
       OLD.entry_id USING ERRCODE = 'check_violation';

@@ -1,8 +1,9 @@
 // Implements: EVS-PRD-destinations/Q
 // the wedge event records why the drainer wedged the head: a permanent
 //   failure the delivery implementation reported, an exhausted retry
-//   budget, an operator halt, or an acceptance that carries no receiver
-//   record.
+//   budget, an operator halt, an acceptance that carries no receiver
+//   record, or a transform that failed until the retry budget was
+//   exhausted.
 // Implements: EVS-PRD-portability/C
 // a pure Dart value type; serialises
 //   identically on every Dart-supported runtime.
@@ -40,8 +41,9 @@ final class WedgeCause {
     isKnown: true,
   );
 
-  /// The head's recorded attempts reached the retry budget in effect
-  /// (`SyncPolicy.maxAttempts`) without a delivery.
+  /// The head's retry budget in effect (`SyncPolicy.maxAttempts` and
+  /// `SyncPolicy.maxRetryTime`) was spent, by attempt count or by time,
+  /// without a delivery.
   static const retryBudgetExhausted = WedgeCause._(
     'retry_budget_exhausted',
     isKnown: true,
@@ -63,12 +65,21 @@ final class WedgeCause {
     isKnown: true,
   );
 
+  /// The destination's transform failed on the events of this item until
+  /// the retry budget was exhausted (`EVS-PRD-destinations/X`); the item
+  /// was never sent.
+  static const transformFailed = WedgeCause._(
+    'transform_failed',
+    isKnown: true,
+  );
+
   /// Every cause this build wedges with.
   static const List<WedgeCause> values = <WedgeCause>[
     permanentRefusal,
     retryBudgetExhausted,
     operatorHalt,
     acknowledgementInvalid,
+    transformFailed,
   ];
 
   /// The string recorded in the wedge event and the wedge record. A later

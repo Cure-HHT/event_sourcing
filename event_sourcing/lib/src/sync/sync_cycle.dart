@@ -111,10 +111,11 @@ enum SyncCycleState {
 /// [call]) that arrives during a pass makes the cycle run one more pass.
 ///
 /// The retry policy is given statically (`policy:`) or resolved at the
-/// start of each pass (`policyResolver:`). Its attempt budget must be at
-/// least one: a static policy below one is refused with an
-/// [ArgumentError], and a pass whose resolved policy is below one logs the
-/// refusal and fills and drains nothing.
+/// start of each pass (`policyResolver:`). Its attempt bound must be at
+/// least one and its time bound must not be negative: a static policy that
+/// fails either check is refused with an [ArgumentError], and a pass whose
+/// resolved policy fails either check logs the refusal and fills and
+/// drains nothing.
 final class SyncCycle {
   SyncCycle._({
     required DestinationRegistry registry,
@@ -753,14 +754,23 @@ final class SyncCycle {
         return;
       }
       // Resolved once per pass; the same value is used for every
-      // destination of the pass.
+      // destination of the pass. retryBudgetRefusalReason is the one place
+      // that decides whether a budget is usable at all
+      // (EVS-DEV-destination-drain/J); a resolved policy is checked here,
+      // before any fill or drain, rather than left to each destination's
+      // own call into drain (which would let an earlier destination's fill
+      // run before the refusal surfaced).
       final passPolicy = _policyResolver != null ? _policyResolver() : _policy;
-      if (passPolicy != null && passPolicy.maxAttempts < 1) {
+      if (passPolicy != null && retryBudgetRefusalReason(passPolicy) != null) {
+        final detail = passPolicy.maxAttempts < 1
+            ? 'a retry budget of ${passPolicy.maxAttempts}'
+            : 'a retry budget with a negative time bound '
+                  '(${passPolicy.maxRetryTime})';
         libraryLog(
           'sync_cycle',
-          'the policy resolver returned a retry budget of '
-              '${passPolicy.maxAttempts}; a budget must be at least one '
-              'attempt, so this pass fills and drains nothing',
+          'the policy resolver returned $detail; a budget must be at '
+              'least one attempt and its time bound must not be '
+              'negative, so this pass fills and drains nothing',
           level: LibraryLogLevel.severe,
         );
         return;
@@ -975,6 +985,8 @@ final class SyncCycle {
         source: _registry.eventStore.source,
         lock: held,
         clock: _clock,
+        policy: passPolicy ?? SyncPolicy.defaults,
+        cadence: _cadence,
         flushHeld: flushHeld,
         declaredFingerprint: declared?.fingerprint,
         registrationId: _registry.localRegistrationId(destination.id),
@@ -1007,6 +1019,7 @@ final class SyncCycle {
         destination,
         registry: _registry,
         lock: held,
+        cadence: _cadence,
         clock: _clock,
         policy: passPolicy,
         declared: declared == null

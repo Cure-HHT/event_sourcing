@@ -17,10 +17,17 @@
 // the halt request the registry writes and
 //   clears in the transaction of the event that opens or closes it, and the
 //   send fence the drainer writes immediately before each send.
+// Implements: EVS-DEV-destination-drain/Y
+// the transform failure record the fill
+//   keeps for a batch its transform failed on: each failure's time and the
+//   batch's sequence range, so a retry evaluates the same batch and the
+//   budget it spends is auditable once the batch enqueues as one
+//   transform-failed item.
 import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:event_sourcing/src/destinations/halt_purpose.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/storage/fifo_entry.dart' show SequenceRange;
 
 /// What a trail sweep removed from a destination's queue: the number of
 /// pending items it deleted and the lowest event sequence number any of them
@@ -328,6 +335,97 @@ class WedgeRecord {
       'cause: ${cause.wire}, haltPurpose: ${haltPurpose?.wire}, '
       'drainerEpoch: $drainerEpoch, '
       'configurationFingerprint: $configurationFingerprint)';
+}
+
+/// A destination's failing transform, kept while the fill retries it: the
+/// times the transform has failed on the batch it would enqueue next, and
+/// the sequence range of that batch.
+///
+/// The transform itself runs outside any transaction; the fill writes this
+/// record, in a transaction of its own, the first time the transform fails
+/// on a batch, and updates it on every later failure of the same batch.
+/// Once the recorded failures have spent the destination's retry
+/// budget, the fill enqueues the batch as one transform-failed item and
+/// clears the record in the same transaction. Deletion, an operator
+/// recovery, a receiver-behind resume and a new channel generation each
+/// remove it too, in their own transaction, since each rewinds the fill
+/// position below the batch the record names.
+///
+/// Persisted under `backend_state` key `transform_failure_<destinationId>`.
+class TransformFailureRecord {
+  const TransformFailureRecord({
+    required this.failureTimes,
+    required this.sequenceRange,
+  });
+
+  /// Decode from the persisted JSON form.
+  factory TransformFailureRecord.fromJson(Map<String, Object?> json) {
+    final times = json['failure_times'];
+    if (times is! List) {
+      throw const FormatException(
+        'TransformFailureRecord: missing or non-list "failure_times"',
+      );
+    }
+    final firstSeq = json['first_seq'];
+    if (firstSeq is! int) {
+      throw const FormatException(
+        'TransformFailureRecord: missing or non-integer "first_seq"',
+      );
+    }
+    final lastSeq = json['last_seq'];
+    if (lastSeq is! int) {
+      throw const FormatException(
+        'TransformFailureRecord: missing or non-integer "last_seq"',
+      );
+    }
+    return TransformFailureRecord(
+      failureTimes: <DateTime>[
+        for (final t in times)
+          if (t is String)
+            DateTime.parse(t).toUtc()
+          else
+            throw const FormatException(
+              'TransformFailureRecord: non-string entry in "failure_times"',
+            ),
+      ],
+      sequenceRange: (firstSeq: firstSeq, lastSeq: lastSeq),
+    );
+  }
+
+  /// When the transform failed on this batch, oldest first.
+  final List<DateTime> failureTimes;
+
+  /// The sequence range of the batch the transform failed on.
+  final SequenceRange sequenceRange;
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'failure_times': <String>[
+      for (final t in failureTimes) t.toUtc().toIso8601String(),
+    ],
+    'first_seq': sequenceRange.firstSeq,
+    'last_seq': sequenceRange.lastSeq,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is TransformFailureRecord &&
+      other.sequenceRange == sequenceRange &&
+      other.failureTimes.length == failureTimes.length &&
+      Iterable<int>.generate(
+        failureTimes.length,
+      ).every((i) => other.failureTimes[i].isAtSameMomentAs(failureTimes[i]));
+
+  @override
+  int get hashCode => Object.hash(
+    sequenceRange,
+    Object.hashAll(failureTimes.map((t) => t.toUtc().microsecondsSinceEpoch)),
+  );
+
+  @override
+  String toString() =>
+      'TransformFailureRecord(failureTimes: $failureTimes, '
+      'sequenceRange: $sequenceRange)';
 }
 
 /// A destination's open halt request: the working copy of the latest

@@ -39,6 +39,19 @@
 // (every transaction of the fill checks
 //   the drain lock first and commits nothing when the drainer no longer
 //   holds it)
+// Implements: EVS-DEV-destination-drain/Y
+// (a failing transform is recorded in
+//   the destination's transform failure record and retried at later passes
+//   under the retry curve; once the recorded failures have spent the
+//   retry budget the batch enqueues as one transform-failed item, with no
+//   payload, and the record is cleared, in one transaction; a transform
+//   that recovers clears the record in the transaction that enqueues its
+//   item)
+// Implements: EVS-DEV-destination-retry-budget/B
+// (the fill records the time of each
+//   transform failure in the transform failure record and treats its
+//   budget as spent by the same attempt-count-or-capped-time rule a send's
+//   recorded attempts are measured by)
 
 part of '../event_store.dart';
 
@@ -60,6 +73,7 @@ class _FillState {
     required this.request,
     required this.refillGuard,
     required this.senderChannel,
+    required this.transformFailureRecord,
   });
 
   final DestinationSchedule? schedule;
@@ -72,6 +86,13 @@ class _FillState {
   /// (null for any other): a new generation changes it, so a fill computed
   /// before it commits nothing.
   final SenderChannelRecord? senderChannel;
+
+  /// The destination's transform failure record, or null when its transform
+  /// is not currently failing. Read here so a fill's decision to retry the
+  /// transform, or to leave the record alone, is re-validated by the same
+  /// compare-and-set as every other fill decision
+  /// (`EVS-DEV-destination-drain/G`).
+  final TransformFailureRecord? transformFailureRecord;
 
   bool get headWedged => headStatus == FinalStatus.wedged;
 
@@ -89,6 +110,10 @@ class _FillState {
       txn,
       destinationId,
     );
+    final transformFailureRecord = await backend.readTransformFailureRecordTxn(
+      txn,
+      destinationId,
+    );
     return _FillState(
       schedule: schedule,
       headStatus: head?.finalStatus,
@@ -96,6 +121,7 @@ class _FillState {
       request: request,
       refillGuard: refillGuard,
       senderChannel: senderChannel,
+      transformFailureRecord: transformFailureRecord,
     );
   }
 
@@ -112,7 +138,8 @@ class _FillState {
       other.cursor == cursor &&
       other.request == request &&
       other.refillGuard == refillGuard &&
-      other.senderChannel == senderChannel;
+      other.senderChannel == senderChannel &&
+      other.transformFailureRecord == transformFailureRecord;
 
   @override
   int get hashCode => Object.hash(
@@ -122,6 +149,7 @@ class _FillState {
     request,
     refillGuard,
     senderChannel,
+    transformFailureRecord,
   );
 }
 
@@ -179,11 +207,15 @@ Future<bool> _compareAndSet(
 ///    now would be speculative work the recovery's trail sweep would undo.
 /// 3. A pending replay request (a first activation, or a start date moved
 ///    earlier) is performed first, and the fill ends when it could not
-///    commit it; the fill never advances the position while a request is
-///    pending. A first-activation replay enqueues every admitted event past
-///    the position, to completion, and advances the position; a gap replay
+///    commit it. A first-activation replay enqueues every admitted event
+///    past the position, batch by batch, advancing the position as each
+///    batch decides; a batch whose transform is retrying under
+///    `EVS-DEV-destination-drain/Y` stops the walk there and the request
+///    stays pending, so the position advances to the last resolved batch
+///    while later, undecided events wait for a later pass. A gap replay
 ///    enqueues the admitted events at or below the position whose client
-///    timestamp lies in `[startDate, gapUpper)`, and leaves the position.
+///    timestamp lies in `[startDate, gapUpper)`, and leaves the position;
+///    a gap replay's transform is not retried (see `_performReplayRequest`).
 /// 4. Dormant schedule (`startDate == null`) or a window entirely in the
 ///    future: nothing to do.
 /// 5. Fetch the events past the position and walk them: an event the filter
@@ -195,9 +227,21 @@ Future<bool> _compareAndSet(
 /// 7. Otherwise assemble a greedy batch through `canAddToBatch`. A lone
 ///    event younger than `maxAccumulateTime` is held (nothing written)
 ///    unless [flushHeld] is set.
-/// 8. Build the item (a native destination gets a library-built envelope;
-///    any other destination's `transform` runs) and commit it with the
-///    position advanced to the batch's last event.
+/// 8. Build the item: a native destination gets a library-built envelope
+///    and never runs a transform. Any other destination's `transform` runs
+///    outside any transaction; on success the item commits with the
+///    position advanced to the batch's last event, clearing any earlier
+///    transform failure record for the destination. On failure the fill
+///    records the failure time in the destination's transform failure
+///    record (replacing a record left by an earlier, different batch) and
+///    writes nothing else; while the retry curve's backoff after the last
+///    recorded failure has not elapsed, a later pass reruns nothing for a
+///    matching batch. Once the recorded failures have spent [policy]'s
+///    retry budget (`EVS-DEV-destination-retry-budget/B`), the batch
+///    enqueues as one transform-failed item — no payload, the failure
+///    count, the destination's `wireFormat` — the position advances to the
+///    batch's last event and the record is cleared, all in one transaction
+///    (`EVS-DEV-destination-drain/Y`).
 ///
 /// A refill guard (left by an accepted recovery of a reconfigure halt) that
 /// names [declaredFingerprint], the fingerprint of the configuration the
@@ -229,7 +273,11 @@ Future<bool> _compareAndSet(
 /// [backend] the fill writes, and its delivery channel: [databaseId], the
 /// destination, the persisted schedule's registration and the generation of
 /// the destination's sender channel record. [clock] defaults to
-/// `() => DateTime.now().toUtc()`.
+/// `() => DateTime.now().toUtc()`. [policy] is the retry budget in effect
+/// (the fill's caller resolves it the way `drain` does, falling back to
+/// [SyncPolicy.defaults]); [cadence] is the delivery cycle's cadence. Both
+/// bound how long a failing transform is retried before its batch enqueues
+/// as transform-failed (`EVS-DEV-destination-retry-budget/B`).
 @internal
 Future<void> fillBatch(
   Destination destination, {
@@ -237,6 +285,8 @@ Future<void> fillBatch(
   required Source source,
   required DrainLock lock,
   required String databaseId,
+  required SyncPolicy policy,
+  required Duration cadence,
   Clock? clock,
   bool flushHeld = false,
   String? declaredFingerprint,
@@ -270,16 +320,23 @@ Future<void> fillBatch(
       now: now,
       channel: _channelOf(destination, state, databaseId),
       databaseId: databaseId,
+      policy: policy,
+      cadence: cadence,
     );
     if (!performed) return;
   }
 
   final schedule = state.schedule!;
   final startDate = schedule.startDate;
-  if (startDate == null) return;
   final endDate = schedule.endDate;
   final upper = endDate == null || endDate.isAfter(now) ? now : endDate;
-  if (startDate.isAfter(upper)) return;
+  // EVS-DEV-destination-drain/X: a dormant schedule or a window entirely in
+  // the future is nothing to do for an ordinary event, but a natively
+  // serializing destination still walks the log for a channel-wide own
+  // event, which bypasses the window as it bypasses the filter.
+  final windowDormant = startDate == null || startDate.isAfter(upper);
+  final channel = _channelOf(destination, state, databaseId);
+  if (windowDormant && !destination.serializesNatively) return;
 
   final candidates = await backend.findAllEvents(afterSequence: state.cursor);
   if (candidates.isEmpty) {
@@ -291,41 +348,55 @@ Future<void> fillBatch(
     return;
   }
 
+  // A channel-wide own event already queued under the channel's current
+  // generation is not enqueued again: a resume, a new generation or an
+  // operator recovery that retires or removes its item lets it back into
+  // this set.
+  final alreadyQueuedChannelWide = destination.serializesNatively
+      ? queuedChannelWideEventIds(
+          await backend.listFifoEntries(id),
+          channel?.generation,
+        )
+      : const <String>{};
+
   // Permanent rejections (filter, startDate-lower) are decided and let the
   // position pass them; a deferred event (past the upper bound, which a
-  // later end date or the clock may widen) stops the walk. The permanent
-  // checks run first, so an event the filter rejects never blocks the walk
-  // even when its client timestamp is past the upper bound.
-  final inWindow = <StoredEvent>[];
-  int? lastDecidedSeq;
-  for (final e in candidates) {
-    if (!e.isHeldAsAuthoredBy(databaseId)) {
-      // EVS-DEV-destination-drain/V: not this database's own event.
-      lastDecidedSeq = e.sequenceNumber;
-      continue;
-    }
-    final bypassesFilter =
-        destination.serializesNatively && isChannelWideEntryType(e.entryType);
-    if (!bypassesFilter && !destination.filter.matches(e)) {
-      lastDecidedSeq = e.sequenceNumber;
-      continue;
-    }
-    if (e.clientTimestamp.isBefore(startDate)) {
-      // A later backward start-date move records a gap replay for events
-      // behind the position, so the fill need not keep these re-evaluable.
-      lastDecidedSeq = e.sequenceNumber;
-      continue;
-    }
-    if (e.clientTimestamp.isAfter(upper)) break;
-    inWindow.add(e);
-    lastDecidedSeq = e.sequenceNumber;
-  }
+  // later end date or the clock may widen) stops the ordinary walk there,
+  // but the walk continues past it to find every channel-wide own event,
+  // which is enqueued on its own without moving the position.
+  final walk = walkAdmission(
+    destination,
+    candidates,
+    databaseId: databaseId,
+    startDate: startDate,
+    upper: upper,
+    alreadyQueued: alreadyQueuedChannelWide,
+    initiallyDeferred: windowDormant,
+  );
+  final standalone = await buildStandaloneChannelWideItems(
+    destination,
+    walk.standaloneChannelWide,
+    source: source,
+    now: now,
+    channel: channel,
+  );
+  final inWindow = walk.inWindow;
 
   if (inWindow.isEmpty) {
-    if (lastDecidedSeq == null) return;
-    final advanceTo = lastDecidedSeq;
+    if (standalone.isEmpty) {
+      if (walk.lastDecidedSeq == null) return;
+      final advanceTo = walk.lastDecidedSeq!;
+      await _compareAndSet(backend, lock, id, state, (txn) async {
+        await backend.writeFillCursorTxn(txn, id, advanceTo);
+      }, cursorAfter: advanceTo);
+      return;
+    }
+    final advanceTo = walk.lastDecidedSeq;
     await _compareAndSet(backend, lock, id, state, (txn) async {
-      await backend.writeFillCursorTxn(txn, id, advanceTo);
+      await writeQueueItemsTxn(txn, backend, id, standalone);
+      if (advanceTo != null) {
+        await backend.writeFillCursorTxn(txn, id, advanceTo);
+      }
     }, cursorAfter: advanceTo);
     return;
   }
@@ -339,32 +410,88 @@ Future<void> fillBatch(
     }
   }
 
-  // maxAccumulateTime hold: a lone event is held (nothing written, the
-  // position not advanced) until it is older than maxAccumulateTime, so a
-  // later event can join it. A forced cycle (flushHeld) ships it now.
+  // maxAccumulateTime hold: a lone ordinary event is held (nothing written,
+  // the position not advanced) until it is older than maxAccumulateTime, so
+  // a later event can join it. A forced cycle (flushHeld) ships it now. A
+  // channel-wide event found beyond the batch is never held: it enqueues in
+  // this same pass regardless.
   final oldestAge = now.difference(batch.first.clientTimestamp);
   if (!flushHeld &&
       batch.length == 1 &&
       oldestAge < destination.maxAccumulateTime) {
+    if (standalone.isNotEmpty) {
+      await _compareAndSet(backend, lock, id, state, (txn) async {
+        await writeQueueItemsTxn(txn, backend, id, standalone);
+      });
+    }
     return;
   }
 
-  final item = await buildQueueItem(
+  final decision = await _decideBatch(
     destination,
     batch,
+    existingRecord: state.transformFailureRecord,
     source: source,
     now: now,
-    channel: _channelOf(destination, state, databaseId),
+    channel: channel,
+    policy: policy,
+    cadence: cadence,
   );
+  if (decision.skip) {
+    // The retry curve has not yet allowed another attempt: the fill
+    // reruns nothing on the ordinary batch this pass, but a channel-wide
+    // event found alongside it still enqueues.
+    if (standalone.isNotEmpty) {
+      await _compareAndSet(backend, lock, id, state, (txn) async {
+        await writeQueueItemsTxn(txn, backend, id, standalone);
+      });
+    }
+    return;
+  }
+  final pendingRecord = decision.pendingRecord;
+  if (pendingRecord != null) {
+    await _compareAndSet(backend, lock, id, state, (txn) async {
+      if (standalone.isNotEmpty) {
+        await writeQueueItemsTxn(txn, backend, id, standalone);
+      }
+      await backend.writeTransformFailureRecordTxn(txn, id, pendingRecord);
+    });
+    return;
+  }
+  final item = decision.item!;
   await _compareAndSet(backend, lock, id, state, (txn) async {
-    await writeQueueItemsTxn(txn, backend, id, <BuiltQueueItem>[item]);
+    await writeQueueItemsTxn(txn, backend, id, <BuiltQueueItem>[
+      item,
+      ...standalone,
+    ]);
     await backend.writeFillCursorTxn(txn, id, batch.last.sequenceNumber);
+    if (state.transformFailureRecord != null) {
+      await backend.clearTransformFailureRecordTxn(txn, id);
+    }
   }, cursorAfter: batch.last.sequenceNumber);
 }
 
 /// Perform [request] under the compare-and-set: build its items outside any
-/// transaction, then commit them, the advanced position (first activation)
-/// and the cleared request together. Returns whether it committed.
+/// transaction, then commit them, the advanced position, a pending
+/// transform failure record and (once every part of the request is
+/// resolved) the cleared request together. Returns whether it committed.
+///
+/// A first-activation batch whose transform is still backing off, or has
+/// failed again without spending its retry budget, stops the walk: the
+/// request stays pending and events past the reached position are
+/// retried at a later fill (`EVS-DEV-destination-drain/Y`). The transform
+/// failure record this stop reads and writes is always the one a first
+/// activation's walk names; a gap replay never reads or writes it, whatever
+/// it currently holds (that record, if any, belongs to an unrelated live
+/// fill batch — see the guard below).
+///
+/// [buildGapReplayRows] is not retry-aware: a transform failure while it
+/// builds a gap replay's items propagates out of this call uncaught, and
+/// the pass writes nothing. Once a first activation's walk has stopped
+/// early at least once (a persisted record proves an earlier call already
+/// built, and this call already committed, the gap replay's own items),
+/// the gap portion is not rebuilt on a later retry, so a stalled
+/// activation's retries do not double-enqueue it.
 Future<bool> _performReplayRequest(
   Destination destination,
   StorageBackend backend,
@@ -375,20 +502,47 @@ Future<bool> _performReplayRequest(
   required DateTime now,
   required DeliveryChannel? channel,
   required String databaseId,
+  required SyncPolicy policy,
+  required Duration cadence,
 }) async {
   final id = destination.id;
   final schedule = state.schedule!;
   final items = <BuiltQueueItem>[];
   int? advanceTo;
+  TransformFailureRecord? pendingRecord;
+  var activationDone = !request.firstActivation;
   final gapUpper = request.gapUpper;
   final startDate = schedule.startDate;
-  if (gapUpper != null && startDate != null && startDate.isBefore(gapUpper)) {
+  final gapActive =
+      gapUpper != null && startDate != null && startDate.isBefore(gapUpper);
+  // A persisted record proves an earlier call for this same request already
+  // built (and this function will have committed) the gap portion's items:
+  // see the doc comment above. This guards only a request that also carries
+  // a first activation: a pure gap replay has no incremental progress to
+  // protect, and the record it sees may belong to an unrelated live-fill
+  // batch that has nothing to do with this request.
+  final runGapPortion =
+      gapActive &&
+      (!request.firstActivation || state.transformFailureRecord == null);
+  // EVS-DEV-destination-drain/X: a channel-wide own event (a succession
+  // event or a security finding) already queued as pending, wedged, or
+  // sent under the channel's current generation is not enqueued a second
+  // time by either portion of this call.
+  final alreadyQueuedChannelWide = destination.serializesNatively
+      ? queuedChannelWideEventIds(
+          await backend.listFifoEntries(id),
+          channel?.generation,
+        )
+      : const <String>{};
+  if (runGapPortion) {
     final events = await _eventsAtOrBelow(
       backend,
       state.cursor,
       keep: (e) =>
-          !e.clientTimestamp.isBefore(startDate) &&
-          e.clientTimestamp.isBefore(gapUpper),
+          (destination.serializesNatively &&
+              isChannelWideEntryType(e.entryType)) ||
+          (!e.clientTimestamp.isBefore(startDate) &&
+              e.clientTimestamp.isBefore(gapUpper)),
     );
     items.addAll(
       await buildGapReplayRows(
@@ -401,6 +555,7 @@ Future<bool> _performReplayRequest(
         source: source,
         channel: channel,
         databaseId: databaseId,
+        alreadyQueuedChannelWide: alreadyQueuedChannelWide,
       ),
     );
   }
@@ -415,16 +570,50 @@ Future<bool> _performReplayRequest(
       source: source,
       channel: channel,
       databaseId: databaseId,
+      policy: policy,
+      cadence: cadence,
+      existingFailureRecord: state.transformFailureRecord,
+      alreadyQueuedChannelWide: alreadyQueuedChannelWide,
     );
     items.addAll(build.items);
     advanceTo = build.cursor;
+    pendingRecord = build.pendingFailureRecord;
+    activationDone = !build.stoppedEarly;
   }
   final cursor = advanceTo;
-  return _compareAndSet(backend, lock, id, state, (txn) async {
+  // The record this function ever writes or clears is the one a first
+  // activation's walk consulted; a pure gap replay (request.firstActivation
+  // false) never touches it, whatever it currently holds — that record, if
+  // any, belongs to an unrelated live fill.
+  final clearsRecord =
+      request.firstActivation &&
+      activationDone &&
+      pendingRecord == null &&
+      state.transformFailureRecord != null;
+  final recordChanges = pendingRecord != null || clearsRecord;
+  if (items.isEmpty && cursor == null && !recordChanges && !activationDone) {
+    // Nothing at all would change: the same "still backing off, write
+    // nothing" outcome the live fill returns without a transaction.
+    return false;
+  }
+  final committed = await _compareAndSet(backend, lock, id, state, (txn) async {
     await writeQueueItemsTxn(txn, backend, id, items);
     if (cursor != null) await backend.writeFillCursorTxn(txn, id, cursor);
-    await backend.clearReplayRequestTxn(txn, id);
+    if (pendingRecord != null) {
+      await backend.writeTransformFailureRecordTxn(txn, id, pendingRecord);
+    } else if (clearsRecord) {
+      await backend.clearTransformFailureRecordTxn(txn, id);
+    }
+    if (activationDone) await backend.clearReplayRequestTxn(txn, id);
   }, cursorAfter: cursor);
+  // Only a fully resolved request (activationDone: the request cleared, or
+  // there was no first-activation portion to resolve) tells the caller's
+  // loop to look for further work under the same `now`. A batch that
+  // stopped early committed real progress (a failure record, or the items
+  // built before it), but retrying immediately would re-run the very
+  // backoff check that just stopped it, at the same clock reading, forever:
+  // the next fill pass (a later `now`) is what lets the retry curve elapse.
+  return committed && activationDone;
 }
 
 /// The events whose sequence number is at or below [cursor] and that [keep]

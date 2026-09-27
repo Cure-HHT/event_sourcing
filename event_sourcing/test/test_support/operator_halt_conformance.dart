@@ -422,6 +422,7 @@ void runOperatorHaltScenarios(
           'cause': 'operator_halt',
           'attempt_count': null,
           'max_attempts': 7,
+          'max_retry_ms': const Duration(hours: 24).inMilliseconds,
           'last_outcome': null,
           'http_status': null,
           'wire_format': head.wireFormat,
@@ -899,6 +900,7 @@ void runOperatorHaltScenarios(
                 rowId: head.entryId,
                 cause: WedgeCause.operatorHalt,
                 maxAttempts: budgetInEffect,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1729,6 +1731,7 @@ void runOperatorHaltScenarios(
         expect(wedge.data['cause'], 'operator_halt');
         expect(wedge.data['halt_request_event_id'], request);
         expect(wedge.data['max_attempts'], isNull);
+        expect(wedge.data['max_retry_ms'], isNull);
         expect(wedge.data['configuration_fingerprint'], isNull);
         expect(wedge.data['wire_format'], head.wireFormat);
         expect(wedge.data['transform_version'], head.transformVersion);
@@ -1749,7 +1752,8 @@ void runOperatorHaltScenarios(
       //   the draining process does not register as on one it does.
       // Verifies: EVS-DEV-destination-drain/I
       // a wedge on a destination the draining process does not register
-      //   records max_attempts as null and the attempt fields of the item.
+      //   records max_attempts and max_retry_ms as null and the attempt
+      //   fields of the item.
       test('a recorded refusal on an unregistered destination', () async {
         if (!available) return;
         final other = DestinationRegistry(eventStore: w.store);
@@ -1779,6 +1783,7 @@ void runOperatorHaltScenarios(
         expect(wedge.data['attempt_count'], 1);
         expect(wedge.data['last_outcome'], 'permanent');
         expect(wedge.data['max_attempts'], isNull);
+        expect(wedge.data['max_retry_ms'], isNull);
         expect(wedge.data['halt_request_event_id'], request);
         expect(await w.halt('remote'), isNull);
         await w.agree(<String>['remote']);

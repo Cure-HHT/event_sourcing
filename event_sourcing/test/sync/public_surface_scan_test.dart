@@ -213,6 +213,7 @@ const _seamKinds = <String, String>{
   'pageVisibility': 'environment signal',
   'onDeliveryWake': 'observe',
   'handDrivenCycle': 'failure injection',
+  'severeLogSink': 'input substitution',
 };
 
 const _seamKindNames = <String>{

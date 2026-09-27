@@ -61,6 +61,8 @@ class FifoEntry {
     this.deliveryGeneration,
     this.deliveryNumber,
     this.deliveryHash,
+    this.transformFailed = false,
+    this.transformFailures,
   }) {
     // Explicit ArgumentError rather than assert so the invariant is
     // enforced in release builds too, not just debug.
@@ -207,6 +209,18 @@ class FifoEntry {
         'FifoEntry: "delivery_hash" must be a String when present',
       );
     }
+    final transformFailedRaw = json['transform_failed'];
+    if (transformFailedRaw != null && transformFailedRaw is! bool) {
+      throw const FormatException(
+        'FifoEntry: "transform_failed" must be a bool when present',
+      );
+    }
+    final transformFailures = json['transform_failures'];
+    if (transformFailures != null && transformFailures is! int) {
+      throw const FormatException(
+        'FifoEntry: "transform_failures" must be an int when present',
+      );
+    }
 
     final attempts = List<AttemptResult>.unmodifiable(
       attemptsRaw.map(
@@ -237,6 +251,8 @@ class FifoEntry {
       deliveryGeneration: deliveryGeneration as int?,
       deliveryNumber: deliveryNumber as int?,
       deliveryHash: deliveryHash as String?,
+      transformFailed: (transformFailedRaw as bool?) ?? false,
+      transformFailures: transformFailures as int?,
     );
   }
 
@@ -297,11 +313,11 @@ class FifoEntry {
   /// or tombstoned.
   final DateTime? sentAt;
 
-  /// Envelope identity for native (`esd/batch@3`) FIFO rows. Carries the
-  /// `batchFormatVersion`, `batchId`, sender identity (`senderHop`,
-  /// `senderIdentifier`, `senderSoftwareVersion`), and `sentAt` of the
-  /// `BatchEnvelope` parsed at enqueue time. Drain combines this with
-  /// `eventIds`-resolved events to re-encode the wire bytes
+  /// The envelope identity the library builds for a delivery-channel item
+  /// at enqueue time: the batch format version, the batch id, the sender
+  /// identity (`senderHop`, `senderIdentifier`, `senderSoftwareVersion`),
+  /// `sentAt`, the delivery channel and its attributes. Drain combines this
+  /// with `eventIds`-resolved events to re-encode the wire bytes
   /// deterministically (RFC 8785 JCS) on each send attempt. Non-null
   /// iff `wireFormat == "esd/batch@3"`; null for 3rd-party rows.
   final BatchEnvelopeMetadata? envelopeMetadata;
@@ -320,6 +336,21 @@ class FifoEntry {
   /// The delivery hash the item was acknowledged under; null unless the
   /// item was marked sent under a delivery.
   final String? deliveryHash;
+
+  /// Whether the fill enqueued this item after its transform failed on its
+  /// events until the destination's retry budget was spent: no payload and
+  /// no envelope, [wirePayload] and [envelopeMetadata] both null.
+  // Implements: EVS-DEV-destination-drain/Z
+  // a transform-failed item carries no payload and no envelope; the
+  //   drainer wedges it with cause transform_failed, without a send.
+  final bool transformFailed;
+
+  /// The transform failures the fill recorded for this item before it
+  /// enqueued it, when [transformFailed] is true; null otherwise.
+  // Implements: EVS-DEV-destination-drain/I
+  // the wedge event's attempt_count, for a wedge of cause transform_failed,
+  //   is the transform failures the fill recorded on the item.
+  final int? transformFailures;
 
   /// Encode to snake_case JSON. Optional fields emit explicit null.
   Map<String, Object?> toJson() => <String, Object?>{
@@ -341,6 +372,8 @@ class FifoEntry {
     'delivery_generation': deliveryGeneration,
     'delivery_number': deliveryNumber,
     'delivery_hash': deliveryHash,
+    'transform_failed': transformFailed,
+    'transform_failures': transformFailures,
   };
 
   @override
@@ -364,7 +397,9 @@ class FifoEntry {
           envelopeMetadata == other.envelopeMetadata &&
           deliveryGeneration == other.deliveryGeneration &&
           deliveryNumber == other.deliveryNumber &&
-          deliveryHash == other.deliveryHash;
+          deliveryHash == other.deliveryHash &&
+          transformFailed == other.transformFailed &&
+          transformFailures == other.transformFailures;
 
   @override
   int get hashCode => Object.hash(
@@ -383,6 +418,8 @@ class FifoEntry {
     deliveryGeneration,
     deliveryNumber,
     deliveryHash,
+    transformFailed,
+    transformFailures,
   );
 
   /// Renders every field `==` compares. A conformance failure on whole-value
@@ -400,7 +437,9 @@ class FifoEntry {
       'finalStatus: $finalStatus, sentAt: $sentAt, '
       'envelopeMetadata: $envelopeMetadata, '
       'deliveryGeneration: $deliveryGeneration, '
-      'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash)';
+      'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash, '
+      'transformFailed: $transformFailed, '
+      'transformFailures: $transformFailures)';
 }
 
 const DeepCollectionEquality _deepEquals = DeepCollectionEquality();

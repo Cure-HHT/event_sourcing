@@ -688,6 +688,9 @@ class DestinationRegistry {
       await _backend.deleteScheduleTxn(txn, id);
       await _backend.clearReplayRequestTxn(txn, id);
       await _backend.clearWedgeRecordTxn(txn, id);
+      // Implements: EVS-DEV-destination-drain/A
+      // deletion removes the destination's transform failure record.
+      await _backend.clearTransformFailureRecordTxn(txn, id);
       await _backend.clearHaltRequestTxn(txn, id);
       await _backend.clearSendFenceTxn(txn, id);
       await _backend.clearRefillGuardTxn(txn, id);
@@ -925,6 +928,10 @@ class DestinationRegistry {
     final rewoundTo = lowest - 1;
     await _backend.writeFillCursorTxn(txn, destinationId, rewoundTo);
     await _backend.clearWedgeRecordTxn(txn, destinationId);
+    // Implements: EVS-DEV-destination-drain/F
+    // recovery removes the destination's transform failure record along
+    //   with the wedge record.
+    await _backend.clearTransformFailureRecordTxn(txn, destinationId);
     // Implements: EVS-PRD-destinations/T
     // an operator recovery of a wedged queue appends a recovery event in the
     //   transaction that retires the wedged head.
@@ -1198,16 +1205,18 @@ class DestinationRegistry {
   ///   [HaltHonour.unverified]: the log is authoritative;
   /// - otherwise wedges the head with cause [WedgeCause.operatorHalt]
   ///   through [_wedgeHeadInTxn], which consumes the request, and returns
-  ///   [HaltHonour.honoured]. [maxAttempts] is the retry budget in effect,
-  ///   or null when the draining process does not register the destination.
-  ///   [drainerEpoch], [configuration] and [configurationFingerprint] are
-  ///   recorded as [_wedgeHeadInTxn] records them.
+  ///   [HaltHonour.honoured]. [maxAttempts] and [maxRetryMs] are the retry
+  ///   budget in effect, or null when the draining process does not
+  ///   register the destination. [drainerEpoch], [configuration] and
+  ///   [configurationFingerprint] are recorded as [_wedgeHeadInTxn] records
+  ///   them.
   Future<HaltHonour> _honourHaltInTxn(
     Transaction txn,
     PublishCollector collector, {
     required String destinationId,
     required String requestEventId,
     required int? maxAttempts,
+    required int? maxRetryMs,
     required int drainerEpoch,
     required Map<String, Object?>? configuration,
     required String? configurationFingerprint,
@@ -1230,6 +1239,7 @@ class DestinationRegistry {
       rowId: head.entryId,
       cause: WedgeCause.operatorHalt,
       maxAttempts: maxAttempts,
+      maxRetryMs: maxRetryMs,
       drainerEpoch: drainerEpoch,
       configuration: configuration,
       configurationFingerprint: configurationFingerprint,
@@ -1276,11 +1286,14 @@ class DestinationRegistry {
   /// record exists (a pending head means no wedge is open), or when the
   /// evidence does not support [cause]: a [WedgeCause.permanentRefusal]
   /// needs a last attempt that reported a permanent failure, a
-  /// [WedgeCause.retryBudgetExhausted] an attempt count at or above
-  /// [maxAttempts], and a [WedgeCause.operatorHalt] an open halt request
+  /// [WedgeCause.retryBudgetExhausted] at least one recorded attempt and,
+  /// where no time bound ([maxRetryMs]) is in effect to justify it, a
+  /// count at or above [maxAttempts], and a [WedgeCause.operatorHalt] an
+  /// open halt request
   /// whose request event the log holds for this destination and database,
   /// on a head whose last attempt did not report a permanent failure (that
-  /// head is wedged for the refusal). Throws [ArgumentError] when
+  /// head is wedged for the refusal), and a [WedgeCause.transformFailed]
+  /// an item marked `transformFailed`. Throws [ArgumentError] when
   /// [maxAttempts] is below one, or null for
   /// [WedgeCause.retryBudgetExhausted].
   ///
@@ -1294,11 +1307,16 @@ class DestinationRegistry {
   /// fields (`attempt_count`, `last_outcome`, `http_status`) are read from
   /// the item's attempts as they stand in [txn], the final attempt included
   /// when the caller recorded it earlier in [txn]; an operator halt records
-  /// them as null. `max_attempts` is [maxAttempts], the retry budget in
-  /// effect, null when the draining process does not register the
-  /// destination (no budget is in effect for it there). No text from an attempt's outcome
-  /// enters the event. The wedge event of an operator halt names the request
-  /// event as its initiator's triggering event.
+  /// them as null. A [WedgeCause.transformFailed] wedge records
+  /// `attempt_count` as the item's `transformFailures` (the item was never
+  /// sent) and `last_outcome`/`http_status` as null. `max_attempts` and
+  /// `max_retry_ms` are [maxAttempts] and
+  /// [maxRetryMs], the retry budget's attempt bound and time bound (in
+  /// milliseconds) in effect, each null when the draining process does not
+  /// register the destination (no budget is in effect for it there). No
+  /// text from an attempt's outcome enters the event. The wedge event of an
+  /// operator halt names the request event as its initiator's triggering
+  /// event.
   ///
   /// [drainerEpoch] is the drain epoch of the lock the drainer holds, and
   /// [configuration] and [configurationFingerprint] the configuration the
@@ -1315,6 +1333,7 @@ class DestinationRegistry {
     required String rowId,
     required WedgeCause cause,
     required int? maxAttempts,
+    required int? maxRetryMs,
     required int drainerEpoch,
     required Map<String, Object?>? configuration,
     required String? configurationFingerprint,
@@ -1363,8 +1382,17 @@ class DestinationRegistry {
         'the last recorded attempt reported ${last?.outcome ?? 'nothing'}.',
       );
     }
+    // Defence in depth: with no recorded attempt the cause is always
+    // refused, whatever budget is in effect (the time bound is never
+    // reached with no recorded attempt; see budgetSpent). Otherwise, a
+    // caller may derive the cause from the time bound
+    // (EVS-DEV-destination-retry-budget/A), which this method cannot
+    // recompute without the retry curve, so an attempt count below
+    // maxAttempts is refused only when no time bound (maxRetryMs) is in
+    // effect to justify it.
     if (cause == WedgeCause.retryBudgetExhausted &&
-        attempts.length < maxAttempts!) {
+        (attempts.isEmpty ||
+            (attempts.length < maxAttempts! && maxRetryMs == null))) {
       throw StateError(
         'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
         'the item records ${attempts.length} attempts, below the budget '
@@ -1376,6 +1404,12 @@ class DestinationRegistry {
         'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
         'the last recorded attempt reported a permanent failure; the head '
         'is wedged for that refusal.',
+      );
+    }
+    if (cause == WedgeCause.transformFailed && !head.transformFailed) {
+      throw StateError(
+        'wedgeHeadInTxn($destinationId, $rowId): cause ${cause.wire} but '
+        'the item is not marked transform-failed.',
       );
     }
     final stored = await _backend.readHaltRequestTxn(txn, destinationId);
@@ -1401,6 +1435,7 @@ class DestinationRegistry {
       await _backend.clearHaltRequestTxn(txn, destinationId);
     }
     final halted = cause == WedgeCause.operatorHalt;
+    final transformFailedWedge = cause == WedgeCause.transformFailed;
     // The append is where an injected wedge-event failure takes effect.
     _consultAuditAppendSeam(kDestinationWedgedEntryType);
     final wedgeEvent = await _emitDestinationAuditInTxn(
@@ -1417,10 +1452,21 @@ class DestinationRegistry {
         'last_seq': head.sequenceRange.lastSeq,
         'sequence_in_queue': head.sequenceInQueue,
         'cause': cause.wire,
-        'attempt_count': halted ? null : attempts.length,
+        // Implements: EVS-DEV-destination-drain/I
+        // attempt_count for a wedge of cause transform_failed is the
+        //   transform failures the fill recorded on the item, not the
+        //   count of send attempts (which is zero: the item was never
+        //   sent).
+        'attempt_count': halted
+            ? null
+            : transformFailedWedge
+            ? head.transformFailures
+            : attempts.length,
         'max_attempts': maxAttempts,
-        'last_outcome': halted ? null : last?.outcome,
-        'http_status': !halted && last?.outcome == 'transient'
+        'max_retry_ms': maxRetryMs,
+        'last_outcome': halted || transformFailedWedge ? null : last?.outcome,
+        'http_status':
+            !halted && !transformFailedWedge && last?.outcome == 'transient'
             ? last?.httpStatus
             : null,
         'wire_format': head.wireFormat,
@@ -1538,6 +1584,7 @@ wedgeHeadInTxnForTest(
   required String rowId,
   required WedgeCause cause,
   required int? maxAttempts,
+  required int? maxRetryMs,
   required int drainerEpoch,
   required Map<String, Object?>? configuration,
   required String? configurationFingerprint,
@@ -1560,6 +1607,7 @@ wedgeHeadInTxnForTest(
     rowId: rowId,
     cause: cause,
     maxAttempts: maxAttempts,
+    maxRetryMs: maxRetryMs,
     drainerEpoch: drainerEpoch,
     configuration: configuration,
     configurationFingerprint: configurationFingerprint,

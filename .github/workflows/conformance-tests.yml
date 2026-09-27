@@ -137,6 +137,9 @@ jobs:
       - name: Drain wedge event scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_drain_wedge_event_test.dart
         working-directory: event_sourcing
+      - name: Transform failure scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_transform_failure_test.dart
+        working-directory: event_sourcing
       - name: Operator halt scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_operator_halt_test.dart
         working-directory: event_sourcing

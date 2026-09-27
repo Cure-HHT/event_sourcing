@@ -212,6 +212,11 @@ class _World {
   Future<WedgeRecord?> wedgeRecord(String destId) =>
       backend.transaction((txn) => backend.readWedgeRecordTxn(txn, destId));
 
+  Future<TransformFailureRecord?> transformFailureRecord(String destId) =>
+      backend.transaction(
+        (txn) => backend.readTransformFailureRecordTxn(txn, destId),
+      );
+
   Future<SenderChannelRecord?> channelRecord(String destId) => backend
       .transaction((txn) => backend.readSenderChannelRecordTxn(txn, destId));
 
@@ -225,6 +230,9 @@ class _World {
     'cursor': await backend.readFillCursor(destId),
     'request': (await request(destId))?.toJson(),
     'wedge_record': (await wedgeRecord(destId))?.toJson(),
+    'transform_failure_record': (await transformFailureRecord(
+      destId,
+    ))?.toJson(),
     'sender_channel': (await channelRecord(destId))?.toJson(),
     'halt': (await backend.transaction(
       (txn) => backend.readHaltRequestTxn(txn, destId),
@@ -555,7 +563,7 @@ void runQueueRegistryScenarios(
       //   the trail swept, the position rewound and one event appended.
       // Verifies: EVS-DEV-destination-drain/F
       // the recovery transaction is atomic
-      //   and removes the wedge record.
+      //   and removes the wedge record and transform failure record.
       test('recovery rolls back on an injected failure; succeeds '
           'otherwise', () async {
         if (!available) return;
@@ -567,6 +575,18 @@ void runQueueRegistryScenarios(
         await w.fillAll(d);
         final headId = await wedgeHeadForTest(w.registry, 'r');
         expect((await w.wedgeRecord('r'))?.rowId, headId);
+        // A transform failure record left from before the wedge is written
+        // directly here; a recovery removes it along with the wedge record.
+        await w.backend.transaction(
+          (txn) => w.backend.writeTransformFailureRecordTxn(
+            txn,
+            'r',
+            TransformFailureRecord(
+              failureTimes: [DateTime.utc(2026, 5, 1)],
+              sequenceRange: (firstSeq: 1, lastSeq: 1),
+            ),
+          ),
+        );
         final before = await w.snapshot('r');
         await expectLater(
           runWithDeliveryTestHooks(
@@ -588,6 +608,7 @@ void runQueueRegistryScenarios(
         await expectWedgesViewMatchesQueue(w.store);
         expect(result.deletedTrailCount, 2);
         expect(await w.wedgeRecord('r'), isNull);
+        expect(await w.transformFailureRecord('r'), isNull);
         final rows = await w.backend.listFifoEntries('r');
         expect(rows.map((r) => r.finalStatus), [FinalStatus.tombstoned]);
         final n1 = (await w.backend.findAllEvents()).firstWhere(
@@ -679,8 +700,9 @@ void runQueueRegistryScenarios(
       // Verifies: EVS-DEV-destination-drain/A
       // the wedged head is tombstoned, the
       //   pending items deleted, the cursor, schedule, replay request, wedge
-      //   record, halt request, send fence and refill guard removed, and the
-      //   only per-destination record left is the sequence_in_queue counter.
+      //   record, transform failure record, halt request, send fence and
+      //   refill guard removed, and the only per-destination record left is
+      //   the sequence_in_queue counter.
       test('retains sent items, tombstones the wedged head, removes pending '
           'items and every per-destination record but the counter', () async {
         if (!available) return;
@@ -732,6 +754,19 @@ void runQueueRegistryScenarios(
             ),
           ),
         );
+        // A transform failure record exists only while a fill is retrying a
+        // failing transform, which leaves no wedged head; it is written
+        // directly here for the same reason.
+        await w.backend.transaction(
+          (txn) => w.backend.writeTransformFailureRecordTxn(
+            txn,
+            'x',
+            TransformFailureRecord(
+              failureTimes: [DateTime.utc(2026, 5, 1)],
+              sequenceRange: (firstSeq: 1, lastSeq: 1),
+            ),
+          ),
+        );
         final keysBefore = await w.db.backendStateKeys();
         expect(
           keysBefore.where((k) => k.endsWith('_x')).toSet(),
@@ -743,6 +778,7 @@ void runQueueRegistryScenarios(
             'halt_request_x',
             'send_fence_x',
             'refill_guard_x',
+            'transform_failure_x',
             'fifo_seq_counter_x',
           ]),
         );
@@ -760,6 +796,7 @@ void runQueueRegistryScenarios(
         expect(await w.backend.readFillCursor('x'), -1);
         expect(await w.request('x'), isNull);
         expect(await w.wedgeRecord('x'), isNull);
+        expect(await w.transformFailureRecord('x'), isNull);
         final keys = await w.db.backendStateKeys();
         expect(keys.where((k) => k.endsWith('_x')).toList(), [
           'fifo_seq_counter_x',

@@ -3529,6 +3529,75 @@ void _registerQueueRecordTests(
       expect(await read('dest'), isNull);
     });
 
+    // Verifies: EVS-DEV-destination-drain/Y
+    // the transform failure record round-trips its failure times and
+    //   sequence range, is overwritten, rolls back with its transaction, is
+    //   kept per destination and is cleared.
+    test(
+      'transform failure record write, overwrite, rollback and clear',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final first = TransformFailureRecord(
+          failureTimes: [DateTime.utc(2026, 1, 1)],
+          sequenceRange: (firstSeq: 1, lastSeq: 1),
+        );
+        final second = TransformFailureRecord(
+          failureTimes: [
+            DateTime.utc(2026, 1, 1),
+            DateTime.utc(2026, 1, 1, 0, 1),
+          ],
+          sequenceRange: (firstSeq: 1, lastSeq: 3),
+        );
+        Future<TransformFailureRecord?> read(String dest) =>
+            backend.transaction(
+              (txn) => backend.readTransformFailureRecordTxn(txn, dest),
+            );
+
+        expect(await read('dest'), isNull);
+        final sameTxn = await backend.transaction((txn) async {
+          await backend.writeTransformFailureRecordTxn(txn, 'dest', first);
+          return backend.readTransformFailureRecordTxn(txn, 'dest');
+        });
+        expect(sameTxn, first);
+        expect(await read('dest'), first);
+        expect(await read('other'), isNull);
+
+        await backend.transaction(
+          (txn) => backend.writeTransformFailureRecordTxn(txn, 'dest', second),
+        );
+        expect(await read('dest'), second);
+
+        await expectLater(
+          backend.transaction((txn) async {
+            await backend.writeTransformFailureRecordTxn(txn, 'dest', first);
+            throw StateError('simulated failure');
+          }),
+          throwsStateError,
+        );
+        expect(await read('dest'), second);
+
+        await expectLater(
+          backend.transaction((txn) async {
+            await backend.clearTransformFailureRecordTxn(txn, 'dest');
+            throw StateError('simulated failure');
+          }),
+          throwsStateError,
+        );
+        expect(await read('dest'), second);
+
+        await backend.transaction(
+          (txn) => backend.clearTransformFailureRecordTxn(txn, 'dest'),
+        );
+        expect(await read('dest'), isNull);
+        // Clearing an absent record is a no-op.
+        await backend.transaction(
+          (txn) => backend.clearTransformFailureRecordTxn(txn, 'dest'),
+        );
+        expect(await read('dest'), isNull);
+      },
+    );
+
     // Verifies: EVS-DEV-destination-drain/N
     // the halt request round-trips every
     //   field, is overwritten, rolls back with its transaction, is kept per

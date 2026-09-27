@@ -17,9 +17,9 @@
 //   application-supplied transport is caught and categorized as SendTransient
 //   rather than propagated to the caller of the pass)
 // Implements: EVS-PRD-destinations/I
-// (a failed attempt below maxAttempts
-//   commits the attempt alone, leaving the row pending at the head of its
-//   queue)
+// (a failed attempt below the retry
+//   budget commits the attempt alone, leaving the row pending at the head
+//   of its queue)
 // Implements: EVS-PRD-destinations/J
 // (every attempt is recorded, in the
 //   transaction that commits the outcome it produced, or not at all when
@@ -52,6 +52,10 @@
 //   and verifies the request; immediately before each send a fence
 //   transaction that writes finds no open request and the head unchanged
 //   since the payload was built, and no send starts otherwise)
+// Implements: EVS-DEV-destination-drain/Z
+// (a pending head marked transform-failed is
+//   wedged with cause transform_failed, without a send, before any halt
+//   honour or backoff check)
 
 part of '../event_store.dart';
 
@@ -94,7 +98,7 @@ Future<void> _lockCheck(
 ///   via `tombstoneAndRefill`);
 /// - the head's backoff has not elapsed;
 /// - the most recent [Destination.send] returned [SendTransient] below the
-///   `maxAttempts` budget (backoff applies on the next pass); or
+///   retry budget in effect (backoff applies on the next pass); or
 /// - a transaction that decides a wedge reported failure (logged; the next
 ///   pass reads the head again and derives its status before any send).
 ///
@@ -104,10 +108,11 @@ Future<void> _lockCheck(
 /// 2. Derive the status the head's recorded attempts call for: a last
 ///    attempt that reported a permanent failure wedges it with cause
 ///    [WedgeCause.permanentRefusal]; an attempt count at or above the
-///    budget in effect wedges it with cause
-///    [WedgeCause.retryBudgetExhausted] (covering a budget lowered since
-///    the attempts were recorded). The wedge commits in its own
-///    transaction, without a send, and ends the pass.
+///    budget in effect, or recorded attempts whose capped gaps have spent
+///    the time bound (`EVS-DEV-destination-retry-budget/A`), wedges it
+///    with cause [WedgeCause.retryBudgetExhausted] (covering a budget
+///    lowered since the attempts were recorded). The wedge commits in its
+///    own transaction, without a send, and ends the pass.
 /// 3. Honour an open halt request: a read outside any transaction decides
 ///    whether to try, and the honouring transaction re-reads the request
 ///    and the head, verifies the request event in the log, and wedges the
@@ -148,9 +153,14 @@ Future<void> _lockCheck(
 /// behind a wedged head are never attempted.
 ///
 /// [policy] is an optional [SyncPolicy] override; when null, the drain
-/// falls back to [SyncPolicy.defaults]. Its `maxAttempts` is the budget in
-/// effect, recorded in every wedge event. A budget below one is refused
-/// with an [ArgumentError] before anything is read or sent.
+/// falls back to [SyncPolicy.defaults]. Its `maxAttempts` and
+/// `maxRetryTime` are the budget in effect, recorded in every wedge event
+/// as `max_attempts` and `max_retry_ms`. A budget whose attempt bound is
+/// below one or whose time bound is negative is refused with an
+/// [ArgumentError] before anything is read or sent. [cadence] is the
+/// delivery cycle's cadence, added to the retry curve's longest allowed
+/// delay to cap each gap the time bound counts
+/// (`EVS-DEV-destination-retry-budget/A`).
 ///
 /// Every transaction that changes the queue (a wedge, a halt honour, the
 /// pre-send fence, each outcome) checks [lock] first and commits nothing
@@ -167,6 +177,7 @@ Future<void> drain(
   Destination destination, {
   required DestinationRegistry registry,
   required DrainLock lock,
+  required Duration cadence,
   Clock? clock,
   SyncPolicy? policy,
   DrainerConfiguration? declared,
@@ -188,13 +199,29 @@ Future<void> drain(
     if (head.finalStatus == FinalStatus.wedged) return;
     // head.finalStatus is null from here on: a drain candidate.
 
+    // (1b) A transform-failed head wedges immediately, without a send,
+    // before any halt honour, status derivation from send attempts, or
+    // backoff check: the item was never sent, so no attempt-based status
+    // applies to it.
+    if (head.transformFailed) {
+      await _wedgeTransformFailed(
+        registry,
+        lock,
+        destinationId: destinationId,
+        policy: effective,
+        declared: declared,
+      );
+      return;
+    }
+
     // (2) Status derivation from the recorded attempts.
-    if (_derivedCause(head, effective.maxAttempts) != null) {
+    if (_derivedCause(head, effective, cadence) != null) {
       await _wedgeFromAttempts(
         registry,
         lock,
         destinationId: destinationId,
-        maxAttempts: effective.maxAttempts,
+        policy: effective,
+        cadence: cadence,
         declared: declared,
       );
       return;
@@ -212,7 +239,8 @@ Future<void> drain(
         lock,
         destinationId: destinationId,
         requestEventId: requested.requestEventId,
-        maxAttempts: effective.maxAttempts,
+        policy: effective,
+        cadence: cadence,
         declared: declared,
       );
       if (honour == null || honour == HaltHonour.honoured) return;
@@ -305,6 +333,17 @@ Future<void> drain(
       destinationId,
     );
 
+    // A send outcome stating that delivery was not attempted records
+    // nothing: the head stays exactly as it was, and this destination's
+    // pass ends. On a delivery channel nothing is written beyond the
+    // fence already committed in step 6, so the next fence recomputes the
+    // same number and link and the channel's numbering has no gap.
+    // Implements: EVS-DEV-destination-retry-budget/C
+    // Implements: EVS-DEV-destination-retry-budget/D
+    if (result is SendNotAttempted) {
+      return;
+    }
+
     final attempt = _attemptFromResult(result, now(), delivery);
 
     // A receiver's answer on a delivery channel carries its record of the
@@ -318,7 +357,8 @@ Future<void> drain(
         delivery: delivery,
         response: result.response,
         attempt: attempt,
-        maxAttempts: effective.maxAttempts,
+        policy: effective,
+        cadence: cadence,
         declared: declared,
       );
       if (advance) continue;
@@ -338,8 +378,17 @@ Future<void> drain(
       //   record as its cause.
       SendOk() => delivery != null ? WedgeCause.acknowledgementInvalid : null,
       SendPermanent() => WedgeCause.permanentRefusal,
+      // Unreachable: drain() returns above whenever result is
+      // SendNotAttempted, before attempt is built.
+      SendNotAttempted() => throw StateError(
+        'a not-attempted send outcome never reaches the wedge-cause switch',
+      ),
       SendTransient() || SendAnswered() =>
-        head.attempts.length + 1 >= effective.maxAttempts
+        budgetSpent(
+              <AttemptResult>[...head.attempts, attempt],
+              effective,
+              cadence,
+            )
             ? WedgeCause.retryBudgetExhausted
             : null,
     };
@@ -366,6 +415,7 @@ Future<void> drain(
             rowId: head.entryId,
             cause: cause,
             maxAttempts: effective.maxAttempts,
+            maxRetryMs: effective.maxRetryTime.inMilliseconds,
             drainerEpoch: lock.epoch,
             configuration: declared?.configuration,
             configurationFingerprint: declared?.fingerprint,
@@ -457,9 +507,10 @@ Future<void> drain(
 /// cause [WedgeCause.permanentRefusal], a wedge that consumes the request;
 /// otherwise the request is honoured with cause [WedgeCause.operatorHalt].
 /// The wedge event takes the wire format and transform version from the
-/// queue item and records `max_attempts` as null, since no retry budget is
-/// in effect for the destination in this process. Returns without writing
-/// when the queue has no pending head or no request is open.
+/// queue item and records `max_attempts` and `max_retry_ms` as null, since
+/// no retry budget is in effect for the destination in this process.
+/// Returns without writing when the queue has no pending head or no
+/// request is open.
 ///
 /// Its transactions check [lock] first, as the drain's do.
 @internal
@@ -476,12 +527,13 @@ Future<void> honourHaltById(
   );
   await DeliveryTestHooks.current?.afterHaltLoopTopRead?.call(destinationId);
   if (requested == null) return;
-  if (_derivedCause(head, null) != null) {
+  if (_derivedCause(head, null, Duration.zero) != null) {
     await _wedgeFromAttempts(
       registry,
       lock,
       destinationId: destinationId,
-      maxAttempts: null,
+      policy: null,
+      cadence: Duration.zero,
       declared: null,
     );
     return;
@@ -491,7 +543,8 @@ Future<void> honourHaltById(
     lock,
     destinationId: destinationId,
     requestEventId: requested.requestEventId,
-    maxAttempts: null,
+    policy: null,
+    cadence: Duration.zero,
     declared: null,
   );
 }
@@ -505,7 +558,8 @@ Future<HaltHonour?> _honourHalt(
   DrainLock lock, {
   required String destinationId,
   required String requestEventId,
-  required int? maxAttempts,
+  required SyncPolicy? policy,
+  required Duration cadence,
   required DrainerConfiguration? declared,
 }) async {
   final HaltHonour honour;
@@ -517,7 +571,8 @@ Future<HaltHonour?> _honourHalt(
         collector,
         destinationId: destinationId,
         requestEventId: requestEventId,
-        maxAttempts: maxAttempts,
+        maxAttempts: policy?.maxAttempts,
+        maxRetryMs: policy?.maxRetryTime.inMilliseconds,
         drainerEpoch: lock.epoch,
         configuration: declared?.configuration,
         configurationFingerprint: declared?.fingerprint,
@@ -588,18 +643,19 @@ void _observeFenceBodyRun(String destinationId) {
 }
 
 /// Wedges [destinationId]'s pending head for the cause its recorded
-/// attempts call for under [maxAttempts] (null: no budget in effect, so
-/// only a permanent refusal), in its own transaction, without a send. The
-/// transaction reads the head again and decides again before it wedges:
-/// with one drainer the head cannot change between the two reads, so the
-/// second decision is defence in depth. A failure is logged; whether the
-/// transaction committed is not known, and the next pass reads the head
-/// again before any send.
+/// attempts call for under [policy] and [cadence] (a null [policy]: no
+/// budget in effect, so only a permanent refusal), in its own transaction,
+/// without a send. The transaction reads the head again and decides again
+/// before it wedges: with one drainer the head cannot change between the
+/// two reads, so the second decision is defence in depth. A failure is
+/// logged; whether the transaction committed is not known, and the next
+/// pass reads the head again before any send.
 Future<void> _wedgeFromAttempts(
   DestinationRegistry registry,
   DrainLock lock, {
   required String destinationId,
-  required int? maxAttempts,
+  required SyncPolicy? policy,
+  required Duration cadence,
   required DrainerConfiguration? declared,
 }) async {
   final backend = registry._backend;
@@ -611,7 +667,7 @@ Future<void> _wedgeFromAttempts(
       await _lockCheck(lock, txn, destinationId);
       final current = await backend.readFifoHeadTxn(txn, destinationId);
       if (current == null || current.finalStatus != null) return null;
-      final cause = _derivedCause(current, maxAttempts);
+      final cause = _derivedCause(current, policy, cadence);
       if (cause == null) return null;
       final wedged = await registry._wedgeHeadInTxn(
         txn,
@@ -619,7 +675,8 @@ Future<void> _wedgeFromAttempts(
         destinationId: destinationId,
         rowId: current.entryId,
         cause: cause,
-        maxAttempts: maxAttempts,
+        maxAttempts: policy?.maxAttempts,
+        maxRetryMs: policy?.maxRetryTime.inMilliseconds,
         drainerEpoch: lock.epoch,
         configuration: declared?.configuration,
         configurationFingerprint: declared?.fingerprint,
@@ -645,31 +702,177 @@ Future<void> _wedgeFromAttempts(
   }
 }
 
+/// Wedges [destinationId]'s pending, transform-failed head with cause
+/// [WedgeCause.transformFailed], in its own transaction, without a send.
+/// The transaction reads the head again and decides again before it
+/// wedges: with one drainer the head cannot change between the two reads,
+/// so the second decision is defence in depth. Consumes an open halt
+/// request like any other wedge (`EVS-DEV-destination-drain/O`): the
+/// request is not honoured with cause `operator_halt` for a transform-
+/// failed head. A failure is logged; whether the transaction committed
+/// is not known, and the next pass reads the head again before any send.
+// Implements: EVS-DEV-destination-drain/Z
+// the wedge runs in its own transaction, without a send, consuming an
+//   open halt request the way any other wedge does.
+Future<void> _wedgeTransformFailed(
+  DestinationRegistry registry,
+  DrainLock lock, {
+  required String destinationId,
+  required SyncPolicy policy,
+  required DrainerConfiguration? declared,
+}) async {
+  final backend = registry._backend;
+  try {
+    final discarded = await registry.eventStore.runTransaction((
+      txn,
+      collector,
+    ) async {
+      await _lockCheck(lock, txn, destinationId);
+      final current = await backend.readFifoHeadTxn(txn, destinationId);
+      if (current == null ||
+          current.finalStatus != null ||
+          !current.transformFailed) {
+        return null;
+      }
+      final wedged = await registry._wedgeHeadInTxn(
+        txn,
+        collector,
+        destinationId: destinationId,
+        rowId: current.entryId,
+        cause: WedgeCause.transformFailed,
+        maxAttempts: policy.maxAttempts,
+        maxRetryMs: policy.maxRetryTime.inMilliseconds,
+        drainerEpoch: lock.epoch,
+        configuration: declared?.configuration,
+        configurationFingerprint: declared?.fingerprint,
+      );
+      return wedged.discardedHaltRequestEventId;
+    });
+    _logDiscardedHaltRequest(destinationId, discarded);
+    _injectAfterWedgeTransaction(destinationId);
+  } on DrainLockLostException {
+    rethrow;
+  } on TransactionRerunLimitException {
+    // The handle cannot commit: the delivery cycle stops.
+    rethrow;
+  } on Object catch (e, st) {
+    libraryLog(
+      'drain',
+      'wedging the transform-failed head of $destinationId reported '
+          'failure; the pass ends',
+      level: LibraryLogLevel.severe,
+      error: e,
+      stackTrace: st,
+    );
+  }
+}
+
 /// The cause for which [head]'s recorded attempts call for a wedge under
-/// [maxAttempts], or null when they leave it pending. With no budget in
-/// effect ([maxAttempts] null) only a permanent refusal is derived.
-WedgeCause? _derivedCause(FifoEntry head, int? maxAttempts) {
+/// [policy] and [cadence], or null when they leave it pending. With no
+/// budget in effect ([policy] null) only a permanent refusal is derived.
+WedgeCause? _derivedCause(
+  FifoEntry head,
+  SyncPolicy? policy,
+  Duration cadence,
+) {
   if (head.attempts.isNotEmpty && head.attempts.last.outcome == 'permanent') {
     return WedgeCause.permanentRefusal;
   }
-  if (maxAttempts != null && head.attempts.length >= maxAttempts) {
+  if (policy != null && budgetSpent(head.attempts, policy, cadence)) {
     return WedgeCause.retryBudgetExhausted;
   }
   return null;
 }
 
-/// Refuses a retry budget below one: under it every pending head would
-/// wedge before its first send, recorded as an exhausted budget with no
-/// attempt behind it.
+/// Whether [attempts]' retry budget counts as spent under [policy] and the
+/// delivery cycle's [cadence]: the attempt bound is reached, or the sum,
+/// over each two consecutive recorded attempts, of the time between them
+/// (each gap capped at the retry curve's longest allowed delay after the
+/// earlier of the two, plus [cadence]), reaches the time bound.
+///
+/// The cap means a gap longer than the drainer would itself have waited —
+/// a declined pause, a sleeping device, or a stopped drainer — spends at
+/// most one capped gap, never the wall-clock time it actually lasted.
+///
+/// With no recorded attempt the time bound is never reached, whatever its
+/// value: a zero time bound is accepted (`checkRetryBudget` refuses only a
+/// negative one), and it wedges only once an attempt has actually held the
+/// item at the head, never before the first send.
+// Implements: EVS-DEV-destination-retry-budget/A
+// Implements: EVS-PRD-destinations/W
+@internal
+bool budgetSpent(
+  List<AttemptResult> attempts,
+  SyncPolicy policy,
+  Duration cadence,
+) => retryBudgetSpentAt(
+  <DateTime>[for (final a in attempts) a.attemptedAt],
+  policy,
+  cadence,
+);
+
+/// Whether the retry budget counts as spent given [times] (the recorded
+/// times of an item's send attempts, or of a transform's failures), oldest
+/// first: the count reaches [SyncPolicy.maxAttempts], or the sum, over each
+/// two consecutive times, of the gap between them (each capped at the
+/// retry curve's longest allowed delay after the earlier one, plus
+/// [cadence]), reaches [SyncPolicy.maxRetryTime]. [budgetSpent] applies
+/// this to a queue item's recorded attempts; the fill applies it to a
+/// transform failure record's recorded failure times.
+// Implements: EVS-DEV-destination-retry-budget/A
+// Implements: EVS-DEV-destination-retry-budget/B
+@internal
+bool retryBudgetSpentAt(
+  List<DateTime> times,
+  SyncPolicy policy,
+  Duration cadence,
+) {
+  if (times.length >= policy.maxAttempts) return true;
+  if (times.isEmpty) return false;
+  var spent = Duration.zero;
+  for (var i = 1; i < times.length; i++) {
+    final gap = times[i].difference(times[i - 1]);
+    final cap = policy.longestDelayAfter(i) + cadence;
+    spent += gap < cap ? gap : cap;
+  }
+  return spent >= policy.maxRetryTime;
+}
+
+/// The reason [policy]'s retry budget is unusable — its attempt bound is
+/// below one, or its time bound is negative — or `null` when the budget is
+/// usable. Under either fault, sending anything under the budget would be
+/// meaningless (every pending head would wedge before its first send,
+/// recorded as an exhausted budget with no attempt behind it, or against a
+/// time bound that can never be reached). A caller that only needs to
+/// decide whether to proceed (a resolved policy, checked once per pass)
+/// reads this without paying for stack-trace-carrying control flow; one
+/// that treats an unusable budget as a programming error calls
+/// [checkRetryBudget] instead.
+///
+// Implements: EVS-DEV-destination-drain/J
+@internal
+String? retryBudgetRefusalReason(SyncPolicy policy) {
+  if (policy.maxAttempts < 1) {
+    return 'the retry budget must be at least one attempt';
+  }
+  if (policy.maxRetryTime.isNegative) {
+    return "the retry budget's time bound must not be negative";
+  }
+  return null;
+}
+
+/// Throws [ArgumentError] for the reason [retryBudgetRefusalReason]
+/// reports, or returns normally when [policy]'s budget is usable.
+///
+// Implements: EVS-DEV-destination-drain/J
 @internal
 void checkRetryBudget(SyncPolicy policy) {
+  final reason = retryBudgetRefusalReason(policy);
+  if (reason == null) return;
   if (policy.maxAttempts < 1) {
-    throw ArgumentError.value(
-      policy.maxAttempts,
-      'maxAttempts',
-      'the retry budget must be at least one attempt',
-    );
+    throw ArgumentError.value(policy.maxAttempts, 'maxAttempts', reason);
   }
+  throw ArgumentError.value(policy.maxRetryTime, 'maxRetryTime', reason);
 }
 
 /// Consults the `afterWedgeTransaction` test seam after the wedge
@@ -734,6 +937,14 @@ AttemptResult _attemptFromResult(
         errorMessage: 'receiver answered: $response',
         deliveryNumber: number,
         deliveryHash: hash,
+      );
+    case SendNotAttempted():
+      // drain() returns before this call whenever result is
+      // SendNotAttempted (EVS-DEV-destination-retry-budget/C): no
+      // attempt is ever built for it.
+      throw StateError(
+        'a not-attempted send outcome records no attempt and is never '
+        'turned into one',
       );
   }
 }
@@ -905,7 +1116,8 @@ Future<bool> _readReceiverAnswer(
   required _Delivery delivery,
   required ReceiverResponse response,
   required AttemptResult attempt,
-  required int maxAttempts,
+  required SyncPolicy policy,
+  required Duration cadence,
   required DrainerConfiguration? declared,
 }) async {
   final backend = registry._backend;
@@ -938,21 +1150,17 @@ Future<bool> _readReceiverAnswer(
             items: items,
           );
     final acknowledged = reading == _Reading.acknowledged;
-    await backend.appendAttemptTxn(
-      txn,
-      destinationId,
-      head.entryId,
-      AttemptResult(
-        attemptedAt: attempt.attemptedAt,
-        outcome: acknowledged ? 'ok' : 'transient',
-        errorMessage: acknowledged
-            ? null
-            : 'receiver ${response.receiverDatabaseId} answered with record '
-                  '${record.deliveryNumber}: ${reading.name}',
-        deliveryNumber: attempt.deliveryNumber,
-        deliveryHash: attempt.deliveryHash,
-      ),
+    final recorded = AttemptResult(
+      attemptedAt: attempt.attemptedAt,
+      outcome: acknowledged ? 'ok' : 'transient',
+      errorMessage: acknowledged
+          ? null
+          : 'receiver ${response.receiverDatabaseId} answered with record '
+                '${record.deliveryNumber}: ${reading.name}',
+      deliveryNumber: attempt.deliveryNumber,
+      deliveryHash: attempt.deliveryHash,
     );
+    await backend.appendAttemptTxn(txn, destinationId, head.entryId, recorded);
     switch (reading) {
       case _Reading.acknowledged:
       case _Reading.adopted:
@@ -1020,7 +1228,14 @@ Future<bool> _readReceiverAnswer(
         );
         return null;
     }
-    if (acknowledged || head.attempts.length + 1 < maxAttempts) return null;
+    if (acknowledged ||
+        !budgetSpent(
+          <AttemptResult>[...head.attempts, recorded],
+          policy,
+          cadence,
+        )) {
+      return null;
+    }
     // The attempt leaves the head pending and spends the budget.
     final wedged = await registry._wedgeHeadInTxn(
       txn,
@@ -1028,7 +1243,8 @@ Future<bool> _readReceiverAnswer(
       destinationId: destinationId,
       rowId: head.entryId,
       cause: WedgeCause.retryBudgetExhausted,
-      maxAttempts: maxAttempts,
+      maxAttempts: policy.maxAttempts,
+      maxRetryMs: policy.maxRetryTime.inMilliseconds,
       drainerEpoch: lock.epoch,
       configuration: declared?.configuration,
       configurationFingerprint: declared?.fingerprint,
@@ -1249,8 +1465,10 @@ Future<void> _resumeInTxn(
       await backend.writeFillCursorTxn(txn, destinationId, lowest - 1);
     }
   }
-  // The destination's transform failure record, once kept, is removed here
-  // with the rewind.
+  // Implements: EVS-DEV-delivery-resume/N
+  // the resume removes the registration's transform failure record with
+  //   the rewind.
+  await backend.clearTransformFailureRecordTxn(txn, destinationId);
   for (
     var n = record.deliveryNumber + 1;
     n <= sender.receiverRecord.deliveryNumber;
@@ -1348,8 +1566,10 @@ Future<void> _newGenerationInTxn(
   );
   await _retirePendingInTxn(backend, txn, destinationId, items);
   await backend.writeFillCursorTxn(txn, destinationId, -1);
-  // The destination's transform failure record, once kept, is removed here
-  // with the rewind.
+  // Implements: EVS-DEV-delivery-resume/Z
+  // the new generation removes the registration's transform failure
+  //   record with the rewind.
+  await backend.clearTransformFailureRecordTxn(txn, destinationId);
   await backend.writeSenderChannelRecordTxn(
     txn,
     destinationId,

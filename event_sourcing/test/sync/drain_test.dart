@@ -112,6 +112,68 @@ void main() {
       expect(await backend.readFifoHead('fake'), isNull);
     });
 
+    // Verifies: EVS-DEV-destination-retry-budget/C
+    // Verifies: EVS-DEV-destination-retry-budget/D
+    test('SendNotAttempted records no attempt, leaves the head pending, and '
+        'sends nothing further in the same pass', () async {
+      final e1RowId = await _enqueueRow(
+        backend,
+        'fake',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      await _enqueueRow(backend, 'fake', eventId: 'e2', sequenceNumber: 2);
+      final dest = FakeDestination(
+        script: [const SendNotAttempted(reason: 'receiver asked to wait')],
+      );
+
+      await drainForTest(dest, registry: registry);
+
+      // e2 (the trail row) was NOT attempted in the same pass.
+      expect(dest.sent, hasLength(1));
+
+      final head = await backend.readFifoHead('fake');
+      expect(head, isNotNull);
+      expect(head!.entryId, e1RowId);
+      expect(head.finalStatus, isNull);
+      expect(head.attempts, isEmpty);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/C
+    // With maxAttempts = 1, a SendNotAttempted does not spend the budget:
+    // the next drain call sends with the item's full budget still intact,
+    // and a single subsequent SendTransient reaches the bound and wedges —
+    // proving the not-attempted outcome recorded no attempt at all.
+    test(
+      'SendNotAttempted does not spend the retry budget (maxAttempts = 1)',
+      () async {
+        await _enqueueRow(backend, 'fake', eventId: 'e1', sequenceNumber: 1);
+        final dest = FakeDestination(
+          script: [
+            const SendNotAttempted(),
+            const SendTransient(error: 'still failing'),
+          ],
+        );
+        const policy = SyncPolicy(
+          initialBackoff: Duration.zero,
+          backoffMultiplier: 1.0,
+          maxBackoff: Duration.zero,
+          jitterFraction: 0.0,
+          maxAttempts: 1,
+        );
+
+        await drainForTest(dest, registry: registry, policy: policy);
+        final afterFirst = await backend.readFifoHead('fake');
+        expect(afterFirst!.attempts, isEmpty);
+        expect(afterFirst.finalStatus, isNull);
+
+        await drainForTest(dest, registry: registry, policy: policy);
+        final afterSecond = await backend.readFifoHead('fake');
+        expect(afterSecond!.attempts, hasLength(1));
+        expect(afterSecond.finalStatus, FinalStatus.wedged);
+      },
+    );
+
     // When the head row's final_status is FinalStatus.wedged, drain
     // SHALL return without calling Destination.send; the row is NOT
     // re-attempted, and its trail rows are NOT attempted either.
@@ -583,6 +645,74 @@ void main() {
       ['e1', 'e2'],
     );
     expect(await after.readFifoHead('fake'), isNull);
+  });
+
+  group('budgetSpent()', () {
+    final t0 = DateTime.utc(2027, 1, 1);
+    AttemptResult at(int seconds, {String outcome = 'transient'}) =>
+        AttemptResult(
+          attemptedAt: t0.add(Duration(seconds: seconds)),
+          outcome: outcome,
+        );
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // the attempt bound alone spends the
+    //   budget, whatever the recorded times.
+    test('the attempt bound spends the budget on its own', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration.zero,
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration.zero,
+        jitterFraction: 0.0,
+        maxAttempts: 2,
+        maxRetryTime: Duration(days: 1),
+      );
+      expect(budgetSpent([at(0), at(1)], policy, Duration.zero), isTrue);
+      expect(budgetSpent([at(0)], policy, Duration.zero), isFalse);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // with no recorded attempt the time
+    //   bound is never reached, whatever its value.
+    test('an empty history never spends the time bound', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration.zero,
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration.zero,
+        jitterFraction: 0.0,
+        maxAttempts: 1000000,
+        maxRetryTime: Duration.zero,
+      );
+      expect(budgetSpent(const [], policy, Duration.zero), isFalse);
+    });
+
+    // Verifies: EVS-DEV-destination-retry-budget/A
+    // each gap is capped at the retry
+    //   curve's longest allowed delay after the earlier attempt plus the
+    //   cadence, and the sum of the capped gaps decides whether the time
+    //   bound is spent.
+    test('gaps are capped at the curve delay plus the cadence', () {
+      const policy = SyncPolicy(
+        initialBackoff: Duration(seconds: 10),
+        backoffMultiplier: 1.0,
+        maxBackoff: Duration(seconds: 10),
+        jitterFraction: 0.0,
+        maxAttempts: 1000000,
+        maxRetryTime: Duration(seconds: 50),
+      );
+      const cadence = Duration(seconds: 5);
+      // Two gaps of 12 s, each capped at 10 + 5 = 15 s: nothing is
+      // capped down, so the raw sum (24 s) governs and stays under 50 s.
+      expect(budgetSpent([at(0), at(12), at(24)], policy, cadence), isFalse);
+      // A single gap of 40 s, capped down to 15 s: under the 50 s bound.
+      expect(budgetSpent([at(0), at(40)], policy, cadence), isFalse);
+      // Four gaps of 15 s, each capped at exactly 15 s: the sum (60 s)
+      // reaches the 50 s bound.
+      expect(
+        budgetSpent([at(0), at(15), at(30), at(45), at(60)], policy, cadence),
+        isTrue,
+      );
+    });
   });
 }
 

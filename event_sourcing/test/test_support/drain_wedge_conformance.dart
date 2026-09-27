@@ -49,6 +49,7 @@ const Set<String> declaredWedgeEventKeys = <String>{
   'cause',
   'attempt_count',
   'max_attempts',
+  'max_retry_ms',
   'last_outcome',
   'http_status',
   'wire_format',
@@ -68,6 +69,19 @@ SyncPolicy budget(int maxAttempts) => SyncPolicy(
   maxBackoff: Duration.zero,
   jitterFraction: 0.0,
   maxAttempts: maxAttempts,
+);
+
+/// A policy with no backoff, an attempt bound high enough to never bind,
+/// and a time bound of [maxRetryTime]. With no backoff every gap's cap
+/// (`EVS-DEV-destination-retry-budget/A`) is exactly the delivery cycle's
+/// cadence, which the scenario passes to `drainForTest` itself.
+SyncPolicy timeBudget(Duration maxRetryTime) => SyncPolicy(
+  initialBackoff: Duration.zero,
+  backoffMultiplier: 1.0,
+  maxBackoff: Duration.zero,
+  jitterFraction: 0.0,
+  maxAttempts: 1000000,
+  maxRetryTime: maxRetryTime,
 );
 
 DateTime _fillNow() => DateTime.utc(2027, 1, 1);
@@ -313,6 +327,29 @@ void runDrainWedgeScenarios(
       return (await w.backend.readFifoHead(d.id))!;
     }
 
+    /// Register and activate [d], append one note, and enqueue it as a
+    /// transform-failed item through the backend seam directly (the fill's
+    /// own retry-and-enqueue path is out of scope here): no payload, no
+    /// envelope, `transformFailed: true` and [failures] recorded transform
+    /// failures.
+    Future<FifoEntry> queuedTransformFailed(
+      FakeDestination d, {
+      int failures = 3,
+    }) async {
+      await w.activate(d);
+      final note = await w.note('${d.id}-tf');
+      return w.backend.transaction(
+        (txn) => w.backend.enqueueFifoTxn(
+          txn,
+          d.id,
+          <StoredEvent>[note],
+          transformFailed: true,
+          transformFailures: failures,
+          wireFormat: 'fake-v1',
+        ),
+      );
+    }
+
     // ------------------------------------------------------------------
     // Fields
     // ------------------------------------------------------------------
@@ -353,6 +390,7 @@ void runDrainWedgeScenarios(
           'cause': 'permanent_refusal',
           'attempt_count': 1,
           'max_attempts': 7,
+          'max_retry_ms': const Duration(hours: 24).inMilliseconds,
           'last_outcome': 'permanent',
           'http_status': null,
           'wire_format': head.wireFormat,
@@ -426,6 +464,65 @@ void runDrainWedgeScenarios(
         expect(event.data['http_status'], isNull);
         expect(event.data['attempt_count'], 1);
         expect(event.data['max_attempts'], 1);
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // Transform-failed head
+    // ------------------------------------------------------------------
+
+    group('transform-failed head', () {
+      // Verifies: EVS-DEV-destination-drain/Z
+      // the drainer wedges a pending head marked transform-failed with
+      //   cause transform_failed, without a send.
+      // Verifies: EVS-DEV-destination-drain/I
+      // attempt_count is the transform failures the fill recorded;
+      //   last_outcome is null.
+      // Verifies: EVS-PRD-destinations/Q
+      // the wedge event records the cause transform_failed.
+      test('wedges without a send', () async {
+        if (!available) return;
+        final d = FakeDestination(id: 'x', script: const <SendResult>[]);
+        final head = await queuedTransformFailed(d, failures: 5);
+        await drainForTest(d, registry: w.registry, policy: budget(7));
+        expect(d.sent, isEmpty, reason: 'no send is attempted');
+        final row = (await w.backend.readFifoRow('x', head.entryId))!;
+        expect(row.finalStatus, FinalStatus.wedged);
+        expect(row.attempts, isEmpty);
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data.keys.toSet(), declaredWedgeEventKeys);
+        expect(event.data['cause'], 'transform_failed');
+        expect(event.data['attempt_count'], 5);
+        expect(event.data['last_outcome'], isNull);
+        expect(event.data['http_status'], isNull);
+        expect(event.data['max_attempts'], 7);
+        expect(event.data['wire_format'], head.wireFormat);
+        expect(event.data['halt_request_event_id'], isNull);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
+      });
+
+      // Verifies: EVS-DEV-destination-drain/Z
+      // the check runs before any halt honour.
+      // Verifies: EVS-DEV-destination-drain/O
+      // a wedge of any cause consumes the open halt request of its
+      //   destination.
+      test('an open halt request is still wedged with cause '
+          'transform_failed, and the request is consumed', () async {
+        if (!available) return;
+        final d = FakeDestination(id: 'x', script: const <SendResult>[]);
+        await queuedTransformFailed(d, failures: 2);
+        final requestEventId = await w.registry.requestHalt(
+          'x',
+          initiator: _init,
+          purpose: HaltPurpose.pause,
+        );
+        await drainForTest(d, registry: w.registry, policy: budget(7));
+        expect(d.sent, isEmpty, reason: 'no send is attempted');
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data['cause'], 'transform_failed');
+        expect(event.data['attempt_count'], 2);
+        expect(event.data['halt_request_event_id'], requestEventId);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
       });
     });
 
@@ -747,6 +844,156 @@ void runDrainWedgeScenarios(
         final event = (await w.wedgeEvents()).single;
         expect(event.data['cause'], 'retry_budget_exhausted');
         expect(event.data['attempt_count'], 2);
+        await expectWedgeRecordMatchesLog(w.store, 'x');
+      });
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // the time bound is spent by
+      //   the sum of the gaps between recorded attempts, each capped at the
+      //   retry curve's longest delay plus the delivery cycle's cadence.
+      // Verifies: EVS-PRD-destinations/W
+      // a retry policy's time bound wedges
+      //   an item whose retryable failures have held it at the head for
+      //   that time.
+      // Verifies: EVS-DEV-destination-drain/I
+      // max_retry_ms is the time bound in
+      //   effect at the wedge.
+      test(
+        'capped gaps that sum past the time bound wedge (post-attempt)',
+        () async {
+          if (!available) return;
+          final d = FakeDestination(
+            id: 'x',
+            script: <SendResult>[
+              const SendTransient(error: 'busy'),
+              const SendTransient(error: 'busy'),
+              const SendTransient(error: 'busy'),
+            ],
+          );
+          await queued(d);
+          final policy = timeBudget(const Duration(seconds: 60));
+          const cadence = Duration(seconds: 30);
+          var now = DateTime.utc(2027, 6, 1);
+          Future<void> pass() => drainForTest(
+            d,
+            registry: w.registry,
+            policy: policy,
+            cadence: cadence,
+            clock: () => now,
+          );
+          await pass();
+          now = now.add(const Duration(seconds: 30));
+          await pass();
+          expect(d.sent, hasLength(2), reason: 'not yet spent');
+          expect(await w.wedgeEvents(), isEmpty);
+          now = now.add(const Duration(seconds: 30));
+          await pass();
+          expect(d.sent, hasLength(3));
+          final event = (await w.wedgeEvents()).single;
+          expect(event.data['cause'], 'retry_budget_exhausted');
+          expect(event.data['attempt_count'], 3);
+          expect(event.data['max_retry_ms'], 60000);
+          await expectWedgeRecordMatchesLog(w.store, 'x');
+        },
+      );
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // a gap longer than the retry
+      //   curve's delay plus the cadence (a device asleep, or no drainer
+      //   running) counts only the capped value toward the time bound.
+      test('a gap longer than the cap counts only the cap', () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'x',
+          script: <SendResult>[
+            const SendTransient(error: 'busy'),
+            const SendTransient(error: 'busy'),
+          ],
+        );
+        await queued(d);
+        final policy = timeBudget(const Duration(seconds: 100));
+        const cadence = Duration(seconds: 30);
+        var now = DateTime.utc(2027, 6, 1);
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: policy,
+          cadence: cadence,
+          clock: () => now,
+        );
+        // A night off: ten hours pass with the device asleep.
+        now = now.add(const Duration(hours: 10));
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: policy,
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2));
+        expect(await w.wedgeEvents(), isEmpty);
+        final row = (await w.backend.readFifoHead('x'))!;
+        expect(row.finalStatus, isNull);
+        expect(row.attempts, hasLength(2));
+      });
+
+      // Verifies: EVS-DEV-destination-retry-budget/A
+      // the status derivation at the
+      //   start of a pass reaches the same decision the drainer reached
+      //   when it recorded the attempt: a lowered time bound wedges an item
+      //   whose recorded attempts already spend it, before any send.
+      // Verifies: EVS-DEV-destination-drain/J
+      // the status derivation runs
+      //   before any send, wedging a pending head whose recorded attempts
+      //   spend the time bound without a further attempt.
+      test('a lowered time budget wedges without a send', () async {
+        if (!available) return;
+        final d = FakeDestination(
+          id: 'x',
+          script: <SendResult>[
+            const SendTransient(error: 'busy'),
+            const SendTransient(error: 'busy'),
+          ],
+        );
+        await queued(d);
+        const cadence = Duration(seconds: 30);
+        var now = DateTime.utc(2027, 6, 1);
+        // Two attempts, 30 s apart, under a budget too large to spend.
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(days: 1)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        now = now.add(const Duration(seconds: 30));
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(days: 1)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2));
+        expect(await w.wedgeEvents(), isEmpty);
+        // The single 30 s gap, capped at 0 (no backoff) + the 30 s cadence,
+        // already spends a 30 s bound: the lowered budget wedges at pass
+        // start, with no third send (the script holds no third result).
+        await drainForTest(
+          d,
+          registry: w.registry,
+          policy: timeBudget(const Duration(seconds: 30)),
+          cadence: cadence,
+          clock: () => now,
+        );
+        expect(d.sent, hasLength(2), reason: 'no send at the lowered budget');
+        final head = (await w.backend.readFifoHead('x'))!;
+        expect(head.finalStatus, FinalStatus.wedged);
+        expect(head.attempts, hasLength(2));
+        final event = (await w.wedgeEvents()).single;
+        expect(event.data['cause'], 'retry_budget_exhausted');
+        expect(event.data['attempt_count'], 2);
+        expect(event.data['max_retry_ms'], 30000);
         await expectWedgeRecordMatchesLog(w.store, 'x');
       });
 
@@ -1254,6 +1501,7 @@ void runDrainWedgeScenarios(
                 rowId: rowId,
                 cause: cause,
                 maxAttempts: maxAttempts,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1368,6 +1616,7 @@ void runDrainWedgeScenarios(
                 rowId: head.entryId,
                 cause: WedgeCause.permanentRefusal,
                 maxAttempts: 3,
+                maxRetryMs: null,
                 drainerEpoch: 1,
                 configuration: null,
                 configurationFingerprint: null,
@@ -1590,6 +1839,14 @@ class UncheckedPolicy implements SyncPolicy {
   @override
   double get jitterFraction => 0.0;
 
+  // Large enough that no conformance scenario's attempts span it, so a
+  // scenario testing the attempt bound never also wedges on time.
+  @override
+  Duration get maxRetryTime => const Duration(days: 365);
+
   @override
   Duration backoffFor(int attemptCount, {Random? random}) => Duration.zero;
+
+  @override
+  Duration longestDelayAfter(int attemptCount) => Duration.zero;
 }

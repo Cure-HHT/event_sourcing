@@ -329,15 +329,37 @@ created by an earlier release is dropped and provisioned again with
 - New reserved entry type `system.destination_wedged` (event type
   `destination_wedged`): the drainer appends it in the transaction that
   wedges a queue head, recording the destination, the item, the cause
-  (`WedgeCause`: permanent refusal, retry budget exhausted, operator halt),
-  the attempt count and budget, the halt request it consumed, the drain
-  epoch, and the declared configuration beside its fingerprint; never the
-  error text. New exports: `kDestinationWedgedEntryType`,
-  `kDestinationWedgedEventType`, `WedgeCause`, `WedgeRecord`.
+  (`WedgeCause`: permanent refusal, retry budget exhausted, operator halt,
+  acknowledgement invalid, transform failed), the attempt count and both
+  halves of the budget in effect (`max_attempts`, `max_retry_ms`), the
+  halt request it consumed, the drain epoch, and the declared
+  configuration beside its fingerprint; never the error text. New
+  exports: `kDestinationWedgedEntryType`, `kDestinationWedgedEventType`,
+  `WedgeCause`, `WedgeRecord`.
 - A wedging attempt whose transaction does not commit is recorded alone;
   each drain pass first wedges a pending head whose recorded attempts call
   for it, without sending it again. Lowering `maxAttempts` below an item's
-  attempt count wedges it at the next pass.
+  attempt count, or `maxRetryTime` below the time its recorded attempts
+  span, wedges it at the next pass, with no further send.
+- `SyncPolicy` gains `maxRetryTime` (default 24 h): the time half of the
+  retry budget, measured as the sum of the gaps between an item's
+  recorded attempts, each gap capped at the retry curve's longest allowed
+  delay after the earlier attempt plus the delivery cycle's cadence. A
+  static policy with a negative `maxRetryTime`, or a `maxAttempts` below
+  one, throws `ArgumentError`; a resolved policy failing either check is
+  logged and skips the pass instead. A destination's transform failure
+  record keeps the time of each transform failure and spends the same
+  budget the same way; once spent, the fill enqueues the events the
+  transform kept failing on as one pending item marked transform-failed,
+  carrying no payload, which the drainer wedges with cause
+  `transform_failed` before any send. New `SendResult` variant
+  `SendNotAttempted`: a destination that did not attempt delivery (a
+  receiver cooldown, a paused transport) records no attempt, leaves the
+  head's recorded attempts unchanged, and ends that destination's pass
+  with no further send.
+- Fill and drain log records at severe level or above reach the
+  process's standard error by default (the console in a browser) unless
+  the application turns that default off.
 - Operator halt: `DestinationRegistry.requestHalt(id, initiator:,
   purpose:)` (returns the request event's id) and `cancelHalt(id,
   initiator:)`; `HaltPurpose` (`pause`, `reconfigure`), `HaltRequest`,
