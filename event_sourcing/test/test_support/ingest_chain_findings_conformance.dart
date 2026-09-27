@@ -14,8 +14,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
-import 'ingest_record_findings_conformance.dart'
-    show envelopeOf, resealed, sealedRecord;
+import 'deliveries.dart';
+import 'ingest_record_findings_conformance.dart' show resealed, sealedRecord;
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
 const String _kType = 'finding_note';
@@ -116,13 +116,12 @@ void runIngestChainFindingScenarios({
                 Map<String, Object?>.from(e.data),
           ];
 
-      Future<IngestBatchResult> deliver(
+      /// Delivers [records], all of one originating database, on that
+      /// database's channel.
+      Future<TestDelivery> deliver(
         EventStore store,
         List<Map<String, Object?>> records,
-      ) => store.ingestBatch(
-        envelopeOf(records).encode(),
-        wireFormat: BatchEnvelope.wireFormat,
-      );
+      ) => deliverTo(store, records);
 
       /// The finding [store]'s ingest records of [kind] with [evidence],
       /// naming [aggregates].
@@ -220,15 +219,9 @@ void runIngestChainFindingScenarios({
         ];
         expect(await ownFindings(store), expected);
         await expectStored(store, <Map<String, Object?>>[f4, f5]);
-        expect(result.events.map((o) => o.outcome), <IngestOutcome>[
+        expect(await recordOutcomes(store, result), <IngestOutcome>[
           IngestOutcome.ingestedWithFinding,
           IngestOutcome.ingestedWithFinding,
-        ]);
-        expect(result.events.first.findingIds, <Object?>[
-          expected.first['finding_id'],
-        ]);
-        expect(result.events.last.findingIds, <Object?>[
-          expected.last['finding_id'],
         ]);
 
         await deliver(store, <Map<String, Object?>>[f4, f5]);
@@ -287,14 +280,13 @@ void runIngestChainFindingScenarios({
         );
         expect(await ownFindings(store), <Map<String, Object?>>[expected]);
         await expectStored(store, <Map<String, Object?>>[g, after]);
-        expect(result.events.first.outcome, IngestOutcome.ingestedWithFinding);
-        expect(result.events.first.findingIds, <Object?>[
-          expected['finding_id'],
-        ]);
         expect(
-          result.events.last.outcome,
-          IngestOutcome.ingested,
-          reason: 'the rest of the batch is admitted',
+          await recordOutcomes(store, result),
+          <IngestOutcome>[
+            IngestOutcome.ingestedWithFinding,
+            IngestOutcome.ingested,
+          ],
+          reason: 'the rest of the delivery is admitted',
         );
       });
 
@@ -357,14 +349,17 @@ void runIngestChainFindingScenarios({
           ),
         ]);
 
+        // The outcome of one record, through the ingest seam, names the
+        // finding it carries.
         final h = chained(db, 7, previous: e[1]);
-        final result = await deliver(store, <Map<String, Object?>>[h]);
+        final outcome = await ingestEventForTest(
+          store,
+          StoredEvent.fromMap(h, 0),
+        );
         expect(await ownFindings(store), recorded);
         await expectStored(store, <Map<String, Object?>>[h]);
-        expect(result.events.single.outcome, IngestOutcome.ingestedWithFinding);
-        expect(result.events.single.findingIds, <Object?>[
-          recorded.single['finding_id'],
-        ]);
+        expect(outcome.outcome, IngestOutcome.ingestedWithFinding);
+        expect(outcome.findingIds, <Object?>[recorded.single['finding_id']]);
       });
 
       // Verifies: EVS-DEV-security-findings/B
@@ -423,8 +418,8 @@ void runIngestChainFindingScenarios({
         ]);
         expect(await ownFindings(store), <Map<String, Object?>>[expected]);
         await expectStored(store, <Map<String, Object?>>[y]);
-        expect(result.events.single.findingIds, <Object?>[
-          expected['finding_id'],
+        expect(await recordOutcomes(store, result), <IngestOutcome>[
+          IngestOutcome.ingestedWithFinding,
         ]);
       });
 
@@ -438,7 +433,7 @@ void runIngestChainFindingScenarios({
         await deliver(store, <Map<String, Object?>>[e[0], e[2]]);
 
         final y = chained(db, 2, previous: e[2]);
-        await store.ingestEvent(StoredEvent.fromMap(y, 0));
+        await ingestEventForTest(store, StoredEvent.fromMap(y, 0));
 
         expect(await ownFindings(store), <Map<String, Object?>>[
           predecessorBreak(store, y, db, <String>[_agg(e[2]), _agg(y)]..sort()),
@@ -458,7 +453,7 @@ void runIngestChainFindingScenarios({
         ]);
         expect(await ownFindings(store), isEmpty);
         expect(
-          result.events.map((o) => o.outcome),
+          await recordOutcomes(store, result),
           everyElement(IngestOutcome.ingested),
         );
       });

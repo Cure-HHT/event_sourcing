@@ -11,6 +11,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -90,7 +91,7 @@ void main() {
         expect(e, isNotNull);
 
         // First ingest — should be ingested.
-        final first = await dest.store.ingestEvent(e!);
+        final first = await ingestEventForTest(dest.store, e!);
         expect(first.outcome, equals(IngestOutcome.ingested));
         final hashAfterFirst = first.resultHash;
 
@@ -100,7 +101,7 @@ void main() {
         );
 
         // Second ingest of same event — should be duplicate.
-        final second = await dest.store.ingestEvent(e);
+        final second = await ingestEventForTest(dest.store, e);
         expect(second.outcome, equals(IngestOutcome.duplicate));
         // Result hash is unchanged (stored copy not mutated).
         expect(second.resultHash, equals(hashAfterFirst));
@@ -146,8 +147,8 @@ void main() {
           );
           expect(e, isNotNull);
 
-          await dest.store.ingestEvent(e!);
-          await dest.store.ingestEvent(e);
+          await ingestEventForTest(dest.store, e!);
+          await ingestEventForTest(dest.store, e);
 
           // Query the ingest-audit aggregate.
           const auditAggId = 'ingest-audit:control-server';
@@ -187,8 +188,8 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e!);
+        await ingestEventForTest(dest.store, e);
 
         // The audit event's provenance[0].batchContext must be absent/null.
         const auditAggId = 'ingest-audit:control-server';
@@ -229,10 +230,10 @@ void main() {
         expect(e, isNotNull);
 
         // 2. First ingest — lands the subject event.
-        await dest.store.ingestEvent(e!);
+        await ingestEventForTest(dest.store, e!);
 
         // 3. Second ingest of same event — emits ingest.duplicate_received.
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e);
 
         // 4. Query the ingest-audit aggregate for the duplicate_received event.
         const auditAggId = 'ingest-audit:control-server';
@@ -288,9 +289,9 @@ void main() {
         );
         expect(e, isNotNull);
 
-        await dest.store.ingestEvent(e!);
-        await dest.store.ingestEvent(e);
-        await dest.store.ingestEvent(e);
+        await ingestEventForTest(dest.store, e!);
+        await ingestEventForTest(dest.store, e);
+        await ingestEventForTest(dest.store, e);
 
         const auditAggId = 'ingest-audit:control-server';
         final auditEvents = await dest.backend.findEventsForAggregate(

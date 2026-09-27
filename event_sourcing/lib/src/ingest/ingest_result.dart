@@ -3,15 +3,13 @@
 //   distinguishes a safe re-presentation from a new admission; the stored
 //   subject is not mutated on duplicate
 // Implements: EVS-PRD-ingest/A
-// ingest path result types (IngestBatchResult
-//   is the return value of EventStore.ingestBatch)
+// ingest path result types
 // Implements: EVS-PRD-ingest/C
 // PerEventIngestOutcome.resultHash carries the
 //   hash of the event as stored after the receiver's provenance hop was appended,
 //   enabling callers to thread Chain 2 linkage checks
 
-/// Outcome of a single received record's processing inside `ingestBatch`
-/// or `ingestEvent`.
+/// Outcome of a single received record's processing inside a delivery.
 enum IngestOutcome {
   /// New event, stored with a fresh receiver provenance entry.
   ingested,
@@ -58,11 +56,4 @@ class PerEventIngestOutcome {
   /// record, or found already held with the same identity, in the order it
   /// met them; empty when it met no anomaly.
   final List<String> findingIds;
-}
-
-/// Result of `ingestBatch`.
-class IngestBatchResult {
-  const IngestBatchResult({required this.batchId, required this.events});
-  final String batchId;
-  final List<PerEventIngestOutcome> events;
 }

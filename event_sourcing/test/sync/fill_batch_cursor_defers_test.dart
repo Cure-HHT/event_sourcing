@@ -50,7 +50,14 @@ Future<StoredEvent> _appendEvent(
       eventType: 'finalized',
       sequenceNumber: seq,
       data: const <String, dynamic>{},
-      metadata: const <String, dynamic>{},
+      metadata: const <String, dynamic>{
+        'provenance': <Map<String, Object?>>[
+          <String, Object?>{
+            'database_id': 'test-database',
+            'library_version': '0.0.0',
+          },
+        ],
+      },
       initiator: const UserInitiator('u'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',

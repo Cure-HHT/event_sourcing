@@ -40,14 +40,20 @@ class BuiltQueueItem {
 }
 
 /// Build one queue item for [batch]: a native destination gets a
-/// library-built envelope minted from [source]; any other destination's
-/// `transform` runs here, outside any transaction.
+/// library-built envelope minted from [source] for its delivery [channel];
+/// any other destination's `transform` runs here, outside any transaction.
+// Implements: EVS-DEV-delivery-channel/A
+// a destination that serializes natively is a delivery channel: its items
+//   carry the channel and the delivery's attributes (empty in every
+//   delivery the library sends), with no number, which the drainer assigns
+//   at its pre-send fence.
 @internal
 Future<BuiltQueueItem> buildQueueItem(
   Destination destination,
   List<StoredEvent> batch, {
   required Source? source,
   required DateTime now,
+  DeliveryChannel? channel,
 }) async {
   if (destination.serializesNatively) {
     if (source == null) {
@@ -57,15 +63,24 @@ Future<BuiltQueueItem> buildQueueItem(
         'to stamp the envelope identity.',
       );
     }
+    if (channel == null) {
+      throw ArgumentError(
+        'destination "${destination.id}" declares serializesNatively == '
+        'true but no delivery channel was supplied; a native item is '
+        'enqueued on its channel.',
+      );
+    }
     return BuiltQueueItem(
       batch: batch,
       nativeEnvelope: BatchEnvelopeMetadata(
-        batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
+        batchFormatVersion: DeliveryEnvelope.batchFormatVersion,
         batchId: _uuidGen.v4(),
         senderHop: source.hopId,
         senderIdentifier: source.identifier,
         senderSoftwareVersion: source.softwareVersion,
         sentAt: now,
+        channel: channel,
+        attributes: const <String, Object?>{},
       ),
     );
   }
@@ -92,6 +107,7 @@ Future<List<BuiltQueueItem>> _buildAll(
   List<StoredEvent> events, {
   required Source? source,
   required DateTime now,
+  required DeliveryChannel? channel,
 }) async {
   final items = <BuiltQueueItem>[];
   var i = 0;
@@ -103,7 +119,13 @@ Future<List<BuiltQueueItem>> _buildAll(
       i++;
     }
     items.add(
-      await buildQueueItem(destination, batch, source: source, now: now),
+      await buildQueueItem(
+        destination,
+        batch,
+        source: source,
+        now: now,
+        channel: channel,
+      ),
     );
   }
   return items;
@@ -142,6 +164,8 @@ Future<HistoricalReplayBuild> buildHistoricalReplayRows(
   required DateTime? endDate,
   required DateTime now,
   required Source? source,
+  required String databaseId,
+  DeliveryChannel? channel,
 }) async {
   if (startDate == null) {
     return const HistoricalReplayBuild(items: <BuiltQueueItem>[], cursor: null);
@@ -153,7 +177,14 @@ Future<HistoricalReplayBuild> buildHistoricalReplayRows(
   final inWindow = <StoredEvent>[];
   int? lastDecidedSeq;
   for (final e in candidates) {
-    if (!destination.filter.matches(e)) {
+    if (!e.isHeldAsAuthoredBy(databaseId)) {
+      // EVS-DEV-destination-drain/V: not this database's own event.
+      lastDecidedSeq = e.sequenceNumber;
+      continue;
+    }
+    final bypassesFilter =
+        destination.serializesNatively && isChannelWideEntryType(e.entryType);
+    if (!bypassesFilter && !destination.filter.matches(e)) {
       lastDecidedSeq = e.sequenceNumber;
       continue;
     }
@@ -170,6 +201,7 @@ Future<HistoricalReplayBuild> buildHistoricalReplayRows(
     inWindow,
     source: source,
     now: now,
+    channel: channel,
   );
   // With items, the position advances to the last replayed event (as the
   // fill's does); with none, past the decided events.
@@ -197,16 +229,27 @@ Future<List<BuiltQueueItem>> buildGapReplayRows(
   required int fillCursor,
   required DateTime now,
   required Source? source,
+  required String databaseId,
+  DeliveryChannel? channel,
 }) {
   final inGap = <StoredEvent>[
     for (final e in events)
       if (e.sequenceNumber <= fillCursor &&
-          destination.filter.matches(e) &&
+          e.isHeldAsAuthoredBy(databaseId) &&
+          (destination.serializesNatively &&
+                  isChannelWideEntryType(e.entryType) ||
+              destination.filter.matches(e)) &&
           !e.clientTimestamp.isBefore(startDate) &&
           e.clientTimestamp.isBefore(gapUpper))
         e,
   ];
-  return _buildAll(destination, inGap, source: source, now: now);
+  return _buildAll(
+    destination,
+    inGap,
+    source: source,
+    now: now,
+    channel: channel,
+  );
 }
 
 /// Enqueue [items] on [destinationId]'s queue inside [txn], in order.

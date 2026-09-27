@@ -167,7 +167,7 @@ class ProvenanceEntry {
   // ingested at this hop, starting at 0.
   final int? ingestSequenceNumber;
 
-  // received as part of an ingestBatch call.
+  // received as part of a delivery.
   final BatchContext? batchContext;
 
   // the receiver-hop entry. Receivers reassign a fresh local sequence_number

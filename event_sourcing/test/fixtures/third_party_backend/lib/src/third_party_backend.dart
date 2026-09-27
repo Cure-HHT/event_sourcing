@@ -420,6 +420,32 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
   Future<StoredEvent?> readLatestEligibleVersionInTxn(
     Transaction txn,
     String aggregateId,
@@ -565,6 +591,63 @@ class ThirdPartyBackend extends StorageBackend {
     String destinationId,
     String entryId,
     FinalStatus status,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
   ) => throw UnimplementedError();
 
   @internal

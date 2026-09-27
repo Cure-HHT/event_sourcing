@@ -26,6 +26,15 @@
 // (a refill guard holds the fill of a
 //   drainer that declares the guarded configuration; a fill under any other
 //   configuration removes the guard in its compare-and-set transaction)
+// Implements: EVS-DEV-destination-drain/V
+// (own events only — the walk skips an
+//   event whose originator entry does not name the database's own identity
+//   or whose last provenance entry is not that originator entry, advancing
+//   the cursor past it like any other decided event)
+// Implements: EVS-DEV-destination-drain/X
+// (channel-wide events — a security
+//   finding or a succession event this database appended bypasses the
+//   destination's filter on a natively serializing registration)
 // Implements: EVS-DEV-destination-drain-lock/B
 // (every transaction of the fill checks
 //   the drain lock first and commits nothing when the drainer no longer
@@ -50,6 +59,7 @@ class _FillState {
     required this.cursor,
     required this.request,
     required this.refillGuard,
+    required this.senderChannel,
   });
 
   final DestinationSchedule? schedule;
@@ -57,6 +67,11 @@ class _FillState {
   final int cursor;
   final ReplayRequest? request;
   final RefillGuard? refillGuard;
+
+  /// The sender channel record of a destination that serializes natively
+  /// (null for any other): a new generation changes it, so a fill computed
+  /// before it commits nothing.
+  final SenderChannelRecord? senderChannel;
 
   bool get headWedged => headStatus == FinalStatus.wedged;
 
@@ -70,12 +85,17 @@ class _FillState {
     final cursor = await backend.readFillCursorTxn(txn, destinationId);
     final request = await backend.readReplayRequestTxn(txn, destinationId);
     final refillGuard = await backend.readRefillGuardTxn(txn, destinationId);
+    final senderChannel = await backend.readSenderChannelRecordTxn(
+      txn,
+      destinationId,
+    );
     return _FillState(
       schedule: schedule,
       headStatus: head?.finalStatus,
       cursor: cursor,
       request: request,
       refillGuard: refillGuard,
+      senderChannel: senderChannel,
     );
   }
 
@@ -91,11 +111,18 @@ class _FillState {
       other.headStatus == headStatus &&
       other.cursor == cursor &&
       other.request == request &&
-      other.refillGuard == refillGuard;
+      other.refillGuard == refillGuard &&
+      other.senderChannel == senderChannel;
 
   @override
-  int get hashCode =>
-      Object.hash(schedule, headStatus, cursor, request, refillGuard);
+  int get hashCode => Object.hash(
+    schedule,
+    headStatus,
+    cursor,
+    request,
+    refillGuard,
+    senderChannel,
+  );
 }
 
 /// Runs [write] inside one transaction only when the persisted state still
@@ -190,9 +217,18 @@ Future<bool> _compareAndSet(
 /// nothing either.
 ///
 /// Every transaction of the fill checks [lock] first and commits nothing
-/// when the drainer no longer holds it. A native destination's envelope
-/// carries [source], the source identity of the event store whose
-/// [backend] the fill writes. [clock] defaults to
+/// when the drainer no longer holds it. [databaseId] (the identity of the
+/// database this fill runs for) decides which events the walk admits at
+/// all: only an event whose originator entry names it and whose last
+/// provenance entry is that originator entry (`EVS-DEV-destination-drain/V`);
+/// every other event is decided like a filter rejection, so the cursor
+/// passes it. A security finding or a succession event this database
+/// appended bypasses the destination's filter on a natively serializing
+/// registration (`EVS-DEV-destination-drain/X`). A native destination's
+/// envelope carries [source], the source identity of the event store whose
+/// [backend] the fill writes, and its delivery channel: [databaseId], the
+/// destination, the persisted schedule's registration and the generation of
+/// the destination's sender channel record. [clock] defaults to
 /// `() => DateTime.now().toUtc()`.
 @internal
 Future<void> fillBatch(
@@ -200,6 +236,7 @@ Future<void> fillBatch(
   required StorageBackend backend,
   required Source source,
   required DrainLock lock,
+  required String databaseId,
   Clock? clock,
   bool flushHeld = false,
   String? declaredFingerprint,
@@ -231,6 +268,8 @@ Future<void> fillBatch(
       request,
       source: source,
       now: now,
+      channel: _channelOf(destination, state, databaseId),
+      databaseId: databaseId,
     );
     if (!performed) return;
   }
@@ -260,7 +299,14 @@ Future<void> fillBatch(
   final inWindow = <StoredEvent>[];
   int? lastDecidedSeq;
   for (final e in candidates) {
-    if (!destination.filter.matches(e)) {
+    if (!e.isHeldAsAuthoredBy(databaseId)) {
+      // EVS-DEV-destination-drain/V: not this database's own event.
+      lastDecidedSeq = e.sequenceNumber;
+      continue;
+    }
+    final bypassesFilter =
+        destination.serializesNatively && isChannelWideEntryType(e.entryType);
+    if (!bypassesFilter && !destination.filter.matches(e)) {
       lastDecidedSeq = e.sequenceNumber;
       continue;
     }
@@ -308,6 +354,7 @@ Future<void> fillBatch(
     batch,
     source: source,
     now: now,
+    channel: _channelOf(destination, state, databaseId),
   );
   await _compareAndSet(backend, lock, id, state, (txn) async {
     await writeQueueItemsTxn(txn, backend, id, <BuiltQueueItem>[item]);
@@ -326,6 +373,8 @@ Future<bool> _performReplayRequest(
   ReplayRequest request, {
   required Source source,
   required DateTime now,
+  required DeliveryChannel? channel,
+  required String databaseId,
 }) async {
   final id = destination.id;
   final schedule = state.schedule!;
@@ -350,6 +399,8 @@ Future<bool> _performReplayRequest(
         fillCursor: state.cursor,
         now: now,
         source: source,
+        channel: channel,
+        databaseId: databaseId,
       ),
     );
   }
@@ -362,6 +413,8 @@ Future<bool> _performReplayRequest(
       endDate: schedule.endDate,
       now: now,
       source: source,
+      channel: channel,
+      databaseId: databaseId,
     );
     items.addAll(build.items);
     advanceTo = build.cursor;
@@ -397,4 +450,31 @@ Future<List<StoredEvent>> _eventsAtOrBelow(
     if (page.length < pageSize) return events;
     after = page.last.sequenceNumber;
   }
+}
+
+/// The delivery channel a fill enqueues [destination]'s items on, computed
+/// from the persisted [state]: the sending database [databaseId], the
+/// destination, the schedule's registration and the sender channel record's
+/// generation. Null for a destination that does not serialize natively.
+DeliveryChannel? _channelOf(
+  Destination destination,
+  _FillState state,
+  String databaseId,
+) {
+  if (!destination.serializesNatively) return null;
+  final registrationId = state.schedule?.registrationId;
+  final record = state.senderChannel;
+  if (registrationId == null || record == null) {
+    throw StateError(
+      'destination "${destination.id}" serializes natively but its persisted '
+      'registration holds no registration identifier or no sender channel '
+      'record',
+    );
+  }
+  return DeliveryChannel(
+    senderDatabaseId: databaseId,
+    destinationId: destination.id,
+    registrationId: registrationId,
+    generation: record.generation,
+  );
 }

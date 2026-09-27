@@ -13,8 +13,10 @@
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
+import 'package:event_sourcing/src/security/security_finding.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -51,7 +53,9 @@ Future<StoredEvent> _appendEvent(
   String entryType = 'epistaxis_event',
   String eventType = 'finalized',
   String aggregateId = 'agg-1',
-}) {
+  String? authoredBy,
+}) async {
+  final databaseId = authoredBy ?? await harnessDatabaseIdForTest(backend);
   return backend.transaction((txn) async {
     final seq = await backend.nextSequenceNumber(txn);
     final event = StoredEvent(
@@ -65,8 +69,63 @@ Future<StoredEvent> _appendEvent(
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
-      metadata: const <String, dynamic>{},
+      metadata: <String, dynamic>{
+        'provenance': <Map<String, Object?>>[
+          <String, Object?>{
+            'database_id': databaseId,
+            'library_version': '0.0.0',
+          },
+        ],
+      },
       initiator: const UserInitiator('u'),
+      clientTimestamp: clientTimestamp,
+      eventHash: 'hash-$eventId',
+      causal: kRootVersionCausal,
+    );
+    await backend.appendEvent(txn, event);
+    return event;
+  });
+}
+
+/// Appends a security-finding audit this test's harness database itself
+/// authored (a Layer 1 record `EVS-DEV-destination-drain/X` reads by entry
+/// type, whatever a destination's filter says of user events).
+Future<StoredEvent> _appendFinding(
+  SembastBackend backend, {
+  required String eventId,
+  required DateTime clientTimestamp,
+}) async {
+  final databaseId = await harnessDatabaseIdForTest(backend);
+  return backend.transaction((txn) async {
+    final seq = await backend.nextSequenceNumber(txn);
+    final event = StoredEvent(
+      key: 0,
+      eventId: eventId,
+      aggregateId: 'finding-agg',
+      aggregateType: kSecurityFindingAggregateType,
+      entryType: kSecurityFindingEntryType,
+      entryTypeVersion: const EntryTypeVersion(1, 0),
+      libFormatVersion: LibVersion.dataFormat,
+      eventType: kSecurityFindingRecordedEventType,
+      sequenceNumber: seq,
+      data: securityFindingData(
+        findingId: eventId,
+        kind: FindingKind.sequenceMissing,
+        evidence: const <String, Object?>{'local_sequence_number': 1},
+        aggregates: const <String>['finding-agg'],
+        databaseId: databaseId,
+        role: FindingRole.ingest,
+        libraryVersion: '0.0.0',
+      ),
+      metadata: <String, dynamic>{
+        'provenance': <Map<String, Object?>>[
+          <String, Object?>{
+            'database_id': databaseId,
+            'library_version': '0.0.0',
+          },
+        ],
+      },
+      initiator: const AutomationInitiator(service: 'ingest'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',
       causal: kRootVersionCausal,
@@ -690,12 +749,17 @@ void main() {
 
       // Phase D: next fillBatch. Promotes e1, e2, e3 in ONE pass into
       // ONE FIFO row (batchCapacity=10 admits all three), advances
-      // fill_cursor to e3.sequenceNumber.
+      // fill_cursor to e3.sequenceNumber. Pinned to the identity e1..e3
+      // were stamped as authored by (before buildAuditedRegistryDeps
+      // opened its own EventStore over this backend and minted a
+      // different one), so the fill still reads them as its own
+      // (EVS-DEV-destination-drain/V).
       await fillWithScheduleForTest(
         dest,
         backend: backend,
         schedule: schedule,
         clock: clock,
+        databaseId: 'test-database',
       );
 
       final fresh = await backend.readFifoHead('fake');
@@ -707,9 +771,13 @@ void main() {
 
     // When serializesNatively is true, fillBatch builds a fresh
     // BatchEnvelopeMetadata from `source` (mints batch_id, stamps
-    // sent_at = now, copies hopId / identifier / softwareVersion) and
+    // sent_at = now, copies hopId / identifier / softwareVersion), names
+    // the item's delivery channel with empty attributes and no number, and
     // enqueues via nativeEnvelope:. The destination's transform is NOT
     // called — NativeDestination's transform throws if invoked.
+    // Verifies: EVS-DEV-delivery-channel/A
+    // an item of a destination that serializes natively is an esd/batch@3
+    //   item on its delivery channel.
     test('native destination — fillBatch mints envelope '
         'from source, stores envelope_metadata, nulls wire_payload', () async {
       const source = Source(
@@ -736,7 +804,18 @@ void main() {
       final head = await backend.readFifoHead('native');
       expect(head, isNotNull);
       expect(head!.eventIds, ['e1', 'e2']);
-      expect(head.wireFormat, BatchEnvelope.wireFormat);
+      expect(head.wireFormat, DeliveryEnvelope.wireFormat);
+      expect(
+        head.envelopeMetadata!.channel,
+        const DeliveryChannel(
+          senderDatabaseId: 'test-database',
+          destinationId: 'native',
+          registrationId: 'test-registration-native',
+          generation: 1,
+        ),
+      );
+      expect(head.envelopeMetadata!.attributes, isEmpty);
+      expect(head.deliveryNumber, isNull);
       expect(
         head.wirePayload,
         isNull,
@@ -748,7 +827,7 @@ void main() {
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'my_app@1.2.3');
       expect(
         head.envelopeMetadata!.batchFormatVersion,
-        BatchEnvelope.currentBatchFormatVersion,
+        DeliveryEnvelope.batchFormatVersion,
       );
       expect(
         head.envelopeMetadata!.sentAt,
@@ -761,6 +840,82 @@ void main() {
         reason: 'fillBatch mints a fresh v4-UUID batch_id per native batch',
       );
       expect(await backend.readFillCursor('native'), 2);
+    });
+
+    // The fill enqueues only events this database authored: an event whose
+    // originator entry names another database (as an ingested event's
+    // does) is skipped, whatever the destination's filter, and the cursor
+    // advances past it.
+    // Verifies: EVS-DEV-destination-drain/V
+    test('an ingested event matching the filter is not enqueued', () async {
+      await _appendEvent(
+        backend,
+        eventId: 'e-ingested',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11),
+        authoredBy: 'peer-database',
+      );
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), 1);
+    });
+
+    // A security finding this database appended reaches a natively
+    // serializing destination's queue whatever that destination's filter
+    // says of system events: EVS-DEV-destination-drain/X bypasses the
+    // filter for these events on native registrations.
+    // Verifies: EVS-DEV-destination-drain/X
+    // Verifies: EVS-PRD-delivery-channel/U
+    test('a local security finding is enqueued on a native destination '
+        'whose filter excludes system events', () async {
+      await _appendFinding(
+        backend,
+        eventId: 'finding-1',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11),
+      );
+      // Default filter: includeSystemEvents == false.
+      final dest = NativeDestination(id: 'native-findings');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      final head = await backend.readFifoHead('native-findings');
+      expect(head, isNotNull);
+      expect(head!.eventIds, ['finding-1']);
+      expect(await backend.readFillCursor('native-findings'), 1);
+    });
+
+    // The same finding, on a destination that does not serialize
+    // natively, follows the ordinary filter: EVS-DEV-destination-drain/X
+    // names natively serializing registrations only.
+    // Verifies: EVS-DEV-destination-drain/X
+    test('a non-native destination does not get a security finding unless '
+        'its filter matches', () async {
+      await _appendFinding(
+        backend,
+        eventId: 'finding-1',
+        clientTimestamp: DateTime.utc(2026, 4, 22, 11),
+      );
+      // Default filter: includeSystemEvents == false.
+      final dest = FakeDestination(id: 'fake');
+      final schedule = DestinationSchedule(startDate: DateTime.utc(2026, 4, 1));
+      await fillWithScheduleForTest(
+        dest,
+        backend: backend,
+        schedule: schedule,
+        clock: () => DateTime.utc(2026, 4, 22, 12),
+      );
+      expect(await backend.readFifoHead('fake'), isNull);
+      expect(await backend.readFillCursor('fake'), 1);
     });
   });
 }

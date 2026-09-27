@@ -12,6 +12,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'deliveries.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
 const _kType = 'progress_note';
@@ -617,7 +618,7 @@ void runBootProgressScenarios(
                   ranDuringBoot.add('runTransaction');
                 }),
               );
-              unawaited(other.ingestEvent(stored));
+              unawaited(ingestEventForTest(other, stored));
               unawaited(
                 rebuildView(
                   store: other,

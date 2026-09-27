@@ -46,14 +46,14 @@ hosts two independent `AppendOnlyDatastore` instances side by side:
 |                                                       |
 |  AppendOnlyDatastore B (hopId='hub-server')           |
 |  Source.identifier = HUB.install.uuid                 |
-|  EventStore.ingestBatch(...) materializes on hub      |
+|  EventStore.receiverEndpoint materializes on hub      |
 +-------------------------------------------------------+
 ```
 
 Both panes are the same code with different `Source` and a different
 on-disk database. Mobile's two `NativeDemoDestination` instances
 deliver via an in-process `DownstreamBridge` straight into hub's
-`EventStore.ingestBatch`. Hub sees the events with mobile's
+`EventStore.receiverEndpoint`. Hub sees the events with mobile's
 provenance entry stamped at hop 0 and a hub-stamped receiver entry
 at hop 1. View rows appear on hub as ingest commits, not
 on a separate code path.
@@ -227,7 +227,7 @@ appears on BOTH panes. When mobile appends a `demo_note` event:
   transaction; mobile's `MaterializedPanel` shows the row on its next
   refresh.
 - The same event flows through `NativeUser` to hub via the bridge.
-- Hub's `EventStore.ingestBatch` folds the SAME event through the SAME
+- Hub's receiver endpoint folds the SAME event through the SAME
   projection; hub's `notes` view gets its own row; hub's
   `MaterializedPanel` shows it.
 
@@ -254,8 +254,8 @@ The demo registers four destinations per pane:
 | --- | --- | --- | --- |
 | `Primary` | 3rd-party | `demo-json-v1` | `demo_note`, `red_button_pressed`, `green_button_pressed` |
 | `Secondary` | 3rd-party | `demo-json-v1` | `green_button_pressed`, `blue_button_pressed` |
-| `NativeUser` | Native (`esd/batch@2`) | `esd/batch@2` | All four user entry types |
-| `NativeAudit` | Native (`esd/batch@2`) | `esd/batch@2` | System events only |
+| `NativeUser` | Native (`esd/batch@3`) | `esd/batch@3` | All four user entry types |
+| `NativeAudit` | Native (`esd/batch@3`) | `esd/batch@3` | System events only |
 
 `Primary` and `Secondary` are `DemoDestination` —
 `serializesNatively: false`; lib invokes `transform` and persists the
@@ -263,13 +263,14 @@ resulting `WirePayload` verbatim. `Secondary` opts into
 `allowHardDelete: true` so the demo can exercise hard-delete on it.
 
 `NativeUser` and `NativeAudit` are `NativeDemoDestination` —
-`serializesNatively: true`; lib produces the `esd/batch@2` envelope
-when the delivery cycle fills the queue and persists `envelope_metadata` with
-`wire_payload: null`. Drain reconstructs the wire bytes
-deterministically on each send attempt and (when a bridge is wired)
-hands them to `DownstreamBridge.deliver`, which calls
-`EventStore.ingestBatch` on hub and maps the outcome to a
-`SendResult`.
+`serializesNatively: true`; each is a delivery channel. The delivery
+cycle's fill persists each queue item's `envelope_metadata` (its channel
+and delivery attributes) with `wire_payload: null`, and drain numbers each
+`esd/batch@3` delivery from the sender channel record, links it to the one
+before, and (when a bridge is wired) hands it to
+`DownstreamBridge.deliver`, which presents it to hub's
+`EventStore.receiverEndpoint` and maps the receiver's acknowledgement or
+refusal to a `SendResult`.
 
 `NativeAudit` ships only system events. Its filter is the canonical
 audit-bridge pattern:

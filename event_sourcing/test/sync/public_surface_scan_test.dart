@@ -875,6 +875,17 @@ void main() {
         isEmpty,
       );
     });
+
+    // Verifies: EVS-PRD-ingest/G
+    // the library exposes no public ingest entry point that admits an
+    //   event outside a delivery: EventStore carries no public
+    //   ingestEvent or ingestBatch member.
+    test('ingestEvent is not reachable from the public API', () {
+      final eventStore = classNamed(libraries, 'EventStore');
+      final members = declaredMembers(eventStore).keys;
+      expect(members, isNot(contains('ingestEvent')));
+      expect(members, isNot(contains('ingestBatch')));
+    });
   });
 
   group('synthetic fixtures fail the rules', () {

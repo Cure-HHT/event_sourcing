@@ -5,6 +5,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -81,7 +82,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        await dest.store.ingestEvent(e1!);
+        await ingestEventForTest(dest.store, e1!);
 
         // 2. Build a divergent copy: same event_id, different content,
         //    sealed with the canonical hash of that content.
@@ -94,7 +95,7 @@ void main() {
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
         // 3. Re-ingest with the divergent copy: kept in a finding.
-        final outcome = await dest.store.ingestEvent(tampered);
+        final outcome = await ingestEventForTest(dest.store, tampered);
         expect(outcome.outcome, IngestOutcome.keptInFinding);
         expect(outcome.resultHash, isNull);
         final findings = await dest.backend.findAllEvents(
@@ -142,7 +143,7 @@ void main() {
           initiator: const UserInitiator('u1'),
         );
         expect(e1, isNotNull);
-        await dest.store.ingestEvent(e1!);
+        await ingestEventForTest(dest.store, e1!);
 
         final tamperedMap = e1.toMap();
         tamperedMap['data'] = const {
@@ -151,7 +152,7 @@ void main() {
         tamperedMap['event_hash'] = canonicalEventHash(tamperedMap);
         final tampered = StoredEvent.fromMap(tamperedMap, 0);
 
-        final outcome = await dest.store.ingestEvent(tampered);
+        final outcome = await ingestEventForTest(dest.store, tampered);
         expect(outcome.outcome, IngestOutcome.keptInFinding);
 
         // No ingest.duplicate_received events (finding path, not dup path).

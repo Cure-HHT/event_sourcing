@@ -2,10 +2,12 @@
 // received record itself: a hash that does not recompute, an identifier
 // held under another sealed hash, a record the library does not store as an
 // event, and an event the receiving database's own identity originated.
-// Each anomaly is the middle record of a three-record delivery: ingest
-// records exactly one finding under role `ingest`, stores or keeps the
-// record as the requirement says, stores the other two, and records nothing
-// again when the delivery is presented again. Run on Sembast by
+// Each anomaly is the middle record of a three-record delivery on the
+// peer's channel: ingest records exactly one finding under role `ingest`
+// (followed by the delivery's `foreign_event` finding when the peer neither
+// authored nor stored the record last), stores or keeps the record as the
+// requirement says, stores the other two, and records no second finding of
+// that kind when the records are delivered again. Run on Sembast by
 // test/ingest/ingest_record_findings_test.dart and on Postgres by
 // test/storage/postgres/postgres_ingest_record_findings_test.dart.
 //
@@ -20,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart'
     show expectedFindingId, forkEvidence;
+import 'deliveries.dart';
 import 'destination_wedges_view_conformance.dart' show wedgeData;
 import 'record_fixtures.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
@@ -149,16 +152,26 @@ Map<String, Object?> relayedRecord(
 
 const Object _originHash = Object();
 
-/// A delivery envelope carrying [records] exactly as given.
-BatchEnvelope envelopeOf(List<Map<String, Object?>> records) => BatchEnvelope(
-  batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-  batchId: 'finding-batch-${records.first['event_id']}',
-  senderHop: 'peer-hop',
-  senderIdentifier: 'peer-install',
-  senderSoftwareVersion: 'peer-app@1.0.0',
-  sentAt: DateTime.utc(2026, 9, 1, 12),
-  events: records,
-);
+/// The channel the scenarios deliver on: from the peer database that
+/// [sealedRecord] seals records as by default.
+final DeliveryChannel peerChannel = testChannel(kPeerDatabaseId);
+
+/// Whether a receiver records a `foreign_event` finding for [record] on
+/// [peerChannel]: it carries an identifier, and its originator entry or its
+/// last provenance entry does not name the peer.
+bool isForeignOnPeerChannel(Map<String, Object?> record) {
+  if (record['event_id'] is! String) return false;
+  final metadata = record['metadata'];
+  final provenance = metadata is Map ? metadata['provenance'] : null;
+  if (provenance is! List || provenance.isEmpty) return true;
+  String? databaseOf(Object? entry) {
+    final id = entry is Map ? entry['database_id'] : null;
+    return id is String ? id : null;
+  }
+
+  return databaseOf(provenance.first) != kPeerDatabaseId ||
+      databaseOf(provenance.last) != kPeerDatabaseId;
+}
 
 /// [record] as the receiver decodes it from a delivery: JSON-encoded and
 /// decoded again.
@@ -217,20 +230,45 @@ void runIngestRecordFindingScenarios({
               Map<String, Object?>.from(e.data),
         ];
 
-    Future<IngestBatchResult> deliver(
+    Future<TestDelivery> deliver(
       EventStore store,
       List<Map<String, Object?>> records,
-    ) => store.ingestBatch(
-      envelopeOf(records).encode(),
-      wireFormat: BatchEnvelope.wireFormat,
-    );
+    ) => deliverTo(store, records, channel: peerChannel);
 
-    /// Delivers [a], [anomaly] and [c], checks that exactly one finding of
-    /// [kind] with [evidence] naming [aggregates] is recorded under role
-    /// `ingest`, that [a] and [c] are stored, that [anomaly] is stored
-    /// exactly when [stored], and that delivering the three again records
-    /// nothing more. Returns the middle outcome of the first delivery.
-    Future<PerEventIngestOutcome> expectOneFinding(
+    /// Checks that the findings [store] recorded after [before] are
+    /// exactly the `foreign_event` finding [delivery] meets for [record]
+    /// when it is foreign on the peer channel, and none otherwise.
+    Future<void> expectForeignFindingOnly(
+      EventStore store,
+      List<Map<String, Object?>> before,
+      TestDelivery delivery,
+      Map<String, Object?> record,
+    ) async {
+      final added = (await ownFindings(store)).sublist(before.length);
+      if (!isForeignOnPeerChannel(record)) {
+        expect(added, isEmpty);
+        return;
+      }
+      expect(added, hasLength(1));
+      expect(added.single['kind'], 'foreign_event');
+      expect(
+        (added.single['evidence']! as Map)['delivery_number'],
+        delivery.envelope.deliveryNumber,
+      );
+      expect(
+        (added.single['evidence']! as Map)['event_id'],
+        record['event_id'],
+      );
+    }
+
+    /// Delivers [a], [anomaly] and [c] on the peer channel, checks that
+    /// exactly one finding of [kind] with [evidence] naming [aggregates] is
+    /// recorded under role `ingest` (followed by the delivery's
+    /// `foreign_event` finding for [anomaly] when it is foreign on the
+    /// channel), that [a] and [c] are stored, that [anomaly] is stored
+    /// exactly when [stored] and has [outcome], and that delivering the
+    /// three again records no second finding of [kind].
+    Future<void> expectOneFinding(
       EventStore store, {
       required Map<String, Object?> anomaly,
       required String kind,
@@ -242,14 +280,27 @@ void runIngestRecordFindingScenarios({
       final a = sealedRecord();
       final c = sealedRecord();
       final before = await ownFindings(store);
-      final result = await deliver(store, <Map<String, Object?>>[
+      final delivery = await deliver(store, <Map<String, Object?>>[
         a,
         anomaly,
         c,
       ]);
+      expect(delivery.accepted, isTrue);
       final findings = await ownFindings(store);
-      expect(findings.length - before.length, 1, reason: 'one finding');
-      final finding = findings.last;
+      final foreign = isForeignOnPeerChannel(anomaly);
+      expect(
+        findings.length - before.length,
+        foreign ? 2 : 1,
+        reason: 'one finding, and a foreign_event finding for a foreign record',
+      );
+      final finding = findings[before.length];
+      if (foreign) {
+        expect(findings.last['kind'], 'foreign_event');
+        expect(
+          (findings.last['evidence']! as Map)['event_id'],
+          anomaly['event_id'],
+        );
+      }
       final id = expectedFindingId(
         databaseId: store.databaseId,
         role: 'ingest',
@@ -296,21 +347,19 @@ void runIngestRecordFindingScenarios({
           );
         }
       }
-      expect(result.events, hasLength(3));
-      expect(result.events.first.outcome, IngestOutcome.ingested);
-      expect(result.events.last.outcome, IngestOutcome.ingested);
-      final middle = result.events[1];
-      expect(middle.outcome, outcome);
-      expect(middle.findingIds, <String>[id]);
+      expect(await recordOutcomes(store, delivery), <IngestOutcome>[
+        IngestOutcome.ingested,
+        outcome,
+        IngestOutcome.ingested,
+      ]);
 
       final again = await deliver(store, <Map<String, Object?>>[a, anomaly, c]);
+      expect(again.accepted, isTrue);
+      await expectForeignFindingOnly(store, findings, again, anomaly);
       expect(
-        await ownFindings(store),
-        findings,
-        reason: 'presenting the delivery again records nothing more',
+        (await recordOutcomes(store, again)).first,
+        IngestOutcome.duplicate,
       );
-      expect(again.events.first.outcome, IngestOutcome.duplicate);
-      return middle;
     }
 
     // Verifies: EVS-DEV-chain-verification/P
@@ -397,11 +446,19 @@ void runIngestRecordFindingScenarios({
         'duplicate, not an identity mismatch', () async {
       final store = await open();
       final origin = sealedRecord();
-      await deliver(store, <Map<String, Object?>>[relayedRecord(origin)]);
-      final result = await deliver(store, <Map<String, Object?>>[origin]);
-      expect(result.events.single.outcome, IngestOutcome.duplicate);
-      expect(result.events.single.findingIds, isEmpty);
-      expect(await ownFindings(store), isEmpty);
+      final relayed = relayedRecord(origin);
+      final first = await deliver(store, <Map<String, Object?>>[relayed]);
+      await expectForeignFindingOnly(store, const [], first, relayed);
+      final before = await ownFindings(store);
+      final second = await deliver(store, <Map<String, Object?>>[origin]);
+      expect(await recordOutcomes(store, second), <IngestOutcome>[
+        IngestOutcome.duplicate,
+      ]);
+      expect(
+        await ownFindings(store),
+        before,
+        reason: 'the copy by another path records no finding',
+      );
     });
 
     final malformed = <String, Map<String, Object?> Function()>{
@@ -609,7 +666,7 @@ void runIngestRecordFindingScenarios({
           initiator: const UserInitiator('u'),
         ))!;
         final record = Map<String, Object?>.from(appended.toMap());
-        final middle = await expectOneFinding(
+        await expectOneFinding(
           store,
           anomaly: record,
           kind: 'own_event_ingested',
@@ -622,7 +679,10 @@ void runIngestRecordFindingScenarios({
           stored: true,
           outcome: IngestOutcome.duplicate,
         );
-        expect(middle.resultHash, appended.eventHash);
+        expect(
+          (await store.reader.findEventById(appended.eventId))!.eventHash,
+          appended.eventHash,
+        );
         final copies = await store.reader.findAllEvents(entryType: _kType);
         expect(
           copies.where((e) => e.eventId == appended.eventId),
@@ -721,14 +781,16 @@ void runIngestRecordFindingScenarios({
         ),
       ))!;
       final store = await open();
-      final a = sealedRecord();
-      final c = sealedRecord();
-      final result = await deliver(store, <Map<String, Object?>>[
+      // The finding travels on its originating database's channel, with
+      // the peer's other events.
+      final a = sealedRecord(databaseId: peer.databaseId);
+      final c = sealedRecord(databaseId: peer.databaseId);
+      final delivery = await deliverTo(store, <Map<String, Object?>>[
         a,
         Map<String, Object?>.from(peerFinding.toMap()),
         c,
       ]);
-      expect(result.events.map((e) => e.outcome), <IngestOutcome>[
+      expect(await recordOutcomes(store, delivery), <IngestOutcome>[
         IngestOutcome.ingested,
         IngestOutcome.ingested,
         IngestOutcome.ingested,
@@ -760,7 +822,7 @@ void runIngestRecordFindingScenarios({
         clientTimestamp: event.clientTimestamp,
         eventHash: event.eventHash,
       );
-      final outcome = await store.ingestEvent(unstorable);
+      final outcome = await ingestEventForTest(store, unstorable);
       expect(outcome.outcome, IngestOutcome.keptInFinding);
       expect(outcome.resultHash, isNull);
       final findings = await ownFindings(store);

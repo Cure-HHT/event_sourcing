@@ -428,6 +428,7 @@ void runDeliveryCycleScenarios(
           source: _source,
           lock: bLock,
           clock: _fillNow,
+          databaseId: b.store.databaseId,
         );
         expect(await b.backend.readFifoHead('remote'), isNotNull);
         final cycle = await w.start(cadence: const Duration(milliseconds: 50));

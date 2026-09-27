@@ -87,14 +87,13 @@ EventStore.close: Future<void> close()
 EventStore.databaseId: field String databaseId
 EventStore.entryTypes: field EntryTypeRegistry entryTypes
 EventStore.idempotencyStore: field IdempotencyStore? idempotencyStore
-EventStore.ingestBatch: Future<IngestBatchResult> ingestBatch(Uint8List bytes, {required String wireFormat})
-EventStore.ingestEvent: Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming)
 EventStore.isLocallyOriginated: bool isLocallyOriginated(StoredEvent event)
 EventStore.open: static Future<EventStore> open({required StorageDescription storage, required EntryTypeRegistry entryTypes, required Source source, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
 EventStore.openForTest: static Future<EventStore> openForTest({required StorageBackend storage, required EntryTypeRegistry entryTypes, required Source source, required MutableSecurityContextStore securityContexts, ProjectionRegistry? projections, PromoterRegistry? promoters, DateTime Function()? clock, Uuid? uuid, void Function(BootProgress)? onBootProgress})
 EventStore.projections: ProjectionRegistry get projections
 EventStore.promoters: PromoterRegistry get promoters
 EventStore.reader: field StorageReader reader
+EventStore.receiverEndpoint: field ReceiverEndpoint receiverEndpoint
 EventStore.runTransaction: Future<T> runTransaction<T>(Future<T> Function(Transaction, PublishCollector) body)
 EventStore.securityContexts: field SecurityContextStore securityContexts
 EventStore.source: field Source source
@@ -110,9 +109,6 @@ IdempotencyStore.lookup: Future<IdempotencyEntry?> lookup(String actionName, Str
 IdempotencyStore.new: constructor IdempotencyStore()
 IdempotencyStore.record: Future<void> record({required String actionName, required String principalId, required String key, required Map<String, Object?> resultJson, required List<String> emittedEventIds, required DateTime expiresAt, String? rawInputCanonicalJson})
 IdempotencyStore.sweepExpired: Future<int> sweepExpired({DateTime? before})
-IngestBatchResult.batchId: field String batchId
-IngestBatchResult.events: field List<PerEventIngestOutcome> events
-IngestBatchResult.new: constructor IngestBatchResult({required String batchId, required List<PerEventIngestOutcome> events})
 PerEventIngestOutcome.eventId: field String? eventId
 PerEventIngestOutcome.findingIds: field List<String> findingIds
 PerEventIngestOutcome.new: constructor PerEventIngestOutcome({required String? eventId, required IngestOutcome outcome, required String? resultHash, List<String> findingIds = const <String>[]})
@@ -137,6 +133,8 @@ PromoterRegistry.register: void register(PromoterSpec spec)
 PromoterRegistry.seal: void seal()
 PublishCollector.events: List<StoredEvent> get events
 PublishCollector.rowChanges: List<AggregateFoldChange> get rowChanges
+ReceiverEndpoint.accept: Future<ReceiverResponse> accept(Uint8List bytes, {required Set<String> senderDatabaseIds})
+ReceiverEndpoint.pull: Future<PullResponse> pull(PullRequest request, {required Set<String> senderDatabaseIds})
 RetentionResult.compactedCount: field int compactedCount
 RetentionResult.new: constructor RetentionResult({required int compactedCount, required int purgedCount})
 RetentionResult.purgedCount: field int purgedCount

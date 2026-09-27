@@ -4,7 +4,9 @@
 //   version 2 adds the declared library roles and keeps the minimum;
 //   version 3 adds the chain lookup columns and indexes, the causal column
 //   and the latest-eligible-version index to the events table and raises
-//   the minimum to itself.
+//   the minimum to itself; version 4 adds the delivery columns and the
+//   retained-delivery index to the queue table, rewrites its guard, and
+//   raises the minimum to itself.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -32,13 +34,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 3;
+const int postgresSchemaVersion = 4;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 3;
+const int postgresMinCompatibleSchemaVersion = 4;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -94,6 +96,18 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _eventsSecurityFindingIdx,
       _eventsCausalColumn,
       _eventsLatestEligibleIdx,
+    ],
+  ),
+  // A build before this step marks a delivery sent without the delivery it
+  // was acknowledged under, and its guard refuses a resume's retirement of
+  // an attempted item, so the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 4,
+    minCompatibleVersion: 4,
+    ddl: <String>[
+      _fifoEntriesDeliveryColumns,
+      _fifoEntriesDeliveryIdx,
+      _fifoEntriesGuardFunction,
     ],
   ),
 ];
@@ -289,6 +303,25 @@ CREATE TABLE IF NOT EXISTS fifo_entries (
 )
 ''';
 
+// The delivery a queue item was acknowledged under: the channel's
+// generation, the delivery number and the delivery hash. Null until the
+// change that marks the item sent under a delivery.
+const String _fifoEntriesDeliveryColumns = '''
+ALTER TABLE fifo_entries
+  ADD COLUMN IF NOT EXISTS delivery_generation  BIGINT,
+  ADD COLUMN IF NOT EXISTS delivery_number      BIGINT,
+  ADD COLUMN IF NOT EXISTS delivery_hash        TEXT
+''';
+
+// The retained-delivery read: the sent item at a number under a
+// generation, the latest first.
+const String _fifoEntriesDeliveryIdx = '''
+CREATE INDEX IF NOT EXISTS fifo_entries_delivery_idx
+  ON fifo_entries (destination_id, delivery_generation, delivery_number,
+                   sequence_in_queue)
+  WHERE final_status = 'sent'
+''';
+
 const String _fifoEntriesHeadIdx = '''
 CREATE INDEX IF NOT EXISTS fifo_entries_head_idx
   ON fifo_entries (destination_id, sequence_in_queue)
@@ -296,18 +329,22 @@ CREATE INDEX IF NOT EXISTS fifo_entries_head_idx
 ''';
 
 // The queue table's guard. The library changes a queue item only in these
-// shapes: it inserts an item pending, with no attempts and no delivery time;
-// it appends one attempt to a pending item; it marks a pending item sent
-// (stamping the delivery time) or wedged, appending at most the attempt
-// that decided it; it tombstones a wedged item; and it deletes pending
-// items. The guard refuses every change outside those shapes, whatever role
-// makes it: no item is inserted terminal, rewrites what it was enqueued
-// with, or loses a terminal item. It checks the shape of a change, not who
-// makes it, so a hand-written change of a legal shape passes (wedging or
-// marking sent a pending item, tombstoning a wedged one, deleting a pending
-// one, inserting a pending one); those rest on the storage precondition.
-// The triggers fire in every session replication role, and the role that
-// owns the table can drop them; the runtime role cannot.
+// shapes: it inserts an item pending, with no attempts, no delivery time and
+// no delivery; it appends one attempt to a pending item; it marks a pending
+// item sent (stamping the delivery time and, on a delivery channel, the
+// delivery it was acknowledged under) or wedged, appending at most the
+// attempt that decided it; it tombstones a wedged item, and a pending item
+// that carries attempts (a resume or a new generation of its channel); and
+// it deletes pending items that carry no attempt. The guard refuses every
+// change outside those shapes, whatever role makes it: no item is inserted
+// terminal or delivered, rewrites what it was enqueued with or the delivery
+// it was acknowledged under, or loses a terminal or attempted item. It
+// checks the shape of a change, not who makes it, so a hand-written change
+// of a legal shape passes (wedging or marking sent a pending item,
+// tombstoning a wedged one, deleting a pending one that carries no attempt,
+// inserting a pending one); those rest on the storage precondition. The
+// triggers fire in every session replication role, and the role that owns
+// the table can drop them; the runtime role cannot.
 //
 // The functions pin their search path, so a role that can create objects on
 // a schema earlier on its path cannot substitute an operator or function
@@ -334,6 +371,12 @@ BEGIN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % is inserted with a delivery time; an item is inserted undelivered',
         NEW.entry_id USING ERRCODE = 'check_violation';
     END IF;
+    IF NEW.delivery_generation IS NOT NULL
+       OR NEW.delivery_number IS NOT NULL
+       OR NEW.delivery_hash IS NOT NULL THEN
+      RAISE EXCEPTION 'fifo_entries_guard: queue item % is inserted with a delivery; an item is inserted with none',
+        NEW.entry_id USING ERRCODE = 'check_violation';
+    END IF;
     RETURN NEW;
   END IF;
 
@@ -341,6 +384,10 @@ BEGIN
     IF OLD.final_status IS NOT NULL THEN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % is %; a terminal item is never deleted',
         OLD.entry_id, OLD.final_status USING ERRCODE = 'check_violation';
+    END IF;
+    IF OLD.attempts IS DISTINCT FROM '[]'::jsonb THEN
+      RAISE EXCEPTION 'fifo_entries_guard: queue item % carries attempts; an item carrying attempts is never deleted',
+        OLD.entry_id USING ERRCODE = 'check_violation';
     END IF;
     RETURN OLD;
   END IF;
@@ -353,10 +400,16 @@ BEGIN
     ('pending', 'pending'),
     ('pending', 'sent'),
     ('pending', 'wedged'),
+    ('pending', 'tombstoned'),
     ('wedged', 'tombstoned')
   ) THEN
-    RAISE EXCEPTION 'fifo_entries_guard: queue item % cannot change status from % to %; the legal changes are pending to sent, pending to wedged and wedged to tombstoned',
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % cannot change status from % to %; the legal changes are pending to sent, pending to wedged, wedged to tombstoned and, for an item carrying attempts, pending to tombstoned',
       OLD.entry_id, old_status, new_status USING ERRCODE = 'check_violation';
+  END IF;
+  IF (old_status, new_status) = ('pending', 'tombstoned')
+     AND OLD.attempts IS NOT DISTINCT FROM '[]'::jsonb THEN
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % carries no attempt; only an item carrying attempts changes from pending to tombstoned',
+      OLD.entry_id USING ERRCODE = 'check_violation';
   END IF;
   IF NEW.destination_id IS DISTINCT FROM OLD.destination_id
      OR NEW.entry_id IS DISTINCT FROM OLD.entry_id
@@ -377,10 +430,18 @@ BEGIN
     RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its delivery time outside the change that marks it sent',
       OLD.entry_id USING ERRCODE = 'check_violation';
   END IF;
+  IF (NEW.delivery_generation IS DISTINCT FROM OLD.delivery_generation
+      OR NEW.delivery_number IS DISTINCT FROM OLD.delivery_number
+      OR NEW.delivery_hash IS DISTINCT FROM OLD.delivery_hash)
+     AND (old_status, new_status) <> ('pending', 'sent') THEN
+    RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its delivery outside the change that marks it sent',
+      OLD.entry_id USING ERRCODE = 'check_violation';
+  END IF;
   -- The array checks come first and on their own, since the length
   -- functions raise on anything else.
   IF NEW.attempts IS DISTINCT FROM OLD.attempts THEN
     IF old_status <> 'pending'
+       OR new_status NOT IN ('pending', 'sent', 'wedged')
        OR jsonb_typeof(NEW.attempts) IS DISTINCT FROM 'array'
        OR jsonb_typeof(OLD.attempts) IS DISTINCT FROM 'array' THEN
       RAISE EXCEPTION 'fifo_entries_guard: queue item % changes its attempts other than by appending one attempt while pending',

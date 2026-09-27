@@ -420,6 +420,7 @@ void main() {
         required String eventId,
         required DateTime clientTimestamp,
       }) async {
+        final databaseId = await harnessDatabaseIdForTest(backend);
         return backend.transaction((txn) async {
           final seq = await backend.nextSequenceNumber(txn);
           final event = StoredEvent(
@@ -433,7 +434,14 @@ void main() {
             eventType: 'finalized',
             sequenceNumber: seq,
             data: const <String, dynamic>{},
-            metadata: const <String, dynamic>{},
+            metadata: <String, dynamic>{
+              'provenance': <Map<String, Object?>>[
+                <String, Object?>{
+                  'database_id': databaseId,
+                  'library_version': '0.0.0',
+                },
+              ],
+            },
             initiator: const UserInitiator('u'),
             clientTimestamp: clientTimestamp,
             eventHash: 'hash-$eventId',

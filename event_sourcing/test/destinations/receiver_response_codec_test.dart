@@ -406,20 +406,21 @@ void main() {
         ),
         isA<SendTransient>(),
       );
-      final v2 = BatchEnvelope(
-        batchFormatVersion: '2',
-        batchId: 'b',
-        senderHop: 'h',
-        senderIdentifier: 'i',
-        senderSoftwareVersion: 'v',
-        sentAt: DateTime.utc(2026),
-        events: const <Map<String, Object?>>[<String, Object?>{}],
-      );
+      // A batch in the data-format-2 batch format.
+      final v2 = <String, Object?>{
+        'batch_format_version': '2',
+        'batch_id': 'b',
+        'sender_hop': 'h',
+        'sender_identifier': 'i',
+        'sender_software_version': 'v',
+        'sent_at': DateTime.utc(2026).toIso8601String(),
+        'events': const <Map<String, Object?>>[<String, Object?>{}],
+      };
       expect(
         await receiver.send(
           WirePayload(
-            bytes: v2.encode(),
-            contentType: BatchEnvelope.wireFormat,
+            bytes: Uint8List.fromList(utf8.encode(jsonEncode(v2))),
+            contentType: 'esd/batch@2',
             transformVersion: null,
           ),
         ),

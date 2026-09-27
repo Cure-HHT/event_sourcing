@@ -10,7 +10,6 @@
 //
 // This file exposes [runDestinationWedgesViewScenarios] and registers no
 // `main()` of its own. Traceability lives on the individual tests.
-import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
@@ -22,6 +21,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'deliveries.dart';
 import 'fake_destination.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'queue_test_support.dart';
@@ -102,13 +102,16 @@ class _Store {
   Future<List<StoredEvent>> events({String? entryType}) =>
       backend.findAllEvents(entryType: entryType);
 
-  /// [snapshot] with the security findings left out of the log.
+  /// [snapshot] with the security findings and the accepted-delivery
+  /// audits left out of the log.
   Future<Map<String, Object?>> snapshotBesideFindings() async =>
       <String, Object?>{
         ...await snapshot(),
         'events': <String>[
           for (final e in await events())
-            if (e.entryType != kSecurityFindingEntryType) e.eventId,
+            if (e.entryType != kSecurityFindingEntryType &&
+                e.eventType != 'ingest.delivery_accepted')
+              e.eventId,
         ],
       };
 
@@ -242,31 +245,17 @@ Map<String, Object?> wedgeData({
   return data;
 }
 
-Uint8List _batchOf(List<StoredEvent> events) => BatchEnvelope(
-  batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-  batchId: 'wedges-view-batch-${events.first.eventId}',
-  senderHop: _peerSource.hopId,
-  senderIdentifier: _peerSource.identifier,
-  senderSoftwareVersion: _peerSource.softwareVersion,
-  sentAt: DateTime.utc(2026, 9, 1, 12),
-  events: <Map<String, Object?>>[
-    for (final e in events) Map<String, Object?>.from(e.toMap()),
-  ],
-).encode();
-
-/// The two ingest entry points, each taking the whole list of events: the
-/// batch in one envelope, or each event in its own `ingestEvent` call.
+/// The two ingest paths, each taking the whole list of events: one
+/// delivery on their originating database's channel, or each event through
+/// the ingest seam.
 final Map<String, Future<void> Function(EventStore, List<StoredEvent>)>
 _ingestPaths = <String, Future<void> Function(EventStore, List<StoredEvent>)>{
-  'ingestBatch': (store, events) async {
-    await store.ingestBatch(
-      _batchOf(events),
-      wireFormat: BatchEnvelope.wireFormat,
-    );
+  'delivery': (store, events) async {
+    await deliverEventsTo(store, events);
   },
   'ingestEvent': (store, events) async {
     for (final e in events) {
-      await store.ingestEvent(e);
+      await ingestEventForTest(store, e);
     }
   },
 };
@@ -452,7 +441,7 @@ void runDestinationWedgesViewScenarios(
             'row_id': 'r',
           },
         );
-        await r.store.ingestEvent(recovery);
+        await ingestEventForTest(r.store, recovery);
         expect(await wedgesViewRows(r.backend), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
       });
@@ -549,6 +538,7 @@ void runDestinationWedgesViewScenarios(
           await r.registry.cancelHalt('k', initiator: _init);
           await wedgeHeadForTest(r.registry, 'k');
           await r.registry.deleteDestination('k', initiator: _init);
+          await resumeChannelForTest(r.registry, r.backend, initiator: _init);
           final audits = <StoredEvent>[
             for (final e in await r.events())
               if (kDestinationAuditEntryTypes.contains(e.entryType)) e,
@@ -582,7 +572,7 @@ void runDestinationWedgesViewScenarios(
         final peerWedge = (await p.events(
           entryType: kDestinationWedgedEntryType,
         )).single;
-        await r.store.ingestEvent(peerWedge);
+        await ingestEventForTest(r.store, peerWedge);
         final localRow = await r.wedge(FakeDestination(id: 'shared'));
         expect((await wedgesViewRows(r.backend)).keys.toSet(), <String>{
           '${p.store.databaseId}|shared',
@@ -615,7 +605,7 @@ void runDestinationWedgesViewScenarios(
         for (final e in await p.events(
           entryType: kDestinationWedgedEntryType,
         )) {
-          await r.store.ingestEvent(e);
+          await ingestEventForTest(r.store, e);
         }
         await r.wedge(FakeDestination(id: 'shared'));
         final peerKey = '${p.store.databaseId}|';
@@ -631,7 +621,8 @@ void runDestinationWedgesViewScenarios(
           peerRow,
           initiator: _init,
         );
-        await r.store.ingestEvent(
+        await ingestEventForTest(
+          r.store,
           (await p.events(
             entryType: kDestinationWedgeRecoveredEntryType,
           )).single,
@@ -642,7 +633,8 @@ void runDestinationWedgesViewScenarios(
         });
 
         await p.registry.deleteDestination('gone', initiator: _init);
-        await r.store.ingestEvent(
+        await ingestEventForTest(
+          r.store,
           (await p.events(entryType: kDestinationDeletedEntryType)).single,
         );
         expect((await wedgesViewRows(r.backend)).keys, <String>[localKey]);
@@ -666,9 +658,9 @@ void runDestinationWedgesViewScenarios(
         final recovery = (await p.events(
           entryType: kDestinationWedgeRecoveredEntryType,
         )).single;
-        await r.store.ingestEvent(recovery);
+        await ingestEventForTest(r.store, recovery);
         expect(await wedgesViewRows(r.backend), isEmpty);
-        await r.store.ingestEvent(wedge);
+        await ingestEventForTest(r.store, wedge);
         expect((await wedgesViewRows(r.backend)).keys, <String>[
           '${p.store.databaseId}|late',
         ]);
@@ -689,7 +681,7 @@ void runDestinationWedgesViewScenarios(
           eventType: kDestinationWedgedEventType,
           data: const <String, Object?>{'id': 's', 'database_id': 'peer-db'},
         );
-        await r.store.ingestEvent(sparse);
+        await ingestEventForTest(r.store, sparse);
         final stored = (await r.events(
           entryType: kDestinationWedgedEntryType,
         )).single;
@@ -1259,6 +1251,7 @@ void runDestinationWedgesViewScenarios(
         await s.registry.setEndDate('e', DateTime.utc(2100), initiator: _init);
         await s.registry.tombstoneAndRefill('e', row, initiator: _init);
         await s.registry.deleteDestination('e', initiator: _init);
+        await resumeChannelForTest(s.registry, backend, initiator: _init);
         final secured = await store.append(
           entryType: _noteType,
           aggregateId: 'secured',
@@ -1292,8 +1285,8 @@ void runDestinationWedgesViewScenarios(
         );
         final p = await peer();
         final peerNote = await p.note('peer-note');
-        await store.ingestEvent(peerNote);
-        await store.ingestEvent(peerNote);
+        await ingestEventForTest(store, peerNote);
+        await ingestEventForTest(store, peerNote);
         final kinds = <String>{
           for (final e in await store.reader.findAllEvents())
             if (kReservedSystemEntryTypeIds.contains(e.entryType)) e.entryType,

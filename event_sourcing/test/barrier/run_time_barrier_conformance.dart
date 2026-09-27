@@ -23,6 +23,7 @@ import 'package:event_sourcing/src/security/security_context_store.dart'
     show MutableSecurityContextStore;
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/deliveries.dart';
 import '../test_support/fake_destination.dart';
 
 const Source barrierSource = Source(
@@ -356,7 +357,7 @@ void runRunTimeBarrierScenarios({
 
         // ingest of a peer's event.
         final peerEvent = await _appendNote(peer, 'p-1');
-        final outcome = await store.ingestEvent(peerEvent!);
+        final outcome = await ingestEventForTest(store, peerEvent!);
         expect(outcome.outcome, IngestOutcome.ingested);
 
         // registry operations.

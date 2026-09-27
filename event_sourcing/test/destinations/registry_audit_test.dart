@@ -292,6 +292,12 @@ void main() {
         initiator: _user,
       );
       await ds.destinations.deleteDestination('wedged', initiator: _user);
+      // The drainer resumes a channel, appending the resume event.
+      await resumeChannelForTest(
+        ds.destinations,
+        backend,
+        initiator: _automation,
+      );
 
       final destinationAuditEntryTypes = kReservedSystemEntryTypeIds
           .where((id) => id.startsWith('system.destination_'))
@@ -336,6 +342,7 @@ void main() {
         kDestinationDeletedEventType,
         kDestinationWedgeRecoveredEventType,
         kDestinationWedgedEventType,
+        kDestinationChannelResumedEventType,
         kDestinationHaltRequestedEventType,
         kDestinationHaltCancelledEventType,
       });

@@ -490,13 +490,14 @@ abstract class StorageBackend {
   ///   `wire_payload`, with `wire_format = wirePayload.contentType` and
   ///   `envelope_metadata = null`. Drain hands the bytes back to
   ///   `Destination.send` verbatim.
-  /// - [nativeEnvelope] (native `esd/batch@2` path) — caller (typically
-  ///   `fillBatch`) built the envelope identity from the local
-  ///   `Source`. The metadata is persisted under `envelope_metadata`,
-  ///   with `wire_payload = null` and `wire_format = "esd/batch@2"`.
-  ///   Drain reconstructs wire bytes deterministically (RFC 8785 JCS)
-  ///   from `envelope_metadata` + `event_ids`-resolved events on each
-  ///   send attempt.
+  /// - [nativeEnvelope] (native path) — caller (the fill, or a resume
+  ///   copying a retained delivery's) built the envelope identity from the
+  ///   local `Source`. The metadata is persisted under `envelope_metadata`,
+  ///   with `wire_payload = null` and `wire_format` the metadata's
+  ///   ([BatchEnvelopeMetadata.wireFormat]: `esd/batch@3` for an item of a
+  ///   delivery channel). Drain reconstructs wire bytes deterministically
+  ///   (RFC 8785 JCS) from `envelope_metadata` + `event_ids`-resolved
+  ///   events on each send attempt.
   ///
   /// Implementations SHALL extract `event_ids` from
   /// `batch.map((e) => e.eventId)` and `event_id_range` from
@@ -563,6 +564,18 @@ abstract class StorageBackend {
     int? afterSequenceInQueue,
     int? limit,
   });
+
+  /// [listFifoEntries] of every item of [destinationId]'s queue, in
+  /// `sequence_in_queue` order, read inside [txn], so the result reflects
+  /// writes staged in the same transaction. The drainer reads it when it
+  /// reads a receiver record: to find the deliveries it attempted on the
+  /// registration and the pending items a resume or a new generation
+  /// retires.
+  @internal
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  );
 
   /// Append [attempt] to the `attempts[]` list of the entry identified by
   /// `(destinationId, entryId)` inside [txn]. Does not change
@@ -829,6 +842,46 @@ abstract class StorageBackend {
   @internal
   Future<void> clearSendFenceTxn(Transaction txn, String destinationId);
 
+  // -------- Sender channel records --------
+
+  /// Read [destinationId]'s sender channel record inside [txn], or null when
+  /// the destination has none (it serializes natively and is registered
+  /// exactly while it has one).
+  ///
+  /// Persisted under `backend_state` key `sender_channel_<destinationId>`.
+  // Implements: EVS-PRD-destinations/L
+  // the sender channel record is persisted state the storage precondition
+  //   names: it changes only through the library's operations.
+  @internal
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
+  /// Write [record] as [destinationId]'s sender channel record inside
+  /// [txn], replacing the previous one. The registration writes
+  /// [SenderChannelRecord.initial]; afterwards only the drainer writes one,
+  /// in the transaction that commits a send outcome, a resume or a new
+  /// generation.
+  // Implements: EVS-DEV-delivery-channel/E
+  // the sender channel record changes only with the registration that
+  //   writes it and, afterwards, a send outcome, a resume or a new
+  //   generation; no other registry operation writes it.
+  @internal
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  );
+
+  /// Delete [destinationId]'s sender channel record inside [txn]. No-op
+  /// when none exists. A deletion deletes it.
+  @internal
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  );
+
   // -------- Registry check record --------
 
   /// Write [check] as the database-wide registry check record inside [txn],
@@ -1032,10 +1085,14 @@ abstract class StorageBackend {
   /// Set the row's `final_status` to [status] inside [txn]. The legal
   /// transitions are exactly:
   ///
-  /// - `null -> sent` — the drainer delivered the pending head.
+  /// - `null -> sent` — the drainer delivered the pending head of a
+  ///   destination that is no delivery channel ([markSentTxn] marks a
+  ///   delivery sent).
   /// - `null -> wedged` — the drainer wedged the pending head.
   /// - `wedged -> tombstoned` — an operator recovery or a deletion retired
   ///   a wedged head.
+  /// - `null -> tombstoned`, only for an item that carries attempts — a
+  ///   resume or a new generation of the delivery channel retired it.
   ///
   /// Implementations SHALL throw [StateError] and change nothing on every
   /// other pair, on a repeated status, and when the target row is absent.
@@ -1043,7 +1100,7 @@ abstract class StorageBackend {
   /// On `null -> sent` the implementation SHALL stamp
   /// `sent_at = DateTime.now().toUtc()`. On every other transition
   /// `attempts[]` and `sent_at` SHALL be left untouched, so a tombstoned
-  /// row keeps the attempts of the wedge it retired.
+  /// row keeps the attempts of the wedge or the sends it retired.
   @internal
   Future<void> setFinalStatusTxn(
     Transaction txn,
@@ -1051,6 +1108,61 @@ abstract class StorageBackend {
     String entryId,
     FinalStatus status,
   );
+
+  /// Mark the pending item [entryId] of [destinationId] sent inside [txn],
+  /// recording the delivery it was acknowledged under: the channel's
+  /// [generation], the [deliveryNumber] and the [deliveryHash]. Stamps
+  /// `sent_at = DateTime.now().toUtc()` and leaves `attempts[]` untouched.
+  ///
+  /// This is the only change that writes the three delivery fields.
+  /// Implementations SHALL throw [StateError] and change nothing when the
+  /// item is absent or not pending.
+  // Implements: EVS-DEV-delivery-channel/J
+  // the change that marks a queue item sent records the generation,
+  //   delivery number and delivery hash it was acknowledged under.
+  @internal
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  });
+
+  /// Delete the pending item [entryId] of [destinationId] inside [txn]: a
+  /// resume or a new generation of the delivery channel retires a pending
+  /// item that carries no attempt this way.
+  ///
+  /// Implementations SHALL throw [StateError] and change nothing when the
+  /// item is absent, terminal, or carries attempts: an item that was sent
+  /// is retired by tombstoning it, and a terminal item is the delivery
+  /// record.
+  @internal
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  );
+
+  /// Read inside [txn] the retained delivery of [destinationId] at
+  /// [deliveryNumber] under [generation]: among the items marked sent with
+  /// that generation and number, the one marked last (the highest
+  /// `sequence_in_queue`), or null when there is none.
+  ///
+  /// An item sent at that number under another generation, and an item
+  /// that is not sent, is never the retained delivery.
+  // Implements: EVS-DEV-delivery-resume/W
+  // the retained delivery at a number is the delivery the queue last
+  //   marked sent at that number under the given generation; none where
+  //   there is none.
+  @internal
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  });
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`
   /// is strictly greater than [afterSequenceInQueue] AND whose
@@ -1120,6 +1232,56 @@ abstract class StorageBackend {
     Transaction txn,
     String databaseId,
   );
+
+  /// The event of the aggregate [aggregateId] with the highest local
+  /// sequence number among the events this database holds as authored
+  /// (copies whose provenance holds exactly one entry, naming
+  /// [databaseId], this database's identity), or null when it holds none.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-DEV-delivery-receiver/I
+  // the receiver's record of a channel is read from the latest
+  //   accepted-delivery audit of the channel's audit aggregate that the
+  //   receiver authored; audits another database authored never match.
+  @internal
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  });
+
+  /// The `ingest.delivery_accepted` audits of the aggregate [aggregateId]
+  /// that this database holds as authored (copies whose provenance holds
+  /// exactly one entry, naming [databaseId]) and whose data's
+  /// `delivery_number` is a number from [fromDeliveryNumber] to
+  /// [toDeliveryNumber] inclusive, in ascending local sequence number.
+  /// Read inside [txn].
+  // Implements: EVS-DEV-delivery-receiver/O
+  // the pull reads each delivery of a range from the accepted-delivery
+  //   audit of the channel that the receiver authored for it.
+  @internal
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  });
+
+  /// For each aggregate holding an `ingest.delivery_accepted` audit that
+  /// this database holds as authored and whose data's `channel` names a
+  /// sending database in [senderDatabaseIds], the one such audit with the
+  /// highest local sequence number. Read inside [txn]; in no particular
+  /// order.
+  // Implements: EVS-DEV-delivery-receiver/R
+  // the channel listing reads, from the accepted-delivery audits the
+  //   receiver authored, every channel of every generation it accepted a
+  //   delivery on from the named senders.
+  @internal
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  });
 
   /// The held events sealed under [sealedHash], in ascending local
   /// sequence number. Read inside [txn].

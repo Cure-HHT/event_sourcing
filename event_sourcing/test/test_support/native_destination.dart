@@ -7,8 +7,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// native destination from the library's source identity.
 ///
 /// Each `send` pops the next [SendResult] of the script supplied at
-/// construction (or pushed with [enqueueScript]). With the script empty it
-/// answers as an in-step receiver: it decodes the payload as a
+/// construction (or pushed with [enqueueScript]); a scripted send reaches
+/// no receiver. With the script empty it answers as an in-step receiver: it decodes the payload as a
 /// [DeliveryEnvelope], keeps its record of each channel, and answers with
 /// the library's acknowledgement or refusal body passed through
 /// [decodeReceiverAnswer]:
@@ -20,6 +20,12 @@ import 'package:event_sourcing/event_sourcing.dart';
 /// - a batch that does not decode is refused as `rejected`, naming the
 ///   decoder's reason;
 /// - every other delivery is refused `out_of_sequence`.
+///
+/// A result pushed with [loseAnswer] replaces the receiver's answer to the
+/// next unscripted send: the receiver handles the delivery (accepting it,
+/// when it follows its record) and the sender sees the replacement, as when
+/// a transport loses the acknowledgement. [restoreReceiverTo] moves the
+/// receiver back, as a restore of its database does.
 ///
 /// Its [channelPull] serves the channels and the deliveries it accepted.
 class NativeDestination extends Destination {
@@ -38,7 +44,7 @@ class NativeDestination extends Destination {
   final String id;
 
   @override
-  String get wireFormat => 'esd/batch@2';
+  String get wireFormat => DeliveryEnvelope.wireFormat;
 
   @override
   bool get serializesNatively => true;
@@ -57,6 +63,7 @@ class NativeDestination extends Destination {
 
   final SubscriptionFilter _filter;
   final List<SendResult> _script;
+  final List<SendResult> _lostAnswers = <SendResult>[];
 
   /// The deliveries the in-step receiver accepted, by channel, in order.
   final Map<DeliveryChannel, List<DeliveryEnvelope>> accepted =
@@ -89,15 +96,37 @@ class NativeDestination extends Destination {
   @override
   Future<SendResult> send(WirePayload payload) async {
     sent.add(payload);
-    final result = _script.isNotEmpty
-        ? _script.removeAt(0)
-        : decodeReceiverAnswer(_answer(payload).encode());
+    final SendResult result;
+    if (_script.isNotEmpty) {
+      result = _script.removeAt(0);
+    } else {
+      final answer = decodeReceiverAnswer(_answer(payload).encode());
+      result = _lostAnswers.isNotEmpty ? _lostAnswers.removeAt(0) : answer;
+    }
     returned.add(result);
     return result;
   }
 
   /// Push [result] onto the tail of the script.
   void enqueueScript(SendResult result) => _script.add(result);
+
+  /// Replace the receiver's answer to the next unscripted send with
+  /// [replacement] (by default a transient failure): the receiver handles
+  /// the delivery, and its answer is lost.
+  void loseAnswer([
+    SendResult replacement = const SendTransient(
+      error: 'the acknowledgement was lost',
+    ),
+  ]) => _lostAnswers.add(replacement);
+
+  /// Move the receiver's record of [channel] back to [deliveryNumber],
+  /// forgetting every delivery it accepted above it, as a restore of the
+  /// receiver's database to an earlier point does.
+  void restoreReceiverTo(DeliveryChannel channel, int deliveryNumber) {
+    final deliveries = accepted[channel];
+    if (deliveries == null) return;
+    deliveries.removeRange(deliveryNumber, deliveries.length);
+  }
 
   /// The in-step receiver's record of [channel].
   DeliveryRecord recordOf(DeliveryChannel channel) {

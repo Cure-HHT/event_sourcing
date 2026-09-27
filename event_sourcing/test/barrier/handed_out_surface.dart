@@ -23,6 +23,7 @@ const String committedSurfacePath = 'test/barrier/handed_out_surface.txt';
 const List<String> handedOutTypes = <String>[
   // The event store and what it hands out.
   'EventStore',
+  'ReceiverEndpoint',
   'EntryTypeRegistry',
   'ProjectionRegistry',
   'PromoterRegistry',
@@ -46,7 +47,6 @@ const List<String> handedOutTypes = <String>[
   'ActionDispatcher',
   // The values and results the operations return.
   'StoredEvent',
-  'IngestBatchResult',
   'PerEventIngestOutcome',
   'RetentionResult',
   'ChainVerificationVerdict',

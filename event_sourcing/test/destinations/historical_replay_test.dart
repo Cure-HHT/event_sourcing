@@ -48,7 +48,8 @@ Future<StoredEvent> _appendEvent(
   String entryType = 'epistaxis_event',
   String eventType = 'finalized',
   String aggregateId = 'agg-1',
-}) {
+}) async {
+  final databaseId = await harnessDatabaseIdForTest(backend);
   return backend.transaction((txn) async {
     final seq = await backend.nextSequenceNumber(txn);
     final event = StoredEvent(
@@ -62,7 +63,14 @@ Future<StoredEvent> _appendEvent(
       eventType: eventType,
       sequenceNumber: seq,
       data: const <String, dynamic>{},
-      metadata: const <String, dynamic>{},
+      metadata: <String, dynamic>{
+        'provenance': <Map<String, Object?>>[
+          <String, Object?>{
+            'database_id': databaseId,
+            'library_version': '0.0.0',
+          },
+        ],
+      },
       initiator: const UserInitiator('u'),
       clientTimestamp: clientTimestamp,
       eventHash: 'hash-$eventId',

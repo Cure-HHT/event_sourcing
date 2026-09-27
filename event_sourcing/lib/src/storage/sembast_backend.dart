@@ -5,13 +5,16 @@ import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kSecurityFindingEntryType, kSecurityFindingRecordedEventType;
+    show
+        kIngestAuditEntryType,
+        kIngestDeliveryAcceptedEventType,
+        kSecurityFindingEntryType,
+        kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
@@ -753,6 +756,122 @@ class SembastBackend extends StorageBackend {
     return StoredEvent.fromMap(Map<String, Object?>.from(value), sequence);
   }
 
+  // Implements: EVS-DEV-delivery-receiver/I
+  // on Sembast the latest authored event of an aggregate is found by a scan
+  //   of the aggregate's events, newest first.
+  @override
+  @internal
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final record = await _eventStore.findFirst(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.equals('aggregate_id', aggregateId),
+          Filter.custom(
+            (record) =>
+                _coordinatesOf(
+                  record.value! as Map<String, Object?>,
+                ).heldAsAuthoredBy ==
+                databaseId,
+          ),
+        ]),
+        sortOrders: [SortOrder('sequence_number', false)],
+      ),
+    );
+    if (record == null) return null;
+    return StoredEvent.fromMap(
+      Map<String, Object?>.from(record.value),
+      record.key,
+    );
+  }
+
+  /// The filter matching the `ingest.delivery_accepted` audits the
+  /// database [databaseId] holds as authored.
+  static Filter _authoredDeliveryAudits(String databaseId) =>
+      Filter.and(<Filter>[
+        Filter.equals('event_type', kIngestDeliveryAcceptedEventType),
+        Filter.equals('entry_type', kIngestAuditEntryType),
+        Filter.custom(
+          (record) =>
+              _coordinatesOf(
+                record.value! as Map<String, Object?>,
+              ).heldAsAuthoredBy ==
+              databaseId,
+        ),
+      ]);
+
+  @override
+  @internal
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final records = await _eventStore.find(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and(<Filter>[
+          Filter.equals('aggregate_id', aggregateId),
+          _authoredDeliveryAudits(databaseId),
+          Filter.custom((record) {
+            final data = (record.value! as Map<String, Object?>)['data'];
+            final number = data is Map ? data['delivery_number'] : null;
+            return number is num &&
+                number >= fromDeliveryNumber &&
+                number <= toDeliveryNumber;
+          }),
+        ]),
+        sortOrders: [SortOrder('sequence_number')],
+      ),
+    );
+    return <StoredEvent>[
+      for (final r in records)
+        StoredEvent.fromMap(Map<String, Object?>.from(r.value), r.key),
+    ];
+  }
+
+  @override
+  @internal
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final records = await _eventStore.find(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and(<Filter>[
+          _authoredDeliveryAudits(databaseId),
+          Filter.custom((record) {
+            final data = (record.value! as Map<String, Object?>)['data'];
+            final channel = data is Map ? data['channel'] : null;
+            return channel is Map &&
+                senderDatabaseIds.contains(channel['sender_database_id']);
+          }),
+        ]),
+        sortOrders: [SortOrder('sequence_number')],
+      ),
+    );
+    final latest = <String, StoredEvent>{};
+    for (final r in records) {
+      final event = StoredEvent.fromMap(
+        Map<String, Object?>.from(r.value),
+        r.key,
+      );
+      latest[event.aggregateId] = event;
+    }
+    return latest.values.toList(growable: false);
+  }
+
   // Implements: EVS-DEV-causal-parents/H
   // the latest eligible version is read from the log: the aggregate's
   //   events are scanned, newest first, for one whose recorded causal says
@@ -1423,6 +1542,52 @@ class SembastBackend extends StorageBackend {
         .delete(t._sembastTxn);
   }
 
+  // -------- Sender channel records --------
+
+  static String _senderChannelKey(String destinationId) =>
+      'sender_channel_$destinationId';
+
+  @override
+  @internal
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _backendStateStore
+        .record(_senderChannelKey(destinationId))
+        .get(t._sembastTxn);
+    if (value == null) return null;
+    return SenderChannelRecord.fromJson(
+      Map<String, Object?>.from(value as Map),
+    );
+  }
+
+  @override
+  @internal
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_senderChannelKey(destinationId))
+        .put(t._sembastTxn, record.toJson());
+  }
+
+  @override
+  @internal
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    await _backendStateStore
+        .record(_senderChannelKey(destinationId))
+        .delete(t._sembastTxn);
+  }
+
   // -------- Registry check record --------
 
   static const _registryCheckKey = 'registry_check';
@@ -2067,8 +2232,8 @@ class SembastBackend extends StorageBackend {
   ///   map`, `wire_format = wirePayload.contentType`,
   ///   `transform_version = wirePayload.transformVersion`,
   ///   `envelope_metadata = null`.
-  /// - [nativeEnvelope] (native `esd/batch@2`): persists
-  ///   `wire_payload = null`, `wire_format = "esd/batch@2"`,
+  /// - [nativeEnvelope] (native (`esd/batch@3`)): persists
+  ///   `wire_payload = null`, `wire_format = "esd/batch@3"`,
   ///   `transform_version = null`, `envelope_metadata = nativeEnvelope`.
   ///
   /// Centralizes all row-construction logic: empty-batch rejection,
@@ -2116,7 +2281,7 @@ class SembastBackend extends StorageBackend {
     String? transformVersion;
     if (nativeEnvelope != null) {
       payloadMap = null;
-      wireFormat = BatchEnvelope.wireFormat;
+      wireFormat = nativeEnvelope.wireFormat;
       transformVersion = null;
     } else {
       // 3rd-party: bytes MUST be valid JSON encoding a Map — destinations
@@ -2258,6 +2423,21 @@ class SembastBackend extends StorageBackend {
     );
     if (records.isEmpty) return null;
     return FifoEntry.fromJson(Map<String, Object?>.from(records.single.value));
+  }
+
+  @override
+  @internal
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final records = await _fifoStore(destinationId).find(
+      _requireValidTxn(txn)._sembastTxn,
+      finder: Finder(sortOrders: [SortOrder('sequence_in_queue')]),
+    );
+    return records
+        .map((r) => FifoEntry.fromJson(Map<String, Object?>.from(r.value)))
+        .toList();
   }
 
   @override
@@ -2496,16 +2676,17 @@ class SembastBackend extends StorageBackend {
 
   /// Transition the target row's `final_status` to [status] inside
   /// [txn]. The legal transitions are exactly `null -> sent`,
-  /// `null -> wedged` and `wedged -> tombstoned`; every other pair, a
-  /// repeated status and a missing row throw [StateError] with nothing
-  /// written.
+  /// `null -> wedged`, `wedged -> tombstoned` and, for a row carrying
+  /// attempts, `null -> tombstoned`; every other pair, a repeated status and
+  /// a missing row throw [StateError] with nothing written.
   ///
   /// Preserves `attempts[]` verbatim on every transition. `sent_at` is set
   /// on `null -> sent` and untouched on every other transition.
   // Implements: EVS-DEV-destination-drain/B
-  // exactly null -> sent, null -> wedged and
-  //   wedged -> tombstoned; every other pair, a repeat and a missing row
-  //   throw StateError with nothing written.
+  // exactly null -> sent, null -> wedged,
+  //   wedged -> tombstoned and, for a row carrying attempts, null ->
+  //   tombstoned; every other pair, a repeat and a missing row throw
+  //   StateError with nothing written.
   @override
   @internal
   Future<void> setFinalStatusTxn(
@@ -2532,11 +2713,17 @@ class SembastBackend extends StorageBackend {
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw as String);
-    if (!isLegalFinalStatusTransition(current, status)) {
+    final hasAttempts = (updated['attempts'] as List? ?? const []).isNotEmpty;
+    if (!isLegalFinalStatusTransition(
+      current,
+      status,
+      hasAttempts: hasAttempts,
+    )) {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
         '${current?.name} -> ${status.name}. Legal transitions: '
-        'null -> sent, null -> wedged, wedged -> tombstoned.',
+        'null -> sent, null -> wedged, wedged -> tombstoned, and '
+        'null -> tombstoned for an item carrying attempts.',
       );
     }
     updated['final_status'] = status.toJson();
@@ -2545,6 +2732,106 @@ class SembastBackend extends StorageBackend {
     }
     await store.record(record.key).put(t._sembastTxn, updated);
     t._fifoChanged.add(destinationId);
+  }
+
+  /// The record of [entryId] on [destinationId] inside [t], or null.
+  Future<RecordSnapshot<int, Map<String, Object?>>?> _fifoRecordTxn(
+    _SembastTxn t,
+    String destinationId,
+    String entryId,
+  ) => _fifoStore(destinationId).findFirst(
+    t._sembastTxn,
+    finder: Finder(filter: Filter.equals('entry_id', entryId)),
+  );
+
+  // Implements: EVS-DEV-delivery-channel/J
+  // marking a pending item sent records the
+  //   generation, delivery number and delivery hash it was acknowledged
+  //   under.
+  @override
+  @internal
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final record = await _fifoRecordTxn(t, destinationId, entryId);
+    if (record == null) {
+      throw StateError('markSentTxn($destinationId, $entryId): no such item.');
+    }
+    final updated = Map<String, Object?>.from(record.value);
+    final current = updated['final_status'];
+    if (current != null) {
+      throw StateError(
+        'markSentTxn($destinationId, $entryId): the item is $current; only '
+        'a pending item is marked sent.',
+      );
+    }
+    updated['final_status'] = FinalStatus.sent.toJson();
+    updated['sent_at'] = DateTime.now().toUtc().toIso8601String();
+    updated['delivery_generation'] = generation;
+    updated['delivery_number'] = deliveryNumber;
+    updated['delivery_hash'] = deliveryHash;
+    await _fifoStore(
+      destinationId,
+    ).record(record.key).put(t._sembastTxn, updated);
+    t._fifoChanged.add(destinationId);
+  }
+
+  @override
+  @internal
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final record = await _fifoRecordTxn(t, destinationId, entryId);
+    if (record == null) {
+      throw StateError(
+        'deleteFifoEntryTxn($destinationId, $entryId): no such item.',
+      );
+    }
+    final status = record.value['final_status'];
+    final attempts = record.value['attempts'] as List? ?? const <Object?>[];
+    if (status != null || attempts.isNotEmpty) {
+      throw StateError(
+        'deleteFifoEntryTxn($destinationId, $entryId): the item is '
+        '${status ?? 'pending with ${attempts.length} attempts'}; only a '
+        'pending item that carries no attempt is deleted.',
+      );
+    }
+    await _fifoStore(destinationId).record(record.key).delete(t._sembastTxn);
+    t._fifoChanged.add(destinationId);
+  }
+
+  @override
+  @internal
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final record = await _fifoStore(destinationId).findFirst(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and(<Filter>[
+          Filter.equals('final_status', FinalStatus.sent.toJson()),
+          Filter.equals('delivery_generation', generation),
+          Filter.equals('delivery_number', deliveryNumber),
+        ]),
+        sortOrders: <SortOrder>[SortOrder('sequence_in_queue', false)],
+      ),
+    );
+    return record == null
+        ? null
+        : FifoEntry.fromJson(Map<String, Object?>.from(record.value));
   }
 
   /// Delete every FIFO row on [destinationId] whose `sequence_in_queue`

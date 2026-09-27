@@ -20,6 +20,7 @@
 import 'package:collection/collection.dart' show DeepCollectionEquality;
 import 'package:event_sourcing/src/destinations/halt_purpose.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 
 /// What a trail sweep removed from a destination's queue: the number of
 /// pending items it deleted and the lowest event sequence number any of them
@@ -426,7 +427,8 @@ class HaltRequest {
 
 /// The last send the drainer started on a destination: the queue item and
 /// the attempt count it found in the pre-send fence transaction, written in
-/// that transaction immediately before the send.
+/// that transaction immediately before the send, and, on a delivery channel,
+/// the number and hash of the delivery the send carries.
 ///
 /// Writing it makes the fence a writing transaction, so a backend that
 /// validates a transaction against other writers only when it writes (a
@@ -440,7 +442,12 @@ class SendFence {
     required this.entryId,
     required this.attemptCount,
     required this.at,
-  });
+    this.deliveryNumber,
+    this.deliveryHash,
+  }) : assert(
+         (deliveryNumber == null) == (deliveryHash == null),
+         'a send fence names both the delivery number and hash, or neither',
+       );
 
   /// Decode from the persisted JSON form.
   factory SendFence.fromJson(Map<String, Object?> json) {
@@ -460,10 +467,22 @@ class SendFence {
     if (at is! String) {
       throw const FormatException('SendFence: missing or non-string "at"');
     }
+    final number = json['delivery_number'];
+    final hash = json['delivery_hash'];
+    if (number != null && number is! int ||
+        hash != null && hash is! String ||
+        (number == null) != (hash == null)) {
+      throw const FormatException(
+        'SendFence: "delivery_number" (an integer) and "delivery_hash" (a '
+        'string) are both present or both absent',
+      );
+    }
     return SendFence(
       entryId: entryId,
       attemptCount: count,
       at: DateTime.parse(at).toUtc(),
+      deliveryNumber: number as int?,
+      deliveryHash: hash as String?,
     );
   }
 
@@ -476,11 +495,25 @@ class SendFence {
   /// When the fence ran, by the drainer's clock.
   final DateTime at;
 
-  /// Persisted JSON form.
+  /// The number of the delivery the send carries, on a delivery channel;
+  /// null for a destination that is no channel.
+  // Implements: EVS-DEV-delivery-channel/I
+  // the send fence record names the delivery number and delivery hash of
+  //   the delivery in flight.
+  final int? deliveryNumber;
+
+  /// The hash of the delivery the send carries, on a delivery channel; null
+  /// for a destination that is no channel.
+  final String? deliveryHash;
+
+  /// Persisted JSON form. The delivery keys are present only for a send of
+  /// a delivery on a channel.
   Map<String, Object?> toJson() => <String, Object?>{
     'entry_id': entryId,
     'attempt_count': attemptCount,
     'at': at.toUtc().toIso8601String(),
+    if (deliveryNumber != null) 'delivery_number': deliveryNumber,
+    if (deliveryHash != null) 'delivery_hash': deliveryHash,
   };
 
   @override
@@ -488,13 +521,113 @@ class SendFence {
       other is SendFence &&
       other.entryId == entryId &&
       other.attemptCount == attemptCount &&
-      other.at.isAtSameMomentAs(at);
+      other.at.isAtSameMomentAs(at) &&
+      other.deliveryNumber == deliveryNumber &&
+      other.deliveryHash == deliveryHash;
 
   @override
-  int get hashCode =>
-      Object.hash(entryId, attemptCount, at.microsecondsSinceEpoch);
+  int get hashCode => Object.hash(
+    entryId,
+    attemptCount,
+    at.microsecondsSinceEpoch,
+    deliveryNumber,
+    deliveryHash,
+  );
 
   @override
   String toString() =>
-      'SendFence(entryId: $entryId, attemptCount: $attemptCount, at: $at)';
+      'SendFence(entryId: $entryId, attemptCount: $attemptCount, at: $at, '
+      'deliveryNumber: $deliveryNumber, deliveryHash: $deliveryHash)';
+}
+
+/// The sender's record of one registration's delivery channel: the current
+/// generation, the receiver record the sender last established on it (the
+/// number and hash of the last delivery the receiver accepted, as far as
+/// the sender knows) and the database identity of the receiver that
+/// answered on the current generation.
+///
+/// Registering a destination that serializes natively writes it with
+/// [initial]; deleting the destination removes it. Between the two only the
+/// drainer changes it, in the transaction that commits a send outcome, a
+/// resume or a new generation of the registration.
+///
+/// Persisted under `backend_state` key `sender_channel_<destinationId>`.
+// Implements: EVS-DEV-delivery-channel/D
+// the sender channel record: the generation, the number and hash of the
+//   receiver record the sender last established, and the receiver identity
+//   that answered on the current generation.
+final class SenderChannelRecord {
+  const SenderChannelRecord({
+    required this.generation,
+    required this.receiverRecord,
+    this.receiverDatabaseId,
+  });
+
+  /// Decode from the persisted JSON form. Throws [FormatException] for a
+  /// generation below 1, a record whose hash is null exactly when its
+  /// number is not 0, or a non-string receiver identity.
+  factory SenderChannelRecord.fromJson(Map<String, Object?> json) {
+    final generation = json['generation'];
+    if (generation is! int || generation < 1) {
+      throw const FormatException(
+        'SenderChannelRecord: "generation" must be an integer of at least 1',
+      );
+    }
+    final receiverDatabaseId = json['receiver_database_id'];
+    if (receiverDatabaseId != null && receiverDatabaseId is! String) {
+      throw const FormatException(
+        'SenderChannelRecord: non-string "receiver_database_id"',
+      );
+    }
+    return SenderChannelRecord(
+      generation: generation,
+      receiverRecord: DeliveryRecord.fromJson(<String, Object?>{
+        'delivery_number': json['delivery_number'],
+        'delivery_hash': json['delivery_hash'],
+      }),
+      receiverDatabaseId: receiverDatabaseId as String?,
+    );
+  }
+
+  /// The record a registration starts with: generation 1, number 0, a null
+  /// hash and no receiver identity.
+  static const SenderChannelRecord initial = SenderChannelRecord(
+    generation: 1,
+    receiverRecord: DeliveryRecord.none,
+  );
+
+  /// The registration's current generation, 1 for the first.
+  final int generation;
+
+  /// The number and hash of the receiver record the sender last
+  /// established on the current generation.
+  final DeliveryRecord receiverRecord;
+
+  /// The database identity of the receiver that answered on the current
+  /// generation, or null before any answered.
+  final String? receiverDatabaseId;
+
+  /// Persisted JSON form.
+  Map<String, Object?> toJson() => <String, Object?>{
+    'generation': generation,
+    'delivery_number': receiverRecord.deliveryNumber,
+    'delivery_hash': receiverRecord.deliveryHash,
+    'receiver_database_id': receiverDatabaseId,
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is SenderChannelRecord &&
+      other.generation == generation &&
+      other.receiverRecord == receiverRecord &&
+      other.receiverDatabaseId == receiverDatabaseId;
+
+  @override
+  int get hashCode =>
+      Object.hash(generation, receiverRecord, receiverDatabaseId);
+
+  @override
+  String toString() =>
+      'SenderChannelRecord(generation: $generation, receiverRecord: '
+      '$receiverRecord, receiverDatabaseId: $receiverDatabaseId)';
 }

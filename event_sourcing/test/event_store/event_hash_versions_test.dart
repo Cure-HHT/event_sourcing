@@ -10,6 +10,8 @@ import 'package:event_sourcing/src/verification/chain_walk.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import '../test_support/deliveries.dart';
+
 const _kType = 'hashed_note';
 var _dbCounter = 0;
 
@@ -115,7 +117,7 @@ void main() {
       final relay = await _openStore('relay');
       final receiver = await _openStore('receiver');
       final event = await _appendAt(origin);
-      await relay.ingestEvent(event);
+      await ingestEventForTest(relay, event);
       final forwarded = (await relay.reader.findEventById(event.eventId))!;
 
       final tampered = <String, StoredEvent>{
@@ -134,7 +136,7 @@ void main() {
         final next = await _openStore(
           'receiver-${entry.key.replaceAll(' ', '-')}',
         );
-        final outcome = await next.ingestEvent(entry.value);
+        final outcome = await ingestEventForTest(next, entry.value);
         expect(
           outcome.outcome,
           IngestOutcome.ingestedWithFinding,
@@ -152,7 +154,7 @@ void main() {
 
       // The untampered copy verifies and ingests.
       expect(hashMismatchEvidence(forwarded), isEmpty);
-      await receiver.ingestEvent(forwarded);
+      await ingestEventForTest(receiver, forwarded);
       final stored = await receiver.reader.findEventById(event.eventId);
       expect(stored!.entryTypeVersion, const EntryTypeVersion(1, 2));
       expect(_recomputedHash(stored), stored.eventHash);

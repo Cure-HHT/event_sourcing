@@ -5,6 +5,7 @@
 // test/storage/postgres/postgres_versions_test.dart.
 //
 // Traceability lives on the individual tests below.
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
@@ -13,6 +14,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kViewSnapshotPromotedEntryType;
 import 'package:flutter_test/flutter_test.dart';
 
+import 'deliveries.dart';
 import 'record_fixtures.dart';
 import 'test_backends.dart';
 
@@ -604,7 +606,8 @@ void runVersionCompatibilityScenarios(
 
         // A lagging peer's events of the lower major, through both ingest
         // entry points, into the aggregate that holds `y`.
-        await v20.ingestEvent(
+        await ingestEventForTest(
+          v20,
           _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 0),
             dataFormat: LibVersion.dataFormat,
@@ -613,18 +616,16 @@ void runVersionCompatibilityScenarios(
           ),
         );
         expect((await _row(v20, 'agg-r'))!['y'], 5);
-        await v20.ingestBatch(
-          _batchOf(
-            _peerEvent(
-              entryTypeVersion: const EntryTypeVersion(1, 1),
-              dataFormat: LibVersion.dataFormat,
-              data: const <String, Object?>{'a': 8},
-              aggregateId: 'agg-r',
-            ),
+        await deliverEventsOrThrow(v20, <StoredEvent>[
+          _peerEvent(
+            entryTypeVersion: const EntryTypeVersion(1, 1),
+            dataFormat: LibVersion.dataFormat,
+            data: const <String, Object?>{'a': 8},
+            aggregateId: 'agg-r',
           ),
-          wireFormat: BatchEnvelope.wireFormat,
-        );
-        await v20.ingestEvent(
+        ]);
+        await ingestEventForTest(
+          v20,
           _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 0),
             dataFormat: LibVersion.dataFormat,
@@ -764,7 +765,8 @@ void runVersionCompatibilityScenarios(
         await _appendNote(newer, 'agg-1', <String, Object?>{'a': 1});
 
         final older = await openBuild(<ProjectionSpec>[_kSpec]);
-        await older.ingestEvent(
+        await ingestEventForTest(
+          older,
           _peerEvent(
             entryTypeVersion: const EntryTypeVersion(1, 0),
             dataFormat: LibVersion.dataFormat,
@@ -1085,54 +1087,55 @@ void runVersionCompatibilityScenarios(
       );
 
       final paths = <String, Future<void> Function(EventStore, StoredEvent)>{
-        'ingestBatch': (store, event) async {
-          await store.ingestBatch(
-            _batchOf(event),
-            wireFormat: BatchEnvelope.wireFormat,
-          );
+        'delivery': (store, event) async {
+          await deliverEventsOrThrow(store, <StoredEvent>[event]);
         },
         'ingestEvent': (store, event) async {
-          await store.ingestEvent(event);
+          await ingestEventForTest(store, event);
         },
       };
 
-      final refusals = <String, (EntryTypeVersion, DataFormatVersion, Matcher)>{
-        'data format 1.0': (
-          const EntryTypeVersion(1, 4),
-          const DataFormatVersion(1, 0),
-          isA<IngestDataFormatIncompatible>()
-              .having(
-                (e) => e.wireFormat,
-                'wireFormat',
-                const DataFormatVersion(1, 0),
-              )
-              .having(
-                (e) => e.receiverFormat,
-                'receiverFormat',
-                LibVersion.dataFormat,
-              ),
-        ),
-        'the next data-format major': (
-          const EntryTypeVersion(1, 4),
-          DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
-          isA<IngestDataFormatIncompatible>(),
-        ),
-        'entry type 2.0 under 1.4': (
-          const EntryTypeVersion(2, 0),
-          LibVersion.dataFormat,
-          isA<IngestEntryTypeVersionAhead>()
-              .having(
-                (e) => e.wireVersion,
-                'wireVersion',
-                const EntryTypeVersion(2, 0),
-              )
-              .having(
-                (e) => e.receiverVersion,
-                'receiverVersion',
-                const EntryTypeVersion(1, 4),
-              ),
-        ),
-      };
+      final refusals =
+          <String, (EntryTypeVersion, DataFormatVersion, Matcher, String)>{
+            'data format 1.0': (
+              const EntryTypeVersion(1, 4),
+              const DataFormatVersion(1, 0),
+              isA<IngestDataFormatIncompatible>()
+                  .having(
+                    (e) => e.wireFormat,
+                    'wireFormat',
+                    const DataFormatVersion(1, 0),
+                  )
+                  .having(
+                    (e) => e.receiverFormat,
+                    'receiverFormat',
+                    LibVersion.dataFormat,
+                  ),
+              IngestDataFormatIncompatible.refusalReason,
+            ),
+            'the next data-format major': (
+              const EntryTypeVersion(1, 4),
+              DataFormatVersion(LibVersion.dataFormat.major + 1, 0),
+              isA<IngestDataFormatIncompatible>(),
+              IngestDataFormatIncompatible.refusalReason,
+            ),
+            'entry type 2.0 under 1.4': (
+              const EntryTypeVersion(2, 0),
+              LibVersion.dataFormat,
+              isA<IngestEntryTypeVersionAhead>()
+                  .having(
+                    (e) => e.wireVersion,
+                    'wireVersion',
+                    const EntryTypeVersion(2, 0),
+                  )
+                  .having(
+                    (e) => e.receiverVersion,
+                    'receiverVersion',
+                    const EntryTypeVersion(1, 4),
+                  ),
+              IngestEntryTypeVersionAhead.refusalReason,
+            ),
+          };
 
       for (final path in paths.entries) {
         for (final refusal in refusals.entries) {
@@ -1140,19 +1143,21 @@ void runVersionCompatibilityScenarios(
           test('${path.key} refuses ${refusal.key} before any write', () async {
             if (db == null) return;
             final receiver = await openReceiver();
-            final (entryVersion, dataFormat, matcher) = refusal.value;
+            final (entryVersion, dataFormat, matcher, reason) = refusal.value;
             final eventsBefore = await receiver.reader.findAllEvents();
             final counterBefore = await receiver.reader.readSequenceCounter();
+            final event = _peerEvent(
+              entryTypeVersion: entryVersion,
+              dataFormat: dataFormat,
+              data: const <String, Object?>{'title': 'peer'},
+            );
             await expectLater(
-              path.value(
-                receiver,
-                _peerEvent(
-                  entryTypeVersion: entryVersion,
-                  dataFormat: dataFormat,
-                  data: const <String, Object?>{'title': 'peer'},
-                ),
+              path.value(receiver, event),
+              throwsA(
+                path.key == 'delivery'
+                    ? _refusedRejected(reason, event.eventId)
+                    : matcher,
               ),
-              throwsA(matcher),
             );
             expect(
               (await receiver.reader.findAllEvents()).length,
@@ -1230,7 +1235,7 @@ void runVersionCompatibilityScenarios(
       };
       for (final refusal in laterRefusals.entries) {
         // Verifies: EVS-DEV-version-compatibility/D
-        test('ingestBatch of [a compatible event, ${refusal.key}] writes '
+        test('a delivery of [a compatible event, ${refusal.key}] writes '
             'nothing', () async {
           if (db == null) return;
           final receiver = await openReceiver();
@@ -1240,24 +1245,30 @@ void runVersionCompatibilityScenarios(
           final rowsBefore = await receiver.reader.findViewRows(_kView);
           final targetBefore = await _storedTarget(receiver);
           final (entryVersion, dataFormat) = refusal.value;
-          final bytes = _batchOfMaps(<Map<String, Object?>>[
-            _peerEvent(
-              entryTypeVersion: const EntryTypeVersion(1, 0),
-              dataFormat: LibVersion.dataFormat,
-              data: const <String, Object?>{'title': 'staged'},
-            ).toMap(),
-            _peerEvent(
-              entryTypeVersion: entryVersion,
-              dataFormat: dataFormat,
-              data: const <String, Object?>{'title': 'refused'},
-            ).toMap(),
-          ]);
+          final refused = _peerEvent(
+            entryTypeVersion: entryVersion,
+            dataFormat: dataFormat,
+            data: const <String, Object?>{'title': 'refused'},
+          );
           await expectLater(
-            receiver.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
+            deliverEventsOrThrow(receiver, <StoredEvent>[
+              _peerEvent(
+                entryTypeVersion: const EntryTypeVersion(1, 0),
+                dataFormat: LibVersion.dataFormat,
+                data: const <String, Object?>{'title': 'staged'},
+              ),
+              refused,
+            ]),
             throwsA(
               anyOf(
-                isA<IngestDataFormatIncompatible>(),
-                isA<IngestEntryTypeVersionAhead>(),
+                _refusedRejected(
+                  IngestDataFormatIncompatible.refusalReason,
+                  refused.eventId,
+                ),
+                _refusedRejected(
+                  IngestEntryTypeVersionAhead.refusalReason,
+                  refused.eventId,
+                ),
               ),
             ),
           );
@@ -1287,20 +1298,25 @@ void runVersionCompatibilityScenarios(
           await expectLater(
             path.value(receiver, event),
             throwsA(
-              isA<IngestEntryTypeVersionUnpromotable>()
-                  .having((e) => e.eventId, 'eventId', event.eventId)
-                  .having((e) => e.entryType, 'entryType', _kType)
-                  .having((e) => e.viewName, 'viewName', _kView)
-                  .having(
-                    (e) => e.wireVersion,
-                    'wireVersion',
-                    const EntryTypeVersion(1, 3),
-                  )
-                  .having(
-                    (e) => e.receiverVersion,
-                    'receiverVersion',
-                    const EntryTypeVersion(2, 0),
-                  ),
+              path.key == 'delivery'
+                  ? _refusedRejected(
+                      IngestEntryTypeVersionUnpromotable.refusalReason,
+                      event.eventId,
+                    )
+                  : isA<IngestEntryTypeVersionUnpromotable>()
+                        .having((e) => e.eventId, 'eventId', event.eventId)
+                        .having((e) => e.entryType, 'entryType', _kType)
+                        .having((e) => e.viewName, 'viewName', _kView)
+                        .having(
+                          (e) => e.wireVersion,
+                          'wireVersion',
+                          const EntryTypeVersion(1, 3),
+                        )
+                        .having(
+                          (e) => e.receiverVersion,
+                          'receiverVersion',
+                          const EntryTypeVersion(2, 0),
+                        ),
             ),
           );
           expect((await receiver.reader.findAllEvents()).length, eventsBefore);
@@ -1339,15 +1355,26 @@ void runVersionCompatibilityScenarios(
         final refusal = isA<IngestDataFormatIncompatible>()
             .having((e) => e.wireFormat.major, 'wireFormat.major', 2)
             .having((e) => e.toString(), 'toString', contains('2.0'));
-        await expectLater(
-          receiver.ingestBatch(
-            _batchOfMaps(<Map<String, Object?>>[record]),
-            wireFormat: BatchEnvelope.wireFormat,
-          ),
-          throwsA(refusal),
+        final answer = (await deliverTo(receiver, <Map<String, Object?>>[
+          record,
+        ], channel: testChannel(kPeerDatabaseId))).response;
+        expect(
+          answer,
+          isA<ReceiverRefusal>()
+              .having((r) => r.refusal, 'refusal', RefusalKind.rejected)
+              .having(
+                (r) => r.reason,
+                'reason',
+                IngestDataFormatIncompatible.refusalReason,
+              )
+              .having(
+                (r) => r.refusedEventId,
+                'refusedEventId',
+                record['event_id'],
+              ),
         );
         await expectLater(
-          receiver.ingestEvent(_dataFormat2Event(record)),
+          ingestEventForTest(receiver, _dataFormat2Event(record)),
           throwsA(refusal),
         );
         expect((await receiver.reader.findAllEvents()).length, eventsBefore);
@@ -1356,13 +1383,15 @@ void runVersionCompatibilityScenarios(
 
       // Verifies: EVS-DEV-version-compatibility/D
       // Verifies: EVS-DEV-security-findings/O
-      test('ingestBatch keeps an event with a malformed version in an '
+      test('a delivery keeps an event with a malformed version in an '
           'event_malformed finding, storing no event for it', () async {
         if (db == null) return;
         final receiver = await openReceiver();
         Future<List<String>> besideFindings() async => <String>[
           for (final e in await receiver.reader.findAllEvents())
-            if (e.entryType != kSecurityFindingEntryType) e.eventId,
+            if (e.entryType != kSecurityFindingEntryType &&
+                e.eventType != 'ingest.delivery_accepted')
+              e.eventId,
         ];
         final eventsBefore = await besideFindings();
         final malformed = <String, Map<String, Object?>>{
@@ -1379,15 +1408,12 @@ void runVersionCompatibilityScenarios(
               data: const <String, Object?>{'title': 'malformed'},
             ).toMap(),
           )..[field.key] = field.value;
-          final result = await receiver.ingestBatch(
-            _batchOfMaps(<Map<String, Object?>>[map]),
-            wireFormat: BatchEnvelope.wireFormat,
-          );
-          expect(
-            result.events.single.outcome,
+          final delivery = await deliverTo(receiver, <Map<String, Object?>>[
+            map,
+          ]);
+          expect(await recordOutcomes(receiver, delivery), <IngestOutcome>[
             IngestOutcome.keptInFinding,
-            reason: field.key,
-          );
+          ], reason: field.key);
           final findings = await receiver.reader.findAllEvents(
             entryType: kSecurityFindingEntryType,
           );
@@ -1412,26 +1438,32 @@ void runVersionCompatibilityScenarios(
         if (db == null) return;
         final receiver = await openReceiver();
         final eventsBefore = await receiver.reader.findAllEvents();
-        final bytes = _batchOf(
-          _peerEvent(
-            entryTypeVersion: const EntryTypeVersion(1, 4),
-            dataFormat: LibVersion.dataFormat,
-            data: const <String, Object?>{'title': 'peer'},
+        // A batch in the envelope format of data format 1, which names no
+        // delivery channel.
+        final bytes = Uint8List.fromList(
+          utf8.encode(
+            jsonEncode(<String, Object?>{
+              'batch_format_version': '1',
+              'batch_id': 'versions-batch-1',
+              'sender_hop': 'peer-hop',
+              'sender_identifier': 'peer-install',
+              'sender_software_version': 'peer@1',
+              'sent_at': DateTime.utc(2026, 9, 1, 12).toIso8601String(),
+              'events': <Object?>[
+                _peerEvent(
+                  entryTypeVersion: const EntryTypeVersion(1, 4),
+                  dataFormat: LibVersion.dataFormat,
+                  data: const <String, Object?>{'title': 'peer'},
+                ).toMap(),
+              ],
+            }),
           ),
-          batchFormatVersion: '1',
         );
         await expectLater(
-          receiver.ingestBatch(bytes, wireFormat: 'esd/batch@1'),
-          throwsA(
-            isA<IngestDecodeFailure>().having(
-              (e) => e.message,
-              'message',
-              contains('esd/batch@1'),
-            ),
+          receiver.receiverEndpoint.accept(
+            bytes,
+            senderDatabaseIds: const <String>{kPeerDatabaseId},
           ),
-        );
-        await expectLater(
-          receiver.ingestBatch(bytes, wireFormat: BatchEnvelope.wireFormat),
           throwsA(
             isA<IngestDecodeFailure>().having(
               (e) => e.message,
@@ -1537,24 +1569,10 @@ StoredEvent _dataFormat2Event(Map<String, Object?> record) => StoredEvent(
   eventHash: record['event_hash']! as String,
 );
 
-Uint8List _batchOf(StoredEvent event, {String? batchFormatVersion}) =>
-    _batchOfMaps(<Map<String, Object?>>[
-      Map<String, Object?>.from(event.toMap()),
-    ], batchFormatVersion: batchFormatVersion);
-
-Uint8List _batchOfMaps(
-  List<Map<String, Object?>> events, {
-  String? batchFormatVersion,
-}) {
-  final now = DateTime.utc(2026, 9, 1, 12);
-  return BatchEnvelope(
-    batchFormatVersion:
-        batchFormatVersion ?? BatchEnvelope.currentBatchFormatVersion,
-    batchId: 'versions-batch-${events.first['event_id']}',
-    senderHop: 'peer-hop',
-    senderIdentifier: 'peer-install',
-    senderSoftwareVersion: 'peer@1',
-    sentAt: now,
-    events: events,
-  ).encode();
-}
+/// Matches the [TestDeliveryRefused] of a delivery the receiver refused
+/// `rejected`, naming [reason] and the event [eventId].
+Matcher _refusedRejected(String reason, String eventId) =>
+    isA<TestDeliveryRefused>()
+        .having((e) => e.refusal.refusal, 'refusal', RefusalKind.rejected)
+        .having((e) => e.refusal.reason, 'reason', reason)
+        .having((e) => e.refusal.refusedEventId, 'refusedEventId', eventId);

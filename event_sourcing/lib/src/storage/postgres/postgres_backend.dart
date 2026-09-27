@@ -42,14 +42,17 @@ import 'package:event_sourcing/src/actions/idempotency_store.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kSecurityFindingEntryType, kSecurityFindingRecordedEventType;
+    show
+        kIngestAuditEntryType,
+        kIngestDeliveryAcceptedEventType,
+        kSecurityFindingEntryType,
+        kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
@@ -1931,7 +1934,7 @@ class PostgresBackend extends StorageBackend {
   ///   `envelope_metadata = null`.
   /// - Native (`nativeEnvelope`): `envelope_metadata` stores the
   ///   `BatchEnvelopeMetadata` map; `wire_payload = null`;
-  ///   `wire_format = 'esd/batch@2'`; `transform_version = null`.
+  ///   `wire_format = 'esd/batch@3'`; `transform_version = null`.
   // Implements: EVS-PRD-destinations
   // empty batch rejected with
   //   ArgumentError; XOR(wirePayload, nativeEnvelope) enforced; v4 UUID
@@ -1976,7 +1979,7 @@ class PostgresBackend extends StorageBackend {
     String? transformVersion;
     if (nativeEnvelope != null) {
       payloadMap = null;
-      wireFormat = BatchEnvelope.wireFormat;
+      wireFormat = nativeEnvelope.wireFormat;
       transformVersion = null;
     } else {
       final wp = wirePayload!;
@@ -2123,6 +2126,22 @@ class PostgresBackend extends StorageBackend {
     ORDER BY sequence_in_queue ASC
     LIMIT 1
   ''';
+
+  @override
+  @internal
+  Future<List<FifoEntry>> listFifoEntriesTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final result = await _asPgTxn(txn)._session.execute(
+      Sql.named(
+        'SELECT * FROM fifo_entries WHERE destination_id = @dest '
+        'ORDER BY sequence_in_queue ASC',
+      ),
+      parameters: {'dest': destinationId},
+    );
+    return result.map(_fifoEntryFromRow).toList(growable: false);
+  }
 
   // Implements: EVS-PRD-destinations
   // listFifoEntries enumerates rows
@@ -2305,9 +2324,10 @@ class PostgresBackend extends StorageBackend {
 
   // Implements: EVS-DEV-destination-drain/B
   // setFinalStatusTxn allows exactly
-  //   null -> sent, null -> wedged and wedged -> tombstoned; every other pair,
-  //   a repeated status and a missing row throw StateError with nothing
-  //   written. null -> sent stamps sent_at; attempts[] is never touched.
+  //   null -> sent, null -> wedged, wedged -> tombstoned and, for a row
+  //   carrying attempts, null -> tombstoned; every other pair, a repeated
+  //   status and a missing row throw StateError with nothing written.
+  //   null -> sent stamps sent_at; attempts[] is never touched.
   @override
   @internal
   Future<void> setFinalStatusTxn(
@@ -2319,7 +2339,8 @@ class PostgresBackend extends StorageBackend {
     final session = _asPgTxn(txn)._session;
     final existing = await session.execute(
       Sql.named('''
-        SELECT final_status FROM fifo_entries
+        SELECT final_status, jsonb_array_length(attempts) > 0
+        FROM fifo_entries
         WHERE destination_id = @dest AND entry_id = @e
       '''),
       parameters: {'dest': destinationId, 'e': entryId},
@@ -2334,11 +2355,16 @@ class PostgresBackend extends StorageBackend {
     final current = currentRaw == null
         ? null
         : FinalStatus.fromJson(currentRaw);
-    if (!isLegalFinalStatusTransition(current, status)) {
+    if (!isLegalFinalStatusTransition(
+      current,
+      status,
+      hasAttempts: existing.first[1]! as bool,
+    )) {
       throw StateError(
         'setFinalStatusTxn($destinationId, $entryId): illegal transition '
         '${current?.name} -> ${status.name}. Legal transitions: '
-        'null -> sent, null -> wedged, wedged -> tombstoned.',
+        'null -> sent, null -> wedged, wedged -> tombstoned, and '
+        'null -> tombstoned for an item carrying attempts.',
       );
     }
     if (status == FinalStatus.sent) {
@@ -2365,6 +2391,124 @@ class PostgresBackend extends StorageBackend {
         parameters: {'s': status.name, 'dest': destinationId, 'e': entryId},
       );
     }
+  }
+
+  // Implements: EVS-DEV-delivery-channel/J
+  // marking a pending item sent records the
+  //   generation, delivery number and delivery hash it was acknowledged
+  //   under, in the one change that stamps sent_at.
+  @override
+  @internal
+  Future<void> markSentTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId, {
+    required int generation,
+    required int deliveryNumber,
+    required String deliveryHash,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final existing = await session.execute(
+      Sql.named('''
+        SELECT final_status FROM fifo_entries
+        WHERE destination_id = @dest AND entry_id = @e
+      '''),
+      parameters: {'dest': destinationId, 'e': entryId},
+    );
+    if (existing.isEmpty) {
+      throw StateError('markSentTxn($destinationId, $entryId): no such item.');
+    }
+    final current = existing.first[0] as String?;
+    if (current != null) {
+      throw StateError(
+        'markSentTxn($destinationId, $entryId): the item is $current; only '
+        'a pending item is marked sent.',
+      );
+    }
+    await session.execute(
+      Sql.named('''
+        UPDATE fifo_entries
+        SET final_status = 'sent', sent_at = @t:timestamptz,
+            delivery_generation = @g, delivery_number = @n,
+            delivery_hash = @h
+        WHERE destination_id = @dest AND entry_id = @e
+      '''),
+      parameters: {
+        't': DateTime.now().toUtc(),
+        'g': generation,
+        'n': deliveryNumber,
+        'h': deliveryHash,
+        'dest': destinationId,
+        'e': entryId,
+      },
+    );
+  }
+
+  @override
+  @internal
+  Future<void> deleteFifoEntryTxn(
+    Transaction txn,
+    String destinationId,
+    String entryId,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final existing = await session.execute(
+      Sql.named('''
+        SELECT final_status, jsonb_array_length(attempts)
+        FROM fifo_entries
+        WHERE destination_id = @dest AND entry_id = @e
+      '''),
+      parameters: {'dest': destinationId, 'e': entryId},
+    );
+    if (existing.isEmpty) {
+      throw StateError(
+        'deleteFifoEntryTxn($destinationId, $entryId): no such item.',
+      );
+    }
+    final status = existing.first[0] as String?;
+    final attempts = existing.first[1]! as int;
+    if (status != null || attempts > 0) {
+      throw StateError(
+        'deleteFifoEntryTxn($destinationId, $entryId): the item is '
+        '${status ?? 'pending with $attempts attempts'}; only a pending item '
+        'that carries no attempt is deleted.',
+      );
+    }
+    await session.execute(
+      Sql.named(
+        'DELETE FROM fifo_entries WHERE destination_id = @dest '
+        'AND entry_id = @e',
+      ),
+      parameters: {'dest': destinationId, 'e': entryId},
+    );
+  }
+
+  // Implements: EVS-DEV-delivery-resume/W
+  // the retained delivery at a number is the
+  //   item last marked sent (highest sequence_in_queue) at that number under
+  //   the given generation, read through `fifo_entries_delivery_idx`.
+  @override
+  @internal
+  Future<FifoEntry?> readRetainedDeliveryTxn(
+    Transaction txn,
+    String destinationId, {
+    required int generation,
+    required int deliveryNumber,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT * FROM fifo_entries
+        WHERE destination_id = @dest
+          AND final_status = 'sent'
+          AND delivery_generation = @g
+          AND delivery_number = @n
+        ORDER BY sequence_in_queue DESC
+        LIMIT 1
+      '''),
+      parameters: {'dest': destinationId, 'g': generation, 'n': deliveryNumber},
+    );
+    return result.isEmpty ? null : _fifoEntryFromRow(result.first);
   }
 
   // Implements: EVS-DEV-destination-drain/F
@@ -2692,6 +2836,35 @@ class PostgresBackend extends StorageBackend {
   @internal
   Future<void> clearSendFenceTxn(Transaction txn, String destinationId) =>
       _deleteStateTxn(txn, 'send_fence_$destinationId');
+
+  // -------- Sender channel records --------
+
+  @override
+  @internal
+  Future<SenderChannelRecord?> readSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) async {
+    final value = await _readStateTxn(txn, 'sender_channel_$destinationId');
+    return value == null
+        ? null
+        : SenderChannelRecord.fromJson(_asJsonMap(value));
+  }
+
+  @override
+  @internal
+  Future<void> writeSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+    SenderChannelRecord record,
+  ) => _writeStateTxn(txn, 'sender_channel_$destinationId', record.toJson());
+
+  @override
+  @internal
+  Future<void> clearSenderChannelRecordTxn(
+    Transaction txn,
+    String destinationId,
+  ) => _deleteStateTxn(txn, 'sender_channel_$destinationId');
 
   // -------- Registry check record --------
 
@@ -3073,6 +3246,85 @@ class PostgresBackend extends StorageBackend {
       parameters: {'db': databaseId},
     );
     return result.isEmpty ? null : _storedEventFromRow(result.first);
+  }
+
+  // Implements: EVS-DEV-delivery-receiver/I
+  // on Postgres the latest authored event of an aggregate is read newest
+  //   first through the aggregate index, filtered on the column that names
+  //   the database holding the copy as authored.
+  @override
+  @internal
+  Future<StoredEvent?> readLatestAuthoredOfAggregateInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT * FROM events '
+        'WHERE aggregate_id = @agg AND held_as_authored_by = @db '
+        'ORDER BY sequence_number DESC LIMIT 1',
+      ),
+      parameters: {'agg': aggregateId, 'db': databaseId},
+    );
+    return result.isEmpty ? null : _storedEventFromRow(result.first);
+  }
+
+  // The delivery number is compared only where the audit's data holds a
+  // number, so an audit another database authored on the same aggregate
+  // never fails the cast.
+  @override
+  @internal
+  Future<List<StoredEvent>> findAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required String aggregateId,
+    required int fromDeliveryNumber,
+    required int toDeliveryNumber,
+  }) => _findEventsWhere(
+    txn,
+    'aggregate_id = @agg AND held_as_authored_by = @db '
+    'AND event_type = @type AND entry_type = @entry '
+    "AND CASE WHEN jsonb_typeof(data -> 'delivery_number') = 'number' "
+    "THEN (data ->> 'delivery_number')::numeric END "
+    'BETWEEN @from AND @to',
+    {
+      'agg': aggregateId,
+      'db': databaseId,
+      'type': kIngestDeliveryAcceptedEventType,
+      'entry': kIngestAuditEntryType,
+      'from': fromDeliveryNumber,
+      'to': toDeliveryNumber,
+    },
+  );
+
+  // Served by the index over (event_type, sequence_number): the listing
+  // reads every accepted-delivery audit of the receiver once.
+  @override
+  @internal
+  Future<List<StoredEvent>> findLatestAuthoredDeliveryAuditsInTxn(
+    Transaction txn, {
+    required String databaseId,
+    required Set<String> senderDatabaseIds,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named(
+        'SELECT DISTINCT ON (aggregate_id) * FROM events '
+        'WHERE event_type = @type AND entry_type = @entry '
+        'AND held_as_authored_by = @db '
+        "AND (data -> 'channel' ->> 'sender_database_id') = ANY(@senders) "
+        'ORDER BY aggregate_id, sequence_number DESC',
+      ),
+      parameters: {
+        'type': kIngestDeliveryAcceptedEventType,
+        'entry': kIngestAuditEntryType,
+        'db': databaseId,
+        'senders': senderDatabaseIds.toList(),
+      },
+    );
+    return result.map(_storedEventFromRow).toList(growable: false);
   }
 
   // Implements: EVS-DEV-causal-parents/H
@@ -3556,6 +3808,9 @@ class PostgresBackend extends StorageBackend {
       envelopeMetadata: envelopeRaw == null
           ? null
           : BatchEnvelopeMetadata.fromMap(_asJsonMap(envelopeRaw)),
+      deliveryGeneration: m['delivery_generation'] as int?,
+      deliveryNumber: m['delivery_number'] as int?,
+      deliveryHash: m['delivery_hash'] as String?,
     );
   }
 

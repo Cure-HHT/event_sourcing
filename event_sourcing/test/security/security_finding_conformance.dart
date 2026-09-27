@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/event_store.dart'
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../test_support/deliveries.dart';
 import '../test_support/destination_wedges_view_conformance.dart'
     show forgedEvent, wedgeData;
 import '../test_support/version_compatibility_conformance.dart'
@@ -252,7 +253,7 @@ void runSecurityFindingScenarios({
           },
         },
       );
-      final outcome = await store.ingestEvent(forged);
+      final outcome = await ingestEventForTest(store, forged);
       expect(outcome.outcome, IngestOutcome.ingested);
       expect(await record(store), isNotNull);
       final held = await findings(store);
@@ -398,7 +399,7 @@ void runSecurityFindingScenarios({
           futureCause,
           futureKind,
         ]) {
-          final outcome = await store.ingestEvent(event);
+          final outcome = await ingestEventForTest(store, event);
           expect(
             outcome.outcome,
             IngestOutcome.ingested,

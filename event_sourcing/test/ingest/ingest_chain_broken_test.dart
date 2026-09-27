@@ -6,6 +6,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 import '../test_support/record_fixtures.dart';
 
@@ -105,7 +106,7 @@ void main() {
         expect(original, isNotNull);
 
         // 2. Intermediate ingests — stored copy has 2-entry provenance.
-        final outcome1 = await inter.store.ingestEvent(original!);
+        final outcome1 = await ingestEventForTest(inter.store, original!);
         expect(outcome1.outcome, equals(IngestOutcome.ingested));
 
         // Read the intermediate's stored copy.
@@ -137,7 +138,7 @@ void main() {
 
         // 4. Third destination stores the event as received and records
         //    the broken arrival hash.
-        final outcome = await third.store.ingestEvent(tampered);
+        final outcome = await ingestEventForTest(third.store, tampered);
         expect(outcome.outcome, IngestOutcome.ingestedWithFinding);
         final stored = await third.backend.findEventById(original.eventId);
         expect(stored, isNotNull);
@@ -209,7 +210,7 @@ void main() {
         recordMap['event_hash'] = canonicalEventHash(recordMap);
         final syntheticEvent = StoredEvent.fromMap(recordMap, 0);
 
-        final outcome = await dest.store.ingestEvent(syntheticEvent);
+        final outcome = await ingestEventForTest(dest.store, syntheticEvent);
         expect(outcome.outcome, IngestOutcome.keptInFinding);
         expect(
           await dest.backend.findEventById('test-chain-null-arrival'),

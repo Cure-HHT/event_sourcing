@@ -10,7 +10,6 @@
 // This file exposes [runIngestHashScenarios] and registers no `main()` of
 // its own. Traceability lives on the individual tests.
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/verification/chain_walk.dart'
@@ -18,6 +17,7 @@ import 'package:event_sourcing/src/verification/chain_walk.dart'
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
+import 'deliveries.dart';
 import 'queue_registry_conformance.dart' show QueueTestDatabase;
 import 'record_fixtures.dart';
 
@@ -151,18 +151,6 @@ Map<String, Object?> _withLastHop(StoredEvent event, String key, Object value) {
     'metadata': <String, Object?>{...event.metadata, 'provenance': provenance},
   };
 }
-
-Uint8List _batchOf(List<StoredEvent> events) => BatchEnvelope(
-  batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-  batchId: 'ingest-hash-batch-${events.first.eventId}',
-  senderHop: _peerSource.hopId,
-  senderIdentifier: _peerSource.identifier,
-  senderSoftwareVersion: _peerSource.softwareVersion,
-  sentAt: DateTime.utc(2026, 9, 1, 12),
-  events: <Map<String, Object?>>[
-    for (final e in events) Map<String, Object?>.from(e.toMap()),
-  ],
-).encode();
 
 /// A record as a hand-built sender seals it, with an origin provenance
 /// entry received at [receivedAt] (by default [clientTimestamp]),
@@ -388,31 +376,18 @@ _tampers = <String, Map<String, Object?> Function(Map<String, Object?>)>{
   },
 };
 
-Uint8List _batchOfRecords(List<Map<String, Object?>> records) => BatchEnvelope(
-  batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-  batchId: 'ingest-hash-batch-${records.first['event_id']}',
-  senderHop: _peerSource.hopId,
-  senderIdentifier: _peerSource.identifier,
-  senderSoftwareVersion: _peerSource.softwareVersion,
-  sentAt: DateTime.utc(2026, 9, 1, 12),
-  events: records,
-).encode();
-
-/// The two ingest entry points over records as a sender spelled them: the
-/// batch carries each record as it is, and `ingestEvent` takes each record
-/// as `StoredEvent.fromMap` parses it.
+/// The two ingest paths over records as a sender spelled them: a delivery
+/// on the peer's channel carries each record as it is, and the ingest seam
+/// takes each record as `StoredEvent.fromMap` parses it.
 final Map<String, Future<void> Function(EventStore, List<Map<String, Object?>>)>
 _recordIngestPaths =
     <String, Future<void> Function(EventStore, List<Map<String, Object?>>)>{
-      'ingestBatch': (store, records) async {
-        await store.ingestBatch(
-          _batchOfRecords(records),
-          wireFormat: BatchEnvelope.wireFormat,
-        );
+      'delivery': (store, records) async {
+        await deliverTo(store, records, channel: testChannel(kPeerDatabaseId));
       },
       'ingestEvent': (store, records) async {
         for (final r in records) {
-          await store.ingestEvent(StoredEvent.fromMap(r, 0));
+          await ingestEventForTest(store, StoredEvent.fromMap(r, 0));
         }
       },
     };
@@ -433,19 +408,16 @@ DateTime Function() _localClock() {
   };
 }
 
-/// The two ingest entry points, each taking the whole list of events: the
-/// batch in one envelope, or each event in its own `ingestEvent` call.
+/// The two ingest paths, each taking the whole list of events: one
+/// delivery on the peer's channel, or each event through the ingest seam.
 final Map<String, Future<void> Function(EventStore, List<StoredEvent>)>
 _ingestPaths = <String, Future<void> Function(EventStore, List<StoredEvent>)>{
-  'ingestBatch': (store, events) async {
-    await store.ingestBatch(
-      _batchOf(events),
-      wireFormat: BatchEnvelope.wireFormat,
-    );
+  'delivery': (store, events) async {
+    await deliverEventsTo(store, events, channel: testChannel(kPeerDatabaseId));
   },
   'ingestEvent': (store, events) async {
     for (final e in events) {
-      await store.ingestEvent(e);
+      await ingestEventForTest(store, e);
     }
   },
 };
@@ -500,27 +472,35 @@ void runIngestHashScenarios(
       if (available) await db.close();
     });
 
-    /// The event identifiers of the log, the security findings left out.
+    /// The event identifiers of the log, the security findings and the
+    /// accepted-delivery audits a delivery path appends left out.
     Future<List<String>> logBesideFindings() async => <String>[
       for (final e in await backend.findAllEvents())
-        if (e.entryType != kSecurityFindingEntryType) e.eventId,
+        if (e.entryType != kSecurityFindingEntryType &&
+            e.eventType != 'ingest.delivery_accepted')
+          e.eventId,
     ];
 
     /// The kind and evidence of every security finding the store under
-    /// test recorded, in log order.
+    /// test recorded, in log order, but the `foreign_event` findings a
+    /// delivery records for a record its channel's sender did not author or
+    /// store last (a relayed record, or one naming no originator): those are
+    /// the receiver's channel check, which the receiver scenarios cover,
+    /// and these scenarios are about the hash checks.
     Future<List<Map<String, Object?>>> findings() async =>
         <Map<String, Object?>>[
           for (final e in await backend.findAllEvents(
             entryType: kSecurityFindingEntryType,
           ))
-            <String, Object?>{
-              'kind': e.data['kind'],
-              'evidence': e.data['evidence'],
-            },
+            if (e.data['kind'] != 'foreign_event')
+              <String, Object?>{
+                'kind': e.data['kind'],
+                'evidence': e.data['evidence'],
+              },
         ];
 
-    /// Delivers the malformed [record] on the path [pathKey] names:
-    /// `ingestBatch` stores no event for it and keeps it in full in one
+    /// Delivers the malformed [record] on the path [pathKey] names: a
+    /// delivery stores no event for it and keeps it in full in one
     /// `event_malformed` finding; a record that does not parse never
     /// reaches `ingestEvent`, whose caller's parse refuses it naming
     /// [field].
@@ -529,7 +509,7 @@ void runIngestHashScenarios(
       Map<String, Object?> record,
       String field,
     ) async {
-      if (pathKey != 'ingestBatch') {
+      if (pathKey != 'delivery') {
         expect(
           () => StoredEvent.fromMap(record, 0),
           throwsA(_parseRefusalNaming(field)),
@@ -573,7 +553,7 @@ void runIngestHashScenarios(
         data: <String, Object?>{'title': 'relayed $opened'},
         initiator: _init,
       ))!;
-      await relay.ingestEvent(origin);
+      await ingestEventForTest(relay, origin);
       final relayed = await relay.reader.findEventById(origin.eventId);
       expect(
         (relayed!.metadata['provenance']! as List).length,
@@ -636,7 +616,7 @@ void runIngestHashScenarios(
             );
 
             final next = await downstream();
-            await next.ingestEvent(stored);
+            await ingestEventForTest(next, stored);
             final forwarded = (await next.reader.findEventById(
               stored.eventId,
             ))!;
@@ -887,7 +867,7 @@ void runIngestHashScenarios(
         if (!available) return;
         final event = c.value();
         final before = await logBesideFindings();
-        final outcome = await store.ingestEvent(event);
+        final outcome = await ingestEventForTest(store, event);
         expect(outcome.outcome, IngestOutcome.keptInFinding);
         expect(await logBesideFindings(), before);
         final recorded = await findings();
@@ -927,7 +907,7 @@ void runIngestHashScenarios(
       expect(canonicalEventHash(storedMap), stored.eventHash);
 
       final receiver = await downstream();
-      final outcome = await receiver.ingestEvent(stored);
+      final outcome = await ingestEventForTest(receiver, stored);
       expect(outcome.outcome, IngestOutcome.ingested);
       expect(await receiver.reader.findEventById(stored.eventId), isNotNull);
     });
@@ -937,14 +917,14 @@ void runIngestHashScenarios(
         'arrival in UTC, and a downstream store admits the copy', () async {
       if (!available) return;
       final event = _originEvent();
-      await store.ingestEvent(event);
+      await ingestEventForTest(store, event);
       final stored = (await backend.findEventById(event.eventId))!;
       expect(
         ((stored.metadata['provenance']! as List).last as Map)['received_at'],
         endsWith('Z'),
       );
       final next = await downstream();
-      final outcome = await next.ingestEvent(stored);
+      final outcome = await ingestEventForTest(next, stored);
       expect(outcome.outcome, IngestOutcome.ingested);
       expect(await next.reader.findEventById(stored.eventId), isNotNull);
     });
@@ -1080,7 +1060,7 @@ void runIngestHashScenarios(
 
     // Verifies: EVS-PRD-ingest/D
     // Verifies: EVS-PRD-ingest/G
-    test('ingestBatch admits every event of a batch in which one first-hop '
+    test('a delivery admits every event it carries when one first-hop '
         'event does not verify, recording one finding', () async {
       if (!available) return;
       final good = _originEvent();
@@ -1088,11 +1068,12 @@ void runIngestHashScenarios(
         'event_hash': 'not-the-hash-of-this-event',
       });
       final alsoGood = _originEvent();
-      final result = await store.ingestBatch(
-        _batchOf(<StoredEvent>[good, bad, alsoGood]),
-        wireFormat: BatchEnvelope.wireFormat,
-      );
-      expect(result.events.map((e) => e.outcome), <IngestOutcome>[
+      final delivery = await deliverEventsTo(store, <StoredEvent>[
+        good,
+        bad,
+        alsoGood,
+      ], channel: testChannel(kPeerDatabaseId));
+      expect(await recordOutcomes(store, delivery), <IngestOutcome>[
         IngestOutcome.ingested,
         IngestOutcome.ingestedWithFinding,
         IngestOutcome.ingested,

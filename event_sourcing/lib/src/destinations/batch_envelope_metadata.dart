@@ -3,15 +3,22 @@
 // persisted on FIFO rows for library-native destinations (serializesNatively)
 // so the drain path can reconstruct wire bytes deterministically at send
 // time without requiring the app to supply a transform.
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
+import 'package:collection/collection.dart' show DeepCollectionEquality;
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 
-/// Metadata extracted from a `BatchEnvelope` minus its events list.
-/// Persisted on a FIFO row when the row's `wire_format == "esd/batch@2"`,
-/// so that drain can reconstruct the wire bytes deterministically by
-/// re-encoding `(envelope_metadata + events resolved via findEventById)`.
+/// The envelope fields of a queue item of a destination that serializes
+/// natively, minus its events. Persisted on the item as
+/// `envelope_metadata`, so that the drainer rebuilds the wire bytes
+/// deterministically from them and the events the item names.
+///
+/// An item of a delivery channel (`esd/batch@3`) carries its [channel] and
+/// its delivery [attributes]; the drainer assigns the delivery number, the
+/// link and the delivery hash when it sends it.
 ///
 /// The fields are immutable once set — they are part of the FIFO row's
-/// identity for retry determinism.
+/// identity for retry determinism, and a resend of a delivery copies them
+/// unchanged.
 class BatchEnvelopeMetadata {
   const BatchEnvelopeMetadata({
     required this.batchFormatVersion,
@@ -20,21 +27,9 @@ class BatchEnvelopeMetadata {
     required this.senderIdentifier,
     required this.senderSoftwareVersion,
     required this.sentAt,
+    required this.channel,
+    required this.attributes,
   });
-
-  /// Build from a parsed [BatchEnvelope]. Drops the `events` list — the
-  /// drain path resolves events via `findEventById` and reattaches them
-  /// at encode time.
-  factory BatchEnvelopeMetadata.fromEnvelope(BatchEnvelope env) {
-    return BatchEnvelopeMetadata(
-      batchFormatVersion: env.batchFormatVersion,
-      batchId: env.batchId,
-      senderHop: env.senderHop,
-      senderIdentifier: env.senderIdentifier,
-      senderSoftwareVersion: env.senderSoftwareVersion,
-      sentAt: env.sentAt,
-    );
-  }
 
   factory BatchEnvelopeMetadata.fromMap(Map<String, Object?> m) {
     return BatchEnvelopeMetadata(
@@ -44,6 +39,10 @@ class BatchEnvelopeMetadata {
       senderIdentifier: m['sender_identifier']! as String,
       senderSoftwareVersion: m['sender_software_version']! as String,
       sentAt: DateTime.parse(m['sent_at']! as String),
+      channel: DeliveryChannel.fromJson(
+        Map<String, Object?>.from(m['channel']! as Map),
+      ),
+      attributes: Map<String, Object?>.from(m['attributes']! as Map),
     );
   }
 
@@ -54,21 +53,15 @@ class BatchEnvelopeMetadata {
   final String senderSoftwareVersion;
   final DateTime sentAt;
 
-  /// Reconstruct a full [BatchEnvelope] by attaching events. Used by the
-  /// drain path: after `findEventById` resolves each event in `event_ids`,
-  /// the events are passed here to rebuild the envelope and `.encode()`
-  /// is called to produce wire bytes.
-  BatchEnvelope toEnvelope(List<Map<String, Object?>> events) {
-    return BatchEnvelope(
-      batchFormatVersion: batchFormatVersion,
-      batchId: batchId,
-      senderHop: senderHop,
-      senderIdentifier: senderIdentifier,
-      senderSoftwareVersion: senderSoftwareVersion,
-      sentAt: sentAt,
-      events: events,
-    );
-  }
+  /// The delivery channel the item is delivered on.
+  final DeliveryChannel channel;
+
+  /// The delivery attributes the item's delivery carries, as the delivery
+  /// hash covers them.
+  final Map<String, Object?> attributes;
+
+  /// The wire format of the item: the native delivery format.
+  String get wireFormat => DeliveryEnvelope.wireFormat;
 
   Map<String, Object?> toMap() => <String, Object?>{
     'batch_format_version': batchFormatVersion,
@@ -77,6 +70,8 @@ class BatchEnvelopeMetadata {
     'sender_identifier': senderIdentifier,
     'sender_software_version': senderSoftwareVersion,
     'sent_at': sentAt.toUtc().toIso8601String(),
+    'channel': channel.toJson(),
+    'attributes': attributes,
   };
 
   @override
@@ -88,7 +83,9 @@ class BatchEnvelopeMetadata {
           senderHop == other.senderHop &&
           senderIdentifier == other.senderIdentifier &&
           senderSoftwareVersion == other.senderSoftwareVersion &&
-          sentAt == other.sentAt;
+          sentAt == other.sentAt &&
+          channel == other.channel &&
+          const DeepCollectionEquality().equals(attributes, other.attributes);
 
   @override
   int get hashCode => Object.hash(
@@ -98,10 +95,13 @@ class BatchEnvelopeMetadata {
     senderIdentifier,
     senderSoftwareVersion,
     sentAt,
+    channel,
+    const DeepCollectionEquality().hash(attributes),
   );
 
   @override
   String toString() =>
       'BatchEnvelopeMetadata(batchId: $batchId, '
-      'senderHop: $senderHop, sentAt: $sentAt)';
+      'senderHop: $senderHop, sentAt: $sentAt, channel: $channel, '
+      'attributes: $attributes)';
 }

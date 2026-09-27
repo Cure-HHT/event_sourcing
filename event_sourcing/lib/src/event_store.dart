@@ -89,13 +89,15 @@ import 'package:event_sourcing/src/destinations/default_destination_wedges_spec.
 import 'package:event_sourcing/src/destinations/destination.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/halt_purpose.dart';
+import 'package:event_sourcing/src/destinations/receiver_response.dart';
 import 'package:event_sourcing/src/destinations/wedge_cause.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/entry_type_definition.dart';
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/event_draft.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/ingest/chain_checks.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
+import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
@@ -171,6 +173,7 @@ part 'actions/action_dispatcher.dart';
 //   its parts are the event store's side of that surface.
 part 'bootstrap.dart';
 part 'destinations/destination_registry.dart';
+part 'ingest/receiver_endpoint.dart';
 part 'projections/rebuild.dart';
 part 'sync/drain.dart';
 part 'sync/fill_batch.dart';
@@ -355,6 +358,13 @@ class EventStore {
   // the storage reader handed to the application is a separate object
   //   delegating only the backend's reads.
   late final StorageReader reader = _StorageReader(this);
+
+  /// This store's receiver endpoint: it accepts the native deliveries a
+  /// sender presents on its delivery channels.
+  // Implements: EVS-PRD-delivery-channel/P
+  // the library provides the receiver endpoint over the event store; it is
+  //   never built from a backend.
+  late final ReceiverEndpoint receiverEndpoint = ReceiverEndpoint._(this);
 
   /// The idempotency store over this store's storage, for an action
   /// dispatcher, when it runs on Postgres: its outcomes persist in the
@@ -2210,25 +2220,34 @@ class EventStore {
   // Destination-role (ingest) write path
   // -----------------------------------------------------------------------
 
-  /// Process-local ingest of one event, in a transaction of its own: the
-  /// handling [ingestBatch] gives each record of a delivery, applied to the
-  /// record [incoming] writes (`incoming.toMap()`).
+  /// Process-local ingest of one event, in a transaction of its own,
+  /// applied to the record [incoming] writes (`incoming.toMap()`). Private
+  /// to the event store's Dart library: the library admits an event only
+  /// as part of a delivery ([ReceiverEndpoint.accept]), so no public entry
+  /// point admits one outside a delivery (`EVS-PRD-ingest/G`). The
+  /// receiver endpoint, which shares this library, and
+  /// [ingestEventForTest], for the library's own tests of how ingest
+  /// handles a single record, are its only callers.
   ///
   /// Refuses, before any write, an event of another data-format major
   /// ([IngestDataFormatIncompatible]), and an entry-type version above the
   /// registered major or one a view it folds into cannot promote
   /// ([IngestEntryTypeVersionAhead], [IngestEntryTypeVersionUnpromotable]).
   /// Every other anomaly is recorded as a security finding in the same
-  /// transaction, as [ingestBatch] states, and the returned outcome says
-  /// whether the event was stored, found held, or kept in a finding.
+  /// transaction, and the returned outcome says whether the event was
+  /// stored, found held, or kept in a finding.
   ///
   /// For an event parsed with [StoredEvent.fromMap], `incoming.toMap()` is
   /// the record it was parsed from as far as the hash reaches: parsing keeps
   /// every hashed field as the record spelled it.
+  // Implements: EVS-PRD-ingest/G
+  // the event store's ingest of one record is private to its Dart library;
+  //   the receiver endpoint, which shares that library, is the only
+  //   production caller.
   // Implements: EVS-DEV-version-compatibility/Q
-  // ingestEvent refuses another data-format major before any check of the
-  //   rest of the event's record.
-  Future<PerEventIngestOutcome> ingestEvent(StoredEvent incoming) async {
+  // ingest refuses another data-format major before any check of the rest
+  //   of the event's record.
+  Future<PerEventIngestOutcome> _ingestEvent(StoredEvent incoming) async {
     _refuseOtherDataFormatMajor(incoming.eventId, incoming.libFormatVersion);
     final record = Map<String, Object?>.from(incoming.toMap());
     return _runInTxnWithPublish((txn, collector) {
@@ -2240,94 +2259,6 @@ class EventStore {
         collector: collector,
       );
     });
-  }
-
-  /// Wire-side batch ingest. Decodes [bytes] as an `esd/batch@2` envelope
-  /// and handles every record it carries, in order, inside one transaction,
-  /// stamping each stored event with a [BatchContext] referencing this
-  /// batch. Throws [IngestDecodeFailure] for an unsupported [wireFormat] or
-  /// bytes that do not decode as a batch, and the version refusals
-  /// [ingestEvent] names, rolling back the whole batch.
-  ///
-  /// Each record is handled on its own, and every anomaly in it is
-  /// recorded, under the detector role `ingest`, as a security finding in
-  /// the batch's transaction, while the rest of the batch is admitted:
-  ///
-  /// - a record whose `event_hash`, or a receiver entry's arrival hash, does
-  ///   not recompute over the record as the envelope carried it is stored
-  ///   as received, with a `hash_mismatch` finding per hash;
-  /// - a record whose identifier the receiver holds under another sealed
-  ///   hash is not stored, and an `identity_mismatch` finding carries it in
-  ///   full;
-  /// - a record the library does not store as an event (malformed, a
-  ///   declared reserved entry type in a shape it does not have, or a
-  ///   destination audit whose identifiers are not well formed or whose
-  ///   database identity is not its originating database) is not stored,
-  ///   and an `event_malformed` finding carries it in full with the reason;
-  /// - a record whose originator provenance entry names this database is
-  ///   stored as received when this database does not hold it and can store
-  ///   it, and records an `own_event_ingested` finding, which carries the
-  ///   record in full only when it is neither held nor stored.
-  /// - a record stored as an event whose predecessor hash is the sealed
-  ///   hash of a held event another database originated, or of one of its
-  ///   own database at an origin position not below its own, records a
-  ///   `predecessor_break` finding; one at an origin position a held event
-  ///   of its database with another identifier occupies records a
-  ///   `position_reused` finding; and one whose predecessor hash such an
-  ///   event at another origin position carries records a `fork_unrecorded`
-  ///   finding. The held events include those stored earlier in the batch.
-  ///
-  /// A record the receiver holds under the sealed hash it arrived with is a
-  /// duplicate: nothing is stored for it and a duplicate_received audit
-  /// event is appended. A security finding another database originated is
-  /// stored as any event.
-  ///
-  /// Each record's `event_hash` is checked against the canonical hash of
-  /// the record exactly as the envelope carried it, not of the parsed
-  /// event. The parsed event keeps every hashed field as that record spelled
-  /// it, so the stored copy, and the copy a later delivery forwards, hash as
-  /// the record did.
-  Future<IngestBatchResult> ingestBatch(
-    Uint8List bytes, {
-    required String wireFormat,
-  }) async {
-    if (wireFormat != BatchEnvelope.wireFormat) {
-      throw IngestDecodeFailure(
-        'unsupported wireFormat: "$wireFormat"; expected "${BatchEnvelope.wireFormat}"',
-      );
-    }
-    final envelope = BatchEnvelope.decode(bytes);
-    final wireBytesHash = sha256.convert(bytes).toString();
-    final outcomes = <PerEventIngestOutcome>[];
-
-    await _runInTxnWithPublish<void>((txn, collector) async {
-      // Implements: EVS-PRD-event-log/G
-      // A re-run body starts from no outcomes, so
-      //   the result lists the committed run's outcomes only.
-      outcomes.clear();
-      for (var i = 0; i < envelope.events.length; i++) {
-        final record = envelope.events[i];
-        _refuseOtherDataFormatMajorOfRecord(record);
-        final batchContext = BatchContext(
-          batchId: envelope.batchId,
-          batchPosition: i,
-          batchSize: envelope.events.length,
-          batchWireBytesHash: wireBytesHash,
-          batchWireFormat: BatchEnvelope.wireFormat,
-        );
-        outcomes.add(
-          await _ingestRecordInTxn(
-            txn,
-            record,
-            parsed: null,
-            batchContext: batchContext,
-            collector: collector,
-          ),
-        );
-      }
-    });
-
-    return IngestBatchResult(batchId: envelope.batchId, events: outcomes);
   }
 
   /// Throws [IngestDataFormatIncompatible] when [version], the data-format
@@ -2375,15 +2306,16 @@ class EventStore {
     );
   }
 
-  /// Handles one received [record] inside [txn], for [ingestEvent] and each
-  /// record of [ingestBatch]: stores it as received, finds it held, or keeps
-  /// it in a security finding, and records every finding it meets, as
-  /// [ingestBatch] states.
+  /// Handles one received [record] inside [txn], for [_ingestEvent] and each
+  /// record of a native delivery the receiver endpoint accepts: stores it
+  /// as received, finds it held, or keeps it in a security finding, and
+  /// records every finding it meets.
   ///
   /// [parsed] is the event [record] was written from, when the caller holds
-  /// one ([ingestEvent]); otherwise [record] is parsed here, and a record
+  /// one ([_ingestEvent]); otherwise [record] is parsed here, and a record
   /// that does not parse is one the library does not store as an event.
-  /// [batchContext] is non-null for a record of a batch.
+  /// [batchContext] is non-null for a record of a delivery, and [delivery]
+  /// names the delivery of a native delivery channel it arrived in.
   // Implements: EVS-PRD-ingest/G
   // every record of a delivery is admitted whatever its content or the
   //   outcome of the integrity checks, other than a record the library cannot
@@ -2400,6 +2332,7 @@ class EventStore {
     required StoredEvent? parsed,
     required BatchContext? batchContext,
     required PublishCollector collector,
+    ProvenanceDelivery? delivery,
   }) async {
     final rawEventId = record['event_id'];
     final eventId = rawEventId is String ? rawEventId : null;
@@ -2581,6 +2514,10 @@ class EventStore {
       batchContext: batchContext,
       libraryVersion: _build().version,
       databaseId: databaseId,
+      // Implements: EVS-DEV-delivery-receiver/H
+      // the receiver entry of an event ingested from a native delivery
+      //   carries the delivery: its channel and its number.
+      delivery: delivery,
     );
     final updatedEvent = _appendReceiverProvenance(
       incoming,
@@ -2928,6 +2865,36 @@ Future<ChainVerificationVerdict> verifyChainsForTest(
     pageSize: pageSize,
     afterPage: afterPage,
   );
+}
+
+/// [EventStore]'s ingest of one event outside any delivery, on [store], for
+/// the library's own tests of how ingest handles a single record
+/// (`EVS-PRD-ingest/G`: the library exposes no public ingest entry point
+/// that admits an event outside a delivery, so this test-only seam is the
+/// only way a test outside the event store's Dart library reaches it). In a
+/// build with assertions disabled it throws [StateError] before it touches
+/// [store].
+// Implements: EVS-PRD-storage-barrier/J
+// the test-only entry point to per-record ingest refuses in a build with
+//   assertions disabled.
+@internal
+@visibleForTesting
+Future<PerEventIngestOutcome> ingestEventForTest(
+  EventStore store,
+  StoredEvent incoming,
+) {
+  var assertionsEnabled = false;
+  assert(() {
+    assertionsEnabled = true;
+    return true;
+  }(), 'records that assertions are enabled');
+  if (!assertionsEnabled) {
+    throw StateError(
+      'ingestEventForTest is test-only and refuses in a build with '
+      'assertions disabled',
+    );
+  }
+  return store._ingestEvent(incoming);
 }
 
 /// The event store's recording of a security finding inside [txn], as a

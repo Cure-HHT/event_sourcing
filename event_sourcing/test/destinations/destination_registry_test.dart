@@ -53,6 +53,17 @@ class _StubDestination extends Destination {
   Future<SendResult> send(WirePayload payload) async => const SendOk();
 }
 
+/// A destination that serializes natively and implements no pull.
+class _NativeWithoutPull extends _StubDestination {
+  _NativeWithoutPull(super.id);
+
+  @override
+  bool get serializesNatively => true;
+
+  @override
+  String get wireFormat => 'esd/batch@3';
+}
+
 Future<SembastBackend> _openBackend(String path) async {
   final db = await newDatabaseFactoryMemory().openDatabase(path);
   return SembastBackend(database: db);
@@ -124,6 +135,35 @@ void main() {
         () => dests.add(_StubDestination('other')),
         throwsUnsupportedError,
       );
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/B
+    // a destination that serializes natively and implements no pull is
+    //   refused before anything is written: no schedule, no sender channel
+    //   record, no registration event and no registry check record.
+    test('a native destination without a pull is refused and nothing is '
+        'written', () async {
+      final eventsBefore = (await backend.findAllEvents()).length;
+      await expectLater(
+        registry.addDestination(
+          _NativeWithoutPull('native'),
+          initiator: _testInit,
+        ),
+        throwsArgumentError,
+      );
+      expect(await backend.readSchedule('native'), isNull);
+      expect(await backend.findAllEvents(), hasLength(eventsBefore));
+      await backend.transaction((txn) async {
+        expect(await backend.readRegistryCheckTxn(txn), isNull);
+        expect(await backend.readSenderChannelRecordTxn(txn, 'native'), isNull);
+      });
+      expect(registry.byId('native'), isNull);
+      // The refusal holds nothing: the id registers once it has a pull.
+      await registry.addDestination(
+        _StubDestination('native'),
+        initiator: _testInit,
+      );
+      expect(registry.byId('native'), isNotNull);
     });
 
     // byId returns null for unknown ids, the destination for known ids.

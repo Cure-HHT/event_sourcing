@@ -312,17 +312,20 @@ void main() {
     });
 
     test('a batch in another format is refused by name', () {
-      final v2 = BatchEnvelope(
-        batchFormatVersion: '2',
-        batchId: 'b',
-        senderHop: 'h',
-        senderIdentifier: 'i',
-        senderSoftwareVersion: 'v',
-        sentAt: DateTime.utc(2026),
-        events: <Map<String, Object?>>[_event('e1', 'h1')],
-      );
+      // A batch in the data-format-2 batch format.
+      final v2 = <String, Object?>{
+        'batch_format_version': '2',
+        'batch_id': 'b',
+        'sender_hop': 'h',
+        'sender_identifier': 'i',
+        'sender_software_version': 'v',
+        'sent_at': DateTime.utc(2026).toIso8601String(),
+        'events': <Map<String, Object?>>[_event('e1', 'h1')],
+      };
       expect(
-        () => DeliveryEnvelope.decode(v2.encode()),
+        () => DeliveryEnvelope.decode(
+          Uint8List.fromList(utf8.encode(jsonEncode(v2))),
+        ),
         _refusedWith(IngestDecodeFailure.formatUnsupported),
       );
       final wire = _wire(_sealed())..['batch_format_version'] = '4';

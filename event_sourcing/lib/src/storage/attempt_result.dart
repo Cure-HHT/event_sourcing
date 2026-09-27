@@ -15,6 +15,8 @@ class AttemptResult {
     required this.outcome,
     this.errorMessage,
     this.httpStatus,
+    this.deliveryNumber,
+    this.deliveryHash,
   });
 
   /// Decode from snake_case JSON; throws [FormatException] on missing
@@ -44,11 +46,25 @@ class AttemptResult {
         'AttemptResult: "http_status" must be an int when present',
       );
     }
+    final deliveryNumber = json['delivery_number'];
+    if (deliveryNumber != null && deliveryNumber is! int) {
+      throw const FormatException(
+        'AttemptResult: "delivery_number" must be an int when present',
+      );
+    }
+    final deliveryHash = json['delivery_hash'];
+    if (deliveryHash != null && deliveryHash is! String) {
+      throw const FormatException(
+        'AttemptResult: "delivery_hash" must be a String when present',
+      );
+    }
     return AttemptResult(
       attemptedAt: DateTime.parse(attemptedAtRaw),
       outcome: outcome,
       errorMessage: errorMessage as String?,
       httpStatus: httpStatus as int?,
+      deliveryNumber: deliveryNumber as int?,
+      deliveryHash: deliveryHash as String?,
     );
   }
 
@@ -66,14 +82,26 @@ class AttemptResult {
   /// (e.g., network failure before a response was received).
   final int? httpStatus;
 
-  /// Encode to snake_case JSON. Optional fields are emitted with explicit
-  /// null so the wire contract distinguishes absent-because-null from
-  /// absent-because-missing.
+  /// The delivery number of the delivery the attempt sent, on a delivery
+  /// channel; null for a destination that is no channel.
+  // Implements: EVS-DEV-delivery-channel/I
+  // the attempt a send produces records the delivery's number and hash.
+  final int? deliveryNumber;
+
+  /// The delivery hash of the delivery the attempt sent, on a delivery
+  /// channel; null for a destination that is no channel.
+  final String? deliveryHash;
+
+  /// Encode to snake_case JSON. `error_message` and `http_status` are
+  /// emitted with explicit null; `delivery_number` and `delivery_hash` are
+  /// emitted only for an attempt that sent a delivery on a channel.
   Map<String, Object?> toJson() => <String, Object?>{
     'attempted_at': attemptedAt.toIso8601String(),
     'outcome': outcome,
     'error_message': errorMessage,
     'http_status': httpStatus,
+    if (deliveryNumber != null) 'delivery_number': deliveryNumber,
+    if (deliveryHash != null) 'delivery_hash': deliveryHash,
   };
 
   @override
@@ -83,15 +111,24 @@ class AttemptResult {
           attemptedAt == other.attemptedAt &&
           outcome == other.outcome &&
           errorMessage == other.errorMessage &&
-          httpStatus == other.httpStatus;
+          httpStatus == other.httpStatus &&
+          deliveryNumber == other.deliveryNumber &&
+          deliveryHash == other.deliveryHash;
 
   @override
-  int get hashCode =>
-      Object.hash(attemptedAt, outcome, errorMessage, httpStatus);
+  int get hashCode => Object.hash(
+    attemptedAt,
+    outcome,
+    errorMessage,
+    httpStatus,
+    deliveryNumber,
+    deliveryHash,
+  );
 
   @override
   String toString() =>
       'AttemptResult(attemptedAt: ${attemptedAt.toIso8601String()}, '
       'outcome: $outcome, errorMessage: $errorMessage, '
-      'httpStatus: $httpStatus)';
+      'httpStatus: $httpStatus, deliveryNumber: $deliveryNumber, '
+      'deliveryHash: $deliveryHash)';
 }

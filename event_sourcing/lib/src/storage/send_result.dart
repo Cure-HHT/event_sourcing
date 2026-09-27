@@ -4,7 +4,8 @@ import 'package:event_sourcing/src/destinations/receiver_response.dart';
 ///
 /// The drain loop switches on the four subclasses:
 /// - [SendOk]: the payload was delivered; mark the FIFO head `sent` and
-///   continue draining.
+///   continue draining. For a destination that serializes natively it is
+///   an acceptance carrying no receiver record, on which the head wedges.
 /// - [SendAnswered]: a receiver of the native batch format answered with
 ///   its record of the delivery's channel.
 /// - [SendTransient]: retry later per SyncPolicy; `httpStatus` optional

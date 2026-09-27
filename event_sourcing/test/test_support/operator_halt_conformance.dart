@@ -14,7 +14,6 @@
 // Traceability lives on the individual tests.
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show wedgeHeadInTxnForTest;
@@ -22,6 +21,7 @@ import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'deliveries.dart';
 import 'destination_wedges_view_conformance.dart' show forgedEvent;
 import 'drain_wedge_conformance.dart'
     show budget, declaredWedgeEventKeys, expectWedgeRecordMatchesLog;
@@ -1171,7 +1171,7 @@ void runOperatorHaltScenarios(
               'purpose': HaltPurpose.pause.wire,
             },
           );
-          await w.store.ingestEvent(peer);
+          await ingestEventForTest(w.store, peer);
           final held = await w.backend.findEventById(peer.eventId);
           expect(held?.data['database_id'], 'peer-db');
           return peer.eventId;
@@ -2102,40 +2102,27 @@ void runOperatorHaltScenarios(
         },
       };
 
-      Uint8List batchOf(List<StoredEvent> events) => BatchEnvelope(
-        batchFormatVersion: BatchEnvelope.currentBatchFormatVersion,
-        batchId: 'halt-batch-${events.first.eventId}',
-        senderHop: 'mobile-device',
-        senderIdentifier: 'peer-install',
-        senderSoftwareVersion: 'test@1.0.0',
-        sentAt: DateTime.utc(2026, 9, 1, 12),
-        events: <Map<String, Object?>>[
-          for (final e in events) Map<String, Object?>.from(e.toMap()),
-        ],
-      ).encode();
-
       final paths =
           <String, Future<void> Function(EventStore, List<StoredEvent>)>{
-            'ingestBatch': (store, events) async {
-              await store.ingestBatch(
-                batchOf(events),
-                wireFormat: BatchEnvelope.wireFormat,
-              );
+            'delivery': (store, events) async {
+              await deliverEventsTo(store, events);
             },
             'ingestEvent': (store, events) async {
               for (final e in events) {
-                await store.ingestEvent(e);
+                await ingestEventForTest(store, e);
               }
             },
           };
 
-      /// The snapshot of [destId] with the security findings left out of
-      /// the log, and without the records every stored event advances (the
+      /// The snapshot of [destId] with the security findings and the
+      /// accepted-delivery audits left out of the log, and without the records every stored event advances (the
       /// sequence counter and the latest authored sequence) or a stored
       /// finding sets (whether a security finding is held).
       Future<Map<String, Object?>> besideFindings(String destId) async {
         final findings = <String>{
           for (final e in await w.events(kSecurityFindingEntryType)) e.eventId,
+          for (final e in await w.events('ingest-audit'))
+            if (e.eventType == 'ingest.delivery_accepted') e.eventId,
         };
         final snapshot = await w.snapshot(destId);
         return <String, Object?>{

@@ -8,6 +8,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 import '../test_support/record_fixtures.dart';
 
@@ -251,7 +252,7 @@ void main() {
         // Ingest the originated event into dest. The receiver-hop event
         // routes through appendEvent under unification, so it must
         // surface on the stream.
-        await destStore.ingestEvent(origEvent!);
+        await ingestEventForTest(destStore, origEvent!);
         await Future<void>.delayed(Duration.zero);
 
         await sub.cancel();

@@ -4,12 +4,11 @@
 
 import 'package:event_sourcing/src/versions.dart';
 
-/// Thrown by `EventStore.ingestBatch`, `BatchEnvelope.decode` and
-/// `DeliveryEnvelope.decode` when the input bytes cannot be parsed as a
-/// well-formed batch envelope (malformed JSON, wrong shape, unsupported
-/// format version, missing required fields). A record inside a well-formed
-/// envelope that the library cannot store as an event is kept in a security
-/// finding instead.
+/// Thrown by `DeliveryEnvelope.decode` when the input bytes cannot be
+/// parsed as a well-formed delivery envelope (malformed JSON, wrong shape,
+/// unsupported format version, missing required fields). A record inside a
+/// well-formed envelope that the library cannot store as an event is kept
+/// in a security finding instead.
 ///
 /// [reason] names the refusal: one of [formatUnsupported],
 /// [attributesNotObject], [noEvents] and [malformed]. It is the reason a
@@ -43,18 +42,21 @@ class IngestDecodeFailure implements Exception {
   String toString() => 'IngestDecodeFailure($reason): $message';
 }
 
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event's data-format major differs from the receiver's
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event's data-format major differs from the receiver's
 /// (`LibVersion.dataFormat`). The receiver reads no other data-format
-/// major, so it refuses the event before any write, and `ingestBatch`
-/// refuses the whole batch. Operator action: run builds of one data-format
-/// major on both sides.
+/// major, so it refuses the event before any write, and a delivery
+/// carrying such an event is refused whole. Operator action: run builds of
+/// one data-format major on both sides.
 class IngestDataFormatIncompatible implements Exception {
   const IngestDataFormatIncompatible({
     required this.eventId,
     required this.wireFormat,
     required this.receiverFormat,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'data_format_incompatible';
 
   /// The refused event.
   final String eventId;
@@ -71,10 +73,10 @@ class IngestDataFormatIncompatible implements Exception {
       'wire: $wireFormat, receiver: $receiverFormat)';
 }
 
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event's entry-type major is above the major the receiver
-/// registers for its entry type. The receiver refuses the event before any
-/// write, and `ingestBatch` refuses the whole batch. An event of the
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event's entry-type major is above the major the receiver registers for
+/// its entry type. The receiver refuses the event before any write, and a
+/// delivery carrying such an event is refused whole. An event of the
 /// registered major is accepted at any minor. Operator action: upgrade the
 /// receiver's entry-type registry to the event's major.
 class IngestEntryTypeVersionAhead implements Exception {
@@ -84,6 +86,9 @@ class IngestEntryTypeVersionAhead implements Exception {
     required this.wireVersion,
     required this.receiverVersion,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'entry_type_version_ahead';
   final String eventId;
   final String entryType;
 
@@ -98,13 +103,13 @@ class IngestEntryTypeVersionAhead implements Exception {
       'wire: $wireVersion, receiver: $receiverVersion)';
 }
 
-/// Thrown by `EventStore.ingestBatch` and `EventStore.ingestEvent` when an
-/// incoming event is of a lower entry-type version than the receiver
-/// registers and the receiver's promoter steps for a view the event folds
-/// into do not lead from the event's version to the registered one: a
-/// lower major with no major step registered from it, or a version past
-/// the start of that major step. The receiver refuses the event before any
-/// write, and `ingestBatch` refuses the whole batch. Operator action:
+/// Thrown by the receiver endpoint's delivery accept path when an incoming
+/// event is of a lower entry-type version than the receiver registers and
+/// the receiver's promoter steps for a view the event folds into do not
+/// lead from the event's version to the registered one: a lower major
+/// with no major step registered from it, or a version past the start of
+/// that major step. The receiver refuses the event before any write, and a
+/// delivery carrying such an event is refused whole. Operator action:
 /// register the missing promoter step for [viewName], or stop the peer
 /// sending the event's major.
 class IngestEntryTypeVersionUnpromotable implements Exception {
@@ -116,6 +121,9 @@ class IngestEntryTypeVersionUnpromotable implements Exception {
     required this.receiverVersion,
     required this.reason,
   });
+
+  /// The reason a receiver's `rejected` refusal names for this refusal.
+  static const String refusalReason = 'entry_type_version_unpromotable';
   final String eventId;
   final String entryType;
 
@@ -135,4 +143,22 @@ class IngestEntryTypeVersionUnpromotable implements Exception {
       'IngestEntryTypeVersionUnpromotable(event_id: $eventId, entry_type: '
       '$entryType, view: $viewName, wire: $wireVersion, receiver: '
       '$receiverVersion): $reason';
+}
+
+/// A delivery or a pull refused because the caller may not act for the
+/// sending database it names: [senderDatabaseId] is not in the set of
+/// sender database identities the deployment's authentication states for
+/// the caller. Thrown before any read of a channel and any write; it
+/// carries no receiver record, and the deployment's transport answers it as
+/// an authentication refusal.
+class DeliveryAuthenticationRefused implements Exception {
+  const DeliveryAuthenticationRefused({required this.senderDatabaseId});
+
+  /// The sending database the delivery's channel, or the pull, names.
+  final String senderDatabaseId;
+
+  @override
+  String toString() =>
+      'DeliveryAuthenticationRefused: the caller may not act for '
+      'sender database $senderDatabaseId';
 }

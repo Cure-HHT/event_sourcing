@@ -6,6 +6,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 var _dbCounter = 0;
 
@@ -61,8 +62,8 @@ void main() {
     final sent1 = await _appendNote(sender, 's1');
     final sent2 = await _appendNote(sender, 's2');
     final own1 = await _appendNote(holder, 'h1');
-    await holder.ingestEvent(sent1);
-    await holder.ingestEvent(sent2);
+    await ingestEventForTest(holder, sent1);
+    await ingestEventForTest(holder, sent2);
     final own2 = await _appendNote(holder, 'h2');
     expect(own2.previousEventHash, own1.eventHash);
 
@@ -90,10 +91,10 @@ void main() {
       'aaaa0001-0000-4000-8000-000000000022',
     );
     final own1 = await _appendNote(holder, 'h1');
-    await holder.ingestEvent(await _appendNote(sender, 's1'));
+    await ingestEventForTest(holder, await _appendNote(sender, 's1'));
     final own2 = await _appendNote(holder, 'h2');
-    await holder.ingestEvent(await _appendNote(sender, 's2'));
-    await holder.ingestEvent(await _appendNote(sender, 's3'));
+    await ingestEventForTest(holder, await _appendNote(sender, 's2'));
+    await ingestEventForTest(holder, await _appendNote(sender, 's3'));
     final own3 = await _appendNote(holder, 'h3');
     expect(own2.previousEventHash, own1.eventHash);
     expect(own3.previousEventHash, own2.eventHash);

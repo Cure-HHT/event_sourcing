@@ -3,7 +3,7 @@
 ## 0.5.0
 
 This release changes what the library stores and sends (data format 3.0,
-and the `esd/batch@2` batch envelope). A database written by an earlier
+and the `esd/batch@3` delivery envelope). A database written by an earlier
 release, or by a build of data format 2, does not open: `EventStore.open`
 refuses it by name with `DatabaseResetRequiredError`, and it must be reset. A Postgres schema
 created by an earlier release is dropped and provisioned again with
@@ -139,6 +139,108 @@ created by an earlier release is dropped and provisioned again with
   `destination_channel_resumed`) and `system.destination_sender_succeeded`
   (event type `destination_sender_succeeded`), each an ineligible
   annotation.
+
+### Delivery channel: storage
+
+- `SenderChannelRecord` (generation, receiver record and receiver database
+  identity). Registering a destination that serializes natively writes it
+  as generation 1, number 0, a null hash and no receiver in the
+  registration's transaction; deleting the destination removes it.
+  Registering a destination that serializes natively with no
+  `channelPull` throws `ArgumentError` before anything is written.
+- `FifoEntry` gains `deliveryGeneration`, `deliveryNumber` and
+  `deliveryHash`, written only by the new `StorageBackend.markSentTxn`;
+  `AttemptResult` and `SendFence` gain `deliveryNumber` and `deliveryHash`.
+- A pending queue item that carries attempts may move to tombstoned; the
+  new `StorageBackend.deleteFifoEntryTxn` deletes only a pending item that
+  carries no attempt. `StorageBackend.readRetainedDeliveryTxn` reads the
+  item last marked sent at a delivery number under a generation. The
+  sender channel record members are `readSenderChannelRecordTxn`,
+  `writeSenderChannelRecordTxn` and `clearSenderChannelRecordTxn`.
+- Postgres schema version 4 (minimum 4): the queue table gains
+  `delivery_generation`, `delivery_number` and `delivery_hash` and the
+  index `fifo_entries_delivery_idx`; `fifo_entries_guard` refuses an item
+  inserted with a delivery, a change to the delivery outside the change
+  that marks the item sent, pending to tombstoned for an item carrying no
+  attempt, and the deletion of an item carrying attempts.
+
+### Delivery channel: receiver accept path
+
+- `EventStore.receiverEndpoint` returns the store's `ReceiverEndpoint`.
+  `ReceiverEndpoint.accept(bytes, senderDatabaseIds:)` accepts an
+  `esd/batch@3` delivery and returns the receiver's
+  `ReceiverAcknowledgement` (`accepted` or `represented`) or
+  `ReceiverRefusal` (`out_of_sequence`, `delivery_hash_mismatch` or
+  `rejected`), each carrying the receiver's record of the channel.
+- A delivery whose channel names a sending database outside
+  `senderDatabaseIds` throws the new `DeliveryAuthenticationRefused`
+  before any read of the channel and any write; a batch from which no
+  channel can be read throws `IngestDecodeFailure`.
+- The receiver accepts only the delivery numbered one above its record
+  and linked to its hash, acknowledges a re-presentation of the last one
+  without appending anything, and appends one `ingest.delivery_accepted`
+  audit per accepted delivery, from which the record is derived.
+- Each event stored from a delivery carries the delivery in its receiver
+  provenance entry. A delivery hash that does not recompute records a
+  `delivery_hash_mismatch` finding; an event the channel's sender did not
+  author is stored with a `foreign_event` finding.
+- `IngestDataFormatIncompatible`, `IngestEntryTypeVersionAhead` and
+  `IngestEntryTypeVersionUnpromotable` gain `refusalReason`, the reason a
+  `rejected` refusal names.
+- `StorageBackend.readLatestAuthoredOfAggregateInTxn` (internal) reads the
+  latest event of an aggregate the database holds as authored.
+
+### Delivery channel: receiver pull and channel listing
+
+- `ReceiverEndpoint.pull(request, senderDatabaseIds:)` serves a
+  `ChannelListingPull` as a `ChannelListing` (every channel, of every
+  generation, on which the receiver accepted a delivery from the sender,
+  each with its record) and a `DeliveryRangePull` as a `DeliveryRange`
+  reconstructed from the receiver's `ingest.delivery_accepted` audits: each
+  delivery's number, link, hash and attributes as carried, and the stored
+  record of each event in the audit's order, or the record a security
+  finding's evidence keeps for an event the receiver could not store. The
+  first delivery it cannot serve (above its record, or lacking its audit
+  or an event) is named in `unservableDeliveryNumber`.
+- A pull naming a sending database outside `senderDatabaseIds` throws
+  `DeliveryAuthenticationRefused` before any read.
+- `StorageBackend.findAuthoredDeliveryAuditsInTxn` and
+  `findLatestAuthoredDeliveryAuditsInTxn` (internal) read the authored
+  accepted-delivery audits of a channel's range and the latest of each
+  channel of a set of senders.
+
+### Delivery channel: sender drain
+
+- The fill enqueues each item of a destination that serializes natively as
+  an `esd/batch@3` item: its `envelope_metadata` names the delivery
+  channel (the sending database, the destination, the registration and the
+  sender channel record's generation) and carries empty delivery
+  attributes, with no delivery number. `BatchEnvelopeMetadata` gains
+  `channel`, `attributes` and `wireFormat`; `fillBatch` takes the
+  database identity (`databaseId`).
+- The drainer numbers each delivery one above the sender channel record
+  and links it to the record's hash; its pre-send fence sends only while
+  the record is unchanged and writes the delivery's number and hash in the
+  send fence record, and the attempt carries them.
+- The receiver's record returned with every answer decides the outcome: a
+  record naming the delivery in flight marks the head sent under its
+  generation, number and hash (a lost acknowledgement is recognised when
+  the retry is answered `represented`); a record at the next number naming
+  another delivery the sender attempted is adopted and marks nothing sent;
+  a receiver behind whose missing deliveries are all retained gets them
+  again exactly as first sent, recorded in one
+  `system.destination_channel_resumed` event; a record ahead naming no
+  attempted delivery records a `sender_regressed` finding, and any other
+  record, or an answer from another receiver database, a
+  `channel_unexplained` finding, each starting a new generation of the
+  registration from delivery 1 with the fill rewound to the start of the
+  log.
+- A `SendOk` from a destination that serializes natively (an acceptance
+  carrying no receiver record) wedges the head with cause
+  `acknowledgement_invalid`. `NativeDemoDestination` in the example answers
+  as an in-memory receiver when no bridge is wired.
+- `StorageBackend.listFifoEntriesTxn` (internal) lists a destination's
+  queue inside a transaction.
 
 ### Delivery: one drainer per database
 
@@ -288,18 +390,16 @@ created by an earlier release is dropped and provisioned again with
   identity is not its originating database, and keeps the record in an
   `event_malformed` security finding.
 - `IngestDataFormatIncompatible` replaces `IngestLibFormatVersionAhead`, and
-  `ingestEvent` applies the version checks too. New
-  `IngestEntryTypeVersionUnpromotable`: an event of a lower version that a
-  view's promoter steps do not lead from is refused by name, before any
-  write. A record with a malformed event version is kept in an
-  `event_malformed` security finding.
+  the event store's private per-record ingest applies the version checks
+  too. New `IngestEntryTypeVersionUnpromotable`: an event of a lower
+  version that a view's promoter steps do not lead from is refused by
+  name, before any write. A record with a malformed event version is kept
+  in an `event_malformed` security finding.
 - Ingest verifies every event's own hash, whatever the length of its
   provenance, and stores an event whose hash differs from its `event_hash`
-  as received, with a `hash_mismatch` security finding. `ingestBatch`
-  hashes each record exactly as the envelope carried it, not the parsed
-  event;
-  `ingestEvent` hashes `incoming.toMap()` of the event its caller parsed.
-  An event with only its origin provenance entry is checked too, so a sender
+  as received, with a `hash_mismatch` security finding. A native delivery's
+  accept path hashes each record exactly as the delivery carried it, not
+  the parsed event. An event with only its origin provenance entry is checked too, so a sender
   that builds events by hand seals each record with `canonicalEventHash`
   (now exported) after its last change; an invented `event_hash` is
   recorded as a finding. The hash is an unkeyed
@@ -582,3 +682,27 @@ created by an earlier release is dropped and provisioned again with
   commit even with every other tab's writes held back; the application
   closes and reopens the database.
 - `package:web` is a direct dependency.
+
+### Fill and replay: own events only, and the cut-over to `esd/batch@3`
+
+- The fill and every replay enqueue only an event whose originator entry
+  names the fill's own database and whose last provenance entry is that
+  originator entry (`EVS-DEV-destination-drain/V`): an event this database
+  ingested, or otherwise holds without being its author, is decided like a
+  filter rejection and never reaches a queue. A security finding or a
+  succession event this database appended reaches every natively
+  serializing destination registration whatever that destination's filter
+  (`EVS-DEV-destination-drain/X`); a destination that does not serialize
+  natively still applies its ordinary filter to these events.
+  `fillBatch`, `buildHistoricalReplayRows` and `buildGapReplayRows` take
+  the fill's database identity.
+- `esd/batch@2` and `BatchEnvelope` are removed: `esd/batch@3`
+  (`DeliveryEnvelope`) is the library's one native batch format.
+  `BatchEnvelopeMetadata.channel` and `.attributes` are required, and
+  `.fromEnvelope`/`.toEnvelope` are gone with them.
+- `EventStore.ingestBatch` and `IngestBatchResult` are removed:
+  `EventStore.receiverEndpoint.accept` is the library's one delivery
+  operation for a native batch, authenticated by the caller's sender
+  identities. `EventStore.ingestEvent` is private to the event store's Dart
+  library; the library exposes no public ingest entry point that admits an
+  event outside a delivery (`EVS-PRD-ingest/G`).

@@ -35,23 +35,9 @@ Future<List<Map<String, Object?>>> _findings(EventStore store) async =>
         Map<String, Object?>.from(e.data),
     ];
 
-/// [envelope] carrying [events] in place of its own.
-BatchEnvelope _withEvents(
-  BatchEnvelope envelope,
-  List<Map<String, Object?>> events,
-) => BatchEnvelope(
-  batchFormatVersion: envelope.batchFormatVersion,
-  batchId: envelope.batchId,
-  senderHop: envelope.senderHop,
-  senderIdentifier: envelope.senderIdentifier,
-  senderSoftwareVersion: envelope.senderSoftwareVersion,
-  sentAt: envelope.sentAt,
-  events: events,
-);
-
 WirePayload _wirePayload(Uint8List bytes) => WirePayload(
   bytes: bytes,
-  contentType: BatchEnvelope.wireFormat,
+  contentType: DeliveryEnvelope.wireFormat,
   transformVersion: null,
 );
 
@@ -60,18 +46,124 @@ void main() {
   String nextPath() => 'bridge-${++pathCounter}.db';
 
   group('DownstreamBridge.deliver', () {
-    test('valid esd/batch@2 envelope returns SendOk and the hub admits '
-        'its event', () async {
+    test("a synthetic sender's deliveries are numbered and linked, and the "
+        'hub accepts each', () async {
+      final hub = await _bootstrapHub(nextPath());
+      final sender = SyntheticSender();
+      final first = await sender.deliverOne(hub.eventStore);
+      final second = await sender.deliverOne(hub.eventStore);
+      expect(
+        first,
+        isA<ReceiverAcknowledgement>().having(
+          (a) => a.outcome,
+          'outcome',
+          AcknowledgementOutcome.accepted,
+        ),
+      );
+      expect(
+        second,
+        isA<ReceiverAcknowledgement>()
+            .having(
+              (a) => a.outcome,
+              'outcome',
+              AcknowledgementOutcome.accepted,
+            )
+            .having((a) => a.record.deliveryNumber, 'number', 2),
+      );
+    });
+
+    test(
+      'two synthetic senders delivering to one hub are each accepted',
+      () async {
+        final hub = await _bootstrapHub(nextPath());
+        for (final sender in <SyntheticSender>[
+          SyntheticSender(),
+          SyntheticSender(),
+        ]) {
+          expect(
+            await sender.deliverOne(hub.eventStore),
+            isA<ReceiverAcknowledgement>()
+                .having(
+                  (a) => a.outcome,
+                  'outcome',
+                  AcknowledgementOutcome.accepted,
+                )
+                .having((a) => a.record.deliveryNumber, 'number', 1),
+          );
+        }
+      },
+    );
+
+    test('a valid native delivery returns an acknowledgement and the hub '
+        'admits its event', () async {
       final hub = await _bootstrapHub(nextPath());
       final bridge = DownstreamBridge(hub.eventStore);
-      final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
-      final eventId = envelope.events.single['event_id']! as String;
+      final delivery = SyntheticSender().nextDelivery(<Map<String, Object?>>[
+        SyntheticSender().buildEvent(),
+      ]);
+      final eventId = delivery.events.single['event_id']! as String;
       expect(await hub.eventStore.reader.findEventById(eventId), isNull);
-      final result = await bridge.deliver(_wirePayload(envelope.encode()));
-      expect(result, isA<SendOk>());
+      final result = await bridge.deliver(_wirePayload(delivery.encode()));
+      expect(result, isA<SendAnswered>());
       final admitted = await hub.eventStore.reader.findEventById(eventId);
       expect(admitted, isNotNull, reason: 'the hub log holds the event');
       expect(admitted!.aggregateId, 'remote-aggregate-1');
+    });
+
+    test('a native esd/batch@3 delivery goes to the hub receiver endpoint '
+        'and returns the acknowledgement carrying its record', () async {
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
+      final record = SyntheticSender().buildEvent();
+      final originator =
+          ((record['metadata']! as Map)['provenance']! as List).first as Map;
+      final delivery = DeliveryEnvelope.seal(
+        batchId: 'bridge-delivery-1',
+        senderHop: 'mobile',
+        senderIdentifier: 'mobile-install',
+        senderSoftwareVersion: 'event_sourcing_demo@0.1.0+1',
+        sentAt: DateTime.utc(2026, 9, 1),
+        channel: DeliveryChannel(
+          senderDatabaseId: originator['database_id']! as String,
+          destinationId: 'Native',
+          registrationId: 'registration-1',
+          generation: 1,
+        ),
+        deliveryNumber: 1,
+        previousDeliveryHash: null,
+        events: <Map<String, Object?>>[record],
+      );
+
+      final result = await bridge.deliver(
+        WirePayload(
+          bytes: delivery.encode(),
+          contentType: DeliveryEnvelope.wireFormat,
+          transformVersion: null,
+        ),
+      );
+
+      expect(
+        result,
+        isA<SendAnswered>().having(
+          (a) => a.response,
+          'response',
+          ReceiverAcknowledgement(
+            channel: delivery.channel,
+            receiverDatabaseId: hub.eventStore.databaseId,
+            record: DeliveryRecord(
+              deliveryNumber: 1,
+              deliveryHash: delivery.deliveryHash,
+            ),
+            outcome: AcknowledgementOutcome.accepted,
+          ),
+        ),
+      );
+      expect(
+        await hub.eventStore.reader.findEventById(
+          record['event_id']! as String,
+        ),
+        isNotNull,
+      );
     });
 
     test('garbage bytes return SendPermanent (decode failure)', () async {
@@ -83,89 +175,83 @@ void main() {
       expect(result, isA<SendPermanent>());
     });
 
-    test('unsupported wireFormat returns SendPermanent', () async {
-      final hub = await _bootstrapHub(nextPath());
-      final bridge = DownstreamBridge(hub.eventStore);
-      final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
-      final payload = WirePayload(
-        bytes: envelope.encode(),
-        contentType: 'application/x-unknown',
-        transformVersion: null,
-      );
-      final result = await bridge.deliver(payload);
-      expect(result, isA<SendPermanent>());
-    });
+    test(
+      'another wire format returns SendPermanent and writes nothing',
+      () async {
+        final hub = await _bootstrapHub(nextPath());
+        final bridge = DownstreamBridge(hub.eventStore);
+        final before = (await hub.eventStore.reader.findAllEvents()).length;
+        final delivery = SyntheticSender().nextDelivery(<Map<String, Object?>>[
+          SyntheticSender().buildEvent(),
+        ]);
+        for (final format in <String>['application/x-unknown', 'esd/batch@2']) {
+          final payload = WirePayload(
+            bytes: delivery.encode(),
+            contentType: format,
+            transformVersion: null,
+          );
+          expect(await bridge.deliver(payload), isA<SendPermanent>());
+        }
+        expect((await hub.eventStore.reader.findAllEvents()).length, before);
+      },
+    );
 
     test('thrown StateError maps to SendTransient', () async {
       final bridge = DownstreamBridge(_ThrowingEventStore(StateError('boom')));
-      final envelope = SyntheticBatchBuilder().buildSingleEventBatch();
-      final result = await bridge.deliver(_wirePayload(envelope.encode()));
+      final delivery = SyntheticSender().nextDelivery(<Map<String, Object?>>[
+        SyntheticSender().buildEvent(),
+      ]);
+      final result = await bridge.deliver(_wirePayload(delivery.encode()));
       expect(result, isA<SendTransient>());
     });
 
-    test('IngestDataFormatIncompatible -> SendPermanent', () async {
-      final stub = _ThrowingEventStore(
-        const IngestDataFormatIncompatible(
-          eventId: 'e-1',
-          wireFormat: DataFormatVersion(3, 0),
-          receiverFormat: DataFormatVersion(2, 0),
+    test('a delivery the hub refuses as rejected maps to SendPermanent naming '
+        'the reason', () async {
+      final hub = await _bootstrapHub(nextPath());
+      final bridge = DownstreamBridge(hub.eventStore);
+      final record = SyntheticSender().buildEvent()
+        ..['lib_format_version'] = DataFormatVersion(
+          LibVersion.dataFormat.major + 1,
+          0,
+        ).toJson();
+      record['event_hash'] = canonicalEventHash(record);
+      final delivery = SyntheticSender().nextDelivery(<Map<String, Object?>>[
+        record,
+      ]);
+      final result = await bridge.deliver(_wirePayload(delivery.encode()));
+      expect(
+        result,
+        isA<SendPermanent>().having(
+          (p) => p.error,
+          'error',
+          contains(IngestDataFormatIncompatible.refusalReason),
         ),
       );
-      final bridge = DownstreamBridge(stub);
-      final result = await bridge.deliver(
-        _wirePayload(Uint8List.fromList(<int>[1])),
-      );
-      expect(result, isA<SendPermanent>());
-    });
-
-    test('IngestEntryTypeVersionAhead -> SendPermanent', () async {
-      final stub = _ThrowingEventStore(
-        const IngestEntryTypeVersionAhead(
-          eventId: 'e-1',
-          entryType: 'demo_note',
-          wireVersion: EntryTypeVersion(5, 0),
-          receiverVersion: EntryTypeVersion(2, 0),
+      expect(
+        await hub.eventStore.reader.findEventById(
+          record['event_id']! as String,
         ),
+        isNull,
       );
-      final bridge = DownstreamBridge(stub);
-      final result = await bridge.deliver(
-        _wirePayload(Uint8List.fromList(<int>[1])),
-      );
-      expect(result, isA<SendPermanent>());
-    });
-
-    test('IngestEntryTypeVersionUnpromotable -> SendPermanent', () async {
-      final stub = _ThrowingEventStore(
-        const IngestEntryTypeVersionUnpromotable(
-          eventId: 'e-1',
-          entryType: 'demo_note',
-          viewName: 'demo_notes',
-          wireVersion: EntryTypeVersion(1, 3),
-          receiverVersion: EntryTypeVersion(2, 0),
-          reason: 'no major step is registered from major 1',
-        ),
-      );
-      final bridge = DownstreamBridge(stub);
-      final result = await bridge.deliver(
-        _wirePayload(Uint8List.fromList(<int>[1])),
-      );
-      expect(result, isA<SendPermanent>());
     });
 
     test(
-      'a record whose hash does not recompute returns SendOk; the hub '
+      'a record whose hash does not recompute is accepted; the hub '
       'stores it as received with a hash_mismatch security finding',
       () async {
         final hub = await _bootstrapHub(nextPath());
         final bridge = DownstreamBridge(hub.eventStore);
-        final sealed = SyntheticBatchBuilder().buildSingleEventBatch();
-        final tampered = Map<String, Object?>.from(sealed.events.single)
+        final tampered = SyntheticSender().buildEvent()
           ..['event_hash'] = 'f' * 64;
         final eventId = tampered['event_id']! as String;
         final result = await bridge.deliver(
-          _wirePayload(_withEvents(sealed, [tampered]).encode()),
+          _wirePayload(
+            SyntheticSender().nextDelivery(<Map<String, Object?>>[
+              tampered,
+            ]).encode(),
+          ),
         );
-        expect(result, isA<SendOk>());
+        expect(result, isA<SendAnswered>());
         expect(
           await hub.eventStore.reader.findEventById(eventId),
           isNotNull,
@@ -178,16 +264,22 @@ void main() {
     );
 
     test('a declared reserved entry type under an aggregate type the library '
-        'does not declare for it returns SendOk; the hub keeps the record in '
+        'does not declare for it is accepted; the hub keeps the record in '
         'an event_malformed security finding', () async {
       final hub = await _bootstrapHub(nextPath());
       final bridge = DownstreamBridge(hub.eventStore);
-      final sealed = SyntheticBatchBuilder().buildSingleEventBatch(
+      final record = SyntheticSender().buildEvent(
         entryType: kSecurityFindingEntryType,
       );
-      final eventId = sealed.events.single['event_id']! as String;
-      final result = await bridge.deliver(_wirePayload(sealed.encode()));
-      expect(result, isA<SendOk>());
+      final eventId = record['event_id']! as String;
+      final result = await bridge.deliver(
+        _wirePayload(
+          SyntheticSender().nextDelivery(<Map<String, Object?>>[
+            record,
+          ]).encode(),
+        ),
+      );
+      expect(result, isA<SendAnswered>());
       expect(await hub.eventStore.reader.findEventById(eventId), isNull);
       final findings = await _findings(hub.eventStore);
       expect(findings.map((f) => f['kind']), <String>['event_malformed']);
@@ -202,10 +294,7 @@ class _ThrowingEventStore implements EventStore {
   _ThrowingEventStore(this._toThrow);
   final Object _toThrow;
   @override
-  Future<IngestBatchResult> ingestBatch(
-    Uint8List bytes, {
-    required String wireFormat,
-  }) {
+  ReceiverEndpoint get receiverEndpoint {
     // ignore: only_throw_errors
     throw _toThrow;
   }

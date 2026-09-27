@@ -20,12 +20,22 @@ import 'test_postgres_url.dart';
 /// The statuses a queue item can hold; null is pending.
 const List<String?> _statuses = <String?>[null, 'sent', 'wedged', 'tombstoned'];
 
-/// The status changes the guard admits.
+/// The status changes the guard admits for an item that carries attempts.
+/// Pending to tombstoned is admitted only for such an item.
 const Set<(String?, String?)> _legalChanges = <(String?, String?)>{
   (null, null),
   (null, 'sent'),
   (null, 'wedged'),
+  (null, 'tombstoned'),
   ('wedged', 'tombstoned'),
+};
+
+/// The columns that record the delivery a queue item was acknowledged
+/// under, written only by the change that marks it sent.
+const Map<String, String> _deliveryColumns = <String, String>{
+  'delivery_generation': 'delivery_generation = 1',
+  'delivery_number': 'delivery_number = 1',
+  'delivery_hash': "delivery_hash = 'h1'",
 };
 
 /// The columns a queue item is enqueued with, which the guard holds
@@ -175,10 +185,11 @@ void main() {
       (await c.execute('SELECT count(*) FROM fifo_entries')).first[0]! as int;
 
   // Verifies: EVS-DEV-destination-drain/S
-  // a status change other than pending to pending, pending to sent,
-  //   pending to wedged and wedged to tombstoned is refused, a repeated
-  //   terminal status included, and the refused row is unchanged.
-  test('only the four legal status changes pass', () async {
+  // for an item carrying attempts, a status change other than pending to
+  //   pending, pending to sent, pending to wedged, pending to tombstoned and
+  //   wedged to tombstoned is refused, a repeated terminal status included,
+  //   and the refused row is unchanged.
+  test('only the legal status changes pass', () async {
     for (final from in _statuses) {
       for (final to in _statuses) {
         final entryId = await itemAt(from);
@@ -204,6 +215,16 @@ void main() {
         }
       }
     }
+  });
+
+  // Verifies: EVS-DEV-destination-drain/S
+  // pending to tombstoned is refused for an item that carries no attempt,
+  //   and the row is unchanged.
+  test('pending to tombstoned without attempts is refused', () async {
+    final entryId = await insertPending();
+    final before = await row(entryId);
+    await expectLater(setStatus(entryId, 'tombstoned'), _refusedByGuard);
+    expect(await row(entryId), before);
   });
 
   // Verifies: EVS-DEV-destination-drain/S
@@ -292,6 +313,13 @@ void main() {
           'attempts = attempts || \'[{"n":9}]\'::jsonb',
       'appended when tombstoned',
     );
+    final retired = await itemAt(null);
+    await refused(
+      retired,
+      "final_status = 'tombstoned', "
+          'attempts = attempts || \'[{"n":9}]\'::jsonb',
+      'appended when a pending item is tombstoned',
+    );
     await refused(
       wedged,
       "final_status = 'tombstoned', attempts = '[]'::jsonb",
@@ -338,6 +366,7 @@ void main() {
     for (final (from, to) in <(String?, String)>[
       (null, 'NULL'),
       (null, "'wedged'"),
+      (null, "'tombstoned'"),
       ('wedged', "'tombstoned'"),
     ]) {
       final entryId = await itemAt(from);
@@ -358,10 +387,11 @@ void main() {
   });
 
   // Verifies: EVS-DEV-destination-drain/S
-  // deleting a sent, wedged or tombstoned item is refused; deleting a
-  //   pending item is allowed; truncating a table that holds a terminal item
-  //   is refused.
-  test('terminal items are never deleted; pending items are', () async {
+  // deleting a sent, wedged or tombstoned item, or a pending item carrying
+  //   attempts, is refused; deleting a pending item carrying none is
+  //   allowed; truncating a table that holds a terminal item is refused.
+  test('terminal items and items carrying attempts are never deleted; '
+      'other pending items are', () async {
     for (final status in <String>['sent', 'wedged', 'tombstoned']) {
       final entryId = await itemAt(status);
       await expectLater(
@@ -374,15 +404,25 @@ void main() {
       );
       expect((await row(entryId))['final_status'], status);
     }
-    final pending = await itemAt(null);
+    final attempted = await itemAt(null);
+    await expectLater(
+      c.execute(
+        Sql.named('DELETE FROM fifo_entries WHERE entry_id = @e'),
+        parameters: <String, Object?>{'e': attempted},
+      ),
+      _refusedByGuard,
+      reason: 'pending with attempts',
+    );
+    expect((await row(attempted))['attempts'], hasLength(1));
+    final pending = await insertPending();
     await c.execute(
       Sql.named('DELETE FROM fifo_entries WHERE entry_id = @e'),
       parameters: <String, Object?>{'e': pending},
     );
     expect(await row(pending), isEmpty);
-    expect(await count(), 3);
+    expect(await count(), 4);
     await expectLater(c.execute('TRUNCATE fifo_entries'), _refusedByGuard);
-    expect(await count(), 3);
+    expect(await count(), 4);
   });
 
   // Verifies: EVS-DEV-destination-drain/S
@@ -455,9 +495,9 @@ void main() {
 
   // Verifies: EVS-DEV-destination-drain/S
   // the guard names every column of the queue table: the enqueue-time
-  //   columns it holds unchanged, plus attempts, final_status and sent_at,
-  //   whose changes it rules on; a column added to the table without a
-  //   decision in the guard fails here.
+  //   columns it holds unchanged, plus attempts, final_status, sent_at and
+  //   the delivery columns, whose changes it rules on; a column added to the
+  //   table without a decision in the guard fails here.
   test('the guard covers every column of the queue table', () async {
     final columns = await c.execute(
       'SELECT column_name FROM information_schema.columns '
@@ -467,6 +507,7 @@ void main() {
       <String>{for (final r in columns) r[0]! as String},
       <String>{
         ..._immutableColumns.keys,
+        ..._deliveryColumns.keys,
         'attempts',
         'final_status',
         'sent_at',
@@ -497,6 +538,93 @@ void main() {
     expect(await row(head), isEmpty);
     final events = await c.execute('SELECT count(*) FROM events');
     expect(events.first[0], 0);
+  });
+
+  // Verifies: EVS-DEV-destination-drain/S
+  // an item inserted with a delivery generation, number or hash is
+  //   refused: an item is inserted with no delivery.
+  test('an item is inserted with no delivery', () async {
+    for (final MapEntry(key: column, value: assignment)
+        in _deliveryColumns.entries) {
+      final value = assignment.split(' = ').last;
+      await expectLater(
+        c.execute(
+          'INSERT INTO fifo_entries (destination_id, sequence_in_queue, '
+          'entry_id, event_ids, event_id_first_seq, event_id_last_seq, '
+          'wire_format, enqueued_at, attempts, $column) '
+          "VALUES ('d', 900, 'inserted', '[\"ev\"]'::jsonb, 1, 1, "
+          "'fake-v1', now(), '[]'::jsonb, $value)",
+        ),
+        _refusedByGuard,
+        reason: column,
+      );
+      expect(await count(), 0, reason: column);
+    }
+  });
+
+  // Verifies: EVS-DEV-destination-drain/S
+  // the delivery generation, number and hash change only in the change
+  //   that marks an item sent: set on a pending item that stays pending, in
+  //   a wedge or a tombstoning, or changed on a sent item, they are refused
+  //   and the row is unchanged; set in the change that marks it sent, they
+  //   pass.
+  test('the delivery changes only when an item is marked sent', () async {
+    Future<void> refused(String entryId, String set, String why) async {
+      final before = await row(entryId);
+      await expectLater(
+        c.execute(
+          Sql.named('UPDATE fifo_entries SET $set WHERE entry_id = @e'),
+          parameters: <String, Object?>{'e': entryId},
+        ),
+        _refusedByGuard,
+        reason: why,
+      );
+      expect(await row(entryId), before, reason: why);
+    }
+
+    const all =
+        "delivery_generation = 1, delivery_number = 1, delivery_hash = 'h1'";
+    for (final MapEntry(key: column, value: assignment)
+        in _deliveryColumns.entries) {
+      await refused(await itemAt(null), assignment, '$column while pending');
+      await refused(
+        await itemAt(null),
+        "final_status = 'wedged', $assignment",
+        '$column when wedged',
+      );
+      await refused(
+        await itemAt(null),
+        "final_status = 'tombstoned', $assignment",
+        '$column when a pending item is tombstoned',
+      );
+      await refused(
+        await itemAt('wedged'),
+        "final_status = 'tombstoned', $assignment",
+        '$column when a wedged item is tombstoned',
+      );
+    }
+
+    final sent = await itemAt(null);
+    await c.execute(
+      Sql.named(
+        "UPDATE fifo_entries SET final_status = 'sent', sent_at = now(), "
+        '$all WHERE entry_id = @e',
+      ),
+      parameters: <String, Object?>{'e': sent},
+    );
+    final marked = await row(sent);
+    expect(marked['final_status'], 'sent');
+    expect(marked['delivery_generation'], 1);
+    expect(marked['delivery_number'], 1);
+    expect(marked['delivery_hash'], 'h1');
+    await refused(sent, "delivery_hash = 'other'", 'delivery_hash when sent');
+    await refused(sent, 'delivery_number = 2', 'delivery_number when sent');
+    await refused(
+      sent,
+      'delivery_generation = 2',
+      'delivery_generation when sent',
+    );
+    await refused(sent, 'delivery_hash = NULL', 'delivery_hash cleared');
   });
 
   // Verifies: EVS-DEV-destination-drain/S

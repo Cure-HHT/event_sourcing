@@ -13,9 +13,9 @@ import 'package:event_sourcing/src/event_store.dart' show verifyChainsForTest;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'deliveries.dart';
 import 'ingest_chain_findings_conformance.dart' show chained, originChain;
-import 'ingest_record_findings_conformance.dart'
-    show envelopeOf, relayedRecord, resealed;
+import 'ingest_record_findings_conformance.dart' show relayedRecord, resealed;
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
 /// A database whose stored log a test changes as a write outside the
@@ -96,10 +96,7 @@ void runChainVerificationScenarios({
       EventStore store,
       List<Map<String, Object?>> records,
     ) async {
-      await store.ingestBatch(
-        envelopeOf(records).encode(),
-        wireFormat: BatchEnvelope.wireFormat,
-      );
+      await deliverByOriginator(store, records);
     }
 
     Future<StoredEvent> held(EventStore store, String eventId) async =>
@@ -267,7 +264,9 @@ void runChainVerificationScenarios({
         'hash_mismatch', () async {
       final store = await open();
       final relayed = relayedRecord(chained('origin-db', 1));
-      await deliver(store, <Map<String, Object?>>[relayed]);
+      // Through the ingest seam, so the relayed event is the last one
+      // stored and its rewrite breaks no successor's storage link.
+      await ingestEventForTest(store, StoredEvent.fromMap(relayed, 0));
       final stored = await held(store, relayed['event_id']! as String);
       expect(stored.metadata['provenance'], hasLength(3));
       await db.rewriteEvent(

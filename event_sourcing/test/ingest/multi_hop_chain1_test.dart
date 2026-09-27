@@ -20,6 +20,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Test fixture helpers
@@ -133,8 +134,8 @@ void main() {
           expect(eA2, isNotNull);
 
           // Hop 1: B ingests both of A's events.
-          await relayB.store.ingestEvent(eA1!);
-          await relayB.store.ingestEvent(eA2!);
+          await ingestEventForTest(relayB.store, eA1!);
+          await ingestEventForTest(relayB.store, eA2!);
 
           // Read B's stored copies — these now carry receiver provenance
           // entries from B (length 2: [origin, B]).
@@ -163,8 +164,8 @@ void main() {
           // B's stored copy IS the wire-supplied incoming event:
           // provenance is already [origin-A, receiver-B], and C will
           // append a third hop.
-          final outAtC1 = await controlC.store.ingestEvent(atB1);
-          final outAtC2 = await controlC.store.ingestEvent(atB2);
+          final outAtC1 = await ingestEventForTest(controlC.store, atB1);
+          final outAtC2 = await ingestEventForTest(controlC.store, atB2);
           expect(outAtC1.outcome, equals(IngestOutcome.ingested));
           expect(outAtC2.outcome, equals(IngestOutcome.ingested));
 
@@ -284,13 +285,13 @@ void main() {
           expect(eA, isNotNull);
 
           // Walk through B, D, C.
-          await relayB.store.ingestEvent(eA!);
+          await ingestEventForTest(relayB.store, eA!);
           final atB = await _fetchStored(relayB, eA.eventId);
 
-          await relayD.store.ingestEvent(atB);
+          await ingestEventForTest(relayD.store, atB);
           final atD = await _fetchStored(relayD, eA.eventId);
 
-          final outAtC = await controlC.store.ingestEvent(atD);
+          final outAtC = await ingestEventForTest(controlC.store, atD);
           expect(outAtC.outcome, equals(IngestOutcome.ingested));
 
           final atC = await _fetchStored(controlC, eA.eventId);

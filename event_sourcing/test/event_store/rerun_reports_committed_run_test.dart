@@ -1,9 +1,10 @@
 // Verifies: EVS-PRD-event-log/G
 // when the storage layer runs a write more
 //   than once before one run commits, the dispatcher's result and its
-//   idempotency record, and ingestBatch's per-event outcomes, reflect only
-//   the committed run: no event id, decision or outcome of the rolled-back
-//   run is returned or recorded.
+//   idempotency record, and the receiver's answer to a delivery and the
+//   accepted-delivery audit it records, reflect only the committed run: no
+//   event id, decision or outcome of the rolled-back run is returned or
+//   recorded.
 //
 // RerunningSembastBackend runs every transaction body twice on the VM,
 // rolling the first run back and committing the second, as Postgres does
@@ -13,10 +14,10 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
-import 'package:uuid/uuid.dart';
 
 import '../actions/fixtures/test_actions.dart'
     show AlwaysAllowPolicy, MultiEventAction, OptionalKeyAction;
+import '../test_support/deliveries.dart';
 import '../test_support/rerunning_sembast_backend.dart';
 
 const _source = Source(
@@ -192,8 +193,8 @@ void main() {
     );
   });
 
-  group('EventStore.ingestBatch under a re-run transaction', () {
-    test('returns one outcome per subject event', () async {
+  group('a delivery under a re-run transaction', () {
+    test('is answered and audited once, as the committed run', () async {
       final origDb = await newDatabaseFactoryMemory().openDatabase(
         'rerun-origin-${DateTime.now().microsecondsSinceEpoch}.db',
       );
@@ -220,34 +221,35 @@ void main() {
             initiator: const UserInitiator('u1'),
           ))!,
       ];
-      final envelope = BatchEnvelope(
-        batchFormatVersion: '2',
-        batchId: const Uuid().v4(),
-        senderHop: 'mobile-device',
-        senderIdentifier: 'device-1',
-        senderSoftwareVersion: 'my_app@1.0.0',
-        sentAt: DateTime.now().toUtc(),
-        events: subjects
-            .map((e) => Map<String, Object?>.from(e.toMap()))
-            .toList(),
-      );
-
       final (store, backend) = await _openRerunningStore();
       addTearDown(backend.close);
-      final result = await store.ingestBatch(
-        envelope.encode(),
-        wireFormat: BatchEnvelope.wireFormat,
-      );
+      final delivery = await deliverEventsTo(store, subjects);
 
       expect(backend.bodyRuns, 2, reason: 'the ingest body must be re-run');
-      expect(result.events, hasLength(subjects.length));
+      final answer = delivery.response;
+      expect(answer, isA<ReceiverAcknowledgement>());
       expect(
-        result.events.map((o) => o.eventId),
-        subjects.map((e) => e.eventId),
+        (answer as ReceiverAcknowledgement).outcome,
+        AcknowledgementOutcome.accepted,
+        reason: 'the committed run accepted the delivery',
       );
-      for (final outcome in result.events) {
-        expect(outcome.outcome, IngestOutcome.ingested);
-      }
+      expect(answer.record.deliveryNumber, 1);
+      expect(answer.record.deliveryHash, delivery.envelope.deliveryHash);
+      final audits = <StoredEvent>[
+        for (final e in await store.reader.findAllEvents(
+          entryType: 'ingest-audit',
+        ))
+          if (e.eventType == 'ingest.delivery_accepted') e,
+      ];
+      expect(audits, hasLength(1), reason: 'one audit, of the committed run');
+      expect(
+        audits.single.data['event_ids'],
+        subjects.map((e) => e.eventId).toList(),
+      );
+      expect(
+        await recordOutcomes(store, delivery),
+        List<IngestOutcome>.filled(subjects.length, IngestOutcome.ingested),
+      );
     });
   });
 }

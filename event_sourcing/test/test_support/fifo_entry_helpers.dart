@@ -123,6 +123,26 @@ Future<void> seedSentRowForTest(
   String entryId,
 ) => setStatusForTest(backend, destinationId, entryId, FinalStatus.sent);
 
+/// Mark a pending item `sent` under a delivery through the storage
+/// contract, in its own transaction.
+Future<void> markSentForTest(
+  StorageBackend backend,
+  String destinationId,
+  String entryId, {
+  required int generation,
+  required int deliveryNumber,
+  required String deliveryHash,
+}) => backend.transaction(
+  (txn) => backend.markSentTxn(
+    txn,
+    destinationId,
+    entryId,
+    generation: generation,
+    deliveryNumber: deliveryNumber,
+    deliveryHash: deliveryHash,
+  ),
+);
+
 /// Record [attempt] on a pending item through the storage contract.
 Future<void> appendAttemptForTest(
   StorageBackend backend,

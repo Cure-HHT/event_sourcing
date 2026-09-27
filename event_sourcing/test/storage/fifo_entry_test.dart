@@ -4,6 +4,7 @@
 //   constructor invariants (non-empty eventIds, firstSeq <= lastSeq) are
 //   enforced in both release and debug builds.
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
@@ -284,13 +285,21 @@ void main() {
   });
 
   group('FifoEntry envelopeMetadata + nullable wirePayload', () {
+    const channel = DeliveryChannel(
+      senderDatabaseId: 'db-1',
+      destinationId: 'dest',
+      registrationId: 'reg-1',
+      generation: 1,
+    );
     final meta = BatchEnvelopeMetadata(
-      batchFormatVersion: '2',
+      batchFormatVersion: '3',
       batchId: 'b-001',
       senderHop: 'mobile-1',
       senderIdentifier: 'device-uuid',
       senderSoftwareVersion: 'diary@1.2.3',
       sentAt: DateTime.utc(2026, 4, 25, 12),
+      channel: channel,
+      attributes: const <String, Object?>{},
     );
 
     // A native row carries envelopeMetadata and a null wire_payload, and
@@ -302,7 +311,7 @@ void main() {
         eventIds: const <String>['e1'],
         sequenceRange: (firstSeq: 1, lastSeq: 1),
         sequenceInQueue: 1,
-        wireFormat: 'esd/batch@2',
+        wireFormat: 'esd/batch@3',
         wirePayload: null,
         transformVersion: 'native-v1',
         enqueuedAt: DateTime.utc(2026, 4, 25, 12),
@@ -319,12 +328,14 @@ void main() {
       expect(
         json['envelope_metadata'],
         equals(<String, Object?>{
-          'batch_format_version': '2',
+          'batch_format_version': '3',
           'batch_id': 'b-001',
           'sender_hop': 'mobile-1',
           'sender_identifier': 'device-uuid',
           'sender_software_version': 'diary@1.2.3',
           'sent_at': '2026-04-25T12:00:00.000Z',
+          'channel': channel.toJson(),
+          'attributes': const <String, Object?>{},
         }),
       );
 
@@ -369,6 +380,137 @@ void main() {
       expect(restored.wirePayload!['rows'], isA<List<Object?>>());
       expect(restored.envelopeMetadata, isNull);
       expect(restored, equals(entry));
+    });
+  });
+
+  group('FifoEntry delivery triple', () {
+    FifoEntry sentEntry({int? generation, int? number, String? hash}) =>
+        FifoEntry(
+          entryId: 'fe-003',
+          eventIds: const <String>['e1'],
+          sequenceRange: (firstSeq: 1, lastSeq: 1),
+          sequenceInQueue: 1,
+          wireFormat: 'esd/batch@3',
+          transformVersion: null,
+          enqueuedAt: DateTime.utc(2026, 4, 25, 12),
+          attempts: <AttemptResult>[
+            AttemptResult(
+              attemptedAt: DateTime.utc(2026, 4, 25, 13),
+              outcome: 'ok',
+              deliveryNumber: number,
+              deliveryHash: hash,
+            ),
+          ],
+          finalStatus: FinalStatus.sent,
+          sentAt: DateTime.utc(2026, 4, 25, 13),
+          deliveryGeneration: generation,
+          deliveryNumber: number,
+          deliveryHash: hash,
+        );
+
+    // Verifies: EVS-DEV-delivery-channel/J
+    // a sent item carries the generation, delivery number and delivery hash
+    //   it was acknowledged under, and they round-trip with the item.
+    test('the generation, number and hash round-trip', () {
+      final entry = sentEntry(generation: 2, number: 7, hash: 'h7');
+      final json = entry.toJson();
+      expect(json['delivery_generation'], 2);
+      expect(json['delivery_number'], 7);
+      expect(json['delivery_hash'], 'h7');
+      final restored = FifoEntry.fromJson(json);
+      expect(restored, equals(entry));
+      expect(restored.deliveryGeneration, 2);
+      expect(restored.deliveryNumber, 7);
+      expect(restored.deliveryHash, 'h7');
+      expect(restored.attempts.single.deliveryNumber, 7);
+      expect(restored.attempts.single.deliveryHash, 'h7');
+      expect(
+        restored,
+        isNot(equals(sentEntry(generation: 1, number: 7, hash: 'h7'))),
+      );
+      expect(
+        restored,
+        isNot(equals(sentEntry(generation: 2, number: 8, hash: 'h7'))),
+      );
+      expect(
+        restored,
+        isNot(equals(sentEntry(generation: 2, number: 7, hash: 'h8'))),
+      );
+    });
+
+    test('an item without a delivery reads the three as null, absent or '
+        'null in its JSON', () {
+      final json = makeBatch().toJson()
+        ..remove('delivery_generation')
+        ..remove('delivery_number')
+        ..remove('delivery_hash');
+      final entry = FifoEntry.fromJson(json);
+      expect(entry.deliveryGeneration, isNull);
+      expect(entry.deliveryNumber, isNull);
+      expect(entry.deliveryHash, isNull);
+      expect(FifoEntry.fromJson(makeBatch().toJson()), makeBatch());
+    });
+
+    test('a wrongly typed delivery field is refused', () {
+      final valid = sentEntry(generation: 2, number: 7, hash: 'h7').toJson();
+      for (final broken in <Map<String, Object?>>[
+        {...valid, 'delivery_generation': '2'},
+        {...valid, 'delivery_number': '7'},
+        {...valid, 'delivery_hash': 7},
+      ]) {
+        expect(
+          () => FifoEntry.fromJson(broken),
+          throwsFormatException,
+          reason: '$broken',
+        );
+      }
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // an attempt records the delivery number and delivery hash of the
+    //   delivery it sent; an attempt of a destination that is no channel
+    //   records neither and keeps its JSON shape.
+    test('an attempt carries the delivery number and hash', () {
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 25, 13),
+        outcome: 'transient',
+        errorMessage: 'busy',
+        deliveryNumber: 3,
+        deliveryHash: 'h3',
+      );
+      expect(AttemptResult.fromJson(attempt.toJson()), attempt);
+      expect(attempt.toJson()['delivery_number'], 3);
+      expect(attempt.toJson()['delivery_hash'], 'h3');
+      expect(
+        attempt,
+        isNot(
+          AttemptResult(
+            attemptedAt: DateTime.utc(2026, 4, 25, 13),
+            outcome: 'transient',
+            errorMessage: 'busy',
+            deliveryNumber: 4,
+            deliveryHash: 'h3',
+          ),
+        ),
+      );
+      final plain = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 25, 13),
+        outcome: 'ok',
+      );
+      expect(plain.toJson().keys, <String>[
+        'attempted_at',
+        'outcome',
+        'error_message',
+        'http_status',
+      ]);
+      expect(AttemptResult.fromJson(plain.toJson()), plain);
+      expect(
+        () => AttemptResult.fromJson(<String, Object?>{
+          ...attempt.toJson(),
+          'delivery_number': '3',
+        }),
+        throwsFormatException,
+      );
     });
   });
 }

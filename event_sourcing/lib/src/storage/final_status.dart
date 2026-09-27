@@ -7,12 +7,16 @@ import 'package:meta/meta.dart' show internal;
 /// of three terminal states below. Once a FIFO entry's `finalStatus` is
 /// non-null it is retained for the database's lifetime as the delivery
 /// record, including after its destination is deleted. Only rows whose
-/// `finalStatus` is `null` are ever deleted: by an operator recovery's
-/// trail sweep (`tombstoneAndRefill`) and by a destination's deletion.
+/// `finalStatus` is `null` and that carry no attempt are ever deleted: by an
+/// operator recovery's trail sweep (`tombstoneAndRefill`), by a
+/// destination's deletion, and by a resume or a new generation of a
+/// delivery channel.
 ///
 /// The legal transitions are exactly `null -> sent` and `null -> wedged`
-/// (the drainer's outcomes) and `wedged -> tombstoned` (a recovery or a
-/// deletion retiring a wedged head).
+/// (the drainer's outcomes), `wedged -> tombstoned` (a recovery or a
+/// deletion retiring a wedged head) and, for a row carrying attempts,
+/// `null -> tombstoned` (a resume or a new generation of its delivery
+/// channel retiring it).
 // Implements: EVS-PRD-portability/C
 // pure Dart enum; platform-independent
 //   serialisation via name-based toJson/fromJson.
@@ -37,12 +41,20 @@ enum FinalStatus {
 }
 
 /// Whether a queue item's status may change from [current] to [next]:
-/// exactly `null -> sent`, `null -> wedged` and `wedged -> tombstoned`.
-/// The shipped backends' `setFinalStatusTxn` refuses every other change.
+/// exactly `null -> sent`, `null -> wedged`, `wedged -> tombstoned` and,
+/// for an item that carries attempts ([hasAttempts]), `null -> tombstoned`
+/// (a resume or a new generation of its delivery channel retires it). The
+/// shipped backends' `setFinalStatusTxn` refuses every other change.
 // Implements: EVS-DEV-destination-drain/B
 // the one table of legal status changes.
 @internal
-bool isLegalFinalStatusTransition(FinalStatus? current, FinalStatus next) =>
+bool isLegalFinalStatusTransition(
+  FinalStatus? current,
+  FinalStatus next, {
+  required bool hasAttempts,
+}) =>
     (current == null &&
-        (next == FinalStatus.sent || next == FinalStatus.wedged)) ||
+        (next == FinalStatus.sent ||
+            next == FinalStatus.wedged ||
+            (next == FinalStatus.tombstoned && hasAttempts))) ||
     (current == FinalStatus.wedged && next == FinalStatus.tombstoned);

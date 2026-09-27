@@ -21,6 +21,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
         kViewSnapshotPromotedEntryType;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
+import '../test_support/deliveries.dart';
 
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
@@ -287,8 +288,8 @@ void runProvenanceStampingScenarios({
         'database and the library version', () async {
       final store = await open(await database());
       final (_, sent) = await peerEvent();
-      await store.ingestEvent(sent);
-      final outcome = await store.ingestEvent(sent);
+      await ingestEventForTest(store, sent);
+      final outcome = await ingestEventForTest(store, sent);
       expect(outcome.outcome, IngestOutcome.duplicate);
 
       final audit = await _single(
@@ -305,7 +306,7 @@ void runProvenanceStampingScenarios({
         'database and the library version', () async {
       final store = await open(await database());
       final (peer, sent) = await peerEvent();
-      await store.ingestEvent(sent);
+      await ingestEventForTest(store, sent);
 
       final stored = await _single(store, (e) => e.eventId == sent.eventId);
       final provenance = _provenanceOf(stored);
@@ -326,8 +327,8 @@ void runProvenanceStampingScenarios({
         () async {
           final store = await open(db);
           final appended = await _appendNote(store, 'note-1');
-          await store.ingestEvent(sent);
-          await store.ingestEvent(sent);
+          await ingestEventForTest(store, sent);
+          await ingestEventForTest(store, sent);
 
           final log = await _log(store);
           final initialized = log.singleWhere(
@@ -368,7 +369,7 @@ void runProvenanceStampingScenarios({
       expect(e1.previousEventHash, initialized.eventHash);
 
       final (_, sent) = await peerEvent();
-      final ingested = await store.ingestEvent(sent);
+      final ingested = await ingestEventForTest(store, sent);
       final e2 = await _appendNote(store, 'note-2');
 
       expect(e2.previousEventHash, e1.eventHash);
@@ -390,8 +391,8 @@ void runProvenanceStampingScenarios({
       final store = await open(await database());
       final e1 = await _appendNote(store, 'note-1');
       final (_, sent) = await peerEvent();
-      final ingested = await store.ingestEvent(sent);
-      await store.ingestEvent(sent);
+      final ingested = await ingestEventForTest(store, sent);
+      await ingestEventForTest(store, sent);
 
       final audit = await _single(
         store,
@@ -477,7 +478,7 @@ void runProvenanceStampingScenarios({
       };
       record['event_hash'] = canonicalEventHash(record);
 
-      await store.ingestEvent(StoredEvent.fromMap(record, 0));
+      await ingestEventForTest(store, StoredEvent.fromMap(record, 0));
 
       final stored = await _single(
         store,

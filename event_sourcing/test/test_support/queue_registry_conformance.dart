@@ -20,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'fake_destination.dart';
 import 'fifo_entry_helpers.dart';
+import 'native_destination.dart';
 import 'queue_test_support.dart';
 import 'test_backends.dart';
 import 'wedges_view_invariant.dart';
@@ -211,6 +212,9 @@ class _World {
   Future<WedgeRecord?> wedgeRecord(String destId) =>
       backend.transaction((txn) => backend.readWedgeRecordTxn(txn, destId));
 
+  Future<SenderChannelRecord?> channelRecord(String destId) => backend
+      .transaction((txn) => backend.readSenderChannelRecordTxn(txn, destId));
+
   /// Everything a registry operation could change about [destId], and the
   /// log, except the registry check record.
   Future<Map<String, Object?>> snapshot(String destId) async => {
@@ -221,6 +225,7 @@ class _World {
     'cursor': await backend.readFillCursor(destId),
     'request': (await request(destId))?.toJson(),
     'wedge_record': (await wedgeRecord(destId))?.toJson(),
+    'sender_channel': (await channelRecord(destId))?.toJson(),
     'halt': (await backend.transaction(
       (txn) => backend.readHaltRequestTxn(txn, destId),
     ))?.toJson(),
@@ -1028,6 +1033,102 @@ void runQueueRegistryScenarios(
     // ------------------------------------------------------------------
 
     group('persisted state', () {
+      // Verifies: EVS-DEV-delivery-channel/D
+      // registering a destination that serializes natively writes its sender
+      //   channel record, generation 1, number 0, no hash and no receiver,
+      //   in the registration's transaction; one that does not writes none;
+      //   another process registering the same registration keeps the
+      //   record it finds.
+      // Verifies: EVS-DEV-destination-drain/A
+      // deleting the destination removes the sender channel record with
+      //   the other per-destination records.
+      test('a native registration writes the sender channel record; a '
+          'deletion removes it', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), SenderChannelRecord.initial);
+        expect(await w.db.backendStateKeys(), contains('sender_channel_x'));
+
+        await w.registry.addDestination(
+          FakeDestination(id: 'y', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('y'), isNull);
+
+        // A record the drainer advanced survives another process's
+        // registration of the same registration.
+        const advanced = SenderChannelRecord(
+          generation: 1,
+          receiverRecord: DeliveryRecord(deliveryNumber: 2, deliveryHash: 'h2'),
+          receiverDatabaseId: 'receiver-db',
+        );
+        await w.backend.transaction(
+          (txn) => w.backend.writeSenderChannelRecordTxn(txn, 'x', advanced),
+        );
+        final b = await w.openProcess();
+        await b.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), advanced);
+
+        await w.registry.deleteDestination('x', initiator: _init);
+        expect(await w.channelRecord('x'), isNull);
+        expect(
+          (await w.db.backendStateKeys()).where((k) => k.endsWith('_x')),
+          isNot(contains('sender_channel_x')),
+        );
+
+        // Registered again, the destination starts a new record.
+        await w.registry.addDestination(
+          NativeDestination(id: 'x', allowHardDelete: true),
+          initiator: _init,
+        );
+        expect(await w.channelRecord('x'), SenderChannelRecord.initial);
+      });
+
+      // Verifies: EVS-DEV-delivery-channel/E
+      // no registry operation but the registration and the deletion changes
+      //   a sender channel record: date changes, a halt request and its
+      //   cancellation leave it as it was.
+      test('registry operations leave the sender channel record '
+          'unchanged', () async {
+        if (!available) return;
+        await w.registry.addDestination(
+          NativeDestination(id: 'x'),
+          initiator: _init,
+        );
+        const advanced = SenderChannelRecord(
+          generation: 2,
+          receiverRecord: DeliveryRecord(deliveryNumber: 1, deliveryHash: 'h1'),
+          receiverDatabaseId: 'receiver-db',
+        );
+        await w.backend.transaction(
+          (txn) => w.backend.writeSenderChannelRecordTxn(txn, 'x', advanced),
+        );
+        await w.registry.setStartDate(
+          'x',
+          DateTime.utc(2026, 1, 1),
+          initiator: _init,
+        );
+        await w.registry.setEndDate(
+          'x',
+          DateTime.utc(2030, 1, 1),
+          initiator: _init,
+        );
+        await w.note('n1');
+        await w.registry.requestHalt(
+          'x',
+          purpose: HaltPurpose.pause,
+          initiator: _init,
+        );
+        await w.registry.cancelHalt('x', initiator: _init);
+        expect(await w.channelRecord('x'), advanced);
+      });
+
       // Verifies: EVS-DEV-destination-drain/A
       // the latest registration's opt-in is
       //   the one in effect; a deletion acts on it and records it.

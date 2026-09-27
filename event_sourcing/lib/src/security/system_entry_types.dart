@@ -267,6 +267,24 @@ const String kSecurityFindingAggregateType = 'security_finding';
 /// Event type of the security finding ([kSecurityFindingEntryType]).
 const String kSecurityFindingRecordedEventType = 'security_finding_recorded';
 
+/// The entry types the fill and every replay enqueue on every natively
+/// serializing destination registration of the database whatever that
+/// destination's filter: the succession event and the security finding.
+// Implements: EVS-DEV-destination-drain/X
+// the entry types a channel-wide enqueue names: the succession event and
+//   the security finding.
+const Set<String> kChannelWideEntryTypes = <String>{
+  kSecurityFindingEntryType,
+  kDestinationSenderSucceededEntryType,
+};
+
+/// Whether [entryType] is one the fill and every replay enqueue on every
+/// natively serializing destination registration whatever that
+/// destination's filter names ([kChannelWideEntryTypes]).
+@internal
+bool isChannelWideEntryType(String entryType) =>
+    kChannelWideEntryTypes.contains(entryType);
+
 /// The reserved entry types outside the `system.` prefix. With every
 /// identifier beginning with `system.`, they form the reserved namespace
 /// ([isReservedEntryType]), which no later release extends.

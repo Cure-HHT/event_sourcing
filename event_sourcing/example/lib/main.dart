@@ -45,7 +45,7 @@ class _PaneRuntime {
 /// Bootstraps one datastore with its own destinations and starts its
 /// delivery cycle. The optional [bridge] is wired into the Native
 /// destination's `send()` so mobile's outgoing wire stream lands in
-/// hub's `EventStore.ingestBatch`. The hub pane passes
+/// hub's `EventStore.receiverEndpoint`. The hub pane passes
 /// `bridge: null` so its Native destination's `send()` is a no-op
 /// simulator.
 ///

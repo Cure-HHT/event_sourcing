@@ -125,6 +125,16 @@ Future<void> _lockCheck(
 ///    honoured at step 3).
 /// 7. Send, then commit the outcome.
 ///
+/// For a destination that serializes natively, step 5 numbers the delivery
+/// one above the sender channel record and links it to that record's hash,
+/// the fence of step 6 proceeds only while the record is unchanged and
+/// writes the delivery's number and hash in the send fence record, and the
+/// receiver's record returned with its answer decides the outcome (see
+/// [_readReceiverAnswer]): the head is marked `sent` only on a record
+/// naming its delivery, and a [SendOk] (an acceptance carrying no record)
+/// wedges it with cause [WedgeCause.acknowledgementInvalid]. A resume or a
+/// new generation of the channel ends the pass.
+///
 /// On [SendOk] the head is marked `sent` and the loop advances. On
 /// [SendPermanent], or a [SendTransient] whose attempt reaches the budget,
 /// one event-store transaction records the attempt, marks the head wedged,
@@ -217,32 +227,15 @@ Future<void> drain(
       if (now().isBefore(nextAllowed)) return;
     }
 
-    // (5) Build the payload. Native `esd/batch@2` rows reconstruct bytes
-    // from `envelopeMetadata` + `eventIds`-resolved events through
-    // `BatchEnvelope.encode`, which JCS-canonicalizes the envelope so the
-    // result is byte-identical across retries. Third-party rows (any other
-    // wireFormat) carry the bytes as a stored JSON-Map `wirePayload`,
-    // re-encoded to bytes verbatim for `Destination.send`.
+    // (5) Build the payload. A destination that serializes natively sends
+    // a delivery on its channel, numbered from the sender channel record.
+    // Any other destination's row carries the bytes as a stored JSON-Map
+    // `wirePayload`, re-encoded to bytes verbatim for `Destination.send`.
     final WirePayload payload;
-    final envelope = head.envelopeMetadata;
-    if (envelope != null) {
-      final events = <Map<String, Object?>>[];
-      for (final eventId in head.eventIds) {
-        final ev = await backend.findEventById(eventId);
-        if (ev == null) {
-          throw StateError(
-            'native FIFO row ${head.entryId} references missing event '
-            '$eventId; cannot reconstruct esd/batch@2 wire bytes',
-          );
-        }
-        events.add(Map<String, Object?>.from(ev.toMap()));
-      }
-      final bytes = envelope.toEnvelope(events).encode();
-      payload = WirePayload(
-        bytes: bytes,
-        contentType: BatchEnvelope.wireFormat,
-        transformVersion: head.transformVersion,
-      );
+    _Delivery? delivery;
+    if (destination.serializesNatively) {
+      delivery = await _buildDelivery(backend, destinationId, head);
+      payload = delivery.payload;
     } else {
       payload = WirePayload(
         bytes: Uint8List.fromList(utf8.encode(jsonEncode(head.wirePayload))),
@@ -267,6 +260,20 @@ Future<void> drain(
           current.attempts.length != head.attempts.length) {
         return false;
       }
+      // Implements: EVS-DEV-delivery-channel/H
+      // a delivery is sent only when the sender channel record the fence
+      //   reads equals the one its number, link and hash were built from.
+      // Implements: EVS-DEV-delivery-channel/G
+      // the delivery's number (the record's plus one) and link (the
+      //   record's hash) are those of the record read in the fence.
+      if (delivery != null &&
+          await backend.readSenderChannelRecordTxn(txn, destinationId) !=
+              delivery.builtFrom) {
+        return false;
+      }
+      // Implements: EVS-DEV-delivery-channel/I
+      // the send fence record names the number and hash of the delivery in
+      //   flight.
       await backend.writeSendFenceTxn(
         txn,
         destinationId,
@@ -274,6 +281,8 @@ Future<void> drain(
           entryId: head.entryId,
           attemptCount: head.attempts.length,
           at: fenceAt,
+          deliveryNumber: delivery?.number,
+          deliveryHash: delivery?.hash,
         ),
       );
       return true;
@@ -296,12 +305,38 @@ Future<void> drain(
       destinationId,
     );
 
-    final attempt = _attemptFromResult(result, now());
+    final attempt = _attemptFromResult(result, now(), delivery);
+
+    // A receiver's answer on a delivery channel carries its record of the
+    // channel, which decides the outcome.
+    if (delivery != null && result is SendAnswered) {
+      final advance = await _readReceiverAnswer(
+        registry,
+        lock,
+        destinationId: destinationId,
+        head: head,
+        delivery: delivery,
+        response: result.response,
+        attempt: attempt,
+        maxAttempts: effective.maxAttempts,
+        declared: declared,
+      );
+      if (advance) continue;
+      return;
+    }
+
     // head.attempts.length is the count before this attempt.
-    // A receiver's answer carrying its record is recorded as a transient
-    // attempt: this drainer marks the head sent only on SendOk.
+    // A receiver's answer to a destination that is no delivery channel is
+    // recorded as a transient attempt.
     final cause = switch (result) {
-      SendOk() => null,
+      // Implements: EVS-DEV-delivery-channel/Q
+      // on a delivery channel, an accepting outcome that carries no record
+      //   wedges the head with cause acknowledgement_invalid, in the
+      //   transaction that records the attempt.
+      // Implements: EVS-PRD-destinations/Q
+      // the wedge event records an acceptance that carries no receiver
+      //   record as its cause.
+      SendOk() => delivery != null ? WedgeCause.acknowledgementInvalid : null,
       SendPermanent() => WedgeCause.permanentRefusal,
       SendTransient() || SendAnswered() =>
         head.attempts.length + 1 >= effective.maxAttempts
@@ -658,28 +693,670 @@ void _injectOutcomeFailure(String destinationId, String outcome) {
   }
 }
 
-AttemptResult _attemptFromResult(SendResult result, DateTime attemptedAt) {
+AttemptResult _attemptFromResult(
+  SendResult result,
+  DateTime attemptedAt,
+  _Delivery? delivery,
+) {
+  // Implements: EVS-DEV-delivery-channel/I
+  // the attempt a send of a delivery produces records its number and hash.
+  final number = delivery?.number;
+  final hash = delivery?.hash;
   switch (result) {
     case SendOk():
-      return AttemptResult(attemptedAt: attemptedAt, outcome: 'ok');
+      return AttemptResult(
+        attemptedAt: attemptedAt,
+        outcome: 'ok',
+        deliveryNumber: number,
+        deliveryHash: hash,
+      );
     case SendTransient(:final error, :final httpStatus):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'transient',
         errorMessage: error,
         httpStatus: httpStatus,
+        deliveryNumber: number,
+        deliveryHash: hash,
       );
     case SendPermanent(:final error):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'permanent',
         errorMessage: error,
+        deliveryNumber: number,
+        deliveryHash: hash,
       );
     case SendAnswered(:final response):
       return AttemptResult(
         attemptedAt: attemptedAt,
         outcome: 'transient',
         errorMessage: 'receiver answered: $response',
+        deliveryNumber: number,
+        deliveryHash: hash,
       );
   }
+}
+
+// ---------------------------------------------------------------------------
+// Delivery channels
+// ---------------------------------------------------------------------------
+
+/// A delivery the drainer built for the head of a delivery channel: its
+/// number, link and hash, from the sender channel record [builtFrom].
+final class _Delivery {
+  const _Delivery({
+    required this.builtFrom,
+    required this.channel,
+    required this.number,
+    required this.hash,
+    required this.payload,
+  });
+
+  /// The sender channel record the delivery was numbered from.
+  final SenderChannelRecord builtFrom;
+
+  /// The channel the delivery is sent on.
+  final DeliveryChannel channel;
+
+  /// The delivery number: [builtFrom]'s number plus one.
+  final int number;
+
+  /// The delivery hash.
+  final String hash;
+
+  /// The `esd/batch@3` bytes handed to the destination.
+  final WirePayload payload;
+}
+
+/// Builds the delivery that carries [head] on its channel: numbered one
+/// above the sender channel record read now, linked to that record's hash,
+/// with the item's envelope fields, channel and attributes and the events
+/// the item names, as stored. Every read of the item's events happens here.
+Future<_Delivery> _buildDelivery(
+  StorageBackend backend,
+  String destinationId,
+  FifoEntry head,
+) async {
+  final metadata = head.envelopeMetadata;
+  final channel = metadata?.channel;
+  final attributes = metadata?.attributes;
+  if (metadata == null || channel == null || attributes == null) {
+    throw StateError(
+      'queue item ${head.entryId} of $destinationId, a destination that '
+      'serializes natively, carries no delivery channel',
+    );
+  }
+  final record = await backend.transaction(
+    (txn) => backend.readSenderChannelRecordTxn(txn, destinationId),
+  );
+  if (record == null) {
+    throw StateError(
+      '$destinationId serializes natively and has no sender channel record',
+    );
+  }
+  if (record.generation != channel.generation) {
+    throw StateError(
+      'queue item ${head.entryId} of $destinationId is on generation '
+      '${channel.generation}; the sender channel record is on generation '
+      '${record.generation}',
+    );
+  }
+  final events = <Map<String, Object?>>[];
+  for (final eventId in head.eventIds) {
+    final ev = await backend.findEventById(eventId);
+    if (ev == null) {
+      throw StateError(
+        'queue item ${head.entryId} of $destinationId references missing '
+        'event $eventId; cannot build its delivery',
+      );
+    }
+    events.add(Map<String, Object?>.from(ev.toMap()));
+  }
+  final sealed = DeliveryEnvelope.seal(
+    batchId: metadata.batchId,
+    senderHop: metadata.senderHop,
+    senderIdentifier: metadata.senderIdentifier,
+    senderSoftwareVersion: metadata.senderSoftwareVersion,
+    sentAt: metadata.sentAt,
+    channel: channel,
+    deliveryNumber: record.receiverRecord.deliveryNumber + 1,
+    previousDeliveryHash: record.receiverRecord.deliveryHash,
+    events: events,
+    attributes: attributes,
+  );
+  return _Delivery(
+    builtFrom: record,
+    channel: channel,
+    number: sealed.deliveryNumber,
+    hash: sealed.deliveryHash,
+    payload: WirePayload(
+      bytes: sealed.encode(),
+      contentType: DeliveryEnvelope.wireFormat,
+      transformVersion: head.transformVersion,
+    ),
+  );
+}
+
+/// How the drainer reads a receiver record returned for a delivery.
+enum _Reading {
+  /// The record names the delivery in flight at the next number: the head
+  /// is marked sent under it.
+  acknowledged,
+
+  /// The record names, at the next number, another delivery the sender
+  /// attempted: the sender adopts it and marks nothing sent.
+  adopted,
+
+  /// The record equals the sender channel record.
+  inStep,
+
+  /// The receiver is behind and every delivery it lacks is retained.
+  receiverBehind,
+
+  /// The record is ahead and names no delivery the sender attempted.
+  senderRegressed,
+
+  /// No automatic path explains the record, or another receiver answered.
+  unexplained,
+
+  /// The answer names another channel than the delivery's; it says nothing
+  /// of this channel and is a transient failure.
+  otherChannel,
+}
+
+/// Reads [response], the receiver's answer to [delivery], the delivery of
+/// [head], and commits what it calls for with [attempt] in one transaction
+/// that checks [lock] first. Returns true when the head was marked sent
+/// (the drain goes on to the next item), false when the pass ends.
+///
+/// In this order:
+///
+/// - An answer naming another channel is a transient failure.
+/// - A response from another receiver database than the one the sender
+///   channel record holds, when it holds one, starts a new generation with
+///   a `channel_unexplained` finding.
+/// - A record numbered one above the sender channel record that names a
+///   delivery the sender attempted (the one the send fence record names,
+///   or one an attempt on a pending, wedged or tombstoned item carries)
+///   becomes the sender channel record, with the responding receiver, and
+///   marks the head sent under it when it names the delivery in flight.
+/// - A record equal to the sender channel record changes nothing.
+/// - A record below the sender channel record, every delivery above it
+///   retained and the first linking to its hash, resumes the channel.
+/// - A record above the sender channel record naming no delivery the
+///   sender attempted starts a new generation with a `sender_regressed`
+///   finding.
+/// - Every other record starts a new generation with a
+///   `channel_unexplained` finding.
+///
+/// The attempt is recorded on the head first; an attempt that leaves the
+/// head pending and spends the retry budget wedges it in the same
+/// transaction.
+// Implements: EVS-DEV-delivery-channel/N
+// an accepting outcome carrying another record, and an out_of_sequence
+//   refusal, are read here as the receiver's record, never as a permanent
+//   failure.
+Future<bool> _readReceiverAnswer(
+  DestinationRegistry registry,
+  DrainLock lock, {
+  required String destinationId,
+  required FifoEntry head,
+  required _Delivery delivery,
+  required ReceiverResponse response,
+  required AttemptResult attempt,
+  required int maxAttempts,
+  required DrainerConfiguration? declared,
+}) async {
+  final backend = registry._backend;
+  final discarded = await registry.eventStore.runTransaction((
+    txn,
+    collector,
+  ) async {
+    await _lockCheck(lock, txn, destinationId);
+    final sender = await backend.readSenderChannelRecordTxn(txn, destinationId);
+    if (sender == null) {
+      throw StateError(
+        '$destinationId serializes natively and has no sender channel record',
+      );
+    }
+    final fence = await backend.readSendFenceTxn(txn, destinationId);
+    final items = await backend.listFifoEntriesTxn(txn, destinationId);
+    final record = response.record;
+    final responding = response.receiverDatabaseId;
+    final reading = response.channel != delivery.channel
+        ? _Reading.otherChannel
+        : await _readRecord(
+            backend,
+            txn,
+            destinationId: destinationId,
+            headEntryId: head.entryId,
+            sender: sender,
+            record: record,
+            responding: responding,
+            fence: fence,
+            items: items,
+          );
+    final acknowledged = reading == _Reading.acknowledged;
+    await backend.appendAttemptTxn(
+      txn,
+      destinationId,
+      head.entryId,
+      AttemptResult(
+        attemptedAt: attempt.attemptedAt,
+        outcome: acknowledged ? 'ok' : 'transient',
+        errorMessage: acknowledged
+            ? null
+            : 'receiver ${response.receiverDatabaseId} answered with record '
+                  '${record.deliveryNumber}: ${reading.name}',
+        deliveryNumber: attempt.deliveryNumber,
+        deliveryHash: attempt.deliveryHash,
+      ),
+    );
+    switch (reading) {
+      case _Reading.acknowledged:
+      case _Reading.adopted:
+        // Implements: EVS-DEV-delivery-resume/H
+        // a record at the next number naming a delivery the sender
+        //   attempted becomes the sender channel record, with the responding
+        //   receiver, and marks the pending head sent only when it names the
+        //   delivery the send fence record names.
+        // Implements: EVS-DEV-delivery-channel/M
+        // the head is marked sent only on a record whose number and hash are
+        //   those of the delivery it sent.
+        // Implements: EVS-PRD-delivery-channel/F
+        // a queued item is marked delivered only on a receiver record naming
+        //   the delivery the sender made of it.
+        if (acknowledged) {
+          await backend.markSentTxn(
+            txn,
+            destinationId,
+            head.entryId,
+            generation: sender.generation,
+            deliveryNumber: record.deliveryNumber,
+            deliveryHash: record.deliveryHash!,
+          );
+        }
+        await backend.writeSenderChannelRecordTxn(
+          txn,
+          destinationId,
+          SenderChannelRecord(
+            generation: sender.generation,
+            receiverRecord: record,
+            receiverDatabaseId: responding,
+          ),
+        );
+      case _Reading.inStep:
+      case _Reading.otherChannel:
+        break;
+      case _Reading.receiverBehind:
+        await _resumeInTxn(
+          registry,
+          txn,
+          collector,
+          lock: lock,
+          destinationId: destinationId,
+          sender: sender,
+          record: record,
+          responding: responding,
+          items: await backend.listFifoEntriesTxn(txn, destinationId),
+        );
+        return null;
+      case _Reading.senderRegressed:
+      case _Reading.unexplained:
+        await _newGenerationInTxn(
+          registry,
+          txn,
+          collector,
+          destinationId: destinationId,
+          channel: delivery.channel,
+          sender: sender,
+          record: record,
+          responding: responding,
+          kind: reading == _Reading.senderRegressed
+              ? FindingKind.senderRegressed
+              : FindingKind.channelUnexplained,
+          items: await backend.listFifoEntriesTxn(txn, destinationId),
+        );
+        return null;
+    }
+    if (acknowledged || head.attempts.length + 1 < maxAttempts) return null;
+    // The attempt leaves the head pending and spends the budget.
+    final wedged = await registry._wedgeHeadInTxn(
+      txn,
+      collector,
+      destinationId: destinationId,
+      rowId: head.entryId,
+      cause: WedgeCause.retryBudgetExhausted,
+      maxAttempts: maxAttempts,
+      drainerEpoch: lock.epoch,
+      configuration: declared?.configuration,
+      configurationFingerprint: declared?.fingerprint,
+    );
+    return wedged.discardedHaltRequestEventId;
+  });
+  _logDiscardedHaltRequest(destinationId, discarded);
+  final after = await backend.readFifoRow(destinationId, head.entryId);
+  return after?.finalStatus == FinalStatus.sent;
+}
+
+/// Reads [record], returned by [responding] on the channel of [sender],
+/// against the sender's own records: the sender channel record, the send
+/// fence record [fence] and the attempts the registration's queue [items]
+/// carry.
+// Implements: EVS-DEV-delivery-resume/Y
+// a response from another receiver database than the one the sender channel
+//   record holds, and a record that is not the sender's, calls for no
+//   resume, and is not above it or is more than one above it naming an
+//   attempted delivery, is unexplained.
+// Implements: EVS-DEV-delivery-resume/K
+// a record above the sender channel record naming no delivery the sender
+//   attempted is a sender regression.
+// Implements: EVS-PRD-delivery-channel/I
+// a record from the channel's receiver database ahead of the sender's that
+//   names no delivery the sender attempted is recorded as a sender
+//   regression.
+Future<_Reading> _readRecord(
+  StorageBackend backend,
+  Transaction txn, {
+  required String destinationId,
+  required String headEntryId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required SendFence? fence,
+  required List<FifoEntry> items,
+}) async {
+  final held = sender.receiverDatabaseId;
+  if (held != null && held != responding) return _Reading.unexplained;
+  final own = sender.receiverRecord;
+  final attempted = _namesAttempted(record, fence, items);
+  if (record.deliveryNumber == own.deliveryNumber + 1 && attempted) {
+    return fence != null &&
+            fence.entryId == headEntryId &&
+            fence.deliveryNumber == record.deliveryNumber &&
+            fence.deliveryHash == record.deliveryHash
+        ? _Reading.acknowledged
+        : _Reading.adopted;
+  }
+  if (record == own) return _Reading.inStep;
+  if (record.deliveryNumber < own.deliveryNumber &&
+      await _resendable(
+        backend,
+        txn,
+        destinationId: destinationId,
+        sender: sender,
+        record: record,
+      )) {
+    return _Reading.receiverBehind;
+  }
+  if (record.deliveryNumber > own.deliveryNumber && !attempted) {
+    return _Reading.senderRegressed;
+  }
+  return _Reading.unexplained;
+}
+
+/// Whether [record] names a delivery the sender attempted: the one the send
+/// fence record names, or one an attempt recorded on a pending, wedged or
+/// tombstoned item of the queue carries. The delivery hash covers the
+/// channel, so a match names a delivery of the same registration and
+/// generation.
+bool _namesAttempted(
+  DeliveryRecord record,
+  SendFence? fence,
+  List<FifoEntry> items,
+) {
+  final number = record.deliveryNumber;
+  final hash = record.deliveryHash;
+  if (number == 0 || hash == null) return false;
+  if (fence != null &&
+      fence.deliveryNumber == number &&
+      fence.deliveryHash == hash) {
+    return true;
+  }
+  for (final item in items) {
+    if (item.finalStatus == FinalStatus.sent) continue;
+    for (final a in item.attempts) {
+      if (a.deliveryNumber == number && a.deliveryHash == hash) return true;
+    }
+  }
+  return false;
+}
+
+/// Whether the sender retains a delivery at every number above [record] up
+/// to [sender]'s, and the one numbered one above [record] links to its hash:
+/// its hash recomputes from its channel, number, events and attributes with
+/// [record]'s hash as its link.
+// Implements: EVS-DEV-delivery-resume/I
+// the channel resumes as a receiver behind when every number above the
+//   record up to the sender's is retained and the first links to the
+//   record's hash.
+// Implements: EVS-DEV-delivery-resume/W
+// the retained delivery at a number is the one the queue last marked sent
+//   there under the current generation; a number without one is not
+//   retained.
+Future<bool> _resendable(
+  StorageBackend backend,
+  Transaction txn, {
+  required String destinationId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+}) async {
+  for (
+    var n = record.deliveryNumber + 1;
+    n <= sender.receiverRecord.deliveryNumber;
+    n++
+  ) {
+    final retained = await backend.readRetainedDeliveryTxn(
+      txn,
+      destinationId,
+      generation: sender.generation,
+      deliveryNumber: n,
+    );
+    if (retained == null) return false;
+    if (n != record.deliveryNumber + 1) continue;
+    final metadata = retained.envelopeMetadata;
+    final channel = metadata?.channel;
+    final attributes = metadata?.attributes;
+    if (channel == null || attributes == null) return false;
+    final hashes = <Object?>[];
+    for (final id in retained.eventIds) {
+      final event = await backend.findEventByIdInTxn(txn, id);
+      if (event == null) return false;
+      hashes.add(event.toMap()['event_hash']);
+    }
+    final relinked = computeDeliveryHash(
+      channel: channel,
+      deliveryNumber: n,
+      previousDeliveryHash: record.deliveryHash,
+      eventHashes: hashes,
+      attributes: attributes,
+    );
+    if (relinked != retained.deliveryHash) return false;
+  }
+  return true;
+}
+
+/// Retires [items]' pending ones inside [txn]: deletes each that carries no
+/// attempt and tombstones each that carries attempts. Returns the lowest
+/// event sequence number they carry, or null when none was pending.
+Future<int?> _retirePendingInTxn(
+  StorageBackend backend,
+  Transaction txn,
+  String destinationId,
+  List<FifoEntry> items,
+) async {
+  int? lowest;
+  for (final item in items) {
+    if (item.finalStatus != null) continue;
+    if (item.attempts.isEmpty) {
+      await backend.deleteFifoEntryTxn(txn, destinationId, item.entryId);
+    } else {
+      await backend.setFinalStatusTxn(
+        txn,
+        destinationId,
+        item.entryId,
+        FinalStatus.tombstoned,
+      );
+    }
+    final first = item.sequenceRange.firstSeq;
+    if (lowest == null || first < lowest) lowest = first;
+  }
+  return lowest;
+}
+
+/// The resume of a receiver behind, inside [txn]: retires the pending
+/// items, rewinds the fill position below the lowest event they carry,
+/// enqueues one resend item per delivery number above [record] up to
+/// [sender]'s, carrying the retained delivery's events, envelope fields
+/// and attributes, sets the sender channel record to [record] and appends
+/// the resume event.
+// Implements: EVS-DEV-delivery-resume/N
+// the resume commits in one transaction that verifies the drain lock,
+//   retires the pending items (deleting those without attempts,
+//   tombstoning those with), rewinds the fill position below their lowest
+//   event, enqueues the resend items, sets the sender channel record to the
+//   receiver record and appends the resume event.
+// Implements: EVS-DEV-delivery-resume/M
+// one resend item per delivery number above the receiver record up to the
+//   sender's, in ascending order, each carrying the retained delivery's
+//   events and attributes in its order.
+// Implements: EVS-PRD-delivery-channel/H
+// every retained delivery after the receiver's record is sent again with
+//   the events, number, link and hash it was first sent with, and the
+//   resume is recorded as one event.
+// Implements: EVS-PRD-delivery-channel/L
+// a receiver that moved back is realigned by resending the retained
+//   deliveries it lacks that link to its record.
+// Implements: EVS-DEV-destination-drain/E
+// the receiver-behind resume enqueues the resend items; it is the drainer.
+Future<void> _resumeInTxn(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required DrainLock lock,
+  required String destinationId,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required List<FifoEntry> items,
+}) async {
+  final backend = registry._backend;
+  final lowest = await _retirePendingInTxn(backend, txn, destinationId, items);
+  if (lowest != null) {
+    final cursor = await backend.readFillCursorTxn(txn, destinationId);
+    if (lowest - 1 < cursor) {
+      await backend.writeFillCursorTxn(txn, destinationId, lowest - 1);
+    }
+  }
+  // The destination's transform failure record, once kept, is removed here
+  // with the rewind.
+  for (
+    var n = record.deliveryNumber + 1;
+    n <= sender.receiverRecord.deliveryNumber;
+    n++
+  ) {
+    final retained = (await backend.readRetainedDeliveryTxn(
+      txn,
+      destinationId,
+      generation: sender.generation,
+      deliveryNumber: n,
+    ))!;
+    final events = <StoredEvent>[];
+    for (final id in retained.eventIds) {
+      events.add((await backend.findEventByIdInTxn(txn, id))!);
+    }
+    await backend.enqueueFifoTxn(
+      txn,
+      destinationId,
+      events,
+      nativeEnvelope: retained.envelopeMetadata,
+    );
+  }
+  await backend.writeSenderChannelRecordTxn(
+    txn,
+    destinationId,
+    SenderChannelRecord(
+      generation: sender.generation,
+      receiverRecord: record,
+      receiverDatabaseId: responding,
+    ),
+  );
+  final schedule = await backend.readScheduleTxn(txn, destinationId);
+  // Implements: EVS-DEV-resume-event/A
+  // the resume event carries exactly id, database_id, registration_id,
+  //   generation, resume_after, previous_record and drainer_epoch.
+  await registry._emitDestinationAuditInTxn(
+    txn,
+    collector,
+    entryType: kDestinationChannelResumedEntryType,
+    eventType: kDestinationChannelResumedEventType,
+    data: <String, Object?>{
+      'id': destinationId,
+      // `database_id` is added by the audit emitter.
+      'registration_id': schedule?.registrationId,
+      'generation': sender.generation,
+      'resume_after': record.toJson(),
+      'previous_record': sender.receiverRecord.toJson(),
+      'drainer_epoch': lock.epoch,
+    },
+    initiator: _drainInitiator,
+  );
+}
+
+/// A new generation of [destinationId]'s registration, inside [txn]:
+/// records the finding [kind] under the role `sender`, retires the pending
+/// items, rewinds the fill position to the start of the log and sets the
+/// sender channel record to the next generation, number 0, a null hash and
+/// the responding receiver.
+// Implements: EVS-DEV-delivery-resume/Z
+// the new generation commits in one transaction that verifies the drain
+//   lock, appends the finding under the detector role sender naming the
+//   channel, both records and both receiver identities, retires the pending
+//   items, rewinds the fill position to the start and sets the record to
+//   the next generation at number 0 with the responding receiver.
+// Implements: EVS-PRD-delivery-channel/X
+// a record no automatic path explains continues the registration on a new
+//   generation, numbered from delivery 1 and filled again from the start of
+//   the log.
+Future<void> _newGenerationInTxn(
+  DestinationRegistry registry,
+  Transaction txn,
+  PublishCollector collector, {
+  required String destinationId,
+  required DeliveryChannel channel,
+  required SenderChannelRecord sender,
+  required DeliveryRecord record,
+  required String responding,
+  required FindingKind kind,
+  required List<FifoEntry> items,
+}) async {
+  final backend = registry._backend;
+  await registry.eventStore._recordFindingInTxn(
+    txn,
+    collector,
+    role: FindingRole.sender,
+    kind: kind,
+    evidence: <String, Object?>{
+      'channel': channel.toJson(),
+      'sender_record': sender.receiverRecord.toJson(),
+      'receiver_record': record.toJson(),
+      'recorded_receiver_database_id': sender.receiverDatabaseId,
+      'responding_receiver_database_id': responding,
+    },
+    aggregates: const <String>[],
+  );
+  await _retirePendingInTxn(backend, txn, destinationId, items);
+  await backend.writeFillCursorTxn(txn, destinationId, -1);
+  // The destination's transform failure record, once kept, is removed here
+  // with the rewind.
+  await backend.writeSenderChannelRecordTxn(
+    txn,
+    destinationId,
+    SenderChannelRecord(
+      generation: sender.generation + 1,
+      receiverRecord: DeliveryRecord.none,
+      receiverDatabaseId: responding,
+    ),
+  );
 }

@@ -7,7 +7,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
-import 'package:uuid/uuid.dart';
+import '../test_support/deliveries.dart';
 
 // ---------------------------------------------------------------------------
 // Toy ProjectionSpec — AggregateProjectionSpec that folds any 'demo_note'
@@ -70,23 +70,6 @@ Future<_Fixture> _openDatastore({
   return _Fixture(datastore: datastore, backend: backend);
 }
 
-BatchEnvelope _buildEnvelope(
-  List<StoredEvent> events, {
-  required String senderHop,
-  required String senderIdentifier,
-  required String senderSoftwareVersion,
-}) {
-  return BatchEnvelope(
-    batchFormatVersion: '2',
-    batchId: const Uuid().v4(),
-    senderHop: senderHop,
-    senderIdentifier: senderIdentifier,
-    senderSoftwareVersion: senderSoftwareVersion,
-    sentAt: DateTime.now().toUtc(),
-    events: events.map((e) => Map<String, Object?>.from(e.toMap())).toList(),
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -128,7 +111,10 @@ void main() {
         expect(preUser, isEmpty);
 
         // Ingest the originator's event at the receiver.
-        final outcome = await dest.datastore.eventStore.ingestEvent(original!);
+        final outcome = await ingestEventForTest(
+          dest.datastore.eventStore,
+          original!,
+        );
         expect(outcome.outcome, equals(IngestOutcome.ingested));
 
         // Post-ingest: receiver has one toy_view row for this aggregate.
@@ -153,7 +139,7 @@ void main() {
     });
 
     //   into the toy_view view atomically with the event log write.
-    test('ingestBatch projects each event in batch into '
+    test('a delivery projects each event it carries into '
         'toy_view', () async {
       final orig = await _openDatastore(
         hopId: 'mobile-device',
@@ -200,20 +186,17 @@ void main() {
         expect(e2, isNotNull);
         expect(e3, isNotNull);
 
-        final envelope = _buildEnvelope(
+        final delivery = await deliverEventsTo(
+          dest.datastore.eventStore,
           <StoredEvent>[e1!, e2!, e3!],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'device-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
         );
-
-        final result = await dest.datastore.eventStore.ingestBatch(
-          envelope.encode(),
-          wireFormat: BatchEnvelope.wireFormat,
+        final outcomes = await recordOutcomes(
+          dest.datastore.eventStore,
+          delivery,
         );
-        expect(result.events, hasLength(3));
-        for (final outcome in result.events) {
-          expect(outcome.outcome, equals(IngestOutcome.ingested));
+        expect(outcomes, hasLength(3));
+        for (final outcome in outcomes) {
+          expect(outcome, equals(IngestOutcome.ingested));
         }
 
         final rows = await dest.backend.findViewRows('toy_view');
@@ -274,20 +257,17 @@ void main() {
       final preCount = preRows.length;
 
       try {
-        final envelope = _buildEnvelope(
+        final delivery = await deliverEventsTo(
+          dest.datastore.eventStore,
           <StoredEvent>[senderSystemEvent],
-          senderHop: 'mobile-device',
-          senderIdentifier: 'sender-id-1',
-          senderSoftwareVersion: 'my_app@1.0.0',
         );
-
-        final result = await dest.datastore.eventStore.ingestBatch(
-          envelope.encode(),
-          wireFormat: BatchEnvelope.wireFormat,
+        final outcomes = await recordOutcomes(
+          dest.datastore.eventStore,
+          delivery,
         );
-        expect(result.events, hasLength(1));
+        expect(outcomes, hasLength(1));
         expect(
-          result.events.first.outcome,
+          outcomes.first,
           anyOf(
             equals(IngestOutcome.ingested),
             equals(IngestOutcome.duplicate),

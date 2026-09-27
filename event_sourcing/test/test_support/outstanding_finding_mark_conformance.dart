@@ -17,8 +17,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
+import 'deliveries.dart';
 import 'ingest_chain_findings_conformance.dart' show chained, originChain;
-import 'ingest_record_findings_conformance.dart' show envelopeOf, sealedRecord;
+import 'ingest_record_findings_conformance.dart' show sealedRecord;
 import 'record_fixtures.dart' show kPeerDatabaseId;
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
@@ -101,13 +102,10 @@ void runOutstandingFindingMarkScenarios({
       databases.clear();
     });
 
-    Future<IngestBatchResult> deliver(
+    Future<List<TestDelivery>> deliver(
       EventStore store,
       List<Map<String, Object?>> records,
-    ) => store.ingestBatch(
-      envelopeOf(records).encode(),
-      wireFormat: BatchEnvelope.wireFormat,
-    );
+    ) => deliverByOriginator(store, records);
 
     Future<Object?> integrityOfRow(EventStore store, String aggregateId) async {
       final rows = await store.reader.readViewRowsByKeys(_kNotes, <String>{
@@ -302,7 +300,9 @@ void runOutstandingFindingMarkScenarios({
         },
       );
       final result = await deliver(store, <Map<String, Object?>>[received]);
-      expect(result.events.single.outcome, IngestOutcome.ingested);
+      expect(await recordOutcomes(store, result.single), <IngestOutcome>[
+        IngestOutcome.ingested,
+      ]);
 
       expect(
         await integrityOfRow(store, agg(ownByPeer)),

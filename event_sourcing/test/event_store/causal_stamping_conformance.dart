@@ -15,6 +15,7 @@ import 'package:event_sourcing/src/lifecycle/lib_version.dart'
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestDuplicateReceivedEventType, kSecurityContextRedactedEntryType;
 import 'package:flutter_test/flutter_test.dart';
+import '../test_support/deliveries.dart';
 
 import '../test_support/version_compatibility_conformance.dart'
     show VersionTestDatabase;
@@ -260,8 +261,8 @@ void runCausalStampingScenarios({
       );
       final peer = await open(other: true, identifier: 'causal-peer');
       final sent = await _append(peer, 'peer-note', _kVersion);
-      await store.ingestEvent(sent);
-      await store.ingestEvent(sent);
+      await ingestEventForTest(store, sent);
+      await ingestEventForTest(store, sent);
 
       final reserved = <StoredEvent>[
         await _single(
@@ -294,7 +295,7 @@ void runCausalStampingScenarios({
       final peer = await open(other: true, identifier: 'causal-peer');
       final local = await _append(store, 'shared-note', _kVersion);
       final sent = await _append(peer, 'shared-note', _kVersion);
-      await store.ingestEvent(sent);
+      await ingestEventForTest(store, sent);
       final ingested = await _single(store, (e) => e.eventId == sent.eventId);
       expect(ingested.eventHash, isNot(sent.eventHash));
 
@@ -320,8 +321,8 @@ void runCausalStampingScenarios({
       final sent = await _append(peer, 'shared-note', _kVersion);
       expect(sent.causal!.parents, <CausalRef>[_ref(v1)]);
 
-      await store.ingestEvent(v1);
-      await store.ingestEvent(sent);
+      await ingestEventForTest(store, v1);
+      await ingestEventForTest(store, sent);
 
       final stored = await _single(store, (e) => e.eventId == sent.eventId);
       expect(stored.causal, sent.causal);

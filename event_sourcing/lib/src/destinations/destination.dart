@@ -76,14 +76,19 @@ abstract class Destination {
   /// in effect.
   bool get allowHardDelete => false;
 
-  /// Whether this destination consumes the library's canonical batch
-  /// format (`esd/batch@2`). When `true`, `fillBatch` skips
-  /// [transform] entirely and instead constructs a
-  /// `BatchEnvelopeMetadata` from the library's source identity, persisted
-  /// on the FIFO row as `envelope_metadata` with `wire_payload: null` and
-  /// `wire_format: "esd/batch@2"`. The drain path reconstructs the wire
-  /// bytes deterministically via `BatchEnvelope.encode` over the
-  /// row's events plus `envelope_metadata`.
+  /// Whether this destination consumes the library's native batch format
+  /// (`esd/batch@3`), which makes each of its registrations a delivery
+  /// channel. When `true`, `fillBatch` skips [transform] entirely and
+  /// instead constructs a `BatchEnvelopeMetadata` from the library's source
+  /// identity, naming the item's delivery channel with empty delivery
+  /// attributes, persisted on the FIFO row as `envelope_metadata` with
+  /// `wire_payload: null` and `wire_format: "esd/batch@3"`. The drainer
+  /// numbers each delivery at its pre-send fence, from the sender channel
+  /// record, and builds the wire bytes deterministically from the row's
+  /// events plus `envelope_metadata`. Its [send] reports every answer of the
+  /// receiver through [decodeReceiverAnswer]: the drainer marks an item
+  /// sent only on a receiver record naming its delivery, and wedges the head
+  /// on a [SendOk], which carries no record.
   ///
   /// When `false` (the default for 3rd-party destinations such as sponsor
   /// CSV or Rave EDC XML), `fillBatch` invokes [transform] and persists the
@@ -153,5 +158,12 @@ abstract class Destination {
   /// How underlying HTTP codes, network errors, and timeouts map into those
   /// three variants is a per-destination judgment, not dictated by the
   /// contract.
+  ///
+  /// A destination that serializes natively returns, for every answer its
+  /// receiver gives, what [decodeReceiverAnswer] maps the answer's body to
+  /// ([SendAnswered] carrying the receiver's record, [SendTransient] for a
+  /// `delivery_hash_mismatch` refusal, [SendPermanent] for a `rejected`
+  /// one), and [SendTransient] or [SendPermanent] only for a transport
+  /// failure that brought no answer.
   Future<SendResult> send(WirePayload payload);
 }

@@ -1379,9 +1379,12 @@ design:
   another installation. You register destinations at composition time
   by passing them to `bootstrapEventStore`; the delivery cycle enqueues
   outbound events through them.
-- On the receiving side, the substrate exposes an ingest entry point
-  that accepts a `BatchEnvelope` of events from a peer, verifies the
-  hash chain against what's stored, extends the provenance chain, and
+- On the receiving side, the event store's receiver endpoint
+  (`EventStore.receiverEndpoint`) accepts native deliveries
+  (`esd/batch@3`) from a peer, authenticated by the sender database
+  identities your deployment binds to the caller: it admits a delivery
+  only when it follows the last one it accepted on its channel, verifies
+  the hash chain against what's stored, extends the provenance chain, and
   admits the events into the local log. Ingested events flow into
   projections and subscriptions identically to locally-produced events.
 - The substrate verifies hash-chain integrity on every ingested event:

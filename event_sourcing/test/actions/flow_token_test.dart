@@ -31,6 +31,7 @@
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import '../test_support/deliveries.dart';
 
 import 'fixtures/test_actions.dart' show AlwaysAllowPolicy, HelloAction;
 import 'test_support/event_store_helper.dart' show bootstrapTestEventStore;
@@ -319,7 +320,7 @@ void main() {
       // flow_token is an identity-level field on StoredEvent and must survive.
       final second = await _openSecondStore();
       try {
-        final outcome = await second.store.ingestEvent(evt);
+        final outcome = await ingestEventForTest(second.store, evt);
         expect(outcome.outcome, IngestOutcome.ingested);
 
         final ingestedEvents = await second.backend.findAllEvents(

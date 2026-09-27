@@ -268,6 +268,15 @@ jobs:
       - name: Ingest findings about the received record on Postgres
         run: flutter test test/storage/postgres/postgres_ingest_record_findings_test.dart
         working-directory: event_sourcing
+      - name: Receiver accept path of the delivery channel on Postgres
+        run: flutter test test/storage/postgres/delivery_receiver_postgres_test.dart
+        working-directory: event_sourcing
+      - name: Receiver pull and channel listing on Postgres
+        run: flutter test test/storage/postgres/delivery_pull_postgres_test.dart
+        working-directory: event_sourcing
+      - name: Sender drain of the delivery channel on Postgres
+        run: flutter test test/storage/postgres/delivery_channel_drain_postgres_test.dart
+        working-directory: event_sourcing
       - name: Ingest findings about chain structure on Postgres
         run: flutter test test/storage/postgres/postgres_ingest_chain_findings_test.dart
         working-directory: event_sourcing

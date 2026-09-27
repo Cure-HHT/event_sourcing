@@ -129,5 +129,104 @@ void main() {
         );
       }
     });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // the send fence of a delivery on a channel names its delivery number
+    //   and delivery hash; a fence of a destination that is no channel names
+    //   neither.
+    test('names the delivery number and hash of a delivery', () {
+      final delivery = SendFence(
+        entryId: 'row-1',
+        attemptCount: 0,
+        at: DateTime.utc(2026, 4, 1, 2, 3, 4),
+        deliveryNumber: 5,
+        deliveryHash: 'h5',
+      );
+      expect(delivery.toJson(), <String, Object?>{
+        'entry_id': 'row-1',
+        'attempt_count': 0,
+        'at': '2026-04-01T02:03:04.000Z',
+        'delivery_number': 5,
+        'delivery_hash': 'h5',
+      });
+      expect(SendFence.fromJson(delivery.toJson()), delivery);
+      expect(fence.deliveryNumber, isNull);
+      expect(fence.deliveryHash, isNull);
+      expect(
+        delivery,
+        isNot(
+          SendFence(
+            entryId: 'row-1',
+            attemptCount: 0,
+            at: DateTime.utc(2026, 4, 1, 2, 3, 4),
+            deliveryNumber: 5,
+            deliveryHash: 'other',
+          ),
+        ),
+      );
+      for (final broken in <Map<String, Object?>>[
+        {...delivery.toJson(), 'delivery_number': '5'},
+        {...delivery.toJson(), 'delivery_hash': 5},
+        {...delivery.toJson()}..remove('delivery_hash'),
+      ]) {
+        expect(
+          () => SendFence.fromJson(broken),
+          throwsFormatException,
+          reason: '$broken',
+        );
+      }
+    });
+  });
+
+  group('SenderChannelRecord', () {
+    // Verifies: EVS-DEV-delivery-channel/D
+    // the record a registration starts with is generation 1, number 0, a
+    //   null hash and no receiver identity; every field round-trips.
+    test('starts at generation 1, number 0, no hash and no receiver', () {
+      expect(SenderChannelRecord.initial.generation, 1);
+      expect(SenderChannelRecord.initial.receiverRecord, DeliveryRecord.none);
+      expect(SenderChannelRecord.initial.receiverDatabaseId, isNull);
+      expect(SenderChannelRecord.initial.toJson(), <String, Object?>{
+        'generation': 1,
+        'delivery_number': 0,
+        'delivery_hash': null,
+        'receiver_database_id': null,
+      });
+      const advanced = SenderChannelRecord(
+        generation: 3,
+        receiverRecord: DeliveryRecord(deliveryNumber: 9, deliveryHash: 'h9'),
+        receiverDatabaseId: 'receiver-db',
+      );
+      expect(SenderChannelRecord.fromJson(advanced.toJson()), advanced);
+      expect(
+        SenderChannelRecord.fromJson(SenderChannelRecord.initial.toJson()),
+        SenderChannelRecord.initial,
+      );
+      expect(advanced, isNot(SenderChannelRecord.initial));
+    });
+
+    test('refuses a malformed record', () {
+      const valid = <String, Object?>{
+        'generation': 2,
+        'delivery_number': 1,
+        'delivery_hash': 'h1',
+        'receiver_database_id': 'r',
+      };
+      for (final broken in <Map<String, Object?>>[
+        {...valid}..remove('generation'),
+        {...valid, 'generation': 0},
+        {...valid, 'generation': '2'},
+        {...valid, 'delivery_number': -1},
+        {...valid, 'delivery_hash': null},
+        {...valid, 'delivery_number': 0},
+        {...valid, 'receiver_database_id': 7},
+      ]) {
+        expect(
+          () => SenderChannelRecord.fromJson(broken),
+          throwsFormatException,
+          reason: '$broken',
+        );
+      }
+    });
   });
 }

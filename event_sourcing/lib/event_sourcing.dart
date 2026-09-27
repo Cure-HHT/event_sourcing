@@ -226,6 +226,7 @@ export 'src/event_store.dart'
         EntryTypeVersionDowngradeError,
         EventStore,
         EventStoreBundle,
+        ReceiverEndpoint,
         RetentionResult,
         SyncCycle,
         SyncCycleState,
@@ -233,18 +234,18 @@ export 'src/event_store.dart'
         rebuildView;
 
 // Ingest types — error types and result types.
-export 'src/ingest/batch_envelope.dart' show BatchEnvelope;
 export 'src/ingest/delivery_channel.dart'
     show DeliveryChannel, DeliveryRecord, computeDeliveryHash;
 export 'src/ingest/delivery_envelope.dart' show DeliveryEnvelope;
 export 'src/ingest/ingest_errors.dart'
     show
+        DeliveryAuthenticationRefused,
         IngestDataFormatIncompatible,
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
         IngestEntryTypeVersionUnpromotable;
 export 'src/ingest/ingest_result.dart'
-    show IngestBatchResult, IngestOutcome, PerEventIngestOutcome;
+    show IngestOutcome, PerEventIngestOutcome;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.
@@ -446,6 +447,7 @@ export 'src/storage/queue_records.dart'
         RegistryCheck,
         ReplayRequest,
         SendFence,
+        SenderChannelRecord,
         TrailSweepResult,
         WedgeRecord;
 export 'src/storage/sembast_backend.dart'

@@ -6,8 +6,9 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' show newDatabaseFactoryMemory;
 
+import '../test_support/deliveries.dart';
 import '../test_support/ingest_record_findings_conformance.dart'
-    show envelopeOf, sealedRecord;
+    show sealedRecord;
 
 const String _kType = 'finding_note';
 
@@ -120,11 +121,12 @@ void main() {
       ...sealed,
       'data': <String, Object?>{'title': 'changed after sealing'},
     };
-    final result = await store.ingestBatch(
-      envelopeOf(<Map<String, Object?>>[tampered]).encode(),
-      wireFormat: BatchEnvelope.wireFormat,
-    );
-    final findingId = result.events.single.findingIds.single;
+    await deliverTo(store, <Map<String, Object?>>[tampered]);
+    final findingId =
+        (await store.reader.findAllEvents(
+              entryType: kSecurityFindingEntryType,
+            )).single.data['finding_id']!
+            as String;
     backend.aggregateReads = 0;
     await _appendNote(store, 'tampered');
     await _appendNote(store, 'unrelated');

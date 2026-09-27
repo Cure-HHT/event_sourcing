@@ -1752,13 +1752,21 @@ void _registerFifoTests(
       if (!initializedOf()) return;
       final backend = backendOf();
       final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
+      const channel = DeliveryChannel(
+        senderDatabaseId: 'db-1',
+        destinationId: 'dest',
+        registrationId: 'reg-1',
+        generation: 1,
+      );
       final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
+        batchFormatVersion: '3',
         batchId: 'batch-x',
         senderHop: 'mobile-1',
         senderIdentifier: 'device-uuid',
         senderSoftwareVersion: 'diary@1.2.3',
         sentAt: DateTime.utc(2026, 4, 25, 12),
+        channel: channel,
+        attributes: const <String, Object?>{},
       );
       await backend.transaction(
         (txn) => backend.enqueueFifoTxn(txn, 'dest', [
@@ -1777,8 +1785,10 @@ void _registerFifoTests(
       expect(head.envelopeMetadata!.senderHop, 'mobile-1');
       expect(head.envelopeMetadata!.senderIdentifier, 'device-uuid');
       expect(head.envelopeMetadata!.senderSoftwareVersion, 'diary@1.2.3');
-      expect(head.envelopeMetadata!.batchFormatVersion, '2');
-      expect(head.wireFormat, BatchEnvelope.wireFormat);
+      expect(head.envelopeMetadata!.batchFormatVersion, '3');
+      expect(head.envelopeMetadata!.channel, channel);
+      expect(head.envelopeMetadata!.attributes, isEmpty);
+      expect(head.wireFormat, DeliveryEnvelope.wireFormat);
       expect(
         head.transformVersion,
         isNull,
@@ -1828,12 +1838,19 @@ void _registerFifoTests(
             [event],
             wirePayload: wirePayloadJson(const {'k': 'v'}),
             nativeEnvelope: BatchEnvelopeMetadata(
-              batchFormatVersion: '2',
+              batchFormatVersion: '3',
               batchId: 'batch-x',
               senderHop: 'mobile-1',
               senderIdentifier: 'device-uuid',
               senderSoftwareVersion: 'diary@1.2.3',
               sentAt: DateTime.utc(2026, 4, 25, 12),
+              channel: const DeliveryChannel(
+                senderDatabaseId: 'db-1',
+                destinationId: 'dest',
+                registrationId: 'reg-1',
+                generation: 1,
+              ),
+              attributes: const <String, Object?>{},
             ),
           ),
         ),
@@ -2170,9 +2187,340 @@ void _registerFifoTests(
     });
 
     // Verifies: EVS-DEV-destination-drain/B
-    // every transition other than
-    //   null -> sent, null -> wedged and wedged -> tombstoned throws, and the
-    //   item is unchanged.
+    // a pending item that carries attempts moves to tombstoned, keeping its
+    //   attempts and leaving sent_at unset; a pending item that carries none
+    //   is refused and unchanged.
+    test('pending -> tombstoned only for an item carrying attempts', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final attempted = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'a1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'transient',
+        errorMessage: 'busy',
+        deliveryNumber: 1,
+        deliveryHash: 'h1',
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        attempt,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        FinalStatus.tombstoned,
+      );
+      final row = await backend.readFifoRow('primary', attempted.entryId);
+      expect(row!.finalStatus, FinalStatus.tombstoned);
+      expect(row.attempts, [attempt]);
+      expect(row.sentAt, isNull);
+      expect(row.deliveryNumber, isNull);
+
+      final fresh = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'a2',
+        sequenceNumber: 2,
+      );
+      final before = await backend.readFifoRow('primary', fresh.entryId);
+      await expectLater(
+        setStatusForTest(
+          backend,
+          'primary',
+          fresh.entryId,
+          FinalStatus.tombstoned,
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await backend.readFifoRow('primary', fresh.entryId))!.toJson(),
+        before!.toJson(),
+      );
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/J
+    // the change that marks a queue item sent records the generation,
+    //   delivery number and delivery hash it was acknowledged under, and
+    //   stamps sent_at; the plain change leaves the three null.
+    // Verifies: EVS-DEV-destination-drain/B
+    // marking sent with a delivery is the pending -> sent change: a terminal
+    //   or missing item is refused and unchanged.
+    test('mark sent records the delivery triple', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final pending = await backend.readFifoRow('primary', e1.entryId);
+      expect(pending!.deliveryGeneration, isNull);
+      expect(pending.deliveryNumber, isNull);
+      expect(pending.deliveryHash, isNull);
+      final before = DateTime.now().toUtc();
+      await markSentForTest(
+        backend,
+        'primary',
+        e1.entryId,
+        generation: 2,
+        deliveryNumber: 4,
+        deliveryHash: 'h4',
+      );
+      final sent = await backend.readFifoRow('primary', e1.entryId);
+      expect(sent!.finalStatus, FinalStatus.sent);
+      expect(sent.deliveryGeneration, 2);
+      expect(sent.deliveryNumber, 4);
+      expect(sent.deliveryHash, 'h4');
+      expect(sent.sentAt, isNotNull);
+      expect(sent.sentAt!.isBefore(before), isFalse);
+      // The listing and the per-row read agree field for field.
+      expect((await backend.listFifoEntries('primary')).single, sent);
+
+      final again = await backend.readFifoRow('primary', e1.entryId);
+      await expectLater(
+        markSentForTest(
+          backend,
+          'primary',
+          e1.entryId,
+          generation: 2,
+          deliveryNumber: 5,
+          deliveryHash: 'h5',
+        ),
+        throwsStateError,
+      );
+      expect(
+        (await backend.readFifoRow('primary', e1.entryId))!.toJson(),
+        again!.toJson(),
+      );
+      await expectLater(
+        markSentForTest(
+          backend,
+          'primary',
+          'ghost',
+          generation: 1,
+          deliveryNumber: 1,
+          deliveryHash: 'h1',
+        ),
+        throwsStateError,
+      );
+
+      final plain = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e2',
+        sequenceNumber: 2,
+      );
+      await seedSentRowForTest(backend, 'primary', plain.entryId);
+      final plainRow = await backend.readFifoRow('primary', plain.entryId);
+      expect(plainRow!.deliveryGeneration, isNull);
+      expect(plainRow.deliveryNumber, isNull);
+      expect(plainRow.deliveryHash, isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // an attempt recorded with a delivery number and hash reads back with
+    //   them.
+    test('an attempt keeps its delivery number and hash', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final e1 = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'e1',
+        sequenceNumber: 1,
+      );
+      final attempt = AttemptResult(
+        attemptedAt: DateTime.utc(2026, 4, 22, 9),
+        outcome: 'transient',
+        deliveryNumber: 1,
+        deliveryHash: 'h1',
+      );
+      await appendAttemptForTest(backend, 'primary', e1.entryId, attempt);
+      expect((await backend.readFifoRow('primary', e1.entryId))!.attempts, [
+        attempt,
+      ]);
+    });
+
+    // A pending item that carries no attempt is deleted; a pending item that
+    // carries attempts, a terminal item and a missing item are refused, and
+    // nothing changes.
+    test('delete removes only a pending item that carries no '
+        'attempt', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final fresh = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd1',
+        sequenceNumber: 1,
+      );
+      final attempted = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd2',
+        sequenceNumber: 2,
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        attempted.entryId,
+        AttemptResult(
+          attemptedAt: DateTime.utc(2026, 4, 22, 9),
+          outcome: 'transient',
+        ),
+      );
+      final sent = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd3',
+        sequenceNumber: 3,
+      );
+      await seedSentRowForTest(backend, 'primary', sent.entryId);
+      final wedged = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'd4',
+        sequenceNumber: 4,
+      );
+      await setStatusForTest(
+        backend,
+        'primary',
+        wedged.entryId,
+        FinalStatus.wedged,
+      );
+      Future<void> delete(String entryId) => backend.transaction(
+        (txn) => backend.deleteFifoEntryTxn(txn, 'primary', entryId),
+      );
+
+      final before = [
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ];
+      for (final refused in <String>[
+        attempted.entryId,
+        sent.entryId,
+        wedged.entryId,
+        'ghost',
+      ]) {
+        await expectLater(delete(refused), throwsStateError, reason: refused);
+      }
+      expect([
+        for (final r in await backend.listFifoEntries('primary')) r.toJson(),
+      ], before);
+
+      await delete(fresh.entryId);
+      expect(await backend.readFifoRow('primary', fresh.entryId), isNull);
+      expect((await backend.listFifoEntries('primary')).length, 3);
+    });
+
+    // Verifies: EVS-DEV-delivery-resume/W
+    // the retained delivery at a number is the item the queue last marked
+    //   sent at that number under the given generation; an item sent at that
+    //   number under an earlier generation, a pending, wedged or tombstoned
+    //   item, and another destination's item are not; a number with none
+    //   reads none.
+    test('the retained delivery is the last sent at the number under the '
+        'generation', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      Future<FifoEntry> sentAt(
+        String eventId,
+        int seq, {
+        required int generation,
+        required int number,
+        String dest = 'primary',
+      }) async {
+        final e = await enqueueSingle(
+          backend,
+          dest,
+          eventId: eventId,
+          sequenceNumber: seq,
+        );
+        await markSentForTest(
+          backend,
+          dest,
+          e.entryId,
+          generation: generation,
+          deliveryNumber: number,
+          deliveryHash: 'h-$eventId',
+        );
+        return (await backend.readFifoRow(dest, e.entryId))!;
+      }
+
+      Future<FifoEntry?> retained(int generation, int number) =>
+          backend.transaction(
+            (txn) => backend.readRetainedDeliveryTxn(
+              txn,
+              'primary',
+              generation: generation,
+              deliveryNumber: number,
+            ),
+          );
+
+      // Generation 1 sent 1 and 2; generation 2 sent 1, then resent 1.
+      await sentAt('g1n1', 1, generation: 1, number: 1);
+      final g1n2 = await sentAt('g1n2', 2, generation: 1, number: 2);
+      await sentAt('g2n1', 3, generation: 2, number: 1);
+      final g2n1again = await sentAt('g2n1b', 4, generation: 2, number: 1);
+      await sentAt('other', 5, generation: 2, number: 2, dest: 'other');
+      // A pending item and a tombstoned one never count.
+      final pending = await enqueueSingle(
+        backend,
+        'primary',
+        eventId: 'p',
+        sequenceNumber: 6,
+      );
+      await appendAttemptForTest(
+        backend,
+        'primary',
+        pending.entryId,
+        AttemptResult(
+          attemptedAt: DateTime.utc(2026, 4, 22, 9),
+          outcome: 'transient',
+          deliveryNumber: 2,
+          deliveryHash: 'h-p',
+        ),
+      );
+
+      expect(await retained(2, 1), g2n1again);
+      expect(await retained(1, 2), g1n2);
+      // Generation 2 has sent nothing at 2 on this destination, though
+      // generation 1 did and another destination did.
+      expect(await retained(2, 2), isNull);
+      expect(await retained(3, 1), isNull);
+      expect(await retained(1, 3), isNull);
+      // The read sees a mark staged in its own transaction.
+      final staged = await backend.transaction((txn) async {
+        await backend.markSentTxn(
+          txn,
+          'primary',
+          pending.entryId,
+          generation: 2,
+          deliveryNumber: 2,
+          deliveryHash: 'h-p',
+        );
+        return backend.readRetainedDeliveryTxn(
+          txn,
+          'primary',
+          generation: 2,
+          deliveryNumber: 2,
+        );
+      });
+      expect(staged?.entryId, pending.entryId);
+    });
+
+    // Verifies: EVS-DEV-destination-drain/B
+    // every transition other than null -> sent, null -> wedged, wedged ->
+    //   tombstoned and, for an item carrying attempts, null -> tombstoned
+    //   throws, and the item is unchanged (the items here carry no attempt).
     test('every illegal transition throws and leaves the item '
         'unchanged', () async {
       if (!initializedOf()) return;
@@ -3299,6 +3647,88 @@ void _registerQueueRecordTests(
         (txn) => backend.clearSendFenceTxn(txn, 'dest'),
       );
       expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/D
+    // the sender channel record keeps the generation, the receiver record's
+    //   number and hash and the receiver identity; it round-trips, is
+    //   overwritten, rolls back with its transaction, is kept per
+    //   destination and is cleared.
+    test('sender channel record write, overwrite, rollback and '
+        'clear', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      const advanced = SenderChannelRecord(
+        generation: 2,
+        receiverRecord: DeliveryRecord(deliveryNumber: 3, deliveryHash: 'h3'),
+        receiverDatabaseId: 'receiver-db',
+      );
+      Future<SenderChannelRecord?> read(String dest) => backend.transaction(
+        (txn) => backend.readSenderChannelRecordTxn(txn, dest),
+      );
+
+      expect(await read('dest'), isNull);
+      final sameTxn = await backend.transaction((txn) async {
+        await backend.writeSenderChannelRecordTxn(
+          txn,
+          'dest',
+          SenderChannelRecord.initial,
+        );
+        return backend.readSenderChannelRecordTxn(txn, 'dest');
+      });
+      expect(sameTxn, SenderChannelRecord.initial);
+      expect(await read('dest'), SenderChannelRecord.initial);
+      expect(await read('other'), isNull);
+
+      await backend.transaction(
+        (txn) => backend.writeSenderChannelRecordTxn(txn, 'dest', advanced),
+      );
+      expect(await read('dest'), advanced);
+
+      await expectLater(
+        backend.transaction((txn) async {
+          await backend.writeSenderChannelRecordTxn(
+            txn,
+            'dest',
+            SenderChannelRecord.initial,
+          );
+          throw StateError('simulated failure');
+        }),
+        throwsStateError,
+      );
+      expect(await read('dest'), advanced);
+
+      await backend.transaction(
+        (txn) => backend.clearSenderChannelRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+      await backend.transaction(
+        (txn) => backend.clearSenderChannelRecordTxn(txn, 'dest'),
+      );
+      expect(await read('dest'), isNull);
+    });
+
+    // Verifies: EVS-DEV-delivery-channel/I
+    // a send fence naming a delivery keeps its number and hash.
+    test('a send fence keeps its delivery number and hash', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final fence = SendFence(
+        entryId: 'entry-1',
+        attemptCount: 0,
+        at: DateTime.utc(2026, 4, 1, 2, 3, 4),
+        deliveryNumber: 7,
+        deliveryHash: 'h7',
+      );
+      await backend.transaction(
+        (txn) => backend.writeSendFenceTxn(txn, 'dest', fence),
+      );
+      expect(
+        await backend.transaction(
+          (txn) => backend.readSendFenceTxn(txn, 'dest'),
+        ),
+        fence,
+      );
     });
 
     // Verifies: EVS-DEV-destination-drain/T

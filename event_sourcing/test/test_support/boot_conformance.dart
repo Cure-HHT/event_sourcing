@@ -14,6 +14,7 @@ import 'package:event_sourcing/src/security/system_entry_types.dart'
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
+import 'deliveries.dart';
 
 import 'lib_version_seed.dart';
 import 'test_backends.dart';
@@ -405,7 +406,7 @@ void runBootScenarios(
 
         // H: the compiled build, opened after M, ingests M's initialization.
         final h = await _open(db!, await db!.openBackend(), identifier: 'h');
-        await h.ingestEvent(forwarded);
+        await ingestEventForTest(h, forwarded);
         final hEvents = await _libVersionEvents(testBackendOf(h));
         expect(hEvents, hasLength(2));
         expect(
@@ -449,7 +450,7 @@ void runBootScenarios(
           identifier: 'h',
           forTest: true,
         );
-        await h.ingestEvent(forwarded);
+        await ingestEventForTest(h, forwarded);
         expect(await _libVersionEvents(testBackendOf(h)), hasLength(1));
 
         final opened = await _open(db!, await db!.openBackend());

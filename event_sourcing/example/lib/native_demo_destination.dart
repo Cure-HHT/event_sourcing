@@ -3,8 +3,9 @@ import 'package:event_sourcing_demo/demo_knobs.dart';
 import 'package:event_sourcing_demo/downstream_bridge.dart';
 import 'package:flutter/foundation.dart';
 
-/// Native demo destination — declares it speaks `esd/batch@2` so the
-/// library handles serialization itself. FIFO rows for this destination
+/// Native demo destination — declares it speaks the library's native
+/// batch format (`esd/batch@3`) so the library handles serialization
+/// itself. FIFO rows for this destination
 /// store envelope metadata with a null wire_payload. Used in the example
 /// to demonstrate the storage-shape difference vs `DemoDestination`
 /// (lossy 3rd-party).
@@ -18,8 +19,9 @@ import 'package:flutter/foundation.dart';
 /// Optional [DownstreamBridge] hook: when supplied via the `bridge:`
 /// constructor parameter and `connection.value == Connection.ok`,
 /// `send()` delegates to the bridge after the latency delay. The bridge
-/// forwards the wire bytes to a downstream `EventStore.ingestBatch` and
-/// maps the outcome back to a [SendResult]. When `connection != ok`,
+/// forwards the wire bytes to the downstream event store (a native
+/// `esd/batch@3` delivery to its receiver endpoint) and maps the answer
+/// back to a [SendResult]. When `connection != ok`,
 /// the bridge is NOT invoked — link failures are simulated upstream of
 /// the bridge so the existing `broken`/`rejecting` UX is unchanged.
 class NativeDemoDestination implements Destination, DemoKnobs {
@@ -75,12 +77,15 @@ class NativeDemoDestination implements Destination, DemoKnobs {
   @override
   bool get serializesNatively => true;
 
-  // The demo's in-process hub serves no pull.
+  // The demo's in-process hub keeps no deliveries to serve, so every pull
+  // fails permanently.
   @override
-  ChannelPull? get channelPull => null;
+  ChannelPull? get channelPull =>
+      (request) async =>
+          const PullPermanent(error: 'the demo hub serves no pull');
 
   @override
-  String get wireFormat => 'esd/batch@2';
+  String get wireFormat => DeliveryEnvelope.wireFormat;
 
   @override
   bool canAddToBatch(List<StoredEvent> currentBatch, StoredEvent candidate) =>
@@ -99,11 +104,13 @@ class NativeDemoDestination implements Destination, DemoKnobs {
     );
   }
 
-  // Demo: routes by `connection.value`. `ok` succeeds after `sendLatency`;
+  // Demo: routes by `connection.value`. `ok` answers after `sendLatency`;
   // `broken` returns SendTransient; `rejecting` returns SendPermanent.
-  // Real native destinations would POST the re-encoded `esd/batch@2` bytes
-  // (reconstructed by drain from envelope_metadata + the row's events) to
-  // a server.
+  // Real native destinations would POST the delivery's bytes (built by the
+  // drainer from envelope_metadata + the row's events) to a server's
+  // receiver endpoint. With no bridge, the demo answers as an in-memory
+  // receiver that keeps only its record of each channel: the drainer marks
+  // an item sent only on a receiver record naming its delivery.
   @override
   Future<SendResult> send(WirePayload payload) async {
     switch (connection.value) {
@@ -113,11 +120,59 @@ class NativeDemoDestination implements Destination, DemoKnobs {
         if (bridge != null) {
           return bridge.deliver(payload);
         }
-        return const SendOk();
+        return _answerInMemory(payload);
       case Connection.broken:
         return const SendTransient(error: 'simulated disconnect');
       case Connection.rejecting:
         return const SendPermanent(error: 'simulated rejection');
     }
   }
+
+  /// The in-memory receiver's record of each channel.
+  final Map<DeliveryChannel, DeliveryRecord> _records =
+      <DeliveryChannel, DeliveryRecord>{};
+
+  SendResult _answerInMemory(WirePayload payload) {
+    final DeliveryEnvelope delivery;
+    try {
+      delivery = DeliveryEnvelope.decode(payload.bytes);
+    } on IngestDecodeFailure catch (e) {
+      return SendPermanent(error: e.toString());
+    }
+    final channel = delivery.channel;
+    final record = _records[channel] ?? DeliveryRecord.none;
+    final ReceiverResponse answer;
+    if (delivery.deliveryNumber == record.deliveryNumber &&
+        delivery.deliveryHash == record.deliveryHash) {
+      answer = ReceiverAcknowledgement(
+        channel: channel,
+        receiverDatabaseId: _receiverDatabaseId,
+        record: record,
+        outcome: AcknowledgementOutcome.represented,
+      );
+    } else if (delivery.deliveryNumber == record.deliveryNumber + 1 &&
+        delivery.previousDeliveryHash == record.deliveryHash) {
+      final accepted = DeliveryRecord(
+        deliveryNumber: delivery.deliveryNumber,
+        deliveryHash: delivery.deliveryHash,
+      );
+      _records[channel] = accepted;
+      answer = ReceiverAcknowledgement(
+        channel: channel,
+        receiverDatabaseId: _receiverDatabaseId,
+        record: accepted,
+        outcome: AcknowledgementOutcome.accepted,
+      );
+    } else {
+      answer = ReceiverRefusal(
+        channel: channel,
+        receiverDatabaseId: _receiverDatabaseId,
+        record: record,
+        refusal: RefusalKind.outOfSequence,
+      );
+    }
+    return decodeReceiverAnswer(answer.encode());
+  }
+
+  static const String _receiverDatabaseId = 'demo-in-memory-receiver';
 }

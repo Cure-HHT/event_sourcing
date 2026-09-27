@@ -254,6 +254,14 @@ class DestinationRegistry {
   /// that registration (the destination was deleted, and perhaps registered
   /// again, elsewhere), this registry's entry is stale and is replaced.
   ///
+  /// For a destination that serializes natively, a new registration also
+  /// writes its sender channel record ([SenderChannelRecord.initial]); a
+  /// registration the database already has keeps the record it finds.
+  ///
+  /// Throws `ArgumentError` before anything is written, the registry check
+  /// record included, when [destination] serializes natively and implements
+  /// no pull ([Destination.channelPull] is null).
+  ///
   /// A destination deleted and registered again under the same id starts a
   /// new registration. Its refill may send again events that the prior
   /// registration's `sent` items already delivered: delivery is
@@ -268,6 +276,17 @@ class DestinationRegistry {
     final wireFormat = destination.wireFormat;
     final allowHardDelete = destination.allowHardDelete;
     final serializesNatively = destination.serializesNatively;
+    // Implements: EVS-DEV-delivery-channel/B
+    // a destination that serializes natively and implements no pull is
+    //   refused before anything is written.
+    if (serializesNatively && destination.channelPull == null) {
+      throw ArgumentError.value(
+        id,
+        'destination',
+        'destination $id serializes natively and implements no pull; a '
+            'delivery channel needs its pull',
+      );
+    }
     final filterEntryTypes = destination.filter.entryTypes?.toList();
     final filterEventTypes = destination.filter.eventTypes?.toList();
     // Reserved before the first await, so two registrations of one id in
@@ -335,6 +354,18 @@ class DestinationRegistry {
             initiator: initiator,
           );
           final registration = persisted?.registrationId ?? event.eventId;
+          // Implements: EVS-DEV-delivery-channel/D
+          // a new registration of a destination that serializes natively
+          //   writes its sender channel record, generation 1, number 0, a
+          //   null hash and no receiver identity, in the registration's
+          //   transaction.
+          if (serializesNatively && persisted == null) {
+            await _backend.writeSenderChannelRecordTxn(
+              txn,
+              id,
+              SenderChannelRecord.initial,
+            );
+          }
           await _backend.writeScheduleTxn(
             txn,
             id,
@@ -587,7 +618,8 @@ class DestinationRegistry {
   ///
   /// The deletion tombstones a wedged head, deletes the pending items behind
   /// it, removes the destination's schedule, fill position, replay request,
-  /// wedge record, halt request and send fence, and keeps every item that
+  /// wedge record, halt request, send fence, refill guard and sender channel
+  /// record, and keeps every item that
   /// was delivered, wedged or recovered (the delivery record) and the queue's
   /// sequence counter. A `system.destination_deleted` audit event records
   /// the tombstoned item, the number of pending items deleted, the opt-in it
@@ -659,6 +691,7 @@ class DestinationRegistry {
       await _backend.clearHaltRequestTxn(txn, id);
       await _backend.clearSendFenceTxn(txn, id);
       await _backend.clearRefillGuardTxn(txn, id);
+      await _backend.clearSenderChannelRecordTxn(txn, id);
       // Implements: EVS-PRD-destinations/T
       // a deletion appends a deletion event naming the wedged item it retires,
       //   if any.

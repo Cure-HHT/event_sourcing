@@ -15,12 +15,12 @@ library;
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
+import 'package:event_sourcing/src/destinations/subscription_filter.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/event_store.dart';
-import 'package:event_sourcing/src/ingest/batch_envelope.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/final_status.dart';
+import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
 import 'package:event_sourcing/src/storage/send_result.dart';
 import 'package:event_sourcing/src/sync/sync_policy.dart';
@@ -31,6 +31,7 @@ import 'package:sembast/sembast_memory.dart';
 
 import '../test_support/fake_destination.dart';
 import '../test_support/fifo_entry_helpers.dart';
+import '../test_support/native_destination.dart';
 import '../test_support/queue_test_support.dart';
 import '../test_support/registry_with_audit.dart';
 
@@ -491,124 +492,28 @@ void main() {
       expect(head.attempts.first.outcome, 'transient');
     });
 
-    // A native row reconstructs wire bytes from `envelope_metadata` +
-    // `event_ids`-resolved events through `BatchEnvelope.encode`. The
-    // re-encode is JCS-canonical and therefore byte-identical across
-    // retries: a transient first attempt and a successful second attempt
-    // hand `Destination.send` the exact same bytes, captured here at
-    // `FakeDestination.sent`.
-    test('drain on native row re-encodes deterministically '
-        'across retries', () async {
-      // Write the event into the origin event store so findEventById
-      // resolves it at re-encode time.
-      final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
-      await backend.transaction((txn) async {
-        final seq = await backend.nextSequenceNumber(txn);
-        // Re-mint the fixture with the reserved sequence number so the
-        // append-side guard (event.sequenceNumber == reserved) holds.
-        await backend.appendEvent(
-          txn,
-          storedEventFixture(eventId: 'e1', sequenceNumber: seq),
-        );
-      });
-
-      // Enqueue a native esd/batch@2 row directly via the
-      // nativeEnvelope: path. Drain reconstructs the wire bytes from
-      // envelope_metadata + event_ids-resolved events on each attempt.
-      final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
-        batchId: 'batch-x',
-        senderHop: 'mobile-1',
-        senderIdentifier: 'device-uuid',
-        senderSoftwareVersion: 'diary@1.2.3',
-        sentAt: DateTime.utc(2026, 4, 25, 12),
-      );
-      await backend.transaction(
-        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
-          event,
-        ], nativeEnvelope: envelope),
-      );
-
-      // First drain: scripted SendTransient leaves the row pending and
-      // captures the bytes the destination saw on attempt #1.
-      const oneAttemptCapPolicy = SyncPolicy(
-        initialBackoff: Duration.zero,
-        backoffMultiplier: 1.0,
-        maxBackoff: Duration.zero,
-        jitterFraction: 0.0,
-        maxAttempts: 5, // well above 2 — keeps the row pending across both
-      );
-      final dest = FakeDestination(
-        script: [
-          const SendTransient(error: 'HTTP 503', httpStatus: 503),
-          const SendOk(),
-        ],
-      );
-      await drainForTest(
-        dest,
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 25, 13),
-        policy: oneAttemptCapPolicy,
-      );
-      expect(dest.sent, hasLength(1));
-      final firstBytes = dest.sent.last.bytes;
-      // The reconstructed payload must be tagged with the native wire
-      // format and its bytes must decode back to the original envelope.
-      expect(dest.sent.last.contentType, BatchEnvelope.wireFormat);
-      final firstDecoded =
-          jsonDecode(utf8.decode(firstBytes)) as Map<String, Object?>;
-      expect(firstDecoded['batch_id'], 'batch-x');
-      expect((firstDecoded['events']! as List).length, 1);
-
-      // Second drain: clock past the zero-backoff window; SendOk lands
-      // the row. Capture bytes again and assert byte-for-byte equality.
-      await drainForTest(
-        dest,
-        registry: registry,
-        clock: () => DateTime.utc(2026, 4, 25, 14),
-        policy: oneAttemptCapPolicy,
-      );
-      expect(dest.sent, hasLength(2));
-      final secondBytes = dest.sent.last.bytes;
-      expect(
-        secondBytes,
-        firstBytes,
-        reason:
-            'native re-encode MUST be byte-deterministic across retries '
-            '(RFC 8785 JCS)',
-      );
-    });
-
-    // A native row whose `event_ids` reference a missing event throws
-    // StateError. Models the integrity-violation case where the FIFO row
-    // outlives its underlying event log entry; drain refuses to send a
-    // partial / incorrect re-encode.
+    // A native item's delivery is rebuilt from its envelope metadata and
+    // the events its `event_ids` name; the byte-identical resend of a
+    // delivery is covered by the delivery channel drain scenarios. An item
+    // whose `event_ids` name a missing event throws StateError: the FIFO
+    // row outlives its underlying event log entry, and drain refuses to
+    // send a partial or incorrect delivery.
     test('drain on native row with missing event throws '
         'StateError', () async {
-      // Append the event, enqueue the native row, then surgically delete
-      // the event from the underlying sembast store. After deletion,
-      // findEventById returns null and drain MUST throw.
-      final event = storedEventFixture(eventId: 'e1', sequenceNumber: 1);
-      await backend.transaction((txn) async {
-        final seq = await backend.nextSequenceNumber(txn);
-        await backend.appendEvent(
-          txn,
-          storedEventFixture(eventId: 'e1', sequenceNumber: seq),
-        );
-      });
-      final envelope = BatchEnvelopeMetadata(
-        batchFormatVersion: '2',
-        batchId: 'batch-x',
-        senderHop: 'mobile-1',
-        senderIdentifier: 'device-uuid',
-        senderSoftwareVersion: 'diary@1.2.3',
-        sentAt: DateTime.utc(2026, 4, 25, 12),
+      const init = AutomationInitiator(service: 'drain-test');
+      final dest = NativeDestination(
+        filter: const SubscriptionFilter(includeSystemEvents: true),
       );
-      await backend.transaction(
-        (txn) => backend.enqueueFifoTxn(txn, 'fake', [
-          event,
-        ], nativeEnvelope: envelope),
+      await registry.addDestination(dest, initiator: init);
+      await registry.setStartDate(dest.id, DateTime.utc(2000), initiator: init);
+      await fillForTest(
+        dest,
+        backend: backend,
+        clock: () => DateTime.utc(2100),
       );
+      final queued = await backend.readFifoHead(dest.id);
+      expect(queued, isNotNull, reason: 'the fill enqueued an item');
+      final missing = queued!.eventIds.first;
 
       // Surgically delete the event from the origin event store
       // (bypasses the append-only API; test-only mutation that simulates
@@ -619,13 +524,12 @@ void main() {
       final record = (await eventStore.find(
         db,
         finder: sembast.Finder(
-          filter: sembast.Filter.equals('event_id', 'e1'),
+          filter: sembast.Filter.equals('event_id', missing),
           limit: 1,
         ),
       )).single;
       await eventStore.record(record.key).delete(db);
 
-      final dest = FakeDestination(script: [const SendOk()]);
       await expectLater(
         drainForTest(dest, registry: registry),
         throwsA(isA<StateError>()),
@@ -633,9 +537,9 @@ void main() {
       // The drain refused before sending anything and recorded no attempt:
       // the row is still the pending head with an empty attempt history.
       expect(dest.sent, isEmpty);
-      final head = await backend.readFifoHead('fake');
+      final head = await backend.readFifoHead(dest.id);
       expect(head, isNotNull);
-      expect(head!.eventIds, ['e1']);
+      expect(head!.entryId, queued.entryId);
       expect(head.attempts, isEmpty);
       expect(head.finalStatus, isNull);
     });
