@@ -330,7 +330,8 @@ Future<void> fillBatch(
   final startDate = schedule.startDate;
   final endDate = schedule.endDate;
   final upper = endDate == null || endDate.isAfter(now) ? now : endDate;
-  // EVS-DEV-destination-drain/X: a dormant schedule or a window entirely in
+  // Implements: EVS-DEV-destination-drain/X
+  // A dormant schedule or a window entirely in
   // the future is nothing to do for an ordinary event, but a natively
   // serializing destination still walks the log for a channel-wide own
   // event, which bypasses the window as it bypasses the filter.
@@ -524,7 +525,8 @@ Future<bool> _performReplayRequest(
   final runGapPortion =
       gapActive &&
       (!request.firstActivation || state.transformFailureRecord == null);
-  // EVS-DEV-destination-drain/X: a channel-wide own event (a succession
+  // Implements: EVS-DEV-destination-drain/X
+  // A channel-wide own event (a succession
   // event or a security finding) already queued as pending, wedged, or
   // sent under the channel's current generation is not enqueued a second
   // time by either portion of this call.

@@ -9,6 +9,8 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart'
     as internal
     show ingestEventForTest;
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SenderSuccessionData;
 
 /// Handles [event] as the ingest path handles one received record, in a
 /// transaction of its own and outside any delivery. The seam for tests of
@@ -122,10 +124,39 @@ Future<TestDelivery> deliverTo(
   final bytes = envelope.encode();
   final response = await store.receiverEndpoint.accept(
     bytes,
-    senderDatabaseIds: senderDatabaseIds ?? <String>{c.senderDatabaseId},
+    senderDatabaseIds: senderDatabaseIds ?? _defaultSenderIds(c, records),
   );
   if (response is ReceiverAcknowledgement) byChannel[c] = response.record;
   return TestDelivery(envelope: envelope, bytes: bytes, response: response);
+}
+
+/// The sender identities [deliverTo] authenticates a delivery for when the
+/// caller names none: the channel's sender, plus, for a succession-event
+/// record among [records], the identities it names as successor and
+/// predecessor, so a test that hands a succession record to a helper that
+/// defaults its authentication is not refused for the predecessor it
+/// carries but does not otherwise mention.
+Set<String> _defaultSenderIds(
+  DeliveryChannel channel,
+  List<Map<String, Object?>> records,
+) {
+  final ids = <String>{channel.senderDatabaseId};
+  for (final record in records) {
+    if (record['entry_type'] != kDestinationSenderSucceededEntryType) {
+      continue;
+    }
+    final data = record['data'];
+    if (data is! Map<String, Object?>) continue;
+    try {
+      final succession = SenderSuccessionData.fromJson(data);
+      ids
+        ..add(succession.databaseId)
+        ..add(succession.predecessorDatabaseId);
+    } on FormatException {
+      // Left to ingest's own malformed-record handling.
+    }
+  }
+  return ids;
 }
 
 /// [deliverTo] for events: delivers each event's stored record.

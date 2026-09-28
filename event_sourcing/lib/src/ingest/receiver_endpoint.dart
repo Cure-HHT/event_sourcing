@@ -30,16 +30,21 @@ final class ReceiverEndpoint {
   ///    naming the decoder's reason. One from which no channel can be read
   ///    throws the [IngestDecodeFailure] instead, since no refusal can name
   ///    its channel.
-  /// 3. A delivery whose `delivery_hash` does not recompute is refused
+  /// 3. A delivery carrying a succession event the receiver does not hold
+  ///    throws [DeliveryAuthenticationRefused], as an unauthenticated
+  ///    sender, when [senderDatabaseIds] does not name both the event's
+  ///    successor and its predecessor. A succession event the receiver
+  ///    already holds is a duplicate and no check applies to it.
+  /// 4. A delivery whose `delivery_hash` does not recompute is refused
   ///    `delivery_hash_mismatch`, and a `delivery_hash_mismatch` security
   ///    finding is recorded, once, in a transaction that writes nothing
   ///    else. The sender treats it as transient and sends it again.
-  /// 4. Inside the ingest transaction, before any write, the record is
+  /// 5. Inside the ingest transaction, before any write, the record is
   ///    read. A delivery whose number and hash equal it is acknowledged
   ///    `represented` and nothing is appended; any other delivery that is
   ///    not numbered one above it and linked to its hash is refused
   ///    `out_of_sequence`.
-  /// 5. Otherwise every event is handled as ingest handles a record (a
+  /// 6. Otherwise every event is handled as ingest handles a record (a
   ///    record the library cannot store as an event is kept in a finding,
   ///    every other one is admitted, anomalies are recorded as findings),
   ///    each stored event's receiver entry names the delivery, an event
@@ -55,6 +60,13 @@ final class ReceiverEndpoint {
   // the accept path refuses a delivery whose channel's sender is not in the
   //   caller's sender identities before any read of the channel and any
   //   write.
+  // Implements: EVS-DEV-sender-succession/F
+  // a delivery carrying a succession event the receiver does not hold is
+  //   refused, as an unauthenticated sender, when the caller may not act
+  //   for both the successor and the predecessor it names.
+  // Implements: EVS-DEV-sender-succession/E
+  // a succession event the receiver already holds is handled as any other
+  //   held event; no succession check applies to it.
   // Implements: EVS-PRD-delivery-channel/E
   // every acknowledgement and every refusal the endpoint answers with
   //   carries the receiver's record of the channel.
@@ -86,11 +98,58 @@ final class ReceiverEndpoint {
         reason: failure!.reason,
       );
     }
+    await _refuseUnauthenticatedSuccessions(delivery, senderDatabaseIds);
     final recomputed = delivery.recomputedDeliveryHash;
     if (recomputed != delivery.deliveryHash) {
       return _refuseHashMismatch(delivery, recomputed);
     }
     return _ingest(delivery, bytes);
+  }
+
+  /// Throws [DeliveryAuthenticationRefused], as an unauthenticated sender,
+  /// for the first event of [delivery] that is a succession event
+  /// (`system.destination_sender_succeeded`) the receiver does not already
+  /// hold and whose `database_id` (the successor) or
+  /// `predecessor_database_id` (the predecessor) is outside
+  /// [senderDatabaseIds]. A succession event the receiver already holds is
+  /// a duplicate and is not checked; nor is a record that does not decode
+  /// as a succession event, since ingest's own record handling meets it.
+  // Implements: EVS-DEV-sender-succession/F
+  // refuses, as it refuses a caller it does not authenticate for a
+  //   channel's sender, a delivery carrying a succession event the
+  //   receiver does not hold when the caller may not act for both the
+  //   successor and the predecessor.
+  // Implements: EVS-DEV-sender-succession/E
+  // a delivered succession event the receiver already holds is handled as
+  //   any event it already holds, with no succession check applied.
+  Future<void> _refuseUnauthenticatedSuccessions(
+    DeliveryEnvelope delivery,
+    Set<String> senderDatabaseIds,
+  ) async {
+    for (final record in delivery.events) {
+      if (record['entry_type'] != kDestinationSenderSucceededEntryType) {
+        continue;
+      }
+      final eventId = record['event_id'];
+      if (eventId is! String) continue;
+      if (await _store._backend.findEventById(eventId) != null) continue;
+      final data = record['data'];
+      if (data is! Map<String, Object?>) continue;
+      final SenderSuccessionData succession;
+      try {
+        succession = SenderSuccessionData.fromJson(data);
+      } on FormatException {
+        continue;
+      }
+      final unauthenticated = !senderDatabaseIds.contains(succession.databaseId)
+          ? succession.databaseId
+          : !senderDatabaseIds.contains(succession.predecessorDatabaseId)
+          ? succession.predecessorDatabaseId
+          : null;
+      if (unauthenticated != null) {
+        throw DeliveryAuthenticationRefused(senderDatabaseId: unauthenticated);
+      }
+    }
   }
 
   /// Serves [request] to a caller that the deployment's authentication
@@ -149,12 +208,14 @@ final class ReceiverEndpoint {
 
   /// The identities whose channels a listing for [senderDatabaseId]
   /// covers: the sender and the identities of its succession lineage, as
-  /// the succession events the receiver holds state it. The restore
-  /// operation that appends succession events is not yet built, so the
-  /// lineage is the sender alone.
-  static Set<String> _successionLineageOf(String senderDatabaseId) => <String>{
+  /// the succession events the receiver holds state it, read inside [txn].
+  Future<Set<String>> _successionLineageOf(
+    Transaction txn,
+    String senderDatabaseId,
+  ) async => lineageSetOf(
+    await computeSuccessionLineageInTxn(txn, _store._backend, senderDatabaseId),
     senderDatabaseId,
-  };
+  );
 
   /// The channel listing [request] asks for, read inside [txn].
   // Implements: EVS-DEV-delivery-receiver/R
@@ -168,7 +229,10 @@ final class ReceiverEndpoint {
     final audits = await _store._backend.findLatestAuthoredDeliveryAuditsInTxn(
       txn,
       databaseId: _store.databaseId,
-      senderDatabaseIds: _successionLineageOf(request.senderDatabaseId),
+      senderDatabaseIds: await _successionLineageOf(
+        txn,
+        request.senderDatabaseId,
+      ),
     );
     final channels = <ListedChannel>[
       for (final audit in audits)

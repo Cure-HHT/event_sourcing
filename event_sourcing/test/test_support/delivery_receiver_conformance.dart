@@ -12,6 +12,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SenderSuccessionChannel, SenderSuccessionData;
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestAuditEntryType;
 import 'package:flutter_test/flutter_test.dart';
@@ -69,6 +71,59 @@ DeliveryEnvelope sealedDelivery({
     attributes: attributes,
   );
 }
+
+/// The database identity a succession event names as the predecessor in
+/// the scenarios below.
+const String kPredecessorDatabaseId = 'predecessor-database';
+
+/// The delivery hash [successionRecord] names by default.
+const String _kPredecessorDeliveryHash =
+    'hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh';
+
+/// The channel a hand-built succession event names as restored from
+/// [predecessorDatabaseId], by default.
+DeliveryChannel successionPredecessorChannel({
+  String predecessorDatabaseId = kPredecessorDatabaseId,
+}) => DeliveryChannel(
+  senderDatabaseId: predecessorDatabaseId,
+  destinationId: 'destination-1',
+  registrationId: 'registration-1',
+  generation: 1,
+);
+
+/// A hand-built succession event (`system.destination_sender_succeeded`)
+/// naming [databaseId] as having succeeded [predecessorDatabaseId], sealed
+/// as its provenance's originator, naming [predecessorChannel] restored up
+/// to [predecessorDeliveryNumber] (hashed [predecessorDeliveryHash]).
+Map<String, Object?> successionRecord({
+  String databaseId = kPeerDatabaseId,
+  String predecessorDatabaseId = kPredecessorDatabaseId,
+  DeliveryChannel? predecessorChannel,
+  int predecessorDeliveryNumber = 3,
+  String predecessorDeliveryHash = _kPredecessorDeliveryHash,
+}) => sealedRecord(
+  databaseId: databaseId,
+  entryType: kDestinationSenderSucceededEntryType,
+  aggregateType: kDestinationAuditAggregateType,
+  eventType: kDestinationSenderSucceededEventType,
+  data: SenderSuccessionData(
+    id: 'destination-1',
+    registrationId: 'registration-1',
+    databaseId: databaseId,
+    predecessorDatabaseId: predecessorDatabaseId,
+    predecessorChannels: <SenderSuccessionChannel>[
+      SenderSuccessionChannel(
+        channel:
+            predecessorChannel ??
+            successionPredecessorChannel(
+              predecessorDatabaseId: predecessorDatabaseId,
+            ),
+        deliveryNumber: predecessorDeliveryNumber,
+        deliveryHash: predecessorDeliveryHash,
+      ),
+    ],
+  ).toJson(),
+);
 
 /// The record a receiver answers with after accepting [delivery].
 DeliveryRecord recordAfter(DeliveryEnvelope delivery) => DeliveryRecord(
@@ -353,6 +408,240 @@ void runDeliveryReceiverScenarios({
       );
 
       expect(await store.reader.readSequenceCounter(), before);
+    });
+
+    // Verifies: EVS-DEV-sender-succession/F
+    // Verifies: EVS-DEV-delivery-receiver/N
+    test('a delivery carrying a succession event the receiver does not hold is '
+        'refused when the caller may not act for its predecessor', () async {
+      final store = await open();
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[successionRecord()],
+      );
+
+      await expectLater(
+        present(store, delivery, senders: <String>{kPeerDatabaseId}),
+        throwsA(
+          isA<DeliveryAuthenticationRefused>().having(
+            (e) => e.senderDatabaseId,
+            'senderDatabaseId',
+            kPredecessorDatabaseId,
+          ),
+        ),
+      );
+      expect(await authoredDeliveryAudits(store), isEmpty);
+      expect(
+        await store.reader.findEventById(
+          delivery.events.single['event_id']! as String,
+        ),
+        isNull,
+      );
+    });
+
+    // Verifies: EVS-DEV-sender-succession/F
+    test('a delivery carrying a succession event the receiver does not hold is '
+        'accepted when the caller may act for both the successor and the '
+        'predecessor', () async {
+      final store = await open();
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[successionRecord()],
+      );
+
+      final response = await present(
+        store,
+        delivery,
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      expect(
+        response,
+        acknowledgement(store, delivery, AcknowledgementOutcome.accepted),
+      );
+    });
+
+    // Verifies: EVS-DEV-sender-succession/E
+    test('a succession event the receiver already holds is a duplicate; no '
+        'succession check applies to it', () async {
+      final store = await open();
+      final succession = successionRecord();
+      final first = sealedDelivery(records: <Map<String, Object?>>[succession]);
+      await present(
+        store,
+        first,
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      final second = sealedDelivery(
+        number: 2,
+        link: first.deliveryHash,
+        records: <Map<String, Object?>>[succession, sealedRecord()],
+      );
+      final response = await present(
+        store,
+        second,
+        senders: <String>{kPeerDatabaseId},
+      );
+
+      expect(
+        response,
+        acknowledgement(store, second, AcknowledgementOutcome.accepted),
+      );
+    });
+
+    // Verifies: EVS-DEV-sender-succession/K
+    test('a succession event names a channel the receiver never accepted a '
+        'delivery on: no succession_ahead finding', () async {
+      final store = await open();
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[
+          successionRecord(predecessorDeliveryNumber: 1),
+        ],
+      );
+
+      await present(
+        store,
+        delivery,
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      expect(await authoredFindings(store), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-sender-succession/K
+    test("a succession event names a delivery at the receiver's record of "
+        'a channel: no succession_ahead finding', () async {
+      final store = await open();
+      final channel = successionPredecessorChannel();
+      final first = sealedDelivery(channel: channel);
+      final second = sealedDelivery(
+        channel: channel,
+        number: 2,
+        link: first.deliveryHash,
+      );
+      await present(store, first, senders: <String>{kPredecessorDatabaseId});
+      await present(store, second, senders: <String>{kPredecessorDatabaseId});
+
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[
+          successionRecord(
+            predecessorChannel: channel,
+            predecessorDeliveryNumber: 2,
+            predecessorDeliveryHash: second.deliveryHash,
+          ),
+        ],
+      );
+      await present(
+        store,
+        delivery,
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      expect(await authoredFindings(store), isEmpty);
+    });
+
+    // Verifies: EVS-DEV-sender-succession/K
+    // Verifies: EVS-DEV-security-findings/F
+    // Verifies: EVS-DEV-security-findings/R
+    test("a succession event names a delivery above the receiver's record "
+        'of a channel: one succession_ahead finding, idempotent on a second '
+        'succession event naming the same gap', () async {
+      final store = await open();
+      final channel = successionPredecessorChannel();
+      final first = sealedDelivery(channel: channel);
+      final second = sealedDelivery(
+        channel: channel,
+        number: 2,
+        link: first.deliveryHash,
+      );
+      await present(store, first, senders: <String>{kPredecessorDatabaseId});
+      await present(store, second, senders: <String>{kPredecessorDatabaseId});
+
+      final succession = successionRecord(
+        predecessorChannel: channel,
+        predecessorDeliveryNumber: 3,
+        predecessorDeliveryHash: _kPredecessorDeliveryHash,
+      );
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[succession],
+      );
+      final response = await present(
+        store,
+        delivery,
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      expect(
+        response,
+        acknowledgement(store, delivery, AcknowledgementOutcome.accepted),
+      );
+      expect(
+        await store.reader.findEventById(succession['event_id']! as String),
+        isNotNull,
+      );
+
+      final evidence = <String, Object?>{
+        'channel': channel.toJson(),
+        'receiver_record': DeliveryRecord(
+          deliveryNumber: 2,
+          deliveryHash: second.deliveryHash,
+        ).toJson(),
+        'succession_record': const DeliveryRecord(
+          deliveryNumber: 3,
+          deliveryHash: _kPredecessorDeliveryHash,
+        ).toJson(),
+      };
+      final expectedFinding = <String, Object?>{
+        'finding_id': expectedFindingId(
+          databaseId: store.databaseId,
+          role: 'ingest',
+          kind: 'succession_ahead',
+          evidence: evidence,
+        ),
+        'kind': 'succession_ahead',
+        'evidence': evidence,
+        'aggregates': <Object?>[],
+        'detector': <String, Object?>{
+          'database_id': store.databaseId,
+          'role': 'ingest',
+          'library_version': LibVersion.version,
+        },
+      };
+      expect(await authoredFindings(store), <Map<String, Object?>>[
+        expectedFinding,
+      ]);
+      // The finding is appended in the transaction that stores the
+      //   succession event and its channel's accepted-delivery audit: its
+      //   local sequence number immediately precedes the audit's.
+      final findingEvent = (await store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      )).single;
+      final audit = (await authoredDeliveryAudits(store)).lastWhere(
+        (a) => DeliveryChannel.fromJson(a.data['channel']) == delivery.channel,
+      );
+      expect(audit.sequenceNumber, findingEvent.sequenceNumber + 1);
+
+      // A second, distinct succession event naming the same channel and the
+      // same gap computes the same finding identity and records nothing
+      // more.
+      final secondSuccession = successionRecord(
+        predecessorChannel: channel,
+        predecessorDeliveryNumber: 3,
+        predecessorDeliveryHash: _kPredecessorDeliveryHash,
+      );
+      expect(secondSuccession['event_id'], isNot(succession['event_id']));
+      await present(
+        store,
+        sealedDelivery(
+          number: 2,
+          link: delivery.deliveryHash,
+          records: <Map<String, Object?>>[secondSuccession],
+        ),
+        senders: <String>{kPeerDatabaseId, kPredecessorDatabaseId},
+      );
+
+      expect(await authoredFindings(store), <Map<String, Object?>>[
+        expectedFinding,
+      ]);
     });
 
     // Verifies: EVS-DEV-delivery-receiver/W

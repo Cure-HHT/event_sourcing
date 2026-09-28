@@ -14,6 +14,8 @@
 import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SenderSuccessionChannel, SenderSuccessionData;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
@@ -312,6 +314,290 @@ void runOutstandingFindingMarkScenarios({
         await integrityOfRow(store, agg(third)),
         integrityOf(const <String>[]),
       );
+    });
+
+    // Verifies: EVS-PRD-materializer/D
+    test('a finding received from successor S marks an aggregate its '
+        'predecessor P authored', () async {
+      final store = await open();
+      const predecessorId = 'predecessor-db';
+      const successorId = 'successor-db';
+      final byPredecessor = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+      );
+      await deliver(store, <Map<String, Object?>>[byPredecessor]);
+
+      const successionData = SenderSuccessionData(
+        id: 'destination-1',
+        registrationId: 'registration-1',
+        databaseId: successorId,
+        predecessorDatabaseId: predecessorId,
+        predecessorChannels: <SenderSuccessionChannel>[],
+      );
+      final successionRecord = sealedRecord(
+        databaseId: successorId,
+        entryType: kDestinationSenderSucceededEntryType,
+        aggregateType: kDestinationAuditAggregateType,
+        eventType: kDestinationSenderSucceededEventType,
+        data: successionData.toJson(),
+      );
+      await deliver(store, <Map<String, Object?>>[successionRecord]);
+
+      const receivedId = 'received-finding-from-the-successor';
+      final received = sealedRecord(
+        databaseId: successorId,
+        entryType: kSecurityFindingEntryType,
+        aggregateType: 'security_finding',
+        eventType: 'security_finding_recorded',
+        aggregateId: receivedId,
+        data: <String, Object?>{
+          'finding_id': receivedId,
+          'kind': 'hash_mismatch',
+          'evidence': <String, Object?>{
+            'event_id': 'e',
+            'carried_hash': 'a',
+            'recomputed_hash': 'b',
+          },
+          'aggregates': <String>[agg(byPredecessor)],
+          'detector': <String, Object?>{
+            'database_id': successorId,
+            'role': 'ingest',
+            'library_version': '0.0.0',
+          },
+        },
+      );
+      final result = await deliver(store, <Map<String, Object?>>[received]);
+      expect(await recordOutcomes(store, result.single), <IngestOutcome>[
+        IngestOutcome.ingested,
+      ]);
+
+      expect(
+        await integrityOfRow(store, agg(byPredecessor)),
+        integrityOf(const <String>[receivedId]),
+      );
+    });
+
+    // Verifies: EVS-PRD-delivery-channel/T
+    test('a finding received from predecessor P marks an aggregate that '
+        "successor S authored after S's succession event", () async {
+      final store = await open();
+      const predecessorId = 'predecessor-db-t';
+      const successorId = 'successor-db-t';
+
+      const successionData = SenderSuccessionData(
+        id: 'destination-t',
+        registrationId: 'registration-t',
+        databaseId: successorId,
+        predecessorDatabaseId: predecessorId,
+        predecessorChannels: <SenderSuccessionChannel>[],
+      );
+      final successionRecord = sealedRecord(
+        databaseId: successorId,
+        entryType: kDestinationSenderSucceededEntryType,
+        aggregateType: kDestinationAuditAggregateType,
+        eventType: kDestinationSenderSucceededEventType,
+        data: successionData.toJson(),
+      );
+      await deliver(store, <Map<String, Object?>>[successionRecord]);
+
+      final bySuccessor = sealedRecord(
+        databaseId: successorId,
+        entryType: _kType,
+      );
+      await deliver(store, <Map<String, Object?>>[bySuccessor]);
+
+      const receivedId = 'received-finding-from-the-predecessor';
+      final received = sealedRecord(
+        databaseId: predecessorId,
+        entryType: kSecurityFindingEntryType,
+        aggregateType: 'security_finding',
+        eventType: 'security_finding_recorded',
+        aggregateId: receivedId,
+        data: <String, Object?>{
+          'finding_id': receivedId,
+          'kind': 'hash_mismatch',
+          'evidence': <String, Object?>{
+            'event_id': 'e',
+            'carried_hash': 'a',
+            'recomputed_hash': 'b',
+          },
+          'aggregates': <String>[agg(bySuccessor)],
+          'detector': <String, Object?>{
+            'database_id': predecessorId,
+            'role': 'ingest',
+            'library_version': '0.0.0',
+          },
+        },
+      );
+      final result = await deliver(store, <Map<String, Object?>>[received]);
+      expect(await recordOutcomes(store, result.single), <IngestOutcome>[
+        IngestOutcome.ingested,
+      ]);
+
+      expect(
+        await integrityOfRow(store, agg(bySuccessor)),
+        integrityOf(const <String>[receivedId]),
+        reason:
+            "a finding P holds reaches S's aggregate, since the "
+            "default authorship convention treats S's events after its "
+            "succession event as continuing P's authorship",
+      );
+    });
+
+    // Verifies: EVS-PRD-materializer/D
+    // Verifies: EVS-PRD-materializer/B
+    test('a finding received before its successor names a predecessor marks '
+        "the predecessor's aggregate once the succession event arrives, "
+        'exactly as a rebuild derives it', () async {
+      final store = await open();
+      const predecessorId = 'predecessor-db-2';
+      const successorId = 'successor-db-2';
+      final byPredecessor = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+      );
+      await deliver(store, <Map<String, Object?>>[byPredecessor]);
+
+      const receivedId = 'received-finding-before-the-succession';
+      final received = sealedRecord(
+        databaseId: successorId,
+        entryType: kSecurityFindingEntryType,
+        aggregateType: 'security_finding',
+        eventType: 'security_finding_recorded',
+        aggregateId: receivedId,
+        data: <String, Object?>{
+          'finding_id': receivedId,
+          'kind': 'hash_mismatch',
+          'evidence': <String, Object?>{
+            'event_id': 'e',
+            'carried_hash': 'a',
+            'recomputed_hash': 'b',
+          },
+          'aggregates': <String>[agg(byPredecessor)],
+          'detector': <String, Object?>{
+            'database_id': successorId,
+            'role': 'ingest',
+            'library_version': '0.0.0',
+          },
+        },
+      );
+      await deliver(store, <Map<String, Object?>>[received]);
+      expect(
+        await integrityOfRow(store, agg(byPredecessor)),
+        integrityOf(const <String>[]),
+        reason: 'unmarked before the succession names the predecessor',
+      );
+
+      const successionData = SenderSuccessionData(
+        id: 'destination-2',
+        registrationId: 'registration-2',
+        databaseId: successorId,
+        predecessorDatabaseId: predecessorId,
+        predecessorChannels: <SenderSuccessionChannel>[],
+      );
+      final successionRecord = sealedRecord(
+        databaseId: successorId,
+        entryType: kDestinationSenderSucceededEntryType,
+        aggregateType: kDestinationAuditAggregateType,
+        eventType: kDestinationSenderSucceededEventType,
+        data: successionData.toJson(),
+      );
+      await deliver(store, <Map<String, Object?>>[successionRecord]);
+
+      expect(
+        await integrityOfRow(store, agg(byPredecessor)),
+        integrityOf(const <String>[receivedId]),
+        reason: 'marked once the succession event is folded',
+      );
+
+      final before = jsonEncode(await store.reader.findViewRows(_kNotes));
+      await rebuildView(
+        store: store,
+        viewName: _kNotes,
+        targetVersionByEntryType: const <String, EntryTypeVersion>{
+          _kType: EntryTypeVersion(1, 0),
+        },
+      );
+      expect(
+        jsonEncode(await store.reader.findViewRows(_kNotes)),
+        before,
+        reason:
+            'a rebuild derives the same marks whatever order the '
+            'finding and the succession event stored in',
+      );
+    });
+
+    // Verifies: EVS-PRD-materializer/E
+    test('a position_reused finding received from a successor marks the '
+        "predecessor's aggregates at or above the position", () async {
+      final store = await open();
+      const predecessorId = 'reused-pred-db';
+      const successorId = 'reused-succ-db';
+      // No duplicate is delivered at the receiver: the reuse is only the
+      // received finding's claim (as another database observed it), not
+      // something the receiver's own ingest detects on its own chain.
+      final chain = originChain(predecessorId, 3);
+      await deliver(store, chain);
+
+      const receivedId = 'received-position-reused-from-successor';
+      final received = sealedRecord(
+        databaseId: successorId,
+        entryType: kSecurityFindingEntryType,
+        aggregateType: 'security_finding',
+        eventType: 'security_finding_recorded',
+        aggregateId: receivedId,
+        data: <String, Object?>{
+          'finding_id': receivedId,
+          'kind': 'position_reused',
+          'evidence': <String, Object?>{
+            'database_id': predecessorId,
+            'origin_sequence_number': 2,
+          },
+          'aggregates': const <String>[],
+          'detector': <String, Object?>{
+            'database_id': successorId,
+            'role': 'ingest',
+            'library_version': '0.0.0',
+          },
+        },
+      );
+      await deliver(store, <Map<String, Object?>>[received]);
+      expect(
+        await integrityOfRow(store, agg(chain[1])),
+        integrityOf(const <String>[]),
+        reason: 'unmarked before the succession names the predecessor',
+      );
+
+      const successionData = SenderSuccessionData(
+        id: 'destination-3',
+        registrationId: 'registration-3',
+        databaseId: successorId,
+        predecessorDatabaseId: predecessorId,
+        predecessorChannels: <SenderSuccessionChannel>[],
+      );
+      final successionRecord = sealedRecord(
+        databaseId: successorId,
+        entryType: kDestinationSenderSucceededEntryType,
+        aggregateType: kDestinationAuditAggregateType,
+        eventType: kDestinationSenderSucceededEventType,
+        data: successionData.toJson(),
+      );
+      await deliver(store, <Map<String, Object?>>[successionRecord]);
+      final later = chained(predecessorId, 4, previous: chain[2]);
+      await deliver(store, <Map<String, Object?>>[later]);
+
+      expect(
+        await integrityOfRow(store, agg(chain[0])),
+        integrityOf(const <String>[]),
+      );
+      for (final record in <Map<String, Object?>>[chain[1], chain[2], later]) {
+        expect(
+          await integrityOfRow(store, agg(record)),
+          integrityOf(<String>[receivedId]),
+          reason: 'origin position ${record['sequence_number']}',
+        );
+      }
     });
 
     // Verifies: EVS-PRD-materializer/B

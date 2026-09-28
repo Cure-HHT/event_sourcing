@@ -1,4 +1,6 @@
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SuccessionLineage;
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -171,6 +173,12 @@ abstract interface class StorageReader {
   /// Throws [ArgumentError], before reading any event, for a negative bound
   /// or a lower bound above the upper.
   Future<ChainVerificationVerdict> verifyChains({int? from, int? to});
+
+  /// The succession lineage of [databaseId], derived solely from the
+  /// `system.destination_sender_succeeded` events the log holds, whether
+  /// authored or received: the predecessors it succeeded, transitively,
+  /// earliest first, and its successor, if any.
+  Future<SuccessionLineage> successionLineageOf(String databaseId);
 
   /// The events joined with their security contexts, filtered and paged
   /// as the backend's `queryAudit` documents.

@@ -81,9 +81,18 @@ final class _Side {
 /// delivery's channel names, passing the answer through the library's
 /// decoder, as a transport carrying the receiver's answer does.
 final class _EndpointDestination extends Destination {
-  _EndpointDestination(this.receiver);
+  _EndpointDestination(
+    this.receiver, {
+    this.additionalSenderIds = const <String>{},
+  });
 
   final _Side receiver;
+
+  /// Identities the deployment's authentication also binds this caller to,
+  /// beyond the channel's own sender: a succession delivery needs the
+  /// caller authenticated for the predecessor too
+  /// (`EVS-DEV-sender-succession/F`).
+  final Set<String> additionalSenderIds;
 
   /// Every payload handed to [send], in order.
   final List<WirePayload> sent = <WirePayload>[];
@@ -119,7 +128,7 @@ final class _EndpointDestination extends Destination {
     };
     final response = await receiver.store.receiverEndpoint.pull(
       request,
-      senderDatabaseIds: <String>{sender},
+      senderDatabaseIds: <String>{sender, ...additionalSenderIds},
     );
     return decodePullResponse(response.encode());
   };
@@ -132,7 +141,7 @@ final class _EndpointDestination extends Destination {
     ).channel.senderDatabaseId;
     final answer = await receiver.store.receiverEndpoint.accept(
       payload.bytes,
-      senderDatabaseIds: <String>{sender},
+      senderDatabaseIds: <String>{sender, ...additionalSenderIds},
     );
     return decodeReceiverAnswer(answer.encode());
   }
@@ -141,7 +150,9 @@ final class _EndpointDestination extends Destination {
 void main() {
   late _Side sender;
   late _Side receiver;
+  _Side? successor;
   late _EndpointDestination hub;
+  late _EndpointDestination successorHub;
   late DestinationRegistry registry;
 
   Future<void> register() async {
@@ -180,6 +191,8 @@ void main() {
   tearDown(() async {
     await sender.close();
     await receiver.close();
+    final side = successor;
+    if (side != null) await side.close();
   });
 
   Future<StoredEvent> note(String id) async {
@@ -220,6 +233,72 @@ void main() {
       <DeliveryEnvelope>[
         for (final p in payloads) DeliveryEnvelope.decode(p.bytes),
       ];
+
+  /// The findings [side] holds of kind [kind] (the security finding's wire
+  /// `kind`, e.g. `FindingKind.senderRegressed.wire`).
+  Future<List<Map<String, Object?>>> findingsOf(_Side side, String kind) async {
+    return <Map<String, Object?>>[
+      for (final e in await side.store.reader.findAllEvents(
+        entryType: kSecurityFindingEntryType,
+      ))
+        if (e.data['kind'] == kind) e.data,
+    ];
+  }
+
+  /// Every channel [receiver] lists for [senderDatabaseId] and its
+  /// succession lineage, across every generation.
+  Future<List<ListedChannel>> allListedChannels(String senderDatabaseId) async {
+    final listing =
+        await receiver.store.receiverEndpoint.pull(
+              ChannelListingPull(senderDatabaseId: senderDatabaseId),
+              senderDatabaseIds: <String>{senderDatabaseId},
+            )
+            as ChannelListing;
+    return listing.channels;
+  }
+
+  /// The event ids of every `_noteType` event [side] holds.
+  Future<Set<String>> noteEventIdsOf(_Side side) async => <String>{
+    for (final e in await side.store.reader.findAllEvents(entryType: _noteType))
+      e.eventId,
+  };
+
+  /// Opens a fresh, freshly identified successor database, registers its
+  /// own native destination to [receiver] (bound to [predecessorId] too, so
+  /// its succession delivery authenticates under `EVS-DEV-sender-succession
+  /// /F`), and restores [predecessorId]'s deliveries into it. Records the
+  /// successor as [successor] (closed in `tearDown`) and returns its
+  /// registry, for draining.
+  Future<DestinationRegistry> rebuildSuccessor(String predecessorId) async {
+    final side = _Side(
+      'successor',
+      const Source(
+        hopId: 'mobile-device',
+        identifier: 'successor-install',
+        softwareVersion: 'app@2.0.0',
+      ),
+    );
+    await side.create();
+    successor = side;
+    successorHub = _EndpointDestination(
+      receiver,
+      additionalSenderIds: <String>{predecessorId},
+    );
+    final successorRegistry = DestinationRegistry(eventStore: side.store);
+    await successorRegistry.addDestination(successorHub, initiator: _init);
+    await successorRegistry.setStartDate(
+      successorHub.id,
+      DateTime.utc(2026, 1, 1),
+      initiator: _init,
+    );
+    await side.store.restoreFromReceiver(
+      registry: successorRegistry,
+      destinationId: successorHub.id,
+      predecessorDatabaseId: predecessorId,
+      initiator: _init,
+    );
+    return successorRegistry;
+  }
 
   // Verifies: EVS-PRD-delivery-channel/H
   // a receiver restored to an earlier point is sent again, exactly as first
@@ -331,5 +410,206 @@ void main() {
         reason: '${side.name} records nothing for the delivery neither holds',
       );
     }
+  });
+
+  // Verifies: EVS-PRD-delivery-channel/I
+  // a receiver record ahead of the sender's, naming no delivery the sender
+  //   attempted, is recorded as a sender-regression finding.
+  // Verifies: EVS-DEV-delivery-resume/K
+  // the drainer starts a new generation on such a record, recording the
+  //   finding.
+  // Verifies: EVS-DEV-sender-succession/A
+  // Verifies: EVS-DEV-sender-succession/C
+  // the application rebuilds the regressed sender as a successor: the
+  //   restore pulls every channel the receiver lists for the predecessor
+  //   and stores, in one transaction, every carried event the successor
+  //   does not hold.
+  test('a sender rolled back is recorded as regressed and rebuilt through '
+      'the restore, holding every event the receiver holds, both branches '
+      'included', () async {
+    final n1 = await note('n1');
+    await deliver();
+    final senderPoint = await sender.snapshot();
+    final n2 = await note('n2');
+    final n3 = await note('n3');
+    await deliver();
+    expect(await receivedNotes(), <String>['n1', 'n2', 'n3']);
+    final predecessorId = sender.store.databaseId;
+
+    // The sender forgets n2 and n3 it authored and delivered; the receiver
+    // keeps everything.
+    await sender.restore(senderPoint);
+    await register();
+
+    // A fresh event at the reused origin position: the second branch the
+    // regression produces.
+    final n2b = await note('n2b');
+    await deliver(passes: 8);
+
+    expect(
+      await findingsOf(sender, 'sender_regressed'),
+      hasLength(1),
+      reason:
+          'the receiver record, ahead and naming no delivery the '
+          'sender attempted, is recorded exactly once',
+    );
+    final channels = await allListedChannels(predecessorId);
+    expect(
+      channels.map((c) => c.channel.generation),
+      containsAll(<int>[1, 2]),
+      reason: 'delivery continued on a new generation, alongside the first',
+    );
+
+    final receiverIds = await noteEventIdsOf(receiver);
+    expect(receiverIds, <String>{
+      n1.eventId,
+      n2.eventId,
+      n3.eventId,
+      n2b.eventId,
+    }, reason: 'the receiver holds both branches of the fork');
+
+    final successorRegistry = await rebuildSuccessor(predecessorId);
+    expect(
+      await noteEventIdsOf(successor!),
+      receiverIds,
+      reason:
+          'the rebuilt successor holds every event the receiver holds '
+          'for the predecessor, including both branches',
+    );
+
+    for (var i = 0; i < 4; i++) {
+      await cycleOnce(successorRegistry, clock: () => DateTime.utc(2100));
+    }
+    final sentEntryTypes = <String>{
+      for (final p in successorHub.sent)
+        for (final e in DeliveryEnvelope.decode(p.bytes).events)
+          e['entry_type']! as String,
+    };
+    expect(
+      sentEntryTypes,
+      isNot(contains(_noteType)),
+      reason:
+          'nothing was appended to the successor after the restore, so its '
+          'queue carries no application event of its own',
+    );
+    expect(
+      sentEntryTypes,
+      contains(kDestinationSenderSucceededEntryType),
+      reason: 'the succession event goes on every channel',
+    );
+  });
+
+  // Verifies: EVS-PRD-delivery-channel/L
+  // Verifies: EVS-PRD-delivery-channel/Q
+  // Verifies: EVS-DEV-sender-succession/A
+  // Verifies: EVS-DEV-sender-succession/C
+  // both a receiver-behind resend and a sender rebuild, applied in the same
+  //   channel's history, each fill the end that fell behind: the resend
+  //   fills the receiver, and the rebuilt successor fills in for the
+  //   sender, so each end ends up holding the other's missing events.
+  test('double regression: the receiver-behind resend fills the receiver '
+      'and the sender rebuild fills the successor', () async {
+    final n1 = await note('n1');
+    await deliver();
+    final receiverPoint = await receiver.snapshot();
+    final n2 = await note('n2');
+    final n3 = await note('n3');
+    await deliver();
+    expect(await receivedNotes(), <String>['n1', 'n2', 'n3']);
+
+    // The receiver forgets n2 and n3; a fresh delivery attempt discovers
+    // the receiver is behind and the sender resends them, with no finding,
+    // filling the receiver back in.
+    await receiver.restore(receiverPoint);
+    final n4 = await note('n4');
+    await deliver(passes: 8);
+    expect(await receivedNotes(), <String>['n1', 'n2', 'n3', 'n4']);
+    expect(
+      await findingsOf(sender, 'channel_unexplained'),
+      isEmpty,
+      reason: 'the resend alone explains the receiver record',
+    );
+    expect(
+      await sender.store.reader.findAllEvents(
+        entryType: kDestinationChannelResumedEntryType,
+      ),
+      hasLength(1),
+      reason: 'the gap is closed by a resume, not a new generation',
+    );
+    expect(
+      (await allListedChannels(
+        sender.store.databaseId,
+      )).map((c) => c.channel.generation),
+      <int>[1],
+      reason:
+          'the channel is still on its first generation after the '
+          'resend',
+    );
+
+    // Now the sender regresses: it forgets n5 it authored and delivered,
+    // and the events it appends after the restore reuse n5's position.
+    final senderPoint = await sender.snapshot();
+    final n5 = await note('n5');
+    await deliver();
+    expect(await receivedNotes(), <String>['n1', 'n2', 'n3', 'n4', 'n5']);
+    final predecessorId = sender.store.databaseId;
+
+    await sender.restore(senderPoint);
+    await register();
+    final n5b = await note('n5b');
+    await deliver(passes: 8);
+
+    expect(
+      await findingsOf(sender, 'sender_regressed'),
+      hasLength(1),
+      reason: 'exactly the sender regression is recorded',
+    );
+
+    final receiverIds = await noteEventIdsOf(receiver);
+    expect(
+      receiverIds,
+      <String>{
+        n1.eventId,
+        n2.eventId,
+        n3.eventId,
+        n4.eventId,
+        n5.eventId,
+        n5b.eventId,
+      },
+      reason:
+          'the receiver holds what the resend filled in and both branches '
+          'of the sender regression',
+    );
+
+    final successorRegistry = await rebuildSuccessor(predecessorId);
+    expect(
+      await noteEventIdsOf(successor!),
+      receiverIds,
+      reason:
+          'each end now holds the other end had ever been missing: the '
+          'successor rebuild fills in for the regressed sender exactly as '
+          'the earlier resend filled in for the receiver',
+    );
+
+    for (var i = 0; i < 4; i++) {
+      await cycleOnce(successorRegistry, clock: () => DateTime.utc(2100));
+    }
+    final sentEntryTypes = <String>{
+      for (final p in successorHub.sent)
+        for (final e in DeliveryEnvelope.decode(p.bytes).events)
+          e['entry_type']! as String,
+    };
+    expect(
+      sentEntryTypes,
+      isNot(contains(_noteType)),
+      reason:
+          'a restore with nothing appended after it drains no application '
+          'event of the successor',
+    );
+    expect(
+      sentEntryTypes,
+      contains(kDestinationSenderSucceededEntryType),
+      reason: 'the succession event goes on every channel',
+    );
   });
 }

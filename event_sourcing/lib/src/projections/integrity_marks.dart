@@ -13,6 +13,12 @@
 // Implements: EVS-PRD-materializer/B
 // the marks are a function of the events the transaction reads, and nothing
 //   else, so a rebuild derives the marks the incremental fold did.
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show
+        SenderSuccessionData,
+        lineageFromSuccessions,
+        lineageSetOf,
+        readSenderSuccessionsInTxn;
 import 'package:event_sourcing/src/security/security_finding.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart';
 import 'package:event_sourcing/src/storage/chain_coordinates.dart';
@@ -48,12 +54,6 @@ List<String>? integrityFindingIdsOf(Map<String, Object?> row) {
   if (ids is! List) return null;
   return <String>[for (final id in ids) id.toString()];
 }
-
-/// The databases whose authorship a received finding of [originDatabaseId]
-/// speaks for: the database itself, and the databases of its succession
-/// lineage. While no succession is recorded, the lineage is the database
-/// alone.
-Set<String> _lineageOf(String originDatabaseId) => <String>{originDatabaseId};
 
 /// One held security finding, as the marks read it.
 @immutable
@@ -106,8 +106,14 @@ final class _HeldFinding {
 
   /// The database whose origin chain a `position_reused` or
   /// `fork_unrecorded` finding is about, when this finding is one that the
-  /// holder counts for it; null otherwise.
-  String? get chainDatabase {
+  /// holder counts for it; null otherwise. [state] supplies the succession
+  /// lineage of the finding's originating database, read at most once per
+  /// transaction, inside [txn].
+  Future<String?> chainDatabase(
+    Transaction txn,
+    StorageBackend backend,
+    _TransactionMarks state,
+  ) async {
     if (kind != FindingKind.positionReused &&
         kind != FindingKind.forkUnrecorded) {
       return null;
@@ -116,18 +122,36 @@ final class _HeldFinding {
     if (database is! String) return null;
     if (heldAsAuthored) return database;
     final origin = originDatabaseId;
-    if (origin == null || !_lineageOf(origin).contains(database)) return null;
+    if (origin == null ||
+        !(await state.lineageOf(txn, backend, origin)).contains(database)) {
+      return null;
+    }
     return database;
   }
 
+  // Implements: EVS-PRD-delivery-channel/T
+  // treats an aggregate authored by the finding's originating database's
+  //   successor, after that successor's succession event, as authored by
+  //   the originating database too, so a finding the predecessor holds
+  //   reaches what the successor authors afterward.
   /// Whether a received finding speaks for the aggregate of [authorship]:
   /// some of its held events were authored by the finding's originating
-  /// database or its lineage.
-  bool speaksFor(_Authorship authorship) {
+  /// database or its lineage, per [state]'s succession lineage read inside
+  /// [txn].
+  Future<bool> speaksFor(
+    _Authorship authorship,
+    Transaction txn,
+    StorageBackend backend,
+    _TransactionMarks state,
+  ) async {
     if (heldAsAuthored) return true;
     final origin = originDatabaseId;
     if (origin == null) return false;
-    return _lineageOf(origin).any(authorship.containsKey);
+    return (await state.lineageOf(
+      txn,
+      backend,
+      origin,
+    )).any(authorship.containsKey);
   }
 }
 
@@ -158,6 +182,47 @@ final class _TransactionMarks {
 
   final String? holder;
   final List<_HeldFinding> findings;
+
+  /// Every succession event the transaction's database holds, whether
+  /// authored or received, read at most once per transaction and reused by
+  /// every lineage lookup the fold makes, so the sync fold path reads the
+  /// log for it only once.
+  List<SenderSuccessionData>? _successions;
+
+  final Map<String, Set<String>> _lineageCache = <String, Set<String>>{};
+
+  /// The succession lineage of [originDatabaseId], [originDatabaseId]
+  /// itself included: the databases whose authorship a received finding of
+  /// [originDatabaseId] speaks for, derived solely from the succession
+  /// events [backend] holds, read inside [txn] at most once per
+  /// transaction.
+  Future<Set<String>> lineageOf(
+    Transaction txn,
+    StorageBackend backend,
+    String originDatabaseId,
+  ) async {
+    final cached = _lineageCache[originDatabaseId];
+    if (cached != null) return cached;
+    final successions = _successions ??= await readSenderSuccessionsInTxn(
+      txn,
+      backend,
+    );
+    final set = lineageSetOf(
+      lineageFromSuccessions(successions, originDatabaseId),
+      originDatabaseId,
+    );
+    _lineageCache[originDatabaseId] = set;
+    return set;
+  }
+
+  /// Discards the succession read: the next [lineageOf] call rereads the
+  /// log, so a succession event just folded in this transaction (whether
+  /// stored before or after an earlier lineage lookup ran) is picked up
+  /// rather than left stale for the rest of the transaction.
+  void noteSuccessionFolded() {
+    _successions = null;
+    _lineageCache.clear();
+  }
 
   /// Whether the transaction replays a log it does not append to, so the
   /// authorship of every aggregate is read once.
@@ -320,6 +385,10 @@ abstract final class IntegrityMarks {
   static bool _isFinding(StoredEvent event) =>
       event.entryType == kSecurityFindingEntryType &&
       event.eventType == kSecurityFindingRecordedEventType;
+
+  static bool _isSuccessionEvent(StoredEvent event) =>
+      event.entryType == kDestinationSenderSucceededEntryType &&
+      event.eventType == kDestinationSenderSucceededEventType;
 }
 
 /// One evaluation of the marks, with the lookups it made.
@@ -333,6 +402,16 @@ final class _Evaluation {
   final Map<String, _Authorship> _authorshipOf = <String, _Authorship>{};
   final Map<String, int?> _thresholdOf = <String, int?>{};
 
+  /// [f]'s chain database (see [_HeldFinding.chainDatabase]), resolved
+  /// against this transaction's state.
+  Future<String?> _chainDatabaseOf(_HeldFinding f) =>
+      f.chainDatabase(txn, backend, state);
+
+  /// Whether [f] speaks for [authorship] (see [_HeldFinding.speaksFor]),
+  /// resolved against this transaction's state.
+  Future<bool> _speaksForOf(_HeldFinding f, _Authorship authorship) =>
+      f.speaksFor(authorship, txn, backend, state);
+
   Future<EventMarks> forEvent(StoredEvent event) async {
     final own = event.aggregateId;
     final coordinates = ChainCoordinates.of(event);
@@ -344,8 +423,17 @@ final class _Evaluation {
         if (f.eventId == event.eventId) candidates.addAll(await _reachOf(f));
       }
     }
+    if (IntegrityMarks._isSuccessionEvent(event)) {
+      // A newly folded succession event may extend the lineage a received
+      // finding speaks for, so the marks a rebuild derives do not depend
+      // on whether the finding or the succession event is stored first.
+      state.noteSuccessionFolded();
+      for (final f in findings) {
+        if (!f.heldAsAuthored) candidates.addAll(await _reachOf(f));
+      }
+    }
     for (final f in findings) {
-      final chainDb = f.chainDatabase;
+      final chainDb = await _chainDatabaseOf(f);
       if (chainDb != null && chainDb == origin) {
         if (f.kind == FindingKind.forkUnrecorded &&
             coordinates.previousEventHash ==
@@ -362,7 +450,9 @@ final class _Evaluation {
       }
       if (!f.heldAsAuthored && f.aggregates.contains(own)) {
         final fOrigin = f.originDatabaseId;
-        if (fOrigin != null && _lineageOf(fOrigin).contains(origin)) {
+        if (fOrigin != null &&
+            origin != null &&
+            (await state.lineageOf(txn, backend, fOrigin)).contains(origin)) {
           candidates.add(own);
         }
       }
@@ -388,11 +478,12 @@ final class _Evaluation {
     final ids = <String>{};
     for (final f in findings) {
       if (f.aggregates.contains(aggregateId) &&
-          (f.heldAsAuthored || f.speaksFor(await _authorship(aggregateId)))) {
+          (f.heldAsAuthored ||
+              await _speaksForOf(f, await _authorship(aggregateId)))) {
         ids.add(f.findingId);
         continue;
       }
-      final chainDb = f.chainDatabase;
+      final chainDb = await _chainDatabaseOf(f);
       if (chainDb == null) continue;
       final threshold = await _threshold(f);
       if (threshold == null) continue;
@@ -407,7 +498,7 @@ final class _Evaluation {
   /// database at or above its position.
   Future<Set<String>> _reachOf(_HeldFinding f) async {
     final reach = <String>{...f.aggregates};
-    final chainDb = f.chainDatabase;
+    final chainDb = await _chainDatabaseOf(f);
     if (chainDb == null) return reach;
     final threshold = await _threshold(f);
     if (threshold == null) return reach;
@@ -427,7 +518,7 @@ final class _Evaluation {
   Future<int?> _threshold(_HeldFinding f) async {
     if (_thresholdOf.containsKey(f.eventId)) return _thresholdOf[f.eventId];
     int? threshold;
-    final chainDb = f.chainDatabase;
+    final chainDb = await _chainDatabaseOf(f);
     if (chainDb != null) {
       if (f.kind == FindingKind.positionReused) {
         final position = f.evidence['origin_sequence_number'];

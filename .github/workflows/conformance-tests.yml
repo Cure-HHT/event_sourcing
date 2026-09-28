@@ -289,6 +289,12 @@ jobs:
       - name: Outstanding-finding mark of the default views on Postgres
         run: flutter test test/storage/postgres/postgres_outstanding_finding_mark_test.dart
         working-directory: event_sourcing
+      - name: Succession restore on Postgres
+        run: flutter test test/storage/postgres/postgres_succession_restore_test.dart
+        working-directory: event_sourcing
+      - name: Sender succession and double regression, end to end, on Postgres
+        run: flutter test test/storage/postgres/postgres_succession_end_to_end_test.dart
+        working-directory: event_sourcing
       - name: Storage reader transactions run read-only on Postgres
         run: flutter test test/storage/postgres/postgres_reader_read_only_test.dart
         working-directory: event_sourcing

@@ -243,9 +243,11 @@ export 'src/ingest/ingest_errors.dart'
         IngestDataFormatIncompatible,
         IngestDecodeFailure,
         IngestEntryTypeVersionAhead,
-        IngestEntryTypeVersionUnpromotable;
+        IngestEntryTypeVersionUnpromotable,
+        SuccessionRestoreRefused;
 export 'src/ingest/ingest_result.dart'
     show IngestOutcome, PerEventIngestOutcome;
+export 'src/ingest/sender_succession.dart' show SuccessionLineage;
 
 // Permissions module — role-permission matrix, materialized via the event
 // log; YAML-seeded; failsafe bootstrap.

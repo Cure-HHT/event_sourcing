@@ -214,6 +214,8 @@ const _seamKinds = <String, String>{
   'onDeliveryWake': 'observe',
   'handDrivenCycle': 'failure injection',
   'severeLogSink': 'input substitution',
+  'failRestoreStore': 'failure injection',
+  'beforeRestoreTransaction': 'interleave',
 };
 
 const _seamKindNames = <String>{

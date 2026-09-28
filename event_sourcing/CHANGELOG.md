@@ -242,6 +242,51 @@ created by an earlier release is dropped and provisioned again with
 - `StorageBackend.listFifoEntriesTxn` (internal) lists a destination's
   queue inside a transaction.
 
+### Sender succession: rebuild-from-receiver restore
+
+- `EventStore.restoreFromReceiver` (`registry:`, `destinationId:`,
+  `predecessorDatabaseId:`, `initiator:`) rebuilds a database that has
+  authored no application event as the successor of
+  `predecessorDatabaseId`. It pulls, through the named destination's
+  channel-listing and range pulls, every channel the receiver lists for
+  the predecessor's succession lineage from delivery 1 up to the
+  receiver's record, checks each pulled delivery's link chain and hash and
+  each carried event's hash, originator entry and receiver entry, and
+  stores every event the successor does not hold in one transaction --
+  lineage order first, then ascending origin position, then ascending
+  registration, generation and delivery number of the lowest delivery
+  carrying it -- with the successor's provenance entry and the reserved
+  `system.destination_sender_succeeded` succession event, which names the
+  successor, the predecessor and each restored channel's last delivery. A
+  failed check records a finding under detector role `restore` and the
+  served data is stored as served, never stopping the store: `hash_mismatch`
+  for an event or arrival hash that does not recompute, `restore_unverified`
+  for any other failed check. `SuccessionRestoreRefused` refuses the
+  operation before anything is stored when the successor already authored
+  an application or succession event, when the predecessor names the
+  successor itself, when the receiver lists no channel for the
+  predecessor, or when a pull cannot serve a delivery the restore asked
+  for.
+- `StorageReader.successionLineageOf(databaseId)` reads a sender
+  database's succession lineage -- the predecessors it succeeded,
+  transitively, and its successor, if any -- derived solely from the
+  succession events the log holds.
+- The receiver's accept path refuses, as it refuses a caller it is not
+  authenticated for a channel's sender, a delivery carrying a succession
+  event it does not already hold when the caller may not act for both the
+  successor and the predecessor the event names; a succession event
+  already held is handled as any other held event, with no succession
+  check applied. Storing a succession event the receiver does not already
+  hold records one `succession_ahead` finding for each channel the event
+  names of which the receiver holds an accepted delivery whose named
+  delivery number is above the receiver's own record.
+- The successor's deliveries after the succession event continue the
+  predecessor's authorship on every channel (`EVS-PRD-delivery-channel/T`).
+  A predecessor that keeps delivering after its successor has restored
+  extends its own origin chain on its own channels without forking it;
+  the library records nothing for it, and reconciling two live senders of
+  one identity is the application's choice.
+
 ### Delivery: one drainer per database
 
 - Within what its storage backend's drain lock supports, at most one

@@ -162,3 +162,55 @@ class DeliveryAuthenticationRefused implements Exception {
       'DeliveryAuthenticationRefused: the caller may not act for '
       'sender database $senderDatabaseId';
 }
+
+/// Thrown by `EventStore.restoreFromReceiver` before anything is stored,
+/// naming one of the restore's refusals: the successor's log already holds
+/// an authored event of an application entry type, the successor's log
+/// already holds a succession event it authored, the named predecessor is
+/// the successor's own identity, the receiver lists no channel for the
+/// named predecessor, or a pull answered that it could not serve a
+/// delivery the restore asked for. The two log-holds refusals are checked
+/// before the restore pulls anything and checked again inside the
+/// transaction that would store the restore, before any write, so a
+/// disqualifying event appended between the two checks still refuses the
+/// restore.
+// Implements: EVS-DEV-sender-succession/H
+// the restore refuses, before storing anything, into a successor whose
+//   log holds an authored application event or an authored succession
+//   event, one naming the successor's own identity, one the receiver
+//   lists no channel for, and one whose pull cannot serve a delivery
+//   asked for; the log-holds checks run again inside the storing
+//   transaction.
+// Implements: EVS-PRD-delivery-channel/R
+// the restore refuses, before storing anything, into a database that has
+//   authored an event of an application entry type.
+class SuccessionRestoreRefused implements Exception {
+  const SuccessionRestoreRefused(this.reason, this.message);
+
+  /// The successor's log already holds an authored event of an
+  /// application (non-reserved) entry type.
+  static const String applicationEventAuthored = 'application_event_authored';
+
+  /// The successor's log already holds a succession event it authored.
+  static const String successionAlreadyAuthored = 'succession_already_authored';
+
+  /// The named predecessor is the successor's own database identity.
+  static const String predecessorIsSelf = 'predecessor_is_self';
+
+  /// The receiver lists no channel for the named predecessor.
+  static const String noChannelListed = 'no_channel_listed';
+
+  /// A pull answered that it could not serve a delivery the restore asked
+  /// for: `unservableDeliveryNumber` was set, or it served fewer
+  /// deliveries than asked.
+  static const String deliveryUnservable = 'delivery_unservable';
+
+  /// The name of the refusal: one of the constants above.
+  final String reason;
+
+  /// A human-readable description of the refusal.
+  final String message;
+
+  @override
+  String toString() => 'SuccessionRestoreRefused($reason): $message';
+}

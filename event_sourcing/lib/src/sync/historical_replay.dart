@@ -539,7 +539,8 @@ AdmissionWalk walkAdmission(
   var deferred = initiallyDeferred;
   for (final e in candidates) {
     if (!e.isHeldAsAuthoredBy(databaseId)) {
-      // EVS-DEV-destination-drain/V: not this database's own event.
+      // Implements: EVS-DEV-destination-drain/V
+      // Not this database's own event.
       if (!deferred) lastDecidedSeq = e.sequenceNumber;
       continue;
     }

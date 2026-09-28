@@ -9,6 +9,8 @@
 // This file exposes [runDeliveryPullScenarios] and registers no `main()` of
 // its own. Traceability lives on the individual tests.
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SenderSuccessionChannel, SenderSuccessionData;
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show kIngestAuditEntryType;
 import 'package:flutter_test/flutter_test.dart';
@@ -103,10 +105,15 @@ void runDeliveryPullScenarios({
       databases.clear();
     });
 
-    Future<void> accept(EventStore store, DeliveryEnvelope delivery) async {
+    Future<void> accept(
+      EventStore store,
+      DeliveryEnvelope delivery, {
+      Set<String>? senders,
+    }) async {
       final response = await store.receiverEndpoint.accept(
         delivery.encode(),
-        senderDatabaseIds: <String>{delivery.channel.senderDatabaseId},
+        senderDatabaseIds:
+            senders ?? <String>{delivery.channel.senderDatabaseId},
       );
       expect(
         response,
@@ -424,6 +431,75 @@ void runDeliveryPullScenarios({
         ),
       );
     });
+
+    // Verifies: EVS-DEV-delivery-receiver/R
+    // Verifies: EVS-PRD-delivery-channel/P
+    test(
+      "the listing for a successor includes its predecessor's channels",
+      () async {
+        final store = await open();
+        const predecessorId = 'predecessor-db';
+        const successorId = 'successor-db';
+        final predecessorChannel = deliveryChannel(
+          senderDatabaseId: predecessorId,
+        );
+        final predecessorRun = await acceptRun(store, predecessorChannel, 2);
+
+        final successionData = SenderSuccessionData(
+          id: predecessorChannel.destinationId,
+          registrationId: predecessorChannel.registrationId,
+          databaseId: successorId,
+          predecessorDatabaseId: predecessorId,
+          predecessorChannels: <SenderSuccessionChannel>[
+            SenderSuccessionChannel(
+              channel: predecessorChannel,
+              deliveryNumber: predecessorRun.last.deliveryNumber,
+              deliveryHash: predecessorRun.last.deliveryHash,
+            ),
+          ],
+        );
+        final successionRecord = sealedRecord(
+          databaseId: successorId,
+          entryType: kDestinationSenderSucceededEntryType,
+          aggregateType: kDestinationAuditAggregateType,
+          eventType: kDestinationSenderSucceededEventType,
+          data: successionData.toJson(),
+        );
+        final successorChannel = deliveryChannel(senderDatabaseId: successorId);
+        final successionDelivery = sealedDelivery(
+          channel: successorChannel,
+          records: <Map<String, Object?>>[successionRecord],
+        );
+        await accept(
+          store,
+          successionDelivery,
+          senders: <String>{successorId, predecessorId},
+        );
+
+        final listing = await pullThroughDecoder(
+          store,
+          const ChannelListingPull(senderDatabaseId: successorId),
+        );
+
+        expect(
+          listing,
+          ChannelListing(
+            receiverDatabaseId: store.databaseId,
+            senderDatabaseId: successorId,
+            channels: <ListedChannel>[
+              ListedChannel(
+                channel: predecessorChannel,
+                record: recordAfter(predecessorRun.last),
+              ),
+              ListedChannel(
+                channel: successorChannel,
+                record: recordAfter(successionDelivery),
+              ),
+            ],
+          ),
+        );
+      },
+    );
 
     // Verifies: EVS-DEV-delivery-receiver/N
     test(

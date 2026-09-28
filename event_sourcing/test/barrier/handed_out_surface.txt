@@ -94,6 +94,7 @@ EventStore.projections: ProjectionRegistry get projections
 EventStore.promoters: PromoterRegistry get promoters
 EventStore.reader: field StorageReader reader
 EventStore.receiverEndpoint: field ReceiverEndpoint receiverEndpoint
+EventStore.restoreFromReceiver: Future<StoredEvent> restoreFromReceiver({required DestinationRegistry registry, required String destinationId, required String predecessorDatabaseId, required Initiator initiator})
 EventStore.runTransaction: Future<T> runTransaction<T>(Future<T> Function(Transaction, PublishCollector) body)
 EventStore.securityContexts: field SecurityContextStore securityContexts
 EventStore.source: field Source source
@@ -171,6 +172,7 @@ StorageReader.readViewRowsByKeys: Future<Map<String, Map<String, dynamic>>> read
 StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn(Transaction txn, String viewName, String entryType)
 StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
 StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
+StorageReader.successionLineageOf: Future<SuccessionLineage> successionLineageOf(String databaseId)
 StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
 StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()
@@ -256,6 +258,7 @@ _StorageReader.readViewRowsByKeys: Future<Map<String, Map<String, dynamic>>> rea
 _StorageReader.readViewTargetBehindInTxn: Future<bool> readViewTargetBehindInTxn(Transaction txn, String viewName, String entryType)
 _StorageReader.readViewTargetVersionInTxn: Future<EntryTypeVersion?> readViewTargetVersionInTxn(Transaction txn, String viewName, String entryType)
 _StorageReader.readViewTargetsForEntryTypeInTxn: Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(Transaction txn, String entryType)
+_StorageReader.successionLineageOf: Future<SuccessionLineage> successionLineageOf(String databaseId)
 _StorageReader.transaction: Future<T> transaction<T>(Future<T> Function(Transaction) body)
 _StorageReader.verifyChains: Future<ChainVerificationVerdict> verifyChains({int? from, int? to})
 _StorageReader.wedgedFifos: Future<List<WedgedFifoSummary>> wedgedFifos()

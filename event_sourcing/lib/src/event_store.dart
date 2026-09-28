@@ -100,6 +100,7 @@ import 'package:event_sourcing/src/ingest/delivery_channel.dart';
 import 'package:event_sourcing/src/ingest/delivery_envelope.dart';
 import 'package:event_sourcing/src/ingest/ingest_errors.dart';
 import 'package:event_sourcing/src/ingest/ingest_result.dart';
+import 'package:event_sourcing/src/ingest/sender_succession.dart';
 import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
@@ -178,6 +179,7 @@ part 'projections/rebuild.dart';
 part 'sync/drain.dart';
 part 'sync/fill_batch.dart';
 part 'sync/historical_replay.dart';
+part 'sync/succession_restore.dart';
 part 'sync/sync_cycle.dart';
 
 /// The delivery cycle's trigger, held in an event store's trigger slot.
@@ -365,6 +367,87 @@ class EventStore {
   // the library provides the receiver endpoint over the event store; it is
   //   never built from a backend.
   late final ReceiverEndpoint receiverEndpoint = ReceiverEndpoint._(this);
+
+  /// This store's succession-restore operation, private to the library:
+  /// [restoreFromReceiver] is the public entry point.
+  late final _SuccessionRestore _successionRestore = _SuccessionRestore._(this);
+
+  /// Restores, through [destinationId] (a destination [registry] holds
+  /// registered, whose [Destination.channelPull] this pulls with), every
+  /// channel the destination's receiver lists for [predecessorDatabaseId]
+  /// and that identity's succession lineage, storing every carried event
+  /// this database does not hold and appending the succession event
+  /// (`system.destination_sender_succeeded`) naming [predecessorDatabaseId]
+  /// and each restored channel's last delivery, all in one transaction.
+  ///
+  /// Pulls the channel listing and, for each listed channel, its deliveries
+  /// from 1 up to the listing's record, outside any transaction. Every
+  /// carried event, deduplicated across the channels and generations that
+  /// carry it (an event served on a channel's earlier generation and its
+  /// current one is the ordinary case after that channel resumed on a new
+  /// generation), is stored in lineage order (the earliest predecessor
+  /// first, derived from the succession events among the pulled records),
+  /// then ascending origin position, then ascending registration
+  /// identifier, generation and delivery number of the lowest pulled
+  /// delivery that carried it. [initiator] names who asked for the restore.
+  ///
+  /// Throws [SuccessionRestoreRefused], storing nothing, when the restore
+  /// is refused (see its `reason` constants): the successor's log already
+  /// holds an authored application event or an authored succession event,
+  /// [predecessorDatabaseId] names the successor's own identity, the
+  /// receiver lists no channel for it, or a pull cannot serve a delivery
+  /// the restore asks for.
+  // Implements: EVS-DEV-sender-succession/A
+  // the restore operation pulls the channels a receiver lists for a
+  //   predecessor identity and each listed channel's deliveries from 1 up
+  //   to the receiver's record.
+  // Implements: EVS-DEV-sender-succession/C
+  // every carried event this database does not hold is stored, in one
+  //   transaction, in lineage order, then ascending origin position, then
+  //   ascending registration identifier, generation and delivery number of
+  //   the lowest pulled delivery carrying it, each with the successor's
+  //   provenance entry naming the channel and delivery it was pulled from.
+  // Implements: EVS-DEV-sender-succession/D
+  // the succession event is appended only in the transaction that stores
+  //   the predecessor's events, naming the successor's destination and
+  //   registration, the successor, the predecessor and each restored
+  //   channel's last delivery.
+  // Implements: EVS-PRD-delivery-channel/Q
+  // a database that restores a predecessor's deliveries records a
+  //   succession event in the transaction that stores them.
+  // Implements: EVS-PRD-event-log/C
+  // the restore stores one identity's events in the order that identity
+  //   wrote them.
+  // Implements: EVS-DEV-event-record/D+G
+  // the restore's provenance entry names the restoring database and keeps
+  //   every provenance entry the record carries exactly as carried.
+  // Implements: EVS-PRD-storage-barrier/C
+  // the restore operation is one of the public operations that may append
+  //   a reserved event.
+  // Implements: EVS-PRD-destinations/K
+  // the restore operation is one of the public operations exempted from
+  //   the internal-mutator rule.
+  // Implements: EVS-DEV-sender-succession/H
+  // the restore refuses, before storing anything, a restore into a
+  //   successor whose log holds an authored application event, one whose
+  //   log holds an authored succession event, one naming the successor's
+  //   own identity, one the receiver lists no channel for, and one whose
+  //   pull cannot serve a delivery asked for; throws
+  //   SuccessionRestoreRefused naming the refusal.
+  // Implements: EVS-PRD-delivery-channel/R
+  // the restore refuses, before storing anything, into a database that has
+  //   authored an event of an application entry type.
+  Future<StoredEvent> restoreFromReceiver({
+    required DestinationRegistry registry,
+    required String destinationId,
+    required String predecessorDatabaseId,
+    required Initiator initiator,
+  }) => _successionRestore._run(
+    registry: registry,
+    destinationId: destinationId,
+    predecessorDatabaseId: predecessorDatabaseId,
+    initiator: initiator,
+  );
 
   /// The idempotency store over this store's storage, for an action
   /// dispatcher, when it runs on Postgres: its outcomes persist in the
@@ -2325,7 +2408,8 @@ class EventStore {
   // every finding ingest records is appended in the ingest transaction that
   //   commits the record's outcome.
   // Implements: EVS-DEV-security-findings/Q
-  // ingest records its findings under the detector role ingest.
+  // ingest records its findings under the detector role ingest; the restore
+  //   operation, sharing this record handling, records them under restore.
   Future<PerEventIngestOutcome> _ingestRecordInTxn(
     Transaction txn,
     Map<String, Object?> record, {
@@ -2333,6 +2417,7 @@ class EventStore {
     required BatchContext? batchContext,
     required PublishCollector collector,
     ProvenanceDelivery? delivery,
+    FindingRole role = FindingRole.ingest,
   }) async {
     final rawEventId = record['event_id'];
     final eventId = rawEventId is String ? rawEventId : null;
@@ -2349,6 +2434,7 @@ class EventStore {
           kind: kind,
           evidence: evidence,
           aggregates: aggregates,
+          role: role,
         ),
       );
     }
@@ -2559,6 +2645,14 @@ class EventStore {
     )) {
       await find(found.kind, found.evidence, found.aggregates);
     }
+    // Implements: EVS-DEV-sender-succession/K
+    // storing a succession event the receiver does not hold records one
+    //   succession_ahead finding for each channel it names of which the
+    //   receiver holds an accepted delivery and whose named delivery is
+    //   above the receiver's record of that channel.
+    if (updatedEvent.entryType == kDestinationSenderSucceededEntryType) {
+      await _findSuccessionAheadInTxn(txn, updatedEvent, find);
+    }
     return PerEventIngestOutcome(
       eventId: updatedEvent.eventId,
       outcome: findingIds.isEmpty
@@ -2586,27 +2680,68 @@ class EventStore {
     'record': null,
   }, aggregates);
 
+  /// Records, through [find], one `succession_ahead` finding for each
+  /// channel [event]'s `predecessor_channels` names of which this database
+  /// holds an accepted delivery and whose named delivery number is above
+  /// this database's record of that channel, read inside [txn]. A channel
+  /// this database never accepted a delivery on, and a named delivery at
+  /// or below the record, name nothing.
+  // Implements: EVS-DEV-sender-succession/K
+  // a channel the receiver never accepted a delivery on, and a named
+  //   delivery at or below the receiver's record, record nothing.
+  Future<void> _findSuccessionAheadInTxn(
+    Transaction txn,
+    StoredEvent event,
+    Future<void> Function(FindingKind, Map<String, Object?>, List<String>) find,
+  ) async {
+    final SenderSuccessionData succession;
+    try {
+      succession = SenderSuccessionData.fromJson(event.data);
+    } on FormatException {
+      return;
+    }
+    for (final predecessorChannel in succession.predecessorChannels) {
+      final channel = predecessorChannel.channel;
+      final record = await receiverEndpoint._recordInTxn(txn, channel);
+      if (record.deliveryNumber == 0) continue;
+      if (predecessorChannel.deliveryNumber <= record.deliveryNumber) {
+        continue;
+      }
+      await find(FindingKind.successionAhead, <String, Object?>{
+        'channel': channel.toJson(),
+        'receiver_record': record.toJson(),
+        'succession_record': DeliveryRecord(
+          deliveryNumber: predecessorChannel.deliveryNumber,
+          deliveryHash: predecessorChannel.deliveryHash,
+        ).toJson(),
+      }, const <String>[]);
+    }
+  }
+
   /// Records, inside [txn], the security finding of [kind] with [evidence]
-  /// that ingest detected, naming [aggregates], unless this database holds
-  /// it as authored already; returns its identity either way.
+  /// that this record handling detected under detector role [role] (ingest
+  /// by default; the restore operation passes `FindingRole.restore`),
+  /// naming [aggregates], unless this database holds it as authored
+  /// already; returns its identity either way.
   Future<String> _recordIngestFindingInTxn(
     Transaction txn,
     PublishCollector collector, {
     required FindingKind kind,
     required Map<String, Object?> evidence,
     required List<String> aggregates,
+    FindingRole role = FindingRole.ingest,
   }) async {
     await _recordFindingInTxn(
       txn,
       collector,
-      role: FindingRole.ingest,
+      role: role,
       kind: kind,
       evidence: evidence,
       aggregates: aggregates,
     );
     return securityFindingId(
       databaseId: databaseId,
-      role: FindingRole.ingest,
+      role: role,
       kind: kind,
       evidence: evidence,
     );
@@ -3511,6 +3646,13 @@ final class _StorageReader implements StorageReader {
     refuseCallFromBootProgressObserver('StorageReader.verifyChains');
     return verifyChainsOver(_backend, from: from, to: to);
   }
+
+  // Implements: EVS-DEV-sender-succession/G
+  // the succession lineage read is derived solely from the succession
+  //   events the log holds.
+  @override
+  Future<SuccessionLineage> successionLineageOf(String databaseId) =>
+      computeSuccessionLineage(_backend, databaseId);
 
   @override
   Future<PagedAudit> queryAudit({

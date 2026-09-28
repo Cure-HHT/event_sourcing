@@ -40,7 +40,10 @@ final Object _zoneKey = Object();
 /// [holdDrainKeyOutsideLibrary], [failNextHeartbeat]); an observing seam
 /// sees each wake of the delivery cycle ([onDeliveryWake]), and a cycle
 /// can be started so that no wake runs a pass of it ([handDrivenCycle]).
-/// The boot of
+/// The restore operation's one transaction can be made to fail after it
+/// stores the restored events and before it appends the succession event
+/// ([failRestoreStore]), and a test can run between the restore's pull and
+/// its storing transaction ([beforeRestoreTransaction]). The boot of
 /// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
 /// injection after its library-version append ([afterBootVersionEvent]).
 /// The incompatible-generation guard and the Postgres lock session have
@@ -119,6 +122,8 @@ class DeliveryTestHooks {
     this.onDeliveryWake,
     this.handDrivenCycle = false,
     this.severeLogSink,
+    this.failRestoreStore,
+    this.beforeRestoreTransaction,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -381,6 +386,19 @@ class DeliveryTestHooks {
   /// trigger slot. An exception it throws is reported and does not reach
   /// the operation that woke.
   final void Function(bool cycleWoken)? onDeliveryWake;
+
+  /// Consulted by the restore operation after it stored every restored
+  /// event and before it appends the succession event, inside the
+  /// restore's one transaction. Returning true makes the restore throw
+  /// [InjectedFailure] there, so the transaction rolls back and neither the
+  /// restored events nor the succession event are stored.
+  final bool Function()? failRestoreStore;
+
+  /// Awaited by the restore operation after it finished pulling and before
+  /// it opens its storing transaction, so a test can append a
+  /// disqualifying event in between and observe the transaction's own
+  /// recheck of the restore's log preconditions refuse it.
+  final Future<void> Function()? beforeRestoreTransaction;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass
