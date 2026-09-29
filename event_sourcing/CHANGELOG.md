@@ -575,7 +575,11 @@ created by an earlier release is dropped and provisioned again with
   `ViewConvergingRefusal` while converging. The old snapshot-promotion
   machinery (promotion at open, view-target-version seeding, the
   catch-up/promotion gap model, leases and scheduling records, the
-  `view_snapshot_promoted` event) is removed.
+  `view_snapshot_promoted` event) is removed. `currentViewRows` is the one
+  adapter from a `StorageReader`'s converging-aware view read to the
+  `FindRowsInTxn` shape `ContainmentResolver` and a host's own
+  containment-backed lookups take, so a converging view refuses through
+  `ViewConvergingRefusal` for every caller built on it.
 - `EventStore.subscribe<T>` gains the `Pending<T>` `Update<T>` variant,
   delivered for a named aggregate an `AggregateMode` subscription cannot
   yet confirm settled (in place of a `Snapshot`); `EndOfReplay<T>` gains a
@@ -656,17 +660,52 @@ created by an earlier release is dropped and provisioned again with
   - chain lookups, reads over the log that return stored events:
     `readLatestHeldAsAuthoredInTxn`, `findEventsBySealedHashInTxn`,
     `findEventsByPredecessorInTxn`, `findEventsByOriginPositionInTxn`,
-    `readLatestEligibleVersionInTxn`. The library keeps no index of its
-    own for them: `PostgresBackend` serves them from columns and
-    non-unique indexes of the events table, and `SembastBackend` stores
-    each event under its local sequence number, keeps one record of the
-    latest sequence the database authored (read back by that key) and
-    scans the events for the rest.
+    `readLatestEligibleVersionInTxn`, `findEventsForAggregateInTxn`.
+    `PostgresBackend` serves them from columns and non-unique indexes of
+    the events table. `SembastBackend` stores each event under its local
+    sequence number and serves `readLatestHeldAsAuthoredInTxn` and
+    `readLatestEligibleVersionInTxn` by fetching that key from a
+    backend-owned record it writes alongside the event in the same
+    transaction (the latest sequence the database authored; each
+    aggregate's latest eligible version), and `findEventsForAggregateInTxn`
+    by fetching an aggregate's held events' keys from a backend-owned
+    per-aggregate list, also written alongside the event — none of the
+    three scans the store. `findEventsBySealedHashInTxn`,
+    `findEventsByPredecessorInTxn` and `findEventsByOriginPositionInTxn`
+    still scan; none of these indexes is compared with anything else, and
+    none is part of the chain walk.
   - `holdsSecurityFindingInTxn`, whether the database holds any security
     finding, which the outstanding-finding marks read before any finding:
     `PostgresBackend` probes the partial index over the finding events,
     and `SembastBackend` keeps one record, set when the first finding is
     stored.
+  - `readAggregateAuthorshipInTxn` (who authored an aggregate's held
+    events, by originating database, each database's highest origin
+    position among them) and `readLowestOriginPositionByPredecessorInTxn`
+    (a fork finding's threshold: the lowest origin position among a
+    database's held events sharing a given predecessor hash) are new
+    abstract members the marks fold reads instead of the aggregate's
+    events themselves, so appending an event that evaluates a held
+    finding or fork does not read every held event it marks. Both
+    reference backends serve them from a backend-owned index written
+    alongside each stored event.
+  - `upsertTableViewRowInTxn` and `findTableRowsBySourceAggregateInTxn`
+    are new abstract members: a `TableProjectionSpec` row upsert stamps
+    the aggregate id of the insert that produced it into a backend-owned
+    index from source aggregate to the row keys it produced, and the
+    outstanding-finding refresh reads a source aggregate's rows from that
+    index rather than scanning the view copy. A key already indexed under
+    a different source aggregate moves to the new one on a later insert;
+    every path that retires a row (`deleteViewRowInTxn`, `clearViewInTxn`,
+    `deleteViewCopyRowsInTxn`, `deleteViewCopyRecordInTxn`) retires its
+    index entry with it.
+- On Postgres, an ordinary append's and an ingest batch's throughput each
+  stay at least half of the data-format-2 build's on the same workload and
+  host; a conformance test gated on `PG_TEST_URL` plus an opt-in variable
+  checks out that build into a temporary worktree and measures both
+  builds against it. On Sembast, an ordinary append's cost stays constant
+  as the store grows, proven in the default suite by a test comparing
+  append cost at two store sizes.
 - Removed: `appendAttempt`, `markFinal`, `writeFillCursor`,
   `deleteFifoStoreTxn`, and the non-transactional `enqueueFifo` and
   `writeSchedule`. `setFinalStatusTxn` takes a non-null status and allows

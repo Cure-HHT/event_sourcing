@@ -8,6 +8,9 @@
 // Verifies: EVS-PRD-cross-process-event-transport/D
 // SubscribeMsg
 //   carries the client-chosen subscriptionId.
+// Verifies: EVS-DEV-converging-view-reads/H
+// ErrorMsg's view_converging code round-trips and carries the
+//   converging view's name.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -78,6 +81,21 @@ void main() {
     final j = SubscriptionMessages.encodeServer(original);
     expect(j['type'], 'error');
     expect(j['code'], 'protocol_error');
+  });
+
+  test('round-trips ErrorMsg with view_converging code naming the view', () {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    const original = ErrorMsg(
+      code: WireErrorCode.viewConverging,
+      message: 'participant_site_index',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j['type'], 'error');
+    expect(j['code'], 'view_converging');
+    expect(j['message'], 'participant_site_index');
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.code, WireErrorCode.viewConverging);
+    expect(decoded.message, 'participant_site_index');
   });
 
   test('round-trips StaleDataMsg with reason', () {

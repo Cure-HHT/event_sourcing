@@ -406,6 +406,46 @@ abstract class StorageBackend {
   @internal
   Future<void> clearViewInTxn(Transaction txn, String copyId);
 
+  /// Whole-row upsert into a `TableProjectionSpec` view copy [copyId] at
+  /// [key], as [upsertViewRowInTxn], additionally stamping [row]'s producer
+  /// -- the aggregate id of the event whose insert wrote it -- into a
+  /// backend-owned index from [sourceAggregateId] to the row keys it
+  /// produced in [copyId]. [findTableRowsBySourceAggregateInTxn] serves the
+  /// outstanding-finding refresh (`EVS-PRD-materializer/E`, `/G`) from this
+  /// index, by key, rather than a scan of the whole copy; nothing else
+  /// compares the index. A key already indexed under a different source
+  /// aggregate (a table row whose key an aggregate other than
+  /// [sourceAggregateId] produces on a later insert) moves to the new one.
+  /// [deleteViewRowInTxn], [clearViewInTxn], [deleteViewCopyRowsInTxn] and
+  /// [deleteViewCopyRecordInTxn] retire a key's entry from the index
+  /// together with the row itself, so the index never names a key whose
+  /// row is gone.
+  // Implements: EVS-PRD-materializer/E
+  // a TableProjectionSpec row's producer is stamped into a backend-owned
+  //   index, keyed for lookup by source aggregate.
+  @internal
+  Future<void> upsertTableViewRowInTxn(
+    Transaction txn,
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  });
+
+  /// The rows of a `TableProjectionSpec` view copy [copyId] produced by
+  /// [sourceAggregateId] -- those [upsertTableViewRowInTxn] last indexed
+  /// under it and that are still present -- read by the backend's own
+  /// index inside [txn], never a scan of the whole copy.
+  // Implements: EVS-PRD-materializer/E
+  // the outstanding-finding refresh reads a source aggregate's rows from
+  //   this index rather than scanning the view copy.
+  @internal
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
+    Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+  );
+
   // -------- View copies --------
   //
   // Records the stored copies of registered views: one row per copy,
@@ -1461,6 +1501,36 @@ abstract class StorageBackend {
     Transaction txn,
     String aggregateId,
   );
+
+  /// Who authored the held events of [aggregateId]: for each originating
+  /// database with at least one held event of it, the highest origin
+  /// position among those events, or null when none of them carries one.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-PRD-materializer/E
+  // the marks fold reads who authored an aggregate's held events from this
+  //   lookup rather than the aggregate's events themselves, so an append
+  //   evaluating a held finding does not read every held event of the
+  //   aggregates it marks.
+  @internal
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
+    Transaction txn,
+    String aggregateId,
+  );
+
+  /// The lowest origin position among the held events of
+  /// [originatingDatabaseId] whose `previous_event_hash` is
+  /// [previousEventHash] (null included), or null when none carries one.
+  /// Read inside [txn], so it sees the events stored earlier in it.
+  // Implements: EVS-PRD-materializer/E
+  // a fork finding's threshold is this lookup's answer rather than a scan
+  //   of the database's events sharing its predecessor, so an append
+  //   evaluating a held fork finding does not read every such event.
+  @internal
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  });
 
   // -------- Audit query --------
 

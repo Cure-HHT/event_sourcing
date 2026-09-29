@@ -197,5 +197,5 @@ void main() {
           'every serving append commits within about $bound of a catch-up '
           'transaction: $overLong',
     );
-  }, timeout: const Timeout(Duration(minutes: 20)));
+  }, timeout: const Timeout(Duration(minutes: 2)));
 }

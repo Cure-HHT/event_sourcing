@@ -10,7 +10,9 @@
 //   columns to the queue table and rewrites its guard, and raises the
 //   minimum to itself; version 6 adds the `view_copies` table with its
 //   partial unique index on an unmarked fingerprint, renames `view_rows`'
-//   `view_name` column to `copy_id`, and raises the minimum to itself.
+//   `view_name` column to `copy_id`, and raises the minimum to itself;
+//   version 7 adds `view_rows.source_aggregate_id` with its partial index
+//   and raises the minimum to itself.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -38,13 +40,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 6;
+const int postgresSchemaVersion = 7;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 6;
+const int postgresMinCompatibleSchemaVersion = 7;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -135,6 +137,14 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _viewCopiesFingerprintIdx,
       _viewRowsRenameColumn,
     ],
+  ),
+  // A build before this step upserts a TableProjectionSpec row without
+  // recording its source aggregate, so the outstanding-finding refresh's
+  // per-source-aggregate index cannot find it; the step raises the minimum.
+  PostgresMigrationStep(
+    toVersion: 7,
+    minCompatibleVersion: 7,
+    ddl: <String>[_viewRowsSourceAggregateColumn, _viewRowsSourceAggregateIdx],
   ),
 ];
 
@@ -320,6 +330,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS view_copies_unmarked_fingerprint_idx
 // view is stored per fingerprinted copy.
 const String _viewRowsRenameColumn = '''
 ALTER TABLE view_rows RENAME COLUMN view_name TO copy_id
+''';
+
+// The source aggregate id a TableProjectionSpec row's producing insert
+// event named, null for a row no such insert wrote (an AggregateProjectionSpec
+// row, or a TableProjectionSpec row from a build before this column exists).
+// `PostgresBackend.upsertTableViewRowInTxn` is the only write; the generic
+// `upsertViewRowInTxn`'s ON CONFLICT clause never touches it, so the
+// outstanding-finding refresh's rewrite (which goes through the generic
+// upsert to change only `$integrity`) leaves a row's producer intact. The
+// partial index over the non-null column serves
+// `PostgresBackend.findTableRowsBySourceAggregateInTxn`'s lookup
+// (`EVS-PRD-materializer/E`).
+const String _viewRowsSourceAggregateColumn = '''
+ALTER TABLE view_rows
+  ADD COLUMN IF NOT EXISTS source_aggregate_id TEXT
+''';
+
+const String _viewRowsSourceAggregateIdx = '''
+CREATE INDEX IF NOT EXISTS view_rows_source_aggregate_idx
+  ON view_rows (copy_id, source_aggregate_id)
+  WHERE source_aggregate_id IS NOT NULL
 ''';
 
 // --- FIFO entries ---------------------------------------------------------

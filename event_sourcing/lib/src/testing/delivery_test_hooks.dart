@@ -44,8 +44,10 @@ final Object _zoneKey = Object();
 /// stores the restored events and before it appends the succession event
 /// ([failRestoreStore]), and a test can run between the restore's pull and
 /// its storing transaction ([beforeRestoreTransaction]). The boot of
-/// `EventStore.open` has an observing seam ([onBootBodyRun]) and a failure
-/// injection after its library-version append ([afterBootVersionEvent]).
+/// `EventStore.open` has an observing seam ([onBootBodyRun]), a failure
+/// injection after its library-version append ([afterBootVersionEvent]),
+/// and one after its Postgres transaction's body returns
+/// ([failBootTransactionWithSerializationFailure]).
 /// The incompatible-generation guard and the Postgres lock session have
 /// seams that delay ([insideBootLock]), replace the timers of the lock
 /// session's probe, the delivery cycle's cadence and heartbeat and a
@@ -92,6 +94,7 @@ class DeliveryTestHooks {
     this.onFenceBodyRun,
     this.onBootBodyRun,
     this.afterBootVersionEvent,
+    this.failBootTransactionWithSerializationFailure,
     this.buildDeclaration,
     this.insideBootLock,
     this.splitLockSessionStatements = false,
@@ -227,6 +230,13 @@ class DeliveryTestHooks {
   /// appends a library-version event. Returning true makes the boot throw
   /// [InjectedFailure] there, so the transaction rolls back.
   final bool Function()? afterBootVersionEvent;
+
+  /// Consulted by the Postgres backend's boot transaction after its body
+  /// returns, before the transaction commits. Returning true makes the
+  /// transaction raise a genuine SQLSTATE 40001 there, so the boot's own
+  /// bounded retry re-runs the body exactly as a real cross-session
+  /// serialization conflict would.
+  final bool Function()? failBootTransactionWithSerializationFailure;
 
   /// Input substitution: the package version and data-format version that
   /// `EventStore.open`'s boot decides with and records in the

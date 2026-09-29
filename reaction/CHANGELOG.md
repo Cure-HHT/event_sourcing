@@ -8,3 +8,9 @@
   `"current"` or `"converging"`), preserving both fields end to end for a
   remote consumer exactly as an in-process subscriber sees them.
   `RemoteViewSource` maps both across the consumer-supplied mapper.
+- A scoped subscription whose containment view is still converging refuses
+  with the typed `WireErrorCode.viewConverging` wire error, naming the
+  view, instead of narrowing the subscription's aggregate set or
+  surfacing as `internal_error`. `ScopeDescendantExpander`'s row reads go
+  through the substrate's `currentViewRows` adapter, the same currency
+  check `ContainmentResolver` uses for the write path.

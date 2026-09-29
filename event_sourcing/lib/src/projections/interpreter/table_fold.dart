@@ -19,8 +19,11 @@ import 'package:meta/meta.dart' show internal;
 class TableFold {
   /// Applies one [event] to the table view of [spec], inside [txn]: an
   /// insert event upserts the row its key extracts, stamped with
-  /// [integrity], the findings that mark the event's aggregate; a remove
-  /// event deletes it.
+  /// [integrity], the findings that mark the event's aggregate, and indexed
+  /// by the event's aggregate id as its producer
+  /// (`upsertTableViewRowInTxn`), so the outstanding-finding refresh can
+  /// later find the rows one aggregate produced without scanning the view;
+  /// a remove event deletes it.
   @internal
   static Future<AggregateFoldChange?> applyEvent({
     required Transaction txn,
@@ -50,7 +53,13 @@ class TableFold {
         //   findings that mark the aggregate whose event produced its key.
         kIntegrityRowKey: integrityValue(integrity),
       };
-      await backend.upsertViewRowInTxn(txn, copyId, keyStr, row);
+      await backend.upsertTableViewRowInTxn(
+        txn,
+        copyId,
+        keyStr,
+        row,
+        sourceAggregateId: event.aggregateId,
+      );
       return AggregateFoldChange(
         viewName: spec.viewName,
         aggregateId: keyStr,

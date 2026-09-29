@@ -1082,6 +1082,7 @@ class PostgresBackend extends StorageBackend {
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body) async {
     refuseCallFromBootProgressObserver('PostgresBackend.bootTransaction');
     _checkOpen();
+    final hooks = DeliveryTestHooks.current;
     final giveUpAt = DateTime.now().add(_bootLockWait);
     final random = Random();
     for (var attempt = 1; ; attempt++) {
@@ -1112,7 +1113,15 @@ class PostgresBackend extends StorageBackend {
               await tx.execute('SET LOCAL lock_timeout = 0');
               await _refuseEarlierFormatColumns(tx);
               await _guard.fence(tx);
-              return await body(wrapper);
+              final result = await body(wrapper);
+              if (hooks?.failBootTransactionWithSerializationFailure?.call() ??
+                  false) {
+                await tx.execute(
+                  r"DO $$ BEGIN RAISE EXCEPTION 'injected serialization "
+                  r"failure' USING ERRCODE = '40001'; END $$",
+                );
+              }
+              return result;
             } finally {
               wrapper._invalidate();
             }
@@ -1824,6 +1833,59 @@ class PostgresBackend extends StorageBackend {
       Sql.named('DELETE FROM view_rows WHERE copy_id = @v'),
       parameters: {'v': copyId},
     );
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // a TableProjectionSpec upsert stamps its row's source aggregate into
+  //   `view_rows.source_aggregate_id`; the ON CONFLICT clause sets it
+  //   explicitly (unlike the generic upsertViewRowInTxn's, which never
+  //   touches the column, so a rewrite through the generic path leaves a
+  //   row's producer intact), so the outstanding-finding refresh of
+  //   the outstanding-finding mark can find the rows one aggregate produced
+  //   without scanning the view.
+  @override
+  @internal
+  Future<void> upsertTableViewRowInTxn(
+    Transaction txn,
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named('''
+        INSERT INTO view_rows (copy_id, row_key, row_data, source_aggregate_id, updated_at)
+        VALUES (@v, @k, @row:jsonb, @src, NOW())
+        ON CONFLICT (copy_id, row_key)
+        DO UPDATE SET row_data = EXCLUDED.row_data,
+                      source_aggregate_id = EXCLUDED.source_aggregate_id,
+                      updated_at = NOW()
+      '''),
+      parameters: {'v': copyId, 'k': key, 'row': row, 'src': sourceAggregateId},
+    );
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // the rows a TableProjectionSpec view holds for one source aggregate are
+  //   served by one probe of the source-aggregate partial index — no scan
+  //   of the whole copy.
+  @override
+  @internal
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
+    Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT row_data FROM view_rows
+        WHERE copy_id = @v AND source_aggregate_id = @src
+      '''),
+      parameters: {'v': copyId, 'src': sourceAggregateId},
+    );
+    return result.map((r) => _asJsonMap(r[0])).toList();
   }
 
   // -------- View copies --------
@@ -3585,6 +3647,62 @@ class PostgresBackend extends StorageBackend {
         'type': kSecurityFindingRecordedEventType,
         'entry': kSecurityFindingEntryType,
       });
+
+  // Implements: EVS-PRD-materializer/E
+  // one probe of the aggregate_id index, grouped by originating database;
+  //   MAX(origin_position) ignores the events that carry none, matching the
+  //   marks fold's own tie-break.
+  @override
+  @internal
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT origin_database_id, MAX(origin_position) AS max_position
+        FROM events
+        WHERE aggregate_id = @agg AND origin_database_id IS NOT NULL
+        GROUP BY origin_database_id
+      '''),
+      parameters: {'agg': aggregateId},
+    );
+    return <String, int?>{
+      for (final row in result) row[0]! as String: row[1] as int?,
+    };
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // one probe of the origin-position index, restricted to the events
+  //   sharing the predecessor hash; a null predecessor is matched with IS
+  //   NULL, which the index serves.
+  @override
+  @internal
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      previousEventHash == null
+          ? Sql.named(
+              'SELECT MIN(origin_position) FROM events '
+              'WHERE origin_database_id = @db '
+              'AND previous_event_hash IS NULL',
+            )
+          : Sql.named(
+              'SELECT MIN(origin_position) FROM events '
+              'WHERE origin_database_id = @db '
+              'AND previous_event_hash = @p',
+            ),
+      parameters: previousEventHash == null
+          ? {'db': originatingDatabaseId}
+          : {'db': originatingDatabaseId, 'p': previousEventHash},
+    );
+    return result.first[0] as int?;
+  }
 
   @override
   @internal

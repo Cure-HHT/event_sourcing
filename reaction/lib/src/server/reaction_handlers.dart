@@ -93,16 +93,13 @@ class ReactionHandlers {
 
     final registry = scopeClassRegistry;
     if (registry != null) {
+      // currentViewRows is the one adapter ContainmentResolver (the
+      // write-path policy) and ScopeDescendantExpander (this read path)
+      // share, so a converging view refuses here exactly as it does there.
+      // Implements: EVS-DEV-converging-view-reads/H
       final expander = ScopeDescendantExpander(
         registry: registry,
-        findRowsInTxn: (txn, viewName, {where, limit, offset}) async =>
-            (await eventStore.reader.findViewRowsInTxn(
-              txn,
-              viewName,
-              where: where,
-              limit: limit,
-              offset: offset,
-            )).rows,
+        findRowsInTxn: currentViewRows(eventStore.reader),
       );
       _expandDescendants = (assignment, targetClass) =>
           eventStore.reader.transaction(

@@ -1,0 +1,209 @@
+// The throughput workload the baseline build runs. The throughput guard's
+// harness (postgres_throughput_guard_test.dart) copies this file's text into
+// a temporary worktree checked out at the pinned baseline commit, as a
+// `_test.dart` file under that worktree's own `event_sourcing/test/`, and
+// runs it there with `flutter test`. It stays a `.dart.txt` file in the
+// current tree so neither the analyzer nor the Postgres-gated-test listing
+// scan (test/ci/postgres_ci_listing_test.dart) sees it as one of this tree's
+// own tests: the baseline worktree runs it, not this package.
+//
+// It reads PG_TEST_URL the same way every gated test does and prints one
+// JSON line the harness parses: `{"append_per_sec": ..., "ingest_per_sec":
+// ...}`. Its append and ingest workloads are the same shapes and counts as
+// the current tree's (test/storage/postgres/throughput_workload.dart): a
+// warm-up pass plus three timed passes of 500 events over 20 aggregates,
+// the reported rate the median of the three timed passes. The baseline
+// build predates the owner/runtime/lock role fixture and the run-time
+// storage barrier, so it opens two throwaway Postgres databases directly
+// (dropped afterwards) instead of two schemas over that fixture, and calls
+// the baseline's own public `ingestEvent` instead of the current tree's
+// test-only ingest seam.
+
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
+import 'package:postgres/postgres.dart';
+import 'package:test/test.dart';
+
+const _kEventsPerRun = 500;
+const _kAggregatesPerRun = 20;
+const _kChunk = 25;
+const _kEntryType = 'throughput_note';
+const _kRuns = 3;
+
+Future<Connection> _connectAdmin(String url) => Connection.open(
+  PostgresBackend.endpointFromUrl(url),
+  settings: const ConnectionSettings(sslMode: SslMode.disable),
+);
+
+/// Creates a fresh, empty database named [name] on the server [adminUrl]
+/// reaches (dropping one of that name left over from an earlier run), and
+/// returns [adminUrl] with its path replaced by it.
+Future<String> _createThrowawayDatabase(String adminUrl, String name) async {
+  final conn = await _connectAdmin(adminUrl);
+  try {
+    await conn.execute('DROP DATABASE IF EXISTS "$name" WITH (FORCE)');
+    await conn.execute('CREATE DATABASE "$name"');
+  } finally {
+    await conn.close();
+  }
+  return Uri.parse(adminUrl).replace(path: '/$name').toString();
+}
+
+Future<void> _dropDatabase(String adminUrl, String name) async {
+  final conn = await _connectAdmin(adminUrl);
+  try {
+    await conn.execute('DROP DATABASE IF EXISTS "$name" WITH (FORCE)');
+  } finally {
+    await conn.close();
+  }
+}
+
+EntryTypeRegistry _entryTypes() {
+  final registry = EntryTypeRegistry();
+  for (final definition in kSystemEntryTypes) {
+    registry.register(definition);
+  }
+  return registry..register(
+    const EntryTypeDefinition(
+      id: _kEntryType,
+      registeredVersion: EntryTypeVersion(1, 0),
+      name: _kEntryType,
+    ),
+  );
+}
+
+Future<EventStore> _openStore(String url, String hopId) async {
+  final backend = await PostgresBackend.open(
+    url: url,
+    sslMode: SslMode.disable,
+    provisionSchema: true,
+  );
+  return EventStore.open(
+    storage: backend,
+    entryTypes: _entryTypes(),
+    source: Source(
+      hopId: hopId,
+      identifier: '$hopId-install',
+      softwareVersion: 'throughput-guard@baseline',
+    ),
+    securityContexts: PostgresSecurityContextStore(backend: backend),
+  );
+}
+
+Future<StoredEvent> _appendOne(
+  EventStore store,
+  Transaction txn,
+  PublishCollector collector,
+  String aggregateId,
+  int i,
+) async {
+  final event = await store.appendInTxn(
+    txn,
+    entryType: _kEntryType,
+    aggregateId: aggregateId,
+    aggregateType: 'throughput',
+    eventType: 'measured',
+    data: <String, Object?>{'i': i},
+    initiator: const AutomationInitiator(service: 'throughput-guard'),
+    flowToken: null,
+    metadata: null,
+    security: null,
+    checkpointReason: null,
+    changeReason: null,
+    dedupeByContent: false,
+    collector: collector,
+  );
+  return event!;
+}
+
+Future<Duration> _timedAppendRun(EventStore store, int runIndex) async {
+  final clock = Stopwatch()..start();
+  for (var start = 0; start < _kEventsPerRun; start += _kChunk) {
+    await store.runTransaction((txn, collector) async {
+      for (var i = start; i < start + _kChunk; i++) {
+        final aggregateId = 'thr-append-r$runIndex-a${i % _kAggregatesPerRun}';
+        await _appendOne(store, txn, collector, aggregateId, i);
+      }
+    });
+  }
+  clock.stop();
+  return clock.elapsed;
+}
+
+Future<Duration> _timedIngestRun(
+  EventStore peer,
+  EventStore target,
+  int runIndex,
+) async {
+  final events = <StoredEvent>[];
+  for (var i = 0; i < _kEventsPerRun; i++) {
+    final aggregateId = 'thr-ingest-r$runIndex-a${i % _kAggregatesPerRun}';
+    final event = await peer.append(
+      entryType: _kEntryType,
+      aggregateId: aggregateId,
+      aggregateType: 'throughput',
+      eventType: 'measured',
+      data: <String, Object?>{'i': i},
+      initiator: const AutomationInitiator(service: 'throughput-guard-peer'),
+    );
+    events.add(event!);
+  }
+  final clock = Stopwatch()..start();
+  for (final event in events) {
+    await target.ingestEvent(event);
+  }
+  clock.stop();
+  return clock.elapsed;
+}
+
+double _median(List<double> values) {
+  final sorted = List<double>.of(values)..sort();
+  return sorted[sorted.length ~/ 2];
+}
+
+void main() {
+  test('baseline throughput workload', () async {
+    final url = Platform.environment['PG_TEST_URL'];
+    if (url == null || url.isEmpty) {
+      markTestSkipped('PG_TEST_URL is not set');
+      return;
+    }
+    final mainDbName = 'evs_thrbase_main_$pid';
+    final peerDbName = 'evs_thrbase_peer_$pid';
+    final mainUrl = await _createThrowawayDatabase(url, mainDbName);
+    final peerUrl = await _createThrowawayDatabase(url, peerDbName);
+    final mainStore = await _openStore(mainUrl, 'throughput-main');
+    final peerStore = await _openStore(peerUrl, 'throughput-peer');
+    try {
+      await _timedAppendRun(mainStore, -1);
+      await _timedIngestRun(peerStore, mainStore, -1);
+
+      final appendRates = <double>[];
+      for (var run = 0; run < _kRuns; run++) {
+        final elapsed = await _timedAppendRun(mainStore, run);
+        appendRates.add(_kEventsPerRun / elapsed.inMicroseconds * 1e6);
+      }
+
+      final ingestRates = <double>[];
+      for (var run = 0; run < _kRuns; run++) {
+        final elapsed = await _timedIngestRun(peerStore, mainStore, run);
+        ingestRates.add(_kEventsPerRun / elapsed.inMicroseconds * 1e6);
+      }
+
+      final measurement = <String, Object?>{
+        'append_per_sec': _median(appendRates),
+        'ingest_per_sec': _median(ingestRates),
+      };
+      // ignore: avoid_print
+      print(jsonEncode(measurement));
+    } finally {
+      await mainStore.close();
+      await peerStore.close();
+      await _dropDatabase(url, mainDbName);
+      await _dropDatabase(url, peerDbName);
+    }
+  });
+}

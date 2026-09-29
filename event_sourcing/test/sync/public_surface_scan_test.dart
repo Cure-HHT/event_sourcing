@@ -186,6 +186,7 @@ const _seamKinds = <String, String>{
   'failFillTransaction': 'failure injection',
   'failListSchedules': 'failure injection',
   'afterBootVersionEvent': 'failure injection',
+  'failBootTransactionWithSerializationFailure': 'failure injection',
   'beforeRegistryTransaction': 'interleave',
   'insideTransform': 'interleave',
   'afterFillReads': 'interleave',
@@ -438,6 +439,9 @@ const _topLevelOperations = <String, String>{
   'computeDeliveryHash': 'pure function; changes nothing',
   'computeRoleAssignmentAggregateId': 'pure function; changes nothing',
   'configurationFingerprint': 'pure function; changes nothing',
+  'currentViewRows':
+      'the one adapter feeding a converging-aware view read to '
+      'ContainmentResolver and ScopeDescendantExpander; changes nothing',
   'declaredConfiguration': 'pure function; changes nothing',
   'decodePullResponse': 'pure function; changes nothing',
   'decodeReceiverAnswer': 'pure function; changes nothing',

@@ -96,7 +96,13 @@ class SubscriptionDeniedMsg extends ServerMessage {
 
 enum WireErrorCode {
   internalError,
-  protocolError;
+  protocolError,
+  // Implements: EVS-DEV-converging-view-reads/H
+  // the wire code a subscription refusal carries when computing its
+  //   scoped aggregate set reads a still-converging view; the client
+  //   sees a typed, transient refusal rather than internal_error or a
+  //   silently narrowed subscription.
+  viewConverging;
 
   String toWire() {
     switch (this) {
@@ -104,6 +110,8 @@ enum WireErrorCode {
         return 'internal_error';
       case WireErrorCode.protocolError:
         return 'protocol_error';
+      case WireErrorCode.viewConverging:
+        return 'view_converging';
     }
   }
 
@@ -113,6 +121,8 @@ enum WireErrorCode {
         return WireErrorCode.internalError;
       case 'protocol_error':
         return WireErrorCode.protocolError;
+      case 'view_converging':
+        return WireErrorCode.viewConverging;
       default:
         throw FormatException('unknown WireErrorCode: $s');
     }

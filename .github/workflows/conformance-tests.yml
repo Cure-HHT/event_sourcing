@@ -1,7 +1,7 @@
 # Conformance tests — runs the sembast and Postgres conformance + integration
 # test suites on every PR and push to main.
 #
-# Three jobs:
+# Four jobs:
 #   sembast  — SembastBackend conformance + in-memory IdempotencyStore
 #              conformance. No external services required.
 #   postgres_storage, postgres_delivery — every Postgres-gated test file,
@@ -13,6 +13,12 @@
 #              container; the files are gated on PG_TEST_URL.
 #              event_sourcing/test/ci/postgres_ci_listing_test.dart fails when
 #              a gated file is not run here.
+#   postgres_throughput_guard — the throughput guard
+#              (test/storage/postgres/postgres_throughput_guard_test.dart):
+#              checks out the baseline commit into a temporary worktree and
+#              compares its measured throughput with the current tree's, so
+#              it needs the full git history (fetch-depth 0) and an explicit
+#              opt-in variable besides PG_TEST_URL.
 #
 # The Flutter SDK is pinned (flutter-version) in every workflow so a new stable
 # release or lint set cannot change a run's outcome; bump it deliberately.
@@ -331,3 +337,47 @@ jobs:
       - name: action_permissions_demo server process boot probes and hand-over
         run: flutter test test/server_process_postgres_test.dart
         working-directory: event_sourcing/example_action_permissions
+
+  postgres_throughput_guard:
+    name: Postgres throughput guard against the baseline build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: evs
+          POSTGRES_PASSWORD: evs
+          POSTGRES_DB: evs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evs -d evs_test"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    env:
+      PG_TEST_URL: postgres://evs:evs@localhost:5432/evs_test
+      EVS_THROUGHPUT_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The baseline worktree checks out a commit from the tree's own
+          # history, so the full history must be present.
+          fetch-depth: 0
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.44.7
+      - name: Resolve deps (canonical_json_jcs)
+        run: flutter pub get
+        working-directory: canonical_json_jcs
+      - name: Resolve deps (provenance)
+        run: flutter pub get
+        working-directory: provenance
+      - name: Resolve deps (event_sourcing)
+        run: flutter pub get
+        working-directory: event_sourcing
+      - name: Throughput guard against the baseline build
+        run: flutter test test/storage/postgres/postgres_throughput_guard_test.dart
+        working-directory: event_sourcing

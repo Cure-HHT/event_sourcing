@@ -257,36 +257,52 @@ class _ConnectionState {
   Future<void> _handleSubscribe(SubscribeMsg msg) async {
     final principal = _principal!;
 
-    // --- Step 1: view-level permission gate. ---
-    final required = viewPermissionNamer(msg.viewName);
-    if (required != null) {
-      final decision = await policy.isPermitted(
-        principal,
-        Permission(required),
-        null,
-      );
-      if (decision is! Allow) {
-        _send(
-          SubscriptionMessages.encodeServer(
-            SubscriptionDeniedMsg(
-              subscriptionId: msg.subscriptionId,
-              reason: SubscriptionDenyReason.viewPermissionDenied,
-            ),
-          ),
-        );
-        return;
-      }
-    }
-
-    // --- Step 2: row-level narrowing via the view's scope binding. ---
     Set<String>? allowedAggregates;
-    final binding = viewScopes.lookup(msg.viewName);
-    if (binding != null) {
-      final eff = await policy.effectivePermissionsFor(principal);
-      allowedAggregates = await _expandAssignments(
-        assignments: eff.scopeAssignments,
-        binding: binding,
+    try {
+      // --- Step 1: view-level permission gate. ---
+      final required = viewPermissionNamer(msg.viewName);
+      if (required != null) {
+        final decision = await policy.isPermitted(
+          principal,
+          Permission(required),
+          null,
+        );
+        if (decision is! Allow) {
+          _send(
+            SubscriptionMessages.encodeServer(
+              SubscriptionDeniedMsg(
+                subscriptionId: msg.subscriptionId,
+                reason: SubscriptionDenyReason.viewPermissionDenied,
+              ),
+            ),
+          );
+          return;
+        }
+      }
+
+      // --- Step 2: row-level narrowing via the view's scope binding. ---
+      final binding = viewScopes.lookup(msg.viewName);
+      if (binding != null) {
+        final eff = await policy.effectivePermissionsFor(principal);
+        allowedAggregates = await _expandAssignments(
+          assignments: eff.scopeAssignments,
+          binding: binding,
+        );
+      }
+    } on ViewConvergingRefusal catch (e) {
+      // Implements: EVS-DEV-converging-view-reads/H
+      // a converging containment view read anywhere in the subscribe
+      //   path — the view-level permission check, the row-level scope
+      //   expansion, or the assignment expansion itself — refuses the
+      //   subscription with a typed, transient wire error naming the
+      //   view rather than deciding from an unsettled read or
+      //   surfacing as internal_error.
+      _send(
+        SubscriptionMessages.encodeServer(
+          ErrorMsg(code: WireErrorCode.viewConverging, message: e.viewName),
+        ),
       );
+      return;
     }
 
     // --- Step 3: intersect any client-supplied aggregates allow-list

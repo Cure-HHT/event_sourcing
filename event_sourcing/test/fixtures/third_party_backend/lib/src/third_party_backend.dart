@@ -128,6 +128,24 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<void> upsertTableViewRowInTxn(
+    Transaction txn,
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
+    Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
   Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
@@ -508,6 +526,21 @@ class ThirdPartyBackend extends StorageBackend {
     Transaction txn,
     String aggregateId,
   ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) => throw UnimplementedError();
 
   @internal
   @override

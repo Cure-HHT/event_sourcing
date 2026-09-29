@@ -133,6 +133,80 @@ class SembastBackend extends StorageBackend {
   final StoreRef<String, Map<String, Object?>> _securityContextStore =
       stringMapStoreFactory.store('security_context');
 
+  /// Backend-owned index, keyed by aggregate id, of the local sequence
+  /// number of the aggregate's latest eligible version. Written in the same
+  /// transaction that stores an eligible version (append, ingest, restore,
+  /// finding — every path goes through [appendEvent]), so
+  /// [readLatestEligibleVersionInTxn] reads this record and fetches the
+  /// event at its key, rather than scanning the aggregate's events. Nothing
+  /// compares this index with anything else; it is not part of the chain
+  /// walk, only the backend's own read-path acceleration.
+  final StoreRef<String, Object?> _latestEligibleVersionStore =
+      StoreRef<String, Object?>('latest_eligible_version_by_aggregate');
+
+  /// Backend-owned index, keyed by aggregate id, of who authored the
+  /// aggregate's held events: a JSON map from originating database id to
+  /// the highest origin position among its held events of that aggregate
+  /// (or `null` when none of them carries one). Written in the same
+  /// transaction that stores an event naming an originating database
+  /// (append, ingest, restore), so the marks fold reads authorship by key
+  /// rather than scanning the aggregate's events.
+  final StoreRef<String, Object?> _aggregateAuthorshipStore =
+      StoreRef<String, Object?>('aggregate_authorship');
+
+  /// Backend-owned index, keyed by the JSON encoding of
+  /// `[originatingDatabaseId, previousEventHash]`, of the lowest origin
+  /// position among the held events of that database sharing that
+  /// predecessor hash. Written in the same transaction that stores such an
+  /// event, so a fork finding's threshold is read by key rather than by
+  /// scanning the database's events for its predecessor.
+  final StoreRef<String, Object?> _predecessorLowestPositionStore =
+      StoreRef<String, Object?>('predecessor_lowest_position');
+
+  /// Backend-owned index, keyed by aggregate id, of the local sequence
+  /// numbers of the aggregate's held events, in the order stored. Written
+  /// in the same transaction that stores each event (append, ingest,
+  /// restore -- every path goes through [appendEvent]), so
+  /// [findEventsForAggregateInTxn] fetches the aggregate's events by key in
+  /// ascending sequence order rather than scanning the whole event store.
+  /// Growing this per-aggregate list costs an append proportionally to the
+  /// aggregate's own event count, not to the store's size; Sembast has no
+  /// secondary-index primitive that would avoid it.
+  final StoreRef<String, Object?> _aggregateEventSequencesStore =
+      StoreRef<String, Object?>('aggregate_event_sequences');
+
+  /// Backend-owned index, keyed by the JSON encoding of `[copyId, rowKey]`,
+  /// of the source aggregate id `upsertTableViewRowInTxn` last indexed a
+  /// `TableProjectionSpec` view copy's row key under: the reverse half of
+  /// [_tableRowsBySourceStore], read to find which forward entry to retire
+  /// when a row's key is deleted or reassigned.
+  final StoreRef<String, Object?> _tableRowSourceStore =
+      StoreRef<String, Object?>('table_row_source_aggregate');
+
+  /// Backend-owned index, keyed by the JSON encoding of
+  /// `[copyId, sourceAggregateId]`, of the row keys a `TableProjectionSpec`
+  /// view copy's rows [upsertTableViewRowInTxn] indexed under that source
+  /// aggregate. [findTableRowsBySourceAggregateInTxn] reads it by key
+  /// instead of scanning the whole copy.
+  final StoreRef<String, Object?> _tableRowsBySourceStore =
+      StoreRef<String, Object?>('table_rows_by_source_aggregate');
+
+  static String _rowSourceIndexKey(String copyId, String rowKey) =>
+      jsonEncode(<Object?>[copyId, rowKey]);
+
+  static String _bySourceIndexKey(String copyId, String sourceAggregateId) =>
+      jsonEncode(<Object?>[copyId, sourceAggregateId]);
+
+  /// The `copyId` a `_rowSourceIndexKey`/`_bySourceIndexKey` compound [key]
+  /// was built for, or null when it does not decode to one.
+  static String? _copyIdOfIndexKey(Object? key) {
+    if (key is! String) return null;
+    final decoded = jsonDecode(key);
+    return decoded is List && decoded.isNotEmpty && decoded[0] is String
+        ? decoded[0] as String
+        : null;
+  }
+
   StoreRef<int, Map<String, Object?>> _fifoStore(String destinationId) =>
       intMapStoreFactory.store('fifo_$destinationId');
 
@@ -387,7 +461,7 @@ class SembastBackend extends StorageBackend {
   // -------- Events --------
 
   /// Persist [event] inside [txn] and return its [AppendResult]. Under the
-  /// Phase-2 Prereq B reserve-and-increment contract, `event.sequenceNumber`
+  /// reserve-and-increment contract, `event.sequenceNumber`
   /// MUST equal the value returned by a prior [nextSequenceNumber] call in
   /// the same transaction — i.e., it MUST equal the current persisted
   /// counter value. [appendEvent] does not advance the counter; the advance
@@ -415,8 +489,8 @@ class SembastBackend extends StorageBackend {
         'appendEvent: event.sequenceNumber (${event.sequenceNumber}) '
         'must equal the reserved counter value ($current). '
         'Did the caller forget to call nextSequenceNumber in this '
-        'transaction? (Phase-2 Prereq B, Option 1: reserve-and-increment; '
-        'appendEvent consumes a reservation, it does not create one.)',
+        'transaction? appendEvent consumes a reservation; it does not '
+        'create one.',
       );
     }
     event.requireWellFormedRecord();
@@ -432,7 +506,11 @@ class SembastBackend extends StorageBackend {
       );
     }
     await _recordLatestAuthoredInTxn(t._sembastTxn, event);
+    await _recordLatestEligibleVersionInTxn(t._sembastTxn, event);
     await _recordFindingHeldInTxn(t._sembastTxn, event);
+    await _recordAggregateAuthorshipInTxn(t._sembastTxn, event);
+    await _recordPredecessorLowestPositionInTxn(t._sembastTxn, event);
+    await _recordAggregateEventSequenceInTxn(t._sembastTxn, event);
     // post-commit so live subscribers learn of the new event in
     // sequence_number order.
     t._postCommit.add(() {
@@ -455,18 +533,52 @@ class SembastBackend extends StorageBackend {
     return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
   }
 
+  /// Appends [event]'s sequence number to its aggregate's record in
+  /// [_aggregateEventSequencesStore]. Called from [appendEvent] for every
+  /// stored event, unconditionally: every event belongs to exactly one
+  /// aggregate, and [findEventsForAggregateInTxn] fetches by this index for
+  /// any aggregate id, held or not.
+  Future<void> _recordAggregateEventSequenceInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    final record = _aggregateEventSequencesStore.record(event.aggregateId);
+    final existing = await record.get(txn);
+    final sequences = (existing is List ? List<int>.from(existing) : <int>[])
+      ..add(event.sequenceNumber);
+    await record.put(txn, sequences);
+  }
+
+  // Implements: EVS-PRD-event-log/C
+  // an aggregate's held events, in per-aggregate order, are read from the
+  //   backend's own index: the per-aggregate record of sequence numbers
+  //   written alongside each event by _recordAggregateEventSequenceInTxn,
+  //   fetched by key in ascending sequence order — no scan, no Finder over
+  //   the event store.
   @override
   Future<List<StoredEvent>> findEventsForAggregateInTxn(
     Transaction txn,
     String aggregateId,
   ) async {
     final t = _requireValidTxn(txn);
-    final finder = Finder(
-      filter: Filter.equals('aggregate_id', aggregateId),
-      sortOrders: [SortOrder('sequence_number')],
-    );
-    final records = await _eventStore.find(t._reads, finder: finder);
-    return records.map((r) => StoredEvent.fromMap(r.value, r.key)).toList();
+    final value = await _aggregateEventSequencesStore
+        .record(aggregateId)
+        .get(t._reads);
+    if (value == null) return <StoredEvent>[];
+    final sequences = List<int>.from(value as List);
+    final events = <StoredEvent>[];
+    for (final sequence in sequences) {
+      final raw = await _eventStore.record(sequence).get(t._reads);
+      if (raw == null || raw['sequence_number'] != sequence) {
+        throw StateError(
+          'findEventsForAggregateInTxn: aggregate $aggregateId records '
+          'sequence $sequence in its event index, and no event of that '
+          'sequence is stored under it',
+        );
+      }
+      events.add(StoredEvent.fromMap(Map<String, Object?>.from(raw), sequence));
+    }
+    return events;
   }
 
   // provenance[0].hopId / provenance[0].identifier. The originator filter
@@ -578,9 +690,9 @@ class SembastBackend extends StorageBackend {
   static DateTime _clientTimestampOf(RecordSnapshot<Object?, Object?> record) =>
       DateTime.parse(record['client_timestamp']! as String);
 
-  /// Reserve-and-increment the sequence counter within [txn]. Phase-2
-  /// Prereq B, Option 1: the counter is advanced as a side effect so that
-  /// a second call in the same transaction returns `current + 2`. A paired
+  /// Reserve-and-increment the sequence counter within [txn]: the counter
+  /// is advanced as a side effect so that a second call in the same
+  /// transaction returns `current + 2`. A paired
   /// [appendEvent] consumes the reservation without advancing again. If
   /// the transaction rolls back, the counter rollback falls out of
   /// Sembast's transactional semantics.
@@ -597,18 +709,43 @@ class SembastBackend extends StorageBackend {
     return reserved;
   }
 
+  // Implements: EVS-DEV-chain-verification/C
+  // events are keyed by their sequence number and the sequence counter
+  //   names the latest reserved one, so the tip is read at that key, or,
+  //   when the current transaction reserved it but has not yet stored an
+  //   event there, at the key below.
   @override
   Future<String?> readLatestEventHash(Transaction txn) async {
     final t = _requireValidTxn(txn);
-    final records = await _eventStore.find(
-      t._sembastTxn,
-      finder: Finder(
-        sortOrders: [SortOrder('sequence_number', false)],
-        limit: 1,
-      ),
-    );
-    if (records.isEmpty) return null;
-    return records.first.value['event_hash'] as String?;
+    final counterRaw = await _backendStateStore
+        .record(_sequenceKey)
+        .get(t._sembastTxn);
+    final counter = (counterRaw as int?) ?? 0;
+    if (counter == 0) return null;
+    final atCounter = await _eventStore.record(counter).get(t._sembastTxn);
+    if (atCounter != null) {
+      if (atCounter['sequence_number'] != counter) {
+        throw StateError(
+          'readLatestEventHash: the event stored at sequence $counter '
+          'does not carry that sequence number',
+        );
+      }
+      return atCounter['event_hash'] as String?;
+    }
+    // Nothing stored at the counter's key yet: the current transaction
+    // reserved it (via nextSequenceNumber) but has not appended an event
+    // under it. The tip is the event below, if any.
+    final previous = counter - 1;
+    if (previous == 0) return null;
+    final atPrevious = await _eventStore.record(previous).get(t._sembastTxn);
+    if (atPrevious == null || atPrevious['sequence_number'] != previous) {
+      throw StateError(
+        'readLatestEventHash: the reserved sequence counter is $counter '
+        'with no event stored under it, and no event of sequence '
+        '$previous is stored under the key below it either',
+      );
+    }
+    return atPrevious['event_hash'] as String?;
   }
 
   // Implements: EVS-PRD-event-log/D
@@ -674,10 +811,13 @@ class SembastBackend extends StorageBackend {
 
   static const _latestAuthoredSequenceKey = 'latest_authored_sequence';
 
-  /// The `backend_state` record, true once the database holds a security
-  /// finding, so the marks learn that none is held without a scan of the
-  /// log. Findings are never removed, so it is never cleared.
-  static const _securityFindingHeldKey = 'security_finding_held';
+  /// The `backend_state` record: the local sequence numbers of the held
+  /// security-finding events, authored and received, in the order they were
+  /// stored. So the marks fold reads the findings by key rather than
+  /// scanning the log for them, and learns that none is held from an empty
+  /// list without a scan. Findings are never removed, so entries are never
+  /// cleared.
+  static const _heldFindingSequencesKey = 'held_finding_sequences';
 
   /// The chain coordinates of the stored record [value].
   static ChainCoordinates _coordinatesOf(Map<String, Object?> value) {
@@ -714,24 +854,115 @@ class SembastBackend extends StorageBackend {
         .put(txn, event.sequenceNumber);
   }
 
-  /// Writes the finding-held record when [event], just stored in [txn], is
-  /// a security finding, authored or received.
+  /// Whether [event] is an eligible version: one shared decision used by
+  /// both the write side ([_recordLatestEligibleVersionInTxn]) and the read
+  /// side ([readLatestEligibleVersionInTxn]), so the index and its lookup
+  /// never disagree on what counts.
+  // Implements: EVS-DEV-causal-parents/H
+  // eligibility is causal.kind == version, causal.eligible == true and a
+  //   non-null sealed hash, decided by one shared helper for the write that
+  //   maintains the index and the read that serves it.
+  static bool _isEligibleVersion(StoredEvent event) =>
+      event.causal?.kind == CausalKind.version &&
+      (event.causal?.eligible ?? false) &&
+      ChainCoordinates.of(event).sealedHash != null;
+
+  /// Writes the latest-eligible-version-by-aggregate record when [event],
+  /// just stored in [txn], is an eligible version.
+  // Implements: EVS-DEV-causal-parents/H
+  // the record of the latest eligible version of an aggregate is written in
+  //   the transaction that stores such a version, next to the
+  //   latest-authored record.
+  Future<void> _recordLatestEligibleVersionInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    if (!_isEligibleVersion(event)) return;
+    await _latestEligibleVersionStore
+        .record(event.aggregateId)
+        .put(txn, event.sequenceNumber);
+  }
+
+  /// Appends [event]'s sequence number to the held-finding-sequences record
+  /// when [event], just stored in [txn], is a security finding, authored or
+  /// received.
   // Implements: EVS-PRD-destinations/L
-  // on Sembast the record of whether the database holds a security finding
-  //   is written in the transaction that stores the first one.
+  // on Sembast the record of the held security findings is written in the
+  //   transaction that stores each one.
   Future<void> _recordFindingHeldInTxn(
     sembast.Transaction txn,
     StoredEvent event,
   ) async {
     if (!_isSecurityFinding(event.entryType, event.eventType)) return;
-    final record = _backendStateStore.record(_securityFindingHeldKey);
-    if (await record.get(txn) == true) return;
-    await record.put(txn, true);
+    final record = _backendStateStore.record(_heldFindingSequencesKey);
+    final existing = await record.get(txn);
+    final sequences = (existing is List ? List<int>.from(existing) : <int>[])
+      ..add(event.sequenceNumber);
+    await record.put(txn, sequences);
   }
 
   static bool _isSecurityFinding(Object? entryType, Object? eventType) =>
       entryType == kSecurityFindingEntryType &&
       eventType == kSecurityFindingRecordedEventType;
+
+  /// Merges [event]'s originating database and origin position into the
+  /// aggregate-authorship record when [event], just stored in [txn], names
+  /// an originating database — the same fold `_addAuthorship` applies in
+  /// the marks module, kept in step with the backend's own index.
+  // Implements: EVS-PRD-materializer/E
+  // the authorship index is written in the transaction that stores each
+  //   event naming an originating database.
+  Future<void> _recordAggregateAuthorshipInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    final coordinates = ChainCoordinates.of(event);
+    final origin = coordinates.originatingDatabaseId;
+    if (origin == null) return;
+    final record = _aggregateAuthorshipStore.record(event.aggregateId);
+    final existing = await record.get(txn);
+    final map = existing is Map
+        ? Map<String, Object?>.from(existing)
+        : <String, Object?>{};
+    final position = coordinates.originPosition;
+    final held = map[origin] as int?;
+    map[origin] = position == null
+        ? held
+        : (held == null || position > held ? position : held);
+    await record.put(txn, map);
+  }
+
+  /// The key under which [_predecessorLowestPositionStore] indexes events
+  /// of [originatingDatabaseId] carrying [previousEventHash].
+  static String _predecessorKey(
+    String originatingDatabaseId,
+    String? previousEventHash,
+  ) => jsonEncode(<Object?>[originatingDatabaseId, previousEventHash]);
+
+  /// Lowers the predecessor-lowest-position record when [event], just
+  /// stored in [txn], names an originating database and an origin position,
+  /// so it stays the lowest origin position among the held events sharing
+  /// that database and predecessor hash.
+  // Implements: EVS-PRD-materializer/E
+  // the predecessor-position index is written in the transaction that
+  //   stores each event naming an originating database and an origin
+  //   position.
+  Future<void> _recordPredecessorLowestPositionInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    final coordinates = ChainCoordinates.of(event);
+    final origin = coordinates.originatingDatabaseId;
+    final position = coordinates.originPosition;
+    if (origin == null || position == null) return;
+    final record = _predecessorLowestPositionStore.record(
+      _predecessorKey(origin, coordinates.previousEventHash),
+    );
+    final existing = await record.get(txn);
+    if (existing == null || position < (existing as int)) {
+      await record.put(txn, position);
+    }
+  }
 
   /// The stored events of [txn] whose record satisfies [matches], in
   /// ascending local sequence number.
@@ -897,9 +1128,10 @@ class SembastBackend extends StorageBackend {
   }
 
   // Implements: EVS-DEV-causal-parents/H
-  // the latest eligible version is read from the log: the aggregate's
-  //   events are scanned, newest first, for one whose recorded causal says
-  //   an eligible version.
+  // the latest eligible version is read from the backend's own index: the
+  //   per-aggregate record of the sequence written alongside the event by
+  //   _recordLatestEligibleVersionInTxn, fetched by key — no scan, no
+  //   Finder.
   @override
   @internal
   Future<StoredEvent?> readLatestEligibleVersionInTxn(
@@ -907,29 +1139,57 @@ class SembastBackend extends StorageBackend {
     String aggregateId,
   ) async {
     final t = _requireValidTxn(txn);
-    final record = await _eventStore.findFirst(
-      t._sembastTxn,
-      finder: Finder(
-        filter: Filter.and([
-          Filter.equals('aggregate_id', aggregateId),
-          Filter.equals('causal.kind', CausalKind.version.wireName),
-          Filter.equals('causal.eligible', true),
-          Filter.custom(
-            (record) =>
-                _coordinatesOf(
-                  record.value! as Map<String, Object?>,
-                ).sealedHash !=
-                null,
-          ),
-        ]),
-        sortOrders: [SortOrder('sequence_number', false)],
-      ),
-    );
-    if (record == null) return null;
-    return StoredEvent.fromMap(
-      Map<String, Object?>.from(record.value),
-      record.key,
-    );
+    final sequence = await _latestEligibleVersionStore
+        .record(aggregateId)
+        .get(t._sembastTxn);
+    if (sequence == null) return null;
+    final value = await _eventStore.record(sequence as int).get(t._sembastTxn);
+    if (value == null || value['sequence_number'] != sequence) {
+      throw StateError(
+        'the latest eligible version of aggregate $aggregateId is recorded '
+        'at sequence $sequence, and no event of that sequence is stored '
+        'under it',
+      );
+    }
+    return StoredEvent.fromMap(Map<String, Object?>.from(value), sequence);
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // the authorship of an aggregate's held events is read from the backend's
+  //   own index: the per-aggregate record written alongside each event
+  //   naming an originating database by _recordAggregateAuthorshipInTxn,
+  //   fetched by key — no scan, no Finder.
+  @override
+  @internal
+  Future<Map<String, int?>> readAggregateAuthorshipInTxn(
+    Transaction txn,
+    String aggregateId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _aggregateAuthorshipStore
+        .record(aggregateId)
+        .get(t._reads);
+    if (value == null) return <String, int?>{};
+    return Map<String, int?>.from(value as Map);
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // a fork finding's threshold is read from the backend's own index: the
+  //   per-predecessor record written alongside each event by
+  //   _recordPredecessorLowestPositionInTxn, fetched by key — no scan, no
+  //   Finder.
+  @override
+  @internal
+  Future<int?> readLowestOriginPositionByPredecessorInTxn(
+    Transaction txn, {
+    required String originatingDatabaseId,
+    required String? previousEventHash,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final value = await _predecessorLowestPositionStore
+        .record(_predecessorKey(originatingDatabaseId, previousEventHash))
+        .get(t._reads);
+    return value as int?;
   }
 
   // Implements: EVS-DEV-security-findings/E
@@ -1010,34 +1270,47 @@ class SembastBackend extends StorageBackend {
         position >= fromPosition;
   });
 
+  /// The held-finding sequence numbers recorded so far, read by key.
+  Future<List<int>> _heldFindingSequencesInTxn(_SembastTxn t) async {
+    final value = await _backendStateStore
+        .record(_heldFindingSequencesKey)
+        .get(t._reads);
+    return value is List ? List<int>.from(value) : const <int>[];
+  }
+
+  // Implements: EVS-PRD-materializer/G
+  // whether any finding is held is read from the backend's own index — the
+  //   held-finding-sequences record's emptiness — not a scan of the log.
   @override
   @internal
   Future<bool> holdsSecurityFindingInTxn(Transaction txn) async {
     final t = _requireValidTxn(txn);
-    return await _backendStateStore
-            .record(_securityFindingHeldKey)
-            .get(t._reads) ==
-        true;
+    return (await _heldFindingSequencesInTxn(t)).isNotEmpty;
   }
 
+  // Implements: EVS-PRD-materializer/G
+  // the held findings are read from the backend's own index: the sequence
+  //   numbers recorded alongside each one by _recordFindingHeldInTxn,
+  //   fetched by key — no scan, no Finder.
   @override
   @internal
   Future<List<StoredEvent>> findSecurityFindingsInTxn(Transaction txn) async {
     final t = _requireValidTxn(txn);
-    final records = await _eventStore.find(
-      t._reads,
-      finder: Finder(
-        filter: Filter.and(<Filter>[
-          Filter.equals('event_type', kSecurityFindingRecordedEventType),
-          Filter.equals('entry_type', kSecurityFindingEntryType),
-        ]),
-        sortOrders: [SortOrder('sequence_number')],
-      ),
-    );
-    return <StoredEvent>[
-      for (final r in records)
-        StoredEvent.fromMap(Map<String, Object?>.from(r.value), r.key),
-    ];
+    final sequences = await _heldFindingSequencesInTxn(t);
+    final events = <StoredEvent>[];
+    for (final sequence in sequences) {
+      final value = await _eventStore.record(sequence).get(t._reads);
+      if (value == null || value['sequence_number'] != sequence) {
+        throw StateError(
+          'a held security finding is recorded at sequence $sequence, and '
+          'no event of that sequence is stored under it',
+        );
+      }
+      events.add(
+        StoredEvent.fromMap(Map<String, Object?>.from(value), sequence),
+      );
+    }
+    return events;
   }
 
   /// Page size of [readEventsReverseInTxn].
@@ -2025,12 +2298,167 @@ class SembastBackend extends StorageBackend {
     String key,
   ) async {
     final t = _requireValidTxn(txn);
+    await _retireTableRowIndexInTxn(t._sembastTxn, viewName, key);
     await _viewStore(viewName).record(key).delete(t._sembastTxn);
     t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
         _viewChangesController.add(viewName);
       }
     });
+  }
+
+  /// Removes [key]'s entry, if any, from the `TableProjectionSpec` row
+  /// index of [copyId]: the source aggregate it was last indexed under
+  /// ([_tableRowSourceStore]) and its slot in that aggregate's row-key list
+  /// ([_tableRowsBySourceStore]). A no-op for a key the index never
+  /// recorded (an `AggregateProjectionSpec` row, or one never upserted
+  /// through [upsertTableViewRowInTxn]).
+  Future<void> _retireTableRowIndexInTxn(
+    sembast.Transaction txn,
+    String copyId,
+    String key,
+  ) async {
+    final sourceRecord = _tableRowSourceStore.record(
+      _rowSourceIndexKey(copyId, key),
+    );
+    final source = await sourceRecord.get(txn);
+    if (source is! String) return;
+    await _removeFromTableRowsBySourceInTxn(txn, copyId, source, key);
+    await sourceRecord.delete(txn);
+  }
+
+  Future<void> _addToTableRowsBySourceInTxn(
+    sembast.Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+    String key,
+  ) async {
+    final record = _tableRowsBySourceStore.record(
+      _bySourceIndexKey(copyId, sourceAggregateId),
+    );
+    final existing = await record.get(txn);
+    final keys = existing is List ? List<String>.from(existing) : <String>[];
+    if (!keys.contains(key)) {
+      keys.add(key);
+      await record.put(txn, keys);
+    }
+  }
+
+  Future<void> _removeFromTableRowsBySourceInTxn(
+    sembast.Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+    String key,
+  ) async {
+    final record = _tableRowsBySourceStore.record(
+      _bySourceIndexKey(copyId, sourceAggregateId),
+    );
+    final existing = await record.get(txn);
+    if (existing is! List) return;
+    final keys = List<String>.from(existing)..remove(key);
+    if (keys.isEmpty) {
+      await record.delete(txn);
+    } else {
+      await record.put(txn, keys);
+    }
+  }
+
+  /// Removes every entry of [copyId] from both halves of the
+  /// `TableProjectionSpec` row index: a full scan of the two index stores,
+  /// filtered to [copyId]'s entries by decoding each compound key. Used only
+  /// by [clearViewInTxn] and [deleteViewCopyRecordInTxn] -- teardown paths,
+  /// not the append path this index exists to keep off a store-sized scan.
+  Future<void> _clearTableRowIndexInTxn(
+    sembast.Transaction txn,
+    String copyId,
+  ) async {
+    final sourceKeys = await _tableRowSourceStore.findKeys(
+      txn,
+      finder: Finder(
+        filter: Filter.custom(
+          (snapshot) => _copyIdOfIndexKey(snapshot.key) == copyId,
+        ),
+      ),
+    );
+    if (sourceKeys.isNotEmpty) {
+      await _tableRowSourceStore.records(sourceKeys).delete(txn);
+    }
+    final bySourceKeys = await _tableRowsBySourceStore.findKeys(
+      txn,
+      finder: Finder(
+        filter: Filter.custom(
+          (snapshot) => _copyIdOfIndexKey(snapshot.key) == copyId,
+        ),
+      ),
+    );
+    if (bySourceKeys.isNotEmpty) {
+      await _tableRowsBySourceStore.records(bySourceKeys).delete(txn);
+    }
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // a TableProjectionSpec upsert stamps its row's source aggregate into the
+  //   backend's own index, moving a key's entry when a later insert
+  //   produces it under a different aggregate, so the outstanding-finding
+  //   refresh of EVS-PRD-materializer/G can find the rows one aggregate
+  //   produced without scanning the view.
+  @override
+  @internal
+  Future<void> upsertTableViewRowInTxn(
+    Transaction txn,
+    String copyId,
+    String key,
+    Map<String, dynamic> row, {
+    required String sourceAggregateId,
+  }) async {
+    final t = _requireValidTxn(txn);
+    final sembastTxn = t._sembastTxn;
+    final sourceRecord = _tableRowSourceStore.record(
+      _rowSourceIndexKey(copyId, key),
+    );
+    final priorSource = await sourceRecord.get(sembastTxn);
+    if (priorSource != sourceAggregateId) {
+      if (priorSource is String) {
+        await _removeFromTableRowsBySourceInTxn(
+          sembastTxn,
+          copyId,
+          priorSource,
+          key,
+        );
+      }
+      await _addToTableRowsBySourceInTxn(
+        sembastTxn,
+        copyId,
+        sourceAggregateId,
+        key,
+      );
+      await sourceRecord.put(sembastTxn, sourceAggregateId);
+    }
+    await upsertViewRowInTxn(txn, copyId, key, row);
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // the rows a TableProjectionSpec view holds for one source aggregate are
+  //   read from the backend's own index, fetched by key — no scan of the
+  //   whole copy.
+  @override
+  @internal
+  Future<List<Map<String, dynamic>>> findTableRowsBySourceAggregateInTxn(
+    Transaction txn,
+    String copyId,
+    String sourceAggregateId,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final value = await _tableRowsBySourceStore
+        .record(_bySourceIndexKey(copyId, sourceAggregateId))
+        .get(t._reads);
+    if (value == null) return <Map<String, dynamic>>[];
+    final rows = <Map<String, dynamic>>[];
+    for (final key in List<String>.from(value as List)) {
+      final raw = await _viewStore(copyId).record(key).get(t._reads);
+      if (raw != null) rows.add(Map<String, dynamic>.from(raw));
+    }
+    return rows;
   }
 
   @override
@@ -2132,6 +2560,7 @@ class SembastBackend extends StorageBackend {
   @internal
   Future<void> clearViewInTxn(Transaction txn, String viewName) async {
     final t = _requireValidTxn(txn);
+    await _clearTableRowIndexInTxn(t._sembastTxn, viewName);
     await _viewStore(viewName).delete(t._sembastTxn);
     t._postCommit.add(() {
       if (!_viewChangesController.isClosed) {
@@ -2267,6 +2696,9 @@ class SembastBackend extends StorageBackend {
       copyId,
     ).findKeys(t._sembastTxn, finder: Finder(limit: limit));
     if (keys.isEmpty) return 0;
+    for (final key in keys) {
+      await _retireTableRowIndexInTxn(t._sembastTxn, copyId, key);
+    }
     await _viewStore(copyId).records(keys).delete(t._sembastTxn);
     return keys.length;
   }
@@ -2275,6 +2707,13 @@ class SembastBackend extends StorageBackend {
   @internal
   Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId) async {
     final t = _requireValidTxn(txn);
+    // deleteViewCopyRowsInTxn retires each row's index entry as it deletes
+    // the row, so [copyId]'s share of the index is normally already empty
+    // by the time a caller deletes the copy's own record; this call is
+    // defense in depth against a caller reaching this record without
+    // draining rows first, so no entry is ever stranded under a deleted
+    // copy id.
+    await _clearTableRowIndexInTxn(t._sembastTxn, copyId);
     await _viewCopiesStoreRef.record(copyId).delete(t._sembastTxn);
   }
 

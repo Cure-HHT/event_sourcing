@@ -7,6 +7,10 @@
 //   scoped view expands (via the substrate `ScopeDescendantExpander`,
 //   stubbed here) into the descendant aggregate IDs the principal may
 //   see, rather than conservatively under-granting.
+// Verifies: EVS-DEV-converging-view-reads/H
+// a converging containment view read while computing the scoped
+//   aggregate set refuses the subscription with an ErrorMsg naming the
+//   view rather than subscribing with a narrowed set or crashing.
 
 import 'dart:async';
 import 'dart:convert';
@@ -157,6 +161,25 @@ class _ScopePolicy implements AuthorizationPolicy {
   );
 }
 
+/// Policy stub whose view-level check (`isPermitted`) throws, mirroring
+/// `TableBackedAuthorizationPolicy` reading a converging
+/// `user_role_scopes` view while deciding the view-level gate.
+class _ThrowingIsPermittedPolicy implements AuthorizationPolicy {
+  @override
+  Future<AuthorizationDecision> isPermitted(
+    Principal principal,
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Transaction? txn,
+  }) async => throw const ViewConvergingRefusal('user_role_scopes');
+
+  @override
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Transaction? txn,
+  }) async => throw StateError('not reached: view-level gate throws first');
+}
+
 class _StubDescriptor implements ScopeProjectionDescriptor {
   @override
   Set<String> get columns => {'participant_id', 'site_id'};
@@ -250,4 +273,105 @@ void main() {
       expect(capturedTargetClass, 'participant');
     },
   );
+
+  test('a converging containment view refuses the subscription with an '
+      'ErrorMsg naming the view rather than subscribing or crashing', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final pair = _Pair();
+    addTearDown(pair.close);
+    final store = _CapturingEventStore();
+    addTearDown(store.closeUpdates);
+    final viewScopes = ViewScopeRegistry()
+      ..register(
+        viewName: 'participants',
+        scopeClass: 'participant',
+        aggregateIdResolver: (sv) => sv is BoundScope ? sv.value : null,
+      );
+
+    runSubscriptionHandler(
+      channel: pair.serverSide,
+      validator: validator,
+      eventStore: store,
+      policy: _ScopePolicy(const [
+        ScopeAssignment(
+          scope: BoundScope(class_: 'site', value: 'site-A'),
+        ),
+      ]),
+      viewScopes: viewScopes,
+      viewPermissionNamer: (v) => null,
+      connectionRegistry: connectionRegistry,
+      scopeClassRegistry: participantInSite(),
+      expandDescendants: (assignment, targetClass) async =>
+          throw const ViewConvergingRefusal('participant_site_index'),
+    );
+
+    final messages = <Map<String, Object?>>[];
+    pair.clientSide.stream.listen(
+      (raw) => messages.add(jsonDecode(raw as String) as Map<String, Object?>),
+    );
+    pair.clientSide.sink.add(jsonEncode({'type': 'auth', 'credential': 'dr'}));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    pair.clientSide.sink.add(
+      jsonEncode({
+        'type': 'subscribe',
+        'subscriptionId': 'sub-1',
+        'viewName': 'participants',
+      }),
+    );
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (messages.length < 2 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(store.subscribed, isFalse);
+    final errorMsg = messages.singleWhere((m) => m['type'] == 'error');
+    expect(errorMsg['code'], 'view_converging');
+    expect(errorMsg['message'], 'participant_site_index');
+  });
+
+  test('a converging user_role_scopes view surfacing from the view-level '
+      'permission gate refuses the subscription with an ErrorMsg instead '
+      'of reaching the substrate subscribe or crashing', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final pair = _Pair();
+    addTearDown(pair.close);
+    final store = _CapturingEventStore();
+    addTearDown(store.closeUpdates);
+    final viewScopes = ViewScopeRegistry();
+
+    runSubscriptionHandler(
+      channel: pair.serverSide,
+      validator: validator,
+      eventStore: store,
+      policy: _ThrowingIsPermittedPolicy(),
+      viewScopes: viewScopes,
+      viewPermissionNamer: (v) => 'view.$v.read',
+      connectionRegistry: connectionRegistry,
+    );
+
+    final messages = <Map<String, Object?>>[];
+    pair.clientSide.stream.listen(
+      (raw) => messages.add(jsonDecode(raw as String) as Map<String, Object?>),
+    );
+    pair.clientSide.sink.add(jsonEncode({'type': 'auth', 'credential': 'dr'}));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    pair.clientSide.sink.add(
+      jsonEncode({
+        'type': 'subscribe',
+        'subscriptionId': 'sub-1',
+        'viewName': 'participants',
+      }),
+    );
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (messages.length < 2 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+
+    expect(store.subscribed, isFalse);
+    final errorMsg = messages.singleWhere((m) => m['type'] == 'error');
+    expect(errorMsg['code'], 'view_converging');
+    expect(errorMsg['message'], 'user_role_scopes');
+  });
 }

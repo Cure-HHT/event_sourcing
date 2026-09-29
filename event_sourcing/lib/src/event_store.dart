@@ -3358,6 +3358,10 @@ typedef _ChainLinks = ({
 // Implements: EVS-DEV-chain-verification/C
 // the storage link is the stored hash of the event at the preceding local
 //   sequence number, read inside the storing transaction.
+// Implements: EVS-DEV-chain-verification/T
+// both links are keyed reads (an index on Postgres, a keyed record on
+//   Sembast), so the chain adds a bounded cost to every append and ingest
+//   whatever the log's size.
 Future<_ChainLinks> _reserveChainLinksInTxn(
   StorageBackend backend,
   Transaction txn,

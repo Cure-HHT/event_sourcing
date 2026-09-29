@@ -283,7 +283,7 @@ class _World {
 const Set<String> _advancedByEveryEvent = <String>{
   'sequence_counter',
   'latest_authored_sequence',
-  'security_finding_held',
+  'held_finding_sequences',
 };
 
 /// Run every operator-halt scenario against a database [databaseFactory]

@@ -359,24 +359,22 @@ class ProjectionInterpreter {
           if (row != null) await rewrite(entry.key, row, entry.value);
         }
       case TableProjectionSpec():
-        // A table row records the local sequence number of the event that
-        // produced it; the rows of an aggregate are those its events
-        // produced.
-        final producedBy = <int, List<String>>{};
+        // The rows of a source aggregate are those its insert events
+        // produced, found by the backend's own index from source aggregate
+        // id to row keys (`upsertTableViewRowInTxn` /
+        // `findTableRowsBySourceAggregateInTxn`) rather than a scan of the
+        // whole copy.
         for (final entry in refresh.entries) {
-          for (final e in await backend.findEventsForAggregateInTxn(
+          final ids = entry.value;
+          for (final row in await backend.findTableRowsBySourceAggregateInTxn(
             txn,
+            copyId,
             entry.key,
           )) {
-            producedBy[e.sequenceNumber] = entry.value;
+            final key = row['aggregateId'];
+            if (key is! String) continue;
+            await rewrite(key, row, ids);
           }
-        }
-        for (final row in await backend.findViewRowsInTxn(txn, copyId)) {
-          final sequence = row['sequence'];
-          final key = row['aggregateId'];
-          if (sequence is! int || key is! String) continue;
-          final ids = producedBy[sequence];
-          if (ids != null) await rewrite(key, row, ids);
         }
     }
     return changes;

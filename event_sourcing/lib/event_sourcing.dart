@@ -268,6 +268,7 @@ export 'src/permissions/bootstrap_role_assignments.dart'
     show RoleAssignmentSeedResult, bootstrapRoleAssignments;
 export 'src/permissions/containment_resolver.dart'
     show ContainmentResolver, FindRowsInTxn;
+export 'src/permissions/current_view_rows.dart' show currentViewRows;
 export 'src/permissions/effective_authorization.dart'
     show EffectiveAuthorization;
 export 'src/permissions/fail_safe_authorization_policy.dart'

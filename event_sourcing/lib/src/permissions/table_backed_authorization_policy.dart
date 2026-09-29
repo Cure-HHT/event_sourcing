@@ -54,20 +54,9 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
        _resolver = ContainmentResolver(
          registry: scopeClassRegistry,
          // Containment reads check convergence too, as the class header's
-         // converging-view-reads annotation states.
-         findRowsInTxn: (txn, viewName, {where, limit, offset}) async {
-           final read = await reader.findViewRowsInTxn(
-             txn,
-             viewName,
-             where: where,
-             limit: limit,
-             offset: offset,
-           );
-           if (read.state == ViewConvergenceState.converging) {
-             throw ViewConvergingRefusal(viewName);
-           }
-           return read.rows;
-         },
+         // converging-view-reads annotation states. currentViewRows is the
+         // one adapter both this resolver and ScopeDescendantExpander share.
+         findRowsInTxn: currentViewRows(reader),
        );
 
   /// The reads the policy decides from. A decision given a transaction

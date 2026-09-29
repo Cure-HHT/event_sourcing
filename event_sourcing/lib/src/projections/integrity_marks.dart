@@ -234,21 +234,15 @@ final class _TransactionMarks {
   int authorshipThrough = 0;
 
   /// The authorship of [aggregateId]: in a replay from one read of the
-  /// log, otherwise from the aggregate's held events.
+  /// log, otherwise from the backend's own authorship index (never a scan
+  /// of the aggregate's held events; see `EVS-PRD-materializer/E`).
   Future<_Authorship> authorshipOf(
     Transaction txn,
     StorageBackend backend,
     String aggregateId,
   ) async {
     if (!replay) {
-      final authorship = <String, int?>{};
-      for (final e in await backend.findEventsForAggregateInTxn(
-        txn,
-        aggregateId,
-      )) {
-        _addAuthorship(authorship, e);
-      }
-      return authorship;
+      return backend.readAggregateAuthorshipInTxn(txn, aggregateId);
     }
     var all = authorship;
     if (all == null) {
@@ -526,17 +520,11 @@ final class _Evaluation {
       } else {
         final predecessor = f.evidence['previous_event_hash'];
         if (predecessor == null || predecessor is String) {
-          for (final e in await backend.findEventsByPredecessorInTxn(
+          threshold = await backend.readLowestOriginPositionByPredecessorInTxn(
             txn,
             originatingDatabaseId: chainDb,
             previousEventHash: predecessor as String?,
-          )) {
-            final position = ChainCoordinates.of(e).originPosition;
-            if (position != null &&
-                (threshold == null || position < threshold)) {
-              threshold = position;
-            }
-          }
+          );
         }
       }
     }
