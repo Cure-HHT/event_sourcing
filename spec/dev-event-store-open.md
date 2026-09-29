@@ -19,7 +19,7 @@ D. `EventStore.open` SHALL record the library's package version and data-format 
 
 E. `EventStore.open` SHALL perform its boot in one storage transaction, deciding every refusal (database identity, data format, entry-type downgrade) before its first write, and then appending any library-version event and any registry audit event before creating or marking any view copy; an accepted boot SHALL write in that transaction even when no event or copy is due.
 
-F. At the first open, `EventStore.open` SHALL mint a database identity, or adopt one already stored, and record it in the initialization event; at every later open it SHALL refuse, before writing anything, when the stored identity is missing or differs from the identity recorded in the database's earliest locally appended initialization event, and SHALL refuse with a distinct reason, before writing anything, a database that an earlier data format wrote: one whose locally appended library-version events record no identity or no data format, whose log records locally appended library-version changes but no initialization, or whose stored events or view target versions are in an earlier data format's shape. An event is locally appended when it carries no receiver provenance entry.
+F. At the first open, `EventStore.open` SHALL mint a database identity, or adopt one already stored, and record it in the initialization event; at every later open it SHALL refuse, before writing anything, when the stored identity is missing or differs from the identity recorded in the database's earliest locally appended initialization event, and SHALL refuse with a distinct reason, before writing anything, a database that an earlier data format wrote: one whose locally appended library-version events record no identity or no data format, whose log records locally appended library-version changes but no initialization, or whose stored events are in an earlier data format's shape. An event is locally appended when it carries no receiver provenance entry.
 
 G. `EventStore.open` SHALL report the progress of its boot to an observer the caller may supply: the phase the boot is in (its checks, and its completion) and the time since the open began.
 
@@ -63,10 +63,12 @@ The observer is application code, and the library does not let application code 
 
 **Why a database identity, and why only local events?** A database identity names the database independently of the installation or process that opens it, so every event store over one database agrees on it. It is minted once and recorded in the initialization event; the stored copy is checked against that record at every open, so a storage that lost or changed the record the library wrote -- a durability failure, a restore that mixed two databases, tampering -- is refused rather than silently given a new identity. A database that ingests from peers holds their library-version events too, including newer builds' and other identities'. Only events the database appended itself describe it: ingest adds a receiver provenance entry to every event it stores and the library's own appends carry none, so the boot reads only events without one, and a peer cannot forge that property away.
 
-**Why refuse a database with no identity or no data format?** Such a database was written by a build that predates this data format, as is one whose log holds library-version changes but no initialization, or whose stored events or view target versions carry an earlier format's version fields. There is no migration from those builds; the database must be reset, and the refusal says so by name before anything is written rather than failing later on an unreadable shape.
+**Why refuse a database with no identity or no data format?** Such a database was written by a build that predates this data format, as is one whose log holds library-version changes but no initialization, or whose stored events carry an earlier format's version fields. There is no migration from those builds; the database must be reset, and the refusal says so by name before anything is written rather than failing later on an unreadable shape.
 
 ## Changelog
 
+- 2026-09-28 | 0922eae8 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-28 | - | - | Michael Lewis (<michael@anspar.org>) | F and its Rationale: an earlier data format is recognised by its stored events; the library stores no view target versions. F is cited by code and tests, and its obligation for the stored events is unchanged
 - 2026-09-25 | c0da95f6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | Rationale: catch-up transactions lock the sequence counter's table in SHARE mode, which conflicts with the boot's; the events the boot appends are folded by catch-up, not in the boot
 - 2026-09-25 | c0da95f6 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -92,4 +94,4 @@ The observer is application code, and the library does not let application code 
 - 2026-08-10 | 963d9e19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 98a3dab0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *EventStore.open boot flow* | **Hash**: c0da95f6
+*End* *EventStore.open boot flow* | **Hash**: 0922eae8
