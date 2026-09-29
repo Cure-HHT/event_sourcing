@@ -153,6 +153,27 @@ final class _HeldFinding {
       origin,
     )).any(authorship.containsKey);
   }
+
+  /// Whether this held, non-authored finding marks [aggregateId] because it
+  /// names it directly and [origin] is in this finding's own originating
+  /// database's succession lineage, per [state]'s lineage read inside
+  /// [txn]. Shared by [_Evaluation.forEvent]'s received-finding lineage
+  /// branch and by [IntegrityMarks.changesOtherMarks]'s currency-scan
+  /// mirror of it, so the two cannot drift.
+  Future<bool> namesByLineage(
+    String aggregateId,
+    String? origin,
+    Transaction txn,
+    StorageBackend backend,
+    _TransactionMarks state,
+  ) async {
+    if (heldAsAuthored || origin == null || !aggregates.contains(aggregateId)) {
+      return false;
+    }
+    final fOrigin = originDatabaseId;
+    if (fOrigin == null) return false;
+    return (await state.lineageOf(txn, backend, fOrigin)).contains(origin);
+  }
 }
 
 /// Who authored the held events of one aggregate: each originating
@@ -312,16 +333,19 @@ abstract final class IntegrityMarks {
       event.entryType == kDestinationSenderSucceededEntryType &&
       event.eventType == kDestinationSenderSucceededEventType;
 
-  /// Whether a held `fork_unrecorded` or `position_reused` finding treats
-  /// [event] as changing outstanding-finding marks other than by [event]
-  /// itself being a finding or a succession event: an event of the
-  /// finding's chain database sharing a fork's predecessor hash (which can
-  /// lower the fork's lowest position, [_Evaluation.forEvent]'s
-  /// `forkUnrecorded` branch), or one at or above the finding's threshold
-  /// position (the same branch's `else`) (EVS-PRD-materializer/E). A view's
-  /// currency scan calls this once a gap event fails the interest and
-  /// finding/succession checks, so the read costs no full log scan: the
-  /// findings this transaction holds are read once and cached by
+  /// Whether a held finding treats [event] as changing outstanding-finding
+  /// marks other than by [event] itself being a finding or a succession
+  /// event (EVS-PRD-materializer/D&E), mirroring the three non-identity
+  /// branches of [_Evaluation.forEvent]: a received finding that names
+  /// [event]'s own aggregate directly and reaches it because [event]'s
+  /// origin is now in the finding's own lineage
+  /// ([_HeldFinding.namesByLineage]); an event of a `fork_unrecorded`
+  /// finding's chain database sharing the fork's predecessor hash, which
+  /// can lower the fork's lowest position; or one at or above a
+  /// `position_reused`/`fork_unrecorded` finding's threshold position. A
+  /// view's currency scan calls this once a gap event fails the interest
+  /// and finding/succession checks, so the read costs no full log scan:
+  /// the findings this transaction holds are read once and cached by
   /// [_stateOf], and this walks only that held set.
   static Future<bool> changesOtherMarks(
     Transaction txn,
@@ -335,6 +359,15 @@ abstract final class IntegrityMarks {
     if (origin == null) return false;
     final eval = _Evaluation(txn, backend, state);
     for (final f in state.findings) {
+      if (await f.namesByLineage(
+        event.aggregateId,
+        origin,
+        txn,
+        backend,
+        state,
+      )) {
+        return true;
+      }
       final chainDb = await eval._chainDatabaseOf(f);
       if (chainDb == null || chainDb != origin) continue;
       if (f.kind == FindingKind.forkUnrecorded &&
@@ -408,13 +441,8 @@ final class _Evaluation {
           }
         }
       }
-      if (!f.heldAsAuthored && f.aggregates.contains(own)) {
-        final fOrigin = f.originDatabaseId;
-        if (fOrigin != null &&
-            origin != null &&
-            (await state.lineageOf(txn, backend, fOrigin)).contains(origin)) {
-          candidates.add(own);
-        }
+      if (await f.namesByLineage(own, origin, txn, backend, state)) {
+        candidates.add(own);
       }
     }
 

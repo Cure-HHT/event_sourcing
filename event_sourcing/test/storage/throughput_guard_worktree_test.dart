@@ -166,4 +166,106 @@ void main() {
       expect(removedPaths, isNot(contains(foreignPath)));
     },
   );
+
+  test('a prefixed worktree locked with a live owner pid is left alone by the '
+      'sweep', () async {
+    final git = _FakeGit();
+    final systemTempPath = Directory.systemTemp.path;
+    final livePath = p.join(
+      systemTempPath,
+      'evs-throughput-guard-live1',
+      'evs-baseline',
+    );
+    git.answers['worktree list --porcelain'] =
+        'worktree $livePath\nHEAD 0000000000000000000000000000000000000000\n'
+        'locked evs-throughput-guard pid=4242\ndetached\n';
+
+    await withThroughputGuardWorktree<void>(
+      repoRoot: repoRoot,
+      commit: commit,
+      runGit: git.call,
+      isProcessAlive: (ownerPid) => ownerPid == 4242,
+      body: (worktreePath) async {},
+    );
+
+    final removedPaths = [
+      for (final call in git.calls)
+        if (call.args case ['worktree', 'remove', '--force', final path]) path,
+    ];
+    expect(removedPaths, isNot(contains(livePath)));
+  });
+
+  test('a prefixed worktree locked by a dead owner pid, or left unlocked, is '
+      'still swept', () async {
+    final git = _FakeGit();
+    final systemTempPath = Directory.systemTemp.path;
+    final deadOwnerPath = p.join(
+      systemTempPath,
+      'evs-throughput-guard-dead1',
+      'evs-baseline',
+    );
+    final unlockedPath = p.join(
+      systemTempPath,
+      'evs-throughput-guard-unlocked1',
+      'evs-baseline',
+    );
+    git.answers['worktree list --porcelain'] =
+        'worktree $deadOwnerPath\nHEAD 0000000000000000000000000000000000000000\n'
+        'locked evs-throughput-guard pid=999999\ndetached\n\n'
+        'worktree $unlockedPath\nHEAD 0000000000000000000000000000000000000000\n'
+        'detached\n';
+
+    await withThroughputGuardWorktree<void>(
+      repoRoot: repoRoot,
+      commit: commit,
+      runGit: git.call,
+      isProcessAlive: (ownerPid) => false,
+      body: (worktreePath) async {},
+    );
+
+    final removedPaths = [
+      for (final call in git.calls)
+        if (call.args case ['worktree', 'remove', '--force', final path]) path,
+    ];
+    expect(removedPaths, containsAll([deadOwnerPath, unlockedPath]));
+  });
+
+  test("the guard's own worktree is created locked with its pid, unlocked, "
+      'then removed after a successful body', () async {
+    final git = _FakeGit();
+    String? worktreePath;
+
+    await withThroughputGuardWorktree<void>(
+      repoRoot: repoRoot,
+      commit: commit,
+      runGit: git.call,
+      isProcessAlive: (ownerPid) => true,
+      body: (path) async {
+        worktreePath = path;
+      },
+    );
+
+    expect(worktreePath, isNotNull);
+
+    final addCall = git.calls.firstWhere(
+      (c) => c.args.length > 1 && c.args[0] == 'worktree' && c.args[1] == 'add',
+    );
+    expect(addCall.args, contains('--lock'));
+    expect(addCall.args.any((a) => a.contains('pid=$pid')), isTrue);
+
+    final unlockIndex = git.calls.indexWhere(
+      (c) => switch (c.args) {
+        ['worktree', 'unlock', final path] => path == worktreePath,
+        _ => false,
+      },
+    );
+    final removeIndex = git.calls.indexWhere(
+      (c) => switch (c.args) {
+        ['worktree', 'remove', '--force', final path] => path == worktreePath,
+        _ => false,
+      },
+    );
+    expect(unlockIndex, greaterThanOrEqualTo(0));
+    expect(removeIndex, greaterThan(unlockIndex));
+  });
 }

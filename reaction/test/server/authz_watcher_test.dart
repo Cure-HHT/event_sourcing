@@ -18,6 +18,7 @@ import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:logging/logging.dart';
 import 'package:reaction/src/server/authorization_watcher.dart';
 import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -28,11 +29,14 @@ import '../local/test_support/reaction_test_harness.dart';
 /// the principal's active role as-is for every user except the
 /// configured `throwFor` userIds, for which it throws
 /// [ViewConvergingRefusal] the way the real policy does while its role
-/// or permission view converges.
+/// or permission view converges, and the configured `throwOtherFor`
+/// userIds, for which it throws an arbitrary non-refusal error (e.g. a
+/// storage error) the way an unrelated backend failure would surface.
 class _FakePolicy extends AuthorizationPolicy {
-  _FakePolicy({this.throwFor = const {}});
+  _FakePolicy({this.throwFor = const {}, this.throwOtherFor = const {}});
 
   final Set<String> throwFor;
+  final Set<String> throwOtherFor;
   final List<String> queried = [];
 
   @override
@@ -54,6 +58,9 @@ class _FakePolicy extends AuthorizationPolicy {
     queried.add(p.userId);
     if (throwFor.contains(p.userId)) {
       throw const ViewConvergingRefusal('user_role_scopes');
+    }
+    if (throwOtherFor.contains(p.userId)) {
+      throw StateError('backend unavailable for ${p.userId}');
     }
     return EffectiveAuthorization(
       activeRole: p.activeRole,
@@ -174,6 +181,74 @@ void main() {
     expect(bob.closeCode, 4003);
     expect(carol.closeCode, 4003);
   });
+
+  test(
+    'permission_revoked fails closed on a non-refusal error too, '
+    'forcing that user out and continuing the loop, logged at severe',
+    () async {
+      final alice = _RecordingChannel();
+      final bob = _RecordingChannel();
+      final carol = _RecordingChannel();
+      registry
+        ..register('alice', alice)
+        ..register('bob', bob)
+        ..register('carol', carol);
+
+      final policy = _FakePolicy(throwOtherFor: {'bob'});
+      final watcher = AuthorizationWatcher(
+        eventStore: h.eventStore,
+        connectionRegistry: registry,
+        policy: policy,
+      );
+      await watcher.start();
+      addTearDown(watcher.stop);
+
+      final records = <LogRecord>[];
+      final logSub = Logger.root.onRecord.listen(records.add);
+      addTearDown(logSub.cancel);
+      final previousLevel = Logger.root.level;
+      Logger.root.level = Level.ALL;
+      addTearDown(() => Logger.root.level = previousLevel);
+
+      final errors = <Object>[];
+      await runZonedGuarded(() async {
+        await appendPermissionEvent('permission_revoked', 'install');
+        for (var i = 0; i < 20 && policy.queried.length < 3; i++) {
+          await pumpEventQueue();
+        }
+      }, (error, stack) => errors.add(error));
+
+      expect(
+        errors,
+        isEmpty,
+        reason: 'no uncaught async error escapes the unawaited fan-out',
+      );
+      expect(alice.closeCode, 4003);
+      expect(
+        bob.closeCode,
+        4003,
+        reason:
+            "fail closed: bob's role could not be determined "
+            'because the policy threw an unexpected error',
+      );
+      expect(
+        carol.closeCode,
+        4003,
+        reason: 'the loop continues past the failing user',
+      );
+      expect(
+        records.any(
+          (r) =>
+              r.level == Level.SEVERE &&
+              r.loggerName == 'reaction.authorization_watcher',
+        ),
+        isTrue,
+        reason:
+            'the non-refusal error is logged at severe through '
+            'the package logger',
+      );
+    },
+  );
 
   test('permission_granted sends stale_data even to a user whose role '
       'view is converging (over-notify is safe)', () async {

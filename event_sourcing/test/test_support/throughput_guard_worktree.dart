@@ -20,8 +20,47 @@ typedef GitRunner =
 
 /// The prefix on the temporary directory this helper creates per run. Only a
 /// worktree registered under the system temp directory with this prefix is
-/// ever removed as "stale"; every other worktree registration is left alone.
+/// ever swept as "stale"; every other worktree registration is left alone.
 const kThroughputGuardWorktreePrefix = 'evs-throughput-guard-';
+
+/// Reports whether the process identified by [pid] is still running.
+/// Injectable so a test can fake liveness deterministically; the default
+/// implementation shells out to `kill -0` (POSIX) or `tasklist` (Windows)
+/// and, when that check itself cannot run, answers `true` so an unreadable
+/// answer never causes a live guard's worktree to be swept.
+typedef ProcessLivenessChecker = bool Function(int pid);
+
+bool _defaultIsProcessAlive(int ownerPid) {
+  try {
+    if (Platform.isWindows) {
+      final result = Process.runSync('tasklist', [
+        '/FI',
+        'PID eq $ownerPid',
+        '/NH',
+      ]);
+      return result.exitCode == 0 &&
+          (result.stdout as String).contains('$ownerPid');
+    }
+    final result = Process.runSync('kill', ['-0', '$ownerPid']);
+    return result.exitCode == 0;
+  } catch (_) {
+    return true;
+  }
+}
+
+/// The lock reason a guard's own worktree is added with, naming the owning
+/// process so a concurrently running guard's sweep can tell this worktree
+/// is still live and skip it.
+String _lockReasonFor(int ownerPid) => 'evs-throughput-guard pid=$ownerPid';
+
+final _lockReasonPidPattern = RegExp(r'^evs-throughput-guard pid=(\d+)$');
+
+int? _pidFromLockReason(String? reason) {
+  if (reason == null) return null;
+  final match = _lockReasonPidPattern.firstMatch(reason);
+  if (match == null) return null;
+  return int.tryParse(match.group(1)!);
+}
 
 /// Checks out [commit] as a detached worktree under a fresh temp directory,
 /// runs [body] with that worktree's path, and cleans up afterward.
@@ -34,10 +73,14 @@ const kThroughputGuardWorktreePrefix = 'evs-throughput-guard-';
 /// Before adding the worktree, removes any worktree registration left behind
 /// by a prior run that did not reach its own cleanup (e.g. one killed
 /// mid-run): one whose path lies under the system temp directory inside a
-/// directory named with [kThroughputGuardWorktreePrefix]. No other
-/// registration is touched. Running two guards concurrently against the
-/// same repository is unsupported: each would sweep the other's still-live
-/// registration.
+/// directory named with [kThroughputGuardWorktreePrefix] and whose owning
+/// process (recorded in the worktree's lock reason when it was added) is no
+/// longer running, or that was never locked at all. Each worktree this
+/// helper adds is locked with a reason naming its own process id, so a
+/// concurrently running guard's still-live worktree is recognised and left
+/// alone; only a registration whose owner has died, or an unlocked leftover
+/// from before this liveness check existed, is swept. No registration
+/// outside [kThroughputGuardWorktreePrefix] is ever touched.
 ///
 /// Every cleanup failure is reported through [onCleanupFailure], and the
 /// temp directory deletion is always attempted even when the worktree
@@ -57,12 +100,14 @@ Future<T> withThroughputGuardWorktree<T>({
   required GitRunner runGit,
   required Future<T> Function(String worktreePath) body,
   void Function(String message)? onCleanupFailure,
+  ProcessLivenessChecker isProcessAlive = _defaultIsProcessAlive,
 }) async {
   final systemTempPath = Directory.systemTemp.path;
   await _removeStaleRegistrations(
     repoRoot: repoRoot,
     runGit: runGit,
     systemTempPath: systemTempPath,
+    isProcessAlive: isProcessAlive,
     onCleanupFailure: onCleanupFailure,
   );
 
@@ -80,6 +125,9 @@ Future<T> withThroughputGuardWorktree<T>({
       'worktree',
       'add',
       '--detach',
+      '--lock',
+      '--reason',
+      _lockReasonFor(pid),
       worktreePath,
       commit,
     ], workingDirectory: repoRoot);
@@ -94,6 +142,19 @@ Future<T> withThroughputGuardWorktree<T>({
   final cleanupFailures = <String>[];
   if (worktreeAdded) {
     try {
+      // Unlock before removing: the worktree was added locked (so a
+      // concurrent guard's sweep leaves it alone while live), and
+      // `worktree remove --force` alone refuses a locked worktree. Best
+      // effort — an unlock failure does not stop the removal attempt.
+      try {
+        await runGit([
+          'worktree',
+          'unlock',
+          worktreePath,
+        ], workingDirectory: repoRoot);
+      } catch (_) {
+        // Ignored: the removal below reports the failure that matters.
+      }
       await runGit([
         'worktree',
         'remove',
@@ -116,7 +177,9 @@ Future<T> withThroughputGuardWorktree<T>({
         'list',
         '--porcelain',
       ], workingDirectory: repoRoot);
-      if (_registeredWorktreePaths(listing).contains(worktreePath)) {
+      if (_parseWorktreeEntries(
+        listing,
+      ).any((entry) => entry.path == worktreePath)) {
         cleanupFailures.add(
           'worktree $worktreePath is still registered after removal',
         );
@@ -146,6 +209,7 @@ Future<void> _removeStaleRegistrations({
   required String repoRoot,
   required GitRunner runGit,
   required String systemTempPath,
+  required ProcessLivenessChecker isProcessAlive,
   void Function(String message)? onCleanupFailure,
 }) async {
   final String listing;
@@ -159,26 +223,79 @@ Future<void> _removeStaleRegistrations({
     onCleanupFailure?.call('listing worktrees failed: $e');
     return;
   }
-  for (final path in _registeredWorktreePaths(listing)) {
-    if (!_isOwnStaleWorktree(path, systemTempPath: systemTempPath)) continue;
+  for (final entry in _parseWorktreeEntries(listing)) {
+    if (!_isOwnStaleWorktree(entry.path, systemTempPath: systemTempPath)) {
+      continue;
+    }
+    final ownerPid = _pidFromLockReason(entry.lockReason);
+    if (ownerPid != null && isProcessAlive(ownerPid)) {
+      // A running guard still owns this worktree; it is not stale.
+      continue;
+    }
+    if (entry.lockReason != null) {
+      try {
+        await runGit([
+          'worktree',
+          'unlock',
+          entry.path,
+        ], workingDirectory: repoRoot);
+      } catch (_) {
+        // Ignored: the removal below reports the failure that matters.
+      }
+    }
     try {
       await runGit([
         'worktree',
         'remove',
         '--force',
-        path,
+        entry.path,
       ], workingDirectory: repoRoot);
     } catch (e) {
-      onCleanupFailure?.call('removing stale worktree $path failed: $e');
+      onCleanupFailure?.call(
+        'removing stale worktree ${entry.path} failed: $e',
+      );
     }
   }
 }
 
-/// The `worktree <path>` lines of `git worktree list --porcelain` output.
-List<String> _registeredWorktreePaths(String porcelain) => [
-  for (final line in porcelain.split('\n'))
-    if (line.startsWith('worktree ')) line.substring('worktree '.length).trim(),
-];
+/// One block of `git worktree list --porcelain` output: a worktree's path
+/// and, when the worktree is locked, its lock reason (empty string when
+/// locked with no reason recorded).
+class _WorktreeEntry {
+  _WorktreeEntry(this.path, this.lockReason);
+  final String path;
+  final String? lockReason;
+}
+
+/// Parses `git worktree list --porcelain` output into one entry per
+/// worktree block (blocks are separated by blank lines).
+List<_WorktreeEntry> _parseWorktreeEntries(String porcelain) {
+  final entries = <_WorktreeEntry>[];
+  String? path;
+  String? lockReason;
+  void flush() {
+    if (path != null) entries.add(_WorktreeEntry(path!, lockReason));
+    path = null;
+    lockReason = null;
+  }
+
+  for (final line in porcelain.split('\n')) {
+    if (line.isEmpty) {
+      flush();
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      flush();
+      path = line.substring('worktree '.length).trim();
+    } else if (line == 'locked') {
+      lockReason = '';
+    } else if (line.startsWith('locked ')) {
+      lockReason = line.substring('locked '.length);
+    }
+  }
+  flush();
+  return entries;
+}
 
 /// True when [path] lies under [systemTempPath] inside a first-level
 /// directory named with [kThroughputGuardWorktreePrefix] — i.e. a temp

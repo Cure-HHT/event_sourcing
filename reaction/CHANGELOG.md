@@ -21,11 +21,21 @@
 - Action dispatch and the permission-snapshot route answer a
   `ViewConvergingRefusal` with a 503 and a `{"error": "view_converging",
   "view": "<name>"}` body naming the view (`Retry-After` set).
-  `RemoteActionSubmitter` and `RemotePermissionSource` decode that body
-  with `decodeViewConvergingBody` and throw the typed, transient
+  `RemoteActionSubmitter` decodes that body with
+  `decodeViewConvergingBody` and throws the typed, transient
   `ViewConvergingRefusal` rather than a generic `TransportException`.
+  `RemotePermissionSource` decodes it the same way and, on both the
+  Authenticated-transition fetch and an explicit `refresh()`, schedules
+  a bounded-backoff retry (honouring `Retry-After` when the server
+  sends one) instead of leaving the snapshot stale; `refresh()` still
+  throws the refusal to its awaiting caller. Its `converging` getter
+  and `convergingStream` expose the typed refusal while a retry is
+  pending, clearing on the next successful fetch.
 - `AuthorizationWatcher`'s revoke fan-out (`permission_revoked`,
-  `role_unassigned`) fails closed: a connected user whose role membership
-  cannot be confirmed while the permission policy's view converges is
-  force-logged-out rather than left connected, and the fan-out continues
-  past that user rather than aborting on the transient refusal.
+  `role_unassigned`) fails closed on every error reading a connected
+  user's role, not only the permission policy's typed
+  `ViewConvergingRefusal`: the user is force-logged-out rather than left
+  connected either way, and the fan-out continues past that user rather
+  than aborting. An error other than the typed refusal is logged at
+  `severe` through the `logging` package, since it is not the expected
+  transient case. No error from the unawaited fan-out escapes uncaught.

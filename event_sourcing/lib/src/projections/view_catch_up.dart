@@ -311,7 +311,34 @@ class ViewCatchUpDriver {
     for (final copy in copies) {
       if (copy.markedForDeletion) _deletionCopyIds.add(copy.copyId);
     }
+    _pruneStaleProgress(copies);
     return copies;
+  }
+
+  /// Removes every progress entry whose key another instance's write has
+  /// made stale: a copy id no longer discovered, or a fingerprint that now
+  /// has an unmarked copy. Left in place, such an entry's `nextAttemptAt`
+  /// sits in the past forever, making [_nextWaitDuration] return zero on
+  /// every idle wait, and its `lastFailure` leaks through
+  /// `EventStore.viewProgress`'s fingerprint fallback for a copy that has
+  /// never itself failed.
+  // Implements: EVS-DEV-view-convergence/Q
+  // Implements: EVS-DEV-view-convergence/W
+  void _pruneStaleProgress(List<ViewCopy> copies) {
+    if (_progressByCopyId.isEmpty) return;
+    final liveCopyIds = {for (final copy in copies) copy.copyId};
+    final unmarkedFingerprints = {
+      for (final copy in copies)
+        if (!copy.markedForDeletion) copy.fingerprint,
+    };
+    final liveFingerprints = {
+      for (final target in _targets)
+        if (!unmarkedFingerprints.contains(target.fingerprint))
+          target.fingerprint,
+    };
+    _progressByCopyId.removeWhere(
+      (key, _) => !liveCopyIds.contains(key) && !liveFingerprints.contains(key),
+    );
   }
 
   bool _dueNow(String copyId) {
@@ -436,13 +463,23 @@ class ViewCatchUpDriver {
       // pointing at a copy id no reader can find.
       _viewCopyIds[target.viewName] = result.copyId;
       // Implements: EVS-DEV-view-convergence/Q
-      // Clears whichever key a prior failure on this attempt was recorded
-      // under -- the fingerprint when no copy existed yet, the copy id
-      // otherwise -- so a stale backoff entry never lingers once the
-      // attempt it was keyed for succeeds: left in place, its
-      // `nextAttemptAt` would sit in the past forever, making
-      // `_nextWaitDuration` return zero on every future idle wait.
-      _onSuccess(lockKey);
+      // Implements: EVS-DEV-view-convergence/W
+      // Resets the resolved copy's own progress, keeping its last recorded
+      // failure for diagnostics, and removes any other key this attempt
+      // was keyed under in the past -- the fingerprint when no copy
+      // existed yet, or a copy id another instance has since replaced --
+      // entirely, rather than merely clearing its `nextAttemptAt`. A
+      // stale key left with a cleared `nextAttemptAt` still keeps a
+      // `lastFailure` that `EventStore.viewProgress`'s fingerprint
+      // fallback would attribute to a copy that never itself failed; the
+      // discovery pass (`_pruneStaleProgress`) also prunes such a key
+      // once it stops matching a discovered copy or a fingerprint that
+      // still lacks one, so a stale entry never outlives the next pass
+      // even without a further attempt on it succeeding.
+      _onSuccess(result.copyId);
+      for (final staleKey in {lockKey, target.fingerprint}) {
+        if (staleKey != result.copyId) _progressByCopyId.remove(staleKey);
+      }
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
       return result.steps == 0
           ? _Outcome.idle

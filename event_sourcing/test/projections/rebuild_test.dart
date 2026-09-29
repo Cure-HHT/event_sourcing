@@ -1,7 +1,13 @@
 // Verifies: EVS-DEV-view-convergence/U
-// rebuildView marks the instance's copy of the view for deletion and
-//   creates an empty copy of the same fingerprint, in one transaction: the
-//   copy id changes and the old copy's rows are gone once catch-up has run.
+// rebuildView marks the fingerprint's current unmarked copy for deletion,
+//   resolved from stored state rather than a cached copy id, and creates
+//   an empty copy of the same fingerprint, in one transaction: the copy id
+//   changes and the old copy's rows are gone once catch-up has run. It
+//   does not throw when another instance already rebuilt or marked the
+//   copy.
+// Verifies: EVS-DEV-view-convergence/T
+// finding no unmarked copy of the fingerprint stored (another instance
+//   marked it without replacing it), rebuildView creates one.
 // Verifies: EVS-DEV-view-convergence/V
 // rebuildView returns once the new copy is current for the instance, and
 //   throws ViewConvergenceTimeout, naming the view and the copy's
@@ -11,6 +17,7 @@
 //   log already derived.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/projections/view_fingerprint.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 
@@ -279,6 +286,73 @@ void main() {
             'at least one append interleaved with the still-converging '
             'rebuild rather than waiting behind it',
       );
+      await testBackendOf(store).close();
+    });
+
+    test('rebuildView resolves the copy by fingerprint, not the stale '
+        'in-memory copy id: it does not throw when another instance already '
+        'rebuilt the view', () async {
+      final store = await _openStore();
+      await _appendNote(store, 'agg-1');
+      final backend = testBackendOf(store);
+      final staleCopyId = store.copyIdOf(_kView);
+      final spec = store.projections.lookup(_kView)!;
+      final fingerprint = viewFingerprint(
+        spec,
+        store.entryTypes,
+        store.promoters,
+      );
+
+      // Stands in for another instance's rebuild: it marks the copy this
+      // instance's cache still names and creates the replacement, all
+      // before this instance's own catch-up has refreshed its cache.
+      final otherInstanceCopyId = await backend.transaction<String>((
+        txn,
+      ) async {
+        await backend.markViewCopyForDeletionInTxn(txn, staleCopyId);
+        return backend.createViewCopyInTxn(txn, _kView, fingerprint, 0);
+      });
+
+      await rebuildView(
+        store: store,
+        viewName: _kView,
+        deadline: _farDeadline(),
+      );
+
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      final unmarkedOfFingerprint = copies.where(
+        (c) => c.fingerprint == fingerprint && !c.markedForDeletion,
+      );
+      expect(unmarkedOfFingerprint, hasLength(1));
+      expect(unmarkedOfFingerprint.single.copyId, isNot(otherInstanceCopyId));
+      expect(unmarkedOfFingerprint.single.copyId, isNot(staleCopyId));
+
+      final afterRead = await store.reader.findViewRows(_kView);
+      expect(afterRead.state, ViewConvergenceState.current);
+      expect(afterRead.rows, hasLength(1));
+      await testBackendOf(store).close();
+    });
+
+    test('rebuildView creates a replacement when another instance already '
+        'marked the copy without creating one', () async {
+      final store = await _openStore();
+      await _appendNote(store, 'agg-1');
+      final backend = testBackendOf(store);
+      final staleCopyId = store.copyIdOf(_kView);
+
+      await backend.transaction((txn) async {
+        await backend.markViewCopyForDeletionInTxn(txn, staleCopyId);
+      });
+
+      await rebuildView(
+        store: store,
+        viewName: _kView,
+        deadline: _farDeadline(),
+      );
+
+      final afterRead = await store.reader.findViewRows(_kView);
+      expect(afterRead.state, ViewConvergenceState.current);
+      expect(afterRead.rows, hasLength(1));
       await testBackendOf(store).close();
     });
   });

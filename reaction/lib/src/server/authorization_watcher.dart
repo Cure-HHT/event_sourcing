@@ -31,11 +31,13 @@
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:logging/logging.dart';
 import 'package:reaction/src/server/ws_connection_registry.dart';
 import 'package:reaction/src/wire/subscription_messages.dart';
+
+final _log = Logger('reaction.authorization_watcher');
 
 /// Watches the substrate's permission and role-assignment event
 /// types. On security-narrowing events (role_unassigned,
@@ -179,9 +181,10 @@ class AuthorizationWatcher {
   }
 
   // Implements: EVS-DEV-converging-view-reads/H
-  // (the watcher's own force-logout decision fails closed, per user,
-  // on the policy's typed transient refusal rather than aborting the
-  // fan-out or treating the user as unaffected)
+  // (the watcher's own force-logout decision fails closed, per user, on
+  // the policy's typed transient refusal or on any other error reading
+  // its role, rather than aborting the fan-out or treating the user as
+  // unaffected)
   Future<void> _forceLogoutAllWithRole(String role) async {
     for (final uid in connectionRegistry.connectedUserIds.toList()) {
       // Synthetic principal to query the policy (activeRole is not
@@ -199,6 +202,19 @@ class AuthorizationWatcher {
         // cannot be confirmed one way or the other while the policy's
         // view converges, so force them out rather than assume they
         // still hold the role. The loop continues with later users.
+        _forceLogout(uid);
+      } catch (error, stackTrace) {
+        // Fail closed on any other error too: a narrowing event fired
+        // and this user's role could not be determined, so force them
+        // out rather than assume they still hold the role. Log at
+        // severe since this is not the expected transient refusal, and
+        // continue the loop with later users.
+        _log.severe(
+          'AuthorizationWatcher could not determine role for '
+          '$uid while force-logging-out role $role; forcing them out',
+          error,
+          stackTrace,
+        );
         _forceLogout(uid);
       }
     }
@@ -231,19 +247,15 @@ class AuthorizationWatcher {
 
   /// Runs a fan-out body and swallows any residual error rather than
   /// letting it escape the `unawaited()` call as an uncaught async
-  /// error. Per-user `ViewConvergingRefusal`s are already handled inside
+  /// error. Per-user errors are already handled per-user inside
   /// [_forceLogoutAllWithRole] and [_staleDataAllWithRole]; this is a
-  /// last-resort guard for anything else the policy or registry throws.
+  /// last-resort guard for anything else the policy or registry throws
+  /// (e.g. a failure enumerating connected users).
   Future<void> _runFanOut(Future<void> Function() body) async {
     try {
       await body();
     } catch (error, stackTrace) {
-      developer.log(
-        'AuthorizationWatcher fan-out failed',
-        name: 'reaction.authorization_watcher',
-        error: error,
-        stackTrace: stackTrace,
-      );
+      _log.severe('AuthorizationWatcher fan-out failed', error, stackTrace);
     }
   }
 }

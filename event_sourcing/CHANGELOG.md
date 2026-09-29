@@ -286,6 +286,17 @@ created by an earlier release is dropped and provisioned again with
   extends its own origin chain on its own channels without forking it;
   the library records nothing for it, and reconciling two live senders of
   one identity is the application's choice.
+- Among the distinct-hash occurrences of one served `event_id`, the
+  restore chooses the occurrence it can actually store as the event
+  ahead of one it cannot (a record kept only in an `event_malformed`
+  finding), regardless of their (registration, generation, delivery
+  number) order; the existing tie-break still decides between
+  occurrences it could equally store. Every other distinct-hash
+  occurrence is recorded in an `identity_mismatch` finding after the
+  chosen occurrence is stored (or kept in its own finding); when the
+  chosen occurrence was itself kept only in a finding, an extra
+  occurrence can still be the one stored as the event, out of the
+  ordered store's lineage-and-origin-position order.
 
 ### Delivery: one drainer per database
 
@@ -628,7 +639,30 @@ created by an earlier release is dropped and provisioned again with
   fingerprint in one transaction, then returns once the replacement is
   current or throws `ViewConvergenceTimeout`, naming the copy's progress,
   once `deadline` passes first; it no longer takes a target entry-type
-  version.
+  version. It resolves the fingerprint's current unmarked copy from
+  stored state inside that transaction rather than the instance's cached
+  copy id, so a rebuild that follows another instance's already-
+  committed mark or replacement of the copy proceeds against what is
+  actually stored instead of throwing.
+- `ViewCatchUpDriver`'s per-copy backoff no longer leaves a stale entry
+  once the key it was recorded under stops matching a discovered copy: a
+  successful catch-up drops every earlier key that attempt was keyed
+  under (the fingerprint, before a copy existed; a copy id another
+  instance has since replaced) once it resolves the copy actually
+  written, and each discovery pass prunes any backoff entry left keyed
+  under a copy id no longer found or a fingerprint that now has an
+  unmarked copy. A stale entry previously kept its `nextAttemptAt` in
+  the past forever, so the driver's idle wait for that copy never grew
+  past zero once another instance created it.
+- The currency scan (`IntegrityMarks.changesOtherMarks`, mirroring
+  `_Evaluation.forEvent`) covers the received-finding lineage branch: an
+  event of the aggregate a held, non-authored finding names, authored by
+  the finding's originating database or a database in its succession
+  lineage, changes that aggregate's outstanding-finding mark, so a copy
+  with such an event past its watermark reports converging until it
+  folds it -- the same as the fork-unrecorded and position-reused
+  branches already covered. `_HeldFinding.namesByLineage` is the read
+  both the fold and the currency scan share, so the two cannot drift.
 
 ### Storage contract
 
@@ -717,10 +751,13 @@ created by an earlier release is dropped and provisioned again with
   stay at least half of the data-format-2 build's on the same workload and
   host; a conformance test gated on `PG_TEST_URL` plus an opt-in variable
   checks out that build into a temporary worktree and measures both
-  builds against it; the guard cleans up only the worktree it created
-  under its own temp directory, leaves every other worktree untouched,
-  and never lets that cleanup mask the measurement's own failure. On
-  Sembast, an ordinary append's cost stays constant as the store grows,
+  builds against it; the guard locks its own worktree with its process id
+  and a stale-worktree sweep before each run removes only a worktree
+  registration under its own temp-directory prefix whose owning process
+  has died (or that was never locked), so a concurrently running guard's
+  live worktree is never swept, and never lets that cleanup mask the
+  measurement's own failure. On Sembast, an ordinary append's cost stays
+  constant as the store grows,
   proven in the default suite by a test comparing append cost at two
   store sizes, a received fork finding and a succession event included.
   A read's currency scan resolves a copy through

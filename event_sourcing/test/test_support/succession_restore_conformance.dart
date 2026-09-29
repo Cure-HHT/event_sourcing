@@ -578,6 +578,72 @@ void runSuccessionRestoreScenarios({
       expect(mismatch, hasLength(1));
     });
 
+    // Verifies: EVS-DEV-sender-succession/C
+    // Verifies: EVS-DEV-security-findings/G
+    test('the well-formed occurrence of a distinct-hash event_id is stored '
+        'in its ordered origin position, ahead of a later event of the '
+        'same identity, instead of after the whole ordered store', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-distinct-hash-order';
+      final genOne = testChannel(predecessorId, generation: 1);
+      final genTwo = testChannel(predecessorId, generation: 2);
+      // Sorts lowest (generation 1) and is unstorable: a top-level key the
+      // views reserve. The well-formed occurrence, on generation 2, sorts
+      // higher but is the one this database can actually store.
+      final malformed = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: const <String, Object?>{r'$integrity': 'forged'},
+      );
+      final wellFormed = resealed(malformed, <String, Object?>{
+        'data': <String, Object?>{'title': 'ok'},
+        'sequence_number': 1,
+      });
+      // A later event of the same identity, at the next origin position.
+      final laterEvent = _recordAt(predecessorId, 2);
+      await deliverTo(receiver, <Map<String, Object?>>[
+        malformed,
+      ], channel: genOne);
+      await deliverTo(receiver, <Map<String, Object?>>[
+        wellFormed,
+        laterEvent,
+      ], channel: genTwo);
+
+      final bundle = await successorBundle(receiver);
+      final successor = bundle.eventStore;
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final restored = await successor.reader.findAllEvents(entryType: _kType);
+      restored.sort((a, b) => a.sequenceNumber.compareTo(b.sequenceNumber));
+      expect(
+        restored.map((e) => e.eventId),
+        <Object?>[wellFormed['event_id'], laterEvent['event_id']],
+        reason:
+            'the well-formed occurrence is stored at its own ascending '
+            'origin position, before the later event of the same '
+            'identity, not after the whole ordered store',
+      );
+
+      final findings = await _ownFindings(successor);
+      final malformedFindings = findings.where(
+        (f) => f['kind'] == 'event_malformed',
+      );
+      expect(
+        malformedFindings.where(
+          (f) =>
+              ((f['evidence']! as Map)['record']! as Map)['event_id'] ==
+              malformed['event_id'],
+        ),
+        hasLength(1),
+        reason: 'the unstorable occurrence is kept in its own finding',
+      );
+    });
+
     // Verifies: EVS-DEV-sender-succession/B
     test('a distinct-hash occurrence that ends up stored, because the chosen '
         'occurrence of its event_id was kept only in its own finding, gets '

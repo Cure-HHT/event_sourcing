@@ -91,10 +91,14 @@ class RemoteScope implements ReactionScope {
     // permissions on the next Authenticated transition.
     //
     // Implements: EVS-DEV-converging-view-reads/H
-    // this trigger is fire-and-forget with nothing awaiting it, so a
-    //   ViewConvergingRefusal from `refresh()` is swallowed here rather
-    //   than becoming an unhandled async error; the next stale_data
-    //   envelope, or the view's own next catch-up, retries it.
+    // this trigger is fire-and-forget with nothing awaiting it. `refresh()`
+    //   already schedules its own bounded-backoff retry on a 503
+    //   view_converging response (RemotePermissionSource's retry seam),
+    //   so the catchError here exists only to keep that refusal from
+    //   becoming an unhandled async error, not to provide the retry
+    //   itself — there is no other retry path: the view's own next
+    //   catch-up retries nothing here, since RemotePermissionSource is
+    //   not itself a subscribed view.
     _connection.onStaleData = (_) => unawaited(
       _perms.refresh().catchError(
         (Object _) {},

@@ -163,9 +163,14 @@ class _SuccessionRestore {
     // an event_id served under more than one distinct event_hash (a
     //   tampered or resealed record served alongside the genuine one, kept
     //   by the receiver in an identity_mismatch finding of its own) is not
-    //   deduplicated across hashes: the lowest-sorting occurrence of the
-    //   lowest-sorting distinct hash is chosen for storage, and every other
-    //   distinct-hash occurrence of that id is checked and recorded below.
+    //   deduplicated across hashes: the occurrence this database can store
+    //   (EventStore._unstorableReason finds none) is chosen ahead of one it
+    //   cannot, lowest-sorting among occurrences it can equally store;
+    //   security-findings/G does not mandate the lowest-sorting hash. The
+    //   chosen occurrence takes its place in the ordered store at its own
+    //   lineage and origin position; every other distinct-hash occurrence
+    //   of that id is checked and recorded below, after the ordered store,
+    //   where it is never the occurrence stored as the event.
     final chosen = <String, _RestorePulledRecord>{};
     final extraOccurrences = <_RestorePulledRecord>[];
     final byIdAndHash = <String, Map<Object?, _RestorePulledRecord>>{};
@@ -187,17 +192,12 @@ class _SuccessionRestore {
       }
     }
     for (final entry in byIdAndHash.entries) {
-      _RestorePulledRecord? lowest;
-      for (final occurrence in entry.value.values) {
-        if (lowest == null || occurrence._isLowerThan(lowest)) {
-          lowest = occurrence;
-        }
-      }
-      chosen[entry.key] = lowest!;
-      for (final occurrence in entry.value.values) {
-        if (!identical(occurrence, lowest)) {
-          extraOccurrences.add(occurrence);
-        }
+      final candidates = entry.value.values.toList()
+        ..sort(_compareDistinctHashCandidates);
+      final chosenOccurrence = candidates.first;
+      chosen[entry.key] = chosenOccurrence;
+      for (final occurrence in candidates.skip(1)) {
+        extraOccurrences.add(occurrence);
       }
     }
     extraOccurrences.sort((a, b) {
@@ -536,6 +536,51 @@ class _SuccessionRestore {
     } on StateError {
       return null;
     }
+  }
+
+  /// Whether [record] is an occurrence this database could actually store
+  /// as an event: it parses as a well-formed record and names an
+  /// originator, and [EventStore._unstorableReason] finds no reason (a
+  /// reserved top-level data key, a malformed provenance shape, an
+  /// undeclared reserved-type shape, or an invalid destination-audit
+  /// identity) it cannot store it. This mirrors ingest's own check without
+  /// touching storage, so a distinct-hash occurrence known ahead of time to
+  /// end up kept only in an `event_malformed` finding never displaces one
+  /// this database can genuinely store, whatever their (registration,
+  /// generation, delivery number) sort.
+  // Implements: EVS-DEV-sender-succession/C
+  // Implements: EVS-DEV-security-findings/G
+  static bool _looksStorable(Map<String, Object?> record) {
+    final originator = EventStore._originatorDatabaseOfRecord(record);
+    if (originator == null) return false;
+    try {
+      final event = StoredEvent.fromMap(record, 0)..requireWellFormedRecord();
+      return EventStore._unstorableReason(event, originator) == null;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  /// Orders distinct-hash occurrences of one event_id for the choice of
+  /// which one the restore stores: one [_looksStorable] finds storable
+  /// sorts ahead of one it does not, regardless of their (registration,
+  /// generation, delivery number); within the same storability, the
+  /// existing tie-break decides. `EVS-DEV-security-findings/G` fixes the
+  /// finding a non-chosen occurrence is recorded under, not which
+  /// occurrence is chosen, so this ordering does not mandate the
+  /// lowest-sorting hash.
+  // Implements: EVS-DEV-sender-succession/C
+  // Implements: EVS-DEV-security-findings/G
+  static int _compareDistinctHashCandidates(
+    _RestorePulledRecord a,
+    _RestorePulledRecord b,
+  ) {
+    final storableA = _looksStorable(a.record);
+    final storableB = _looksStorable(b.record);
+    if (storableA != storableB) return storableA ? -1 : 1;
+    if (a._isLowerThan(b)) return -1;
+    if (b._isLowerThan(a)) return 1;
+    return 0;
   }
 
   /// Checks [range]'s deliveries chain by link from delivery 1 and that
