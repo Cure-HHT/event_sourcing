@@ -52,7 +52,10 @@ void main() {
       'v',
       Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
     );
-    fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+    fake.emitViewUpdate<_Row>(
+      'v',
+      const EndOfReplay<_Row>(sequence: 1, state: ViewConvergenceState.current),
+    );
     await _settleStream(tester);
 
     expect(updates, hasLength(2));
@@ -100,7 +103,10 @@ void main() {
       'v',
       Snapshot<_Row>(value: _row('b'), sequence: 2),
     );
-    fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+    fake.emitViewUpdate<_Row>(
+      'v',
+      const EndOfReplay<_Row>(sequence: 2, state: ViewConvergenceState.current),
+    );
     await tester.pumpAndSettle();
 
     expect(

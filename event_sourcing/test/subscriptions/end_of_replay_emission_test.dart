@@ -17,6 +17,7 @@ import 'package:event_sourcing/src/event_store.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
+import 'package:event_sourcing/src/projections/view_read.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/sembast_backend.dart';
@@ -25,6 +26,7 @@ import 'package:event_sourcing/src/storage/storage_description.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
@@ -113,6 +115,7 @@ void main() {
     expect(updates.length, 1);
     expect(marker, isA<EndOfReplay<_Note?>>());
     expect(marker.sequence, 0);
+    expect(marker.state, ViewConvergenceState.current);
     await sub.cancel();
     await store.close();
   });
@@ -231,4 +234,139 @@ void main() {
     await sub.cancel();
     await store.close();
   });
+
+  // Verifies: EVS-DEV-converging-view-reads/E
+  // (a converging view's initial replay,
+  //   naming no aggregates, delivers only the settled row and ends with
+  //   EndOfReplay carrying the converging state)
+  // Verifies: EVS-DEV-converging-view-reads/G
+  // (once the copy catches up, the
+  //   subscription redelivers every row it would snapshot before it
+  //   reports the view current via a second EndOfReplay)
+  test('a converging view (no named aggregates) emits only the settled row and '
+      'EndOfReplay(converging); catch-up redelivers every row before the '
+      'current marker', () async {
+    var paused = true;
+    Future<void> hook(String copyId, String eventId) async {
+      if (paused) {
+        throw const InjectedFailure('paused for end-of-replay test');
+      }
+    }
+
+    await runWithDeliveryTestHooks(
+      DeliveryTestHooks(onCatchUpStep: hook),
+      () async {
+        final (store, backend) = await _openWithBackend();
+        final settled = (await _append(store, 'e1', 'note_added', {
+          'answers': {'q1': 'yes'},
+        }))!;
+        await _append(store, 'e2', 'note_added', {
+          'answers': {'q1': 'no'},
+        });
+        final copyId = store.copyIdOf('diary_entries');
+        await backend.transaction(
+          (txn) => backend.setViewCopyWatermarkInTxn(
+            txn,
+            copyId,
+            settled.sequenceNumber,
+          ),
+        );
+
+        final updates = <Update<_Note?>>[];
+        final firstMarker = Completer<EndOfReplay<_Note?>>();
+        final secondMarker = Completer<EndOfReplay<_Note?>>();
+        final sub = store
+            .subscribe(
+              const SubscriptionFilter(),
+              AggregateMode<_Note?>(
+                viewName: 'diary_entries',
+                mapper: (m) => m.isEmpty ? null : _Note.fromMap(m),
+              ),
+            )
+            .listen((u) {
+              updates.add(u);
+              if (u is EndOfReplay<_Note?>) {
+                if (!firstMarker.isCompleted) {
+                  firstMarker.complete(u);
+                } else if (!secondMarker.isCompleted) {
+                  secondMarker.complete(u);
+                }
+              }
+            });
+
+        final marker1 = await firstMarker.future.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(marker1.state, ViewConvergenceState.converging);
+        expect(updates.whereType<Snapshot<_Note?>>(), hasLength(1));
+        expect(
+          updates
+              .whereType<Snapshot<_Note?>>()
+              .single
+              .value!
+              .entryId
+              .isNotEmpty,
+          isTrue,
+        );
+
+        paused = false;
+
+        final marker2 = await secondMarker.future.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(marker2.state, ViewConvergenceState.current);
+
+        final secondMarkerIndex = updates.indexOf(marker2);
+        final redeliveredE2Index = updates.indexWhere(
+          (u) => u is Snapshot<_Note?> && u.value?.answers['q1'] == 'no',
+        );
+        expect(redeliveredE2Index, greaterThanOrEqualTo(0));
+        expect(redeliveredE2Index, lessThan(secondMarkerIndex));
+
+        await sub.cancel();
+        await store.close();
+      },
+    );
+  });
+}
+
+/// Opens a store the same way [_open] does, but hands back its backend too,
+/// so a test can rewind a view copy's watermark by hand to force it
+/// converging (EVS-DEV-view-convergence).
+Future<(EventStore, SembastBackend)> _openWithBackend() async {
+  final db = await newDatabaseFactoryMemory().openDatabase(
+    'eor-converging-${DateTime.now().microsecondsSinceEpoch}.db',
+  );
+  final backend = SembastBackend(database: db);
+  final entryTypes = EntryTypeRegistry()
+    ..register(
+      const EntryTypeDefinition(
+        id: 'epistaxis_event',
+        registeredVersion: EntryTypeVersion(1, 0),
+        name: 'Epistaxis Event',
+      ),
+    );
+  final projections = ProjectionRegistry()
+    ..register(
+      const AggregateProjectionSpec(
+        viewName: 'diary_entries',
+        interest: SubscriptionFilter(aggregateTypes: {'note'}),
+        tombstoneEventTypes: {'tombstone'},
+      ),
+    );
+  final store = await EventStore.open(
+    storage: ApplicationSuppliedStorage(
+      backend,
+      SembastSecurityContextStore(backend: backend),
+    ),
+    entryTypes: entryTypes,
+    source: const Source(
+      hopId: 'test',
+      identifier: 'test-instance',
+      softwareVersion: '0.0.0-test',
+    ),
+    projections: projections,
+    promoters: PromoterRegistry(),
+  );
+  return (store, backend);
 }

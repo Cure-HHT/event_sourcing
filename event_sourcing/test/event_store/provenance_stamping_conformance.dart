@@ -15,10 +15,7 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show
-        kIngestDuplicateReceivedEventType,
-        kSecurityContextRedactedEntryType,
-        kViewSnapshotPromotedEntryType;
+    show kIngestDuplicateReceivedEventType, kSecurityContextRedactedEntryType;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../test_support/deliveries.dart';
@@ -257,28 +254,6 @@ void runProvenanceStampingScenarios({
         _provenanceOf(initialized).single,
         databaseId: store.databaseId,
       );
-    });
-
-    // Verifies: EVS-DEV-event-record/D
-    // Verifies: EVS-DEV-event-record/E
-    // Verifies: EVS-DEV-event-record/F
-    test('the originator entry of a snapshot-promotion audit names the '
-        'database and the library version', () async {
-      final db = await database();
-      final first = await open(db);
-      await _appendNote(first, 'note-1');
-      final databaseId = first.databaseId;
-      await db.stop(first);
-      opened.remove(first);
-
-      final second = await open(db, noteVersion: const EntryTypeVersion(1, 1));
-
-      expect(second.databaseId, databaseId);
-      final audit = await _single(
-        second,
-        (e) => e.entryType == kViewSnapshotPromotedEntryType,
-      );
-      _expectStamped(_provenanceOf(audit).single, databaseId: databaseId);
     });
 
     // Verifies: EVS-DEV-event-record/D

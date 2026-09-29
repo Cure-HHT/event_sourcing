@@ -551,9 +551,45 @@ created by an earlier release is dropped and provisioned again with
   data format and, on initialization, the database identity
   (`EventStore.databaseId`); a missing or changed stored identity throws
   `DatabaseIdentityMismatchError`. `LibVersion` is exported.
-- Boot-time snapshot promotion re-derives the affected rows from the log,
-  and views registered over events already in the log are caught up at
-  the next open of a build that registers them.
+- A view's copy is identified by the fingerprint of its definition
+  (interest, `ProjectionSpec`, `PromoterSpec`s and entry-type versions,
+  computed by `viewFingerprint`). `EventStore.open` creates an empty copy,
+  with a `folded through position 0` watermark, for every registered view
+  whose fingerprint no stored copy has; an unchanged fingerprint shares its
+  existing copy and keeps folding inline with appends. A new copy catches
+  up after the open in short, bounded catch-up transactions ordered
+  against every append, through the same fold step appends use, never
+  inside the open transaction, so a large or many-view catch-up never
+  holds back an append; each catch-up transaction holds appends for about
+  one second. At most one catch-up transaction runs at a time per copy: a
+  Postgres transaction-scoped advisory try-lock per copy (skipped, not
+  waited on, when already held), and the Sembast single-opener assumption.
+  A copy no build registers is dropped by catch-up. `EventStore.reader`'s
+  row reads report a copy still converging as `ViewConvergenceState
+  .converging` and withhold every row an unfolded event or security
+  finding past its watermark might reach (a table view, which has no
+  settled row while it converges, withholds all of them); a by-key read
+  reports such a key `PendingRow`, distinct from `SettledRow` and
+  `AbsentRow`. The permission-relevant views (role assignment, permission
+  grant, containment) refuse actions with the transient
+  `ViewConvergingRefusal` while converging. The old snapshot-promotion
+  machinery (promotion at open, view-target-version seeding, the
+  catch-up/promotion gap model, leases and scheduling records, the
+  `view_snapshot_promoted` event) is removed.
+- `EventStore.subscribe<T>` gains the `Pending<T>` `Update<T>` variant,
+  delivered for a named aggregate an `AggregateMode` subscription cannot
+  yet confirm settled (in place of a `Snapshot`); `EndOfReplay<T>` gains a
+  `state` field (`ViewConvergenceState.current` or `.converging`). New
+  reads: `EventStore.reader.findViewRows` / `findViewRowsInTxn` /
+  `readViewRowsByKeys` / `readViewRowInTxn` return a `ViewRowsRead` /
+  `ViewRowsByKeyRead` / `ViewRowRead` carrying the copy's convergence
+  state alongside its rows, and `ViewCopyStatus` reports a registered
+  view's state and its copy's watermark, log head and last catch-up
+  failure.
+- `EntryTypeRegistry.register` throws once `EventStore.open` seals the
+  registry: every entry-type registration for a build must be in place
+  before open, matching the sealed `ProjectionRegistry` and
+  `PromoterRegistry`.
 - The incompatible-generation guard: `EventStore.open` registers the
   build's data generation (its data-format major and each entry type's
   major) and throws `IncompatibleGenerationException` while a conflicting
@@ -569,8 +605,12 @@ created by an earlier release is dropped and provisioned again with
   into an event store while the boot runs throws `StateError`.
 - `EventStore.openForTest` is `@visibleForTesting`, runs the same refusals
   and appends no library-version event.
-- `rebuildView` refuses a target version that differs from the registered
-  one, or an unregistered entry type.
+- `rebuildView({store, viewName, deadline})` marks the instance's copy of
+  `viewName` for deletion and creates a new, empty copy of the same
+  fingerprint in one transaction, then returns once the replacement is
+  current or throws `ViewConvergenceTimeout`, naming the copy's progress,
+  once `deadline` passes first; it no longer takes a target entry-type
+  version.
 
 ### Storage contract
 
@@ -718,6 +758,9 @@ created by an earlier release is dropped and provisioned again with
   its fenced idempotency store as `EventStore.idempotencyStore`;
   `PostgresIdempotencyStore.over(pool)` takes a pool the application
   opened.
+- Schema version 6 adds the `view_copies` table (one row per view copy:
+  its fingerprint, watermark, and deletion mark) and moves view rows to a
+  copy-scoped shape; the runtime role's grants extend to it.
 
 ### Trust
 

@@ -28,25 +28,20 @@
 // Implements: EVS-DEV-version-compatibility/D
 // an event of a higher major than the registered one is refused before the
 //   fold writes anything.
-// Implements: EVS-DEV-version-compatibility/E
-// when a view's stored target for the event's entry type has the registered
-//   major and a higher minor, the fold lowers it to the registered version in
-//   its own transaction.
-// Implements: EVS-DEV-version-compatibility/L
-// every stored target of the event's entry type whose view this build
-//   neither folds the event into nor registers for the entry type is marked
-//   behind the log in the fold's own transaction.
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
+import 'package:event_sourcing/src/projections/view_read.dart'
+    show isSecurityFindingEvent;
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
@@ -60,9 +55,8 @@ class ProjectionInterpreter {
   final PromoterRegistry promoters;
   final EntryTypeRegistry entryTypes;
 
-  /// Apply [event] to all matching projection specs inside [txn], and fold
-  /// it into the outstanding-finding marks of every registered view,
-  /// whatever its interest (see [foldIntoView]).
+  /// Apply [event] to every registered view whose copy, of [copyIds], is
+  /// current in [txn], and returns the change records the fold produced.
   ///
   /// The fold decides by the event's entry-type version against the
   /// registered version of its entry type: an event of a lower major, or of
@@ -76,31 +70,34 @@ class ProjectionInterpreter {
   /// under the field's name at the registered version (see
   /// `PromoterExecutor.promote`).
   ///
-  /// For each matching view whose stored target version for the event's
-  /// entry type has the registered major and a higher minor, the fold
-  /// writes the registered version as the stored target, so the next open
-  /// under the newer minor re-derives the rows this build folded.
-  ///
-  /// Every stored target of the event's entry type whose view this build
-  /// neither folds the event into nor registers for that entry type (a
-  /// view, or an entry type in a view's interest, that another build
-  /// sharing the database registers) is marked behind the log, so the next
-  /// open of a build that registers the view re-derives it.
+  /// For each of the instance's copies, [copyIds] gives its id by view
+  /// name. A copy that is current in [txn] -- the log holds no event past
+  /// its watermark that its definition folds -- folds [event] when its
+  /// definition folds it (the view's interest matches, or [event] is a
+  /// security finding) and moves its watermark to [event]'s position,
+  /// whether or not it folded the event's data. A copy that is converging
+  /// is left entirely unchanged: neither its rows nor its watermark move.
   ///
   /// Returns the list of [AggregateFoldChange] records from every spec
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
   /// notification via `SubscriptionEngine.publishRowChange`.
+  // Implements: EVS-DEV-view-convergence/E
+  // a current copy folds the event when its definition folds it and moves
+  //   its watermark to the event's position.
+  // Implements: EVS-DEV-view-convergence/F
+  // a copy this transaction does not set to the event's position -- a
+  //   converging one -- is left entirely unchanged.
   @internal
   Future<List<AggregateFoldChange>> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required StoredEvent event,
+    required Map<String, String> copyIds,
   }) async {
     // The entry type's registered version. An entry type the registry does
     // not hold (a library-version event appended before the registry
-    // exists) folds under the event's own version: no promotion, and no
-    // stored target to compare.
+    // exists) folds under the event's own version: no promotion.
     final def = entryTypes.byId(event.entryType);
     final registeredVersion = def?.registeredVersion ?? event.entryTypeVersion;
     if (event.entryTypeVersion.major > registeredVersion.major) {
@@ -112,71 +109,107 @@ class ProjectionInterpreter {
       );
     }
 
+    final copiesById = <String, ViewCopy>{
+      for (final copy in await backend.readViewCopiesInTxn(txn))
+        copy.copyId: copy,
+    };
+
     final changes = <AggregateFoldChange>[];
     for (final spec in projections.all()) {
-      // Every view folds every event into its outstanding-finding marks;
-      // only a view whose interest matches folds the event's data.
-      if (!spec.interest.matches(event)) {
-        changes.addAll(
-          await foldIntoView(
-            txn: txn,
-            backend: backend,
-            spec: spec,
-            promoters: promoters,
-            event: event,
-            version: null,
-          ),
-        );
-        continue;
-      }
-
-      if (def != null) {
-        final stored = await backend.readViewTargetVersionInTxn(
-          txn,
-          spec.viewName,
-          event.entryType,
-        );
-        if (stored != null &&
-            stored.major == registeredVersion.major &&
-            stored.minor > registeredVersion.minor) {
-          await backend.writeViewTargetVersionInTxn(
-            txn,
-            spec.viewName,
-            event.entryType,
-            registeredVersion,
-          );
-        }
-      }
+      final maybeCopyId = copyIds[spec.viewName];
+      final copy = maybeCopyId == null ? null : copiesById[maybeCopyId];
+      if (copy == null || maybeCopyId == null) continue;
+      final copyId = maybeCopyId;
+      final current = await _copyIsCurrent(
+        txn: txn,
+        backend: backend,
+        spec: spec,
+        watermark: copy.watermark,
+        beforeSequence: event.sequenceNumber,
+      );
+      if (!current) continue;
 
       changes.addAll(
-        await foldIntoView(
+        await foldStep(
           txn: txn,
           backend: backend,
           spec: spec,
           promoters: promoters,
           event: event,
-          version: registeredVersion,
+          registeredVersion: registeredVersion,
+          copyId: copyId,
         ),
       );
-    }
-
-    // A stored target of this entry type whose view this build neither
-    // folds the event into nor registers for the entry type belongs to a
-    // view, or a view's interest, that another build registers: mark it, so
-    // the next open of a build that registers it re-derives the view.
-    final stored = await backend.readViewTargetsForEntryTypeInTxn(
-      txn,
-      event.entryType,
-    );
-    for (final viewName in stored.keys) {
-      final spec = projections.lookup(viewName);
-      final folds = spec != null && spec.interest.matches(event);
-      final registersPair =
-          spec?.interest.entryTypes?.contains(event.entryType) ?? false;
-      if (folds || registersPair) continue;
-      await backend.markViewTargetBehindInTxn(txn, viewName, event.entryType);
+      await backend.setViewCopyWatermarkInTxn(
+        txn,
+        copyId,
+        event.sequenceNumber,
+      );
     }
     return changes;
+  }
+
+  /// The one fold step every writer of a copy's rows shares -- an append
+  /// (this class's [applyEvent]) and a catch-up transaction
+  /// (`ViewCatchUpDriver`) alike: folds [event] into [spec]'s view under
+  /// [registeredVersion] when [spec]'s interest matches it, and always
+  /// refreshes the outstanding-finding marks a security finding changes.
+  /// Calling this from both paths under the same [registeredVersion] is
+  /// what makes promotion equal event-replay-with-promotion by
+  /// construction (EVS-DEV-view-convergence/K).
+  // Implements: EVS-DEV-view-convergence/K
+  // a catch-up transaction folds each event through this step, the same
+  //   one an append uses, under the instance's registered version.
+  @internal
+  static Future<List<AggregateFoldChange>> foldStep({
+    required Transaction txn,
+    required StorageBackend backend,
+    required ProjectionSpec spec,
+    required PromoterRegistry promoters,
+    required StoredEvent event,
+    required EntryTypeVersion registeredVersion,
+    required String copyId,
+  }) {
+    final matches = spec.interest.matches(event);
+    return foldIntoView(
+      txn: txn,
+      backend: backend,
+      spec: spec,
+      promoters: promoters,
+      event: event,
+      version: matches ? registeredVersion : null,
+      copyId: copyId,
+    );
+  }
+
+  /// Whether a copy at [watermark] is current in [txn]: the log holds no
+  /// event, strictly before [beforeSequence] and strictly after
+  /// [watermark], that [spec]'s definition folds -- its interest matches,
+  /// or the event is a security finding (EVS-DEV-view-convergence Terms).
+  static Future<bool> _copyIsCurrent({
+    required Transaction txn,
+    required StorageBackend backend,
+    required ProjectionSpec spec,
+    required int watermark,
+    required int beforeSequence,
+  }) async {
+    var after = watermark;
+    const chunkSize = 500;
+    while (after < beforeSequence - 1) {
+      final chunk = await backend.findAllEventsInTxn(
+        txn,
+        afterSequence: after,
+        limit: chunkSize,
+      );
+      if (chunk.isEmpty) return true;
+      for (final e in chunk) {
+        if (e.sequenceNumber >= beforeSequence) return true;
+        if (spec.interest.matches(e) || isSecurityFindingEvent(e)) return false;
+      }
+      after = chunk.last.sequenceNumber;
+      if (chunk.length < chunkSize) return true;
+    }
+    return true;
   }
 
   /// Folds [event] into the view of [spec] under [version], the version
@@ -212,6 +245,7 @@ class ProjectionInterpreter {
     required PromoterRegistry promoters,
     required StoredEvent event,
     required EntryTypeVersion? version,
+    required String copyId,
   }) async {
     if (version != null && event.entryTypeVersion.major > version.major) {
       throw StateError(
@@ -229,7 +263,7 @@ class ProjectionInterpreter {
         final existingRow = switch (spec) {
           AggregateProjectionSpec() => await backend.readViewRowInTxn(
             txn,
-            spec.viewName,
+            copyId,
             event.aggregateId,
           ),
           TableProjectionSpec() => null,
@@ -253,6 +287,7 @@ class ProjectionInterpreter {
           spec: spec,
           event: eventForFold,
           integrity: marks.own,
+          copyId: copyId,
         ),
         TableProjectionSpec() => TableFold.applyEvent(
           txn: txn,
@@ -260,6 +295,7 @@ class ProjectionInterpreter {
           spec: spec,
           event: eventForFold,
           integrity: marks.own,
+          copyId: copyId,
         ),
       };
       if (change != null) changes.add(change);
@@ -272,6 +308,7 @@ class ProjectionInterpreter {
           spec: spec,
           refresh: marks.refresh,
           event: event,
+          copyId: copyId,
         ),
       );
     }
@@ -288,6 +325,7 @@ class ProjectionInterpreter {
     required ProjectionSpec spec,
     required Map<String, List<String>> refresh,
     required StoredEvent event,
+    required String copyId,
   }) async {
     final changes = <AggregateFoldChange>[];
     Future<void> rewrite(
@@ -301,7 +339,7 @@ class ProjectionInterpreter {
         ...row,
         kIntegrityRowKey: integrityValue(ids),
       });
-      await backend.upsertViewRowInTxn(txn, spec.viewName, key, next);
+      await backend.upsertViewRowInTxn(txn, copyId, key, next);
       changes.add(
         AggregateFoldChange(
           viewName: spec.viewName,
@@ -317,11 +355,7 @@ class ProjectionInterpreter {
     switch (spec) {
       case AggregateProjectionSpec():
         for (final entry in refresh.entries) {
-          final row = await backend.readViewRowInTxn(
-            txn,
-            spec.viewName,
-            entry.key,
-          );
+          final row = await backend.readViewRowInTxn(txn, copyId, entry.key);
           if (row != null) await rewrite(entry.key, row, entry.value);
         }
       case TableProjectionSpec():
@@ -337,7 +371,7 @@ class ProjectionInterpreter {
             producedBy[e.sequenceNumber] = entry.value;
           }
         }
-        for (final row in await backend.findViewRowsInTxn(txn, spec.viewName)) {
+        for (final row in await backend.findViewRowsInTxn(txn, copyId)) {
           final sequence = row['sequence'];
           final key = row['aggregateId'];
           if (sequence is! int || key is! String) continue;

@@ -7,8 +7,13 @@
 // idempotent application
 //   ensures the event log alone is sufficient to reconstruct permission state;
 //   re-running the applier against an already-populated store emits nothing.
+// Implements: EVS-DEV-converging-view-reads/I
+// waits until role_permission_grants is current for the instance before
+//   reading it, and throws ViewConvergenceTimeout, naming it and its
+//   copy's progress, once the caller's deadline passes first.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
 @immutable
@@ -33,18 +38,29 @@ class PermissionSeedApplier {
   final EventStore eventStore;
   final Initiator seedInitiator;
 
+  /// [timeout] bounds how long this waits for `role_permission_grants` to
+  /// become current for the instance before reading it
+  /// (EVS-DEV-converging-view-reads/I): a deadline already passed throws
+  /// [ViewConvergenceTimeout] after one check, without waiting.
   Future<SeedApplyResult> apply(
     PermissionSeed seed,
-    Set<Permission> declared,
-  ) async {
+    Set<Permission> declared, {
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
     final declaredByName = <String, Permission>{
       for (final p in declared) p.name: p,
     };
 
-    // Read current grants in view. Reconstruct the '<role>:<permName>'
-    // pair-id (matching the events' aggregateId) from the row payload —
-    // the row itself does not carry the storage key.
-    final rows = await eventStore.reader.findViewRows('role_permission_grants');
+    // Wait for role_permission_grants to be current, then read its rows.
+    // Reconstruct the '<role>:<permName>' pair-id (matching the events'
+    // aggregateId) from the row payload — the row itself does not carry
+    // the storage key.
+    await waitForViewsCurrent(eventStore, {
+      'role_permission_grants',
+    }, DateTime.now().add(timeout));
+    final rows = (await eventStore.reader.findViewRows(
+      'role_permission_grants',
+    )).rows;
     final inView = <String>{
       for (final r in rows) '${r['role']}:${r['permissionName']}',
     };

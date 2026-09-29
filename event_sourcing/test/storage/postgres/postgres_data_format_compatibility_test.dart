@@ -252,7 +252,7 @@ void main() {
       for (final store in <EventStore>[o1, n1, o2, n2]) {
         expect(store.databaseId, o1.databaseId);
       }
-      expect(await n2.reader.findViewRows('boot_notes'), hasLength(4));
+      expect((await n2.reader.findViewRows('boot_notes')).rows, hasLength(4));
 
       final concurrent = await Future.wait(<Future<EventStore>>[
         d.openBackend().then((b) => openBootStoreForTest(d, b)),
@@ -265,7 +265,7 @@ void main() {
       expect(after.last, (LibVersionEvents.changed, LibVersion.version));
       await appendBootNoteForTest(concurrent.last, 'o3');
       expect(
-        await concurrent.first.reader.findViewRows('boot_notes'),
+        (await concurrent.first.reader.findViewRows('boot_notes')).rows,
         hasLength(5),
       );
     });

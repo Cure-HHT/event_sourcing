@@ -57,35 +57,12 @@ void main() {
       final backend = RerunningSembastBackend(database: database)
         ..rerunEnabled = false;
       final db = _SembastProgressDatabase(database, backend: backend);
-      final older = await openProgressStore(
-        db,
-        backend,
-        registered: const EntryTypeVersion(1, 0),
-        projections: const <ProjectionSpec>[
-          AggregateProjectionSpec(
-            viewName: 'progress_notes',
-            interest: SubscriptionFilter(entryTypes: <String>{'progress_note'}),
-            tombstoneEventTypes: <String>{},
-          ),
-        ],
-      );
-      await seedProgressNotes(older, kProgressScenarioAggregates);
+      final older = await openProgressStore(db, backend);
+      await seedProgressNotes(older, 3);
 
       backend.rerunEnabled = true;
       final reports = <BootProgress>[];
-      final newer = await openProgressStore(
-        db,
-        backend,
-        registered: const EntryTypeVersion(1, 1),
-        projections: const <ProjectionSpec>[
-          AggregateProjectionSpec(
-            viewName: 'progress_notes',
-            interest: SubscriptionFilter(entryTypes: <String>{'progress_note'}),
-            tombstoneEventTypes: <String>{},
-          ),
-        ],
-        onBootProgress: reports.add,
-      );
+      await openProgressStore(db, backend, onBootProgress: reports.add);
       backend.rerunEnabled = false;
 
       final phases = phasesOf(reports);
@@ -98,14 +75,6 @@ void main() {
       final secondRun = reports.sublist(secondChecks);
       expectWellFormedReports(firstRun);
       expectWellFormedReports(secondRun);
-      for (final run in <List<BootProgress>>[firstRun, secondRun]) {
-        final promotion = reportsOf(run, BootPhase.promotion);
-        expect(promotion, isNotEmpty);
-        expect(promotion.first.total, kProgressScenarioAggregates);
-        expect(promotion.last.done, kProgressScenarioAggregates);
-      }
-      final rows = await newer.reader.findViewRows('progress_notes');
-      expect(rows.every((row) => row['b'] == 0), isTrue);
       await database.close();
     });
   });
@@ -164,15 +133,15 @@ void main() {
     test('BootProgress is a value: equal fields are equal, and its string '
         'names its fields', () {
       const a = BootProgress(
-        phase: BootPhase.promotion,
-        done: 3,
-        total: 7,
+        phase: BootPhase.checks,
+        done: 0,
+        total: 0,
         elapsed: Duration(milliseconds: 12),
       );
       const b = BootProgress(
-        phase: BootPhase.promotion,
-        done: 3,
-        total: 7,
+        phase: BootPhase.checks,
+        done: 0,
+        total: 0,
         elapsed: Duration(milliseconds: 12),
       );
       expect(a, b);
@@ -181,15 +150,15 @@ void main() {
         a,
         isNot(
           const BootProgress(
-            phase: BootPhase.catchUp,
-            done: 3,
-            total: 7,
+            phase: BootPhase.complete,
+            done: 0,
+            total: 0,
             elapsed: Duration(milliseconds: 12),
           ),
         ),
       );
-      expect('$a', contains('promotion'));
-      expect('$a', contains('3/7'));
+      expect('$a', contains('checks'));
+      expect('$a', contains('0/0'));
     });
   });
 }

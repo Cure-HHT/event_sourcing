@@ -210,8 +210,7 @@ void main() {
         throwsA(
           isA<EntryTypeVersionDowngradeError>()
               .having((e) => e.entryType, 'entryType', _kX)
-              .having((e) => e.fromVersion.major, 'recorded major', 2)
-              .having((e) => e.recordedByOpen, 'recordedByOpen', isTrue),
+              .having((e) => e.fromVersion.major, 'recorded major', 2),
         ),
       );
       expect(await _contents(path), before);

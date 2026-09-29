@@ -378,7 +378,7 @@ void runOperatorHaltScenarios(
         );
         expect(wedge.data['halt_requested_by'], _operator.toJson());
         expect(await w.halt('x'), isNull, reason: 'the request is consumed');
-        final rows = await wedgesViewRows(w.backend);
+        final rows = await wedgesViewRows(w.store);
         expect(
           rows['${w.store.databaseId}|x']?['halt_requested_by'],
           _operator.toJson(),

@@ -54,6 +54,18 @@ const List<String> handedOutTypes = <String>[
   'DeliveryStatus',
   'DestinationSchedule',
   'TombstoneAndRefillResult',
+  // Converging-view reads (EVS-DEV-converging-view-reads). ViewConvergenceState
+  // is an enum, outside this scan's scope (interfaceNamed only resolves
+  // classes, mixins and extension types; enums carry no writable member
+  // for the barrier to police).
+  'ViewRow',
+  'SettledRow',
+  'AbsentRow',
+  'PendingRow',
+  'ViewRowsRead',
+  'ViewRowsByKeyRead',
+  'ViewRowRead',
+  'ViewCopyStatus',
   // Boot progress and subscription emissions.
   'BootProgress',
   'Update',
@@ -61,6 +73,7 @@ const List<String> handedOutTypes = <String>[
   'Snapshot',
   'Tombstone',
   'EndOfReplay',
+  'Pending',
 ];
 
 /// The class, mixin or extension type named [name] among [libraries];

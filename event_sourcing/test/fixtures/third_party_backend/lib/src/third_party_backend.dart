@@ -106,6 +106,13 @@ class ThirdPartyBackend extends StorageBackend {
   ) => throw UnimplementedError();
 
   @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String viewName,
+    Set<String> keys,
+  ) => throw UnimplementedError();
+
+  @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
     String viewName, {
@@ -119,31 +126,49 @@ class ThirdPartyBackend extends StorageBackend {
   Future<void> clearViewInTxn(Transaction txn, String viewName) =>
       throw UnimplementedError();
 
+  @internal
   @override
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
+    String fingerprint,
+    int watermark,
+  ) => throw UnimplementedError();
+
+  @override
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
+    Transaction txn,
+    String fingerprint,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> writeViewTargetVersionInTxn(
+  Future<void> setViewCopyWatermarkInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
-  ) => throw UnimplementedError();
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
+    String copyId,
+    int watermark,
   ) => throw UnimplementedError();
 
   @internal
   @override
-  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName) =>
+  Future<void> markViewCopyForDeletionInTxn(Transaction txn, String copyId) =>
+      throw UnimplementedError();
+
+  @internal
+  @override
+  Future<int> deleteViewCopyRowsInTxn(
+    Transaction txn,
+    String copyId, {
+    required int limit,
+  }) => throw UnimplementedError();
+
+  @internal
+  @override
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId) =>
       throw UnimplementedError();
 
   @internal
@@ -350,6 +375,13 @@ class ThirdPartyBackend extends StorageBackend {
 
   @internal
   @override
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  ) => transaction(body);
+
+  @internal
+  @override
   Future<GenerationRegistration> registerGeneration(
     GenerationDescriptor descriptor,
   ) async => const _SingleProcessRegistration();
@@ -525,35 +557,6 @@ class ThirdPartyBackend extends StorageBackend {
   @override
   Future<bool> holdsSecurityFindingInTxn(Transaction txn) =>
       throw UnimplementedError();
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
-    Transaction txn,
-    String entryType,
-  ) => throw UnimplementedError();
-
-  @internal
-  @override
-  Future<void> markViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) => throw UnimplementedError();
-
-  @override
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) => throw UnimplementedError();
-
-  @internal
-  @override
-  Future<void> clearViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) => throw UnimplementedError();
 
   @override
   Future<bool> hasFifoWedged() => throw UnimplementedError();

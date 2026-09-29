@@ -751,9 +751,9 @@ void runIngestRecordFindingScenarios({
           outcome: IngestOutcome.ingestedWithFinding,
         );
         expect(
-          await store.reader.findViewRows(
+          (await store.reader.findViewRows(
             defaultDestinationWedgesSpec.viewName,
-          ),
+          )).rows,
           isEmpty,
         );
       });

@@ -260,6 +260,16 @@ Future<Object?> _nothing(_Roles roles) async => null;
 Future<Object?> _world(_Roles roles) async =>
     _World.open(await roles.openRuntimeBackend());
 
+/// A runtime-role backend with one view copy already created, for the
+/// view-copies cases that need an existing row to read, update or delete.
+Future<Object?> _viewCopyWorld(_Roles roles) async {
+  final backend = await roles.openRuntimeBackend();
+  final copyId = await backend.transaction(
+    (txn) => backend.createViewCopyInTxn(txn, 'rt_view', 'rt_fp', 0),
+  );
+  return (backend, copyId);
+}
+
 /// A world with destination `x` activated and two notes filled into its
 /// queue.
 Future<Object?> _filledWorld(_Roles roles) async {
@@ -292,18 +302,69 @@ final Map<String, _Case> _cases = <String, _Case>{
     (roles, w) => (w! as _World).note('a1', withSecurity: true),
   ),
   'read a view': _Case(_world, (roles, w) async {
-    await (w! as _World).backend.findViewRows(_noteView);
+    final world = w! as _World;
+    await world.backend.findViewRows(world.store.copyIdOf(_noteView));
   }),
   'rebuild a view': _Case(_world, (roles, w) async {
     final world = w! as _World;
     await world.note('r1');
+    final oldCopyId = world.store.copyIdOf(_noteView);
     await rebuildView(
       store: world.store,
       viewName: _noteView,
-      targetVersionByEntryType: const <String, EntryTypeVersion>{
-        _noteType: EntryTypeVersion(1, 0),
-      },
+      deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
     );
+    // rebuildView itself never deletes a row: the old copy's rows are
+    // deleted by catch-up afterward, on the driver's own loop, which this
+    // synchronous case cannot observe (its failures log through a hooks
+    // zone the driver's loop was never scheduled inside). The deletion
+    // step is exercised directly here instead, so a denied DELETE fails
+    // this case rather than going unnoticed in the background.
+    await world.backend.transaction(
+      (txn) =>
+          world.backend.deleteViewCopyRowsInTxn(txn, oldCopyId, limit: 500),
+    );
+  }),
+  'create a view copy': _Case((roles) => roles.openRuntimeBackend(), (
+    roles,
+    backend,
+  ) async {
+    final b = backend! as PostgresBackend;
+    try {
+      await b.transaction(
+        (txn) => b.createViewCopyInTxn(txn, 'rt_view', 'rt_fp_create', 0),
+      );
+    } finally {
+      await b.close();
+    }
+  }),
+  'list view copies': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, _) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(backend.readViewCopiesInTxn);
+    } finally {
+      await backend.close();
+    }
+  }),
+  'set a view copy watermark': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, copyId) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(
+        (txn) => backend.setViewCopyWatermarkInTxn(txn, copyId, 7),
+      );
+    } finally {
+      await backend.close();
+    }
+  }),
+  'delete a view copy record': _Case(_viewCopyWorld, (roles, arranged) async {
+    final (backend, copyId) = arranged! as (PostgresBackend, String);
+    try {
+      await backend.transaction(
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
+      );
+    } finally {
+      await backend.close();
+    }
   }),
   'read a security context': _Case(_world, (roles, w) async {
     final world = w! as _World;
@@ -415,10 +476,10 @@ const Map<(String, String), String> _neededBy = <(String, String), String>{
   ('view_rows', 'INSERT'): 'append an event with a security context',
   ('view_rows', 'UPDATE'): 'append an event with a security context',
   ('view_rows', 'DELETE'): 'rebuild a view',
-  ('view_target_versions', 'SELECT'): 'boot an event store',
-  ('view_target_versions', 'INSERT'): 'boot an event store',
-  ('view_target_versions', 'UPDATE'): 'boot an event store',
-  ('view_target_versions', 'DELETE'): 'rebuild a view',
+  ('view_copies', 'SELECT'): 'list view copies',
+  ('view_copies', 'INSERT'): 'create a view copy',
+  ('view_copies', 'UPDATE'): 'set a view copy watermark',
+  ('view_copies', 'DELETE'): 'delete a view copy record',
   ('fifo_entries', 'SELECT'): 'read a queue head',
   ('fifo_entries', 'INSERT'): 'fill a destination',
   ('fifo_entries', 'UPDATE'): 'deliver a queue item',
@@ -679,16 +740,16 @@ void main() {
       expect(await security.read(purged.eventId), isNull);
       expect(await security.read(redacted.eventId), isNull);
       expect(await security.read(compacted.eventId), isNotNull);
-      final before = await w.backend.findViewRows(_noteView);
+      final before = await w.backend.findViewRows(w.store.copyIdOf(_noteView));
       expect(before, hasLength(3));
       await rebuildView(
         store: w.store,
         viewName: _noteView,
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          _noteType: EntryTypeVersion(1, 0),
-        },
+        deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
       );
-      expect(await w.backend.findViewRows(_noteView), before);
+      // The rebuild replaces the copy: the replayed rows are read through
+      // the instance's new copy id, not the one taken before the rebuild.
+      expect(await w.backend.findViewRows(w.store.copyIdOf(_noteView)), before);
     });
 
     // Verifies: EVS-DEV-postgres-backend/K

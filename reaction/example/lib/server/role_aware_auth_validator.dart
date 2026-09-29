@@ -41,7 +41,7 @@ class RoleAwareTrustingValidator implements PrincipalAuthValidator {
     if (credential.isEmpty) {
       throw const AuthenticationDenied('empty credential');
     }
-    final rows = await reader.findViewRows('user_role_scopes');
+    final rows = (await reader.findViewRows('user_role_scopes')).rows;
     final userRoles = <String>{
       for (final row in rows)
         if (row['user_id'] == credential) row['role']! as String,

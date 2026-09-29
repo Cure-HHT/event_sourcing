@@ -166,9 +166,9 @@ void main() {
     late List<FifoEntry> hubPrimary;
     await tester.runAsync(() async {
       hubWedged = await hubReader.wedgedFifos();
-      rows = await hubReader.findViewRows(
+      rows = (await hubReader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
-      );
+      )).rows;
       mobileHead = await mobile.eventStore.reader.readFifoHead('Primary');
       hubPrimary = await hubReader.listFifoEntries('Primary');
     });

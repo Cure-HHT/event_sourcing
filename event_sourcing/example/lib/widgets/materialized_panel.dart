@@ -71,7 +71,7 @@ class _MaterializedPanelState extends State<MaterializedPanel> {
       // Tombstone events delete the row, so presence means the aggregate is live.
       // The demo_note action also deep-merges event.data which carries
       // answers.title — extracted here so the panel can show meaningful labels.
-      final rawRows = await widget.reader.findViewRows('notes');
+      final rawRows = (await widget.reader.findViewRows('notes')).rows;
       final rows = <_ViewRow>[];
       for (final raw in rawRows) {
         final aggregateId = raw['aggregateId'] as String? ?? '';

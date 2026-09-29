@@ -104,7 +104,9 @@ void main() {
         expect(original, isNotNull);
 
         // Pre-ingest: receiver has no toy_view rows for this aggregate.
-        final preRows = await dest.backend.findViewRows('toy_view');
+        final preRows = await dest.backend.findViewRows(
+          dest.datastore.eventStore.copyIdOf('toy_view'),
+        );
         final preUser = preRows
             .where((r) => r['latestEventId'] == original!.eventId)
             .toList();
@@ -118,7 +120,9 @@ void main() {
         expect(outcome.outcome, equals(IngestOutcome.ingested));
 
         // Post-ingest: receiver has one toy_view row for this aggregate.
-        final postRows = await dest.backend.findViewRows('toy_view');
+        final postRows = await dest.backend.findViewRows(
+          dest.datastore.eventStore.copyIdOf('toy_view'),
+        );
         final postUser = postRows
             .where(
               (r) =>
@@ -199,7 +203,9 @@ void main() {
           expect(outcome, equals(IngestOutcome.ingested));
         }
 
-        final rows = await dest.backend.findViewRows('toy_view');
+        final rows = await dest.backend.findViewRows(
+          dest.datastore.eventStore.copyIdOf('toy_view'),
+        );
         // Only user-event rows (exclude any system-aggregate rows).
         final userRows = rows
             .where(
@@ -253,7 +259,9 @@ void main() {
       );
 
       // Snapshot toy_view row count before ingest.
-      final preRows = await dest.backend.findViewRows('toy_view');
+      final preRows = await dest.backend.findViewRows(
+        dest.datastore.eventStore.copyIdOf('toy_view'),
+      );
       final preCount = preRows.length;
 
       try {
@@ -275,7 +283,9 @@ void main() {
         );
 
         // toy_view row count unchanged — system event excluded by filter.
-        final postRows = await dest.backend.findViewRows('toy_view');
+        final postRows = await dest.backend.findViewRows(
+          dest.datastore.eventStore.copyIdOf('toy_view'),
+        );
         expect(
           postRows.length,
           equals(preCount),

@@ -80,9 +80,9 @@ class _WedgesPanelState extends State<WedgesPanel> {
   Future<void> _refresh() async {
     final refresh = ++_refreshes;
     try {
-      final rows = await widget.watch.reader.findViewRows(
+      final rows = (await widget.watch.reader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
-      );
+      )).rows;
       final log = <StoredEvent>[
         for (final type in _deliveryEvents.keys)
           ...await widget.watch.reader.findAllEvents(entryType: type),

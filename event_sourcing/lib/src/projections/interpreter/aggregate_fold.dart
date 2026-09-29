@@ -59,14 +59,15 @@ class AggregateFold {
     required AggregateProjectionSpec spec,
     required StoredEvent event,
     required List<String> integrity,
+    required String copyId,
   }) async {
     if (spec.tombstoneEventTypes.contains(event.eventType)) {
       final existing = await backend.readViewRowInTxn(
         txn,
-        spec.viewName,
+        copyId,
         event.aggregateId,
       );
-      await backend.deleteViewRowInTxn(txn, spec.viewName, event.aggregateId);
+      await backend.deleteViewRowInTxn(txn, copyId, event.aggregateId);
       if (existing == null) return null; // nothing to report
       return AggregateFoldChange(
         viewName: spec.viewName,
@@ -79,7 +80,7 @@ class AggregateFold {
     }
     final priorRaw = await backend.readViewRowInTxn(
       txn,
-      spec.viewName,
+      copyId,
       event.aggregateId,
     );
     final prior = priorRaw ?? const <String, Object?>{};
@@ -118,7 +119,7 @@ class AggregateFold {
     final immutableNext = Map<String, Object?>.unmodifiable(next);
     await backend.upsertViewRowInTxn(
       txn,
-      spec.viewName,
+      copyId,
       event.aggregateId,
       immutableNext,
     );

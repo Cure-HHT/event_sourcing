@@ -9,8 +9,11 @@
 // The dynamic calls on the reader are deliberate: they are what code that
 // bypasses the static type runs.
 // ignore_for_file: avoid_dynamic_calls
+import 'dart:async';
+
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart' show PublishCollector;
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../test_support/version_compatibility_conformance.dart'
@@ -221,12 +224,22 @@ void runStorageReaderScenarios({
         );
 
         final rows = await reader.findViewRows(_kView);
-        expect(rows, hasLength(2));
+        expect(rows.state, ViewConvergenceState.current);
+        expect(rows.rows, hasLength(2));
         final byKey = await reader.readViewRowsByKeys(_kView, <String>{
           'agg-1',
         });
-        expect(byKey.keys, <String>['agg-1']);
-        expect(byKey['agg-1']!['n'], 1);
+        expect(byKey.state, ViewConvergenceState.current);
+        expect(byKey.rows.keys, <String>['agg-1']);
+        expect(byKey.rows['agg-1']!.dataOrNull!['n'], 1);
+
+        // Verifies: EVS-DEV-converging-view-reads/J
+        final progress = await reader.viewProgress();
+        final viewStatus = progress.singleWhere((p) => p.viewName == _kView);
+        expect(viewStatus.state, ViewConvergenceState.current);
+        expect(viewStatus.watermark, await reader.readSequenceCounter());
+        expect(viewStatus.logHead, await reader.readSequenceCounter());
+        expect(viewStatus.lastFailure, isNull);
 
         expect(await reader.readFifoHead('no-such-destination'), isNull);
         expect(await reader.listFifoEntries('no-such-destination'), isEmpty);
@@ -265,32 +278,20 @@ void runStorageReaderScenarios({
           );
           expect(await reader.readLatestEventHash(txn), first.eventHash);
           expect(
-            (await reader.readViewRowInTxn(txn, _kView, 'agg-1'))?['n'],
+            (await reader.readViewRowInTxn(
+              txn,
+              _kView,
+              'agg-1',
+            )).row.dataOrNull?['n'],
             1,
           );
           expect(
-            await reader.findViewRowsInTxn(
+            (await reader.findViewRowsInTxn(
               txn,
               _kView,
               where: const <String, Object?>{'n': 1},
-            ),
+            )).rows,
             hasLength(1),
-          );
-          expect(
-            await reader.readViewTargetVersionInTxn(txn, _kView, _kType),
-            const EntryTypeVersion(1, 0),
-          );
-          expect(
-            await reader.readAllViewTargetVersionsInTxn(txn, _kView),
-            <String, EntryTypeVersion>{_kType: const EntryTypeVersion(1, 0)},
-          );
-          expect(
-            await reader.readViewTargetsForEntryTypeInTxn(txn, _kType),
-            <String, EntryTypeVersion>{_kView: const EntryTypeVersion(1, 0)},
-          );
-          expect(
-            await reader.readViewTargetBehindInTxn(txn, _kView, _kType),
-            isFalse,
           );
         });
       });
@@ -302,7 +303,57 @@ void runStorageReaderScenarios({
         final rows = await store.runTransaction(
           (txn, collector) => store.reader.findViewRowsInTxn(txn, _kView),
         );
-        expect(rows, hasLength(1));
+        expect(rows.rows, hasLength(1));
+      });
+
+      // Verifies: EVS-DEV-converging-view-reads/A
+      // the by-key read's state scan and its row fetch share one storage
+      //   transaction: an append that commits between them, naming a
+      //   requested key, is not visible to the row fetch.
+      test('readViewRowsByKeys reads state and rows in one transaction: an '
+          'append that commits between them is not visible to the row '
+          'fetch', () async {
+        await _appendNote(store, 'agg-1', const <String, Object?>{'n': 1});
+
+        var hookRan = false;
+        final appended = Completer<void>();
+        final isSembast = backendLabel.startsWith('sembast');
+        await runWithDeliveryTestHooks(
+          DeliveryTestHooks(
+            afterViewStateReadBeforeRows: () async {
+              if (hookRan) return;
+              hookRan = true;
+              final future = _appendNote(
+                store,
+                'agg-1',
+                const <String, Object?>{'n': 2},
+              ).then((_) => appended.complete());
+              if (isSembast) {
+                // Sembast serializes transactions on one database-wide
+                // lock, so awaiting this here -- inside the read's own
+                // still-open transaction -- would deadlock. Queuing it
+                // lets the read's transaction finish first.
+                unawaited(future);
+                await Future<void>.delayed(Duration.zero);
+              } else {
+                // Postgres transactions run on independent connections,
+                // so the concurrent append can fully commit before the
+                // row fetch proceeds, without deadlocking the reader's
+                // still-open transaction.
+                await future;
+              }
+            },
+          ),
+          () async {
+            final result = await store.reader.readViewRowsByKeys(_kView, {
+              'agg-1',
+            });
+            expect(result.state, ViewConvergenceState.current);
+            expect(result.rows['agg-1']!.dataOrNull!['n'], 1);
+          },
+        );
+        expect(hookRan, isTrue);
+        await appended.future;
       });
     });
 

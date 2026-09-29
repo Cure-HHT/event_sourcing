@@ -163,7 +163,9 @@ void main() {
         // permission_granted events the bootstrap seed appends. Reading
         // it through StorageBackend.findViewRows proves the substrate
         // wrote rows into the `view_rows` table on Postgres.
-        final rows = await backend.findViewRows('role_permission_grants');
+        final rows = await backend.findViewRows(
+          components.eventStore.copyIdOf('role_permission_grants'),
+        );
         expect(rows, hasLength(9));
         final pairs = rows
             .map((r) => '${r['role']}:${r['permissionName']}')
@@ -418,7 +420,9 @@ void main() {
       // dispatches above (it only reads role_permission_grant events,
       // and the seed already produced those). Confirm the count stayed
       // stable at 9 — same as the bootstrap-seed assertion above.
-      final viewRows = await backend.findViewRows('role_permission_grants');
+      final viewRows = await backend.findViewRows(
+        components.eventStore.copyIdOf('role_permission_grants'),
+      );
       expect(viewRows, hasLength(9));
 
       // Only the 2 PressRedAlarmAction dispatches consume idempotency
@@ -504,11 +508,14 @@ void main() {
       });
       expect(redRes.statusCode, 200);
 
-      // Snapshot pre-close state directly from Postgres.
-      final eventsPhase1 = await backend1.findAllEvents();
-      final viewRowsPhase1 = await backend1.findViewRows(
+      // Snapshot pre-close state directly from Postgres. The view's copy
+      // id is stable across phase 1 and phase 2: the same registrations
+      // in both boots fingerprint to the same, reused copy.
+      final grantsCopyId = components1.eventStore.copyIdOf(
         'role_permission_grants',
       );
+      final eventsPhase1 = await backend1.findAllEvents();
+      final viewRowsPhase1 = await backend1.findViewRows(grantsCopyId);
       final idemPhase1 = await components1.idempotencyStore.listEntries();
 
       // We expect at least 4 dispatched events on top of bootstrap seeds.
@@ -538,9 +545,7 @@ void main() {
 
       // Read events + view rows from the NEW backend instance.
       final eventsPhase2 = await backend2.findAllEvents();
-      final viewRowsPhase2 = await backend2.findViewRows(
-        'role_permission_grants',
-      );
+      final viewRowsPhase2 = await backend2.findViewRows(grantsCopyId);
 
       // Boot a server over the new backend, as a restarted instance does,
       // and read the idempotency entries through its event store's store.

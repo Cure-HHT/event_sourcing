@@ -378,15 +378,12 @@ void runRunTimeBarrierScenarios({
         await cycle.close();
 
         // view rebuild.
-        final processed = await rebuildView(
+        await rebuildView(
           store: store,
           viewName: _notesView,
-          targetVersionByEntryType: <String, EntryTypeVersion>{
-            barrierNoteType.id: barrierNoteType.registeredVersion,
-          },
+          deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
         );
-        expect(processed, greaterThanOrEqualTo(3));
-        final rows = await store.reader.findViewRows(_notesView);
+        final rows = (await store.reader.findViewRows(_notesView)).rows;
         expect(rows, hasLength(3));
 
         // redaction and retention.

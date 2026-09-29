@@ -28,6 +28,7 @@ class TableFold {
     required TableProjectionSpec spec,
     required StoredEvent event,
     required List<String> integrity,
+    required String copyId,
   }) async {
     if (spec.insertEventTypes.contains(event.eventType)) {
       final key = spec.rowKey.extract(event);
@@ -49,7 +50,7 @@ class TableFold {
         //   findings that mark the aggregate whose event produced its key.
         kIntegrityRowKey: integrityValue(integrity),
       };
-      await backend.upsertViewRowInTxn(txn, spec.viewName, keyStr, row);
+      await backend.upsertViewRowInTxn(txn, copyId, keyStr, row);
       return AggregateFoldChange(
         viewName: spec.viewName,
         aggregateId: keyStr,
@@ -65,13 +66,9 @@ class TableFold {
       // Only emit a tombstone change when the row actually existed; a
       // remove event targeting a nonexistent row is a silent no-op so
       // subscribers never receive a spurious Tombstone<T>.
-      final priorRow = await backend.readViewRowInTxn(
-        txn,
-        spec.viewName,
-        keyStr,
-      );
+      final priorRow = await backend.readViewRowInTxn(txn, copyId, keyStr);
       if (priorRow == null) return null;
-      await backend.deleteViewRowInTxn(txn, spec.viewName, keyStr);
+      await backend.deleteViewRowInTxn(txn, copyId, keyStr);
       return AggregateFoldChange(
         viewName: spec.viewName,
         aggregateId: keyStr,

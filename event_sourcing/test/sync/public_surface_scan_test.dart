@@ -24,11 +24,10 @@ const _reads = <String, String>{
   'readViewRowInTxn': 'reads one view row in a txn',
   'findViewRows': 'reads a view',
   'readViewRowsByKeys': 'reads view rows by key',
+  'readViewRowsByKeysInTxn': 'reads view rows by key in a txn',
   'findViewRowsInTxn': 'reads a view in a txn',
-  'readViewTargetVersionInTxn': 'reads one view target version',
-  'readAllViewTargetVersionsInTxn': "reads a view's target versions",
-  'readViewTargetsForEntryTypeInTxn': "reads an entry type's view targets",
-  'readViewTargetBehindInTxn': "reads a view target's catch-up mark",
+  'readViewCopiesInTxn': 'reads every stored view copy in a txn',
+  'readUnmarkedViewCopyInTxn': "reads a fingerprint's unmarked copy in a txn",
   'readFifoHead': 'reads a queue head',
   'listFifoEntries': 'reads a queue',
   'readFifoRow': 'reads one queue row',
@@ -97,6 +96,9 @@ const _functionTyped = <String, String>{
       "the consumer's transaction body; every write it can reach is internal",
   'PostgresBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'PostgresBackend.catchUpTransaction(body)':
+      "internal: runs the catch-up driver's own body, under the copy's "
+      'lock',
   'PostgresBackend.nonBlockingRead(body)':
       "internal: the chain verification's reads, in a read-only snapshot",
   'PostgresBackend.readOnlyTransaction(body)':
@@ -114,12 +116,18 @@ const _functionTyped = <String, String>{
       'scoped read',
   'SembastBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'SembastBackend.catchUpTransaction(body)':
+      "internal: runs the catch-up driver's own body, under the copy's "
+      'lock',
   'SembastBackend.nonBlockingRead(body)':
       "internal: the chain verification's reads, outside any transaction",
   'SembastBackend.transaction(body)':
       "the consumer's transaction body; every write it can reach is internal",
   'StorageBackend.bootTransaction(body)':
       "internal: runs the event store's own boot body",
+  'StorageBackend.catchUpTransaction(body)':
+      "internal: runs the catch-up driver's own body, under the copy's "
+      'lock',
   'StorageBackend.nonBlockingRead(body)':
       "internal: the chain verification's reads, holding nothing an append "
       'waits for',
@@ -216,6 +224,10 @@ const _seamKinds = <String, String>{
   'severeLogSink': 'input substitution',
   'failRestoreStore': 'failure injection',
   'beforeRestoreTransaction': 'interleave',
+  'onCatchUpTransactionBegin': 'observe',
+  'onCatchUpStep': 'interleave',
+  'catchUpClock': 'input substitution',
+  'afterViewStateReadBeforeRows': 'interleave',
 };
 
 const _seamKindNames = <String>{
@@ -299,9 +311,6 @@ const _mustBeInternal = <String, String>{
       'wedges a queue head for a halt request outside the delivery cycle',
   'fillBatch': 'fills a queue outside the delivery cycle',
   'writeQueueItemsTxn': 'enqueues queue items outside the fill',
-  'seedViewTargetVersions': 'writes view target versions',
-  'promoteViewSnapshots': 'rewrites view rows and target versions',
-  'catchUpViews': 'rewrites view rows and clears catch-up marks',
   'AggregateFold.applyEvent': 'writes view rows',
   'TableFold.applyEvent': 'writes view rows',
   'ProjectionInterpreter.applyEvent': 'writes view rows',
@@ -377,7 +386,7 @@ const _concreteOperations = <String, String>{
 /// Public members of unexported types, and unexported top-level functions,
 /// that a `src/` import reaches and that change no persisted state.
 const _unexportedOperations = <String, String>{
-  'verifyNoEntryTypeDowngrade': 'reads view target versions; changes nothing',
+  'viewFingerprint': 'pure function; changes nothing',
   'PublishCollector.events': 'reads what the run collected',
   'PublishCollector.rowChanges': 'reads what the run collected',
   'LibVersionEvents.initialized': 'constant',
@@ -444,9 +453,9 @@ const _topLevelOperations = <String, String>{
   'isReservedEntryType': 'pure function; changes nothing',
   'matchScopeClass': 'pure function; changes nothing',
   'rebuildView':
-      'replays a view from the log through the projection interpreter at '
-      'the registered entry-type versions, refusing any other target; it '
-      'does not notify live subscribers',
+      "replaces the instance's copy of a view with an empty one of the "
+      'same fingerprint and awaits its currency; it does not notify live '
+      'subscribers',
   'sanitizeErrorMessage': 'pure function; changes nothing',
 };
 
@@ -641,9 +650,6 @@ Future<void> recordFindingInTxnForTest() async {}
 Future<void> honourHaltById() async {}
 Future<void> fillBatch() async {}
 Future<void> writeQueueItemsTxn() async {}
-Future<void> seedViewTargetVersions() async {}
-Future<void> promoteViewSnapshots() async {}
-Future<void> catchUpViews() async {}
 
 abstract class GenerationRegistration {
   Future<void> recordInTxn(Object txn);

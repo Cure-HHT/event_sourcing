@@ -27,9 +27,17 @@ class EntryTypeRegistry {
   /// same entry type and the later one would silently win — so it is
   /// surfaced loudly via `ArgumentError`, leaving the existing
   /// registration in effect. A definition that declares one event type
-  /// twice is refused the same way and is not registered.
+  /// twice is refused the same way and is not registered. Throws
+  /// [ArgumentError] after [seal].
   // Implements: EVS-DEV-append-stamps-registered-version/D
   void register(EntryTypeDefinition definition) {
+    if (_sealed) {
+      throw ArgumentError.value(
+        definition.id,
+        'definition.id',
+        'EntryTypeRegistry: cannot register after seal()',
+      );
+    }
     if (_defs.containsKey(definition.id)) {
       throw ArgumentError.value(
         definition.id,
@@ -74,6 +82,20 @@ class EntryTypeRegistry {
   List<EntryTypeDefinition> all() =>
       List<EntryTypeDefinition>.unmodifiable(_defs.values);
 
+  /// Called by `EventStore.open` after `_registerLibraryDefinitions`;
+  /// further [register] calls throw. Sealing at open keeps the registry
+  /// complete for everything that reads the whole set at boot: a view
+  /// fingerprint whose interest names no entry type, the generation
+  /// descriptor, and the registry audit event.
+  // Implements: EVS-DEV-view-convergence/A (fingerprint term)
+  // Implements: EVS-DEV-version-compatibility/F
+  void seal() {
+    _sealed = true;
+  }
+
+  bool get isSealed => _sealed;
+
   final Map<String, EntryTypeDefinition> _defs =
       <String, EntryTypeDefinition>{};
+  bool _sealed = false;
 }

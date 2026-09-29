@@ -248,17 +248,17 @@ class _TopActionBarState extends State<TopActionBar> {
           label: 'Rebuild view',
           onTap: () async {
             try {
-              final count = await rebuildView(
+              await rebuildView(
                 store: widget.datastore.eventStore,
                 viewName: 'notes',
-                targetVersionByEntryType: const <String, EntryTypeVersion>{
-                  'demo_note': EntryTypeVersion(1, 0),
-                },
+                deadline: DateTime.now().toUtc().add(
+                  const Duration(seconds: 20),
+                ),
               );
               if (!mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text('Rebuilt $count events')));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Rebuilt notes view')),
+              );
             } catch (e) {
               if (!mounted) return;
               ScaffoldMessenger.of(

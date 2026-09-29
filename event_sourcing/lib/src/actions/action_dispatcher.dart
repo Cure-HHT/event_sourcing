@@ -81,7 +81,10 @@ class ActionDispatcher {
   ///             emit `authorization_denied` (with `permission_denied`,
   ///             optional `principal_active_role`, and `deny_reason`) and
   ///             return [DispatchAuthorizationDenied]. All-Allow falls
-  ///             through to Stage 7.
+  ///             through to Stage 7. A [ViewConvergingRefusal] the policy
+  ///             throws propagates to the caller instead: the transaction
+  ///             rolls back and the dispatcher appends no event
+  ///             (EVS-DEV-converging-view-reads/H).
   ///   Stage 7 — call `action.execute(parsedInput, ctx)`. On throw, emit
   ///             `execution_failed` and return [DispatchExecutionFailed].
   ///   Stage 8 — atomically persist all events from `result.events` in a
@@ -393,6 +396,15 @@ class ActionDispatcher {
       // the committed dispatch wakes the delivery cycle; the wake never
       //   raises into the dispatch.
       events._wakeDeliveryCycle();
+    } on ViewConvergingRefusal {
+      // Implements: EVS-DEV-converging-view-reads/H
+      // A view the policy would decide from is converging for this
+      // instance: the backend already rolled the dispatch tx back, so no
+      // policy read and no append from it are recorded. The refusal is
+      // transient and appends nothing -- not authorization_denied, not
+      // execution_failed -- and propagates to the caller, who sees the
+      // same submission succeed once the named view is current.
+      rethrow;
     } on Object catch (err) {
       // Transaction was rolled back by the backend. Distinguish:
       //   - execute() threw  → emit execution_failed denial (we captured

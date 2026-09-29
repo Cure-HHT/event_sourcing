@@ -14,8 +14,8 @@ import 'package:event_sourcing/src/storage/initiator.dart';
 import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
 
 /// Abstract persistence contract for the event-sourcing substrate.
@@ -307,45 +307,45 @@ abstract class StorageBackend {
   // -------- Generic view storage --------
   //
   // Projection fold interpreters read and write view rows via these
-  // methods. The view namespace is flat — addressed by `(viewName,
+  // methods. The view namespace is flat — addressed by `(copyId,
   // rowKey)` from the caller's perspective; the on-disk layout is a
   // per-backend implementation detail (sembast uses one store per
-  // viewName; postgres uses a single `view_rows` table keyed by
-  // `(view_name, row_key)`). The backend does not own schema for the
+  // copyId; postgres uses a single `view_rows` table keyed by
+  // `(copy_id, row_key)`). The backend does not own schema for the
   // row payload; the fold interpreter and its readers interpret the
   // row map. Reserved view name: `security_context` (reserved for the
   // sidecar store).
 
-  /// Read one row from [viewName] by [key] inside [txn], or null when
+  /// Read one row from [copyId] by [key] inside [txn], or null when
   /// the row is absent.
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
   );
 
-  /// Whole-row upsert into [viewName] at [key] inside [txn].
+  /// Whole-row upsert into [copyId] at [key] inside [txn].
   @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
     Map<String, dynamic> row,
   );
 
-  /// Delete the row at [key] in [viewName] inside [txn].
+  /// Delete the row at [key] in [copyId] inside [txn].
   @internal
-  Future<void> deleteViewRowInTxn(Transaction txn, String viewName, String key);
+  Future<void> deleteViewRowInTxn(Transaction txn, String copyId, String key);
 
-  /// Iterate rows in [viewName] with optional `limit` / `offset`.
+  /// Iterate rows in [copyId] with optional `limit` / `offset`.
   /// Non-transactional.
   Future<List<Map<String, dynamic>>> findViewRows(
-    String viewName, {
+    String copyId, {
     int? limit,
     int? offset,
   });
 
-  /// Read the rows of [viewName] whose row key is in [keys], in a SINGLE
+  /// Read the rows of [copyId] whose row key is in [keys], in a SINGLE
   /// bulk query, returned as a map from row key to row payload. Keys with no
   /// row are omitted from the result; an empty [keys] yields an empty map
   /// (no query). Non-transactional, mirroring [findViewRows].
@@ -361,11 +361,21 @@ abstract class StorageBackend {
   // a filtered (row-scoped) materialized-
   //   state snapshot reads its allow-list in one batched call, not per id.
   Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
-    String viewName,
+    String copyId,
     Set<String> keys,
   );
 
-  /// Iterate rows in [viewName] inside [txn] optionally filtered by
+  /// [readViewRowsByKeys] inside [txn]: the transactional counterpart used
+  /// where the row fetch must share the same storage transaction as a
+  /// preceding state read (EVS-DEV-converging-view-reads/A), so no commit
+  /// that lands between the two is visible to the row fetch.
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String copyId,
+    Set<String> keys,
+  );
+
+  /// Iterate rows in [copyId] inside [txn] optionally filtered by
   /// column equality. `where` is interpreted as "every key/value pair
   /// must match the row's column of that name." A null or empty
   /// [where] applies no filtering. Returns rows in unspecified order;
@@ -386,87 +396,82 @@ abstract class StorageBackend {
   //   execute path requires a transactional multi-row view-read primitive.
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
-    String viewName, {
+    String copyId, {
     Map<String, Object?>? where,
     int? limit,
     int? offset,
   });
 
-  /// Empty all rows in [viewName] inside [txn]. Other views are untouched.
+  /// Empty all rows in [copyId] inside [txn]. Other views are untouched.
   @internal
-  Future<void> clearViewInTxn(Transaction txn, String viewName);
+  Future<void> clearViewInTxn(Transaction txn, String copyId);
 
-  // -------- View target versions --------
+  // -------- View copies --------
+  //
+  // Records the stored copies of registered views: one row per copy,
+  // identified by a fresh [ViewCopy.copyId] and keyed for lookup by its
+  // [ViewCopy.fingerprint] — the digest of the view's definition
+  // (EVS-DEV-view-convergence). At most one copy of a fingerprint is not
+  // marked for deletion at a time. Rows of a copy live in the generic view
+  // store above, addressed by the copy's id in place of a view name.
 
-  /// Read the persisted target version for [viewName]/[entryType], or `null`
-  /// if no entry has been registered. Used by `rebuildView`
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
-
-  /// Persist [targetVersion] for the [viewName]/[entryType] pair.
-  /// Idempotent on repeat writes of the same value. A pair's catch-up mark
-  /// (see [markViewTargetBehindInTxn]) is left as it is.
+  /// Create a new copy of [viewName] under [fingerprint], with initial
+  /// [watermark], and return its freshly assigned copy id. Implementations
+  /// SHALL refuse a second unmarked copy of one [fingerprint]: a create
+  /// while an unmarked copy of that fingerprint already exists throws
+  /// [StateError] and creates nothing.
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion.
   @internal
-  Future<void> writeViewTargetVersionInTxn(
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
+    String fingerprint,
+    int watermark,
   );
 
-  /// Read all entry-type → target-version entries for [viewName].
-  /// Used by `rebuildView`'s strict-superset check.
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
+  /// Read every stored copy, of every view and every fingerprint, inside
+  /// [txn]. Used to decide which copies no live registration names.
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn);
+
+  /// Read the copy of [fingerprint] that is not marked for deletion, or
+  /// null when none is stored.
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion.
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
     Transaction txn,
-    String viewName,
+    String fingerprint,
   );
 
-  /// Remove every target-version entry for [viewName], catch-up marks
-  /// included. Used by `rebuildView` before re-recording, and by view drop
-  /// helpers.
+  /// Persist [watermark] as the log position [copyId] has folded through.
+  /// No-op when [copyId] names no stored copy.
   @internal
-  Future<void> clearViewTargetVersionsInTxn(Transaction txn, String viewName);
-
-  /// Read every stored target of [entryType], keyed by view name.
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+  Future<void> setViewCopyWatermarkInTxn(
     Transaction txn,
-    String entryType,
+    String copyId,
+    int watermark,
   );
 
-  /// Mark the stored [viewName]/[entryType] pair as behind the log: an
-  /// event of [entryType] was stored without being folded into [viewName].
-  /// No-op when the pair has no stored target. The mark stays until
-  /// [clearViewTargetBehindInTxn] or [clearViewTargetVersionsInTxn]
-  /// removes it; writing the pair's target version keeps it.
-  // Implements: EVS-DEV-version-compatibility/L
-  // the catch-up mark is a flag on the stored target, separate from its
-  //   version, which a lowered version could not express.
+  /// Mark [copyId] for deletion. Idempotent: a repeat mark, or a mark of a
+  /// copy id that names no stored copy, is a no-op.
   @internal
-  Future<void> markViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
+  Future<void> markViewCopyForDeletionInTxn(Transaction txn, String copyId);
 
-  /// True when the stored [viewName]/[entryType] pair carries a catch-up
-  /// mark; false when it carries none or has no stored target.
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
-
-  /// Remove the catch-up mark of the [viewName]/[entryType] pair. No-op
-  /// when it carries none.
+  /// Delete up to [limit] rows of [copyId] from the generic view store,
+  /// returning the number of rows deleted. A return below [limit] means
+  /// the copy held no more rows to delete.
   @internal
-  Future<void> clearViewTargetBehindInTxn(
+  Future<int> deleteViewCopyRowsInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-  );
+    String copyId, {
+    required int limit,
+  });
+
+  /// Delete [copyId]'s own record from the view-copies store. Idempotent:
+  /// a copy id that names no stored copy is a no-op. Does not touch the
+  /// copy's rows — callers delete them first via [deleteViewCopyRowsInTxn].
+  @internal
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId);
 
   // -------- FIFO (per destination) --------
 
@@ -992,6 +997,28 @@ abstract class StorageBackend {
   /// storage trust boundary.
   @internal
   Future<T> bootTransaction<T>(Future<T> Function(Transaction txn) body);
+
+  /// Runs [body] as a bounded catch-up transaction for the view copy keyed
+  /// by [copyKey] (its copy id, or its fingerprint before a copy is first
+  /// created), trying that copy's lock without waiting, and returns its
+  /// result; returns null, writing nothing, when the lock is not granted.
+  ///
+  /// A backend shared by several processes or tabs admits at most one
+  /// catch-up transaction per copy at a time across every instance: on
+  /// Postgres a transaction-scoped advisory try-lock ordered after a
+  /// `SHARE` lock on `backend_state` (so the transaction's snapshot, taken
+  /// by its first query after both locks, includes every append in
+  /// flight), on the web a Web Lock requested with `ifAvailable`. A backend
+  /// used by one process (Sembast outside the browser) uses an
+  /// isolate-local lock, since only one instance can ever reach the
+  /// database.
+  // Implements: EVS-DEV-view-convergence/L
+  // Implements: EVS-DEV-view-convergence/M
+  @internal
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  );
 
   // -------- Data generation --------
 

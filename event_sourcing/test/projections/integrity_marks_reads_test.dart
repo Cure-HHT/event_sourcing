@@ -106,7 +106,7 @@ void main() {
     expect(backend.aggregateReads, 0);
     final row = (await store.reader.readViewRowsByKeys(_kNotesSpec.viewName, {
       'note-1',
-    }))['note-1']!;
+    })).rows['note-1']!.dataOrNull!;
     expect(row[r'$integrity'], <String, Object?>{
       'security_findings': <String>[],
     });
@@ -131,14 +131,14 @@ void main() {
     await _appendNote(store, 'tampered');
     await _appendNote(store, 'unrelated');
     expect(backend.aggregateReads, 0);
-    final rows = await store.reader.readViewRowsByKeys(_kNotesSpec.viewName, {
+    final rows = (await store.reader.readViewRowsByKeys(_kNotesSpec.viewName, {
       'tampered',
       'unrelated',
-    });
-    expect(rows['tampered']![r'$integrity'], <String, Object?>{
+    })).rows;
+    expect(rows['tampered']!.dataOrNull![r'$integrity'], <String, Object?>{
       'security_findings': <String>[findingId],
     });
-    expect(rows['unrelated']![r'$integrity'], <String, Object?>{
+    expect(rows['unrelated']!.dataOrNull![r'$integrity'], <String, Object?>{
       'security_findings': <String>[],
     });
   });

@@ -87,7 +87,13 @@ void main() {
             '(EVS-PRD-reaction-widget-contract/I).',
       );
 
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
       final ready = transitions.last as Ready<_Row>;
@@ -107,7 +113,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
 
@@ -177,7 +189,13 @@ void main() {
         );
 
         // EndOfReplay finally promotes to Ready, surfacing the buffered row.
-        fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+        fake.emitViewUpdate<_Row>(
+          'v',
+          const EndOfReplay<_Row>(
+            sequence: 2,
+            state: ViewConvergenceState.current,
+          ),
+        );
         await _settleStream(tester);
         expect(transitions.last, isA<Ready<_Row>>());
         final ready = transitions.last as Ready<_Row>;
@@ -204,7 +222,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('b'), sequence: 2),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect((transitions.last as Ready<_Row>).rows, hasLength(2));
 
@@ -242,7 +266,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 2),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
 
       expect(transitions.last, isA<Ready<_Row>>());
@@ -271,7 +301,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
 
@@ -299,7 +335,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
 
@@ -320,7 +362,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'fresh'), sequence: 2),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
       expect((transitions.last as Ready<_Row>).rows.single['title'], 'fresh');
@@ -354,7 +402,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       fake.driveConnectionStatus(const Reconnecting());
       await tester.pumpAndSettle();
 
@@ -434,7 +488,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
 
       final node = tester.getSemantics(find.byKey(const ValueKey('leaf')));
@@ -462,7 +522,13 @@ void main() {
         'v',
         Snapshot<_Row>(value: _row('a', title: 'A'), sequence: 1),
       );
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 1));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 1,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
 
       fake.driveConnectionStatus(const Reconnecting());
@@ -509,7 +575,13 @@ void main() {
       await _settleStream(tester);
       expect((transitions.last as Ready<_Row>).rows, hasLength(2));
 
-      fake.emitViewUpdate<_Row>('v', const EndOfReplay<_Row>(sequence: 2));
+      fake.emitViewUpdate<_Row>(
+        'v',
+        const EndOfReplay<_Row>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
+      );
       await _settleStream(tester);
       expect(transitions.last, isA<Ready<_Row>>());
       expect((transitions.last as Ready<_Row>).rows, hasLength(2));

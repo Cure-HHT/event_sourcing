@@ -48,7 +48,7 @@ String _roleFor(String userId, UserDirectory directory) {
 }
 
 Future<List<MatrixGrant>> collectMatrixGrants(EventStore store) async {
-  final rows = await store.reader.findViewRows('role_permission_grants');
+  final rows = (await store.reader.findViewRows('role_permission_grants')).rows;
   return rows
       .map(
         (r) => MatrixGrant(

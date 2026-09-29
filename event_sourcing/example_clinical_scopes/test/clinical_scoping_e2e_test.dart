@@ -105,6 +105,8 @@ class ParticipantsObserver {
         if (id != null) rows[id] = value;
       case EndOfReplay<Map<String, Object?>>():
         sawEndOfReplay = true;
+      case Pending<Map<String, Object?>>():
+        break;
       case Delta<Map<String, Object?>>(:final value):
         final id = value['aggregateId'] as String?;
         if (id != null) rows[id] = value;

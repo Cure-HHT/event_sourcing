@@ -155,7 +155,9 @@ void main() {
         );
       }
 
-      final rows = await backend.findViewRows('notes');
+      final rows = await backend.findViewRows(
+        datastore.eventStore.copyIdOf('notes'),
+      );
       expect(rows, hasLength(1));
       expect(rows.single['aggregateId'], 'note-1');
 

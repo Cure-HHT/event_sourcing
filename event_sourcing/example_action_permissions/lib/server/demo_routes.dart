@@ -228,9 +228,9 @@ class DemoRoutes {
     final operator = await _operator(req.url.queryParameters['userId']);
     if (operator == null) return _forbidden();
     final status = await components.destinations.readDeliveryStatus();
-    final wedges = await components.eventStore.reader.findViewRows(
+    final wedges = (await components.eventStore.reader.findViewRows(
       defaultDestinationWedgesSpec.viewName,
-    );
+    )).rows;
     return Response.ok(
       jsonEncode(<String, Object?>{
         'drainer': status.drainer?.toJson(),

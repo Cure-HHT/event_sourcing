@@ -26,7 +26,8 @@ import 'package:reaction/src/wire/envelope.dart';
 ///   delta         + "value" (map) + "cause" (event id that caused
 ///                            this delta)
 ///   tombstone     + "aggregateId"
-///   end_of_replay (no extra fields)
+///   end_of_replay + "state" ("current" or "converging")
+///   pending       + "aggregateId" (sequence is always 0)
 ///
 /// [Snapshot.value] and [Delta.value] carry the mapped row, which by
 /// `AggregateProjectionSpec` convention contains the aggregateId as a
@@ -67,6 +68,14 @@ class UpdateCodec {
         'type': 'end_of_replay',
         'subscriptionId': subscriptionId,
         'sequence': u.sequence,
+        'state': _encodeState(u.state),
+      };
+    } else if (u is Pending<Map<String, Object?>>) {
+      return {
+        'type': 'pending',
+        'subscriptionId': subscriptionId,
+        'sequence': u.sequence,
+        'aggregateId': u.aggregateId,
       };
     } else {
       throw FormatException('unknown Update<T> type: ${u.runtimeType}');
@@ -94,11 +103,29 @@ class UpdateCodec {
           sequence: sequence,
         );
       case 'end_of_replay':
-        return EndOfReplay<Map<String, Object?>>(sequence: sequence);
+        return EndOfReplay<Map<String, Object?>>(
+          sequence: sequence,
+          state: _decodeState(requireString(json, 'state')),
+        );
+      case 'pending':
+        return Pending<Map<String, Object?>>(
+          aggregateId: requireString(json, 'aggregateId'),
+        );
       default:
         throw FormatException('unknown update type: $type');
     }
   }
+
+  static String _encodeState(ViewConvergenceState state) => switch (state) {
+    ViewConvergenceState.current => 'current',
+    ViewConvergenceState.converging => 'converging',
+  };
+
+  static ViewConvergenceState _decodeState(String value) => switch (value) {
+    'current' => ViewConvergenceState.current,
+    'converging' => ViewConvergenceState.converging,
+    _ => throw FormatException('unknown convergence state: $value'),
+  };
 
   /// Peeks at the subscriptionId without fully decoding the envelope.
   /// Used by RemoteConnection to route incoming envelopes.

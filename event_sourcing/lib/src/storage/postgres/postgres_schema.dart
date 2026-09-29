@@ -6,7 +6,11 @@
 //   and the latest-eligible-version index to the events table and raises
 //   the minimum to itself; version 4 adds the delivery columns and the
 //   retained-delivery index to the queue table, rewrites its guard, and
-//   raises the minimum to itself.
+//   raises the minimum to itself; version 5 adds the transform-failed
+//   columns to the queue table and rewrites its guard, and raises the
+//   minimum to itself; version 6 adds the `view_copies` table with its
+//   partial unique index on an unmarked fingerprint, renames `view_rows`'
+//   `view_name` column to `copy_id`, and raises the minimum to itself.
 // Implements: EVS-DEV-chain-verification/A
 // the chain lookups on Postgres: columns of the events table holding the
 //   originating database, sealed hash and origin position each stored copy
@@ -34,13 +38,13 @@ import 'package:meta/meta.dart' show internal;
 /// and keeps [postgresMinCompatibleSchemaVersion]; a data-format major is
 /// provisioned only after every instance of the old major has stopped,
 /// which the incompatible-generation guard enforces.
-const int postgresSchemaVersion = 5;
+const int postgresSchemaVersion = 6;
 
 /// The minimum compatible schema version this build records when it
 /// provisions: the last migration step's `minCompatibleVersion`. A build
 /// whose [postgresSchemaVersion] is below the minimum stored in a database
 /// refuses to open it.
-const int postgresMinCompatibleSchemaVersion = 5;
+const int postgresMinCompatibleSchemaVersion = 6;
 
 /// The ordered migration steps of this build. Step `n` brings a schema at
 /// the previous step's version to its `toVersion`.
@@ -60,7 +64,6 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       // the log.
       _eventsTypeSeqIdx,
       _viewRowsTable,
-      _viewTargetVersionsTable,
       _fifoEntriesTable,
       _fifoEntriesHeadIdx,
       _fifoEntriesGuardFunction,
@@ -121,6 +124,18 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
       _fifoEntriesGuardFunction,
     ],
   ),
+  // A build before this step has no view_copies table and stores view rows
+  // keyed by view_name rather than copy_id, so the step raises the
+  // minimum: such a build cannot address a fingerprinted copy's rows.
+  PostgresMigrationStep(
+    toVersion: 6,
+    minCompatibleVersion: 6,
+    ddl: <String>[
+      _viewCopiesTable,
+      _viewCopiesFingerprintIdx,
+      _viewRowsRenameColumn,
+    ],
+  ),
 ];
 
 /// The tables the library creates. A schema that holds any of them but
@@ -130,7 +145,7 @@ const List<PostgresMigrationStep> postgresMigrations = <PostgresMigrationStep>[
 const List<String> postgresLibraryTables = <String>[
   'events',
   'view_rows',
-  'view_target_versions',
+  'view_copies',
   'fifo_entries',
   'backend_state',
   'security_context',
@@ -276,17 +291,35 @@ CREATE TABLE IF NOT EXISTS view_rows (
 )
 ''';
 
-// --- View target versions -------------------------------------------------
+// --- View copies ------------------------------------------------------------
+//
+// One row per stored copy of a registered view (EVS-DEV-view-convergence).
+// The partial unique index on fingerprint, scoped to unmarked copies,
+// enforces "at most one copy of a fingerprint that is not marked for
+// deletion" (assertion A) as a database constraint rather than an
+// application-level check.
 
-const String _viewTargetVersionsTable = '''
-CREATE TABLE IF NOT EXISTS view_target_versions (
-  view_name       TEXT     NOT NULL,
-  entry_type      TEXT     NOT NULL,
-  target_major    INTEGER  NOT NULL  CHECK (target_major >= 1),
-  target_minor    INTEGER  NOT NULL  CHECK (target_minor >= 0),
-  behind          BOOLEAN  NOT NULL  DEFAULT false,
-  PRIMARY KEY (view_name, entry_type)
+const String _viewCopiesTable = '''
+CREATE TABLE IF NOT EXISTS view_copies (
+  copy_id              TEXT         PRIMARY KEY,
+  view_name            TEXT         NOT NULL,
+  fingerprint          TEXT         NOT NULL,
+  watermark            BIGINT       NOT NULL,
+  marked_for_deletion  BOOLEAN      NOT NULL  DEFAULT false,
+  created_at           TIMESTAMPTZ  NOT NULL  DEFAULT NOW()
 )
+''';
+
+const String _viewCopiesFingerprintIdx = '''
+CREATE UNIQUE INDEX IF NOT EXISTS view_copies_unmarked_fingerprint_idx
+  ON view_copies (fingerprint)
+  WHERE NOT marked_for_deletion
+''';
+
+// The generic view store keys rows by copy id, not by view name, once a
+// view is stored per fingerprinted copy.
+const String _viewRowsRenameColumn = '''
+ALTER TABLE view_rows RENAME COLUMN view_name TO copy_id
 ''';
 
 // --- FIFO entries ---------------------------------------------------------

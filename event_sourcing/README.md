@@ -187,8 +187,8 @@ usual). Keys beginning with `$` are reserved: an append whose data holds
 one at the top level, and a projection naming one, are refused. Schema
 evolution
 uses `PromoterSpec` chains of shape-changing primitives (`RenameField`,
-`DefaultField`, `DropField`) applied at boot-time snapshot promotion and
-ingest-time event promotion.
+`DefaultField`, `DropField`) applied at view catch-up and ingest-time
+event promotion.
 
 ## Subscribing
 

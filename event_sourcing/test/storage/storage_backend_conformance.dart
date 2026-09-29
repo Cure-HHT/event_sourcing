@@ -94,7 +94,7 @@ void runStorageBackendConformanceTests(
     _registerFindAllEventsFilterTests(() => backend, () => initialized);
     _registerOriginatorFilterTests(() => backend, () => initialized);
     _registerViewRowTests(() => backend, () => initialized);
-    _registerViewTargetVersionTests(() => backend, () => initialized);
+    _registerViewCopyTests(() => backend, () => initialized);
     _registerFifoTests(() => backend, () => initialized);
     _registerListFifoEntriesTests(() => backend, () => initialized);
     _registerFillCursorTests(() => backend, () => initialized);
@@ -1321,320 +1321,176 @@ void _registerViewRowTests(
   });
 }
 
-// -------- View target versions --------
+// -------- View copies subgroup --------
 //
-// view-target-version persistence is
-//   part of the StorageBackend abstraction (round-trip, null-on-unknown,
-//   readAll, clear, cross-view isolation).
-void _registerViewTargetVersionTests(
+// View-copy record methods (createViewCopyInTxn, readViewCopiesInTxn,
+//   readUnmarkedViewCopyInTxn, setViewCopyWatermarkInTxn,
+//   markViewCopyForDeletionInTxn, deleteViewCopyRowsInTxn,
+//   deleteViewCopyRecordInTxn) are part of the StorageBackend abstraction.
+void _registerViewCopyTests(
   StorageBackend Function() backendOf,
   bool Function() initializedOf,
 ) {
-  group('view_target_versions storage', () {
-    // Verifies: EVS-DEV-version-compatibility/L
-    // the catch-up mark: marking a stored pair sets it and a repeat is
-    //   harmless, marking an absent pair writes nothing, writing the pair's
-    //   target keeps the mark, clearing removes it, clearing a view's targets
-    //   removes its marks, a rolled-back mark leaves none, and the read by
-    //   entry type returns every view's target of that entry type.
-    test('catch-up mark: mark, keep across a target write, clear, roll '
-        'back; targets read by entry type', () async {
+  group('view copies', () {
+    // Verifies: EVS-DEV-view-convergence/A
+    // a fresh copy is created and read back by fingerprint.
+    test('create and read back by fingerprint', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      Future<bool> behind(String view, String entryType) => backend.transaction(
-        (txn) => backend.readViewTargetBehindInTxn(txn, view, entryType),
+      final copyId = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
       );
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v1',
-          'note',
-          const EntryTypeVersion(1, 2),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'note',
-          const EntryTypeVersion(1, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'other',
-          const EntryTypeVersion(3, 1),
-        );
-      });
+      expect(copyId, isNotEmpty);
+      final copy = await backend.transaction(
+        (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
+      );
       expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'note'),
+        copy,
+        ViewCopy(
+          copyId: copyId,
+          viewName: 'notes',
+          fingerprint: 'fp-1',
+          watermark: 0,
+          markedForDeletion: false,
         ),
-        <String, EntryTypeVersion>{
-          'v1': const EntryTypeVersion(1, 2),
-          'v2': const EntryTypeVersion(1, 0),
-        },
       );
+      expect(await backend.transaction(backend.readViewCopiesInTxn), [copy]);
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('unmarked lookup of an unknown fingerprint returns null', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
       expect(
         await backend.transaction(
-          (txn) => backend.readViewTargetsForEntryTypeInTxn(txn, 'absent'),
-        ),
-        isEmpty,
-      );
-      expect(await behind('v1', 'note'), isFalse);
-
-      await expectLater(
-        backend.transaction<void>((txn) async {
-          await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-          expect(
-            await backend.readViewTargetBehindInTxn(txn, 'v1', 'note'),
-            isTrue,
-          );
-          throw StateError('roll back');
-        }),
-        throwsStateError,
-      );
-      expect(await behind('v1', 'note'), isFalse);
-
-      await backend.transaction((txn) async {
-        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-        await backend.markViewTargetBehindInTxn(txn, 'v1', 'note');
-        await backend.markViewTargetBehindInTxn(txn, 'absent', 'note');
-      });
-      expect(await behind('v1', 'note'), isTrue);
-      expect(await behind('v2', 'note'), isFalse);
-      expect(await behind('absent', 'note'), isFalse);
-      expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'absent', 'note'),
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'absent'),
         ),
         isNull,
       );
+    });
 
-      await backend.transaction(
-        (txn) => backend.writeViewTargetVersionInTxn(
-          txn,
-          'v1',
-          'note',
-          const EntryTypeVersion(1, 1),
-        ),
+    // Verifies: EVS-DEV-view-convergence/A
+    test(
+      'setting the watermark persists and leaves other copies alone',
+      () async {
+        if (!initializedOf()) return;
+        final backend = backendOf();
+        final a = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-a', 0),
+        );
+        final b = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-b', 0),
+        );
+        await backend.transaction(
+          (txn) => backend.setViewCopyWatermarkInTxn(txn, a, 42),
+        );
+        final copies = await backend.transaction(backend.readViewCopiesInTxn);
+        final byId = {for (final c in copies) c.copyId: c};
+        expect(byId[a]!.watermark, 42);
+        expect(byId[b]!.watermark, 0);
+      },
+    );
+
+    // Verifies: EVS-DEV-view-convergence/A
+    test('marking for deletion is idempotent and lets a fresh copy of the '
+        'same fingerprint be created', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final first = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
       );
-      expect(await behind('v1', 'note'), isTrue);
+      await backend.transaction((txn) async {
+        await backend.markViewCopyForDeletionInTxn(txn, first);
+        await backend.markViewCopyForDeletionInTxn(txn, first);
+      });
       expect(
         await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
         ),
-        const EntryTypeVersion(1, 1),
+        isNull,
       );
-
-      await backend.transaction(
-        (txn) => backend.clearViewTargetBehindInTxn(txn, 'v1', 'note'),
+      final second = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
       );
-      expect(await behind('v1', 'note'), isFalse);
+      expect(second, isNot(first));
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      expect(copies.length, 2);
       expect(
-        await backend.transaction(
-          (txn) => backend.readViewTargetVersionInTxn(txn, 'v1', 'note'),
+        copies.firstWhere((c) => c.copyId == first).markedForDeletion,
+        isTrue,
+      );
+      expect(
+        copies.firstWhere((c) => c.copyId == second).markedForDeletion,
+        isFalse,
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    // at most one copy of a fingerprint that is not marked for deletion.
+    test('a second unmarked copy of one fingerprint is refused', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
+      );
+      await expectLater(
+        backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
         ),
-        const EntryTypeVersion(1, 1),
+        throwsStateError,
       );
+    });
 
+    // Verifies: EVS-DEV-view-convergence/A
+    test('deleting rows in bounded batches empties a copy, then its '
+        'record can be dropped', () async {
+      if (!initializedOf()) return;
+      final backend = backendOf();
+      final copyId = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0),
+      );
+      await backend.transaction((txn) async {
+        for (var i = 0; i < 5; i++) {
+          await backend.upsertViewRowInTxn(txn, copyId, 'row-$i', {'i': i});
+        }
+      });
+      final firstBatch = await backend.transaction(
+        (txn) => backend.deleteViewCopyRowsInTxn(txn, copyId, limit: 3),
+      );
+      expect(firstBatch, 3);
+      final secondBatch = await backend.transaction(
+        (txn) => backend.deleteViewCopyRowsInTxn(txn, copyId, limit: 3),
+      );
+      expect(secondBatch, 2);
+      expect(await backend.findViewRows(copyId), isEmpty);
       await backend.transaction(
-        (txn) => backend.markViewTargetBehindInTxn(txn, 'v2', 'other'),
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
       );
+      final copies = await backend.transaction(backend.readViewCopiesInTxn);
+      expect(copies.where((c) => c.copyId == copyId), isEmpty);
+      // Deleting an already-absent copy record is a no-op, not an error.
       await backend.transaction(
-        (txn) => backend.clearViewTargetVersionsInTxn(txn, 'v2'),
+        (txn) => backend.deleteViewCopyRecordInTxn(txn, copyId),
       );
-      await backend.transaction(
-        (txn) => backend.writeViewTargetVersionInTxn(
-          txn,
-          'v2',
-          'other',
-          const EntryTypeVersion(3, 1),
-        ),
-      );
-      expect(await behind('v2', 'other'), isFalse);
     });
 
-    // Verifies: EVS-PRD-portability/D
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('round-trip read/write keeps major and minor', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-          const EntryTypeVersion(1, 3),
-        );
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(
-            txn,
-            'diary_entries',
-            'demo_note',
-          ),
-          const EntryTypeVersion(1, 3),
-        );
-      });
-    });
-
-    test('returns null for unknown (view, entry_type)', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(
-            txn,
-            'diary_entries',
-            'unknown',
-          ),
-          isNull,
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('readAll returns full map for one view', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'demo_note',
-          const EntryTypeVersion(2, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'diary_entries',
-          'epistaxis',
-          const EntryTypeVersion(5, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'other_view',
-          'demo_note',
-          const EntryTypeVersion(1, 0),
-        );
-      });
-      await backend.transaction((txn) async {
-        final map = await backend.readAllViewTargetVersionsInTxn(
-          txn,
-          'diary_entries',
-        );
-        expect(map, const <String, EntryTypeVersion>{
-          'demo_note': EntryTypeVersion(2, 1),
-          'epistaxis': EntryTypeVersion(5, 0),
-        });
-      });
-    });
-
-    test('clear removes only the named view', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'view_a',
-          'x',
-          const EntryTypeVersion(1, 0),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'view_b',
-          'x',
-          const EntryTypeVersion(2, 0),
-        );
-      });
-      await backend.transaction((txn) async {
-        await backend.clearViewTargetVersionsInTxn(txn, 'view_a');
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'view_a', 'x'),
-          isNull,
-        );
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'view_b', 'x'),
-          const EntryTypeVersion(2, 0),
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/A
-    test('overwrite, including a lower minor within the major', () async {
-      if (!initializedOf()) return;
-      final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 1),
-        );
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 4),
-        );
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 4),
-        );
-      });
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 2),
-        );
-      });
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 2),
-        );
-      });
-    });
-
-    // Verifies: EVS-DEV-version-compatibility/E
+    // Verifies: EVS-DEV-view-convergence/A
     test('a write in a transaction that throws is rolled back', () async {
       if (!initializedOf()) return;
       final backend = backendOf();
-      await backend.transaction((txn) async {
-        await backend.writeViewTargetVersionInTxn(
-          txn,
-          'v',
-          'e',
-          const EntryTypeVersion(1, 3),
-        );
-      });
       await expectLater(
-        backend.transaction((txn) async {
-          await backend.writeViewTargetVersionInTxn(
-            txn,
-            'v',
-            'e',
-            const EntryTypeVersion(1, 0),
-          );
-          throw StateError('injected failure after the write');
+        backend.transaction<void>((txn) async {
+          await backend.createViewCopyInTxn(txn, 'notes', 'fp-1', 0);
+          throw StateError('injected failure after the create');
         }),
         throwsStateError,
       );
-      await backend.transaction((txn) async {
-        expect(
-          await backend.readViewTargetVersionInTxn(txn, 'v', 'e'),
-          const EntryTypeVersion(1, 3),
-        );
-      });
+      expect(
+        await backend.transaction(
+          (txn) => backend.readUnmarkedViewCopyInTxn(txn, 'fp-1'),
+        ),
+        isNull,
+      );
     });
   });
 }

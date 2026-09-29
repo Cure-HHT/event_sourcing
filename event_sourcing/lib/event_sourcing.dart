@@ -330,6 +330,20 @@ export 'src/projections/projection_registry.dart' show ProjectionRegistry;
 // bootstrapEventStore or directly to EventStore.
 export 'src/projections/projection_spec.dart'
     show AggregateProjectionSpec, ProjectionSpec, TableProjectionSpec;
+export 'src/projections/view_read.dart'
+    show
+        AbsentRow,
+        PendingRow,
+        SettledRow,
+        ViewConvergenceTimeout,
+        ViewConvergingRefusal,
+        ViewCopyStatus,
+        ViewRow,
+        ViewRowData,
+        ViewRowRead,
+        ViewRowsByKeyRead,
+        ViewRowsRead,
+        ViewConvergenceState;
 
 // Promoters — entry-type version promotion chains for schema migration.
 export 'src/promoters/primitives/transform.dart'
@@ -485,6 +499,7 @@ export 'src/storage/stored_event.dart' show StoredEvent;
 export 'src/storage/transaction.dart' show Transaction;
 export 'src/storage/transaction_rerun_limit.dart'
     show TransactionRerunLimitException;
+export 'src/storage/view_copy.dart' show ViewCopy;
 export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 
 // Subscriptions — live-update stream primitives returned by
@@ -492,7 +507,7 @@ export 'src/storage/wedged_fifo_summary.dart' show WedgedFifoSummary;
 export 'src/subscriptions/subscription_mode.dart'
     show AggregateMode, Events, SubscriptionMode;
 export 'src/subscriptions/update.dart'
-    show Delta, EndOfReplay, Snapshot, Tombstone, Update;
+    show Delta, EndOfReplay, Pending, Snapshot, Tombstone, Update;
 
 // Implements: EVS-PRD-destinations/K
 // the queue-changing functions are not

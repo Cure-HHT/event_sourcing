@@ -62,7 +62,7 @@ void main() {
     );
     fake.emitViewUpdate<Note>(
       'notes_today',
-      const EndOfReplay<Note>(sequence: 1),
+      const EndOfReplay<Note>(sequence: 1, state: ViewConvergenceState.current),
     );
     await tester.pump();
     expect(find.text('First note'), findsOneWidget);

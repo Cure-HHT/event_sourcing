@@ -5,7 +5,6 @@ import 'package:event_sourcing/src/causal_record.dart';
 import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
-import 'package:event_sourcing/src/lifecycle/boot_errors.dart';
 import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -31,10 +30,11 @@ import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
+import 'package:event_sourcing/src/storage/view_copy_lock.dart';
 import 'package:event_sourcing/src/storage/web_locks_stub.dart'
     if (dart.library.js_interop) 'package:event_sourcing/src/storage/web_locks.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
-import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:sembast/sembast.dart' as sembast show Transaction;
 import 'package:sembast/sembast.dart' hide Transaction;
@@ -208,6 +208,30 @@ class SembastBackend extends StorageBackend {
   /// and so does any other transaction on this backend, which the
   /// database runs one at a time with the boot's.
   bool _bootHoldsWriteLock = false;
+
+  /// Tries the view copy [copyKey]'s lock without waiting: the isolate-
+  /// local registry keyed by this backend's open database handle, and, in
+  /// the browser, also the database's Web Lock (tried second, so a lock
+  /// this isolate lost to another catch-up in the same isolate never
+  /// reaches the browser's lock manager). Not granted, returns null,
+  /// taking no further step and writing nothing; granted, runs [body] as
+  /// [transaction] does and releases both locks when it ends.
+  // Implements: EVS-DEV-view-convergence/M (Sembast isolate-local lock and
+  //   web Web Lock)
+  @override
+  @internal
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  ) {
+    refuseCallFromBootProgressObserver('SembastBackend.catchUpTransaction');
+    if (!tryLockViewCopyIsolate(_db, copyKey)) return Future<T?>.value();
+    return runHoldingBrowserViewCopyLock<T>(
+      path: _database().path,
+      copyKey: copyKey,
+      body: () => transaction(body),
+    ).whenComplete(() => unlockViewCopyIsolate(_db, copyKey));
+  }
 
   // Implements: EVS-PRD-subscription/E
   // Post-commit notifications are queued on the
@@ -2048,6 +2072,31 @@ class SembastBackend extends StorageBackend {
     return out;
   }
 
+  // Implements: EVS-DEV-converging-view-reads/A
+  // the transactional counterpart of
+  //   readViewRowsByKeys, reading against the issued transaction's own
+  //   handle so a by-key row fetch shares one storage transaction with a
+  //   preceding state read.
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String viewName,
+    Set<String> keys,
+  ) async {
+    if (keys.isEmpty) return const <String, Map<String, dynamic>>{};
+    final t = _requireValidTxn(txn);
+    final keyList = keys.toList(growable: false);
+    final values = await _viewStore(
+      viewName,
+    ).records(keyList).get(t._sembastTxn);
+    final out = <String, Map<String, dynamic>>{};
+    for (var i = 0; i < keyList.length; i++) {
+      final v = values[i];
+      if (v != null) out[keyList[i]] = Map<String, dynamic>.from(v);
+    }
+    return out;
+  }
+
   // Implements: EVS-PRD-permissions-as-events
   // transactional multi-row
   //   view-read primitive for the scoped-permissions authorize stage.
@@ -2091,177 +2140,142 @@ class SembastBackend extends StorageBackend {
     });
   }
 
-  // -------- View target versions --------
+  // -------- View copies --------
   //
-  // Persists the per-(viewName, entryType) target schema version that the
-  // promoter pipeline reads on every materialization. One sembast store
-  // (`view_target_versions`) keyed on `'<viewName>::<entryType>'`; rows
-  // carry `view_name` / `entry_type` / `target_version` so `find` /
-  // `delete` can scope by `view_name`.
+  // One sembast store (`view_copies`), keyed by copy id, holding
+  // `{copy_id, view_name, fingerprint, watermark, marked_for_deletion}`
+  // rows. "At most one unmarked copy per fingerprint"
+  // (EVS-DEV-view-convergence/A) is enforced in application code, since
+  // sembast has no partial-unique-index primitive: a create checks for an
+  // existing unmarked row of the fingerprint inside the same transaction
+  // before inserting.
 
-  static const _viewTargetVersionsStore = 'view_target_versions';
+  static const _viewCopiesStore = 'view_copies';
 
-  final StoreRef<String, Map<String, Object?>> _viewTargetVersionsStoreRef =
-      stringMapStoreFactory.store(_viewTargetVersionsStore);
+  final StoreRef<String, Map<String, Object?>> _viewCopiesStoreRef =
+      stringMapStoreFactory.store(_viewCopiesStore);
 
-  String _viewTargetVersionsKey(String viewName, String entryType) =>
-      '$viewName::$entryType';
+  ViewCopy _viewCopyOf(Map<String, Object?> row) => ViewCopy(
+    copyId: row['copy_id'] as String,
+    viewName: row['view_name'] as String,
+    fingerprint: row['fingerprint'] as String,
+    watermark: row['watermark'] as int,
+    markedForDeletion: row['marked_for_deletion'] as bool,
+  );
 
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion;
+  //   enforced by checking for an existing unmarked row of the fingerprint
+  //   before inserting, inside the caller's transaction.
   @override
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
+  @internal
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
+    String fingerprint,
+    int watermark,
   ) async {
     final t = _requireValidTxn(txn);
-    final raw = await _viewTargetVersionsStoreRef
-        .record(_viewTargetVersionsKey(viewName, entryType))
-        .get(t._sembastTxn);
-    if (raw == null) return null;
-    return _targetVersionOf(raw, '$viewName::$entryType');
-  }
-
-  /// Reads the `{major, minor}` target of one view-target record. A
-  /// single integer target is the shape an earlier data format stored, and
-  /// throws [DatabaseResetRequiredError].
-  static EntryTypeVersion _targetVersionOf(
-    Map<String, Object?> record,
-    String key,
-  ) {
-    if (record['target_version'] is int) {
-      throw DatabaseResetRequiredError(
-        'its view target versions are single integers, the shape of an '
-        'earlier data format (view_target_versions[$key])',
-      );
-    }
-    try {
-      return EntryTypeVersion.fromJson(record['target_version']);
-    } on FormatException catch (e) {
+    final existing = await _viewCopiesStoreRef.find(
+      t._sembastTxn,
+      finder: Finder(
+        filter: Filter.and([
+          Filter.equals('fingerprint', fingerprint),
+          Filter.equals('marked_for_deletion', false),
+        ]),
+      ),
+    );
+    if (existing.isNotEmpty) {
       throw StateError(
-        'view_target_versions[$key]: target_version is not a '
-        '{major, minor} version (${e.message}); database corrupted',
+        'createViewCopyInTxn: an unmarked copy of fingerprint '
+        '"$fingerprint" already exists (copy_id ${existing.first.key})',
       );
     }
-  }
-
-  @override
-  @internal
-  Future<void> writeViewTargetVersionInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
-  ) async {
-    final t = _requireValidTxn(txn);
-    final record = _viewTargetVersionsStoreRef.record(
-      _viewTargetVersionsKey(viewName, entryType),
-    );
-    final existing = await record.get(t._sembastTxn);
-    await record.put(t._sembastTxn, <String, Object?>{
+    final copyId = _uuidGen.v4();
+    await _viewCopiesStoreRef.record(copyId).put(t._sembastTxn, {
+      'copy_id': copyId,
       'view_name': viewName,
-      'entry_type': entryType,
-      'target_version': targetVersion.toJson(),
-      if (existing?[_behindField] == true) _behindField: true,
+      'fingerprint': fingerprint,
+      'watermark': watermark,
+      'marked_for_deletion': false,
     });
+    return copyId;
   }
 
-  /// Field of a view-target record that carries its catch-up mark.
-  static const _behindField = 'behind';
+  @override
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn) async {
+    final t = _requireValidTxn(txn);
+    final records = await _viewCopiesStoreRef.find(t._sembastTxn);
+    return records.map((r) => _viewCopyOf(r.value)).toList(growable: false);
+  }
 
   @override
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
     Transaction txn,
-    String entryType,
+    String fingerprint,
   ) async {
     final t = _requireValidTxn(txn);
-    final records = await _viewTargetVersionsStoreRef.find(
+    final records = await _viewCopiesStoreRef.find(
       t._sembastTxn,
-      finder: Finder(filter: Filter.equals('entry_type', entryType)),
+      finder: Finder(
+        filter: Filter.and([
+          Filter.equals('fingerprint', fingerprint),
+          Filter.equals('marked_for_deletion', false),
+        ]),
+      ),
     );
-    return <String, EntryTypeVersion>{
-      for (final r in records)
-        (r.value['view_name'] as String): _targetVersionOf(r.value, r.key),
-    };
+    if (records.isEmpty) return null;
+    return _viewCopyOf(records.single.value);
   }
 
   @override
   @internal
-  Future<void> markViewTargetBehindInTxn(
+  Future<void> setViewCopyWatermarkInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
+    String copyId,
+    int watermark,
   ) async {
     final t = _requireValidTxn(txn);
-    final record = _viewTargetVersionsStoreRef.record(
-      _viewTargetVersionsKey(viewName, entryType),
-    );
+    final record = _viewCopiesStoreRef.record(copyId);
     final existing = await record.get(t._sembastTxn);
-    if (existing == null || existing[_behindField] == true) return;
-    await record.put(t._sembastTxn, <String, Object?>{
-      ...existing,
-      _behindField: true,
-    });
-  }
-
-  @override
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) async {
-    final t = _requireValidTxn(txn);
-    final existing = await _viewTargetVersionsStoreRef
-        .record(_viewTargetVersionsKey(viewName, entryType))
-        .get(t._sembastTxn);
-    return existing?[_behindField] == true;
+    if (existing == null) return;
+    await record.put(t._sembastTxn, {...existing, 'watermark': watermark});
   }
 
   @override
   @internal
-  Future<void> clearViewTargetBehindInTxn(
+  Future<void> markViewCopyForDeletionInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
+    String copyId,
   ) async {
     final t = _requireValidTxn(txn);
-    final record = _viewTargetVersionsStoreRef.record(
-      _viewTargetVersionsKey(viewName, entryType),
-    );
+    final record = _viewCopiesStoreRef.record(copyId);
     final existing = await record.get(t._sembastTxn);
-    if (existing == null || existing[_behindField] != true) return;
-    await record.put(t._sembastTxn, <String, Object?>{
-      for (final entry in existing.entries)
-        if (entry.key != _behindField) entry.key: entry.value,
-    });
-  }
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  ) async {
-    final t = _requireValidTxn(txn);
-    final records = await _viewTargetVersionsStoreRef.find(
-      t._sembastTxn,
-      finder: Finder(filter: Filter.equals('view_name', viewName)),
-    );
-    return <String, EntryTypeVersion>{
-      for (final r in records)
-        (r.value['entry_type'] as String): _targetVersionOf(r.value, r.key),
-    };
+    if (existing == null || existing['marked_for_deletion'] == true) return;
+    await record.put(t._sembastTxn, {...existing, 'marked_for_deletion': true});
   }
 
   @override
   @internal
-  Future<void> clearViewTargetVersionsInTxn(
+  Future<int> deleteViewCopyRowsInTxn(
     Transaction txn,
-    String viewName,
-  ) async {
+    String copyId, {
+    required int limit,
+  }) async {
     final t = _requireValidTxn(txn);
-    await _viewTargetVersionsStoreRef.delete(
-      t._sembastTxn,
-      finder: Finder(filter: Filter.equals('view_name', viewName)),
-    );
+    final keys = await _viewStore(
+      copyId,
+    ).findKeys(t._sembastTxn, finder: Finder(limit: limit));
+    if (keys.isEmpty) return 0;
+    await _viewStore(copyId).records(keys).delete(t._sembastTxn);
+    return keys.length;
+  }
+
+  @override
+  @internal
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId) async {
+    final t = _requireValidTxn(txn);
+    await _viewCopiesStoreRef.record(copyId).delete(t._sembastTxn);
   }
 
   // -------- FIFO --------

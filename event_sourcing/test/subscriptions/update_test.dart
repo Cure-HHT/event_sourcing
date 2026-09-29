@@ -4,6 +4,7 @@
 // Verifies: EVS-PRD-subscription/C
 // (sequence field present on every variant
 //   provides the per-subscription ordering anchor)
+import 'package:event_sourcing/src/projections/view_read.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
 import 'package:event_sourcing/src/subscriptions/update.dart';
@@ -34,10 +35,23 @@ void main() {
       expect(u.sequence, 10);
     });
 
-    test('EndOfReplay carries sequence and is a subtype of Update<T>', () {
-      const u = EndOfReplay<String>(sequence: 42);
-      expect(u, isA<Update<String>>());
-      expect(u.sequence, 42);
+    test(
+      'EndOfReplay carries sequence and state and is a subtype of Update<T>',
+      () {
+        const u = EndOfReplay<String>(
+          sequence: 42,
+          state: ViewConvergenceState.current,
+        );
+        expect(u, isA<Update<String>>());
+        expect(u.sequence, 42);
+        expect(u.state, ViewConvergenceState.current);
+      },
+    );
+
+    test('Pending carries aggregateId and sequence', () {
+      const u = Pending<int>(aggregateId: 'a1');
+      expect(u.aggregateId, 'a1');
+      expect(u.sequence, 0);
     });
 
     test('Pattern matching across variants', () {
@@ -45,6 +59,7 @@ void main() {
       final tag = switch (any) {
         Snapshot() => 'snap',
         EndOfReplay() => 'eor',
+        Pending() => 'pending',
         Delta() => 'delta',
         Tombstone() => 'tomb',
       };

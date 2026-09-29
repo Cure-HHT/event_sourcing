@@ -8,8 +8,13 @@
 // idempotent application
 //   ensures the event log alone is sufficient to reconstruct role-assignment
 //   state; re-running against an already-populated store emits nothing.
+// Implements: EVS-DEV-converging-view-reads/I
+// waits until user_role_scopes is current for the instance before reading
+//   it, and throws ViewConvergenceTimeout, naming it and its copy's
+//   progress, once the caller's deadline passes first.
 
 import 'package:event_sourcing/event_sourcing.dart';
+import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:meta/meta.dart';
 
 @immutable
@@ -43,12 +48,18 @@ class RoleAssignmentSeedResult {
 /// produced by [computeRoleAssignmentAggregateId]; the same convention is used by
 /// the `userRoleScopesSpec` projection's `AggregateIdKey` rowKey so the
 /// emitted events land on the rows this function reconstructs.
+///
+/// [timeout] bounds how long this waits for the `user_role_scopes` view to
+/// become current for the instance before reading it
+/// (EVS-DEV-converging-view-reads/I): a deadline already passed throws
+/// [ViewConvergenceTimeout] after one check, without waiting.
 Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
   required EventStore eventStore,
   required RoleAssignmentSeed seed,
   Initiator seedInitiator = const AutomationInitiator(
     service: 'event_sourcing_role_assignments_seed',
   ),
+  Duration timeout = const Duration(seconds: 30),
 }) async {
   // 1. Compute the aggregate-id -> entry map implied by the seed.
   final inSeed = <String, RoleAssignmentSeedEntry>{
@@ -60,11 +71,14 @@ Future<RoleAssignmentSeedResult> bootstrapRoleAssignments({
       ): e,
   };
 
-  // 2. Reconstruct the aggregate-id set currently materialized in the
-  //    user_role_scopes view. The row payload carries user_id / role /
-  //    scope; the storage key is not surfaced by findViewRows, so we
-  //    rebuild the aggregate id from the row body.
-  final rows = await eventStore.reader.findViewRows('user_role_scopes');
+  // 2. Wait for user_role_scopes to be current, then reconstruct the
+  //    aggregate-id set currently materialized in it. The row payload
+  //    carries user_id / role / scope; the storage key is not surfaced by
+  //    findViewRows, so we rebuild the aggregate id from the row body.
+  await waitForViewsCurrent(eventStore, {
+    'user_role_scopes',
+  }, DateTime.now().add(timeout));
+  final rows = (await eventStore.reader.findViewRows('user_role_scopes')).rows;
   final inView = <String>{};
   for (final r in rows) {
     final scope = ScopeValue.fromJson(

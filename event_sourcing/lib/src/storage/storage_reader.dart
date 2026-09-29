@@ -1,6 +1,7 @@
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart'
     show SuccessionLineage;
+import 'package:event_sourcing/src/projections/view_read.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/storage/fifo_entry.dart';
 import 'package:event_sourcing/src/storage/initiator.dart';
@@ -8,7 +9,6 @@ import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/verification/chain_verification_verdict.dart';
-import 'package:event_sourcing/src/versions.dart';
 
 /// Reads of the storage an event store runs on: the event log, the views,
 /// the destination queues and schedules, and the security-context audit.
@@ -80,29 +80,39 @@ abstract interface class StorageReader {
   /// The events of the log, newest first.
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes});
 
-  /// One row of [viewName] by its key, or null.
-  Future<Map<String, dynamic>?> readViewRowInTxn(
+  /// One row of [viewName] by its [key], with the state of the instance's
+  /// copy, read together in one storage transaction
+  /// (EVS-DEV-converging-view-reads/A). While the copy converges, the row
+  /// is [PendingRow] unless it is confirmed settled (EVS-DEV-converging-view-reads/C).
+  Future<ViewRowRead> readViewRowInTxn(
     Transaction txn,
     String viewName,
     String key,
   );
 
-  /// The rows of [viewName].
-  Future<List<Map<String, dynamic>>> findViewRows(
-    String viewName, {
-    int? limit,
-    int? offset,
-  });
+  /// The rows of [viewName], with the state of the instance's copy, read
+  /// together in one storage transaction (EVS-DEV-converging-view-reads/A).
+  /// While the copy converges, only rows the read confirms settled are
+  /// returned (EVS-DEV-converging-view-reads/B); [limit] and [offset] may
+  /// then return fewer rows than requested.
+  Future<ViewRowsRead> findViewRows(String viewName, {int? limit, int? offset});
 
-  /// The rows of [viewName] whose keys are in [keys], by key.
-  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+  /// The rows of [viewName] whose keys are in [keys], by key, with the
+  /// state of the instance's copy, read together in one storage
+  /// transaction (EVS-DEV-converging-view-reads/A). A requested key whose
+  /// row the read cannot confirm settled is [PendingRow]
+  /// (EVS-DEV-converging-view-reads/C).
+  Future<ViewRowsByKeyRead> readViewRowsByKeys(
     String viewName,
     Set<String> keys,
   );
 
   /// The rows of [viewName] inside [txn], optionally only those whose
-  /// fields equal [where].
-  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+  /// fields equal [where], with the state of the instance's copy, read
+  /// together in one storage transaction (EVS-DEV-converging-view-reads/A).
+  /// While the copy converges, only rows the read confirms settled are
+  /// returned (EVS-DEV-converging-view-reads/B).
+  Future<ViewRowsRead> findViewRowsInTxn(
     Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
@@ -110,31 +120,9 @@ abstract interface class StorageReader {
     int? offset,
   });
 
-  /// The version [viewName] holds [entryType]'s rows at, or null.
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
-
-  /// Every entry type's version [viewName] holds its rows at.
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  );
-
-  /// Every view's version of [entryType]'s rows, by view name.
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
-    Transaction txn,
-    String entryType,
-  );
-
-  /// Whether [viewName]'s rows of [entryType] are marked behind.
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  );
+  /// For each view the instance registers, its state and its copy's
+  /// progress (EVS-DEV-converging-view-reads/J).
+  Future<List<ViewCopyStatus>> viewProgress();
 
   /// The head of [destinationId]'s queue, or null.
   Future<FifoEntry?> readFifoHead(String destinationId);

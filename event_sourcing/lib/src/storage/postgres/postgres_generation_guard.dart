@@ -27,6 +27,12 @@ const String _bootPrefix = 'event_sourcing.boot';
 /// Prefix of the generation component keys.
 const String _generationPrefix = 'event_sourcing.generation';
 
+/// Prefix of a catch-up transaction's per-copy advisory lock key
+/// (EVS-DEV-view-convergence/M), distinct from [_generationPrefix] and
+/// [_bootPrefix] so a copy lock cannot collide with a component or boot
+/// lock.
+const String _viewCatchUpPrefix = 'event_sourcing.view_catch_up';
+
 /// `backend_state` key prefix of the records that map a component key back
 /// to its component.
 const String _componentRecordPrefix = 'generation_component_';
@@ -477,6 +483,18 @@ final class PostgresGenerationGuard {
       add('entry_type', id, descriptor.entryTypes[id]!.major);
     }
     add('schema', '', schemaVersion);
+    // Implements: EVS-DEV-view-convergence/C
+    // a view fingerprint is registered with the generation guard's live
+    //   components, from before the boot transaction until the event
+    //   store closes, alongside the data-format and entry-type components.
+    final fingerprints = descriptor.viewFingerprints.toList()..sort();
+    for (final fingerprint in fingerprints) {
+      // The advisory key is derived exactly as readLiveComponents
+      // reconstructs it from the stored component record (kind, id,
+      // value), so a live registration's lock is found under the same key
+      // another instance's boot looks it up by.
+      add('view_fingerprint', fingerprint, 0);
+    }
     return out;
   }
 
@@ -502,6 +520,17 @@ final class PostgresGenerationGuard {
     try {
       refuseUnsupportedSchema(await readStoredSchemaPair(c), schemaVersion);
       final live = await readLiveComponents(c, scope);
+      if (booting != null) {
+        // Implements: EVS-DEV-view-convergence/D (live registrations)
+        // a snapshot, taken once before the boot transaction, of every
+        //   view fingerprint a live registration other than this one names
+        //   -- read by the boot to spare a copy no build reopening now
+        //   registers but another live instance still does.
+        booting._liveViewFingerprints = <String>{
+          for (final component in live)
+            if (component.kind == 'view_fingerprint') component.id,
+        };
+      }
       for (final r in registrations) {
         final conflicts = _conflictsOf(live, r.descriptor);
         if (conflicts.isNotEmpty) {
@@ -1009,9 +1038,13 @@ final class PostgresGenerationRegistration extends GenerationRegistration {
   int _epoch = 0;
   bool _lost = false;
   bool _released = false;
+  Set<String> _liveViewFingerprints = const {};
 
   @override
   bool get isLost => _lost || _epoch != _guard._epoch;
+
+  @override
+  Set<String> get liveViewFingerprints => _liveViewFingerprints;
 
   @override
   @internal

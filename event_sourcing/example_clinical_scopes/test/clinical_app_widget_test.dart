@@ -55,7 +55,10 @@ void main() {
       );
       fake.emitViewUpdate<Participant>(
         'participants',
-        const EndOfReplay<Participant>(sequence: 2),
+        const EndOfReplay<Participant>(
+          sequence: 2,
+          state: ViewConvergenceState.current,
+        ),
       );
       await tester.pump();
 

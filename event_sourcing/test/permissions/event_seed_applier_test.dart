@@ -95,9 +95,9 @@ void main() {
         expect(result.grantsInViewNotInSeed, contains('admin:user.invite'));
 
         // The pre-existing grant is still in the view (no revocation emitted).
-        final rows = await eventStore.reader.findViewRows(
+        final rows = (await eventStore.reader.findViewRows(
           'role_permission_grants',
-        );
+        )).rows;
         final matching = rows.where(
           (r) => r['role'] == 'admin' && r['permissionName'] == 'user.invite',
         );

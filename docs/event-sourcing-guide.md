@@ -993,8 +993,11 @@ await for (final update in patientsStream) {
   switch (update) {
     case Snapshot<Patient>(:final value):
       // Initial state at subscribe time
-    case EndOfReplay<Patient>():
-      // Backlog finished; updates are now live
+    case EndOfReplay<Patient>(:final state):
+      // Backlog finished; updates are now live. `state` is
+      // `current` or `converging` (see "View convergence" below).
+    case Pending<Patient>(:final aggregateId):
+      // A named aggregate's row isn't confirmed settled yet.
     case Delta<Patient>(:final value):
       // A patient row was updated by a new event
     case Tombstone<Patient>(:final aggregateId):
@@ -1007,9 +1010,10 @@ await for (final update in patientsStream) {
 no snapshots. Use it when you genuinely want events, not rows.
 
 `AggregateMode<T>` mode replays the current materialized state into the
-stream first (one `Snapshot` per matching row, then an `EndOfReplay`),
-then delivers live updates. Use it for building UI that mirrors the
-state of a view.
+stream first (one `Snapshot` per matching row -- or a `Pending` in place
+of a `Snapshot` for a named aggregate the view's copy cannot yet confirm
+settled -- then an `EndOfReplay`), then delivers live updates. Use it
+for building UI that mirrors the state of a view.
 
 Delivery is at-least-once and preserves log order. Subscribers can drop
 and re-attach; the library will replay from current state, not from

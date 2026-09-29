@@ -65,7 +65,7 @@ const Map<String, Set<String>> postgresRuntimeRoleGrants =
     <String, Set<String>>{
       'events': <String>{'SELECT', 'INSERT'},
       'view_rows': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},
-      'view_target_versions': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},
+      'view_copies': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},
       'fifo_entries': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},
       'backend_state': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},
       'security_context': <String>{'SELECT', 'INSERT', 'UPDATE', 'DELETE'},

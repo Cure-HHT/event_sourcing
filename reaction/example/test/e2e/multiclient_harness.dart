@@ -131,6 +131,10 @@ class NotesObserver {
       case Tombstone<Map<String, Object?>>():
         // notes_today never tombstones in the demo.
         break;
+      case Pending<Map<String, Object?>>():
+        // notes_today subscribes with no named aggregates, so no row is
+        // ever reported pending.
+        break;
     }
   }
 

@@ -52,9 +52,9 @@ void main() {
             'admin:user.invite',
           ),
         );
-        expect(row, isNotNull);
-        expect(row!['role'], 'admin');
-        expect(row['permissionName'], 'user.invite');
+        expect(row.row, isA<SettledRow>());
+        expect(row.row.dataOrNull!['role'], 'admin');
+        expect(row.row.dataOrNull!['permissionName'], 'user.invite');
       },
     );
 
@@ -92,7 +92,7 @@ void main() {
           'admin:user.invite',
         ),
       );
-      expect(row, isNull);
+      expect(row.row, isA<AbsentRow>());
     });
 
     test('events with a different aggregateType are ignored (no-op)', () async {
@@ -114,7 +114,7 @@ void main() {
       final rows = await eventStore.reader.findViewRows(
         kRolePermissionGrantsView,
       );
-      expect(rows, isEmpty);
+      expect(rows.rows, isEmpty);
     });
 
     test('re-inserting the same aggregateId is idempotent (upsert)', () async {
@@ -146,7 +146,7 @@ void main() {
         kRolePermissionGrantsView,
       );
       // Exactly one row — upsert overwrote, no duplicates.
-      expect(rows.where((r) => r['role'] == 'admin').length, 1);
+      expect(rows.rows.where((r) => r['role'] == 'admin').length, 1);
 
       final row = await eventStore.reader.transaction(
         (txn) => eventStore.reader.readViewRowInTxn(
@@ -155,8 +155,8 @@ void main() {
           aggregateId,
         ),
       );
-      expect(row, isNotNull);
-      expect(row!['permissionName'], 'user.invite');
+      expect(row.row, isA<SettledRow>());
+      expect(row.row.dataOrNull!['permissionName'], 'user.invite');
     });
   });
 }

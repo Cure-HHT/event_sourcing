@@ -91,6 +91,12 @@ StoredEvent _event(int seq, EntryTypeVersion version) => StoredEvent(
   causal: kRootVersionCausal,
 );
 
+/// Creates a fresh, empty copy of [_kView] in [backend] and returns its id,
+/// the key row-store methods take in place of the view's name.
+Future<String> _createCopy(SembastBackend backend) => backend.transaction(
+  (txn) => backend.createViewCopyInTxn(txn, _kView, 'fp', 0),
+);
+
 Future<Map<String, Object?>?> _fold(
   EntryTypeVersion registered,
   StoredEvent event,
@@ -101,11 +107,17 @@ Future<Map<String, Object?>?> _fold(
     promoters: _promoters(),
     entryTypes: _registry(registered),
   );
+  final copyId = await _createCopy(backend);
   await backend.transaction(
-    (txn) => interpreter.applyEvent(txn: txn, backend: backend, event: event),
+    (txn) => interpreter.applyEvent(
+      txn: txn,
+      backend: backend,
+      event: event,
+      copyIds: <String, String>{_kView: copyId},
+    ),
   );
   return backend.transaction(
-    (txn) => backend.readViewRowInTxn(txn, _kView, event.aggregateId),
+    (txn) => backend.readViewRowInTxn(txn, copyId, event.aggregateId),
   );
 }
 
@@ -155,17 +167,19 @@ void main() {
         promoters: _promoters(),
         entryTypes: _registry(const EntryTypeVersion(1, 2)),
       );
+      final copyId = await _createCopy(backend);
       await expectLater(
         backend.transaction(
           (txn) => interpreter.applyEvent(
             txn: txn,
             backend: backend,
             event: _event(1, const EntryTypeVersion(2, 0)),
+            copyIds: <String, String>{_kView: copyId},
           ),
         ),
         throwsStateError,
       );
-      expect(await backend.findViewRows(_kView), isEmpty);
+      expect(await backend.findViewRows(copyId), isEmpty);
     });
   });
 
@@ -203,6 +217,8 @@ void main() {
           promoters: _promoters(),
           entryTypes: _registry(const EntryTypeVersion(1, 2)),
         );
+        final copyId = await _createCopy(backend);
+        final copyIds = <String, String>{_kView: copyId};
         await backend.transaction((txn) async {
           await interpreter.applyEvent(
             txn: txn,
@@ -212,15 +228,17 @@ void main() {
               'x': 'set-x',
               'y': 'set-y',
             }),
+            copyIds: copyIds,
           );
           await interpreter.applyEvent(
             txn: txn,
             backend: backend,
             event: delta(2, 'agg-r', const EntryTypeVersion(1, 0), {'a': 3}),
+            copyIds: copyIds,
           );
         });
         final row = await backend.transaction(
-          (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-r'),
+          (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-r'),
         );
         expect(row!['a'], 3);
         expect(row['x'], 'set-x');
@@ -238,6 +256,8 @@ void main() {
           promoters: _promoters(),
           entryTypes: _registry(const EntryTypeVersion(1, 2)),
         );
+        final copyId = await _createCopy(backend);
+        final copyIds = <String, String>{_kView: copyId};
         await backend.transaction((txn) async {
           await interpreter.applyEvent(
             txn: txn,
@@ -246,15 +266,17 @@ void main() {
               'a': 1,
               'x': 'set-x',
             }),
+            copyIds: copyIds,
           );
           await interpreter.applyEvent(
             txn: txn,
             backend: backend,
             event: delta(2, 'agg-r', const EntryTypeVersion(1, 0), {'a': 3}),
+            copyIds: copyIds,
           );
         });
         final row = await backend.transaction(
-          (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-r'),
+          (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-r'),
         );
         expect(row!['x'], 'set-x');
         expect(row['y'], 'dy');
@@ -299,15 +321,14 @@ void main() {
       await rebuildView(
         store: store,
         viewName: _kView,
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          _kType: EntryTypeVersion(1, 2),
-        },
+        deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
       );
+      final copyId = store.copyIdOf(_kView);
       final kept = await backend.transaction(
-        (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-r'),
+        (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-r'),
       );
       final filled = await backend.transaction(
-        (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-s'),
+        (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-s'),
       );
       expect(kept!['a'], 3);
       expect(kept['x'], 'set-x');
@@ -360,15 +381,14 @@ void main() {
       await rebuildView(
         store: store,
         viewName: _kView,
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          _kType: EntryTypeVersion(1, 2),
-        },
+        deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
       );
+      final copyId = store.copyIdOf(_kView);
       final promoted = await backend.transaction(
-        (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-1'),
+        (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-1'),
       );
       final unchanged = await backend.transaction(
-        (txn) => backend.readViewRowInTxn(txn, _kView, 'agg-2'),
+        (txn) => backend.readViewRowInTxn(txn, copyId, 'agg-2'),
       );
       expect(promoted!['x'], 'dx');
       expect(promoted['y'], 'dy');
@@ -378,34 +398,12 @@ void main() {
       expect(unchanged, isNot(contains('y')));
     });
 
-    // Verifies: EVS-DEV-version-compatibility/D
-    test('refuses a log holding a higher major and leaves the view as it '
-        'was', () async {
-      final backend = await _openBackend();
-      final store = await openStore(backend, const EntryTypeVersion(1, 2));
-      await store.append(
-        entryType: _kType,
-        aggregateId: 'agg-kept',
-        aggregateType: 'note',
-        eventType: 'finalized',
-        data: const <String, Object?>{'title': 'kept'},
-        initiator: const UserInitiator('u'),
-      );
-      await seed(backend, <StoredEvent>[
-        _event(7, const EntryTypeVersion(2, 0)),
-      ]);
-      final before = await backend.findViewRows(_kView);
-      await expectLater(
-        rebuildView(
-          store: store,
-          viewName: _kView,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 2),
-          },
-        ),
-        throwsStateError,
-      );
-      expect(await backend.findViewRows(_kView), before);
-    });
+    // A log holding a higher major than the registered entry-type version
+    // is EVS-DEV-version-compatibility/D at the fold step: the replacement
+    // copy's catch-up refuses that event on every attempt and the copy
+    // never converges. That is now `rebuildView`'s ordinary deadline-timeout
+    // path (EVS-DEV-view-convergence/V), covered in
+    // test/projections/rebuild_test.dart, not a synchronous refusal of
+    // `rebuildView` itself.
   });
 }

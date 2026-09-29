@@ -29,6 +29,13 @@
 //   returns EffectiveAuthorization { activeRole, rolePermissions,
 //   scopeAssignments }, and EffectiveAuthorization.empty for non-user
 //   principals.
+// Implements: EVS-DEV-converging-view-reads/H
+// the policy's reads of the role-assignment (user_role_scopes) and
+//   permission-grant (role_permission_grants) views, and the containment
+//   views the ContainmentResolver reads while matching a scoped permission,
+//   each check the read's reported state; a converging view throws
+//   ViewConvergingRefusal naming it rather than returning Deny, so the
+//   dispatcher appends no event.
 
 import 'package:event_sourcing/event_sourcing.dart';
 
@@ -46,7 +53,21 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
   }) : _reader = reader,
        _resolver = ContainmentResolver(
          registry: scopeClassRegistry,
-         findRowsInTxn: reader.findViewRowsInTxn,
+         // Containment reads check convergence too, as the class header's
+         // converging-view-reads annotation states.
+         findRowsInTxn: (txn, viewName, {where, limit, offset}) async {
+           final read = await reader.findViewRowsInTxn(
+             txn,
+             viewName,
+             where: where,
+             limit: limit,
+             offset: offset,
+           );
+           if (read.state == ViewConvergenceState.converging) {
+             throw ViewConvergingRefusal(viewName);
+           }
+           return read.rows;
+         },
        );
 
   /// The reads the policy decides from. A decision given a transaction
@@ -128,7 +149,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     // before honouring any permission under that role. This read also
     // doubles as the scope-assignment enumeration consumed by step 6
     // for scoped permissions.
-    final assignments = await _reader.findViewRowsInTxn(
+    final assignmentsRead = await _reader.findViewRowsInTxn(
       txn,
       'user_role_scopes',
       where: <String, Object?>{
@@ -136,12 +157,16 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
         'role': principal.activeRole,
       },
     );
+    if (assignmentsRead.state == ViewConvergenceState.converging) {
+      throw const ViewConvergingRefusal('user_role_scopes');
+    }
+    final assignments = assignmentsRead.rows;
     if (assignments.isEmpty) {
       return Deny(permission: permission, reason: DenyReason.notGranted);
     }
 
     // 4. Role-level grant: does the active role carry this permission name?
-    final grants = await _reader.findViewRowsInTxn(
+    final grantsRead = await _reader.findViewRowsInTxn(
       txn,
       'role_permission_grants',
       where: <String, Object?>{
@@ -150,6 +175,10 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
       },
       limit: 1,
     );
+    if (grantsRead.state == ViewConvergenceState.converging) {
+      throw const ViewConvergingRefusal('role_permission_grants');
+    }
+    final grants = grantsRead.rows;
     if (grants.isEmpty) {
       return Deny(permission: permission, reason: DenyReason.notGranted);
     }
@@ -257,7 +286,7 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
     // assignment for (userId, activeRole), the principal does not
     // effectively hold that role — return empty rather than leaking the
     // role's permissions based on the Principal's unverified claim.
-    final assignmentRows = await _reader.findViewRowsInTxn(
+    final assignmentRowsRead = await _reader.findViewRowsInTxn(
       txn,
       'user_role_scopes',
       where: <String, Object?>{
@@ -265,14 +294,22 @@ class TableBackedAuthorizationPolicy implements AuthorizationPolicy {
         'role': principal.activeRole,
       },
     );
+    if (assignmentRowsRead.state == ViewConvergenceState.converging) {
+      throw const ViewConvergingRefusal('user_role_scopes');
+    }
+    final assignmentRows = assignmentRowsRead.rows;
     if (assignmentRows.isEmpty) {
       return EffectiveAuthorization.empty;
     }
-    final grants = await _reader.findViewRowsInTxn(
+    final grantsRead = await _reader.findViewRowsInTxn(
       txn,
       'role_permission_grants',
       where: <String, Object?>{'role': principal.activeRole},
     );
+    if (grantsRead.state == ViewConvergenceState.converging) {
+      throw const ViewConvergingRefusal('role_permission_grants');
+    }
+    final grants = grantsRead.rows;
     final perms = <Permission>{
       // Permission grants don't store scopeClass (it's a code-registered
       // attribute on the Permission definition, not per-grant data). Apps

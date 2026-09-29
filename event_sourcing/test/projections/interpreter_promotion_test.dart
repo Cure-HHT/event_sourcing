@@ -84,16 +84,20 @@ void main() {
         entryTypes: entryTypes,
       );
 
+      final copyId = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp', 0),
+      );
       await backend.transaction((txn) async {
         await interpreter.applyEvent(
           txn: txn,
           backend: backend,
           event: _event(seq: 1, data: const {'body': 'hello'}),
+          copyIds: <String, String>{'notes': copyId},
         );
       });
 
       await backend.transaction((txn) async {
-        final row = await backend.readViewRowInTxn(txn, 'notes', 'agg-1');
+        final row = await backend.readViewRowInTxn(txn, copyId, 'agg-1');
         expect(row!['body'], 'hello');
       });
     });
@@ -139,6 +143,9 @@ void main() {
           entryTypes: entryTypes,
         );
 
+        final copyId = await backend.transaction(
+          (txn) => backend.createViewCopyInTxn(txn, 'notes', 'fp', 0),
+        );
         await backend.transaction((txn) async {
           await interpreter.applyEvent(
             txn: txn,
@@ -148,11 +155,12 @@ void main() {
               data: const {'body': 'hello'},
               entryTypeVersion: const EntryTypeVersion(1, 0),
             ),
+            copyIds: <String, String>{'notes': copyId},
           );
         });
 
         await backend.transaction((txn) async {
-          final row = await backend.readViewRowInTxn(txn, 'notes', 'agg-1');
+          final row = await backend.readViewRowInTxn(txn, copyId, 'agg-1');
           expect(
             row!['note_body'],
             'hello',
@@ -226,6 +234,12 @@ void main() {
         entryTypes: entryTypes,
       );
 
+      final copyIdA = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'view_a', 'fp-a', 0),
+      );
+      final copyIdB = await backend.transaction(
+        (txn) => backend.createViewCopyInTxn(txn, 'view_b', 'fp-b', 0),
+      );
       await backend.transaction((txn) async {
         await interpreter.applyEvent(
           txn: txn,
@@ -235,15 +249,16 @@ void main() {
             data: const {'body': 'hello'},
             entryTypeVersion: const EntryTypeVersion(1, 0),
           ),
+          copyIds: <String, String>{'view_a': copyIdA, 'view_b': copyIdB},
         );
       });
 
       await backend.transaction((txn) async {
-        final rowA = await backend.readViewRowInTxn(txn, 'view_a', 'agg-1');
+        final rowA = await backend.readViewRowInTxn(txn, copyIdA, 'agg-1');
         expect(rowA!['body_a'], 'hello');
         expect(rowA.containsKey('body'), isFalse);
 
-        final rowB = await backend.readViewRowInTxn(txn, 'view_b', 'agg-1');
+        final rowB = await backend.readViewRowInTxn(txn, copyIdB, 'agg-1');
         expect(rowB!.containsKey('body'), isFalse);
         expect(rowB.containsKey('body_a'), isFalse);
       });

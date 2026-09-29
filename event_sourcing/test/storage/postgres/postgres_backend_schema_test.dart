@@ -2,8 +2,11 @@
 // provisioning creates every table the backend reads or writes.
 // Verifies: EVS-DEV-postgres-backend/B
 // view_rows stored as a single JSONB-blob
-//   table keyed by (view_name, row_key).
-// Both tests are gated on PG_TEST_URL and skip themselves when it is unset.
+//   table keyed by (copy_id, row_key).
+// Verifies: EVS-DEV-view-convergence/A
+// the view_copies table and its partial
+//   unique index on an unmarked fingerprint.
+// All tests are gated on PG_TEST_URL and skip themselves when it is unset.
 
 @TestOn('vm')
 library;
@@ -43,7 +46,7 @@ void main() {
         containsAll(<String>[
           'events',
           'view_rows',
-          'view_target_versions',
+          'view_copies',
           'fifo_entries',
           'backend_state',
           'security_context',
@@ -141,12 +144,12 @@ void main() {
         "WHERE table_schema = current_schema() AND table_name = 'view_rows'",
       );
       final types = {for (final r in cols) r[0]! as String: r[1]! as String};
-      expect(types['view_name'], 'text');
+      expect(types['copy_id'], 'text');
       expect(types['row_key'], 'text');
       expect(types['row_data'], 'jsonb');
       expect(types['updated_at'], 'timestamp with time zone');
 
-      // Primary key is exactly (view_name, row_key) IN THAT ORDER. Order by
+      // Primary key is exactly (copy_id, row_key) IN THAT ORDER. Order by
       // the index's own key ordinality (unnest WITH ORDINALITY over indkey),
       // not alphabetically — composite-PK column order is semantically
       // load-bearing and an alphabetical sort would mask a wrong definition.
@@ -159,8 +162,45 @@ void main() {
         'ORDER BY k.ord',
       );
       final pkCols = pk.map((r) => r[0]! as String).toList();
-      expect(pkCols, ['view_name', 'row_key']);
+      expect(pkCols, ['copy_id', 'row_key']);
     });
+
+    // Verifies: EVS-DEV-view-convergence/A
+    // at most one copy of a fingerprint that is not marked for deletion,
+    //   enforced by a partial unique index on fingerprint scoped to
+    //   unmarked copies.
+    test(
+      'view_copies has a partial unique index on an unmarked fingerprint',
+      () async {
+        final backend = await db.open(provision: true);
+        addTearDown(backend.close);
+        final conn = await db.connectAdmin();
+        addTearDown(conn.close);
+
+        final cols = await conn.execute(
+          'SELECT column_name, data_type FROM information_schema.columns '
+          "WHERE table_schema = current_schema() AND table_name = 'view_copies'",
+        );
+        final types = {for (final r in cols) r[0]! as String: r[1]! as String};
+        expect(types['copy_id'], 'text');
+        expect(types['view_name'], 'text');
+        expect(types['fingerprint'], 'text');
+        expect(types['watermark'], 'bigint');
+        expect(types['marked_for_deletion'], 'boolean');
+        expect(types['created_at'], 'timestamp with time zone');
+
+        final rows = await conn.execute(
+          'SELECT indexdef FROM pg_indexes '
+          "WHERE schemaname = current_schema() AND tablename = 'view_copies' "
+          "AND indexname = 'view_copies_unmarked_fingerprint_idx'",
+        );
+        expect(rows, hasLength(1));
+        final def = rows.single[0]! as String;
+        expect(def, contains('UNIQUE'));
+        expect(def, contains('fingerprint'));
+        expect(def, contains('WHERE (NOT marked_for_deletion)'));
+      },
+    );
   });
 }
 

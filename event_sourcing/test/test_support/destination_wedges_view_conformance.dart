@@ -119,7 +119,7 @@ class _Store {
   /// the queue heads.
   Future<Map<String, Object?>> snapshot() async => <String, Object?>{
     'events': <String>[for (final e in await events()) e.eventId],
-    'view': await wedgesViewRows(backend),
+    'view': await wedgesViewRows(store),
     'wedged': <String>[
       for (final s in await backend.wedgedFifos())
         '${s.destinationId}/${s.headEntryId}',
@@ -368,13 +368,13 @@ void runDestinationWedgesViewScenarios(
         if (!available) return;
         final d = FakeDestination(id: 'x', allowHardDelete: true);
         final key = '${r.store.databaseId}|x';
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
 
         final rowId = await r.wedge(d);
         final wedge = (await r.events(
           entryType: kDestinationWedgedEntryType,
         )).single;
-        expect(await wedgesViewRows(r.backend), <String, Object?>{
+        expect(await wedgesViewRows(r.store), <String, Object?>{
           key: <String, Object?>{
             ...wedge.data,
             'aggregateId': key,
@@ -386,7 +386,7 @@ void runDestinationWedgesViewScenarios(
         await expectWedgesViewMatchesQueue(r.store);
 
         await r.registry.tombstoneAndRefill('x', rowId, initiator: _init);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
 
         await fillForTest(
@@ -397,13 +397,13 @@ void runDestinationWedgesViewScenarios(
         );
         final second = await wedgeHeadForTest(r.registry, 'x');
         expect(second, isNot(rowId));
-        final rows = await wedgesViewRows(r.backend);
+        final rows = await wedgesViewRows(r.store);
         expect(rows.keys, <String>[key]);
         expect(rows[key]!['row_id'], second);
         await expectWedgesViewMatchesQueue(r.store);
 
         await r.registry.deleteDestination('x', initiator: _init);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
         await expectReservedShapes(r.store);
       });
@@ -437,7 +437,7 @@ void runDestinationWedgesViewScenarios(
             ),
           );
           await drainForTest(d, registry: r.registry);
-          final rows = await wedgesViewRows(r.backend);
+          final rows = await wedgesViewRows(r.store);
           expect(rows.keys, <String>[key]);
           expect(rows[key]!['cause'], 'transform_failed');
           expect(rows[key]!['attempt_count'], 4);
@@ -455,7 +455,7 @@ void runDestinationWedgesViewScenarios(
         if (!available) return;
         final d = FakeDestination(id: 'quiet');
         await r.queued(d);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await r.store.append(
           entryType: _noteType,
           aggregateId: 'lookalike',
@@ -467,7 +467,7 @@ void runDestinationWedgesViewScenarios(
           ),
           initiator: _init,
         );
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         final p = await peer();
         final recovery = forgedEvent(
           entryType: kDestinationWedgeRecoveredEntryType,
@@ -480,7 +480,7 @@ void runDestinationWedgesViewScenarios(
           },
         );
         await ingestEventForTest(r.store, recovery);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
       });
     });
@@ -518,7 +518,7 @@ void runDestinationWedgesViewScenarios(
         expect(deletions, hasLength(1));
         expect(deletions.single.data['id'], 'b');
         expect(deletions.single.data['tombstoned_row_id'], bRow);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await expectWedgesViewMatchesQueue(r.store);
       });
 
@@ -531,13 +531,13 @@ void runDestinationWedgesViewScenarios(
         await r.wedge(wedged);
         final never = FakeDestination(id: 'n', allowHardDelete: true);
         await r.registry.addDestination(never, initiator: _init);
-        final before = await wedgesViewRows(r.backend);
+        final before = await wedgesViewRows(r.store);
         await r.registry.deleteDestination('n', initiator: _init);
         final deletion = (await r.events(
           entryType: kDestinationDeletedEntryType,
         )).single;
         expect(deletion.data['tombstoned_row_id'], isNull);
-        expect(await wedgesViewRows(r.backend), before);
+        expect(await wedgesViewRows(r.store), before);
         await expectWedgesViewMatchesQueue(r.store);
       });
     });
@@ -612,7 +612,7 @@ void runDestinationWedgesViewScenarios(
         )).single;
         await ingestEventForTest(r.store, peerWedge);
         final localRow = await r.wedge(FakeDestination(id: 'shared'));
-        expect((await wedgesViewRows(r.backend)).keys.toSet(), <String>{
+        expect((await wedgesViewRows(r.store)).keys.toSet(), <String>{
           '${p.store.databaseId}|shared',
           '${r.store.databaseId}|shared',
         });
@@ -623,7 +623,7 @@ void runDestinationWedgesViewScenarios(
           localRow,
           initiator: _init,
         );
-        expect((await wedgesViewRows(r.backend)).keys, <String>[
+        expect((await wedgesViewRows(r.store)).keys, <String>[
           '${p.store.databaseId}|shared',
         ]);
         await expectWedgesViewMatchesQueue(r.store);
@@ -648,7 +648,7 @@ void runDestinationWedgesViewScenarios(
         await r.wedge(FakeDestination(id: 'shared'));
         final peerKey = '${p.store.databaseId}|';
         final localKey = '${r.store.databaseId}|shared';
-        expect((await wedgesViewRows(r.backend)).keys.toSet(), <String>{
+        expect((await wedgesViewRows(r.store)).keys.toSet(), <String>{
           '${peerKey}shared',
           '${peerKey}gone',
           localKey,
@@ -665,7 +665,7 @@ void runDestinationWedgesViewScenarios(
             entryType: kDestinationWedgeRecoveredEntryType,
           )).single,
         );
-        expect((await wedgesViewRows(r.backend)).keys.toSet(), <String>{
+        expect((await wedgesViewRows(r.store)).keys.toSet(), <String>{
           '${peerKey}gone',
           localKey,
         });
@@ -675,7 +675,7 @@ void runDestinationWedgesViewScenarios(
           r.store,
           (await p.events(entryType: kDestinationDeletedEntryType)).single,
         );
-        expect((await wedgesViewRows(r.backend)).keys, <String>[localKey]);
+        expect((await wedgesViewRows(r.store)).keys, <String>[localKey]);
         await expectWedgesViewMatchesQueue(r.store);
         await expectWedgesViewMatchesQueue(p.store);
       });
@@ -697,9 +697,9 @@ void runDestinationWedgesViewScenarios(
           entryType: kDestinationWedgeRecoveredEntryType,
         )).single;
         await ingestEventForTest(r.store, recovery);
-        expect(await wedgesViewRows(r.backend), isEmpty);
+        expect(await wedgesViewRows(r.store), isEmpty);
         await ingestEventForTest(r.store, wedge);
-        expect((await wedgesViewRows(r.backend)).keys, <String>[
+        expect((await wedgesViewRows(r.store)).keys, <String>[
           '${p.store.databaseId}|late',
         ]);
         expect(await p.backend.wedgedFifos(), isEmpty);
@@ -723,7 +723,7 @@ void runDestinationWedgesViewScenarios(
         final stored = (await r.events(
           entryType: kDestinationWedgedEntryType,
         )).single;
-        expect(await wedgesViewRows(r.backend), <String, Object?>{
+        expect(await wedgesViewRows(r.store), <String, Object?>{
           'peer-db|s': <String, Object?>{
             'id': 's',
             'database_id': 'peer-db',
@@ -913,7 +913,7 @@ void runDestinationWedgesViewScenarios(
               'audit_identity_invalid',
             ]);
             expect(
-              (await wedgesViewRows(r.backend)).keys,
+              (await wedgesViewRows(r.store)).keys,
               contains('peer-db|good'),
             );
             await expectWedgesViewMatchesQueue(r.store);
@@ -958,7 +958,7 @@ void runDestinationWedgesViewScenarios(
                 'reserved_type_undeclared',
               ], reason: id);
               expect(await r.snapshotBesideFindings(), before, reason: id);
-              expect(await wedgesViewRows(r.backend), isEmpty, reason: id);
+              expect(await wedgesViewRows(r.store), isEmpty, reason: id);
             }
             await expectWedgesViewMatchesQueue(r.store);
           });
@@ -1009,7 +1009,7 @@ void runDestinationWedgesViewScenarios(
             'audit_identity_invalid',
           ]);
           expect(await r.snapshotBesideFindings(), before);
-          expect((await wedgesViewRows(r.backend)).keys, <String>[
+          expect((await wedgesViewRows(r.store)).keys, <String>[
             '${r.store.databaseId}|x',
           ]);
           await expectWedgesViewMatchesQueue(r.store);
@@ -1041,7 +1041,7 @@ void runDestinationWedgesViewScenarios(
           expect(await _findingKindsNaming(r.backend, forged.eventId), <String>[
             'own_event_ingested',
           ]);
-          expect((await wedgesViewRows(r.backend)).keys, <String>[
+          expect((await wedgesViewRows(r.store)).keys, <String>[
             '${r.store.databaseId}|x',
           ]);
           await expectWedgesViewMatchesQueue(r.store);
@@ -1059,9 +1059,9 @@ void runDestinationWedgesViewScenarios(
             entryType: kDestinationWedgedEntryType,
           )).single;
           await path.value(r.store, <StoredEvent>[peerWedge]);
-          final rows = await wedgesViewRows(r.backend);
+          final rows = await wedgesViewRows(r.store);
           await path.value(r.store, <StoredEvent>[peerWedge]);
-          expect(await wedgesViewRows(r.backend), rows);
+          expect(await wedgesViewRows(r.store), rows);
           expect(
             await r.events(entryType: kDestinationWedgedEntryType),
             hasLength(1),
@@ -1079,7 +1079,7 @@ void runDestinationWedgesViewScenarios(
           final own = (await r.events(
             entryType: kDestinationWedgedEntryType,
           )).single;
-          final rows = await wedgesViewRows(r.backend);
+          final rows = await wedgesViewRows(r.store);
           await path.value(r.store, <StoredEvent>[own]);
           expect(
             await r.events(entryType: kDestinationWedgedEntryType),
@@ -1091,7 +1091,7 @@ void runDestinationWedgesViewScenarios(
           // The finding names the audit's aggregate, so the default view
           // marks its row.
           final ids = await _findingIdsNaming(r.backend, own.eventId);
-          expect(await wedgesViewRows(r.backend), <String, Object?>{
+          expect(await wedgesViewRows(r.store), <String, Object?>{
             for (final entry in rows.entries)
               entry.key: <String, Object?>{...entry.value, ...markedBy(ids)},
           });
@@ -1114,7 +1114,7 @@ void runDestinationWedgesViewScenarios(
             (await r.events()).map((e) => e.eventId),
             contains(lookalike.eventId),
           );
-          expect(await wedgesViewRows(r.backend), isEmpty);
+          expect(await wedgesViewRows(r.store), isEmpty);
         });
 
         // Verifies: EVS-DEV-destination-drain/L
@@ -1143,14 +1143,16 @@ void runDestinationWedgesViewScenarios(
 
       for (final missing in <String>['id', 'database_id']) {
         // Verifies: EVS-DEV-destination-drain/L
+        // Verifies: EVS-DEV-view-convergence/V
         // a rebuild of the default view over a log into which a wedge event
         //   missing its destination identifier, or its database identity,
-        //   was written outside the library fails naming the event, and
-        //   leaves the view unchanged.
+        //   was written outside the library never converges: the fold
+        //   step refuses the malformed event on every catch-up attempt, so
+        //   `rebuildView`'s deadline passes and the typed timeout names
+        //   the view and the copy's last failure.
         test('rebuild over a wedge event missing data.$missing', () async {
           if (!available) return;
           await r.wedge(FakeDestination(id: 'ok'));
-          final before = await wedgesViewRows(r.backend);
           final written = await r.backend.transaction((txn) async {
             final seq = await r.backend.nextSequenceNumber(txn);
             final previous = await r.backend.readLatestEventHash(txn);
@@ -1171,21 +1173,52 @@ void runDestinationWedgesViewScenarios(
             await r.backend.appendEvent(txn, event);
             return event;
           });
+          final deadline = DateTime.now().toUtc().add(
+            const Duration(milliseconds: 500),
+          );
           await expectLater(
             rebuildView(
               store: r.store,
               viewName: defaultDestinationWedgesSpec.viewName,
-              targetVersionByEntryType: wedgesViewTargets(r.store),
+              deadline: deadline,
             ),
             throwsA(
-              isA<StateError>().having(
-                (e) => e.message,
-                'message',
-                contains(written.eventId),
+              isA<ViewConvergenceTimeout>().having(
+                (e) => e.converging.map((s) => s.viewName),
+                'converging view names',
+                contains(defaultDestinationWedgesSpec.viewName),
               ),
             ),
           );
-          expect(await wedgesViewRows(r.backend), before);
+          // The malformed event lies past the replacement copy's
+          // watermark, matches the table view's interest and can never be
+          // folded, so the copy stays converging forever, and the
+          // convergence-aware reader reports no row (EVS-DEV-converging-
+          // view-reads/B: a table view has no settled row while it
+          // converges).
+          expect(await wedgesViewRows(r.store), isEmpty);
+          // The driver may key its first attempt's failure by the
+          // fingerprint rather than the copy id when its discovery pass
+          // raced this call's create, so poll until the failure lands
+          // under the instance's current copy id, which every later
+          // attempt uses.
+          ViewCopyStatus? progress;
+          for (var i = 0; i < 200; i++) {
+            progress = (await r.store.reader.viewProgress()).singleWhere(
+              (s) => s.viewName == defaultDestinationWedgesSpec.viewName,
+            );
+            if (progress.lastFailure != null) break;
+            await Future<void>.delayed(const Duration(milliseconds: 20));
+          }
+          expect(progress!.state, ViewConvergenceState.converging);
+          expect(
+            progress.lastFailure,
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains(written.eventId),
+            ),
+          );
         });
       }
     });
@@ -1384,13 +1417,12 @@ void runDestinationWedgesViewScenarios(
           ),
           isTrue,
         );
-        final targets = await r.backend.transaction(
-          (txn) => r.backend.readAllViewTargetVersionsInTxn(
-            txn,
-            defaultDestinationWedgesSpec.viewName,
-          ),
+        // The boot creates a copy for the view before any consumer
+        // registration; copyIdOf throws for a view with no copy.
+        expect(
+          () => r.store.copyIdOf(defaultDestinationWedgesSpec.viewName),
+          returnsNormally,
         );
-        expect(targets, wedgesViewTargets(r.store));
         final generation = await r.backend.transaction(
           r.backend.readDataGenerationTxn,
         );
@@ -1404,7 +1436,7 @@ void runDestinationWedgesViewScenarios(
           reason: 'the reserved types are part of the data generation',
         );
         await r.wedge(FakeDestination(id: 'x'));
-        expect(await wedgesViewRows(r.backend), hasLength(1));
+        expect(await wedgesViewRows(r.store), hasLength(1));
       });
 
       // Verifies: EVS-DEV-destination-drain/M

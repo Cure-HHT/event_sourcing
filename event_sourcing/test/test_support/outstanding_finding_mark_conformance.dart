@@ -110,19 +110,23 @@ void runOutstandingFindingMarkScenarios({
     ) => deliverByOriginator(store, records);
 
     Future<Object?> integrityOfRow(EventStore store, String aggregateId) async {
-      final rows = await store.reader.readViewRowsByKeys(_kNotes, <String>{
+      final rows = (await store.reader.readViewRowsByKeys(_kNotes, <String>{
         aggregateId,
-      });
-      expect(rows[aggregateId], isNotNull, reason: 'row of $aggregateId');
-      return rows[aggregateId]![r'$integrity'];
+      })).rows;
+      expect(
+        rows[aggregateId],
+        isA<SettledRow>(),
+        reason: 'row of $aggregateId',
+      );
+      return rows[aggregateId]!.dataOrNull![r'$integrity'];
     }
 
     Future<Object?> integrityOfSlot(EventStore store, String slot) async {
-      final rows = await store.reader.readViewRowsByKeys(_kSlots, <String>{
+      final rows = (await store.reader.readViewRowsByKeys(_kSlots, <String>{
         slot,
-      });
-      expect(rows[slot], isNotNull, reason: 'slot row $slot');
-      return rows[slot]![r'$integrity'];
+      })).rows;
+      expect(rows[slot], isA<SettledRow>(), reason: 'slot row $slot');
+      return rows[slot]!.dataOrNull![r'$integrity'];
     }
 
     String ingestFindingId(
@@ -154,10 +158,10 @@ void runOutstandingFindingMarkScenarios({
         data: <String, Object?>{'title': 'slot-1'},
         initiator: const UserInitiator('u1'),
       );
-      final note = (await store.reader.findViewRows(_kNotes)).single;
+      final note = (await store.reader.findViewRows(_kNotes)).rows.single;
       expect(note[r'$integrity'], integrityOf(const <String>[]));
       expect(note['title'], 'slot-1');
-      final slot = (await store.reader.findViewRows(_kSlots)).single;
+      final slot = (await store.reader.findViewRows(_kSlots)).rows.single;
       expect(slot[r'$integrity'], integrityOf(const <String>[]));
       expect(slot['aggregateId'], 'slot-1');
     });
@@ -511,16 +515,16 @@ void runOutstandingFindingMarkScenarios({
         reason: 'marked once the succession event is folded',
       );
 
-      final before = jsonEncode(await store.reader.findViewRows(_kNotes));
+      final before = jsonEncode(
+        (await store.reader.findViewRows(_kNotes)).rows,
+      );
       await rebuildView(
         store: store,
         viewName: _kNotes,
-        targetVersionByEntryType: const <String, EntryTypeVersion>{
-          _kType: EntryTypeVersion(1, 0),
-        },
+        deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
       );
       expect(
-        jsonEncode(await store.reader.findViewRows(_kNotes)),
+        jsonEncode((await store.reader.findViewRows(_kNotes)).rows),
         before,
         reason:
             'a rebuild derives the same marks whatever order the '
@@ -629,17 +633,15 @@ void runOutstandingFindingMarkScenarios({
       );
 
       for (final view in <String>[_kNotes, _kSlots]) {
-        final before = jsonEncode(await store.reader.findViewRows(view));
+        final before = jsonEncode((await store.reader.findViewRows(view)).rows);
         expect(before, contains('security_findings'));
         await rebuildView(
           store: store,
           viewName: view,
-          targetVersionByEntryType: const <String, EntryTypeVersion>{
-            _kType: EntryTypeVersion(1, 0),
-          },
+          deadline: DateTime.now().toUtc().add(const Duration(seconds: 20)),
         );
         expect(
-          jsonEncode(await store.reader.findViewRows(view)),
+          jsonEncode((await store.reader.findViewRows(view)).rows),
           before,
           reason: 'view $view',
         );
@@ -669,7 +671,7 @@ void runOutstandingFindingMarkScenarios({
         ),
       );
       expect((await store.reader.findAllEvents()).length, before);
-      expect(await store.reader.findViewRows(_kNotes), isEmpty);
+      expect((await store.reader.findViewRows(_kNotes)).rows, isEmpty);
     });
   });
 }

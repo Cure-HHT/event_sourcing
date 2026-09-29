@@ -106,7 +106,9 @@ Future<void> _instanceB(List<Object?> args) async {
           );
         case 'wedges':
           reply.send(
-            await backend.findViewRows(defaultDestinationWedgesSpec.viewName),
+            await backend.findViewRows(
+              c.eventStore.copyIdOf(defaultDestinationWedgesSpec.viewName),
+            ),
           );
         case 'status':
           final status = await c.destinations.readDeliveryStatus();

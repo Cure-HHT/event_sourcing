@@ -160,6 +160,10 @@ class _ViewBuilderState<T> extends State<ViewBuilder<T>> {
       case EndOfReplay<T>():
         _replayDone = true;
         _emitReady();
+      case Pending<T>():
+        // The named aggregate's row is not yet confirmed settled: not
+        // ready, so no row is added and no state transition follows.
+        break;
     }
   }
 

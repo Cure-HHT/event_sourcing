@@ -21,8 +21,14 @@ import 'package:sembast/sembast_memory.dart';
 /// [projections] may be supplied to register projection specs that watch
 /// the test-emitted events — used by the dispatch-materialization test
 /// to confirm that views update inside the dispatch transaction.
+///
+/// [extraEntryTypes] registers additional entry-type definitions before
+/// open, for tests whose actions emit event types beyond the two this
+/// helper always registers. The registry is sealed at open, so a caller
+/// cannot register more afterward.
 Future<EventStore> bootstrapTestEventStore({
   ProjectionRegistry? projections,
+  List<EntryTypeDefinition> extraEntryTypes = const <EntryTypeDefinition>[],
 }) async {
   final db = await newDatabaseFactoryMemory().openDatabase(
     'dispatcher-${DateTime.now().microsecondsSinceEpoch}.db',
@@ -54,6 +60,9 @@ Future<EventStore> bootstrapTestEventStore({
         name: 'Greeting',
       ),
     );
+  for (final definition in extraEntryTypes) {
+    registry.register(definition);
+  }
 
   final securityContexts = SembastSecurityContextStore(backend: backend);
 

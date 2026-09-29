@@ -9,14 +9,13 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart'
     show LibVersionEvents;
 import 'package:event_sourcing/src/security/security_context_store.dart';
-import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kViewSnapshotPromotedEntryType;
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart';
 import 'deliveries.dart';
 
 import 'lib_version_seed.dart';
+import 'manual_timers.dart' show neverFiringTimer;
 import 'test_backends.dart';
 import 'wedges_view_invariant.dart' show expectReservedShapes;
 
@@ -130,6 +129,14 @@ Future<EventStore> _open(
     buildDeclaration: build == _kCompiled ? null : build,
     afterBootVersionEvent: afterBootVersionEvent,
     onBootBodyRun: onBootBodyRun,
+    // These scenarios read a store's storage as a whole (a before/after
+    // snapshot expected unchanged, or a transaction count) and this suite
+    // never exercises the catch-up driver itself (view_catch_up_test.dart
+    // does): a never-firing timer factory means the driver's one,
+    // harmless initial discovery pass runs and then its idle wait never
+    // completes, so it never runs a background transaction that could
+    // land inside a scenario's read window.
+    timerFactory: neverFiringTimer,
   );
   return runWithDeliveryTestHooks(hooks, () async {
     final EventStore store;
@@ -152,6 +159,12 @@ Future<EventStore> _open(
       );
     }
     trackTestBackend(store, backend);
+    // Let the catch-up driver's bounded initial burst (a discovery pass,
+    // plus one no-op attempt on the registered view: fresh, it is already
+    // current) finish before returning: with the never-firing timer
+    // factory above, it then never runs another transaction, so a
+    // scenario's later snapshot or transaction count never races it.
+    await pumpEventQueue(times: 50);
     return store;
   });
 }
@@ -185,16 +198,15 @@ class _Snapshot {
     this.eventIds,
     this.databaseId,
     this.bootCheck,
-    this.targets,
-    this.rows,
+    this.copies,
   );
 
   static Future<_Snapshot> of(StorageBackend backend) async {
-    final (databaseId, bootCheck, targets) = await backend.transaction(
+    final (databaseId, bootCheck, copies) = await backend.transaction(
       (txn) async => (
         await backend.readDatabaseIdTxn(txn),
         await backend.readBootCheckTxn(txn),
-        await backend.readAllViewTargetVersionsInTxn(txn, _kView),
+        await backend.readViewCopiesInTxn(txn),
       ),
     );
     return _Snapshot._(
@@ -202,8 +214,7 @@ class _Snapshot {
       [for (final e in await backend.findAllEvents()) e.eventId],
       databaseId,
       bootCheck,
-      targets,
-      await backend.findViewRows(_kView),
+      copies,
     );
   }
 
@@ -211,16 +222,14 @@ class _Snapshot {
   final List<String> eventIds;
   final String? databaseId;
   final BootCheck? bootCheck;
-  final Map<String, EntryTypeVersion> targets;
-  final List<Map<String, dynamic>> rows;
+  final List<ViewCopy> copies;
 
   void expectUnchangedIn(_Snapshot after) {
     expect(after.counter, counter, reason: 'sequence counter');
     expect(after.eventIds, eventIds, reason: 'events');
     expect(after.databaseId, databaseId, reason: 'database identity');
     expect(after.bootCheck, bootCheck, reason: 'boot record');
-    expect(after.targets, targets, reason: 'view target versions');
-    expect(after.rows, rows, reason: 'view rows');
+    expect(after.copies, copies, reason: 'view copies');
   }
 }
 
@@ -708,7 +717,7 @@ void runBootScenarios(
           expect(change['toVersion'], LibVersion.version);
           expect(change['fromDataFormat'], _kNewer.dataFormat.toJson());
           expect(change['toDataFormat'], LibVersion.dataFormat.toJson());
-          expect(await older.reader.findViewRows(_kView), hasLength(2));
+          expect((await older.reader.findViewRows(_kView)).rows, hasLength(2));
           final again = await _open(db!, await db!.openBackend());
           expect(await _libVersionEvents(testBackendOf(again)), hasLength(2));
         },
@@ -803,7 +812,7 @@ void runBootScenarios(
         before.expectUnchangedIn(await _Snapshot.of(backend));
       });
 
-      // Verifies: EVS-DEV-entry-type-downgrade-refusal/B
+      // Verifies: EVS-DEV-entry-type-downgrade-refusal/A
       // Verifies: EVS-DEV-event-store-open/E
       test('an entry-type refusal leaves no library-version event', () async {
         if (db == null) return;
@@ -836,13 +845,8 @@ void runBootScenarios(
       });
 
       // Verifies: EVS-DEV-event-store-open/E
-      // Verifies: EVS-DEV-destination-drain/L
-      // the library-version change and the snapshot-promotion audit the boot
-      //   appends carry the aggregate type and an event type the library
-      //   declares for their entry types.
       test('a boot that fails after its library-version event writes '
-          'nothing; a clean reopen appends exactly one change and '
-          'promotes', () async {
+          'nothing; a clean reopen appends exactly one change', () async {
         if (db == null) return;
         final older = await _open(db!, await db!.openBackend());
         await _appendNote(older, 'n1');
@@ -870,26 +874,6 @@ void runBootScenarios(
           testBackendOf(newer),
         )).where((e) => e.eventType == LibVersionEvents.changed);
         expect(changes, hasLength(1));
-        final row = (await newer.reader.findViewRows(_kView)).single;
-        expect(row['b'], 0);
-        final audits = await newer.reader.findAllEvents(
-          entryType: kViewSnapshotPromotedEntryType,
-        );
-        expect(audits, hasLength(1));
-        final all = await newer.reader.findAllEvents();
-        final changeIndex = all.indexWhere(
-          (e) => e.eventId == changes.single.eventId,
-        );
-        final auditIndex = all.indexWhere(
-          (e) => e.eventId == audits.single.eventId,
-        );
-        expect(changeIndex, greaterThanOrEqualTo(0));
-        expect(auditIndex, greaterThanOrEqualTo(0));
-        expect(
-          changeIndex,
-          lessThan(auditIndex),
-          reason: 'the version change precedes the promotion it causes',
-        );
         await expectReservedShapes(newer);
       });
     });

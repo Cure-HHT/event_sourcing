@@ -412,9 +412,9 @@ void runSecurityFindingScenarios({
         final held = await findings(store);
         expect(held, hasLength(1), reason: 'only the received finding');
         expect(held.single.eventId, futureKind.eventId);
-        final rows = await store.reader.findViewRows(
+        final rows = (await store.reader.findViewRows(
           defaultDestinationWedgesSpec.viewName,
-        );
+        )).rows;
         expect(<Object?>[
           for (final r in rows) r['cause'],
         ], contains('future_cause'));

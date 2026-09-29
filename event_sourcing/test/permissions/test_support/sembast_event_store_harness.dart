@@ -183,7 +183,7 @@ class SembastEventStoreHarness {
 
   /// Return all rows currently materialized for [viewName].
   Future<List<Map<String, dynamic>>> findRows(String viewName) =>
-      _backend.findViewRows(viewName);
+      _backend.findViewRows(eventStore.copyIdOf(viewName));
 
   /// Close the underlying [EventStore] (and, transitively, the backing
   /// in-memory database).

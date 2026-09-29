@@ -124,6 +124,10 @@ class DeliveryTestHooks {
     this.severeLogSink,
     this.failRestoreStore,
     this.beforeRestoreTransaction,
+    this.onCatchUpTransactionBegin,
+    this.onCatchUpStep,
+    this.catchUpClock,
+    this.afterViewStateReadBeforeRows,
   });
 
   /// Observes every line the library logs. An exception it throws is
@@ -399,6 +403,31 @@ class DeliveryTestHooks {
   /// disqualifying event in between and observe the transaction's own
   /// recheck of the restore's log preconditions refuse it.
   final Future<void> Function()? beforeRestoreTransaction;
+
+  /// Observes the start of each catch-up transaction of a
+  /// `ViewCatchUpDriver`, after its per-copy lock is taken and its copy
+  /// record read, naming the copy's id.
+  final void Function(String copyId)? onCatchUpTransactionBegin;
+
+  /// Awaited before each fold step of a catch-up transaction, naming the
+  /// copy's id and the event's id. Throwing makes the step -- and so the
+  /// transaction -- fail, exercising the catch-up driver's retry
+  /// (EVS-DEV-view-convergence/Q); an unresolved future returned from it
+  /// holds the transaction open, so a test can observe it in flight.
+  final FutureOr<void> Function(String copyId, String eventId)? onCatchUpStep;
+
+  /// Replaces the clock a `ViewCatchUpDriver` reads elapsed time from to
+  /// decide when its 200 ms per-transaction step bound
+  /// (EVS-DEV-view-convergence/N) has passed. Production reads
+  /// `DateTime.now()`.
+  final DateTime Function()? catchUpClock;
+
+  /// Awaited by a consumer-facing view read, inside its storage
+  /// transaction, after it reads its copy's convergence state and before
+  /// it reads its rows, so a test can append an event on another store in
+  /// between and observe that the rows the read returns still match the
+  /// state it already read (EVS-DEV-converging-view-reads/A).
+  final Future<void> Function()? afterViewStateReadBeforeRows;
 
   /// Read once by `SyncCycle.start`. When true, the started cycle holds its
   /// event store's trigger slot as any cycle does, but a wake runs no pass

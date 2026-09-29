@@ -155,12 +155,6 @@ jobs:
       - name: Concurrent first opens and database identity on Postgres
         run: flutter test test/storage/postgres/postgres_database_identity_test.dart
         working-directory: event_sourcing
-      - name: Boot under a serving revision's load on Postgres
-        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
-        working-directory: event_sourcing
-      - name: Boot pause beside a serving revision on Postgres
-        run: flutter test test/storage/postgres/postgres_boot_pause_test.dart
-        working-directory: event_sourcing
       - name: Boot progress reports on Postgres
         run: flutter test test/storage/postgres/postgres_boot_progress_test.dart
         working-directory: event_sourcing
@@ -228,6 +222,18 @@ jobs:
         working-directory: event_sourcing
       - name: Incompatible-generation guard and lock session on Postgres
         run: flutter test test/storage/postgres/postgres_generation_guard_test.dart
+        working-directory: event_sourcing
+      - name: View catch-up ordering, copy locks and live registration on Postgres
+        run: flutter test test/storage/postgres/postgres_view_catch_up_test.dart
+        working-directory: event_sourcing
+      - name: Measured view-convergence scenarios on Postgres
+        run: flutter test test/storage/postgres/postgres_view_convergence_measured_test.dart
+        working-directory: event_sourcing
+      - name: Boot fairness under load on Postgres
+        run: flutter test test/storage/postgres/postgres_boot_under_load_test.dart
+        working-directory: event_sourcing
+      - name: Redelivery read ordering against a concurrent append on Postgres
+        run: flutter test test/storage/postgres/postgres_redelivery_ordering_test.dart
         working-directory: event_sourcing
       - name: Delivery cycle and drain lock scenarios on Postgres
         run: flutter test test/storage/postgres/postgres_delivery_cycle_test.dart

@@ -243,15 +243,6 @@ const String kIngestDuplicateReceivedEventType = 'ingest.duplicate_received';
 @internal
 const String kIngestDeliveryAcceptedEventType = 'ingest.delivery_accepted';
 
-/// Reserved id for the boot-time view-snapshot-promotion audit event
-/// emitted by the snapshot-promotion pass.
-const String kViewSnapshotPromotedEntryType = 'view_snapshot_promoted';
-
-/// Event type of the view-snapshot-promotion audit
-/// ([kViewSnapshotPromotedEntryType]).
-@internal
-const String kViewSnapshotPromotedEventType = 'finalized';
-
 /// Reserved id for the security finding a detection point records when it
 /// meets an integrity anomaly.
 // Implements: EVS-DEV-security-findings/A
@@ -341,7 +332,6 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
   kLibVersionInitializedEntryType,
   kLibVersionChangedEntryType,
   kIngestAuditEntryType,
-  kViewSnapshotPromotedEntryType,
   kSecurityFindingEntryType,
   kDestinationChannelResumedEntryType,
   kDestinationSenderSucceededEntryType,
@@ -355,10 +345,9 @@ const Set<String> kReservedSystemEntryTypeIds = <String>{
 /// retention-policy-applied per-sweep), the drainer's destination wedge
 /// event,
 /// the bootstrap registry-initialized audit, the substrate-internal
-/// lib-version boot events (initialized / changed), the raw-path
-/// `ingest-audit` event (covering `_emitDuplicateReceivedInTxn`), and the `view_snapshot_promoted`
-/// audit emitted by the boot-time snapshot-promotion pass. They exist to
-/// stamp an immutable event_log row for every covered mutation.
+/// lib-version boot events (initialized / changed), and the raw-path
+/// `ingest-audit` event (covering `_emitDuplicateReceivedInTxn`). They
+/// exist to stamp an immutable event_log row for every covered mutation.
 ///
 /// Membership in this set is what `SubscriptionFilter` discriminates on: a
 /// filter that does not opt in admits none of them, and one that opts in
@@ -581,18 +570,6 @@ const List<EntryTypeDefinition> kSystemEntryTypes = <EntryTypeDefinition>[
     ],
   ),
   EntryTypeDefinition(
-    id: kViewSnapshotPromotedEntryType,
-    registeredVersion: EntryTypeVersion(1, 0),
-    name: 'View Snapshot Promoted',
-    declarations: <EventTypeDeclaration>[
-      EventTypeDeclaration(
-        eventType: kViewSnapshotPromotedEventType,
-        kind: CausalKind.annotation,
-        eligible: false,
-      ),
-    ],
-  ),
-  EntryTypeDefinition(
     id: kSecurityFindingEntryType,
     registeredVersion: EntryTypeVersion(1, 0),
     name: 'Security Finding',
@@ -735,10 +712,6 @@ const Map<String, ReservedEventShape> kReservedEventShapes =
           kIngestDuplicateReceivedEventType,
           kIngestDeliveryAcceptedEventType,
         },
-      ),
-      kViewSnapshotPromotedEntryType: ReservedEventShape(
-        kLibAggregateType,
-        <String>{kViewSnapshotPromotedEventType},
       ),
       kSecurityFindingEntryType: ReservedEventShape(
         kSecurityFindingAggregateType,

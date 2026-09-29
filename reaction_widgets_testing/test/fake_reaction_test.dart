@@ -94,7 +94,10 @@ void main() {
         );
         fake.emitViewUpdate<Map<String, Object?>>(
           'v',
-          const EndOfReplay<Map<String, Object?>>(sequence: 1),
+          const EndOfReplay<Map<String, Object?>>(
+            sequence: 1,
+            state: ViewConvergenceState.current,
+          ),
         );
         await pumpEventQueue();
 
@@ -165,7 +168,10 @@ void main() {
       expect(
         () => fake.emitViewUpdate<Map<String, Object?>>(
           'v',
-          const EndOfReplay<Map<String, Object?>>(sequence: 1),
+          const EndOfReplay<Map<String, Object?>>(
+            sequence: 1,
+            state: ViewConvergenceState.current,
+          ),
         ),
         throwsStateError,
       );

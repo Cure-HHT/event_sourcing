@@ -25,9 +25,15 @@
 //   major throws DataFormatIncompatibleError before any write (_runBoot).
 // Implements: EVS-DEV-event-store-open/E
 // the whole boot runs in one
-//   bootTransaction, refusals first, then the library-version event,
-//   seeding, promotion, re-derivation, the generation record and the boot
-//   record (_runBoot).
+//   bootTransaction, refusals first, then the library-version event and
+//   registry audit, then creating and marking view copies, the generation
+//   record and the boot record (_runBoot).
+// Implements: EVS-DEV-event-store-open/N
+// the boot transaction reads, writes and deletes no view row; it creates
+//   and marks copy records only.
+// Implements: EVS-DEV-event-store-open/O
+// the boot reads no event other than the library-version events, the
+//   registry audit events and the latest event of the log.
 // Implements: EVS-DEV-event-store-open/F
 // the database identity is minted
 //   or adopted at the first open, recorded in lib_version_initialized, and
@@ -46,20 +52,21 @@
 // Implements: EVS-DEV-version-compatibility/C
 // every append path stamps LibVersion.dataFormat as the event's
 //   lib_format_version.
-// Implements: EVS-DEV-snapshot-promotion-on-open
-// _runBoot promotes lagging view rows
-//   and emits view_snapshot_promoted audit events.
+// Implements: EVS-DEV-view-convergence/B
+// _runBoot creates an empty copy, watermark before the first event of the
+//   log, for each registered view whose fingerprint has no stored unmarked
+//   copy.
+// Implements: EVS-DEV-view-convergence/D
+// _runBoot marks for deletion every stored copy whose fingerprint the
+//   opening build does not register.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/A
 // EntryTypeVersionDowngradeError
-//   is thrown from open when a registered major is below the major of the
-//   highest stored target version.
-// Implements: EVS-DEV-entry-type-downgrade-refusal/B
-// verifyNoEntryTypeDowngrade
-//   runs in _runBoot before any write of the boot transaction.
+//   is thrown from open when a registered major is below the major the
+//   database's generation record holds for that entry type.
 // Implements: EVS-DEV-entry-type-downgrade-refusal/C
 // EntryTypeVersionDowngradeError
-//   carries the entryType id and the stored and registered versions, each a
-//   major and a minor, for diagnostic logging.
+//   carries the entryType id and the recorded and registered versions, each
+//   a major and a minor, for diagnostic logging.
 
 import 'dart:async';
 import 'dart:collection';
@@ -106,13 +113,15 @@ import 'package:event_sourcing/src/lifecycle/boot_progress.dart';
 import 'package:event_sourcing/src/lifecycle/lib_version.dart';
 import 'package:event_sourcing/src/lifecycle/version_check.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/projections/integrity_marks.dart';
+import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
-import 'package:event_sourcing/src/projections/snapshot_promotion.dart';
 import 'package:event_sourcing/src/projections/subscription_filter.dart';
+import 'package:event_sourcing/src/projections/view_catch_up.dart';
+import 'package:event_sourcing/src/projections/view_fingerprint.dart';
+import 'package:event_sourcing/src/projections/view_read.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
@@ -140,6 +149,7 @@ import 'package:event_sourcing/src/storage/storage_reader.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/transaction_rerun_limit.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_engine.dart';
 import 'package:event_sourcing/src/subscriptions/subscription_mode.dart';
@@ -257,43 +267,38 @@ class RetentionResult {
 }
 
 /// Thrown by [EventStore.open] when a registered entry type's major is
-/// below the major of the highest target version stored for that entry type
-/// in `view_target_versions`: the views hold rows folded under a newer
-/// major, which this build cannot read. A higher stored minor of the same
-/// major is not a downgrade. The resolution is a build whose registered
-/// major is at least [fromVersion]'s major.
+/// below the highest major the database's generation record holds for it:
+/// an earlier boot registered that major, so events or copies of that
+/// major may already exist, which this build cannot read. A higher
+/// recorded minor of the same major is not a downgrade. The resolution is
+/// a build whose registered major is at least [fromVersion]'s major.
+// Implements: EVS-DEV-entry-type-downgrade-refusal/A
 class EntryTypeVersionDowngradeError extends Error {
   EntryTypeVersionDowngradeError({
     required this.entryType,
     required this.fromVersion,
     required this.toVersion,
-    this.recordedByOpen = false,
   });
 
-  /// The entry type whose registered major is below its stored major.
+  /// The entry type whose registered major is below its recorded major.
   final String entryType;
 
-  /// The highest target version stored for [entryType].
+  /// The highest major the generation record holds for [entryType], with
+  /// minor 0.
   final EntryTypeVersion fromVersion;
 
   /// The version this build registers for [entryType].
   final EntryTypeVersion toVersion;
 
-  /// True when the higher major comes from the database's generation
-  /// record (an earlier open registered it) rather than from a stored view
-  /// target; [fromVersion] then carries that major with minor 0.
-  final bool recordedByOpen;
-
   @override
   String toString() =>
       'EntryTypeVersionDowngradeError: entry type "$entryType" was '
-      '${recordedByOpen ? 'registered at major ${fromVersion.major} by an '
-                'earlier open of the database (its generation record)' : 'previously folded at version $fromVersion (stored in '
-                'view_target_versions)'}, '
-      'but this build registers version $toVersion. '
-      'A build whose registered major (${toVersion.major}) is below the '
-      'stored major (${fromVersion.major}) is refused. Run a build that '
-      'registers major ${fromVersion.major} or higher for "$entryType".';
+      'registered at major $fromVersion by an earlier open of the '
+      'database (its generation record), but this build registers version '
+      '$toVersion. A build whose registered major (${toVersion.major}) is '
+      'below the recorded major (${fromVersion.major}) is refused. Run a '
+      'build that registers major ${fromVersion.major} or higher for '
+      '"$entryType".';
 }
 
 /// The substrate's append-only event log. Serves callers across mobile and
@@ -312,12 +317,14 @@ class EventStore {
     required MutableSecurityContextStore securityContexts,
     required OpenedStorage? storage,
     required this.databaseId,
+    required Map<String, String> viewCopyIds,
     required GenerationRegistration registration,
     ProjectionRegistry? projections,
     PromoterRegistry? promoters,
     Clock? clock,
     Uuid? uuid,
   }) : _backend = backend,
+       _viewCopyIds = viewCopyIds,
        _interpreter = ProjectionInterpreter(
          projections: projections ?? ProjectionRegistry(),
          promoters: promoters ?? PromoterRegistry(),
@@ -329,7 +336,15 @@ class EventStore {
        _storage = storage,
        _registration = registration,
        _clock = clock,
-       _uuid = uuid ?? const Uuid();
+       _uuid = uuid ?? const Uuid(),
+       _catchUp = ViewCatchUpDriver(
+         backend: backend,
+         entryTypes: entryTypes,
+         projections: projections ?? ProjectionRegistry(),
+         promoters: promoters ?? PromoterRegistry(),
+         viewCopyIds: viewCopyIds,
+         clock: clock,
+       );
 
   /// The storage this store appends to and reads from. It is private to
   /// the event store's Dart library: the library's own writers (the
@@ -340,6 +355,43 @@ class EventStore {
   final StorageBackend _backend;
   final EntryTypeRegistry entryTypes;
   final Source source;
+
+  /// The id of this instance's current copy of each registered view, by
+  /// view name, as the boot decided it (EVS-DEV-view-convergence/B+D). Row
+  /// storage addresses a view's rows by its copy id, never by its name.
+  final Map<String, String> _viewCopyIds;
+
+  /// Catches up this instance's copies that are behind after boot, and
+  /// deletes copies marked for deletion, in transactions bounded to run
+  /// after this store's construction and before it closes
+  /// (EVS-DEV-view-convergence).
+  final ViewCatchUpDriver _catchUp;
+
+  /// The copy id of [viewName]'s current copy for this instance. Throws
+  /// [StateError] for a view no registered [ProjectionSpec] names.
+  String _copyIdOf(String viewName) {
+    final copyId = _viewCopyIds[viewName];
+    if (copyId == null) {
+      throw StateError(
+        'EventStore: "$viewName" names no view this instance registered '
+        'at EventStore.open.',
+      );
+    }
+    return copyId;
+  }
+
+  /// Test-only access to [_copyIdOf]: the id of this instance's current
+  /// copy of [viewName]'s view, the key row storage methods take in place
+  /// of the view's name.
+  @visibleForTesting
+  String copyIdOf(String viewName) => _copyIdOf(viewName);
+
+  /// Test-only access to the catch-up driver's in-memory progress of
+  /// [copyId]: its last failure and the backoff it is retrying under, if
+  /// it is behind, or null when no catch-up transaction on it has failed.
+  @visibleForTesting
+  ViewCopyProgress? catchUpProgressOf(String copyId) =>
+      _catchUp.progressOf(copyId);
 
   /// The security contexts stored beside this store's events, for reading:
   /// an object of its own that declares no writing member. The event
@@ -590,10 +642,9 @@ class EventStore {
   ///   and by the database's generation record, must equal this build's
   ///   ([LibVersion.dataFormat]); another major throws
   ///   [DataFormatIncompatibleError].
-  /// - No registered entry type's major may be below the major stored for
-  ///   it in `view_target_versions`, or recorded for it in the generation
-  ///   record by an earlier boot; a lower one throws
-  ///   [EntryTypeVersionDowngradeError].
+  /// - No registered entry type's major may be below the major recorded
+  ///   for it in the generation record by an earlier boot; a lower one
+  ///   throws [EntryTypeVersionDowngradeError].
   ///
   /// Only the library-version events this database appended itself count;
   /// a peer's library-version events it ingested are never read as its
@@ -601,52 +652,48 @@ class EventStore {
   /// `lib_version_initialized` event at the first open (minting the
   /// database identity, [databaseId]), or a `lib_version_changed` event
   /// when this build's package version or data format differs from the one
-  /// recorded last, older ones included; the target versions of newly
-  /// registered view and entry-type pairs; the promotion of views whose
-  /// stored targets lag the registered versions; the re-derivation of views
-  /// that are behind the log; the generation record, merged with this
-  /// build's generation; and a boot record. A refused boot writes nothing.
+  /// recorded last, older ones included; an empty copy, at a watermark
+  /// before the first event of the log, for every registered view whose
+  /// fingerprinted definition has no stored unmarked copy (it catches up
+  /// with the log after the open returns); every stored copy whose
+  /// fingerprint this build does not register, marked for deletion; the
+  /// generation record, merged with this build's generation; and a boot
+  /// record. A refused boot writes nothing.
   ///
   /// Deployment. Builds with the same data-format major and the same
   /// entry-type majors share a database in any mix -- a canary beside the
   /// serving revision, several instances, a restart, a rollback to the
   /// previous release -- and every open by a different version is recorded
-  /// in the log. A view, or an entry type in a view's interest, that only
-  /// some of those builds register misses the events the others store
-  /// until a build that registers it opens the database again: that open
-  /// re-derives it (or `rebuildView` does). That catch-up follows the entry
-  /// types a view's interest names; a view whose interest names none (one
-  /// that selects by aggregate type), or whose interest differs between the
-  /// builds only outside its entry types, is not caught up: run
-  /// `rebuildView` for it once no build lacking it, or holding the narrower
-  /// interest, still serves the database. A build of another data-format
-  /// major, or one that raises an entry-type major, is deployed
-  /// stop-then-start: every instance of the old revision stops before the
-  /// first instance of the new one opens the database, and the old
-  /// revision's next open is refused afterwards. Recovery after such a
-  /// deployment is a restore from a backup taken before the switch, or a
-  /// roll-forward. Evolve compatibly where possible: add an optional field
-  /// as a minor step, and make a real reshape a new entry type.
+  /// in the log. The library stores a view's rows per fingerprint of its
+  /// definition (its interest, shape, entry-type versions and promoter
+  /// chains): builds that agree share one copy and fold each event into it
+  /// as they store it, and a build whose definition is new or changed gets
+  /// a copy of its own, which starts empty and catches up with the log
+  /// after this open returns, in short bounded transactions
+  /// (`EVS-DEV-view-convergence`). A build of another data-format major, or
+  /// one that raises an entry-type major, is deployed stop-then-start:
+  /// every instance of the old revision stops before the first instance of
+  /// the new one opens the database, and the old revision's next open is
+  /// refused afterwards. Recovery after such a deployment is a restore from
+  /// a backup taken before the switch, or a roll-forward. Evolve
+  /// compatibly where possible: add an optional field as a minor step, and
+  /// make a real reshape a new entry type.
   ///
   /// On a backend whose transactions contend with concurrent appends, the
   /// boot first locks what every append writes, so the appends of a
   /// revision serving the same database wait for the boot to commit rather
   /// than abort it. The wait lasts for the whole boot: its reads of the
-  /// library-version events and the stored view targets, its checks, and
-  /// any seeding, promotion and re-derivation it performs, the last two
-  /// proportional to the events and rows of the views they rewrite. A
-  /// release that promotes a large view, or adds a view over a long log,
-  /// pauses the serving revision's appends for as long; measure the boot on
-  /// a copy of production data before such a rollout.
+  /// library-version events, the registry audit events and the latest
+  /// event of the log, its checks, and its creating and marking of view
+  /// copies, a constant amount of work per registered view and stored
+  /// copy. It folds no view row, so the pause does not grow with a view's
+  /// size or the log's length.
   ///
   /// Progress. [onBootProgress], when given, observes the boot: it receives
-  /// a [BootProgress] when the open starts its checks ([BootPhase.checks]),
-  /// when snapshot promotion and view catch-up each start, after each chunk
-  /// of their work and when each ends ([BootPhase.promotion],
-  /// [BootPhase.catchUp]; a phase with nothing to re-derive reports
-  /// nothing), and once the boot has committed, just before the open
-  /// returns ([BootPhase.complete]). A refused open reports no completion. A
-  /// boot transaction the backend runs again reports its phases again from
+  /// a [BootProgress] when the open starts its checks ([BootPhase.checks])
+  /// and once the boot has committed, just before the open returns
+  /// ([BootPhase.complete]). A refused open reports no completion. A boot
+  /// transaction the backend runs again reports its phases again from
   /// [BootPhase.checks] when the new run starts; until then the discarded
   /// run's last report stands.
   ///
@@ -696,12 +743,13 @@ class EventStore {
       progress.report(BootPhase.checks, 0, 0);
       final effectiveProjections = projections ?? ProjectionRegistry();
       _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      entryTypes.seal();
       effectiveProjections.seal();
       final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
       final opened = await openDescribedStorage(storage);
       final EventStore store;
       try {
-        final (:databaseId, :registration) = await _guardedBoot(
+        final (:databaseId, :copyIds, :registration) = await _guardedBoot(
           storage: opened.backend,
           entryTypes: entryTypes,
           projections: effectiveProjections,
@@ -716,6 +764,7 @@ class EventStore {
           securityContexts: opened.securityContexts,
           storage: opened,
           databaseId: databaseId,
+          viewCopyIds: copyIds,
           registration: registration,
           projections: effectiveProjections,
           promoters: effectivePromoters,
@@ -729,6 +778,8 @@ class EventStore {
       progress
         ..bootFinished()
         ..report(BootPhase.complete, 0, 0);
+      store._catchUp.onCaughtUp = store._subs.publishViewCaughtUp;
+      store._catchUp.start();
       return store;
     } finally {
       progress.bootFinished();
@@ -793,9 +844,10 @@ class EventStore {
       progress.report(BootPhase.checks, 0, 0);
       final effectiveProjections = projections ?? ProjectionRegistry();
       _registerLibraryDefinitions(entryTypes, effectiveProjections);
+      entryTypes.seal();
       effectiveProjections.seal();
       final effectivePromoters = (promoters ?? PromoterRegistry())..seal();
-      final (:databaseId, :registration) = await _guardedBoot(
+      final (:databaseId, :copyIds, :registration) = await _guardedBoot(
         storage: storage,
         entryTypes: entryTypes,
         projections: effectiveProjections,
@@ -810,6 +862,7 @@ class EventStore {
         securityContexts: securityContexts,
         storage: null,
         databaseId: databaseId,
+        viewCopyIds: copyIds,
         registration: registration,
         projections: effectiveProjections,
         promoters: effectivePromoters,
@@ -819,6 +872,8 @@ class EventStore {
       progress
         ..bootFinished()
         ..report(BootPhase.complete, 0, 0);
+      store._catchUp.onCaughtUp = store._subs.publishViewCaughtUp;
+      store._catchUp.start();
       return store;
     } finally {
       progress.bootFinished();
@@ -921,7 +976,13 @@ class EventStore {
   // Implements: EVS-DEV-version-compatibility/F+G
   // register before any write; the boot transaction runs under the boot
   //   lock; a failed open releases its registration.
-  static Future<({String databaseId, GenerationRegistration registration})>
+  static Future<
+    ({
+      String databaseId,
+      Map<String, String> copyIds,
+      GenerationRegistration registration,
+    })
+  >
   _guardedBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
@@ -938,10 +999,17 @@ class EventStore {
         for (final definition in entryTypes.all())
           definition.id: definition.registeredVersion,
       },
+      // Implements: EVS-DEV-view-convergence/C
+      // the fingerprint of each registered view is registered with the
+      //   guard's live components before the boot transaction.
+      viewFingerprints: <String>{
+        for (final spec in projections.all())
+          viewFingerprint(spec, entryTypes, promoters),
+      },
     );
     final registration = await storage.registerGeneration(descriptor);
     try {
-      final databaseId = await _runBoot(
+      final (:databaseId, :copyIds) = await _runBoot(
         storage: storage,
         entryTypes: entryTypes,
         projections: projections,
@@ -952,7 +1020,11 @@ class EventStore {
         progress: progress,
       );
       await registration.completeBoot();
-      return (databaseId: databaseId, registration: registration);
+      return (
+        databaseId: databaseId,
+        copyIds: copyIds,
+        registration: registration,
+      );
     } catch (_) {
       await registration.release();
       rethrow;
@@ -961,36 +1033,38 @@ class EventStore {
 
   /// The boot of [open] (with [recordVersion]) and of [openForTest]
   /// (without), in one `bootTransaction` of [storage]. Returns the database
-  /// identity.
+  /// identity and, for every view [projections] registers, the id of its
+  /// current copy.
   ///
   /// Every refusal is decided before the first write: the stored shapes,
   /// the database identity, the data format (in the log, then in the
-  /// generation record) and the entry-type majors (in the stored view
-  /// targets, then in the generation record). Then, in order: the
-  /// library-version event (when [recordVersion] and one is due),
-  /// view-target seeding, snapshot promotion (each promoted pair audited by
-  /// a `view_snapshot_promoted` event), the re-derivation of views behind
-  /// the log, the merged generation record and [registration]'s own
-  /// records, and the boot record. The whole body may run more than once (a serialization retry, or a browser database re-running it
-  /// after another tab committed); each run decides again from what it
-  /// reads.
-  // Implements: EVS-DEV-event-store-open/B+C+D+E+F
+  /// generation record) and the entry-type majors (in the generation
+  /// record). Then, in order: the library-version event (when
+  /// [recordVersion] and one is due), an empty copy for every registered
+  /// view whose fingerprint has no stored unmarked copy, marking for
+  /// deletion every stored copy whose fingerprint the opening build does
+  /// not register, the merged generation record and [registration]'s own
+  /// records, and the boot record. The boot folds no view row: a new copy
+  /// catches up with the log after the open returns. The whole body may
+  /// run more than once (a serialization retry, or a browser database
+  /// re-running it after another tab committed); each run decides again
+  /// from what it reads.
+  // Implements: EVS-DEV-event-store-open/E
   // one boot transaction; refusals before any write; the library-version
-  //   event before seeding and promotion; the boot record on every accepted
-  //   boot.
-  // Implements: EVS-DEV-entry-type-downgrade-refusal/A+B
-  // verifyNoEntryTypeDowngrade runs before any write of the boot
-  //   transaction.
-  // Implements: EVS-DEV-snapshot-promotion-on-open/A+B+C
-  // lagging view rows are re-derived and a view_snapshot_promoted audit
-  //   appended per pair, in the boot transaction.
-  // Implements: EVS-DEV-version-compatibility/L
-  // views behind the log for an entry type in their interest are
-  //   re-derived in the boot transaction.
+  //   event and registry audit before creating or marking any copy; the
+  //   boot record on every accepted boot.
+  // Implements: EVS-DEV-entry-type-downgrade-refusal/A
+  // the downgrade refusal runs before any write of the boot transaction.
+  // Implements: EVS-DEV-view-convergence/B+D
+  // the boot creates an empty copy for every unfingerprinted registered
+  //   view and marks for deletion every stored copy whose fingerprint the
+  //   opening build does not register; sparing a copy a live registration
+  //   of another instance names is added once the generation guard's live
+  //   registrations exist.
   // Implements: EVS-DEV-version-compatibility/I
   // the generation record refuses, before any write, a build it does not
   //   admit, and every accepted boot merges its generation into it.
-  static Future<String> _runBoot({
+  static Future<({String databaseId, Map<String, String> copyIds})> _runBoot({
     required StorageBackend storage,
     required EntryTypeRegistry entryTypes,
     required ProjectionRegistry projections,
@@ -1002,7 +1076,9 @@ class EventStore {
   }) {
     final hooks = DeliveryTestHooks.current;
     final build = _build();
-    return storage.bootTransaction<String>((txn) async {
+    return storage.bootTransaction<
+      ({String databaseId, Map<String, String> copyIds})
+    >((txn) async {
       _observeBootBodyRun(hooks);
       progress.beginBodyRun();
 
@@ -1063,12 +1139,10 @@ class EventStore {
           dataFormat: build.dataFormat,
         );
       }
-      await verifyNoEntryTypeDowngrade(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        entryTypes: entryTypes,
-      );
+      // Implements: EVS-DEV-entry-type-downgrade-refusal/A
+      // the database's generation record is the one place that knows
+      //   every major the database has been opened with, so the downgrade
+      //   refusal reads it alone.
       if (record != null) {
         for (final entry in descriptor.entryTypes.entries) {
           final recordedMajor = record.entryTypeMajors[entry.key];
@@ -1077,7 +1151,6 @@ class EventStore {
               entryType: entry.key,
               fromVersion: EntryTypeVersion(recordedMajor, 0),
               toVersion: entry.value,
-              recordedByOpen: true,
             );
           }
         }
@@ -1130,49 +1203,52 @@ class EventStore {
           (hooks?.afterBootVersionEvent?.call() ?? false)) {
         throw const InjectedFailure('afterBootVersionEvent');
       }
-      final seeded = await seedViewTargetVersions(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        entryTypes: entryTypes,
-      );
-      await promoteViewSnapshots(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        promoters: promoters,
-        entryTypes: entryTypes,
-        emitAudit:
-            ({
-              required String viewName,
-              required String entryType,
-              required EntryTypeVersion fromVersion,
-              required EntryTypeVersion toVersion,
-              required int rowsPromoted,
-            }) async {
-              await _appendViewSnapshotPromotedAuditInTxn(
-                txn,
-                storage,
-                entryTypes,
-                viewName: viewName,
-                entryType: entryType,
-                fromVersion: fromVersion,
-                toVersion: toVersion,
-                rowsPromoted: rowsPromoted,
-                databaseId: databaseId,
-              );
-            },
-        progress: progress,
-      );
-      await catchUpViews(
-        txn: txn,
-        backend: storage,
-        projections: projections,
-        promoters: promoters,
-        entryTypes: entryTypes,
-        seeded: seeded,
-        progress: progress,
-      );
+      // Implements: EVS-DEV-view-convergence/A+B
+      // at most one copy of a fingerprint that is not marked for deletion;
+      //   an empty copy, watermark before the first event of the log, is
+      //   created for every registered view whose fingerprint has none.
+      final storedCopies = await storage.readViewCopiesInTxn(txn);
+      final unmarkedByFingerprint = <String, ViewCopy>{
+        for (final copy in storedCopies)
+          if (!copy.markedForDeletion) copy.fingerprint: copy,
+      };
+      final registeredFingerprints = <String>{};
+      final copyIds = <String, String>{};
+      for (final spec in projections.all()) {
+        final fingerprint = viewFingerprint(spec, entryTypes, promoters);
+        registeredFingerprints.add(fingerprint);
+        final existing = unmarkedByFingerprint[fingerprint];
+        if (existing != null) {
+          copyIds[spec.viewName] = existing.copyId;
+          continue;
+        }
+        final copyId = await storage.createViewCopyInTxn(
+          txn,
+          spec.viewName,
+          fingerprint,
+          0,
+        );
+        copyIds[spec.viewName] = copyId;
+        unmarkedByFingerprint[fingerprint] = ViewCopy(
+          copyId: copyId,
+          viewName: spec.viewName,
+          fingerprint: fingerprint,
+          watermark: 0,
+          markedForDeletion: false,
+        );
+      }
+      // Implements: EVS-DEV-view-convergence/D
+      // every stored copy whose fingerprint neither the opening build nor
+      //   a live registration of another instance names is marked for
+      //   deletion.
+      final liveFingerprints = registration.liveViewFingerprints;
+      for (final copy in storedCopies) {
+        if (!copy.markedForDeletion &&
+            !registeredFingerprints.contains(copy.fingerprint) &&
+            !liveFingerprints.contains(copy.fingerprint)) {
+          await storage.markViewCopyForDeletionInTxn(txn, copy.copyId);
+        }
+      }
       final merged = record == null
           ? GenerationRecord.of(descriptor)
           : record.merge(descriptor);
@@ -1191,7 +1267,7 @@ class EventStore {
           dataFormat: build.dataFormat,
         ),
       );
-      return databaseId;
+      return (databaseId: databaseId, copyIds: copyIds);
     });
   }
 
@@ -1255,6 +1331,11 @@ class EventStore {
   // Implements: EVS-PRD-storage-barrier/H
   // closing the event store closes the storage the library opened for it.
   Future<void> close() async {
+    // Implements: EVS-DEV-view-convergence/H
+    // Implements: EVS-DEV-view-convergence/I
+    // no catch-up transaction begins after close is called, and close
+    //   awaits the one in flight, if any, before the storage it uses closes.
+    await _catchUp.stop();
     await _subs.close();
     await _storage?.close();
     await _registration.release();
@@ -1455,9 +1536,32 @@ class EventStore {
   ///
   /// Atomic snapshot-then-attach: opens a single live listener FIRST
   /// (before reading the snapshot) so no changes are lost between the
-  /// snapshot read and forward-mode delivery. A `_replayDone` flag
-  /// inside the listener routes events to the buffer during snapshot
-  /// read and directly to the output controller after it.
+  /// snapshot read and forward-mode delivery. A `replayDone` flag inside
+  /// the listener routes events to a buffer during the snapshot read and
+  /// directly to the output controller after it; a `redelivering` flag
+  /// applies the same buffering, once replay is done, for the duration of
+  /// a became-current redelivery read below, so a live change the read's
+  /// own storage transaction predates is never overtaken by it.
+  ///
+  /// The initial replay reads the view's convergence state and its rows in
+  /// one storage transaction (the [reader]'s `findViewRows` /
+  /// `readViewRowsByKeys`, EVS-DEV-converging-view-reads/A): a named
+  /// aggregate not yet settled is delivered as [Pending] rather than
+  /// [Snapshot], and the replay ends with [EndOfReplay] carrying the
+  /// view's state. While the copy converges, no `Delta`/`Tombstone` for it
+  /// reaches this subscription -- an append folds inline only into a copy
+  /// that is current (EVS-DEV-view-convergence/F) -- so nothing here needs
+  /// to filter live updates by settledness. Once the copy is found current
+  /// at the end of a catch-up transaction, this subscription re-reads the
+  /// view (again in one storage transaction) and redelivers a [Snapshot]
+  /// for every aggregate it named -- the already-settled ones unchanged,
+  /// the formerly pending ones replacing their earlier [Pending] -- or
+  /// every row of the view, if it named none; a live change that lands
+  /// while this re-read is in flight is buffered and drained right after,
+  /// so it can never reach the subscriber ahead of a redelivered row it
+  /// postdates (EVS-PRD-subscription/C). Only then does the subscription
+  /// emit a second [EndOfReplay] reporting the view current
+  /// (EVS-DEV-converging-view-reads/G).
   ///
   /// The [StreamController] is closed when the subscriber cancels,
   /// preventing infinite blocking.
@@ -1467,19 +1571,143 @@ class EventStore {
   ) {
     late StreamController<Update<T>> controller;
     StreamSubscription<AggregateFoldChange>? liveSub;
+    StreamSubscription<String>? caughtUpSub;
 
     Future<void> start() async {
       // Open ONE subscription that lasts the lifetime of this stream.
       // During the snapshot phase events go to liveBuffer; after
       // _replayDone is set they go directly to controller.
       var replayDone = false;
+      var reportedCurrent = false;
+      // Guards the re-read itself, not just its outcome: two caught-up
+      // signals landing before either read returns must not both pass the
+      // `reportedCurrent` check and both redeliver.
+      var deliveringBecameCurrent = false;
+      var caughtUpDuringReplay = false;
       var maxSequenceSeen = 0;
       final liveBuffer = <AggregateFoldChange>[];
+      // While `deliverBecameCurrent`'s redelivery read is in flight, a live
+      // change published by an append that lands concurrently is buffered
+      // here rather than sent straight to the controller -- exactly as
+      // `liveBuffer` holds changes during the initial replay -- so a
+      // redelivered Snapshot (reflecting the read's pre-append state) can
+      // never be followed by a Delta/Tombstone the append already
+      // published before the read started (EVS-PRD-subscription/C).
+      var redelivering = false;
+      final redeliverBuffer = <AggregateFoldChange>[];
+
+      // Drains changes buffered during a redelivery read: applied straight
+      // to the controller, in arrival order, updating `maxSequenceSeen`.
+      void drainRedeliverBuffer() {
+        for (final change in redeliverBuffer) {
+          if (controller.isClosed) break;
+          final u = _changeToUpdate<T>(change, filter, mode);
+          if (u != null) {
+            if (u.sequence > maxSequenceSeen) maxSequenceSeen = u.sequence;
+            controller.add(u);
+          }
+        }
+        redeliverBuffer.clear();
+      }
+
+      // Implements: EVS-DEV-converging-view-reads/G
+      // Redelivers on the view becoming current and reports it current,
+      // only once, guarded by `reportedCurrent`. A signal that arrives
+      // while the re-read still finds the copy converging (another build
+      // wrote past the watermark again first) is a no-op: this listener
+      // stays attached for the next one.
+      Future<void> deliverBecameCurrent() async {
+        if (reportedCurrent || deliveringBecameCurrent || controller.isClosed) {
+          return;
+        }
+        deliveringBecameCurrent = true;
+        // Implements: EVS-PRD-subscription/C
+        // route concurrent live changes to a buffer for the
+        // duration of the redelivery read, the same discipline the initial
+        // replay uses, so no redelivered row is stale relative to a change
+        // already published.
+        redelivering = true;
+        try {
+          final aggregateIds = mode.aggregates;
+          if (aggregateIds == null) {
+            final read = await reader.findViewRows(mode.viewName);
+            if (read.state != ViewConvergenceState.current) {
+              drainRedeliverBuffer();
+              return;
+            }
+            reportedCurrent = true;
+            var maxSeq = 0;
+            for (final row in read.rows) {
+              if (controller.isClosed) return;
+              final seq = (row['sequence'] as int?) ?? 0;
+              if (seq > maxSeq) maxSeq = seq;
+              controller.add(
+                Snapshot<T>(value: mode.mapper(row), sequence: seq),
+              );
+            }
+            drainRedeliverBuffer();
+            if (maxSequenceSeen > maxSeq) maxSeq = maxSequenceSeen;
+            if (!controller.isClosed) {
+              controller.add(
+                EndOfReplay<T>(sequence: maxSeq, state: read.state),
+              );
+            }
+          } else {
+            final read = await reader.readViewRowsByKeys(
+              mode.viewName,
+              aggregateIds,
+            );
+            if (read.state != ViewConvergenceState.current) {
+              drainRedeliverBuffer();
+              return;
+            }
+            reportedCurrent = true;
+            var maxSeq = 0;
+            for (final aggId in aggregateIds) {
+              if (controller.isClosed) return;
+              final data = read.rows[aggId]?.dataOrNull;
+              final seq = (data?['sequence'] as int?) ?? 0;
+              if (seq > maxSeq) maxSeq = seq;
+              controller.add(
+                Snapshot<T>(
+                  value: data == null ? null : mode.mapper(data),
+                  sequence: seq,
+                ),
+              );
+            }
+            drainRedeliverBuffer();
+            if (maxSequenceSeen > maxSeq) maxSeq = maxSequenceSeen;
+            if (!controller.isClosed) {
+              controller.add(
+                EndOfReplay<T>(sequence: maxSeq, state: read.state),
+              );
+            }
+          }
+        } finally {
+          redelivering = false;
+          deliveringBecameCurrent = false;
+        }
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
+      }
+
+      // Attached before the snapshot read, like `liveSub`, so a copy that
+      // reaches the log's tip during the read is not missed: the signal is
+      // recorded and acted on right after the initial EndOfReplay.
+      caughtUpSub = _subs.viewCaughtUp(mode.viewName).listen((_) {
+        if (!replayDone) {
+          caughtUpDuringReplay = true;
+          return;
+        }
+        unawaited(deliverBecameCurrent());
+      });
 
       liveSub = _subs.rowChanges(mode.viewName).listen((change) {
         if (controller.isClosed) return;
         if (!replayDone) {
           liveBuffer.add(change);
+        } else if (redelivering) {
+          redeliverBuffer.add(change);
         } else {
           final u = _changeToUpdate<T>(change, filter, mode);
           if (u != null) {
@@ -1489,11 +1717,15 @@ class EventStore {
         }
       }, onDone: () => controller.close());
 
-      // Snapshot read
+      // Snapshot read: through the reader, so the view's convergence
+      // state and its rows come from one storage transaction
+      // (EVS-DEV-converging-view-reads/A).
       final aggregateIds = mode.aggregates;
+      var initialState = ViewConvergenceState.current;
       if (aggregateIds == null) {
-        final rows = await _backend.findViewRows(mode.viewName);
-        for (final row in rows) {
+        final read = await reader.findViewRows(mode.viewName);
+        initialState = read.state;
+        for (final row in read.rows) {
           if (controller.isClosed) return;
           final seq = (row['sequence'] as int?) ?? 0;
           if (seq > maxSequenceSeen) maxSequenceSeen = seq;
@@ -1507,22 +1739,29 @@ class EventStore {
         // would cost about three round trips per id against a networked
         // database. Each requested id emits a Snapshot, with a null value for
         // an absent row, so a tombstoned or absent row is still signalled
-        // per id.
-        final byKey = await _backend.readViewRowsByKeys(
+        // per id; a row the copy cannot yet confirm settled is delivered as
+        // Pending instead (EVS-DEV-converging-view-reads/E).
+        final read = await reader.readViewRowsByKeys(
           mode.viewName,
           aggregateIds,
         );
+        initialState = read.state;
         for (final aggId in aggregateIds) {
           if (controller.isClosed) return;
-          final row = byKey[aggId];
-          final seq = (row?['sequence'] as int?) ?? 0;
-          if (seq > maxSequenceSeen) maxSequenceSeen = seq;
-          controller.add(
-            Snapshot<T>(
-              value: row == null ? null : mode.mapper(row),
-              sequence: seq,
-            ),
-          );
+          final row = read.rows[aggId];
+          switch (row) {
+            case SettledRow(:final data):
+              final seq = (data['sequence'] as int?) ?? 0;
+              if (seq > maxSequenceSeen) maxSequenceSeen = seq;
+              controller.add(
+                Snapshot<T>(value: mode.mapper(data), sequence: seq),
+              );
+            case AbsentRow():
+            case null:
+              controller.add(Snapshot<T>(value: null, sequence: 0));
+            case PendingRow():
+              controller.add(Pending<T>(aggregateId: aggId));
+          }
         }
       }
 
@@ -1541,10 +1780,22 @@ class EventStore {
       // flipping replayDone so the marker is ordered correctly relative to
       // any deltas that arrive after this point.
       if (!controller.isClosed) {
-        controller.add(EndOfReplay<T>(sequence: maxSequenceSeen));
+        controller.add(
+          EndOfReplay<T>(sequence: maxSequenceSeen, state: initialState),
+        );
       }
 
       replayDone = true;
+      if (initialState == ViewConvergenceState.current) {
+        // Already reported current by the initial EndOfReplay: a stray
+        // caught-up signal (this view was never converging) must not
+        // trigger a redelivery.
+        reportedCurrent = true;
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
+      } else if (caughtUpDuringReplay) {
+        unawaited(deliverBecameCurrent());
+      }
     }
 
     controller = StreamController<Update<T>>(
@@ -1552,6 +1803,8 @@ class EventStore {
       onCancel: () async {
         await liveSub?.cancel();
         liveSub = null;
+        await caughtUpSub?.cancel();
+        caughtUpSub = null;
         if (!controller.isClosed) await controller.close();
       },
     );
@@ -2272,6 +2525,7 @@ class EventStore {
       txn: txn,
       backend: _backend,
       event: event,
+      copyIds: _viewCopyIds,
     );
     if (rowChanges.isNotEmpty) {
       collector._addRowChanges(rowChanges);
@@ -2619,6 +2873,7 @@ class EventStore {
       txn: txn,
       backend: _backend,
       event: updatedEvent,
+      copyIds: _viewCopyIds,
     );
     if (rowChanges.isNotEmpty) collector._addRowChanges(rowChanges);
 
@@ -3223,10 +3478,10 @@ ProvenanceEntry _originatorEntry({
 ///
 /// Reserves the event's sequence number and chain links, builds its
 /// originator entry, assembles the record map shared by
-/// [EventStore._emitDuplicateReceivedInTxn], [_appendLibVersionEventInTxn]
-/// and [_appendViewSnapshotPromotedAuditInTxn], hashes it with
-/// [_canonicalEventHash], calls [StorageBackend.appendEvent], and records
-/// the event into [collector] when one is given.
+/// [EventStore._emitDuplicateReceivedInTxn] and
+/// [_appendLibVersionEventInTxn], hashes it with [_canonicalEventHash],
+/// calls [StorageBackend.appendEvent], and records the event into
+/// [collector] when one is given.
 Future<StoredEvent> _appendRawInternalEventInTxn(
   Transaction txn,
   StorageBackend backend, {
@@ -3336,59 +3591,6 @@ Future<void> _appendLibVersionEventInTxn(
     entryTypeVersion: const EntryTypeVersion(1, 0),
     eventType: eventType,
     data: data,
-    initiator: _kLibVersionInitiator,
-    uuid: uuid,
-  );
-}
-
-/// Append a substrate-emitted `view_snapshot_promoted` event inside [txn].
-///
-/// Called by [EventStore._runBoot] (via the
-/// [AuditEmitter] callback wired to [promoteViewSnapshots]) once per
-/// (viewName, entryType) pair that has been lifted to a new
-/// `registeredVersion`. Runs inside the same backend transaction as the
-/// row updates and `view_target_versions` write, so the promoted state
-/// and its audit event commit atomically.
-///
-/// Bypasses [EventStore.appendInTxn] because this boot-time helper runs
-/// before the [EventStore] instance exists. Uses [_appendRawInternalEventInTxn]
-/// for record assembly and hashing.
-// Implements: EVS-DEV-snapshot-promotion-on-open
-// audit event emission.
-Future<void> _appendViewSnapshotPromotedAuditInTxn(
-  Transaction txn,
-  StorageBackend backend,
-  EntryTypeRegistry entryTypes, {
-  required String viewName,
-  required String entryType,
-  required EntryTypeVersion fromVersion,
-  required EntryTypeVersion toVersion,
-  required int rowsPromoted,
-  required String databaseId,
-}) async {
-  const uuid = Uuid();
-  await _appendRawInternalEventInTxn(
-    txn,
-    backend,
-    databaseId: databaseId,
-    hop: 'event_sourcing',
-    identifier: 'event_sourcing',
-    softwareVersion: LibVersion.version,
-    receivedAt: DateTime.now().toUtc(),
-    aggregateId: kLibAggregateType,
-    aggregateType: kLibAggregateType,
-    entryType: kViewSnapshotPromotedEntryType,
-    entryTypeVersion: entryTypes
-        .byId(kViewSnapshotPromotedEntryType)!
-        .registeredVersion,
-    eventType: kViewSnapshotPromotedEventType,
-    data: <String, Object?>{
-      'viewName': viewName,
-      'entryType': entryType,
-      'fromVersion': fromVersion.toString(),
-      'toVersion': toVersion.toString(),
-      'rowsPromoted': rowsPromoted,
-    },
     initiator: _kLibVersionInitiator,
     uuid: uuid,
   );
@@ -3535,68 +3737,209 @@ final class _StorageReader implements StorageReader {
   Stream<StoredEvent> readEventsReverse({Set<String>? eventTypes}) =>
       _backend.readEventsReverse(eventTypes: eventTypes);
 
+  // The view-row reads below address a view by name; row storage addresses
+  // rows by copy id, so each translates through the instance's copy map
+  // before delegating to the backend (EVS-DEV-view-convergence). Each also
+  // reads the copy's convergence state alongside its rows, in the same
+  // transaction, and withholds what it cannot confirm settled
+  // (EVS-DEV-converging-view-reads).
+
+  /// The instance's [ProjectionSpec] and [ViewCopy] of [viewName], read
+  /// inside [txn].
+  Future<(ProjectionSpec, ViewCopy)> _specAndCopy(
+    Transaction txn,
+    String viewName,
+  ) async {
+    final spec = _store.projections.lookup(viewName);
+    if (spec == null) {
+      throw StateError(
+        'EventStore: "$viewName" names no view this instance registered '
+        'at EventStore.open.',
+      );
+    }
+    final copyId = _store._copyIdOf(viewName);
+    final copies = await _backend.readViewCopiesInTxn(_issued(txn));
+    final copy = copies.firstWhere(
+      (c) => c.copyId == copyId,
+      orElse: () => throw StateError(
+        'EventStore: no stored copy row for "$viewName" (copy id '
+        '"$copyId"); EventStore.open should have created one.',
+      ),
+    );
+    return (spec, copy);
+  }
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/C
   @override
-  Future<Map<String, dynamic>?> readViewRowInTxn(
+  Future<ViewRowRead> readViewRowInTxn(
     Transaction txn,
     String viewName,
     String key,
-  ) async => _backend.readViewRowInTxn(_issued(txn), viewName, key);
+  ) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    if (scan.state == ViewConvergenceState.converging) {
+      final pending = switch (spec) {
+        TableProjectionSpec() => true,
+        AggregateProjectionSpec() =>
+          scan.allUnsettled || scan.unsettledAggregateIds.contains(key),
+      };
+      if (pending) {
+        return ViewRowRead(state: scan.state, row: const PendingRow());
+      }
+    }
+    final row = await _backend.readViewRowInTxn(issued, copyId, key);
+    return ViewRowRead(
+      state: scan.state,
+      row: row == null ? const AbsentRow() : SettledRow(row),
+    );
+  }
 
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/B
   @override
-  Future<List<Map<String, dynamic>>> findViewRows(
+  Future<ViewRowsRead> findViewRows(
     String viewName, {
     int? limit,
     int? offset,
-  }) => _backend.findViewRows(viewName, limit: limit, offset: offset);
+  }) => transaction(
+    (txn) => findViewRowsInTxn(txn, viewName, limit: limit, offset: offset),
+  );
 
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/C
   @override
-  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
+  Future<ViewRowsByKeyRead> readViewRowsByKeys(
     String viewName,
     Set<String> keys,
-  ) => _backend.readViewRowsByKeys(viewName, keys);
+  ) => transaction((txn) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    final settledKeys = <String>{};
+    final rows = <String, ViewRow>{};
+    for (final key in keys) {
+      final pending =
+          scan.state == ViewConvergenceState.converging &&
+          switch (spec) {
+            TableProjectionSpec() => true,
+            AggregateProjectionSpec() =>
+              scan.allUnsettled || scan.unsettledAggregateIds.contains(key),
+          };
+      if (pending) {
+        rows[key] = const PendingRow();
+      } else {
+        settledKeys.add(key);
+      }
+    }
+    if (settledKeys.isNotEmpty) {
+      final found = await _backend.readViewRowsByKeysInTxn(
+        issued,
+        copyId,
+        settledKeys,
+      );
+      for (final key in settledKeys) {
+        final row = found[key];
+        rows[key] = row == null ? const AbsentRow() : SettledRow(row);
+      }
+    }
+    return ViewRowsByKeyRead(state: scan.state, rows: rows);
+  });
 
+  // Implements: EVS-DEV-converging-view-reads/A
+  // Implements: EVS-DEV-converging-view-reads/B
+  // Implements: EVS-DEV-converging-view-reads/D
   @override
-  Future<List<Map<String, dynamic>>> findViewRowsInTxn(
+  Future<ViewRowsRead> findViewRowsInTxn(
     Transaction txn,
     String viewName, {
     Map<String, Object?>? where,
     int? limit,
     int? offset,
-  }) async => _backend.findViewRowsInTxn(
-    _issued(txn),
-    viewName,
-    where: where,
-    limit: limit,
-    offset: offset,
-  );
+  }) async {
+    final issued = _issued(txn);
+    final (spec, copy) = await _specAndCopy(issued, viewName);
+    final scan = await scanViewCurrency(
+      txn: issued,
+      backend: _backend,
+      spec: spec,
+      copy: copy,
+    );
+    await DeliveryTestHooks.current?.afterViewStateReadBeforeRows?.call();
+    final copyId = copy.copyId;
+    if (scan.state == ViewConvergenceState.converging) {
+      if (spec is TableProjectionSpec || scan.allUnsettled) {
+        return ViewRowsRead(state: scan.state, rows: const []);
+      }
+    }
+    final rows = await _backend.findViewRowsInTxn(
+      issued,
+      copyId,
+      where: where,
+      limit: limit,
+      offset: offset,
+    );
+    if (scan.state == ViewConvergenceState.current) {
+      return ViewRowsRead(state: scan.state, rows: rows);
+    }
+    final settled = [
+      for (final row in rows)
+        if (!scan.unsettledAggregateIds.contains(row['aggregateId'])) row,
+    ];
+    return ViewRowsRead(state: scan.state, rows: settled);
+  }
 
+  // Implements: EVS-DEV-converging-view-reads/J
   @override
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) async =>
-      _backend.readViewTargetVersionInTxn(_issued(txn), viewName, entryType);
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  ) async => _backend.readAllViewTargetVersionsInTxn(_issued(txn), viewName);
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
-    Transaction txn,
-    String entryType,
-  ) async => _backend.readViewTargetsForEntryTypeInTxn(_issued(txn), entryType);
-
-  @override
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) async =>
-      _backend.readViewTargetBehindInTxn(_issued(txn), viewName, entryType);
+  Future<List<ViewCopyStatus>> viewProgress() => transaction((txn) async {
+    final issued = _issued(txn);
+    final statuses = <ViewCopyStatus>[];
+    final copies = await _backend.readViewCopiesInTxn(issued);
+    for (final spec in _store.projections.all()) {
+      final copyId = _store._copyIdOf(spec.viewName);
+      final copy = copies.firstWhere(
+        (c) => c.copyId == copyId,
+        orElse: () => throw StateError(
+          'EventStore: no stored copy row for "${spec.viewName}" (copy id '
+          '"$copyId"); EventStore.open should have created one.',
+        ),
+      );
+      final scan = await scanViewCurrency(
+        txn: issued,
+        backend: _backend,
+        spec: spec,
+        copy: copy,
+      );
+      final progress = _store.catchUpProgressOf(copyId);
+      statuses.add(
+        ViewCopyStatus(
+          viewName: spec.viewName,
+          state: scan.state,
+          watermark: copy.watermark,
+          logHead: scan.logHead,
+          lastFailure: progress?.lastFailure,
+          lastFailureAt: progress?.lastFailureAt,
+        ),
+      );
+    }
+    return statuses;
+  });
 
   @override
   Future<FifoEntry?> readFifoHead(String destinationId) =>

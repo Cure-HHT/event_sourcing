@@ -146,10 +146,6 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
           'ingest-audit',
           <String>['ingest.batch_rejected', 'ingest.duplicate_received'],
         ],
-        'view_snapshot_promoted': <Object>[
-          '_lib',
-          <String>['finalized'],
-        ],
       },
       3: <String, List<Object>>{
         'security_context_redacted': <Object>[
@@ -215,10 +211,6 @@ const Map<int, Map<String, List<Object>>> _shapesByDataFormatMajor =
         'ingest-audit': <Object>[
           'ingest-audit',
           <String>['ingest.delivery_accepted', 'ingest.duplicate_received'],
-        ],
-        'view_snapshot_promoted': <Object>[
-          '_lib',
-          <String>['finalized'],
         ],
         'system.security_finding': <Object>[
           'security_finding',

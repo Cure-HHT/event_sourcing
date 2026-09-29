@@ -71,8 +71,9 @@ void main() {
       initiator: const UserInitiator('u'),
     );
 
+    final copyId = store.copyIdOf('diary_entries');
     final row = await backend.transaction(
-      (txn) => backend.readViewRowInTxn(txn, 'diary_entries', 'e1'),
+      (txn) => backend.readViewRowInTxn(txn, copyId, 'e1'),
     );
     expect(row, isNotNull);
     expect((row!['answers'] as Map)['q1'], 'yes');

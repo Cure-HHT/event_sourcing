@@ -118,18 +118,16 @@ ActionContext _ctx() => ActionContext(
 // Bootstrap helper that adds the entry types our InviteUserAction needs.
 // ---------------------------------------------------------------------------
 
-Future<EventStore> _bootstrapStore() async {
-  final store = await bootstrapTestEventStore();
+Future<EventStore> _bootstrapStore() => bootstrapTestEventStore(
   // Register 'user_invitation' entry type — InviteUserAction emits this.
-  store.entryTypes.register(
-    const EntryTypeDefinition(
+  extraEntryTypes: const <EntryTypeDefinition>[
+    EntryTypeDefinition(
       id: 'user_invitation',
       registeredVersion: EntryTypeVersion(1, 0),
       name: 'User invitation',
     ),
-  );
-  return store;
-}
+  ],
+);
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -40,6 +40,7 @@ const String _bootPrefix = 'event_sourcing.boot:';
 const String _generationPrefix = 'event_sourcing.generation:';
 const String _writesPrefix = 'event_sourcing.writes:';
 const String _drainerPrefix = 'event_sourcing.drainer:';
+const String _viewCopyPrefix = 'event_sourcing.view_catch_up:';
 
 web.LockManager _locks() {
   final hooks = DeliveryTestHooks.current;
@@ -196,6 +197,12 @@ Future<GenerationRegistration> registerBrowserGeneration({
   );
   final componentRelease = Completer<void>();
   final componentsReleased = <Future<void>>[];
+  // Implements: EVS-DEV-view-convergence/D (live registrations)
+  // a snapshot, taken once before the boot transaction, of every view
+  //   fingerprint a live registration other than this one names -- read by
+  //   the boot to spare a copy no build reopening now registers but
+  //   another live instance still does.
+  final liveViewFingerprints = <String>{};
   try {
     final prefix = '$_generationPrefix$path:';
     final conflicts = <String>{};
@@ -204,6 +211,11 @@ Future<GenerationRegistration> registerBrowserGeneration({
     for (final info in snapshot.held.toDart) {
       if (!info.name.startsWith(prefix)) continue;
       final component = info.name.substring(prefix.length);
+      if (component.startsWith('view_fingerprint:')) {
+        liveViewFingerprints.add(
+          component.substring('view_fingerprint:'.length),
+        );
+      }
       if (mine.contains(component)) continue;
       if (component.startsWith('data_format:')) {
         conflicts.add(component);
@@ -238,6 +250,7 @@ Future<GenerationRegistration> registerBrowserGeneration({
     bootReleased,
     componentRelease,
     componentsReleased,
+    liveViewFingerprints,
   );
 }
 
@@ -247,15 +260,20 @@ final class _BrowserGenerationRegistration extends GenerationRegistration {
     this._bootReleased,
     this._components,
     this._componentsReleased,
+    this._liveViewFingerprints,
   );
 
   final Completer<void> _boot;
   final Future<void> _bootReleased;
   final Completer<void> _components;
   final List<Future<void>> _componentsReleased;
+  final Set<String> _liveViewFingerprints;
 
   @override
   bool get isLost => false;
+
+  @override
+  Set<String> get liveViewFingerprints => _liveViewFingerprints;
 
   @override
   @internal
@@ -274,6 +292,49 @@ final class _BrowserGenerationRegistration extends GenerationRegistration {
     if (!_boot.isCompleted) _boot.complete();
     if (!_components.isCompleted) _components.complete();
     await Future.wait(<Future<void>>[_bootReleased, ..._componentsReleased]);
+  }
+}
+
+/// Runs [body] holding the Web Lock of the view copy [copyKey] under the
+/// database [path]: an `ifAvailable` request, granted only when no other
+/// tab holds it. Returns null, running [body] not at all, when it is not
+/// granted at once.
+// Implements: EVS-DEV-view-convergence/M (web Web Lock)
+@internal
+Future<T?> runHoldingBrowserViewCopyLock<T>({
+  required String path,
+  required String copyKey,
+  required Future<T> Function() body,
+}) async {
+  final locks = _locks();
+  final name = '$_viewCopyPrefix$path:$copyKey';
+  final release = Completer<void>();
+  final granted = Completer<bool>();
+  JSPromise<JSAny?> onGrant(web.Lock? lock) {
+    if (!granted.isCompleted) granted.complete(lock != null);
+    if (lock == null) return Future<void>.value().toJS;
+    return release.future.toJS;
+  }
+
+  final done = locks
+      .request(
+        name,
+        web.LockOptions(mode: 'exclusive', ifAvailable: true),
+        onGrant.toJS,
+      )
+      .toDart
+      .then<void>(
+        (_) {},
+        onError: (Object e) {
+          if (!granted.isCompleted) granted.completeError(e);
+        },
+      );
+  if (!(await granted.future)) return null;
+  try {
+    return await body();
+  } finally {
+    if (!release.isCompleted) release.complete();
+    await done;
   }
 }
 

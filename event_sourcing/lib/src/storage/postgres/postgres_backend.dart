@@ -75,9 +75,9 @@ import 'package:event_sourcing/src/storage/queue_records.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
+import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/storage/wedged_fifo_summary.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
-import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal, visibleForTesting;
 import 'package:postgres/postgres.dart';
 import 'package:uuid/uuid.dart';
@@ -1137,19 +1137,82 @@ class PostgresBackend extends StorageBackend {
     }
   }
 
-  /// Throws [DatabaseResetRequiredError] when the `events` or
-  /// `view_target_versions` table carries an earlier data format's single
-  /// integer version column, before any statement reads or writes the
-  /// split major and minor columns.
+  /// Runs [body] as one catch-up transaction for the view copy keyed by
+  /// [copyKey]: after the search path is set, its first statement locks
+  /// `backend_state` in `SHARE` mode (conflicting with every append's row
+  /// write to that table and with the boot's lock, not with itself or with
+  /// another catch-up transaction), so its snapshot, taken by the next
+  /// query, includes every append committed before it; it writes nothing
+  /// to that table. It then tries, without waiting, a transaction-scoped
+  /// advisory lock keyed to [copyKey], distinct from the generation
+  /// guard's component and boot-lock keys (a different key prefix). Not
+  /// granted, it returns null at once, taking no further step and writing
+  /// nothing; granted, it runs the generation fence and [body] as
+  /// [transaction] does, releasing the advisory lock when the transaction
+  /// ends.
+  // Implements: EVS-DEV-view-convergence/L
+  // Implements: EVS-DEV-view-convergence/M (Postgres transaction-scoped
+  //   advisory lock)
+  @override
+  @internal
+  Future<T?> catchUpTransaction<T>(
+    String copyKey,
+    Future<T> Function(Transaction txn) body,
+  ) async {
+    refuseCallFromBootProgressObserver('PostgresBackend.catchUpTransaction');
+    _checkOpen();
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _pool.runTx<T?>(
+          (tx) async {
+            final wrapper = _PostgresTxn(tx, owner: this);
+            try {
+              await tx.execute(postgresSearchPathStatement(_schema));
+              await tx.execute('LOCK TABLE backend_state IN SHARE MODE');
+              final key = postgresAdvisoryKey(
+                _viewCatchUpPrefix,
+                _guard.scope,
+                copyKey,
+              );
+              final granted = await tx.execute(
+                Sql.named('SELECT pg_try_advisory_xact_lock(@k)'),
+                parameters: <String, Object?>{'k': key},
+              );
+              if (granted.first[0] != true) return null;
+              await _guard.fence(tx);
+              return await body(wrapper);
+            } finally {
+              wrapper._invalidate();
+            }
+          },
+          settings: TransactionSettings(
+            isolationLevel: IsolationLevel.serializable,
+          ),
+        );
+      } on ServerException catch (e, st) {
+        final retryable = e.code == '40001' || e.code == '40P01';
+        if (!retryable) rethrow;
+        if (attempt >= _maxTransactionAttempts) {
+          Error.throwWithStackTrace(
+            TransactionRetryExhaustedException(attempts: attempt, lastError: e),
+            st,
+          );
+        }
+        await Future<void>.delayed(Duration(milliseconds: 5 * attempt));
+      }
+    }
+  }
+
+  /// Throws [DatabaseResetRequiredError] when the `events` table carries
+  /// an earlier data format's single integer version column, before any
+  /// statement reads or writes the split major and minor columns.
   static Future<void> _refuseEarlierFormatColumns(Session session) async {
     final result = await session.execute(
       Sql.named('''
         SELECT table_name, column_name FROM information_schema.columns
         WHERE table_schema = current_schema()
-          AND ((table_name = 'events'
-                AND column_name IN ('entry_type_version', 'lib_format_version'))
-            OR (table_name = 'view_target_versions'
-                AND column_name = 'target_version'))
+          AND table_name = 'events'
+          AND column_name IN ('entry_type_version', 'lib_format_version')
         ORDER BY table_name, column_name
       '''),
     );
@@ -1564,21 +1627,21 @@ class PostgresBackend extends StorageBackend {
 
   // Implements: EVS-DEV-postgres-backend/B
   // read a single JSONB blob from
-  //   view_rows; returns null when the (view_name, row_key) pair is absent.
+  //   view_rows; returns null when the (copy_id, row_key) pair is absent.
   @override
   Future<Map<String, dynamic>?> readViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
   ) async {
     final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
         SELECT row_data FROM view_rows
-        WHERE view_name = @v AND row_key = @k
+        WHERE copy_id = @v AND row_key = @k
         LIMIT 1
       '''),
-      parameters: {'v': viewName, 'k': key},
+      parameters: {'v': copyId, 'k': key},
     );
     if (result.isEmpty) return null;
     return _asJsonMap(result.first[0]);
@@ -1586,41 +1649,41 @@ class PostgresBackend extends StorageBackend {
 
   // Implements: EVS-DEV-postgres-backend/B
   // whole-row upsert via
-  //   INSERT … ON CONFLICT (view_name, row_key) DO UPDATE.
+  //   INSERT … ON CONFLICT (copy_id, row_key) DO UPDATE.
   @override
   @internal
   Future<void> upsertViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
     Map<String, dynamic> row,
   ) async {
     final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('''
-        INSERT INTO view_rows (view_name, row_key, row_data, updated_at)
+        INSERT INTO view_rows (copy_id, row_key, row_data, updated_at)
         VALUES (@v, @k, @row:jsonb, NOW())
-        ON CONFLICT (view_name, row_key)
+        ON CONFLICT (copy_id, row_key)
         DO UPDATE SET row_data = EXCLUDED.row_data, updated_at = NOW()
       '''),
-      parameters: {'v': viewName, 'k': key, 'row': row},
+      parameters: {'v': copyId, 'k': key, 'row': row},
     );
   }
 
   // Implements: EVS-DEV-postgres-backend/B
   // delete a single row from
-  //   view_rows by (view_name, row_key); no-op when absent.
+  //   view_rows by (copy_id, row_key); no-op when absent.
   @override
   @internal
   Future<void> deleteViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
   ) async {
     final session = _asPgTxn(txn)._session;
     await session.execute(
-      Sql.named('DELETE FROM view_rows WHERE view_name = @v AND row_key = @k'),
-      parameters: {'v': viewName, 'k': key},
+      Sql.named('DELETE FROM view_rows WHERE copy_id = @v AND row_key = @k'),
+      parameters: {'v': copyId, 'k': key},
     );
   }
 
@@ -1629,7 +1692,7 @@ class PostgresBackend extends StorageBackend {
   //   deterministic row_key ASC order; optional LIMIT/OFFSET for paging.
   @override
   Future<List<Map<String, dynamic>>> findViewRows(
-    String viewName, {
+    String copyId, {
     int? limit,
     int? offset,
   }) async {
@@ -1640,11 +1703,11 @@ class PostgresBackend extends StorageBackend {
       (s) => s.execute(
         Sql.named('''
         SELECT row_data FROM view_rows
-        WHERE view_name = @v
+        WHERE copy_id = @v
         ORDER BY row_key ASC
         $limitClause $offsetClause
       '''),
-        parameters: {'v': viewName},
+        parameters: {'v': copyId},
       ),
     );
     return result.map((r) => _asJsonMap(r[0])).toList();
@@ -1658,7 +1721,7 @@ class PostgresBackend extends StorageBackend {
   //   `ANY(@types)` filter); selecting row_key lets the caller re-key the map.
   @override
   Future<Map<String, Map<String, dynamic>>> readViewRowsByKeys(
-    String viewName,
+    String copyId,
     Set<String> keys,
   ) async {
     _checkOpen();
@@ -1667,10 +1730,35 @@ class PostgresBackend extends StorageBackend {
       (s) => s.execute(
         Sql.named('''
         SELECT row_key, row_data FROM view_rows
-        WHERE view_name = @v AND row_key = ANY(@keys)
+        WHERE copy_id = @v AND row_key = ANY(@keys)
       '''),
-        parameters: {'v': viewName, 'keys': keys.toList()},
+        parameters: {'v': copyId, 'keys': keys.toList()},
       ),
+    );
+    return <String, Map<String, dynamic>>{
+      for (final r in result) r[0] as String: _asJsonMap(r[1]),
+    };
+  }
+
+  // Implements: EVS-DEV-converging-view-reads/A
+  // the transactional counterpart of
+  //   readViewRowsByKeys, run on the issued transaction's own session so a
+  //   by-key row fetch shares one storage transaction with a preceding
+  //   state read: no commit that lands between the two is visible to it.
+  @override
+  Future<Map<String, Map<String, dynamic>>> readViewRowsByKeysInTxn(
+    Transaction txn,
+    String copyId,
+    Set<String> keys,
+  ) async {
+    if (keys.isEmpty) return const <String, Map<String, dynamic>>{};
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('''
+        SELECT row_key, row_data FROM view_rows
+        WHERE copy_id = @v AND row_key = ANY(@keys)
+      '''),
+      parameters: {'v': copyId, 'keys': keys.toList()},
     );
     return <String, Map<String, dynamic>>{
       for (final r in result) r[0] as String: _asJsonMap(r[1]),
@@ -1692,14 +1780,14 @@ class PostgresBackend extends StorageBackend {
   @override
   Future<List<Map<String, dynamic>>> findViewRowsInTxn(
     Transaction txn,
-    String viewName, {
+    String copyId, {
     Map<String, Object?>? where,
     int? limit,
     int? offset,
   }) async {
     final session = _asPgTxn(txn)._session;
-    final params = <String, Object?>{'v': viewName};
-    final whereClauses = <String>['view_name = @v'];
+    final params = <String, Object?>{'v': copyId};
+    final whereClauses = <String>['copy_id = @v'];
     if (where != null) {
       var i = 0;
       for (final entry in where.entries) {
@@ -1727,186 +1815,159 @@ class PostgresBackend extends StorageBackend {
 
   // Implements: EVS-DEV-postgres-backend/B
   // delete all rows for a view
-  //   without touching other views (WHERE view_name = @v).
+  //   without touching other views (WHERE copy_id = @v).
   @override
   @internal
-  Future<void> clearViewInTxn(Transaction txn, String viewName) async {
+  Future<void> clearViewInTxn(Transaction txn, String copyId) async {
     final session = _asPgTxn(txn)._session;
     await session.execute(
-      Sql.named('DELETE FROM view_rows WHERE view_name = @v'),
-      parameters: {'v': viewName},
+      Sql.named('DELETE FROM view_rows WHERE copy_id = @v'),
+      parameters: {'v': copyId},
     );
   }
 
-  // -------- Task 8: view target versions --------
+  // -------- View copies --------
+  //
+  // Storage shape: a single `view_copies` table (copy_id PK, view_name,
+  // fingerprint, watermark, marked_for_deletion, created_at) with a
+  // partial unique index on fingerprint WHERE NOT marked_for_deletion,
+  // which the database enforces directly: "at most one copy of a
+  // fingerprint that is not marked for deletion" needs no application-
+  // level check, only a translation of the resulting unique_violation.
 
-  // Implements: EVS-DEV-postgres-backend/D
-  // backend passes the conformance
-  //   harness; readViewTargetVersionInTxn reads a single row from the
-  //   view_target_versions(view_name, entry_type, target_major,
-  //   target_minor) table and returns null when the (view_name, entry_type)
-  //   pair is absent.
+  ViewCopy _viewCopyOfRow(List<Object?> row) => ViewCopy(
+    copyId: row[0]! as String,
+    viewName: row[1]! as String,
+    fingerprint: row[2]! as String,
+    watermark: row[3]! as int,
+    markedForDeletion: row[4]! as bool,
+  );
+
+  static const _viewCopyColumns =
+      'copy_id, view_name, fingerprint, watermark, marked_for_deletion';
+
+  // Implements: EVS-DEV-view-convergence/A
+  // at most one copy of a fingerprint that is not marked for deletion,
+  //   enforced by the partial unique index; a violation is surfaced as
+  //   StateError rather than the driver's raw exception.
   @override
-  Future<EntryTypeVersion?> readViewTargetVersionInTxn(
+  @internal
+  Future<String> createViewCopyInTxn(
     Transaction txn,
     String viewName,
-    String entryType,
+    String fingerprint,
+    int watermark,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    final copyId = _uuidGen.v4();
+    try {
+      await session.execute(
+        Sql.named('''
+          INSERT INTO view_copies (copy_id, view_name, fingerprint, watermark)
+          VALUES (@id, @v, @fp, @w)
+        '''),
+        parameters: {
+          'id': copyId,
+          'v': viewName,
+          'fp': fingerprint,
+          'w': watermark,
+        },
+      );
+    } on ServerException catch (e) {
+      if (e.code == '23505') {
+        throw StateError(
+          'createViewCopyInTxn: an unmarked copy of fingerprint '
+          '"$fingerprint" already exists',
+        );
+      }
+      rethrow;
+    }
+    return copyId;
+  }
+
+  @override
+  Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn) async {
+    final session = _asPgTxn(txn)._session;
+    final result = await session.execute(
+      Sql.named('SELECT $_viewCopyColumns FROM view_copies'),
+    );
+    return result.map(_viewCopyOfRow).toList();
+  }
+
+  @override
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
+    Transaction txn,
+    String fingerprint,
   ) async {
     final session = _asPgTxn(txn)._session;
     final result = await session.execute(
       Sql.named('''
-        SELECT target_major, target_minor FROM view_target_versions
-        WHERE view_name = @v AND entry_type = @et
+        SELECT $_viewCopyColumns FROM view_copies
+        WHERE fingerprint = @fp AND NOT marked_for_deletion
         LIMIT 1
       '''),
-      parameters: {'v': viewName, 'et': entryType},
+      parameters: {'fp': fingerprint},
     );
-    return result.isEmpty
-        ? null
-        : _entryTypeVersionOf(result.first[0], result.first[1]);
+    return result.isEmpty ? null : _viewCopyOfRow(result.first);
   }
 
-  // Implements: EVS-DEV-postgres-backend/D
-  // backend passes the conformance
-  //   harness; writeViewTargetVersionInTxn upserts via INSERT … ON CONFLICT
-  //   DO UPDATE so repeated writes for the same (view_name, entry_type) pair
-  //   reflect the latest target major and minor.
   @override
   @internal
-  Future<void> writeViewTargetVersionInTxn(
+  Future<void> setViewCopyWatermarkInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-    EntryTypeVersion targetVersion,
+    String copyId,
+    int watermark,
+  ) async {
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named('UPDATE view_copies SET watermark = @w WHERE copy_id = @id'),
+      parameters: {'w': watermark, 'id': copyId},
+    );
+  }
+
+  @override
+  @internal
+  Future<void> markViewCopyForDeletionInTxn(
+    Transaction txn,
+    String copyId,
   ) async {
     final session = _asPgTxn(txn)._session;
     await session.execute(
       Sql.named('''
-        INSERT INTO view_target_versions
-          (view_name, entry_type, target_major, target_minor)
-        VALUES (@v, @et, @major, @minor)
-        ON CONFLICT (view_name, entry_type)
-        DO UPDATE SET target_major = EXCLUDED.target_major,
-                      target_minor = EXCLUDED.target_minor
+        UPDATE view_copies SET marked_for_deletion = true
+        WHERE copy_id = @id AND NOT marked_for_deletion
       '''),
-      parameters: {
-        'v': viewName,
-        'et': entryType,
-        'major': targetVersion.major,
-        'minor': targetVersion.minor,
-      },
+      parameters: {'id': copyId},
     );
-  }
-
-  // Implements: EVS-DEV-postgres-backend/D
-  // backend passes the conformance
-  //   harness; readAllViewTargetVersionsInTxn returns all (entry_type →
-  //   target version) pairs for the given view_name.
-  @override
-  Future<Map<String, EntryTypeVersion>> readAllViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  ) async {
-    final session = _asPgTxn(txn)._session;
-    final result = await session.execute(
-      Sql.named('''
-        SELECT entry_type, target_major, target_minor
-        FROM view_target_versions
-        WHERE view_name = @v
-      '''),
-      parameters: {'v': viewName},
-    );
-    return <String, EntryTypeVersion>{
-      for (final row in result)
-        row[0]! as String: _entryTypeVersionOf(row[1], row[2]),
-    };
-  }
-
-  // Implements: EVS-DEV-postgres-backend/D
-  // backend passes the conformance
-  //   harness; clearViewTargetVersionsInTxn deletes all rows for the given
-  //   view_name without touching rows belonging to other views.
-  @override
-  @internal
-  Future<void> clearViewTargetVersionsInTxn(
-    Transaction txn,
-    String viewName,
-  ) async {
-    final session = _asPgTxn(txn)._session;
-    await session.execute(
-      Sql.named('DELETE FROM view_target_versions WHERE view_name = @v'),
-      parameters: {'v': viewName},
-    );
-  }
-
-  @override
-  Future<Map<String, EntryTypeVersion>> readViewTargetsForEntryTypeInTxn(
-    Transaction txn,
-    String entryType,
-  ) async {
-    final session = _asPgTxn(txn)._session;
-    final result = await session.execute(
-      Sql.named('''
-        SELECT view_name, target_major, target_minor
-        FROM view_target_versions
-        WHERE entry_type = @et
-      '''),
-      parameters: {'et': entryType},
-    );
-    return <String, EntryTypeVersion>{
-      for (final row in result)
-        row[0]! as String: _entryTypeVersionOf(row[1], row[2]),
-    };
   }
 
   @override
   @internal
-  Future<void> markViewTargetBehindInTxn(
+  Future<int> deleteViewCopyRowsInTxn(
     Transaction txn,
-    String viewName,
-    String entryType,
-  ) => _setViewTargetBehind(txn, viewName, entryType, behind: true);
-
-  @override
-  Future<bool> readViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) async {
-    final session = _asPgTxn(txn)._session;
-    final result = await session.execute(
-      Sql.named('''
-        SELECT behind FROM view_target_versions
-        WHERE view_name = @v AND entry_type = @et
-      '''),
-      parameters: {'v': viewName, 'et': entryType},
-    );
-    return result.isNotEmpty && result.first[0] == true;
-  }
-
-  @override
-  @internal
-  Future<void> clearViewTargetBehindInTxn(
-    Transaction txn,
-    String viewName,
-    String entryType,
-  ) => _setViewTargetBehind(txn, viewName, entryType, behind: false);
-
-  Future<void> _setViewTargetBehind(
-    Transaction txn,
-    String viewName,
-    String entryType, {
-    required bool behind,
+    String copyId, {
+    required int limit,
   }) async {
     final session = _asPgTxn(txn)._session;
-    // Only a row whose mark differs is updated, so a repeated mark writes
-    // nothing.
-    await session.execute(
+    final result = await session.execute(
       Sql.named('''
-        UPDATE view_target_versions SET behind = @b
-        WHERE view_name = @v AND entry_type = @et AND behind <> @b
+        DELETE FROM view_rows
+        WHERE ctid IN (
+          SELECT ctid FROM view_rows WHERE copy_id = @id LIMIT $limit
+        )
       '''),
-      parameters: {'v': viewName, 'et': entryType, 'b': behind},
+      parameters: {'id': copyId},
+    );
+    return result.affectedRows;
+  }
+
+  @override
+  @internal
+  Future<void> deleteViewCopyRecordInTxn(Transaction txn, String copyId) async {
+    final session = _asPgTxn(txn)._session;
+    await session.execute(
+      Sql.named('DELETE FROM view_copies WHERE copy_id = @id'),
+      parameters: {'id': copyId},
     );
   }
 
@@ -3941,12 +4002,3 @@ class _AuditCursorPoint {
     return base64Url.encode(utf8.encode(raw));
   }
 }
-
-/// An entry-type version read from its two columns, through the strict
-/// parser, so a stored value out of range is refused on read as the
-/// Sembast backend refuses it.
-EntryTypeVersion _entryTypeVersionOf(Object? major, Object? minor) =>
-    EntryTypeVersion.fromJson(<String, Object?>{
-      'major': major,
-      'minor': minor,
-    });

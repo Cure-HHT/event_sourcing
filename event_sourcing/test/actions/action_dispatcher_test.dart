@@ -38,7 +38,7 @@ class _RecordingSembastBackend extends SembastBackend {
   /// including appends in transactions that later rolled back.
   final List<(Transaction, String)> appends = <(Transaction, String)>[];
 
-  /// `(txn, viewName)` for every [upsertViewRowInTxn] call, in call order.
+  /// `(txn, copyId)` for every [upsertViewRowInTxn] call, in call order.
   final List<(Transaction, String)> viewUpserts = <(Transaction, String)>[];
 
   @override
@@ -50,12 +50,12 @@ class _RecordingSembastBackend extends SembastBackend {
   @override
   Future<void> upsertViewRowInTxn(
     Transaction txn,
-    String viewName,
+    String copyId,
     String key,
     Map<String, dynamic> row,
   ) {
-    viewUpserts.add((txn, viewName));
-    return super.upsertViewRowInTxn(txn, viewName, key, row);
+    viewUpserts.add((txn, copyId));
+    return super.upsertViewRowInTxn(txn, copyId, key, row);
   }
 
   /// The transactions of every recorded append of [eventType].
@@ -1217,9 +1217,10 @@ void main() {
       // The greetings_view write ran in the very transaction the
       // hello.said event was appended in, not in a later one.
       final appendTxn = backend.appendTxnsOf('hello.said').single;
+      final greetingsCopyId = store.copyIdOf('greetings_view');
       final viewTxns = <Transaction>[
-        for (final (txn, view) in backend.viewUpserts)
-          if (view == 'greetings_view') txn,
+        for (final (txn, copyId) in backend.viewUpserts)
+          if (copyId == greetingsCopyId) txn,
       ];
       expect(viewTxns, hasLength(1));
       expect(
@@ -1238,8 +1239,8 @@ void main() {
           'greeting-in-tx-world',
         ),
       );
-      expect(row, isNotNull);
-      expect(row!['who'], 'in-tx-world');
+      expect(row.row, isA<SettledRow>());
+      expect(row.row.dataOrNull!['who'], 'in-tx-world');
     });
   });
 
@@ -1599,9 +1600,10 @@ void main() {
         identical(backend.appendTxnsOf('hello.said').single, dispatchTxn),
         isTrue,
       );
+      final greetingsCopyId = store.copyIdOf('greetings_view');
       expect(
         backend.viewUpserts.where(
-          (u) => u.$2 == 'greetings_view' && identical(u.$1, dispatchTxn),
+          (u) => u.$2 == greetingsCopyId && identical(u.$1, dispatchTxn),
         ),
         hasLength(1),
       );
@@ -1621,7 +1623,7 @@ void main() {
           'greeting-rolled-back',
         ),
       );
-      expect(row, isNull);
+      expect(row.row, isA<AbsentRow>());
 
       // The execution_failed denial was appended in its own transaction,
       // after the rollback, and is the only event the dispatch left.

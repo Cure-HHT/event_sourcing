@@ -78,9 +78,9 @@ class _DetailPanelState extends State<DetailPanel> {
       // snapshot, so the two can differ while the drainer runs between
       // them); its peer rows come from wedge events another pane forwarded,
       // which no read of this pane's queues shows.
-      final viewRows = await widget.watch.reader.findViewRows(
+      final viewRows = (await widget.watch.reader.findViewRows(
         defaultDestinationWedgesSpec.viewName,
-      );
+      )).rows;
       final local = <String>[];
       final peers = <String>[];
       for (final row in viewRows) {
@@ -177,7 +177,7 @@ class _DetailPanelState extends State<DetailPanel> {
           // Read the aggregate's row from the notes view.
           // AggregateFold stores: aggregateId, latestEventId, updatedAt,
           // firstEventTimestamp, sequence, plus event.data merged in.
-          final rows = await widget.watch.reader.findViewRows('notes');
+          final rows = (await widget.watch.reader.findViewRows('notes')).rows;
           Map<String, Object?>? row;
           for (final r in rows) {
             if ((r['aggregateId'] as String?) == aggId) {

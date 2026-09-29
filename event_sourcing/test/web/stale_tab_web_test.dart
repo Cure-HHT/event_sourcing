@@ -90,7 +90,7 @@ void main() {
       ).readSequenceCounter();
 
       final f1 = await _openAt(name, 2);
-      final promoted = await f1.backend.findViewRows(_kView);
+      final promoted = await f1.backend.findViewRows(f1.store.copyIdOf(_kView));
       expect(promoted.every((r) => r.containsKey('note_id')), isTrue);
       await f1.close();
       final eventsAfterF1 = (await _events(name)).length;

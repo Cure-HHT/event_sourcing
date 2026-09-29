@@ -24,16 +24,12 @@ enum BootStatus {
 /// `onBootProgress`, and answers the health probe from them.
 ///
 /// The observer only records: [record] stores the report and returns. The
-/// endpoint computes the rest when it is asked. During [BootPhase.checks]
-/// (which also covers the wait for the boot lock another instance's boot
-/// holds) no further report arrives, so the time shown is read from this
-/// tracker's own clock rather than echoed from the last report. The
-/// percentage is `done / total` of the phase in progress; the estimate of
-/// the time left extrapolates the phase's own elapsed time, and is
-/// approximate when a phase re-derives both aggregate and table views.
-/// Readiness is reached when the server's bootstrap has returned
-/// ([markReady]), not when the boot reports [BootPhase.complete], which
-/// means only that the event store opened.
+/// endpoint computes the rest when it is asked. Both boot phases count no
+/// units, so the probe body carries the phase name and the elapsed time
+/// only, read from this tracker's own clock rather than echoed from the
+/// last report. Readiness is reached when the server's bootstrap has
+/// returned ([markReady]), not when the boot reports [BootPhase.complete],
+/// which means only that the event store opened.
 class BootHealth {
   BootHealth({DateTime Function()? now})
     : _now = now ?? DateTime.now,
@@ -44,7 +40,6 @@ class BootHealth {
 
   BootStatus _status = BootStatus.booting;
   BootProgress? _last;
-  Duration? _phaseStartElapsed;
   Object? _error;
 
   /// Where the server is in its start-up.
@@ -54,17 +49,7 @@ class BootHealth {
   BootProgress? get last => _last;
 
   /// The observer to pass as `onBootProgress`: records [progress].
-  void record(BootProgress progress) {
-    final previous = _last;
-    if (previous == null ||
-        previous.phase != progress.phase ||
-        progress.done < previous.done) {
-      // A new phase, or a boot run the backend started again (it reports
-      // from its checks again, so the done count can fall).
-      _phaseStartElapsed = progress.elapsed;
-    }
-    _last = progress;
-  }
+  void record(BootProgress progress) => _last = progress;
 
   /// The server's bootstrap returned: serve.
   void markReady() => _status = BootStatus.ready;
@@ -88,8 +73,6 @@ class BootHealth {
         return <String, Object?>{
           'status': 'booting',
           'phase': phase.name,
-          'percent': _percent(last),
-          'eta_s': _etaSeconds(last),
           'elapsed_s': _now().difference(_startedAt).inMilliseconds / 1000,
         };
     }
@@ -97,27 +80,6 @@ class BootHealth {
 
   /// 200 when ready, 503 otherwise.
   int get statusCode => _status == BootStatus.ready ? 200 : 503;
-
-  static int? _percent(BootProgress? last) {
-    if (last == null || last.total <= 0) return null;
-    return (last.done * 100 / last.total).floor();
-  }
-
-  double? _etaSeconds(BootProgress? last) {
-    final phaseStartElapsed = _phaseStartElapsed;
-    if (last == null ||
-        last.total <= 0 ||
-        last.done <= 0 ||
-        phaseStartElapsed == null) {
-      return null;
-    }
-    // The time the phase took for the units done so far, on the boot's own
-    // clock, scaled to the units left.
-    final inPhase = last.elapsed - phaseStartElapsed;
-    final perUnit = inPhase.inMicroseconds / last.done;
-    final remaining = perUnit * (last.total - last.done);
-    return (remaining / Duration.microsecondsPerSecond * 10).round() / 10;
-  }
 }
 
 /// The server's front handler: answers `/livez` and `/health` from the
