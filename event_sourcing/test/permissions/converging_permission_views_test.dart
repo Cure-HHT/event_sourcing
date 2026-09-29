@@ -4,11 +4,19 @@
 //   permission-grant, or containment view is refused with the typed,
 //   transient ViewConvergingRefusal naming the view; the dispatcher appends
 //   no event, and the same submission succeeds once the view is current.
+//   PermissionSeedApplier.apply and bootstrapRoleAssignments never decide
+//   from a converging read either: a read taken converging after their
+//   wait already reported the view current is discarded and they wait
+//   again, so a role-permission-grants or user-role-scopes view that
+//   converges in that narrow window still yields no duplicate event.
 // Verifies: EVS-DEV-converging-view-reads/I
 // bootstrapRoleAssignments waits until the view it reads is current before
 //   reading it, succeeding once the copy catches up within the caller's
 //   deadline, and throws ViewConvergenceTimeout naming the view and its
-//   copy's progress once the deadline passes first.
+//   copy's progress once the deadline passes first. PermissionSeedApplier
+//   .apply does the same for role_permission_grants.
+
+import 'dart:async';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/testing/delivery_test_hooks.dart';
@@ -169,6 +177,27 @@ Future<void> _rewindWatermark(
   await backend.transaction(
     (txn) => backend.setViewCopyWatermarkInTxn(txn, copyId, watermark),
   );
+}
+
+/// Starts a transaction on [backend] and holds it open until [release]
+/// completes, returning only once the transaction has begun. `SembastBackend`
+/// serializes its transactions (`StorageBackend.transaction`), so every
+/// later `backend.transaction` call -- including the ones a store's own
+/// operations make -- queues up behind this one in the order it was made:
+/// releasing it then runs those queued transactions in that fixed order,
+/// deterministically, with no production test hook and no timing race.
+Future<void> _holdTransaction(
+  SembastBackend backend,
+  Future<void> release,
+) async {
+  final started = Completer<void>();
+  unawaited(
+    backend.transaction((txn) async {
+      started.complete();
+      await release;
+    }),
+  );
+  await started.future;
 }
 
 Future<void> _waitUntilCurrent(EventStore store, String viewName) async {
@@ -635,6 +664,119 @@ void main() {
           ),
         ),
       );
+    });
+  });
+
+  group('converging permission views: seed and bootstrap decide only from '
+      'a current read', () {
+    test('PermissionSeedApplier.apply does not re-grant an already-present '
+        'permission when role_permission_grants converges between its wait '
+        'and its read', () async {
+      final db = await _openDb();
+      final backend = SembastBackend(database: db);
+      final store = await _openStore(
+        backend,
+        hooks: const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
+      );
+      addTearDown(store.close);
+
+      await _grant(store, role: 'admin', perm: 'test.hello');
+
+      final applier = PermissionSeedApplier(
+        eventStore: store,
+        seedInitiator: const AutomationInitiator(service: 'test'),
+      );
+      const seed = PermissionSeed(
+        roles: {'admin'},
+        grants: {
+          'admin': {'test.hello'},
+        },
+      );
+
+      // Sequence, via the backend's serialized transaction queue: (1) a
+      // held transaction; (2) apply()'s waitForViewsCurrent poll, which
+      // sees the copy current and returns; (3) a rewind that makes the
+      // copy converging again; (4) apply()'s findViewRows, enqueued only
+      // once apply() resumes past its wait -- after (3). Releasing (1)
+      // runs (2), (3) and (4) in that fixed order.
+      final release = Completer<void>();
+      await _holdTransaction(backend, release.future);
+      final applyFuture = applier.apply(seed, {const Permission('test.hello')});
+      final rewindFuture = _rewindWatermark(
+        store,
+        backend,
+        'role_permission_grants',
+        0,
+      );
+      release.complete();
+      await rewindFuture;
+
+      // Let apply()'s findViewRows (item 4) run and observe the converging
+      // state before a second, unpaused instance drives the copy back to
+      // current for the deadline-bounded retry.
+      await Future<void>.delayed(Duration.zero);
+      final catchingUp = await _openStore(backend);
+      addTearDown(catchingUp.close);
+      await _waitUntilCurrent(catchingUp, 'role_permission_grants');
+
+      final result = await applyFuture;
+
+      expect(result.grantsEmitted, 0);
+      final events = await store.reader.findAllEvents();
+      expect(
+        events.where((e) => e.eventType == 'permission_granted'),
+        hasLength(1),
+      );
+    });
+
+    test('bootstrapRoleAssignments does not re-assign an already-present '
+        'role when user_role_scopes converges between its wait and its '
+        'read', () async {
+      final db = await _openDb();
+      final backend = SembastBackend(database: db);
+      final store = await _openStore(
+        backend,
+        hooks: const DeliveryTestHooks(onCatchUpStep: _pauseCatchUp),
+      );
+      addTearDown(store.close);
+
+      await _assign(store, userId: 'u1', role: 'admin');
+
+      const seed = RoleAssignmentSeed(
+        entries: [
+          RoleAssignmentSeedEntry(
+            userId: 'u1',
+            role: 'admin',
+            scope: TotalWildcardScope(),
+          ),
+        ],
+      );
+
+      final release = Completer<void>();
+      await _holdTransaction(backend, release.future);
+      final bootstrapFuture = bootstrapRoleAssignments(
+        eventStore: store,
+        seed: seed,
+      );
+      final rewindFuture = _rewindWatermark(
+        store,
+        backend,
+        'user_role_scopes',
+        0,
+      );
+      release.complete();
+      await rewindFuture;
+
+      await Future<void>.delayed(Duration.zero);
+      final catchingUp = await _openStore(backend);
+      addTearDown(catchingUp.close);
+      await _waitUntilCurrent(catchingUp, 'user_role_scopes');
+
+      final result = await bootstrapFuture;
+
+      expect(result.entriesEmitted, 0);
+      final events = await store.reader.findAllEvents();
+      expect(events.where((e) => e.eventType == 'role_assigned'), hasLength(1));
     });
   });
 }

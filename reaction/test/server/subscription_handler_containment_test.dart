@@ -328,6 +328,11 @@ void main() {
     final errorMsg = messages.singleWhere((m) => m['type'] == 'error');
     expect(errorMsg['code'], 'view_converging');
     expect(errorMsg['message'], 'participant_site_index');
+    // Verifies: EVS-DEV-converging-view-reads/H
+    // The refusal names the subscriptionId it refuses so a remote
+    // client can route it to that subscription's stream rather than
+    // dropping it as unaddressed (R13).
+    expect(errorMsg['subscriptionId'], 'sub-1');
   });
 
   test('a converging user_role_scopes view surfacing from the view-level '
@@ -373,5 +378,6 @@ void main() {
     final errorMsg = messages.singleWhere((m) => m['type'] == 'error');
     expect(errorMsg['code'], 'view_converging');
     expect(errorMsg['message'], 'user_role_scopes');
+    expect(errorMsg['subscriptionId'], 'sub-1');
   });
 }

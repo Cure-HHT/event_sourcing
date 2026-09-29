@@ -10,6 +10,10 @@
 // Verifies: EVS-PRD-cross-process-event-transport/F
 // bearer credential
 //   injection on HTTP POST + WS auth message.
+// Verifies: EVS-DEV-converging-view-reads/H
+// a view_converging error
+//   frame naming a subscriptionId errors that subscription's stream
+//   with a typed ViewConvergingRefusal.
 
 import 'dart:async';
 import 'dart:convert';
@@ -419,5 +423,58 @@ void main() {
       expect(authCloseCount, 0);
       await conn.dispose();
     });
+  });
+
+  group('view_converging subscription refusal', () {
+    test(
+      'a view_converging error frame errors that subscription with a '
+      'typed ViewConvergingRefusal naming the view, not a generic string',
+      () async {
+        // Verifies: EVS-DEV-converging-view-reads/H
+        // R13: the refusal carries the subscriptionId so
+        // RemoteConnection can route it to the refused subscription's
+        // stream as a typed, transient error rather than dropping it
+        // as unaddressed or rendering it indistinguishably from a
+        // permission denial.
+        final pair = _Pair();
+        addTearDown(pair.close);
+        final conn = RemoteConnection(
+          baseUrl: Uri.parse('http://localhost:0'),
+          httpClient: _FakeHttpClient(),
+          wsFactory: (_) => pair.clientSide,
+        )..setCredential('alice');
+
+        pair.serverSide.stream.listen((_) {});
+
+        final stream = conn.openSubscription(
+          subscriptionId: 'sub-1',
+          viewName: 'notes_today',
+        );
+        final errorFuture = stream.first.then<Object?>(
+          (v) => v,
+          onError: (Object e) => e,
+        );
+
+        await Future<void>.delayed(Duration.zero);
+        pair.serverSide.sink.add(
+          jsonEncode({'type': 'auth_ok', 'principalId': 'alice'}),
+        );
+        await Future<void>.delayed(Duration.zero);
+        pair.serverSide.sink.add(
+          jsonEncode({
+            'type': 'error',
+            'code': 'view_converging',
+            'message': 'notes_today',
+            'subscriptionId': 'sub-1',
+          }),
+        );
+
+        final result = await errorFuture;
+        expect(result, isA<ViewConvergingRefusal>());
+        expect((result as ViewConvergingRefusal).viewName, 'notes_today');
+
+        await conn.dispose();
+      },
+    );
   });
 }

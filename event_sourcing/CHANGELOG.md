@@ -510,6 +510,20 @@ created by an earlier release is dropped and provisioned again with
   `client_timestamp`, a provenance entry's `received_at`) in UTC, whatever
   zone an injected `clock` returns, and `StoredEvent.toMap` writes the
   `clientTimestamp` of an event built with the constructor in UTC.
+- A view copy's own fold, run inline as ingest or a succession restore
+  commits their transaction, admits every event of an accepted delivery
+  whatever its content: a fold throw is that copy's problem alone. Its
+  writes for the failing event roll back, its watermark does not advance
+  past it, and the rest of the delivery and every other copy's fold
+  commit; the catch-up driver's own fold, not the inline one, is what
+  later records the failure in the copy's progress and keeps it
+  converging. A local `append`'s fold failure still fails to its caller.
+- A succession restore that serves the same delivery twice, or two
+  deliveries under the same `event_id` with different hashes, dedups by
+  `(event_id, event_hash)`: every distinct-hash occurrence runs the same
+  ingest checks inside the restore's transaction, so each is stored or
+  recorded in an `identity_mismatch` finding rather than the second
+  occurrence being dropped unseen.
 
 ### The event record (data format 3.0)
 
@@ -703,9 +717,22 @@ created by an earlier release is dropped and provisioned again with
   stay at least half of the data-format-2 build's on the same workload and
   host; a conformance test gated on `PG_TEST_URL` plus an opt-in variable
   checks out that build into a temporary worktree and measures both
-  builds against it. On Sembast, an ordinary append's cost stays constant
-  as the store grows, proven in the default suite by a test comparing
-  append cost at two store sizes.
+  builds against it; the guard cleans up only the worktree it created
+  under its own temp directory, leaves every other worktree untouched,
+  and never lets that cleanup mask the measurement's own failure. On
+  Sembast, an ordinary append's cost stays constant as the store grows,
+  proven in the default suite by a test comparing append cost at two
+  store sizes, a received fork finding and a succession event included.
+  A read's currency scan resolves a copy through
+  `StorageBackend.readUnmarkedViewCopyInTxn`, a keyed lookup by
+  fingerprint on both reference backends, never a scan of every stored
+  copy.
+- `StorageBackend.findSenderSuccessionEventsInTxn` is a new member,
+  served from a backend-owned index over the sender-succession entry
+  type on both reference backends, that the succession-lineage lookup a
+  received chain finding's marks resolve from reads instead of scanning
+  every held event; an app-supplied backend inherits a default body that
+  scans (`findAllEventsInTxn`).
 - Removed: `appendAttempt`, `markFinal`, `writeFillCursor`,
   `deleteFifoStoreTxn`, and the non-transactional `enqueueFifo` and
   `writeSchedule`. `setFinalStatusTxn` takes a non-null status and allows

@@ -283,4 +283,49 @@ void main() {
       );
     },
   );
+
+  // Verifies: EVS-DEV-view-convergence/T
+  // Verifies: EVS-DEV-converging-view-reads/A
+  // Verifies: EVS-DEV-converging-view-reads/H
+  test('a read of a view with no unmarked copy reports it converging, with no '
+      'rows, instead of throwing -- the storage reader runs a read-only '
+      'transaction on Postgres, so it never itself creates the replacement '
+      "copy the read's currency scan reports against", () async {
+    if (db == null) return;
+    // Keeps the catch-up driver's own replacement-copy attempt failing
+    // (its create rolls back with the transaction), so this read's own
+    // placeholder path is what actually runs, deterministically, rather
+    // than a race the driver might win first.
+    await runWithDeliveryTestHooks(
+      const DeliveryTestHooks(onCatchUpStep: _throwInjected),
+      () async {
+        final backend = await open();
+        final store = await _openStore(backend);
+        await _append(store);
+        final copyId = store.copyIdOf(_kView);
+
+        await backend.transaction((txn) async {
+          await backend.markViewCopyForDeletionInTxn(txn, copyId);
+          await backend.deleteViewCopyRowsInTxn(txn, copyId, limit: 10000);
+          await backend.deleteViewCopyRecordInTxn(txn, copyId);
+        });
+
+        final read = await store.reader.findViewRows(_kView);
+        expect(read.state, ViewConvergenceState.converging);
+        expect(read.rows, isEmpty);
+
+        await store.reader.transaction((txn) async {
+          await expectLater(
+            () => currentViewRows(store.reader)(txn, _kView),
+            throwsA(isA<ViewConvergingRefusal>()),
+          );
+        });
+
+        await store.close();
+      },
+    );
+  });
 }
+
+void _throwInjected(String copyId, String eventId) =>
+    throw const InjectedFailure('paused for this test');

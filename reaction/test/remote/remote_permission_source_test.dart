@@ -4,6 +4,10 @@
 //   dependency) lives in e2e/permission_test.dart; the
 //   null-on-empty-role parity test below runs here because it exercises
 //   only the snapshot-decode branch, which needs no live server.
+// Verifies: EVS-DEV-converging-view-reads/H
+// an explicit refresh() call
+//   propagates a typed ViewConvergingRefusal on a 503 view_converging
+//   response, not a silently swallowed transport failure.
 
 import 'dart:async';
 import 'dart:convert';
@@ -25,6 +29,19 @@ class _FixedHttpClient extends http.BaseClient {
   @override
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     return http.StreamedResponse(Stream.value(utf8.encode(_body)), 200);
+  }
+}
+
+/// HTTP client returning a fixed status + body for every request.
+class _FixedStatusClient extends http.BaseClient {
+  _FixedStatusClient(this._status, this._body);
+
+  final int _status;
+  final String _body;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    return http.StreamedResponse(Stream.value(utf8.encode(_body)), _status);
   }
 }
 
@@ -139,4 +156,44 @@ void main() {
       expect(source.current!.activeRole, 'clinician');
     },
   );
+
+  test('refresh() throws a typed ViewConvergingRefusal on a 503 '
+      'view_converging response; the constructor-triggered initial fetch '
+      'stays quiet on the same response', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final client = _FixedStatusClient(
+      503,
+      jsonEncode({'error': 'view_converging', 'view': 'user_role_scopes'}),
+    );
+    final conn = RemoteConnection(
+      baseUrl: Uri.parse('http://localhost:0'),
+      httpClient: client,
+      wsFactory: (_) => throw UnimplementedError(),
+    );
+    final session = _AuthenticatedSession(_clinician());
+    addTearDown(session.dispose);
+
+    final source = RemotePermissionSource(
+      connection: conn,
+      authSession: session,
+    );
+    addTearDown(source.dispose);
+
+    // The constructor's Authenticated-triggered fetch hits the same
+    // 503 view_converging response; it must not crash the source or
+    // leak an unhandled async error.
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(source.current, isNull);
+
+    await expectLater(
+      source.refresh,
+      throwsA(
+        isA<ViewConvergingRefusal>().having(
+          (e) => e.viewName,
+          'viewName',
+          'user_role_scopes',
+        ),
+      ),
+    );
+  });
 }

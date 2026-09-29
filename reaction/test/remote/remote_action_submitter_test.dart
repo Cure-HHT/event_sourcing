@@ -7,6 +7,10 @@
 // Verifies: EVS-PRD-cross-process-event-transport/A+F
 // codec
 //   round-trip + bearer-credential carriage.
+// Verifies: EVS-DEV-converging-view-reads/H
+// a 503 view_converging
+//   response decodes to a typed ViewConvergingRefusal naming the
+//   view, not TransportException('http 503').
 
 import 'dart:convert';
 
@@ -84,6 +88,54 @@ void main() {
       expect(auth.current, isA<Expired>());
     },
   );
+
+  test('503 view_converging on /actions throws a typed ViewConvergingRefusal '
+      'naming the view', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final principalBody = jsonEncode(
+      PrincipalCodec.encode(
+        UserPrincipal(
+          userId: 'alice',
+          roles: {'install'},
+          activeRole: 'install',
+        ),
+      ),
+    );
+    final conn = RemoteConnection(
+      baseUrl: Uri.parse('http://x:1'),
+      httpClient: _Client(
+        (req) => req.url.path == '/me'
+            ? http.Response(principalBody, 200)
+            : http.Response(
+                jsonEncode({
+                  'error': 'view_converging',
+                  'view': 'user_role_scopes',
+                }),
+                503,
+              ),
+      ),
+      wsFactory: (_) => throw UnimplementedError(),
+    );
+    final auth = RemoteAuthSession(connection: conn)..setCredential('alice');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(auth.current, isA<Authenticated>());
+    final submitter = RemoteActionSubmitter(
+      connection: conn,
+      authSession: auth,
+    );
+    await expectLater(
+      () => submitter.submit(
+        const ActionSubmission(actionName: 'x', rawInput: {}),
+      ),
+      throwsA(
+        isA<ViewConvergingRefusal>().having(
+          (e) => e.viewName,
+          'viewName',
+          'user_role_scopes',
+        ),
+      ),
+    );
+  });
 
   // The 'submit and decode DispatchResult' happy path is exercised in
   // the e2e suite where a full substrate response is available.

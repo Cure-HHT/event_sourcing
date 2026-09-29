@@ -373,9 +373,21 @@ class RemoteConnection {
       if (subId != null) {
         final entry = _subs[subId];
         if (entry != null) {
-          entry.controller.addError(
-            'subscription_denied: ${json['reason'] ?? json['message']}',
-          );
+          // Implements: EVS-DEV-converging-view-reads/H
+          // a view_converging error frame naming this subscriptionId
+          //   errors its stream with a typed, transient
+          //   ViewConvergingRefusal naming the view, distinguishable
+          //   from a subscription_denied permission refusal, rather
+          //   than a generic string the caller cannot branch on.
+          if (type == 'error' && json['code'] == 'view_converging') {
+            entry.controller.addError(
+              ViewConvergingRefusal(json['message'] as String? ?? ''),
+            );
+          } else {
+            entry.controller.addError(
+              'subscription_denied: ${json['reason'] ?? json['message']}',
+            );
+          }
           _subs.remove(subId);
           entry.controller.close();
         }

@@ -165,6 +165,7 @@ Future<EventStoreBundle> openRestoreSuccessor(
   VersionTestDatabase db,
   EventStore receiver, {
   Destination? destination,
+  ProjectionRegistry? projections,
 }) async {
   final backend = await db.openBackend();
   return bootstrapEventStore(
@@ -174,8 +175,24 @@ Future<EventStoreBundle> openRestoreSuccessor(
     destinations: <Destination>[
       destination ?? ReceiverPullDestination(receiver),
     ],
+    projections: projections,
   );
 }
+
+/// A table view keyed on `data.k`, so a served predecessor event whose
+/// data has no `k` throws from the fold rather than being stored under a
+/// substitute key: a fold failure leaves that copy behind without
+/// aborting the restore (`EVS-PRD-ingest/G`, `EVS-DEV-sender-succession/H`).
+const String _kKeyedTableView = 'keyed_restore_notes';
+
+const TableProjectionSpec _kKeyedTableSpec = TableProjectionSpec(
+  viewName: _kKeyedTableView,
+  interest: SubscriptionFilter(entryTypes: <String>{_kType}),
+  insertEventTypes: <String>{'finalized'},
+  removeEventTypes: <String>{},
+  rowKey: CompositeKey(<String>['data.k']),
+  rowData: WholePayload(),
+);
 
 /// A hand-built record of database identity [databaseId] at origin
 /// position [sequenceNumber].
@@ -233,6 +250,7 @@ void runSuccessionRestoreScenarios({
     Future<EventStoreBundle> successorBundle(
       EventStore receiver, {
       Destination? destination,
+      ProjectionRegistry? projections,
     }) async {
       final db = (await openDatabase())!;
       databases.add(db);
@@ -240,6 +258,7 @@ void runSuccessionRestoreScenarios({
         db,
         receiver,
         destination: destination,
+        projections: projections,
       );
       opened.add(bundle.eventStore);
       return bundle;
@@ -347,6 +366,67 @@ void runSuccessionRestoreScenarios({
       expect(storedSuccessions, hasLength(1));
     });
 
+    // Verifies: EVS-PRD-ingest/G
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-DEV-view-convergence/Q
+    // Verifies: EVS-DEV-sender-succession/C
+    // Verifies: EVS-DEV-sender-succession/H
+    test(
+      'a served history containing an event a table fold cannot key '
+      'restores without throwing, and every served event is stored',
+      () async {
+        final receiver = await receiverStore();
+        const predecessorId = 'predecessor-unkeyable';
+        final channel = testChannel(predecessorId);
+        final ok1 = sealedRecord(
+          databaseId: predecessorId,
+          entryType: _kType,
+          data: <String, Object?>{'k': 'x'},
+        );
+        final bad = sealedRecord(
+          databaseId: predecessorId,
+          entryType: _kType,
+          data: <String, Object?>{'title': 'no key'},
+        );
+        final ok2 = sealedRecord(
+          databaseId: predecessorId,
+          entryType: _kType,
+          data: <String, Object?>{'k': 'y'},
+        );
+        for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
+          await deliverTo(receiver, <Map<String, Object?>>[
+            record,
+          ], channel: channel);
+        }
+
+        final bundle = await successorBundle(
+          receiver,
+          projections: ProjectionRegistry()..register(_kKeyedTableSpec),
+        );
+        final successor = bundle.eventStore;
+
+        // The unkeyable event's fold throws inside the restore's one
+        // transaction; it must not propagate as a refusal outside the
+        // enumerated list in EVS-DEV-sender-succession/H.
+        await successor.restoreFromReceiver(
+          registry: bundle.destinations,
+          destinationId: _destinationId,
+          predecessorDatabaseId: predecessorId,
+          initiator: const AutomationInitiator(service: 'restore-test'),
+        );
+
+        for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
+          expect(
+            await successor.reader.findEventById(record['event_id']! as String),
+            isNotNull,
+            reason:
+                'the restore stores every served event whatever a view '
+                "fold makes of it (${record['event_id']})",
+          );
+        }
+      },
+    );
+
     // Verifies: EVS-DEV-sender-succession/C
     test('an event served on more than one generation of a channel is '
         'stored once', () async {
@@ -375,6 +455,224 @@ void runSuccessionRestoreScenarios({
 
       final all = await successor.reader.findAllEvents(entryType: _kType);
       expect(all.where((e) => e.eventId == shared['event_id']), hasLength(1));
+    });
+
+    // Verifies: EVS-DEV-sender-succession/B
+    // Verifies: EVS-DEV-sender-succession/C
+    // Verifies: EVS-DEV-security-findings/G
+    test('an event_id served under two different hashes across generations '
+        'stores the genuine record and records an identity_mismatch finding '
+        'for the other, instead of dropping it', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-resealed';
+      final genOne = testChannel(predecessorId, generation: 1);
+      final genTwo = testChannel(predecessorId, generation: 2);
+      final genuine = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+      );
+      final tampered = resealed(genuine, <String, Object?>{
+        'data': <String, Object?>{'title': 'other'},
+      });
+      await deliverTo(receiver, <Map<String, Object?>>[
+        genuine,
+      ], channel: genOne);
+      // A resumed channel resends the predecessor's log from the start;
+      // here the predecessor's own copy of the record has changed, so
+      // the receiver is served a different record under the same
+      // event_id and keeps it in an identity_mismatch finding of its
+      // own instead of the held event.
+      await deliverTo(receiver, <Map<String, Object?>>[
+        tampered,
+      ], channel: genTwo);
+
+      final receiverFindings = await _ownFindings(receiver);
+      final receiverMismatch = receiverFindings.where(
+        (f) => f['kind'] == 'identity_mismatch',
+      );
+      expect(receiverMismatch, hasLength(1));
+      expect(
+        await receiver.reader.findEventById(genuine['event_id']! as String),
+        isNotNull,
+      );
+
+      final bundle = await successorBundle(receiver);
+      final successor = bundle.eventStore;
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final held = await successor.reader.findEventById(
+        genuine['event_id']! as String,
+      );
+      expect(held, isNotNull);
+      expect(held!.sealedHash, genuine['event_hash']);
+
+      final findings = await _ownFindings(successor);
+      final mismatch = findings.where((f) => f['kind'] == 'identity_mismatch');
+      expect(
+        mismatch,
+        hasLength(1),
+        reason:
+            'the record served under the second occurrence is checked '
+            'and kept in its own finding, never dropped',
+      );
+      expect(
+        (mismatch.single['detector']! as Map)['role'],
+        'restore',
+        reason: 'the restore records its own checks under role restore',
+      );
+      final evidence = mismatch.single['evidence']! as Map;
+      expect(evidence['event_id'], genuine['event_id']);
+      expect(
+        (evidence['record']! as Map)['event_hash'],
+        tampered['event_hash'],
+        reason:
+            "the finding's evidence carries the record that was "
+            'served but not stored',
+      );
+    });
+
+    // Verifies: EVS-DEV-sender-succession/B
+    // Verifies: EVS-DEV-sender-succession/C
+    // Verifies: EVS-DEV-security-findings/G
+    test('an event_id served twice in one delivery under two different '
+        'hashes is checked both times: one is stored and the other is kept '
+        'in an identity_mismatch finding', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-resealed-one-delivery';
+      final channel = testChannel(predecessorId);
+      final genuine = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+      );
+      final tampered = resealed(genuine, <String, Object?>{
+        'data': <String, Object?>{'title': 'other'},
+      });
+      await deliverTo(receiver, <Map<String, Object?>>[
+        genuine,
+        tampered,
+      ], channel: channel);
+
+      final bundle = await successorBundle(receiver);
+      final successor = bundle.eventStore;
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final all = await successor.reader.findAllEvents(entryType: _kType);
+      expect(
+        all.where((e) => e.eventId == genuine['event_id']),
+        hasLength(1),
+        reason: 'exactly one of the two hashes is stored as the event',
+      );
+
+      final findings = await _ownFindings(successor);
+      final mismatch = findings.where((f) => f['kind'] == 'identity_mismatch');
+      expect(mismatch, hasLength(1));
+    });
+
+    // Verifies: EVS-DEV-sender-succession/B
+    test('a distinct-hash occurrence that ends up stored, because the chosen '
+        'occurrence of its event_id was kept only in its own finding, gets '
+        'the same originator and receiver-entry checks as any other newly '
+        'stored event', () async {
+      final receiver = await receiverStore();
+      const predecessorId = 'predecessor-extra-stored';
+      final genOne = testChannel(predecessorId, generation: 1);
+      final genTwo = testChannel(predecessorId, generation: 2);
+      // Sorts lowest (generation 1) and is unstorable, so the successor
+      // holds nothing under this event_id once it is processed.
+      final malformed = sealedRecord(
+        databaseId: predecessorId,
+        entryType: _kType,
+        data: const <String, Object?>{r'$integrity': 'forged'},
+      );
+      // Same event_id, well-formed data, a different hash: this is the
+      // occurrence that ends up stored, as an extra.
+      final wellFormed = resealed(malformed, <String, Object?>{
+        'data': <String, Object?>{'title': 'ok'},
+      });
+      await deliverTo(receiver, <Map<String, Object?>>[
+        malformed,
+      ], channel: genOne);
+      await deliverTo(receiver, <Map<String, Object?>>[
+        wellFormed,
+      ], channel: genTwo);
+
+      final bundle = await successorBundle(
+        receiver,
+        destination: TamperingRangeDestination(
+          receiver,
+          tamper: (range) {
+            if (range.channel != genTwo) return range;
+            return DeliveryRange(
+              receiverDatabaseId: range.receiverDatabaseId,
+              channel: range.channel,
+              record: range.record,
+              deliveries: <ServedDelivery>[
+                for (final d in range.deliveries)
+                  ServedDelivery(
+                    deliveryNumber: d.deliveryNumber,
+                    previousDeliveryHash: d.previousDeliveryHash,
+                    deliveryHash: d.deliveryHash,
+                    attributes: d.attributes,
+                    events: <Map<String, Object?>>[
+                      for (final e in d.events)
+                        _withProvenanceEntry(
+                          e,
+                          -1,
+                          (entry) => <String, Object?>{
+                            ...entry,
+                            'database_id': 'not-the-receiver',
+                          },
+                        ),
+                    ],
+                  ),
+              ],
+            );
+          },
+        ),
+      );
+      final successor = bundle.eventStore;
+
+      await successor.restoreFromReceiver(
+        registry: bundle.destinations,
+        destinationId: _destinationId,
+        predecessorDatabaseId: predecessorId,
+        initiator: const AutomationInitiator(service: 'restore-test'),
+      );
+
+      final held = await successor.reader.findEventById(
+        malformed['event_id']! as String,
+      );
+      expect(
+        held,
+        isNotNull,
+        reason: 'the well-formed occurrence is stored as the event',
+      );
+      expect(held!.sealedHash, wellFormed['event_hash']);
+
+      final findings = await _ownFindings(successor);
+      final unverified = findings.where(
+        (f) => f['kind'] == 'restore_unverified',
+      );
+      expect(
+        unverified.where(
+          (f) => (f['evidence']! as Map)['check'] == 'receiver_entry',
+        ),
+        hasLength(1),
+        reason:
+            'the extra occurrence that got stored is checked for its '
+            'receiver entry exactly as the ordinary stored path checks '
+            'it',
+      );
     });
 
     // Verifies: EVS-DEV-sender-succession/C

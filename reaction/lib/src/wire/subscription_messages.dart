@@ -130,9 +130,20 @@ enum WireErrorCode {
 }
 
 class ErrorMsg extends ServerMessage {
-  const ErrorMsg({required this.code, required this.message});
+  const ErrorMsg({
+    required this.code,
+    required this.message,
+    this.subscriptionId,
+  });
   final WireErrorCode code;
   final String message;
+
+  // Implements: EVS-DEV-converging-view-reads/H
+  // names the subscription a view_converging refusal from
+  //   _handleSubscribe refuses, so the client can route it to that
+  //   subscription's stream instead of dropping it as unaddressed.
+  //   `null` for a connection-scoped error (e.g. malformed frames).
+  final String? subscriptionId;
 }
 
 enum StaleDataReason {
@@ -235,7 +246,12 @@ class SubscriptionMessages {
         'reason': m.reason.toWire(),
       };
     } else if (m is ErrorMsg) {
-      return {'type': 'error', 'code': m.code.toWire(), 'message': m.message};
+      return {
+        'type': 'error',
+        'code': m.code.toWire(),
+        'message': m.message,
+        if (m.subscriptionId != null) 'subscriptionId': m.subscriptionId,
+      };
     } else if (m is StaleDataMsg) {
       return {
         'type': 'stale_data',
@@ -262,6 +278,7 @@ class SubscriptionMessages {
         return ErrorMsg(
           code: WireErrorCode.fromWire(requireString(json, 'code')),
           message: requireString(json, 'message'),
+          subscriptionId: json['subscriptionId'] as String?,
         );
       case 'stale_data':
         final reason = json['reason'];

@@ -150,14 +150,25 @@ class _SuccessionRestore {
     }
 
     // Implements: EVS-DEV-sender-succession/C
-    // an event served in more than one occurrence (a channel's earlier and
-    //   current generation, the ordinary case) is stored once, under the
-    //   occurrence whose registration, generation and delivery number sort
-    //   lowest. A record this database cannot even read an event_id from is
-    //   not deduplicated against anything (there is no reliable key to
-    //   dedup it by): every such occurrence is kept, and each reaches
-    //   ingest on its own to be recorded as its own event_malformed finding.
+    // an event served in more than one occurrence carrying the same
+    //   event_hash (a channel's earlier and current generation, the
+    //   ordinary case) is stored once, under the occurrence whose
+    //   registration, generation and delivery number sort lowest. A record
+    //   this database cannot even read an event_id from is not deduplicated
+    //   against anything (there is no reliable key to dedup it by): every
+    //   such occurrence is kept, and each reaches ingest on its own to be
+    //   recorded as its own event_malformed finding.
+    // Implements: EVS-DEV-sender-succession/B
+    // Implements: EVS-DEV-security-findings/G
+    // an event_id served under more than one distinct event_hash (a
+    //   tampered or resealed record served alongside the genuine one, kept
+    //   by the receiver in an identity_mismatch finding of its own) is not
+    //   deduplicated across hashes: the lowest-sorting occurrence of the
+    //   lowest-sorting distinct hash is chosen for storage, and every other
+    //   distinct-hash occurrence of that id is checked and recorded below.
     final chosen = <String, _RestorePulledRecord>{};
+    final extraOccurrences = <_RestorePulledRecord>[];
+    final byIdAndHash = <String, Map<Object?, _RestorePulledRecord>>{};
     var unkeyedCount = 0;
     for (final occurrence in pulled) {
       final eventId = occurrence.record['event_id'];
@@ -165,11 +176,35 @@ class _SuccessionRestore {
         chosen['\u0000unkeyed-${unkeyedCount++}'] = occurrence;
         continue;
       }
-      final existing = chosen[eventId];
-      if (existing == null || occurrence._isLowerThan(existing)) {
-        chosen[eventId] = occurrence;
+      final byHash = byIdAndHash.putIfAbsent(
+        eventId,
+        () => <Object?, _RestorePulledRecord>{},
+      );
+      final eventHash = occurrence.record['event_hash'];
+      final existingOfHash = byHash[eventHash];
+      if (existingOfHash == null || occurrence._isLowerThan(existingOfHash)) {
+        byHash[eventHash] = occurrence;
       }
     }
+    for (final entry in byIdAndHash.entries) {
+      _RestorePulledRecord? lowest;
+      for (final occurrence in entry.value.values) {
+        if (lowest == null || occurrence._isLowerThan(lowest)) {
+          lowest = occurrence;
+        }
+      }
+      chosen[entry.key] = lowest!;
+      for (final occurrence in entry.value.values) {
+        if (!identical(occurrence, lowest)) {
+          extraOccurrences.add(occurrence);
+        }
+      }
+    }
+    extraOccurrences.sort((a, b) {
+      if (a._isLowerThan(b)) return -1;
+      if (b._isLowerThan(a)) return 1;
+      return 0;
+    });
 
     // Implements: EVS-DEV-sender-succession/C
     // the storing order's lineage component: the predecessor identity's
@@ -292,11 +327,51 @@ class _SuccessionRestore {
         //   (receiver) provenance entry; a record the store keeps only in
         //   an event_malformed finding is not an event this database holds,
         //   so it is not checked again here. This runs once, on the
-        //   deduplicated occurrence [chosen] picked for storage: a record
-        //   carried again in another delivery or generation is a copy of
-        //   the same served bytes (the receiver serves one stored record
-        //   at each occurrence), so checking only the stored occurrence
-        //   checks every distinct record this database was served.
+        //   occurrence [chosen] to store: another occurrence sharing its
+        //   event_id and event_hash is a copy of the same served bytes (the
+        //   receiver serves one stored record at each occurrence), so
+        //   checking only the stored occurrence checks every distinct
+        //   record this database was served under that hash. An occurrence
+        //   of the same event_id under a different hash is a distinct
+        //   record, checked below instead.
+        if (outcome.outcome != IngestOutcome.keptInFinding) {
+          await _verifyStoredEventChecksInTxn(
+            txn,
+            collector,
+            occurrence,
+            receiverDatabaseId: receiverIdOf[occurrence.channel]!,
+          );
+        }
+      }
+      // Implements: EVS-DEV-sender-succession/B
+      // Implements: EVS-DEV-sender-succession/C
+      // Implements: EVS-DEV-security-findings/G
+      // every occurrence of an event_id served under a hash other than the
+      //   one chosen for storage is, once the chosen occurrence is stored
+      //   (or kept in its own finding) above, put through the same ingest
+      //   checks in this transaction: it is recorded as an identity_mismatch
+      //   finding carrying it in full, never silently dropped. When the
+      //   chosen occurrence was itself kept only in a finding (so nothing
+      //   is held under the event_id yet), an extra occurrence can be the
+      //   one that is stored as the event, and gets the same originator and
+      //   receiver-entry checks as any other stored event.
+      for (final occurrence in extraOccurrences) {
+        EventStore._refuseOtherDataFormatMajorOfRecord(occurrence.record);
+        final outcome = await _store._ingestRecordInTxn(
+          txn,
+          occurrence.record,
+          parsed: null,
+          batchContext: null,
+          collector: collector,
+          delivery: ProvenanceDelivery(
+            senderDatabaseId: occurrence.channel.senderDatabaseId,
+            destinationId: occurrence.channel.destinationId,
+            registrationId: occurrence.channel.registrationId,
+            generation: occurrence.channel.generation,
+            deliveryNumber: occurrence.deliveryNumber,
+          ),
+          role: FindingRole.restore,
+        );
         if (outcome.outcome != IngestOutcome.keptInFinding) {
           await _verifyStoredEventChecksInTxn(
             txn,

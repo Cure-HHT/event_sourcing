@@ -33,6 +33,7 @@
 
 import 'dart:async';
 
+import 'package:event_sourcing/event_sourcing.dart';
 import 'package:http/http.dart' as http;
 import 'package:reaction/src/interfaces/action_submitter.dart';
 import 'package:reaction/src/interfaces/auth_session.dart';
@@ -88,7 +89,18 @@ class RemoteScope implements ReactionScope {
     // re-fetch updates `_perms.current` so UI gating reacts live —
     // without it, the client would only learn about its widened
     // permissions on the next Authenticated transition.
-    _connection.onStaleData = (_) => unawaited(_perms.refresh());
+    //
+    // Implements: EVS-DEV-converging-view-reads/H
+    // this trigger is fire-and-forget with nothing awaiting it, so a
+    //   ViewConvergingRefusal from `refresh()` is swallowed here rather
+    //   than becoming an unhandled async error; the next stale_data
+    //   envelope, or the view's own next catch-up, retries it.
+    _connection.onStaleData = (_) => unawaited(
+      _perms.refresh().catchError(
+        (Object _) {},
+        test: (e) => e is ViewConvergingRefusal,
+      ),
+    );
     // Surface every transport-status transition from the underlying
     // RemoteConnection onto the public broadcast stream. The callback
     // is already de-duped at the source (RemoteConnection._emitStatus

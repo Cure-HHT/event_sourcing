@@ -2,6 +2,8 @@ import 'package:event_sourcing/src/destinations/batch_envelope_metadata.dart';
 import 'package:event_sourcing/src/destinations/destination_schedule.dart';
 import 'package:event_sourcing/src/destinations/wire_payload.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
+import 'package:event_sourcing/src/security/system_entry_types.dart'
+    show kDestinationSenderSucceededEntryType;
 import 'package:event_sourcing/src/storage/append_result.dart';
 import 'package:event_sourcing/src/storage/attempt_result.dart';
 import 'package:event_sourcing/src/storage/boot_check.dart';
@@ -1516,6 +1518,21 @@ abstract class StorageBackend {
     Transaction txn,
     String aggregateId,
   );
+
+  /// The held `system.destination_sender_succeeded` events, authored and
+  /// received, that the succession-lineage lookup a received chain finding's
+  /// marks resolve from: served from a backend index keyed by this entry
+  /// type, never a scan proportional to the whole event store. Read inside
+  /// [txn], so it sees the events stored earlier in it. The default body
+  /// serves a backend with no index of its own, at the cost of the scan the
+  /// index exists to avoid.
+  // Implements: EVS-PRD-materializer/E
+  // the succession-lineage read a received chain finding's marks resolve
+  //   from is served by a backend index over this entry type, not a scan
+  //   proportional to the whole event store.
+  @internal
+  Future<List<StoredEvent>> findSenderSuccessionEventsInTxn(Transaction txn) =>
+      findAllEventsInTxn(txn, entryType: kDestinationSenderSucceededEntryType);
 
   /// The lowest origin position among the held events of
   /// [originatingDatabaseId] whose `previous_event_hash` is

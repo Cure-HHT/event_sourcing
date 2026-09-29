@@ -98,6 +98,37 @@ void main() {
     expect(decoded.message, 'participant_site_index');
   });
 
+  test('round-trips ErrorMsg carrying a subscriptionId', () {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    // A subscription-scoped refusal (e.g. view_converging during
+    // _handleSubscribe) names the subscriptionId it refuses so the
+    // client can route it to that subscription's stream instead of
+    // dropping it silently.
+    const original = ErrorMsg(
+      code: WireErrorCode.viewConverging,
+      message: 'participant_site_index',
+      subscriptionId: 'sub-1',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j['type'], 'error');
+    expect(j['subscriptionId'], 'sub-1');
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.subscriptionId, 'sub-1');
+    expect(decoded.code, WireErrorCode.viewConverging);
+    expect(decoded.message, 'participant_site_index');
+  });
+
+  test('round-trips ErrorMsg with no subscriptionId (connection-scoped)', () {
+    const original = ErrorMsg(
+      code: WireErrorCode.protocolError,
+      message: 'bad json',
+    );
+    final j = SubscriptionMessages.encodeServer(original);
+    expect(j.containsKey('subscriptionId'), isFalse);
+    final decoded = SubscriptionMessages.decodeServer(j) as ErrorMsg;
+    expect(decoded.subscriptionId, isNull);
+  });
+
   test('round-trips StaleDataMsg with reason', () {
     const original = StaleDataMsg(reason: StaleDataReason.roleAssigned);
     final j = SubscriptionMessages.encodeServer(original);

@@ -49,6 +49,8 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
+        kDestinationSenderSucceededEntryType,
+        kDestinationSenderSucceededEventType,
         kIngestAuditEntryType,
         kIngestDeliveryAcceptedEventType,
         kSecurityFindingEntryType,
@@ -3646,6 +3648,22 @@ class PostgresBackend extends StorageBackend {
       _findEventsWhere(txn, 'event_type = @type AND entry_type = @entry', {
         'type': kSecurityFindingRecordedEventType,
         'entry': kSecurityFindingEntryType,
+      });
+
+  // The sender-succession events are served by the (event_type,
+  // sequence_number) index: kDestinationSenderSucceededEventType is unique
+  // to this entry type, so filtering on it, entry_type included for
+  // clarity, never scans the whole table.
+  // Implements: EVS-PRD-materializer/E
+  // the succession-lineage lookup a received chain finding's marks resolve
+  //   from is served by the event-type index, not a scan of the whole
+  //   event store.
+  @override
+  @internal
+  Future<List<StoredEvent>> findSenderSuccessionEventsInTxn(Transaction txn) =>
+      _findEventsWhere(txn, 'event_type = @type AND entry_type = @entry', {
+        'type': kDestinationSenderSucceededEventType,
+        'entry': kDestinationSenderSucceededEntryType,
       });
 
   // Implements: EVS-PRD-materializer/E

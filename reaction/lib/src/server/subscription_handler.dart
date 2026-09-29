@@ -296,10 +296,16 @@ class _ConnectionState {
       //   expansion, or the assignment expansion itself — refuses the
       //   subscription with a typed, transient wire error naming the
       //   view rather than deciding from an unsettled read or
-      //   surfacing as internal_error.
+      //   surfacing as internal_error. The error names the refused
+      //   subscriptionId so the client routes it to that subscription's
+      //   stream instead of dropping an unaddressed frame.
       _send(
         SubscriptionMessages.encodeServer(
-          ErrorMsg(code: WireErrorCode.viewConverging, message: e.viewName),
+          ErrorMsg(
+            code: WireErrorCode.viewConverging,
+            message: e.viewName,
+            subscriptionId: msg.subscriptionId,
+          ),
         ),
       );
       return;

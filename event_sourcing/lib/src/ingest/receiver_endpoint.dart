@@ -624,7 +624,7 @@ final class ReceiverEndpoint {
     // Implements: EVS-DEV-delivery-receiver/X
     // the audit keeps the attributes object as the delivery carried it,
     //   whatever names it holds.
-    await _appendRawInternalEventInTxn(
+    final auditEvent = await _appendRawInternalEventInTxn(
       txn,
       _store._backend,
       databaseId: _store.databaseId,
@@ -653,6 +653,7 @@ final class ReceiverEndpoint {
       uuid: _store._uuid,
       collector: collector,
     );
+    await _store._foldRawInternalEventInTxn(txn, auditEvent, collector);
   }
 
   /// Records a `foreign_event` finding for [record], carried by

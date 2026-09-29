@@ -2868,12 +2868,16 @@ class EventStore {
     collector._add(updatedEvent);
 
     // The projection interpreter runs inside the same transaction, as on
-    // the local-append path; a throw rolls back the whole ingest.
+    // the local-append path. In ingest mode a fold throw is this copy's
+    // problem alone: the copy is left behind for the catch-up driver and
+    // the rest of the delivery still commits (`EVS-PRD-ingest/G`,
+    // `EVS-DEV-view-convergence/Q`).
     final rowChanges = await _interpreter.applyEvent(
       txn: txn,
       backend: _backend,
       event: updatedEvent,
       copyIds: _viewCopyIds,
+      mode: ApplyEventMode.ingest,
     );
     if (rowChanges.isNotEmpty) collector._addRowChanges(rowChanges);
 
@@ -3179,7 +3183,7 @@ class EventStore {
     required BatchContext? batchContext,
     PublishCollector? collector,
   }) async {
-    await _appendRawInternalEventInTxn(
+    final auditEvent = await _appendRawInternalEventInTxn(
       txn,
       _backend,
       databaseId: databaseId,
@@ -3203,6 +3207,36 @@ class EventStore {
       uuid: _uuid,
       collector: collector,
     );
+    await _foldRawInternalEventInTxn(txn, auditEvent, collector);
+  }
+
+  /// Folds [event], a raw internal audit this instance just appended
+  /// inside [txn] (the `ingest.delivery_accepted` or `ingest.duplicate_received`
+  /// audit), into every current copy exactly as an ingested event is
+  /// folded, so a copy whose interest names the audit's event type stays
+  /// current after the delivery that produced it. Not used for the boot's
+  /// `lib_version` events, appended before this instance's projection
+  /// interpreter and view copies exist.
+  // Implements: EVS-DEV-view-convergence/E
+  // the storing transaction of a delivery's raw audits folds them into
+  //   every current copy, the same as any other stored event.
+  // Implements: EVS-DEV-view-convergence/F
+  // a copy this call does not set to the event's position is left
+  //   entirely unchanged: this call touches only the copies the
+  //   interpreter's own applyEvent decides are current.
+  Future<void> _foldRawInternalEventInTxn(
+    Transaction txn,
+    StoredEvent event,
+    PublishCollector? collector,
+  ) async {
+    final rowChanges = await _interpreter.applyEvent(
+      txn: txn,
+      backend: _backend,
+      event: event,
+      copyIds: _viewCopyIds,
+      mode: ApplyEventMode.ingest,
+    );
+    if (rowChanges.isNotEmpty) collector?._addRowChanges(rowChanges);
   }
 }
 
@@ -3750,6 +3784,23 @@ final class _StorageReader implements StorageReader {
 
   /// The instance's [ProjectionSpec] and [ViewCopy] of [viewName], read
   /// inside [txn].
+  ///
+  /// The copy this instance last registered may, by the time this read
+  /// runs, be marked for deletion or gone: another instance's boot or
+  /// `rebuildView` legitimately marks a shared copy, and this instance's
+  /// own `_viewCopyIds` follows only after its own next catch-up
+  /// transaction commits. Rather than serve that copy's rows as current or
+  /// throw once its record is gone, this finds the unmarked copy of the
+  /// view's fingerprint in [txn]; when none is stored, it hands back a
+  /// placeholder, unwritten copy at the position before the first event of
+  /// the log, without writing one itself -- a storage reader's transaction
+  /// runs read-only on Postgres, so it could never create the replacement
+  /// there. The placeholder is empty, so the caller's currency scan reports
+  /// it converging and every read built on it withholds rows
+  /// (EVS-DEV-converging-view-reads/B) instead of the ones a copy being
+  /// deleted has left behind; the catch-up driver, not a read, is what
+  /// creates and catches up this instance's real replacement copy
+  /// (EVS-DEV-view-convergence/T).
   Future<(ProjectionSpec, ViewCopy)> _specAndCopy(
     Transaction txn,
     String viewName,
@@ -3761,15 +3812,25 @@ final class _StorageReader implements StorageReader {
         'at EventStore.open.',
       );
     }
-    final copyId = _store._copyIdOf(viewName);
-    final copies = await _backend.readViewCopiesInTxn(_issued(txn));
-    final copy = copies.firstWhere(
-      (c) => c.copyId == copyId,
-      orElse: () => throw StateError(
-        'EventStore: no stored copy row for "$viewName" (copy id '
-        '"$copyId"); EventStore.open should have created one.',
-      ),
+    final issued = _issued(txn);
+    final fingerprint = viewFingerprint(
+      spec,
+      _store.entryTypes,
+      _store._promoters,
     );
+    final existing = await _backend.readUnmarkedViewCopyInTxn(
+      issued,
+      fingerprint,
+    );
+    final copy =
+        existing ??
+        ViewCopy(
+          copyId: fingerprint,
+          viewName: viewName,
+          fingerprint: fingerprint,
+          watermark: 0,
+          markedForDeletion: false,
+        );
     return (spec, copy);
   }
 
@@ -3914,15 +3975,24 @@ final class _StorageReader implements StorageReader {
   Future<List<ViewCopyStatus>> viewProgress() => transaction((txn) async {
     final issued = _issued(txn);
     final statuses = <ViewCopyStatus>[];
-    final copies = await _backend.readViewCopiesInTxn(issued);
     for (final spec in _store.projections.all()) {
-      final copyId = _store._copyIdOf(spec.viewName);
-      final copy = copies.firstWhere(
-        (c) => c.copyId == copyId,
-        orElse: () => throw StateError(
-          'EventStore: no stored copy row for "${spec.viewName}" (copy id '
-          '"$copyId"); EventStore.open should have created one.',
-        ),
+      final fingerprint = viewFingerprint(
+        spec,
+        _store.entryTypes,
+        _store._promoters,
+      );
+      // A copy this instance last registered may since have been marked
+      // for deletion or deleted underneath it (EVS-DEV-view-convergence/T,
+      // see `_specAndCopy`); progress is reported for whichever copy the
+      // driver is currently working, or as freshly converging when none
+      // exists yet.
+      var copy = await _backend.readUnmarkedViewCopyInTxn(issued, fingerprint);
+      copy ??= ViewCopy(
+        copyId: fingerprint,
+        viewName: spec.viewName,
+        fingerprint: fingerprint,
+        watermark: 0,
+        markedForDeletion: false,
       );
       final scan = await scanViewCurrency(
         txn: issued,
@@ -3930,7 +4000,13 @@ final class _StorageReader implements StorageReader {
         spec: spec,
         copy: copy,
       );
-      final progress = _store.catchUpProgressOf(copyId);
+      // A failure while no copy existed was recorded under the
+      // fingerprint (the catch-up driver's lock key when it has no known
+      // copy id); a failure of a real copy's own catch-up was recorded
+      // under its copy id.
+      final progress =
+          _store.catchUpProgressOf(copy.copyId) ??
+          _store.catchUpProgressOf(fingerprint);
       statuses.add(
         ViewCopyStatus(
           viewName: spec.viewName,

@@ -25,6 +25,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
+import '../../test_support/throughput_guard_worktree.dart';
 import '../../test_support/tool_subprocess.dart';
 import 'test_postgres_url.dart';
 import 'throughput_workload.dart';
@@ -100,116 +101,87 @@ void main() {
         '--show-toplevel',
       ], workingDirectory: Directory.current.path)).trim();
 
-      // A worktree a prior run left registered (e.g. a killed process, whose
-      // `finally` block below never ran) would otherwise make `worktree add`
-      // below fail with a stale-path collision.
-      await _runGit(['worktree', 'prune'], workingDirectory: repoRoot);
+      await withThroughputGuardWorktree<void>(
+        repoRoot: repoRoot,
+        commit: _kBaselineCommit,
+        runGit: _runGit,
+        onCleanupFailure: (message) {
+          // ignore: avoid_print
+          print('throughput guard cleanup: $message');
+        },
+        body: (worktreePath) async {
+          final baselineEventSourcing = p.join(worktreePath, 'event_sourcing');
+          await _runTool(sdkTool('flutter'), [
+            'pub',
+            'get',
+          ], workingDirectory: baselineEventSourcing);
 
-      final tempParent = await Directory.systemTemp.createTemp(
-        'evs-throughput-guard-',
-      );
-      final worktreePath = p.join(tempParent.path, 'evs-baseline');
-      var worktreeAdded = false;
-      try {
-        await _runGit([
-          'worktree',
-          'add',
-          '--detach',
-          worktreePath,
-          _kBaselineCommit,
-        ], workingDirectory: repoRoot);
-        worktreeAdded = true;
-
-        final baselineEventSourcing = p.join(worktreePath, 'event_sourcing');
-        await _runTool(sdkTool('flutter'), [
-          'pub',
-          'get',
-        ], workingDirectory: baselineEventSourcing);
-
-        final workloadSource = File(
-          p.join(
-            Directory.current.path,
+          final workloadSource = File(
+            p.join(
+              Directory.current.path,
+              'test',
+              'storage',
+              'postgres',
+              'throughput_baseline_workload.dart.txt',
+            ),
+          ).readAsStringSync();
+          final baselineTestRelativePath = p.join(
             'test',
-            'storage',
-            'postgres',
-            'throughput_baseline_workload.dart.txt',
-          ),
-        ).readAsStringSync();
-        final baselineTestRelativePath = p.join(
-          'test',
-          'throughput_baseline_workload_test.dart',
-        );
-        File(
-          p.join(baselineEventSourcing, baselineTestRelativePath),
-        ).writeAsStringSync(workloadSource);
+            'throughput_baseline_workload_test.dart',
+          );
+          File(
+            p.join(baselineEventSourcing, baselineTestRelativePath),
+          ).writeAsStringSync(workloadSource);
 
-        final baselineOutput = await _runTool(
-          sdkTool('flutter'),
-          ['test', '--no-pub', '--concurrency=1', baselineTestRelativePath],
-          workingDirectory: baselineEventSourcing,
-          environment: <String, String>{'PG_TEST_URL': pgUrl!},
-        );
-        final baselineJson = _lastJsonObject(baselineOutput);
-        expect(
-          baselineJson,
-          isNotNull,
-          reason: 'baseline workload printed no JSON line:\n$baselineOutput',
-        );
-        final baselineAppend = (baselineJson!['append_per_sec']! as num)
-            .toDouble();
-        final baselineIngest = (baselineJson['ingest_per_sec']! as num)
-            .toDouble();
+          final baselineOutput = await _runTool(
+            sdkTool('flutter'),
+            ['test', '--no-pub', '--concurrency=1', baselineTestRelativePath],
+            workingDirectory: baselineEventSourcing,
+            environment: <String, String>{'PG_TEST_URL': pgUrl!},
+          );
+          final baselineJson = _lastJsonObject(baselineOutput);
+          expect(
+            baselineJson,
+            isNotNull,
+            reason: 'baseline workload printed no JSON line:\n$baselineOutput',
+          );
+          final baselineAppend = (baselineJson!['append_per_sec']! as num)
+              .toDouble();
+          final baselineIngest = (baselineJson['ingest_per_sec']! as num)
+              .toDouble();
 
-        final current = await runThroughputWorkload(pgUrl);
+          final current = await runThroughputWorkload(pgUrl);
 
-        final appendRatio = current.appendPerSec / baselineAppend;
-        final ingestRatio = current.ingestPerSec / baselineIngest;
+          final appendRatio = current.appendPerSec / baselineAppend;
+          final ingestRatio = current.ingestPerSec / baselineIngest;
 
-        // ignore: avoid_print
-        print(
-          'throughput per second -- baseline: append '
-          '${baselineAppend.toStringAsFixed(1)}, ingest '
-          '${baselineIngest.toStringAsFixed(1)}; current: append '
-          '${current.appendPerSec.toStringAsFixed(1)}, ingest '
-          '${current.ingestPerSec.toStringAsFixed(1)}; ratios: append '
-          '${appendRatio.toStringAsFixed(3)}, ingest '
-          '${ingestRatio.toStringAsFixed(3)}',
-        );
+          // ignore: avoid_print
+          print(
+            'throughput per second -- baseline: append '
+            '${baselineAppend.toStringAsFixed(1)}, ingest '
+            '${baselineIngest.toStringAsFixed(1)}; current: append '
+            '${current.appendPerSec.toStringAsFixed(1)}, ingest '
+            '${current.ingestPerSec.toStringAsFixed(1)}; ratios: append '
+            '${appendRatio.toStringAsFixed(3)}, ingest '
+            '${ingestRatio.toStringAsFixed(3)}',
+          );
 
-        expect(
-          current.appendPerSec,
-          greaterThanOrEqualTo(baselineAppend / 2),
-          reason:
-              'append throughput ${current.appendPerSec}/s is below half '
-              'the baseline $baselineAppend/s',
-        );
-        expect(
-          current.ingestPerSec,
-          greaterThanOrEqualTo(baselineIngest / 2),
-          reason:
-              'ingest throughput ${current.ingestPerSec}/s is below half '
-              'the baseline $baselineIngest/s',
-        );
-      } finally {
-        if (worktreeAdded) {
-          await _runGit([
-            'worktree',
-            'remove',
-            '--force',
-            worktreePath,
-          ], workingDirectory: repoRoot);
-        }
-        final listing = await _runGit([
-          'worktree',
-          'list',
-        ], workingDirectory: repoRoot);
-        expect(
-          listing.contains(worktreePath),
-          isFalse,
-          reason: 'the baseline worktree was not removed:\n$listing',
-        );
-        await tempParent.delete(recursive: true);
-      }
+          expect(
+            current.appendPerSec,
+            greaterThanOrEqualTo(baselineAppend / 2),
+            reason:
+                'append throughput ${current.appendPerSec}/s is below half '
+                'the baseline $baselineAppend/s',
+          );
+          expect(
+            current.ingestPerSec,
+            greaterThanOrEqualTo(baselineIngest / 2),
+            reason:
+                'ingest throughput ${current.ingestPerSec}/s is below half '
+                'the baseline $baselineIngest/s',
+          );
+        },
+      );
     },
     skip: skipReason,
     timeout: const Timeout(Duration(minutes: 20)),

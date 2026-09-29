@@ -15,16 +15,63 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/ingest/sender_succession.dart'
     show SenderSuccessionChannel, SenderSuccessionData;
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kIngestAuditEntryType;
+    show kIngestAuditEntryType, kIngestDuplicateReceivedEventType;
+import 'package:event_sourcing/src/testing/delivery_test_hooks.dart'
+    show DeliveryTestHooks, runWithDeliveryTestHooks;
 import 'package:flutter_test/flutter_test.dart';
 
 import '../security/security_finding_conformance.dart' show expectedFindingId;
 import 'ingest_record_findings_conformance.dart' show sealedRecord;
+import 'manual_timers.dart' show neverFiringTimer;
 import 'record_fixtures.dart';
 import 'version_compatibility_conformance.dart' show VersionTestDatabase;
 
 /// The entry type of the records the scenarios deliver.
 const String kDeliveryNoteType = 'finding_note';
+
+/// A table view keyed on `data.k`, so a delivered record whose data has no
+/// `k` throws from the fold rather than being stored under a substitute
+/// key: a fold failure leaves that copy behind without aborting the
+/// delivery (`EVS-PRD-ingest/G`).
+const String _kKeyedTableView = 'keyed_delivery_notes';
+
+const TableProjectionSpec _kKeyedTableSpec = TableProjectionSpec(
+  viewName: _kKeyedTableView,
+  interest: SubscriptionFilter(entryTypes: <String>{kDeliveryNoteType}),
+  insertEventTypes: <String>{'finalized'},
+  removeEventTypes: <String>{},
+  rowKey: CompositeKey(<String>['data.k']),
+  rowData: WholePayload(),
+);
+
+/// A view whose interest includes the receiver's own `ingest.delivery_accepted`
+/// audit, so an accepted delivery's raw audit must itself fold into it for
+/// the view to stay current (`EVS-DEV-view-convergence/E`).
+const String _kAuditWatchingView = 'audit_watching_notes';
+
+const AggregateProjectionSpec _kAuditWatchingSpec = AggregateProjectionSpec(
+  viewName: _kAuditWatchingView,
+  interest: SubscriptionFilter(
+    includeSystemEvents: true,
+    eventTypes: <String>{'ingest.delivery_accepted'},
+  ),
+  tombstoneEventTypes: <String>{},
+);
+
+/// A view whose interest includes the receiver's own `ingest.duplicate_received`
+/// audit, so a re-presented event's raw audit must itself fold into it for
+/// the view to stay current (`EVS-DEV-view-convergence/E`).
+const String _kDuplicateAuditWatchingView = 'duplicate_audit_watching_notes';
+
+const AggregateProjectionSpec _kDuplicateAuditWatchingSpec =
+    AggregateProjectionSpec(
+      viewName: _kDuplicateAuditWatchingView,
+      interest: SubscriptionFilter(
+        includeSystemEvents: true,
+        eventTypes: <String>{kIngestDuplicateReceivedEventType},
+      ),
+      tombstoneEventTypes: <String>{},
+    );
 
 const Source _receiverSource = Source(
   hopId: 'receiver-hop',
@@ -154,10 +201,11 @@ Future<List<Map<String, Object?>>> authoredFindings(EventStore store) async =>
     ];
 
 /// Opens an event store over a new backend of [db], registering the
-/// scenarios' entry type.
+/// scenarios' entry type and, when given, [projections].
 Future<EventStore> openReceiverStore(
   VersionTestDatabase db, {
   Source source = _receiverSource,
+  ProjectionRegistry? projections,
 }) async {
   final backend = await db.openBackend();
   return EventStore.open(
@@ -171,6 +219,7 @@ Future<EventStore> openReceiverStore(
         ),
       ),
     source: source,
+    projections: projections,
   );
 }
 
@@ -191,8 +240,14 @@ void runDeliveryReceiverScenarios({
       return db;
     }
 
-    Future<EventStore> open([VersionTestDatabase? db]) async {
-      final store = await openReceiverStore(db ?? await database());
+    Future<EventStore> open([
+      VersionTestDatabase? db,
+      ProjectionRegistry? projections,
+    ]) async {
+      final store = await openReceiverStore(
+        db ?? await database(),
+        projections: projections,
+      );
       opened.add(store);
       return store;
     }
@@ -886,5 +941,227 @@ void runDeliveryReceiverScenarios({
         reason: 'the refusal rolls back the whole delivery',
       );
     });
+
+    // Verifies: EVS-PRD-ingest/G
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-DEV-view-convergence/F
+    // Verifies: EVS-DEV-view-convergence/Q
+    test('a delivered event a table fold cannot key is stored; the delivery '
+        'is accepted whole and the copy is left behind for catch-up', () async {
+      final registry = ProjectionRegistry()..register(_kKeyedTableSpec);
+      final store = await open(null, registry);
+      final ok1 = sealedRecord(data: <String, Object?>{'k': 'x'});
+      final bad = sealedRecord(data: <String, Object?>{'title': 'no key'});
+      final ok2 = sealedRecord(data: <String, Object?>{'k': 'y'});
+      final delivery = sealedDelivery(
+        records: <Map<String, Object?>>[ok1, bad, ok2],
+      );
+
+      final response = await present(store, delivery);
+
+      expect(
+        response,
+        acknowledgement(store, delivery, AcknowledgementOutcome.accepted),
+        reason: 'a fold throw on one event never rolls back the delivery',
+      );
+      for (final record in <Map<String, Object?>>[ok1, bad, ok2]) {
+        expect(
+          await store.reader.findEventById(record['event_id']! as String),
+          isNotNull,
+          reason:
+              'every event of an accepted delivery is stored, whatever '
+              'a view fold makes of it',
+        );
+      }
+      final badEvent = await store.reader.findEventById(
+        bad['event_id']! as String,
+      );
+
+      // The failing copy's watermark is left where it was in the same
+      // storing transaction as the delivery, before any catch-up retry
+      // has a chance to run.
+      final immediateProgress = (await store.reader.viewProgress()).singleWhere(
+        (p) => p.viewName == _kKeyedTableView,
+      );
+      expect(
+        immediateProgress.watermark,
+        lessThan(badEvent!.sequenceNumber),
+        reason:
+            "the failed copy's watermark is not advanced past the event "
+            'whose fold threw, in the storing transaction itself',
+      );
+
+      final progress = await _waitUntilLastFailure(store, _kKeyedTableView);
+      expect(
+        progress.watermark,
+        lessThan(badEvent.sequenceNumber),
+        reason:
+            "the failed copy's watermark is not advanced past the "
+            'event whose fold threw',
+      );
+      expect(progress.state, ViewConvergenceState.converging);
+      expect(progress.lastFailure, isNotNull);
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-PRD-ingest/G
+    test('a view whose interest includes ingest.delivery_accepted stays '
+        'current after an accepted delivery', () async {
+      // The catch-up driver's own re-checks run on a timer that never
+      // fires here, so once its first pass (scheduled at open, over an
+      // empty log) commits, it can never run a second one: a "current"
+      // reading right after present() can only be the delivery's own
+      // storing transaction, not a catch-up pass this test cannot rule
+      // out otherwise. The first pass's own transaction is awaited by its
+      // begin/commit signals below, so it is provably finished before the
+      // delivery is presented.
+      final begins = <String>[];
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          timerFactory: neverFiringTimer,
+          onCatchUpTransactionBegin: begins.add,
+        ),
+        () async {
+          final registry = ProjectionRegistry()..register(_kAuditWatchingSpec);
+          final store = await open(null, registry);
+          await _waitUntilFirstCatchUpPassSettles(store, begins, <String>[
+            _kAuditWatchingView,
+          ]);
+          final delivery = sealedDelivery();
+
+          await present(store, delivery);
+
+          final audit = (await authoredDeliveryAudits(store)).single;
+          final progress = (await store.reader.viewProgress()).singleWhere(
+            (p) => p.viewName == _kAuditWatchingView,
+          );
+          expect(
+            progress.watermark,
+            audit.sequenceNumber,
+            reason:
+                'the raw delivery_accepted audit folds in the same '
+                'transaction that appends it, like any other stored event -- '
+                'a watermark a blocked catch-up driver could not have '
+                'produced on its own',
+          );
+          expect(progress.state, ViewConvergenceState.current);
+        },
+      );
+    });
+
+    // Verifies: EVS-DEV-view-convergence/E
+    // Verifies: EVS-PRD-ingest/G
+    // Verifies: EVS-PRD-ingest/F
+    test('a view whose interest includes ingest.duplicate_received stays '
+        'current after a duplicate delivery', () async {
+      final begins = <String>[];
+      await runWithDeliveryTestHooks(
+        DeliveryTestHooks(
+          timerFactory: neverFiringTimer,
+          onCatchUpTransactionBegin: begins.add,
+        ),
+        () async {
+          final registry = ProjectionRegistry()
+            ..register(_kDuplicateAuditWatchingSpec);
+          final store = await open(null, registry);
+          await _waitUntilFirstCatchUpPassSettles(store, begins, <String>[
+            _kDuplicateAuditWatchingView,
+          ]);
+          final record = sealedRecord();
+          final first = sealedDelivery(records: <Map<String, Object?>>[record]);
+          await present(store, first);
+          final second = sealedDelivery(
+            number: 2,
+            link: first.deliveryHash,
+            records: <Map<String, Object?>>[record],
+          );
+
+          await present(store, second);
+
+          // The delivery's own storing transaction appends the
+          // duplicate_received audit and then the delivery's own
+          // delivery_accepted audit; a copy that folded the duplicate audit
+          // inline stays current and so its watermark reaches the
+          // transaction's last event (the second delivery_accepted audit)
+          // too -- a copy that missed the duplicate audit is stuck
+          // converging at the duplicate audit's own position, and the later
+          // fold skips it, since it is no longer current.
+          final tip = await store.reader.readSequenceCounter();
+          final progress = (await store.reader.viewProgress()).singleWhere(
+            (p) => p.viewName == _kDuplicateAuditWatchingView,
+          );
+          expect(
+            progress.watermark,
+            tip,
+            reason:
+                'the raw duplicate_received audit folds in the same '
+                'transaction that appends it, like any other stored event -- '
+                'a watermark a blocked catch-up driver could not have '
+                'produced on its own',
+          );
+          expect(progress.state, ViewConvergenceState.current);
+        },
+      );
+    });
   });
+}
+
+/// Polls [store]'s reader for [viewName]'s progress until a catch-up
+/// attempt has recorded a failure, pumping real (short) delays between
+/// checks since the catch-up driver runs on its own timer. Fails the test
+/// after too long rather than hanging.
+Future<ViewCopyStatus> _waitUntilLastFailure(
+  EventStore store,
+  String viewName,
+) async {
+  for (var i = 0; i < 400; i++) {
+    final progress = await store.reader.viewProgress();
+    final view = progress.singleWhere((p) => p.viewName == viewName);
+    if (view.lastFailure != null) return view;
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+  fail('view "$viewName" never recorded a catch-up failure in time');
+}
+
+/// Waits for the catch-up driver's own first pass -- scheduled at open,
+/// over the log as it stood then -- to have begun and committed at least
+/// one transaction (observed through [begins], the `onCatchUpTransactionBegin`
+/// test seam), then for every view named in [viewNames] to read current.
+/// Presenting a delivery only after this returns, with the driver's
+/// `timerFactory` a seam that never fires again, means the driver cannot
+/// run a second pass afterward: a "current" reading right after present()
+/// can only be the delivery's own storing transaction. A view already
+/// current before any pass ever runs (an empty log needs no catch-up)
+/// would otherwise let a test move on before the driver's first pass
+/// commits, which is why this waits on [begins] rather than on the
+/// view's progress alone.
+Future<void> _waitUntilFirstCatchUpPassSettles(
+  EventStore store,
+  List<String> begins,
+  List<String> viewNames,
+) async {
+  for (var i = 0; i < 400; i++) {
+    if (begins.isNotEmpty) break;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  if (begins.isEmpty) {
+    fail('the catch-up driver never began a pass before the timeout');
+  }
+  // The observed pass is over the log as it stood at open -- no events --
+  // so its own transaction commits almost at once; this margin lets it
+  // finish (and the driver settle into its now-permanent idle wait)
+  // before the delivery below is presented.
+  await Future<void>.delayed(const Duration(milliseconds: 50));
+  for (var i = 0; i < 400; i++) {
+    final progress = await store.reader.viewProgress();
+    final current = <String, bool>{
+      for (final name in viewNames)
+        name:
+            progress.singleWhere((p) => p.viewName == name).state ==
+            ViewConvergenceState.current,
+    };
+    if (current.values.every((c) => c)) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail('views $viewNames never reached "current" before the timeout');
 }

@@ -46,11 +46,24 @@ class _ParticipantSiteDescriptor implements ScopeProjectionDescriptor {
 /// watermark, to the inherited implementation — so once
 /// [forceConverging] is cleared, the copy reports however far the real
 /// (uninterrupted) fold has actually reached.
+///
+/// Overrides both [readViewCopiesInTxn] (the deletion-sweep listing) and
+/// [readUnmarkedViewCopyInTxn] (the keyed lookup a read's currency scan
+/// resolves its copy through), since either may be the one a caller uses
+/// to find the copy whose watermark this fake rewinds.
 class _ForceConvergingBackend extends SembastBackend {
   _ForceConvergingBackend({required super.database});
 
   bool forceConverging = false;
   String? convergingCopyId;
+
+  ViewCopy _rewound(ViewCopy c) => ViewCopy(
+    copyId: c.copyId,
+    viewName: c.viewName,
+    fingerprint: c.fingerprint,
+    watermark: 0,
+    markedForDeletion: c.markedForDeletion,
+  );
 
   @override
   Future<List<ViewCopy>> readViewCopiesInTxn(Transaction txn) async {
@@ -59,17 +72,21 @@ class _ForceConvergingBackend extends SembastBackend {
     if (!forceConverging || targetId == null) return copies;
     return [
       for (final c in copies)
-        if (c.copyId == targetId)
-          ViewCopy(
-            copyId: c.copyId,
-            viewName: c.viewName,
-            fingerprint: c.fingerprint,
-            watermark: 0,
-            markedForDeletion: c.markedForDeletion,
-          )
-        else
-          c,
+        if (c.copyId == targetId) _rewound(c) else c,
     ];
+  }
+
+  @override
+  Future<ViewCopy?> readUnmarkedViewCopyInTxn(
+    Transaction txn,
+    String fingerprint,
+  ) async {
+    final copy = await super.readUnmarkedViewCopyInTxn(txn, fingerprint);
+    final targetId = convergingCopyId;
+    if (!forceConverging || targetId == null || copy?.copyId != targetId) {
+      return copy;
+    }
+    return _rewound(copy!);
   }
 }
 
@@ -416,6 +433,11 @@ void main() {
       final errorMsg = messages.singleWhere((m) => m['type'] == 'error');
       expect(errorMsg['code'], 'view_converging');
       expect(errorMsg['message'], 'participant_site_index');
+      // Verifies: EVS-DEV-converging-view-reads/H
+      // The refusal names the subscriptionId it refuses so a remote
+      // client can route it to that subscription's stream rather than
+      // dropping it as unaddressed (R13).
+      expect(errorMsg['subscriptionId'], 'sub-1');
       await client.sink.close();
 
       // The view reports current again: the same subscription now

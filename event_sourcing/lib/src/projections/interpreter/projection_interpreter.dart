@@ -29,13 +29,14 @@
 // an event of a higher major than the registered one is refused before the
 //   fold writes anything.
 import 'package:event_sourcing/src/entry_type_registry.dart';
+import 'package:event_sourcing/src/logging.dart';
 import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/aggregate_fold.dart';
 import 'package:event_sourcing/src/projections/interpreter/table_fold.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/projections/view_read.dart'
-    show isSecurityFindingEvent;
+    show isMarkRefreshingEvent;
 import 'package:event_sourcing/src/promoters/promoter_executor.dart';
 import 'package:event_sourcing/src/promoters/promoter_registry.dart';
 import 'package:event_sourcing/src/storage/storage_backend.dart';
@@ -44,6 +45,23 @@ import 'package:event_sourcing/src/storage/transaction.dart';
 import 'package:event_sourcing/src/storage/view_copy.dart';
 import 'package:event_sourcing/src/versions.dart';
 import 'package:meta/meta.dart' show internal;
+
+/// How [ProjectionInterpreter.applyEvent] treats a throw from one copy's
+/// fold step.
+@internal
+enum ApplyEventMode {
+  /// A locally-dispatched action's append: a fold throw propagates to the
+  /// caller, so an app-visible append failure is never silently swallowed.
+  local,
+
+  /// Ingest of a received event, or the sender-succession restore: a fold
+  /// throw from one copy is caught, logged, and leaves that copy behind
+  /// (its watermark not advanced past the event, no row writes of its
+  /// kept), so the rest of the delivery or restore still commits and the
+  /// catch-up driver takes the copy over from there
+  /// (`EVS-PRD-ingest/G`, `EVS-DEV-view-convergence/Q`).
+  ingest,
+}
 
 class ProjectionInterpreter {
   ProjectionInterpreter({
@@ -82,18 +100,35 @@ class ProjectionInterpreter {
   /// that produced a change; null results (e.g. tombstone of non-existent
   /// row) are excluded. The caller uses this list for post-commit subscriber
   /// notification via `SubscriptionEngine.publishRowChange`.
+  ///
+  /// Under [ApplyEventMode.ingest], a throw from one copy's fold step is
+  /// caught and logged; that copy's watermark is left where it was, so it
+  /// reads as behind and the catch-up driver retries it, and folding
+  /// continues with the instance's other copies (`EVS-PRD-ingest/G`,
+  /// `EVS-DEV-view-convergence/Q`). Under [ApplyEventMode.local] a throw
+  /// propagates to the caller.
   // Implements: EVS-DEV-view-convergence/E
   // a current copy folds the event when its definition folds it and moves
   //   its watermark to the event's position.
   // Implements: EVS-DEV-view-convergence/F
   // a copy this transaction does not set to the event's position -- a
   //   converging one -- is left entirely unchanged.
+  // Implements: EVS-PRD-ingest/G
+  // a fold throw during ingest is caught per copy so the rest of the
+  //   delivery is still admitted; the event stays stored and the failing
+  //   copy is left behind rather than the whole ingest rolling back.
+  // Implements: EVS-DEV-view-convergence/Q
+  // the failing copy keeps no partial row writes and its watermark is not
+  //   advanced past the event, so it reads as behind; the catch-up
+  //   driver's own retry-and-backoff is what records the failure in the
+  //   copy's progress once it meets the same event.
   @internal
   Future<List<AggregateFoldChange>> applyEvent({
     required Transaction txn,
     required StorageBackend backend,
     required StoredEvent event,
     required Map<String, String> copyIds,
+    ApplyEventMode mode = ApplyEventMode.local,
   }) async {
     // The entry type's registered version. An entry type the registry does
     // not hold (a library-version event appended before the registry
@@ -118,7 +153,17 @@ class ProjectionInterpreter {
     for (final spec in projections.all()) {
       final maybeCopyId = copyIds[spec.viewName];
       final copy = maybeCopyId == null ? null : copiesById[maybeCopyId];
-      if (copy == null || maybeCopyId == null) continue;
+      // A copy marked for deletion -- another instance's boot or
+      // rebuildView legitimately marked the copy this instance's
+      // _viewCopyIds still names, which follows only after its own next
+      // catch-up transaction commits -- is treated the same as a copy
+      // this instance has not yet registered: skipped entirely, neither
+      // its rows nor its watermark touched. The catch-up driver, not an
+      // append, is what creates this instance's replacement copy
+      // (EVS-DEV-view-convergence/T).
+      if (copy == null || maybeCopyId == null || copy.markedForDeletion) {
+        continue;
+      }
       final copyId = maybeCopyId;
       final current = await _copyIsCurrent(
         txn: txn,
@@ -129,8 +174,35 @@ class ProjectionInterpreter {
       );
       if (!current) continue;
 
-      changes.addAll(
-        await foldStep(
+      if (mode == ApplyEventMode.local) {
+        changes.addAll(
+          await foldStep(
+            txn: txn,
+            backend: backend,
+            spec: spec,
+            promoters: promoters,
+            event: event,
+            registeredVersion: registeredVersion,
+            copyId: copyId,
+          ),
+        );
+        await backend.setViewCopyWatermarkInTxn(
+          txn,
+          copyId,
+          event.sequenceNumber,
+        );
+        continue;
+      }
+
+      // Ingest mode: a throw from this copy's fold (a row key or row data
+      // function that cannot extract from the event's payload, a
+      // promoter, a marks refresh) is this copy's problem alone. It is
+      // caught here, before any watermark write, so the copy keeps no
+      // partial row writes of the failed event and is left behind for the
+      // catch-up driver; every other copy, and the rest of the delivery
+      // or restore, still folds and commits (`EVS-PRD-ingest/G`).
+      try {
+        final stepChanges = await foldStep(
           txn: txn,
           backend: backend,
           spec: spec,
@@ -138,13 +210,24 @@ class ProjectionInterpreter {
           event: event,
           registeredVersion: registeredVersion,
           copyId: copyId,
-        ),
-      );
-      await backend.setViewCopyWatermarkInTxn(
-        txn,
-        copyId,
-        event.sequenceNumber,
-      );
+        );
+        await backend.setViewCopyWatermarkInTxn(
+          txn,
+          copyId,
+          event.sequenceNumber,
+        );
+        changes.addAll(stepChanges);
+      } on Object catch (e, st) {
+        libraryLog(
+          'ingest',
+          'view "${spec.viewName}" could not fold event ${event.eventId}; '
+              'the event is stored and the copy is left behind for the '
+              'catch-up driver',
+          level: LibraryLogLevel.severe,
+          error: e,
+          stackTrace: st,
+        );
+      }
     }
     return changes;
   }
@@ -185,7 +268,8 @@ class ProjectionInterpreter {
   /// Whether a copy at [watermark] is current in [txn]: the log holds no
   /// event, strictly before [beforeSequence] and strictly after
   /// [watermark], that [spec]'s definition folds -- its interest matches,
-  /// or the event is a security finding (EVS-DEV-view-convergence Terms).
+  /// or the event is one [isMarkRefreshingEvent] names (EVS-DEV-view-
+  /// convergence Terms).
   static Future<bool> _copyIsCurrent({
     required Transaction txn,
     required StorageBackend backend,
@@ -204,7 +288,10 @@ class ProjectionInterpreter {
       if (chunk.isEmpty) return true;
       for (final e in chunk) {
         if (e.sequenceNumber >= beforeSequence) return true;
-        if (spec.interest.matches(e) || isSecurityFindingEvent(e)) return false;
+        if (spec.interest.matches(e) ||
+            await isMarkRefreshingEvent(txn, backend, e)) {
+          return false;
+        }
       }
       after = chunk.last.sequenceNumber;
       if (chunk.length < chunkSize) return true;

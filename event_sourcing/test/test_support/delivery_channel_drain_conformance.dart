@@ -802,6 +802,74 @@ void runDeliveryChannelDrainScenarios(
       expect(await w.findings(), hasLength(1));
     });
 
+    // Verifies: EVS-DEV-delivery-resume/I
+    // a record below the sender's resumes the channel only when the
+    //   retained delivery numbered one above it links to its hash; a record
+    //   of a forked or foreign receiver history, whose hash the retained
+    //   delivery does not link to, does not resume it.
+    // Verifies: EVS-DEV-delivery-resume/Y
+    // a record below the sender's that assertion I does not resume starts a
+    //   new generation with a channel_unexplained finding.
+    // Verifies: EVS-PRD-delivery-channel/L
+    // a receiver behind whose record does not prove a common point by
+    //   content is realigned by a new generation, not a resume.
+    test('a record behind whose hash the retained delivery does not link to '
+        'is unexplained and starts generation 2', () async {
+      if (!available) return;
+      final d = NativeDestination(id: 'hub');
+      await w.activate(d);
+      for (var i = 1; i <= 3; i++) {
+        await w.note('n$i');
+      }
+      await w.deliverAll(d);
+      final channel = await w.channel('hub');
+      final before = await w.senderRecord('hub');
+      // A record naming delivery 1 of a forked or foreign receiver history:
+      // its hash is not the one the retained delivery 2 links to.
+      final forked = DeliveryRecord(deliveryNumber: 1, deliveryHash: 'f' * 64);
+      d.enqueueScript(
+        SendAnswered(
+          ReceiverRefusal(
+            channel: channel,
+            receiverDatabaseId: d.receiverDatabaseId,
+            record: forked,
+            refusal: RefusalKind.outOfSequence,
+          ),
+        ),
+      );
+      await w.note('n4');
+      await w.fill(d);
+      await w.drain(d);
+
+      expect(
+        await w.resumeEvents(),
+        isEmpty,
+        reason:
+            'the forked record does not prove a common point by '
+            'content, so no resume is recorded',
+      );
+      final findings = await w.findings();
+      expect(findings, hasLength(1));
+      final data = findings.single.data;
+      expect(data['kind'], 'channel_unexplained');
+      expect(data['evidence'], <String, Object?>{
+        'channel': channel.toJson(),
+        'sender_record': before!.receiverRecord.toJson(),
+        'receiver_record': forked.toJson(),
+        'recorded_receiver_database_id': d.receiverDatabaseId,
+        'responding_receiver_database_id': d.receiverDatabaseId,
+      });
+      expect((data['detector']! as Map)['role'], 'sender');
+      expect(
+        await w.senderRecord('hub'),
+        SenderChannelRecord(
+          generation: 2,
+          receiverRecord: DeliveryRecord.none,
+          receiverDatabaseId: d.receiverDatabaseId,
+        ),
+      );
+    });
+
     // Verifies: EVS-DEV-delivery-resume/K
     // a record ahead of the sender's naming no delivery the sender attempted
     //   starts a new generation with a sender_regressed finding.

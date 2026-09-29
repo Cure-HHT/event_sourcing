@@ -21,9 +21,15 @@
 // Implements: EVS-DEV-converging-view-reads/J
 // ViewCopyStatus lets a caller read, per registered view, its state and
 //   its copy's progress (watermark, log head, last failure).
+import 'package:event_sourcing/src/projections/integrity_marks.dart'
+    show IntegrityMarks;
 import 'package:event_sourcing/src/projections/projection_spec.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
-    show kSecurityFindingEntryType, kSecurityFindingRecordedEventType;
+    show
+        kDestinationSenderSucceededEntryType,
+        kDestinationSenderSucceededEventType,
+        kSecurityFindingEntryType,
+        kSecurityFindingRecordedEventType;
 import 'package:event_sourcing/src/storage/storage_backend.dart';
 import 'package:event_sourcing/src/storage/stored_event.dart';
 import 'package:event_sourcing/src/storage/transaction.dart';
@@ -162,6 +168,32 @@ bool isSecurityFindingEvent(StoredEvent event) =>
     event.entryType == kSecurityFindingEntryType &&
     event.eventType == kSecurityFindingRecordedEventType;
 
+/// Whether [event] is a sender-succession event: it may extend the
+/// succession lineage a received chain finding's reach depends on
+/// (`IntegrityMarks.forEvent`), so every copy's definition folds it for its
+/// outstanding-finding marks whatever the view's interest, the same as a
+/// security finding event.
+bool _isSuccessionEvent(StoredEvent event) =>
+    event.entryType == kDestinationSenderSucceededEntryType &&
+    event.eventType == kDestinationSenderSucceededEventType;
+
+/// Whether [event], found past a copy's watermark inside [txn], is one
+/// every copy's definition folds for its outstanding-finding marks
+/// whatever the view's interest: a security finding event, a
+/// sender-succession event, or an event a held `fork_unrecorded` or
+/// `position_reused` finding treats as changing other aggregates' marks
+/// ([IntegrityMarks.changesOtherMarks]) (EVS-PRD-materializer/E&G; see
+/// EVS-DEV-view-convergence Terms, "folds").
+@internal
+Future<bool> isMarkRefreshingEvent(
+  Transaction txn,
+  StorageBackend backend,
+  StoredEvent event,
+) async {
+  if (isSecurityFindingEvent(event) || _isSuccessionEvent(event)) return true;
+  return IntegrityMarks.changesOtherMarks(txn, backend, event);
+}
+
 /// What [scanViewCurrency] finds scanning the log past a copy's watermark.
 @internal
 class ViewCurrencyScan {
@@ -192,9 +224,10 @@ class ViewCurrencyScan {
 
 /// Scans the log past [copy]'s watermark, inside [txn], for the events
 /// [spec]'s definition folds (EVS-DEV-view-convergence Terms): an event
-/// [spec]'s interest matches, or any security finding.
+/// [spec]'s interest matches, or one [isMarkRefreshingEvent] names.
 // Implements: EVS-DEV-converging-view-reads/B
 // Implements: EVS-DEV-converging-view-reads/D
+// Implements: EVS-PRD-materializer/G
 @internal
 Future<ViewCurrencyScan> scanViewCurrency({
   required Transaction txn,
@@ -219,7 +252,7 @@ Future<ViewCurrencyScan> scanViewCurrency({
         anyFolding = true;
         unsettled.add(e.aggregateId);
       }
-      if (isSecurityFindingEvent(e)) {
+      if (await isMarkRefreshingEvent(txn, backend, e)) {
         anyFolding = true;
         allUnsettled = true;
       }

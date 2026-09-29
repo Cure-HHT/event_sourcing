@@ -31,6 +31,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/server/ws_connection_registry.dart';
@@ -137,12 +138,18 @@ class AuthorizationWatcher {
           StaleDataReason.roleAssigned,
         );
       case 'permission_revoked':
-        unawaited(_forceLogoutAllWithRole(event.data['role']! as String));
+        unawaited(
+          _runFanOut(
+            () => _forceLogoutAllWithRole(event.data['role']! as String),
+          ),
+        );
       case 'permission_granted':
         unawaited(
-          _staleDataAllWithRole(
-            event.data['role']! as String,
-            StaleDataReason.permissionAdded,
+          _runFanOut(
+            () => _staleDataAllWithRole(
+              event.data['role']! as String,
+              StaleDataReason.permissionAdded,
+            ),
           ),
         );
     }
@@ -171,6 +178,10 @@ class AuthorizationWatcher {
     }
   }
 
+  // Implements: EVS-DEV-converging-view-reads/H
+  // (the watcher's own force-logout decision fails closed, per user,
+  // on the policy's typed transient refusal rather than aborting the
+  // fan-out or treating the user as unaffected)
   Future<void> _forceLogoutAllWithRole(String role) async {
     for (final uid in connectionRegistry.connectedUserIds.toList()) {
       // Synthetic principal to query the policy (activeRole is not
@@ -180,11 +191,22 @@ class AuthorizationWatcher {
         roles: {role},
         activeRole: role,
       );
-      final eff = await policy.effectivePermissionsFor(principal);
-      if (eff.activeRole == role) _forceLogout(uid);
+      try {
+        final eff = await policy.effectivePermissionsFor(principal);
+        if (eff.activeRole == role) _forceLogout(uid);
+      } on ViewConvergingRefusal {
+        // Fail closed: a narrowing event fired, and this user's role
+        // cannot be confirmed one way or the other while the policy's
+        // view converges, so force them out rather than assume they
+        // still hold the role. The loop continues with later users.
+        _forceLogout(uid);
+      }
     }
   }
 
+  // Implements: EVS-DEV-converging-view-reads/H
+  // (an expanding event over-notifies rather than aborting the
+  // fan-out when the policy's view is converging for a user)
   Future<void> _staleDataAllWithRole(
     String role,
     StaleDataReason reason,
@@ -195,8 +217,33 @@ class AuthorizationWatcher {
         roles: {role},
         activeRole: role,
       );
-      final eff = await policy.effectivePermissionsFor(principal);
-      if (eff.activeRole == role) _staleData(uid, reason);
+      try {
+        final eff = await policy.effectivePermissionsFor(principal);
+        if (eff.activeRole == role) _staleData(uid, reason);
+      } on ViewConvergingRefusal {
+        // Over-notify is safe: send the expansion signal even though
+        // the role can't be confirmed while the policy's view
+        // converges. The loop continues with later users.
+        _staleData(uid, reason);
+      }
+    }
+  }
+
+  /// Runs a fan-out body and swallows any residual error rather than
+  /// letting it escape the `unawaited()` call as an uncaught async
+  /// error. Per-user `ViewConvergingRefusal`s are already handled inside
+  /// [_forceLogoutAllWithRole] and [_staleDataAllWithRole]; this is a
+  /// last-resort guard for anything else the policy or registry throws.
+  Future<void> _runFanOut(Future<void> Function() body) async {
+    try {
+      await body();
+    } catch (error, stackTrace) {
+      developer.log(
+        'AuthorizationWatcher fan-out failed',
+        name: 'reaction.authorization_watcher',
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 }

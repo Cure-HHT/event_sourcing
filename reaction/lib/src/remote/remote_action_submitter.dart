@@ -19,6 +19,7 @@ import 'package:reaction/src/remote/remote_auth_session.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/action_submission_codec.dart';
 import 'package:reaction/src/wire/dispatch_result_codec.dart';
+import 'package:reaction/src/wire/view_converging_codec.dart';
 
 class RemoteActionSubmitter implements ActionSubmitter {
   RemoteActionSubmitter({required this.connection, required this.authSession});
@@ -41,6 +42,15 @@ class RemoteActionSubmitter implements ActionSubmitter {
         (authSession as RemoteAuthSession).handleWireUnauthorized();
       }
       throw const TransportException('unauthorized');
+    }
+    if (res.statusCode == 503) {
+      // Implements: EVS-DEV-converging-view-reads/H
+      // a 503 view_converging response from the action route decodes
+      //   to a typed, transient ViewConvergingRefusal naming the
+      //   view, so the caller can retry rather than treating it as an
+      //   opaque transport failure.
+      final refusal = decodeViewConvergingBody(res.body);
+      if (refusal != null) throw refusal;
     }
     if (res.statusCode != 200) {
       throw TransportException('http ${res.statusCode}');

@@ -41,7 +41,6 @@ import 'dart:async';
 
 import 'package:event_sourcing/src/entry_type_registry.dart';
 import 'package:event_sourcing/src/logging.dart';
-import 'package:event_sourcing/src/projections/integrity_marks.dart';
 import 'package:event_sourcing/src/projections/interpreter/projection_interpreter.dart';
 import 'package:event_sourcing/src/projections/projection_registry.dart';
 import 'package:event_sourcing/src/projections/view_fingerprint.dart';
@@ -267,16 +266,18 @@ class ViewCatchUpDriver {
       for (final target in _targets) {
         if (_stopping) return;
         final outcome = await _attemptView(target, copies);
-        if (outcome == _Outcome.progressed || outcome == _Outcome.failed) {
-          progressed = true;
-        }
+        // Implements: EVS-DEV-view-convergence/Q
+        // a failure backs off; it is not progress, so it must not skip the
+        //   idle wait below -- a copy that fails every attempt (a missing
+        //   copy folding a poisoned event, among others) would otherwise
+        //   spin the discovery loop with no delay at all.
+        if (outcome == _Outcome.progressed) progressed = true;
       }
       for (final copyId in _deletionCopyIds.toList()) {
         if (_stopping) return;
         final outcome = await _attemptDeletion(copyId);
-        if (outcome == _Outcome.progressed || outcome == _Outcome.failed) {
-          progressed = true;
-        }
+        // Implements: EVS-DEV-view-convergence/Q
+        if (outcome == _Outcome.progressed) progressed = true;
         if (outcome == _Outcome.done) _deletionCopyIds.remove(copyId);
       }
       if (_stopping) return;
@@ -329,11 +330,15 @@ class ViewCatchUpDriver {
         )
         .toList();
     final knownCopyId = existing.isEmpty ? null : existing.single.copyId;
-    if (knownCopyId != null && !_dueNow(knownCopyId)) return _Outcome.idle;
+    // Implements: EVS-DEV-view-convergence/Q
+    // backoff applies whether or not an unmarked copy of the fingerprint
+    //   exists yet: a missing copy's fold failing (a poisoned event, a
+    //   transient storage error) leaves no copy behind for the next pass
+    //   to key off, so this keys the check by the fingerprint instead.
     final lockKey = knownCopyId ?? target.fingerprint;
+    if (!_dueNow(lockKey)) return _Outcome.idle;
 
     Future<_StepResult> body(Transaction txn) async {
-      await IntegrityMarks.beginReplay(txn, _backend);
       final existingCopy = await _backend.readUnmarkedViewCopyInTxn(
         txn,
         target.fingerprint,
@@ -430,7 +435,14 @@ class ViewCatchUpDriver {
       // has committed: a rolled-back attempt must not leave this instance
       // pointing at a copy id no reader can find.
       _viewCopyIds[target.viewName] = result.copyId;
-      _onSuccess(result.copyId);
+      // Implements: EVS-DEV-view-convergence/Q
+      // Clears whichever key a prior failure on this attempt was recorded
+      // under -- the fingerprint when no copy existed yet, the copy id
+      // otherwise -- so a stale backoff entry never lingers once the
+      // attempt it was keyed for succeeds: left in place, its
+      // `nextAttemptAt` would sit in the past forever, making
+      // `_nextWaitDuration` return zero on every future idle wait.
+      _onSuccess(lockKey);
       if (result.reachedTip) onCaughtUp?.call(target.viewName);
       return result.steps == 0
           ? _Outcome.idle

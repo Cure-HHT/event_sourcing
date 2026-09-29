@@ -22,6 +22,7 @@ import 'package:reaction/src/interfaces/auth_session.dart';
 import 'package:reaction/src/interfaces/permission_source.dart';
 import 'package:reaction/src/remote/remote_connection.dart';
 import 'package:reaction/src/wire/effective_authorization_codec.dart';
+import 'package:reaction/src/wire/view_converging_codec.dart';
 
 /// PermissionSource over HTTP. Fetches an [EffectiveAuthorization]
 /// from the server's `/permissions/snapshot` route on every Authenticated
@@ -103,18 +104,28 @@ class RemotePermissionSource implements PermissionSource {
   /// the UI without waiting for the next Authenticated transition.
   ///
   /// Bumps the generation counter so any in-flight Authenticated-
-  /// triggered fetch is superseded; the last writer wins. Quiet on
-  /// transport errors (same shape as the Authenticated-transition
-  /// path).
+  /// triggered fetch is superseded; the last writer wins. Quiet on a
+  /// transport error, but propagates a typed [ViewConvergingRefusal]
+  /// (EVS-DEV-converging-view-reads/H) from a 503 view_converging
+  /// response: an explicit caller-awaited refresh is the one path
+  /// where the refusal is worth surfacing rather than swallowing, so
+  /// UI code that calls it can retry instead of seeing a stale
+  /// snapshot with no explanation.
   @override
   Future<void> refresh() async {
     if (_isDisposed) return;
     if (authSession.current is! Authenticated) return;
     _fetchGen++;
-    await _fetchSnapshot();
+    await _fetchSnapshot(rethrowConverging: true);
   }
 
-  Future<void> _fetchSnapshot() async {
+  // Implements: EVS-DEV-converging-view-reads/H
+  // decodes a 503 view_converging response into a typed
+  //   ViewConvergingRefusal; rethrowConverging distinguishes the
+  //   caller-awaited refresh() path (propagates it) from the
+  //   fire-and-forget Authenticated-transition fetch (stays quiet,
+  //   since nothing awaits it to react).
+  Future<void> _fetchSnapshot({bool rethrowConverging = false}) async {
     if (_isDisposed) return;
     final gen = _fetchGen;
     final url = connection.baseUrl.replace(path: '/permissions/snapshot');
@@ -149,6 +160,11 @@ class RemotePermissionSource implements PermissionSource {
       }
       _current = effective;
       if (!_controller.isClosed) _controller.add(effective);
+      return;
+    }
+    if (res.statusCode == 503 && rethrowConverging) {
+      final refusal = decodeViewConvergingBody(res.body);
+      if (refusal != null) throw refusal;
     }
     // Non-200: leave current state untouched.
   }

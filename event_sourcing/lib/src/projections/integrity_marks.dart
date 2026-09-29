@@ -160,21 +160,6 @@ final class _HeldFinding {
 /// null when none records one.
 typedef _Authorship = Map<String, int?>;
 
-/// Adds [event] to [authorship].
-void _addAuthorship(_Authorship authorship, StoredEvent event) {
-  final c = ChainCoordinates.of(event);
-  final origin = c.originatingDatabaseId;
-  if (origin == null) return;
-  final position = c.originPosition;
-  final held = authorship[origin];
-  authorship[origin] = position == null
-      ? held
-      : (held == null || position > held ? position : held);
-}
-
-/// Chunk size of the one read of the log a replay makes.
-const int _replayChunkSize = 500;
-
 /// The marks state of one transaction: the holder's identity, the findings
 /// held, and the lookups made for the event being folded.
 final class _TransactionMarks {
@@ -224,57 +209,14 @@ final class _TransactionMarks {
     _lineageCache.clear();
   }
 
-  /// Whether the transaction replays a log it does not append to, so the
-  /// authorship of every aggregate is read once.
-  bool replay = false;
-
-  /// In a replay, the authorship of every aggregate, once read, and the
-  /// highest local sequence number it covers.
-  Map<String, _Authorship>? authorship;
-  int authorshipThrough = 0;
-
-  /// The authorship of [aggregateId]: in a replay from one read of the
-  /// log, otherwise from the backend's own authorship index (never a scan
-  /// of the aggregate's held events; see `EVS-PRD-materializer/E`).
+  /// The authorship of [aggregateId], from the backend's own authorship
+  /// index: never a scan of the aggregate's held events, nor of the whole
+  /// event store (`EVS-PRD-materializer/E`).
   Future<_Authorship> authorshipOf(
     Transaction txn,
     StorageBackend backend,
     String aggregateId,
-  ) async {
-    if (!replay) {
-      return backend.readAggregateAuthorshipInTxn(txn, aggregateId);
-    }
-    var all = authorship;
-    if (all == null) {
-      all = <String, _Authorship>{};
-      int? after;
-      while (true) {
-        final chunk = await backend.findAllEventsInTxn(
-          txn,
-          afterSequence: after,
-          limit: _replayChunkSize,
-        );
-        for (final e in chunk) {
-          _addAuthorship(all.putIfAbsent(e.aggregateId, () => {}), e);
-          if (e.sequenceNumber > authorshipThrough) {
-            authorshipThrough = e.sequenceNumber;
-          }
-        }
-        if (chunk.length < _replayChunkSize) break;
-        after = chunk.last.sequenceNumber;
-      }
-      authorship = all;
-    }
-    return all[aggregateId] ?? const <String, int?>{};
-  }
-
-  /// Adds [event], stored after the replay's read, to the authorship.
-  void noteFolded(StoredEvent event) {
-    final all = authorship;
-    if (all == null || event.sequenceNumber <= authorshipThrough) return;
-    _addAuthorship(all.putIfAbsent(event.aggregateId, () => {}), event);
-    authorshipThrough = event.sequenceNumber;
-  }
+  ) => backend.readAggregateAuthorshipInTxn(txn, aggregateId);
 
   /// The event the memo below belongs to.
   String? memoEventId;
@@ -324,7 +266,6 @@ abstract final class IntegrityMarks {
   ) async {
     final state = await _stateOf(txn, backend);
     if (state.memoEventId == event.eventId) return state.memo!;
-    state.noteFolded(event);
 
     if (_isFinding(event) &&
         !state.findings.any((f) => f.eventId == event.eventId)) {
@@ -342,19 +283,6 @@ abstract final class IntegrityMarks {
       ..memoEventId = event.eventId
       ..memo = result;
     return result;
-  }
-
-  /// Declares that [txn] replays the log without appending to it (a
-  /// rebuild, or the re-derivation at open), so the marks read the
-  /// authorship of every aggregate in one read of the log rather than one
-  /// read per event. An event folded in [txn] beyond that read is added to
-  /// it.
-  static Future<void> beginReplay(
-    Transaction txn,
-    StorageBackend backend,
-  ) async {
-    await _stateOf(txn, backend);
-    _byTransaction[txn]!.replay = true;
   }
 
   static Future<_TransactionMarks> _stateOf(
@@ -383,6 +311,44 @@ abstract final class IntegrityMarks {
   static bool _isSuccessionEvent(StoredEvent event) =>
       event.entryType == kDestinationSenderSucceededEntryType &&
       event.eventType == kDestinationSenderSucceededEventType;
+
+  /// Whether a held `fork_unrecorded` or `position_reused` finding treats
+  /// [event] as changing outstanding-finding marks other than by [event]
+  /// itself being a finding or a succession event: an event of the
+  /// finding's chain database sharing a fork's predecessor hash (which can
+  /// lower the fork's lowest position, [_Evaluation.forEvent]'s
+  /// `forkUnrecorded` branch), or one at or above the finding's threshold
+  /// position (the same branch's `else`) (EVS-PRD-materializer/E). A view's
+  /// currency scan calls this once a gap event fails the interest and
+  /// finding/succession checks, so the read costs no full log scan: the
+  /// findings this transaction holds are read once and cached by
+  /// [_stateOf], and this walks only that held set.
+  static Future<bool> changesOtherMarks(
+    Transaction txn,
+    StorageBackend backend,
+    StoredEvent event,
+  ) async {
+    final state = await _stateOf(txn, backend);
+    if (state.findings.isEmpty) return false;
+    final coordinates = ChainCoordinates.of(event);
+    final origin = coordinates.originatingDatabaseId;
+    if (origin == null) return false;
+    final eval = _Evaluation(txn, backend, state);
+    for (final f in state.findings) {
+      final chainDb = await eval._chainDatabaseOf(f);
+      if (chainDb == null || chainDb != origin) continue;
+      if (f.kind == FindingKind.forkUnrecorded &&
+          coordinates.previousEventHash == f.evidence['previous_event_hash']) {
+        return true;
+      }
+      final threshold = await eval._threshold(f);
+      final position = coordinates.originPosition;
+      if (threshold != null && position != null && position >= threshold) {
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 /// One evaluation of the marks, with the lookups it made.

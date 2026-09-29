@@ -11,6 +11,7 @@ import 'dart:convert';
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:reaction/src/server/auth_middleware.dart';
+import 'package:reaction/src/server/view_converging_response.dart';
 import 'package:reaction/src/wire/action_submission_codec.dart';
 import 'package:reaction/src/wire/dispatch_result_codec.dart';
 import 'package:shelf/shelf.dart';
@@ -60,7 +61,18 @@ Handler actionHandler({
       security: const SecurityDetails(),
       requestStartedAt: clock(),
     );
-    final result = await dispatcher.dispatch(submission, ctx);
+    final DispatchResult<Object?> result;
+    try {
+      result = await dispatcher.dispatch(submission, ctx);
+    } on ViewConvergingRefusal catch (e) {
+      // Implements: EVS-DEV-converging-view-reads/H
+      // a converging-view refusal from the authorization policy's
+      //   read of the role-assignment or permission-grant views
+      //   during dispatch answers a typed, transient 503 naming the
+      //   view, so RemoteActionSubmitter can decode it instead of
+      //   seeing an untyped 500.
+      return viewConvergingResponse(e);
+    }
     return Response.ok(
       jsonEncode(DispatchResultCodec.encode(result)),
       headers: {'Content-Type': 'application/json'},

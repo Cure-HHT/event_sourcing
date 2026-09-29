@@ -2,17 +2,20 @@
 // whole view: seeds a Sembast memory database to 1,000 events and to
 // 40,000 events, each with several aggregates, eligible and annotation
 // events, one ingested event, a registered TableProjectionSpec view the
-// eligible-version events fold into, and one held position_reused and one
-// held fork_unrecorded finding about the database's own chain, then times
-// a fixed batch of ordinary appends at each size.
+// eligible-version events fold into, one held position_reused and one held
+// fork_unrecorded finding about the database's own chain, and one received
+// position_reused finding naming a foreign predecessor database with a
+// recorded successor, then times a fixed batch of ordinary appends at each
+// size.
 // [SembastBackend.readLatestEventHash] and
 // [SembastBackend.readLatestEligibleVersionInTxn] are each served from a
 // backend-owned index keyed by the value they answer with, and so are the
 // marks fold's own lookups once a finding is held
-// ([SembastBackend.readAggregateAuthorshipInTxn] and
-// [SembastBackend.readLowestOriginPositionByPredecessorInTxn], plus the
-// held-finding-sequences record `findSecurityFindingsInTxn` reads) — never
-// a Finder over the whole store (`EVS-DEV-causal-parents/H`,
+// ([SembastBackend.readAggregateAuthorshipInTxn],
+// [SembastBackend.readLowestOriginPositionByPredecessorInTxn], the
+// held-finding-sequences record `findSecurityFindingsInTxn` reads, and the
+// received finding's succession-lineage read) — never a Finder over the
+// whole store (`EVS-DEV-causal-parents/H`, `EVS-DEV-view-convergence/N`,
 // `EVS-PRD-materializer/E`, Rationale). Each measured append also dedupes
 // by content against a fresh aggregate, so
 // [SembastBackend.findEventsForAggregateInTxn] is served from its own
@@ -34,10 +37,14 @@ library;
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/event_store.dart'
     show recordFindingInTxnForTest;
+import 'package:event_sourcing/src/ingest/sender_succession.dart'
+    show SenderSuccessionChannel, SenderSuccessionData;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sembast/sembast_memory.dart' hide Transaction;
 
 import '../test_support/deliveries.dart';
+import '../test_support/ingest_record_findings_conformance.dart'
+    show sealedRecord;
 
 const _kTableViewName = 'append_cost_table';
 
@@ -228,6 +235,58 @@ Future<void> _seedHeldFindings(EventStore store) async {
   });
 }
 
+/// Delivers a received `position_reused` finding (held as received, not
+/// authored) naming a foreign predecessor database, plus a sender-
+/// succession event naming a successor for it, so every later marks fold
+/// resolves the finding's chain database through `chainDatabase ->
+/// state.lineageOf` rather than the `heldAsAuthored` shortcut: the
+/// succession-lineage read this guards must be served from a backend index,
+/// never a scan of the whole event store, however large it grows
+/// (`EVS-DEV-view-convergence/N`, `EVS-PRD-materializer/E`).
+Future<void> _seedReceivedChainFindingWithLineage(EventStore store) async {
+  const predecessorId = 'append-cost-pred-db';
+  const successorId = 'append-cost-succ-db';
+  const findingId = 'append-cost-received-position-reused';
+  final received = sealedRecord(
+    databaseId: successorId,
+    entryType: kSecurityFindingEntryType,
+    aggregateType: 'security_finding',
+    eventType: kSecurityFindingRecordedEventType,
+    aggregateId: findingId,
+    data: <String, Object?>{
+      'finding_id': findingId,
+      'kind': 'position_reused',
+      'evidence': <String, Object?>{
+        'database_id': predecessorId,
+        'origin_sequence_number': 1,
+      },
+      'aggregates': const <String>[],
+      'detector': <String, Object?>{
+        'database_id': successorId,
+        'role': 'ingest',
+        'library_version': '0.0.0',
+      },
+    },
+  );
+  await deliverTo(store, <Map<String, Object?>>[received]);
+
+  const successionData = SenderSuccessionData(
+    id: 'append-cost-destination',
+    registrationId: 'append-cost-registration',
+    databaseId: successorId,
+    predecessorDatabaseId: predecessorId,
+    predecessorChannels: <SenderSuccessionChannel>[],
+  );
+  final successionRecord = sealedRecord(
+    databaseId: successorId,
+    entryType: kDestinationSenderSucceededEntryType,
+    aggregateType: kDestinationAuditAggregateType,
+    eventType: kDestinationSenderSucceededEventType,
+    data: successionData.toJson(),
+  );
+  await deliverTo(store, <Map<String, Object?>>[successionRecord]);
+}
+
 /// A handful of ordinary appends, discarded from the measurement, so the
 /// timed batch does not absorb one-time warm-up cost (JIT, first-write page
 /// faults) that would otherwise bias whichever store is timed first.
@@ -280,6 +339,7 @@ void main() {
     await _seedTo(small, 1000);
     await _seedOneIngestedEvent(small);
     await _seedHeldFindings(small);
+    await _seedReceivedChainFindingWithLineage(small);
     await _warmUp(small);
     final smallElapsed = await _timeMeasuredAppends(small, 'small');
 
@@ -287,6 +347,7 @@ void main() {
     await _seedTo(large, 40000);
     await _seedOneIngestedEvent(large);
     await _seedHeldFindings(large);
+    await _seedReceivedChainFindingWithLineage(large);
     await _warmUp(large);
     final largeElapsed = await _timeMeasuredAppends(large, 'large');
 

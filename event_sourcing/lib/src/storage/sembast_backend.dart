@@ -10,6 +10,7 @@ import 'package:event_sourcing/src/security/event_security_context.dart';
 import 'package:event_sourcing/src/security/security_context_store.dart';
 import 'package:event_sourcing/src/security/system_entry_types.dart'
     show
+        kDestinationSenderSucceededEntryType,
         kIngestAuditEntryType,
         kIngestDeliveryAcceptedEventType,
         kSecurityFindingEntryType,
@@ -508,6 +509,7 @@ class SembastBackend extends StorageBackend {
     await _recordLatestAuthoredInTxn(t._sembastTxn, event);
     await _recordLatestEligibleVersionInTxn(t._sembastTxn, event);
     await _recordFindingHeldInTxn(t._sembastTxn, event);
+    await _recordSenderSuccessionInTxn(t._sembastTxn, event);
     await _recordAggregateAuthorshipInTxn(t._sembastTxn, event);
     await _recordPredecessorLowestPositionInTxn(t._sembastTxn, event);
     await _recordAggregateEventSequenceInTxn(t._sembastTxn, event);
@@ -819,6 +821,14 @@ class SembastBackend extends StorageBackend {
   /// cleared.
   static const _heldFindingSequencesKey = 'held_finding_sequences';
 
+  /// The `backend_state` record: the local sequence numbers of the held
+  /// `system.destination_sender_succeeded` events, authored and received,
+  /// in the order they were stored. So the succession-lineage lookup a
+  /// received chain finding's marks resolve from reads these events by key
+  /// rather than scanning the log for them. Never cleared: a succession
+  /// event is never removed.
+  static const _senderSuccessionSequencesKey = 'sender_succession_sequences';
+
   /// The chain coordinates of the stored record [value].
   static ChainCoordinates _coordinatesOf(Map<String, Object?> value) {
     final metadata = value['metadata'];
@@ -904,6 +914,25 @@ class SembastBackend extends StorageBackend {
   static bool _isSecurityFinding(Object? entryType, Object? eventType) =>
       entryType == kSecurityFindingEntryType &&
       eventType == kSecurityFindingRecordedEventType;
+
+  /// Appends [event]'s sequence number to the sender-succession-sequences
+  /// record when [event], just stored in [txn], is a
+  /// `system.destination_sender_succeeded` event, authored or received.
+  // Implements: EVS-PRD-materializer/E
+  // the record of the held sender-succession events is written in the
+  //   transaction that stores each one, so the succession-lineage lookup
+  //   never scans the log for them.
+  Future<void> _recordSenderSuccessionInTxn(
+    sembast.Transaction txn,
+    StoredEvent event,
+  ) async {
+    if (event.entryType != kDestinationSenderSucceededEntryType) return;
+    final record = _backendStateStore.record(_senderSuccessionSequencesKey);
+    final existing = await record.get(txn);
+    final sequences = (existing is List ? List<int>.from(existing) : <int>[])
+      ..add(event.sequenceNumber);
+    await record.put(txn, sequences);
+  }
 
   /// Merges [event]'s originating database and origin position into the
   /// aggregate-authorship record when [event], just stored in [txn], names
@@ -1304,6 +1333,42 @@ class SembastBackend extends StorageBackend {
         throw StateError(
           'a held security finding is recorded at sequence $sequence, and '
           'no event of that sequence is stored under it',
+        );
+      }
+      events.add(
+        StoredEvent.fromMap(Map<String, Object?>.from(value), sequence),
+      );
+    }
+    return events;
+  }
+
+  /// The sender-succession sequence numbers recorded so far, read by key.
+  Future<List<int>> _senderSuccessionSequencesInTxn(_SembastTxn t) async {
+    final value = await _backendStateStore
+        .record(_senderSuccessionSequencesKey)
+        .get(t._reads);
+    return value is List ? List<int>.from(value) : const <int>[];
+  }
+
+  // Implements: EVS-PRD-materializer/E
+  // the succession-lineage lookup a received chain finding's marks resolve
+  //   from is served by the sender-succession-sequences record fetched by
+  //   key — no scan, no Finder — never a Sembast append-transaction scan of
+  //   the whole event store.
+  @override
+  @internal
+  Future<List<StoredEvent>> findSenderSuccessionEventsInTxn(
+    Transaction txn,
+  ) async {
+    final t = _requireValidTxn(txn);
+    final sequences = await _senderSuccessionSequencesInTxn(t);
+    final events = <StoredEvent>[];
+    for (final sequence in sequences) {
+      final value = await _eventStore.record(sequence).get(t._reads);
+      if (value == null || value['sequence_number'] != sequence) {
+        throw StateError(
+          'a held sender-succession event is recorded at sequence '
+          '$sequence, and no event of that sequence is stored under it',
         );
       }
       events.add(

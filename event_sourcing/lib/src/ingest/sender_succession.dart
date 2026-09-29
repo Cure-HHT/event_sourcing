@@ -284,17 +284,15 @@ Future<List<SenderSuccessionData>> readSenderSuccessions(
   await backend.findAllEvents(entryType: kDestinationSenderSucceededEntryType),
 );
 
-/// [readSenderSuccessions] read inside [txn].
+/// [readSenderSuccessions] read inside [txn], served from
+/// [StorageBackend.findSenderSuccessionEventsInTxn]'s backend index rather
+/// than a scan proportional to the whole event store
+/// (`EVS-PRD-materializer/E`).
 @internal
 Future<List<SenderSuccessionData>> readSenderSuccessionsInTxn(
   Transaction txn,
   StorageBackend backend,
-) async => _parseAll(
-  await backend.findAllEventsInTxn(
-    txn,
-    entryType: kDestinationSenderSucceededEntryType,
-  ),
-);
+) async => _parseAll(await backend.findSenderSuccessionEventsInTxn(txn));
 
 List<SenderSuccessionData> _parseAll(List<StoredEvent> events) {
   final successions = <SenderSuccessionData>[];

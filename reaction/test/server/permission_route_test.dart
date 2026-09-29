@@ -4,6 +4,10 @@
 // Verifies: EVS-PRD-cross-process-event-transport/A
 // EffectiveAuthorization
 //   codec round-trip through the route.
+// Verifies: EVS-DEV-converging-view-reads/H
+// a ViewConvergingRefusal
+//   from the policy answers 503 + view_converging body + Retry-After,
+//   not an untyped 500.
 
 import 'dart:convert';
 
@@ -68,4 +72,48 @@ void main() {
     final res = await handler(req);
     expect(res.statusCode, 500);
   });
+
+  test('returns 503 + view_converging body + Retry-After when the policy '
+      'throws ViewConvergingRefusal', () async {
+    // Verifies: EVS-DEV-converging-view-reads/H
+    final handler = permissionSnapshotHandler(
+      policy: _ThrowingPolicy(const ViewConvergingRefusal('user_role_scopes')),
+    );
+    final req = Request(
+      'GET',
+      Uri.parse('http://x/permissions/snapshot'),
+      context: {
+        'reaction.principal': UserPrincipal(
+          userId: 'u-1',
+          roles: {'install'},
+          activeRole: 'install',
+        ),
+      },
+    );
+    final res = await handler(req);
+    expect(res.statusCode, 503);
+    expect(res.headers['retry-after'], isNotNull);
+    final body = jsonDecode(await res.readAsString()) as Map<String, Object?>;
+    expect(body['error'], 'view_converging');
+    expect(body['view'], 'user_role_scopes');
+  });
+}
+
+class _ThrowingPolicy implements AuthorizationPolicy {
+  _ThrowingPolicy(this.error);
+  final Exception error;
+
+  @override
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Transaction? txn,
+  }) async => throw error;
+
+  @override
+  Future<AuthorizationDecision> isPermitted(
+    Principal principal,
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Transaction? txn,
+  }) async => const Allow();
 }

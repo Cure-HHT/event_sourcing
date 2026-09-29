@@ -10,7 +10,15 @@
 // Implements: EVS-DEV-converging-view-reads/I
 // waits until role_permission_grants is current for the instance before
 //   reading it, and throws ViewConvergenceTimeout, naming it and its
-//   copy's progress, once the caller's deadline passes first.
+//   copy's progress, once the caller's deadline passes first; a read
+//   taken converging (the view converged again after the wait returned)
+//   is discarded and apply() re-enters that wait rather than treating the
+//   read's rows as the view's settled contents.
+// Implements: EVS-DEV-converging-view-reads/H
+// never decides from a converging read: satisfies H's intent for this
+//   operation through I's deadline-bounded wait rather than a typed
+//   refusal, since I requires waiting the view current before reading it
+//   in the first place.
 
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:event_sourcing/src/permissions/wait_for_current_views.dart';
@@ -54,13 +62,24 @@ class PermissionSeedApplier {
     // Wait for role_permission_grants to be current, then read its rows.
     // Reconstruct the '<role>:<permName>' pair-id (matching the events'
     // aggregateId) from the row payload — the row itself does not carry
-    // the storage key.
-    await waitForViewsCurrent(eventStore, {
-      'role_permission_grants',
-    }, DateTime.now().add(timeout));
-    final rows = (await eventStore.reader.findViewRows(
-      'role_permission_grants',
-    )).rows;
+    // the storage key. The view can converge again between the wait and
+    // the read (another instance's write, or a rebuild, in between); a
+    // read taken converging is discarded and this waits again rather than
+    // deciding from it (EVS-DEV-converging-view-reads/H), so a deadline
+    // already passed throws ViewConvergenceTimeout from the next wait.
+    final deadline = DateTime.now().add(timeout);
+    List<Map<String, dynamic>> rows;
+    while (true) {
+      await waitForViewsCurrent(eventStore, {
+        'role_permission_grants',
+      }, deadline);
+      final read = await eventStore.reader.findViewRows(
+        'role_permission_grants',
+      );
+      if (read.state == ViewConvergenceState.converging) continue;
+      rows = read.rows;
+      break;
+    }
     final inView = <String>{
       for (final r in rows) '${r['role']}:${r['permissionName']}',
     };
