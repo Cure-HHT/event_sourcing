@@ -52,7 +52,7 @@
 | EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 6c2b3476 |
 | EVS-DEV-effective-permissions-shape        | effectivePermissionsFor surface                              | scoped-permissions.md                   | c6cee772 |
 | EVS-DEV-entry-type-downgrade-refusal       | Entry-type version downgrade refusal                         | dev-entry-type-downgrade-refusal.md     | 3adaac55 |
-| EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | 4e97d8b7 |
+| EVS-DEV-event-record                       | The event record as read, stored and sent                    | dev-event-record.md                     | b1c1b22f |
 | EVS-DEV-event-store-open                   | EventStore.open boot flow                                    | dev-event-store-open.md                 | 0922eae8 |
 | EVS-DEV-find-all-events-extended-filters   | Extended findAllEvents filters                               | dev-find-all-events-extended-filters.md | 3248479c |
 | EVS-DEV-flow-token                         | Flow Correlation Token                                       | dev-flow-token.md                       | 784df968 |
@@ -65,7 +65,7 @@
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable           | scoped-permissions.md                   | 2cfc7054 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
-| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | aa63cd94 |
+| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | 43178ed6 |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | c24246dc |
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |

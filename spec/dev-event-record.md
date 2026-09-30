@@ -5,12 +5,13 @@
 
 ## Purpose
 
-An event is stored and sent as a record: a JSON object whose fields the event hash covers as the record spells them. This requirement fixes four things:
+An event is stored and sent as a record: a JSON object whose fields the event hash covers as the record spells them. This requirement fixes five things:
 
 - which client timestamps and provenance receipt times a record may carry, so that every storage backend and every host reads the same instant from one;
 - which database identity and library version every provenance entry the library stamps records, so that the log states which database and which build appended or stored each event at each hop;
 - the causal record every event carries, kept unchanged at every hop and covered by the event hash;
 - how a build treats the parts of a record it does not read, so that a record written by a later release of the same data-format major verifies, stores and relays unchanged through an earlier one.
+- which characters a record's strings may hold, so that every storage backend can store every event the library holds.
 
 ## Assertions
 
@@ -35,6 +36,10 @@ I. The library SHALL include the `library_version` of every provenance entry in 
 J. The library SHALL keep an event's `causal` object unchanged whenever it stores, delivers, ingests or restores the event.
 
 K. The library SHALL include an event's `causal` object in the content from which the event hash is derived.
+
+L. Every string of every event the library holds, on every storage backend -- every key and every value, at any depth of its record -- SHALL be free of the character U+0000.
+
+M. The library SHALL refuse every append of an event carrying the character U+0000, with nothing of that append stored and the refusal reported to its caller, naming the top-level field of the record that carries it.
 
 ## Rationale
 
@@ -62,10 +67,16 @@ The application's own version stays in `software_version`. The data-format versi
 
 **Why keep the causal record unchanged, and hash it (assertions J and K)?** The causal record states which versions of its aggregate an event follows, as its author's database held them when it appended the event (EVS-DEV-causal-parents). Every holder resolves the parents against sealed hashes, so the record means the same everywhere only if every holder carries it as the author wrote it. It is a top-level field, and a top-level key outside the hashed fields is not attested (EVS-PRD-hash-chain-integrity, Rationale). So the record is added to the hash input: a hop that changed or dropped it would break the event's hash. The field is part of the data-format major step every change of this data format belongs to (EVS-DEV-version-compatibility/C), because a build whose hash input lacks it computes a different hash for the same record.
 
-**Why a data-format major step for these fields.** The entry fields and the causal record are required, and a record without them is refused, so a build of an earlier minor of the same major would refuse, or re-encode without, what a later minor wrote. They therefore ride the data-format major step (EVS-DEV-version-compatibility/N).
+**Why no U+0000 in any string (assertion L)?** The Postgres backend stores an event's data, metadata, initiator, causal record, version maps and unread fields as JSONB and its identifiers, types and hashes as text, and neither type can hold the character U+0000 in any string; the Sembast backend can. An event holding one could be stored on one backend and not on the other. The rule is stated over every event the library holds, on every backend, rather than only where Postgres stores it, so that no database the library writes holds an event another backend cannot store: a Sembast sender whose log held one would send it on every resend, and a Postgres receiver could never store it, so the channel would stop on it. Held events include the ones the library appends itself -- its boot events, its reserved operations' events and its security findings -- so a finding whose evidence carries a received record carrying the character keeps that record in an encoded form (`EVS-DEV-security-findings/U`). The rule is a Layer 1 structural fact about every record the log holds.
+
+**How the rule is kept (assertions L and M)?** An append checks every string of every event it would store, the events of the library's own operations included, before it writes anything, and refuses the whole append when one carries the character, reporting the field to its caller, so the caller learns the refusal and the log and the views stay as they were; the library never strips or replaces the character, since that would store content other than what the caller submitted. A record carrying one that arrives at ingest or restore is stored as no event: it is kept in full, encoded, in a security finding of kind `event_malformed` with the reason `unstorable_character` (`EVS-DEV-security-findings/O` and `/U`), and the rest of its delivery is admitted, so every event of an admitted delivery is still held (`EVS-PRD-ingest/G`) and the channel goes on. A read refuses a stored record carrying one, as it refuses the malformed timestamps of assertions A and C: no build of this data format writes one.
+
+**Why a data-format major step for these fields.** The entry fields and the causal record are required, and a record without them is refused, so a build of an earlier minor of the same major would refuse, or re-encode without, what a later minor wrote. They therefore ride the data-format major step (EVS-DEV-version-compatibility/N). A read that refuses a stored record carrying U+0000 (assertion L) rides the same step, since an earlier data format could have written one on Sembast.
 
 ## Changelog
 
+- 2026-09-30 | b1c1b22f | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-30 | - | - | Michael Lewis (<michael@anspar.org>) | Add L: every string of every event the library holds, keys and values at any depth, on every backend, is free of U+0000. Add M: an append of an event carrying U+0000 is refused with nothing stored and reported to its caller, naming the field. Purpose: the fifth thing the record requirement fixes. No code or test cites L or M yet
 - 2026-09-26 | 4e97d8b7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | A and C: ingest and the restore store no event for a record with a malformed client timestamp or received_at, keeping it in a security finding, instead of refusing the delivery; append and read still refuse it, naming the field. The implementation and its tests already behave this way
 - 2026-09-26 | a4b16ae0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -85,4 +96,4 @@ The application's own version stays in `software_version`. The data-format versi
 - 2026-09-24 | f24e0c04 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-B: a client timestamp carries a four-digit year, in-range calendar fields and an explicit offset; the initiator, the version maps and unread top-level keys are kept as the record carries them
 
-*End* *The event record as read, stored and sent* | **Hash**: 4e97d8b7
+*End* *The event record as read, stored and sent* | **Hash**: b1c1b22f
