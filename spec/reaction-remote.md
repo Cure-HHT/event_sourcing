@@ -1262,19 +1262,23 @@ E. The `AuthorizationWatcher` SHALL maintain exactly one substrate subscription 
 
 F. Consumers MAY opt in an account-level narrowing the substrate does not model via `ReactionHandlers.watchForceLogout(aggregateType, eventTypes, userIdOf)`, after which a `Delta` on `aggregateType` whose `eventType` is in `eventTypes` SHALL force-close (close code `4003`, reason `permissions_changed`) every WS connection registered for the `userId` returned by `userIdOf(event)` — the account-level analogue of assertion A (e.g. a portal `user_deactivated` on a `portal_user` aggregate). The trigger keys by user, ending all of that user's live sessions; it SHALL NOT be pointed at a per-session termination signal.
 
+G. On a `permission_revoked` event for a role `R`, the `AuthorizationWatcher` SHALL force-close (close code `4003`, reason `permissions_changed`) every WS connection of each connected user for whom it cannot determine whether the user holds `R`, whether because a view it reads is converging or because the lookup fails.
+
 ### Rationale
 
-The asymmetry between force-logout (security narrowing) and `stale_data` (security expansion / data-driven change) captures admin intent: revocation is a deliberate "remove this access" action and merits interrupting the user, whereas grants and containment movements are routine and the client may not even care. The single server-wide subscription keeps the substrate's reactive cost flat regardless of connected user count, and the `WsConnectionRegistry` lookup is the only per-user state the watcher reads — no per-Principal permission mirror is maintained (rationale lives in "Why no per-Principal permission cache" in the Decisions section).
+The asymmetry between force-logout (security narrowing) and `stale_data` (security expansion / data-driven change) captures admin intent: revocation is a deliberate "remove this access" action and merits interrupting the user, whereas grants and containment movements are routine and the client may not even care. The single server-wide subscription keeps the substrate's reactive cost flat regardless of connected user count, and the `WsConnectionRegistry` lookup is the only per-user state the watcher reads — no per-Principal permission mirror is maintained (rationale lives in "Why no per-Principal permission cache" in the Decisions section). A revocation whose reach the watcher cannot determine for a user fails closed (G): the user is forced to log in again, which costs a reconnect, whereas keeping the session could leave a revoked permission in use for as long as the view converges or the lookup keeps failing.
 
 ### Changelog
 
+- 2026-09-29 | 533309a9 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Add G: on a permission revocation, a connected user whose role the watcher cannot determine (a converging view, a failed lookup) is forced out. No code or test references G
 - 2026-08-10 | f1cc4c0d | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-09 | 49ed4e67 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-29 | cc1908b5 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | add96480 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-05-24 | - | - | Michael Lewis (<michael.lewis.c@gmail.com>) | Initial authoring; locks in shipped AuthorizationWatcher behavior
 
-*End* *Mid-session permission-change signalling* | **Hash**: f1cc4c0d
+*End* *Mid-session permission-change signalling* | **Hash**: 533309a9
 
 ## Trust boundary expansion
 

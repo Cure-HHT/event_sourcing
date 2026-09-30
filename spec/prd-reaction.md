@@ -280,6 +280,8 @@ I. The Remote-side transport SHALL surface its observable connection state via t
 
 J. The server-side wire handler SHALL support a configurable WebSocket keepalive interval. When set, it SHALL emit periodic ping frames on each connection and close any connection whose peer fails the ping/pong round-trip; when unset, it SHALL send no keepalive frames. Keepalive SHALL keep otherwise-idle connections from being silently reaped by network intermediaries and SHALL surface a dead peer as an observable close-frame.
 
+K. The Remote-side client SHALL treat a `view_converging` refusal from the server, on a subscription, an action submission or a permission-snapshot request, as transient: it SHALL surface a typed converging state naming the view, distinct from an error, and SHALL retry the refused request with a bounded backoff and a bounded number of attempts, re-sending an action submission with its idempotency key unchanged.
+
 ### Rationale
 
 **Why JSON rather than a binary protocol?** The wire serves Flutter web clients (where Dart compiles to JavaScript) and pure-Dart server endpoints. JSON has zero-cost ergonomics in both environments, plays nicely with browser dev-tools, and matches typical web transport formats. Binary protocols (protobuf, MessagePack) would be a premature optimization at the expected interactive-UI scale of a few to tens of concurrent users.
@@ -298,12 +300,16 @@ J. The server-side wire handler SHALL support a configurable WebSocket keepalive
 
 **Why server-side keepalive (J), and how does it relate to status (I) and reconnect (H)?** The Remote client cannot detect a silently dropped connection on web: a browser `WebSocket` neither lets application code send timed pings nor surfaces incoming ping/pong frames, and a half-open socket may never deliver a close event. Without keepalive, an idle connection behind a proxy/load-balancer can be reaped with no close-frame, so the client's lifecycle-driven status (I) stays `Connected` and the backoff reconnect (H) — which is edge-triggered by a close — never fires. A *server-side* keepalive (the host's `pingInterval`, which browsers auto-pong) solves both halves: it keeps the connection non-idle so it is not reaped in the first place, and when a peer is genuinely gone it forces a server-side close that reaches the client as the observable close-frame that I and H already act on. This is distinct from I's prohibition: I forbids the client from *synthesizing pings to derive status*; J is transport-level liveness on the *server*, and it feeds — rather than bypasses — the lifecycle-event path. It is opt-in (interval supplied by the consumer) so the library imposes no traffic by default.
 
+**Why retry a converging refusal (K)?** A view the server reads is converging while its copy catches up after an open, which lasts seconds, and the server refuses rather than answer from unsettled rows. The refusal says "not yet", not "no": surfacing it as an error would make every consumer write the same retry loop, and surfacing nothing would leave a panel blank with no reason. A typed converging state lets the widget layer show that the data is on its way, and the bounded retry ends the wait on its own in the common case while never spinning against a server whose view stays converging. An action submission is retried under its original idempotency key, so a submission the server did in fact accept is answered from its recorded outcome rather than dispatched twice.
+
 ### Changelog
 
+- 2026-09-29 | 85156c09 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Add K: the remote client treats a view_converging refusal on a subscription, an action submission or a permission-snapshot request as transient, surfacing a typed converging state and retrying with a bounded backoff and a bounded number of attempts. No code or test references K
 - 2026-08-10 | 3e0bf707 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 2df8cc19 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Cross-Process Event Transport* | **Hash**: 3e0bf707
+*End* *Cross-Process Event Transport* | **Hash**: 85156c09
 
 ## EVS-PRD-reaction-scope: Reaction Scope
 

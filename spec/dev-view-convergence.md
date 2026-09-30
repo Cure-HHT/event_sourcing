@@ -15,7 +15,10 @@ Terms used below:
 - A copy is **behind** in a transaction when its watermark is before the position of the latest event of the log that the transaction reads.
 - A copy is **current** in a transaction when the log that the transaction reads holds no event past the copy's watermark that the copy's definition folds, and **converging** otherwise.
 - The events a copy's definition **folds** include every security finding event, whatever the view's interest, which the copy folds for its outstanding-finding marks.
-- A **catch-up transaction** is a transaction, other than the boot of `EventStore.open` and a transaction that stores events, that folds events into a copy or deletes rows of a copy marked for deletion. A **step** of it is the fold of one event, or the passing over of one event its copy's definition does not fold, or the deletion of up to 500 rows.
+- A **catch-up transaction** is a transaction, other than the boot of `EventStore.open` and a transaction that stores events, that folds events into a copy or deletes rows of a copy marked for deletion. A **step** of it is the fold of one event, or the passing over of one event its copy's definition does not fold or whose fold into it fails, or the deletion of up to 500 rows.
+- A **fold failure** is a failure raised, while one event is folded into one copy, by a promoter of the copy's chain, or by the computation of a row's key, a row's data or a derived field the copy's shape declares. A failure of storage (a read or write the backend refuses, a serialization conflict, a lost connection) is not a fold failure.
+- An **always-stored event** is an event an ingest or a restore stores, a record the library appends in the transaction of an ingest, a restore or the drain, and a security finding.
+- A copy **passes over** an event when it sets its watermark past the event, writing no row for it.
 - A copy's **progress** is its watermark, the log's latest position, and the last failure of a catch-up transaction the instance ran on it.
 - The **measured database** is a Postgres database whose log holds 20,000 events of 2,000 aggregates, ten each, all folded into one aggregate view of 2,000 rows. The **serving loop** is an instance appending on it continuously, alternating events outside the view's interest and events of the view's entry type into the view's aggregates. The **measured scenarios** are three: beside the serving loop, three further instances of one build of the same data-format major open together, each registering the view's entry type in an added view; beside the serving loop, a second instance of the same data-format major opens registering a newer minor of the view's entry type; and the instance running the serving loop is itself one that opened registering a newer minor of the view's entry type. A scenario's **window** is the 60 seconds from the moment the first converging instance begins to open; its **converging copy** is the copy of the definition the opening instances register and the serving loop's instance does not, or, in the third scenario, the serving loop's instance's copy of the view.
 
@@ -29,7 +32,7 @@ C. On a backend whose generation guard keeps live registrations, an instance SHA
 
 D. The boot of `EventStore.open` SHALL, in its boot transaction, mark for deletion every stored copy whose fingerprint neither the opening build nor a live registration names.
 
-E. A transaction that stores an event, other than the boot transaction of `EventStore.open`, SHALL, for each of the instance's copies that is current in that transaction, fold the event into the copy when the copy's definition folds it, and set the copy's watermark to the event's position.
+E. A transaction that stores an event, other than the boot transaction of `EventStore.open`, SHALL, for each of the instance's copies that is current in that transaction, fold the event into the copy when the copy's definition folds it, and set the copy's watermark to the event's position; when that fold meets a fold failure, the transaction SHALL, for an always-stored event, keep no write of the failed fold (on Postgres, by folding each always-stored event into each copy in a savepoint), pass over the event in that copy and commit, and, for any other event, store nothing and throw the failure to its caller.
 
 F. A transaction that stores an event SHALL leave unchanged the watermark of every copy it does not set to the event's position.
 
@@ -49,11 +52,11 @@ M. Each catch-up transaction SHALL, after its first statement and before it read
 
 N. Each catch-up transaction SHALL begin no further step once it has run for 200 ms.
 
-O. Each catch-up transaction SHALL perform at least one step.
+O. Each catch-up transaction, other than one that ends without writing on a fold failure, SHALL perform at least one step.
 
 P. <RETIRED> The library's own views are caught up before the consumer's.
 
-Q. When a catch-up transaction throws, the library SHALL log the failure, record it with its error in the copy's progress, and retry that copy's catch-up after a delay that starts at 1 s and doubles with each consecutive failure up to 5 minutes, without closing the event store or delaying the catch-up of other copies.
+Q. When a catch-up transaction throws for a failure other than a fold failure, the library SHALL log the failure, record it with its error in the copy's progress, and retry that copy's catch-up after a delay that starts at 1 s and doubles with each consecutive failure up to 5 minutes, without closing the event store or delaying the catch-up of other copies.
 
 R. <RETIRED> The retry of a failed catch-up is stated with its logging.
 
@@ -70,6 +73,8 @@ W. In each measured scenario, every append of the serving loop SHALL commit with
 X. In each measured scenario, the watermark of the converging copy SHALL reach, within the window, the latest position the log held when the window began.
 
 Y. <RETIRED> The time to become current after the serving loop stops.
+
+Z. When a catch-up transaction's fold of an event into its copy meets a fold failure, the library SHALL end that transaction without writing, and a later catch-up transaction of that copy SHALL pass over the event, once a security finding recording that fold failure is held or, for an event that is itself a finding of kind `fold_failed`, at once.
 
 ## Rationale
 
@@ -89,7 +94,9 @@ Y. <RETIRED> The time to become current after the serving loop stops.
 
 **Why a lock per copy, taken without waiting (assertion M)?** Several instances may register one copy -- every instance of a revision that added a view. They hold the table lock together, so each then tries the copy's lock, one of them does the catch-up transaction and the others end at once rather than repeat the same work: one catch-up transaction at a time per copy, whatever the number of instances. The lock is taken after the table lock because on Postgres taking it is a query, which fixes the snapshot. No guarantee rests on it: the database orders every catch-up against every writer of the watermark, so two catch-ups that overlap cost duplicated work, not wrong rows.
 
-**Why keep the store open when a catch-up fails (assertion Q)?** A failure while folding -- a promoter that throws on a stored payload, a storage failure -- concerns one copy. The store stays open for everything else, the failure is logged and recorded in the copy's progress so an operator sees which view is stuck and why, the view stays converging so its unsettled rows are never served, and the retry backs off, since a failure the build itself causes repeats until the build changes.
+**Why keep the store open when a catch-up fails (assertion Q)?** A storage failure during a catch-up concerns one copy. The store stays open for everything else, the failure is logged and recorded in the copy's progress so an operator sees which view is stuck and why, the view stays converging so its unsettled rows are never served, and the retry backs off.
+
+**Why pass over an event a copy cannot fold (assertions E and Z)?** A fold failure is a property of the event and the copy's definition: a promoter, a row key, row data or a derived field that cannot handle the event's data fails on every attempt, so retrying it would freeze the copy for as long as the build lasts. An event the library stores whatever its content -- one a delivery or a restore carries, and the library's own records beside it -- cannot be refused to spare a view, so the copy passes over it: it keeps no partial row for the event, stays current and keeps serving, and the security finding recording the failure marks the event's aggregate in the default views (EVS-PRD-materializer). An event a local operation appends has a caller, so the append fails and nothing is stored. A catch-up meets events already stored, whoever appended them, so it passes over any event it cannot fold; it appends nothing to the log itself (assertion L), so it ends, the finding is appended in a transaction of its own, and the next catch-up passes over the event once the finding is held. A replay of the log under the same definition fails on the same events, so a copy that passed over them still equals its replay; a build whose definition differs has a new fingerprint and a new copy, which folds each of those events afresh.
 
 **Why delete a copy no live instance registers (assertions C, D, S and T)?** A copy nobody folds only falls further behind, and a rollback that brings its build back finds it missing and creates a new one, which catches up as any new copy does. The boot decides under the generation guard's boot lock, so no instance boots meanwhile, and a live instance keeps its copies registered with the same guard that keeps its generation, so a canary's boot never deletes the serving revision's copy. Deletion is marked in the boot and done after the open, in bounded transactions, because deleting a large view in the boot would hold back appends as long as folding it would. On Sembast outside the browser the library relies on one opener of the database file, so the opening build's own views are the only live ones. A copy has an identity of its own, so rows of a copy being deleted never mix with a new copy of the same fingerprint, and an instance whose copy was marked while its registration was lost creates a new one (assertion T).
 
@@ -101,6 +108,9 @@ Y. <RETIRED> The time to become current after the serving loop stops.
 
 ## Changelog
 
+- 2026-09-29 | ef8cf24b | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | f7e06c56 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Terms: fold failure, always-stored event, passing over an event; a catch-up step includes passing over an event whose fold fails. E: a fold failure of an always-stored event in a storing transaction keeps no write of the failed fold (a savepoint on Postgres) and passes over the event in that copy, which stays current; for any other event the transaction stores nothing and throws. Q: the logged back-off covers catch-up failures other than fold failures. O: a catch-up that ends on a fold failure performs no step. Add Z: a catch-up that meets a fold failure ends without writing and a later one passes over the event once its finding is held. Code and tests cite E, O and Q; none cites Z
 - 2026-09-26 | 1f251ccb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: sync changelog hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | This requirement absorbs the deleted EVS-DEV-snapshot-promotion-on-open and EVS-DEV-view-target-versions-seeding. Code and tests still cite them: event_sourcing/lib/src/event_store.dart, projections/snapshot_promotion.dart, promoters/promoter_registry.dart and promoters/promoter_spec.dart; test/projections/snapshot_promotion_test.dart, test/promoters/promoter_spec_test.dart, test/storage/postgres/postgres_versions_test.dart and test/test_support/version_compatibility_conformance.dart. No assertion changes
 - 2026-09-25 | 1f251ccb | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -117,4 +127,4 @@ Y. <RETIRED> The time to become current after the serving loop stops.
 - 2026-09-25 | 823e933e | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-24 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-Z: the boot records catch-up and promotion gaps; rounds after the open re-derive what the gaps cover and remove a gap only while its token is unchanged; a fold into a covered aggregate re-derives it; rebuildView and the whole-view pair record gaps
 
-*End* *View copies and their catch-up* | **Hash**: 1f251ccb
+*End* *View copies and their catch-up* | **Hash**: ef8cf24b

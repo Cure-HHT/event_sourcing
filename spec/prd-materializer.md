@@ -25,6 +25,8 @@ G. Every copy of a default view SHALL fold each security finding event, whatever
 
 H. The library SHALL refuse, by name and before any write, an append whose data holds a top-level key beginning with `$` and the registration of a projection whose key, column or derived field name begins with `$`, and SHALL store no event, naming the reason, for a record whose data holds such a key that ingest or a restore receives.
 
+I. The library's default views SHALL TREAT a stored event whose fold into a copy of a view fails (a promoter, a row key, row data or a derived field of that copy's definition fails on it) as contributing nothing to that copy's rows, and SHALL keep folding that copy's later events and serving it.
+
 ## Rationale
 
 **Why typed state, not row-maps or untyped JSON?** Application code relies on the materialized state for its work. Typed state lets the compiler catch shape mismatches between the materializer and its consumers; untyped state pushes those errors to runtime, where they are far harder to catch in regulated environments.
@@ -39,6 +41,8 @@ H. The library SHALL refuse, by name and before any write, an append whose data 
 
 **Outstanding findings (assertions D to H).** A finding says the holder stored something it could not verify, not that the data is false. Withholding the aggregate would hide the record a person needs to judge, and choosing a state would decide on their behalf; folding it and marking it keeps the view truthful about both. A fork's branches reach aggregates its evidence does not name, and a holder whose channel filtered events cannot trace which branch an event is on, so the default views mark every aggregate with an event of the forked database at or above the fork's lowest position: they may mark an aggregate only one branch touched, and, wherever the holder recorded or received a fork or reuse finding, never leave one that both branches touched unmarked. A filter can hide every fork and reuse from a holder, and then nothing is marked there. Findings are reserved events, outside most views' interest, but the mark governs rows of every view, so every copy folds each finding in log order, inline while the copy is current and during its catch-up otherwise (EVS-DEV-view-convergence). The mark lasts while the finding is held; clearing a finding is a separate event (`spec/roadmap/security-findings.md`). A finding the holder received is another database's statement, so it marks only what that database, or its succession lineage, authored: a sender cannot mark another database's data at its receivers by stating a finding about it. The rules read only the log, so materialization stays deterministic and a rebuild derives the marks the incremental fold did. The `$` prefix is reserved so an application key never collides with the mark. The finding is a Layer 1 fact; the mark is a Layer 2 convention of the default views.
 
+**An event a view cannot fold (assertion I).** An event the library stores whatever its content can carry data one view's definition cannot handle. Stopping that view at the event would leave it unserved until the build changes, and refusing the event would lose it, so the copy leaves the event out of its rows and the library records a security finding naming the view, the copy's definition, the event and the reason. The finding names the event's aggregate, so the aggregate is marked like any other a held finding names (assertion D), and the mark states that the row may lack the event's contribution. A replay under the same definition leaves out the same event, so materialization stays deterministic; a build whose definition differs folds it into a copy of its own. Leaving the event out is a Layer 2 convention: the library could equally withhold the aggregate's row.
+
 ## Future work
 
 Deferred projection primitives (a `TimeBucketProjectionSpec` for
@@ -47,6 +51,8 @@ in `spec/roadmap/projections.md`.
 
 ## Changelog
 
+- 2026-09-29 | 8842efaa | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | Add I: the default views treat a stored event whose fold into a copy fails as contributing nothing to that copy's rows, and keep folding and serving the copy; the finding recording the failure marks the aggregate as D states. No code or test references I
 - 2026-09-26 | 06c5d8a4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | - | - | Michael Lewis (<michael@anspar.org>) | E: a received finding counts when its originating database is X or has X in its succession lineage, as for D. Rationale: a filter can hide every fork and reuse from a holder. No code or test references E
 - 2026-09-25 | a46d7da0 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -60,4 +66,4 @@ in `spec/roadmap/projections.md`.
 - 2026-08-10 | 88f90336 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-07-02 | 02028dcf | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: add missing changelog section
 
-*End* *Materializer* | **Hash**: 06c5d8a4
+*End* *Materializer* | **Hash**: 8842efaa

@@ -12,14 +12,14 @@
 | EVS-PRD-action-submitter              | Action Submitter                | prd-reaction.md                      | fec6feb6 |
 | EVS-PRD-auth-session                  | Auth Session                    | prd-reaction.md                      | 6b3b75e2 |
 | EVS-PRD-canonical-json                | Canonical JSON Serialization    | prd-canonical-json.md                | 14bb1343 |
-| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 3e0bf707 |
-| EVS-PRD-delivery-channel              | Delivery channel continuity     | delivery-continuity.md               | c4286b3d |
+| EVS-PRD-cross-process-event-transport | Cross-Process Event Transport   | prd-reaction.md                      | 85156c09 |
+| EVS-PRD-delivery-channel              | Delivery channel continuity     | delivery-continuity.md               | f6230ffe |
 | EVS-PRD-destinations                  | Destinations                    | prd-destinations.md                  | 4f6634d8 |
 | EVS-PRD-event-log                     | Event Log                       | prd-event-log.md                     | e50ef232 |
 | EVS-PRD-hash-chain-integrity          | Hash-Chain Integrity            | prd-hash-chain-integrity.md          | 5e9d9d6e |
-| EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | dd17064b |
+| EVS-PRD-ingest                        | Ingest Path                     | prd-ingest.md                        | 67bc4bf5 |
 | EVS-PRD-library-charter               | Library Charter                 | prd-library-charter.md               | 0021ec08 |
-| EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 06c5d8a4 |
+| EVS-PRD-materializer                  | Materializer                    | prd-materializer.md                  | 8842efaa |
 | EVS-PRD-multi-source-canonicalization | Multi-Source Canonicalization   | prd-multi-source-canonicalization.md | ccf88a3b |
 | EVS-PRD-permission-source             | Permission Source               | prd-reaction.md                      | 5fa8d048 |
 | EVS-PRD-permissions-as-events         | Permissions as Events           | prd-permissions-as-events.md         | 0fe7afbd |
@@ -38,7 +38,7 @@
 | ID                                         | Title                                                        | File                                    | Hash     |
 | ------------------------------------------ | ------------------------------------------------------------ | --------------------------------------- | -------- |
 | EVS-DEV-append-stamps-registered-version   | Substrate stamps entryTypeVersion on append                  | dev-append-stamps-registered-version.md | b0a57e30 |
-| EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | f1cc4c0d |
+| EVS-DEV-authz-watcher                      | Mid-session permission-change signalling                     | reaction-remote.md                      | 533309a9 |
 | EVS-DEV-bootstrap-action-permissions       | YAML-seeded role/permission bootstrap                        | prd-permissions-as-events.md            | c76af2cd |
 | EVS-DEV-causal-parents                     | Causal parents within an aggregate                           | causal-history.md                       | e2eee9c4 |
 | EVS-DEV-chain-verification                 | Storage and origin chain verification                        | causal-history.md                       | 201d5630 |
@@ -46,7 +46,7 @@
 | EVS-DEV-converging-view-reads              | Reads of a converging view                                   | dev-converging-view-reads.md            | e95c070e |
 | EVS-DEV-delivery-channel                   | Delivery channel sender mechanics                            | delivery-continuity.md                  | 29357550 |
 | EVS-DEV-delivery-receiver                  | Delivery channel receiver mechanics                          | delivery-continuity.md                  | 21c20c41 |
-| EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | 0409f85d |
+| EVS-DEV-delivery-resume                    | Channel resume and new generation                            | delivery-continuity.md                  | ae74fe21 |
 | EVS-DEV-destination-drain                  | Destination queue mechanics                                  | dev-destination-drain.md                | cc80871d |
 | EVS-DEV-destination-drain-lock             | Delivery cycle mechanics                                     | dev-destination-drain-lock.md           | c8a491db |
 | EVS-DEV-destination-retry-budget           | Destination retry budget and attempt outcomes                | dev-destination-retry-budget.md         | 6c2b3476 |
@@ -65,10 +65,10 @@
 | EVS-DEV-scope-unresolvable-denial          | Dispatcher denial when Action.scopeFor is unusable           | scoped-permissions.md                   | 2cfc7054 |
 | EVS-DEV-scope-value-json                   | Sealed ScopeValue JSON contract                              | scoped-permissions.md                   | 35e57fd0 |
 | EVS-DEV-scoped-permissions-match-algorithm | TableBackedAuthorizationPolicy match semantics               | scoped-permissions.md                   | f186081d |
-| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | c2d8a734 |
+| EVS-DEV-security-findings                  | Security findings                                            | dev-security-findings.md                | ec066b67 |
 | EVS-DEV-sender-succession                  | Sender succession                                            | delivery-continuity.md                  | c24246dc |
 | EVS-DEV-severe-log-default                 | Severe log records reach standard error                      | dev-severe-log-default.md               | 2019159d |
 | EVS-DEV-storage-capability                 | The storage capability the library keeps                     | dev-storage-capability.md               | 4cba8786 |
 | EVS-DEV-transactional-authorize-execute    | Dispatch tx encompasses authorize + execute + persist        | scoped-permissions.md                   | 5e07a961 |
 | EVS-DEV-version-compatibility              | Entry-type and data-format versions                          | dev-version-compatibility.md            | 53f98178 |
-| EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | 1f251ccb |
+| EVS-DEV-view-convergence                   | View copies and their catch-up                               | dev-view-convergence.md                 | ef8cf24b |

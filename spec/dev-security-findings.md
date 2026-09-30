@@ -38,7 +38,8 @@ channel_unexplained     sender    a receiver record no automatic path
                                   explains; the channel starts a new
                                   generation
 sender_regressed        sender    a record of the channel's receiver database
-                                  ahead of the sender's
+                                  ahead of the sender's, at a number it
+                                  never reached
 restore_unverified      restore   a served delivery or event fails a check
                                   other than a hash that does not recompute
 succession_ahead        ingest    a succession event naming a delivery of a
@@ -47,6 +48,8 @@ storage_link_break,     walk      the chain verification operation: the
 sequence_missing,                 storage-chain and parent findings its
 parent_invalid,                   verdict lists
 parents_not_stamped
+fold_failed             fold      a view copy's fold of a stored event
+                                  fails; the copy passes over the event
 ```
 
 ## EVS-DEV-security-findings: Security findings
@@ -62,19 +65,19 @@ This requirement fixes the reserved event that records an integrity anomaly: its
 
 A. The library SHALL declare a reserved entry type `system.security_finding` with one event type, `security_finding_recorded`, and SHALL append it only through the detection points that record a finding.
 
-B. A security finding's data SHALL carry exactly `finding_id`, `kind`, `evidence` (an object), `aggregates` (the identifiers, in ascending order, of the aggregates of the events the evidence names, or for a finding of kind `fork_unrecorded` or `position_reused` of the events of the named database that carry the named predecessor hash or sit at the named origin position, that the detecting database holds when it records the finding, counting the events stored earlier in the recording transaction; or an empty list) and `detector` (an object with exactly `database_id`, the detecting database; `role`, one of `ingest`, `restore`, `sender` or `walk`; and `library_version`, the library version that detected it).
+B. A security finding's data SHALL carry exactly `finding_id`, `kind`, `evidence` (an object), `aggregates` (the identifiers, in ascending order, of the aggregates of the events the evidence names, or for a finding of kind `fork_unrecorded` or `position_reused` of the events of the named database that carry the named predecessor hash or sit at the named origin position, that the detecting database holds when it records the finding, counting the events stored earlier in the recording transaction; or an empty list) and `detector` (an object with exactly `database_id`, the detecting database; `role`, one of `ingest`, `restore`, `sender`, `walk` or `fold`; and `library_version`, the library version that detected it).
 
 C. A finding's `finding_id` SHALL be the SHA-256, in lowercase hexadecimal, of the canonical JSON of an object with exactly the keys `database_id` (the detecting database), `role` (the detector's role), `kind` and `evidence`.
 
-D. A finding's evidence SHALL hold only event identifiers, hashes, origin and local positions, database identities, channels, delivery numbers and delivery records, named reasons and checks, the values a check compared, and the record an anomaly concerns where the evidence carries one.
+D. A finding's evidence SHALL hold only event identifiers, hashes, origin and local positions, database identities, channels, delivery numbers and delivery records, view names and definition fingerprints, named reasons and checks, the values a check compared, and the record an anomaly concerns where the evidence carries one.
 
 E. The library SHALL append a security finding only when, read inside the appending transaction, the detecting database holds as authored no finding with the same `finding_id`.
 
-F. The library SHALL append each finding a detection point other than the chain verification operation records in the transaction that commits that detection point's outcome.
+F. The library SHALL append each finding a detection point other than the chain verification operation and a view copy's catch-up records in the transaction that commits that detection point's outcome.
 
 G. Where a detection point finds an event that it cannot store because the holder holds its identifier under another sealed hash, the library SHALL record a finding of kind `identity_mismatch` whose evidence carries the received record in full, and SHALL store the rest of what it received.
 
-H. The library SHALL record a security finding only with a `kind` among `hash_mismatch`, `identity_mismatch`, `event_malformed`, `delivery_hash_mismatch`, `predecessor_break`, `fork_unrecorded`, `position_reused`, `own_event_ingested`, `foreign_event`, `channel_unexplained`, `sender_regressed`, `restore_unverified`, `succession_ahead`, `storage_link_break`, `sequence_missing`, `parent_invalid` and `parents_not_stamped`.
+H. The library SHALL record a security finding only with a `kind` among `hash_mismatch`, `identity_mismatch`, `event_malformed`, `delivery_hash_mismatch`, `predecessor_break`, `fork_unrecorded`, `position_reused`, `own_event_ingested`, `foreign_event`, `channel_unexplained`, `sender_regressed`, `restore_unverified`, `succession_ahead`, `storage_link_break`, `sequence_missing`, `parent_invalid`, `parents_not_stamped` and `fold_failed`.
 
 I. Ingest SHALL store a security finding another database originated as it stores any event, whatever its kind and detector, and the library SHALL apply no idempotence rule to it beyond ingest's own.
 
@@ -92,9 +95,13 @@ O. Where ingest or a restore meets a received record that the library does not s
 
 P. <RETIRED> A received finding is stored as any event, whatever detector it names, as assertion I states.
 
-Q. The library SHALL record each finding under the detector role of the operation that detects it: `ingest` for an ingest entry point, `restore` for the restore operation, `sender` for the drainer and `walk` for the chain verification operation.
+Q. The library SHALL record each finding under the detector role of the operation that detects it: `ingest` for an ingest entry point, `restore` for the restore operation, `sender` for the drainer, `walk` for the chain verification operation and `fold` for a view copy's fold of an event, whether in the transaction that stores the event or in a catch-up.
 
-R. Every finding of each of the following kinds SHALL carry as evidence exactly the keys listed for its kind: `identity_mismatch`: `event_id`, `held_hash` (the sealed hash the holder holds the identifier under) and `record` (the received record in full); `event_malformed`: `reason` (`record_malformed`, `reserved_type_undeclared` or `audit_identity_invalid`) and `record`; `delivery_hash_mismatch`: `channel`, `delivery_number`, `carried_hash` and `recomputed_hash`; `own_event_ingested`: `event_id`, `sealed_hash` and `record` (the received record in full when the receiver does not hold the event and cannot store it as an event, otherwise null); `foreign_event`: `channel`, `delivery_number`, `event_id` and `sealed_hash`; `channel_unexplained` and `sender_regressed`: `channel`, `sender_record` and `receiver_record` (each an object with exactly `delivery_number` and `delivery_hash`), `recorded_receiver_database_id` (null when the sender channel record holds none) and `responding_receiver_database_id`; `restore_unverified`: `channel`, `delivery_number`, `event_id` (null when the check concerns the delivery) and `check` (`delivery_link`, `delivery_hash`, `originator` or `receiver_entry`); `succession_ahead`: `channel`, `receiver_record` and `succession_record` (the delivery the succession event names, in the same shape); `storage_link_break`: `local_sequence_number`, `event_id`, `field` (`ingest_sequence_number` or `previous_ingest_hash`), `expected` and `actual`; `sequence_missing`: `local_sequence_number`; `parent_invalid`: `local_sequence_number`, `event_id`, `parent` (the parent as the event names it) and `reason` (`other_aggregate`, `annotation`, `ineligible` or `held_under_other_hash`); `parents_not_stamped`: `local_sequence_number`, `event_id`, `expected` (the parents the stamping rule yields) and `actual` (the parents the event names).
+R. Every finding of each of the following kinds SHALL carry as evidence exactly the keys listed for its kind: `identity_mismatch`: `event_id`, `held_hash` (the sealed hash the holder holds the identifier under) and `record` (the received record in full); `event_malformed`: `reason` (`record_malformed`, `reserved_type_undeclared` or `audit_identity_invalid`) and `record`; `delivery_hash_mismatch`: `channel`, `delivery_number`, `carried_hash` and `recomputed_hash`; `own_event_ingested`: `event_id`, `sealed_hash` and `record` (the received record in full when the receiver does not hold the event and cannot store it as an event, otherwise null); `foreign_event`: `channel`, `delivery_number`, `event_id` and `sealed_hash`; `channel_unexplained` and `sender_regressed`: `channel`, `sender_record` and `receiver_record` (each an object with exactly `delivery_number` and `delivery_hash`), `recorded_receiver_database_id` (null when the sender channel record holds none) and `responding_receiver_database_id`; `restore_unverified`: `channel`, `delivery_number`, `event_id` (null when the check concerns the delivery) and `check` (`delivery_link`, `delivery_hash`, `originator` or `receiver_entry`); `succession_ahead`: `channel`, `receiver_record` and `succession_record` (the delivery the succession event names, in the same shape); `storage_link_break`: `local_sequence_number`, `event_id`, `field` (`ingest_sequence_number` or `previous_ingest_hash`), `expected` and `actual`; `sequence_missing`: `local_sequence_number`; `parent_invalid`: `local_sequence_number`, `event_id`, `parent` (the parent as the event names it) and `reason` (`other_aggregate`, `annotation`, `ineligible` or `held_under_other_hash`); `parents_not_stamped`: `local_sequence_number`, `event_id`, `expected` (the parents the stamping rule yields) and `actual` (the parents the event names); `fold_failed`: `view` (the view's name), `definition_fingerprint` (the fingerprint of the copy's definition), `event_id`, `sealed_hash` and `reason` (`promoter_failed`, `row_key_failed`, `row_data_failed` or `derived_field_failed`).
+
+S. Where a copy of a view passes over a stored event, other than one that is itself a finding of kind `fold_failed`, because its fold into that copy fails, the library SHALL record a finding of kind `fold_failed` about that copy and event: in the transaction that stores the event when the copy passes over it there, and otherwise in a transaction of its own that commits before the catch-up transaction that passes over the event.
+
+T. The library SHALL record no finding of kind `fold_failed` about the failed fold of an event that is itself a finding of kind `fold_failed`.
 
 ### Rationale
 
@@ -110,10 +117,15 @@ R. Every finding of each of the following kinds SHALL carry as evidence exactly 
 
 **Why a received finding is an ordinary event (assertion I)?** A finding a sender detected travels on every channel of the sender whatever the filter (`EVS-DEV-destination-drain`), so every receiver of the sender's events holds the anomalies the sender found. At a receiver it is the sender's statement, stored and folded like any other event, including one of a kind a later release of its data-format major added.
 
+**Why a finding for a fold that fails (assertions S and T)?** An event ingest or a restore stores, and a record the library appends beside it, is stored whatever its content, so a view whose promoter, row key, row data or derived field cannot handle it would otherwise either refuse the delivery that carries it or stop folding at it. The copy passes over the event instead, keeps serving, and the finding states which view, under which definition, could not fold which event and why; it names the event's aggregate, so the default views mark it (`EVS-PRD-materializer`). A copy meets each event once, inline in the transaction that stores it while the copy is current, or in its catch-up while it is converging, never both, so one detector role and an evidence of the copy's fingerprint and the event record each failure once however the copy reached it. The reason is one of a closed list, never an error message, so the identity holds across releases. A catch-up appends nothing to the log, so the finding it calls for is appended in a transaction of its own and the copy passes over the event only once the finding is held: a crash between the two leaves the finding without the pass, never the pass without the finding. A later build whose definition differs has another fingerprint and another copy, which folds the event afresh. A failed fold of a `fold_failed` finding records nothing further, so the findings about one event cannot chain.
+
 **Layer.** A finding is a Layer 1 fact: the detecting database recorded that a check failed, with the values it compared, under the hash of the event that records it. Treating an aggregate a finding names as suspect is a Layer 2 convention of the default views.
 
 ### Changelog
 
+- 2026-09-29 | ec066b67 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | 38d4dca4 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
+- 2026-09-29 | - | - | Michael Lewis (<michael@anspar.org>) | B and Q: add the detector role `fold`, for a view copy's fold of an event inline or in catch-up. D: evidence may name views and definition fingerprints. F: a catch-up's finding is appended in a transaction of its own. H: add the kind `fold_failed`. R: its evidence keys, with a closed list of reasons. Add S: a copy that passes over a stored event (other than a `fold_failed` finding) whose fold fails records a `fold_failed` finding, in the storing transaction or before the catch-up passes over it; add T: no `fold_failed` finding about a `fold_failed` finding. Code and tests cite B, D, F, H, Q and R; none cites S or T
 - 2026-09-26 | c2d8a734 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | 29b85b41 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-26 | 287480f7 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
@@ -135,4 +147,4 @@ R. Every finding of each of the following kinds SHALL carry as evidence exactly 
 - 2026-09-25 | 967987e3 | - | Michael Lewis (<michael@anspar.org>) | Auto-fix: update hash
 - 2026-09-25 | - | - | Michael Lewis (<michael@anspar.org>) | Add A-I: the reserved security finding with its stable identity, kind, evidence, aggregates and detector, appended once per anomaly in the transaction of the detection point's outcome, an unstorable event carried in full, and a received finding stored as any event
 
-*End* *Security findings* | **Hash**: c2d8a734
+*End* *Security findings* | **Hash**: ec066b67

@@ -20,6 +20,9 @@ It is a new reserved entry type, in the reserved entry-type namespace
 (`EVS-DEV-destination-drain/L`), so it ships as a data-format minor
 step: a build that does not know it stores it and keeps the mark, and
 no release's public append accepts it from application code.
+A `fold_failed` finding is cleared like any other; a build whose changed
+definition folds the event has a new copy of the view, which folds it
+afresh whether or not the finding is cleared.
 Open points: who may clear (a permission of the role/permission/scope
 model), whether a receiver may clear a sender's finding or only one it
 detected, and whether a clearing event travels on every channel as a
