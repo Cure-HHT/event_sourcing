@@ -17,8 +17,9 @@ combination.
 | 1 | Automated multi-client + permission/projection scenarios | `flutter test` | nothing extra (boots its own server on a loopback port / subprocess) |
 | 2 | UI confirmation through the rendered Flutter client | `flutter drive` | a display + a manually-started server |
 
-Tier 1 is CI-ready and runs in the **e2e scenario tests** PR workflow
-(`.github/workflows/e2e-scenario-tests.yml`). Tier 2 is run by hand (or a
+Tier 1 is CI-ready and runs in CI with the rest of each package's tests
+(the unit targets of `.elspais.toml`, run by
+`.github/workflows/event-sourcing-tests.yml`). Tier 2 is run by hand (or a
 manual workflow) because it needs a desktop display and a live server.
 
 ## Tier 1 — automated (run in PR CI)
@@ -49,8 +50,8 @@ flutter test test/view/view_builder_test.dart
 ```
 
 (All three run in CI: `.github/workflows/event-sourcing-tests.yml` runs
-every package's full `flutter test` suite, `test/e2e/`, `test/scenarios/`
-and `reaction_widgets` included.)
+every package's unit target, `test/e2e/`, `test/scenarios/` and
+`reaction_widgets` included.)
 
 ## Tier 2 — UI confirmation (run on demand)
 
@@ -93,8 +94,9 @@ Notes:
 
 - **Not on pre-commit / not on every commit.** These are slower and (for
   Tier 2) environment-dependent.
-- **Tier 1: on PRs.** Wired in `e2e-scenario-tests.yml` (triggers on
-  `pull_request` and `push` to `main`), matching the other test workflows.
+- **Tier 1: on PRs.** Part of the unit targets
+  `.github/workflows/event-sourcing-tests.yml` runs (on `pull_request` and
+  `push` to `main`).
 - **Tier 2: on demand** — before merging UI-affecting changes, or wire a
   manual (`workflow_dispatch`) CI job with `xvfb` + Linux desktop build
   deps if unattended runs are wanted later.

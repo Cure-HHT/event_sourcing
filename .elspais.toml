@@ -112,9 +112,12 @@ directories = [
   "event_sourcing/test",
   "event_sourcing/example_action_permissions/test",
   "event_sourcing/example/test",
+  "event_sourcing/example/integration_test",
+  "event_sourcing/example_clinical_scopes/test",
   "canonical_json_jcs/test",
   "provenance/test",
   "reaction/test",
+  "reaction/example/test",
   "reaction_widgets/test",
   "reaction_widgets_testing/test",
 ]
@@ -126,73 +129,64 @@ prescan_command = ""
 reference_keyword = "Verifies"
 reference_patterns = []
 
-# Test targets: one per Flutter package. Each runs `flutter test
-# --machine` (native JSON on stdout, real `suite.path` per test file) and reads
-# the package's `coverage/lcov.info`. `match = "source"` wires file-granular
-# RESULT->TEST verification by real path (no tojunit, no gen-junit script).
-# `credit_coverage = "verified"` credits the lcov_tested dimension from covered
-# // Implements: lines. `elspais checks --run-tests` runs these; CI omits
-# `command` and points at pre-produced coverage/results.
+# Test targets: the single definition of the repository's test suites. The
+# root Makefile (through tools/run-checks.sh) and CI
+# (.github/workflows/event-sourcing-tests.yml) both run them through
+# `elspais checks --run-tests --targets <group or target>`; neither lists a
+# suite or a test command of its own.
 #
-# Each command also writes the same machine JSON to a file via
-# `--file-reporter=json:coverage/machine.jsonl`, and `results` points at it
-# (the same path and name a consuming repository's targets use, for
-# cross-repo consistency). The `flutter-machine` reporter is a stdout channel, so
-# `--run-tests` ingests results transiently from captured stdout -- but commands
-# that do NOT run the tests (`elspais trace`, `viewer`, `graph`) have no captured
-# stdout and fall back to globbing `results`. Without a persisted file they
-# skipped result ingestion entirely, so `verified` (and the viewer's VER links)
-# showed 0 even though tests passed. Persisting to `coverage/` (gitignored,
-# alongside lcov.info) makes the verified dimension survive outside a
-# `--run-tests` invocation. The `--file-reporter` sink is additive: stdout still
-# carries the machine JSON, so `--run-tests` capture and the real exit code are
-# unaffected. NOTE: the daemon only watches spec/code/test dirs, not coverage/ or
-# this config -- run `elspais daemon --force` after producing results so the
-# viewer rebuilds. Because results now persist, every `checks` run (not just
-# `--run-tests`) loads the per-test-case RESULT nodes; flutter-machine emits no
-# stable test_id, so those nodes have no FILE ancestor and trip
-# `spec.structural_orphans`. That is inherent to path-based (not edge-based)
-# result matching and benign for verification, so `[rules.hierarchy]
-# allow_structural_orphans` below suppresses it.
+# Each target runs `flutter test` with the machine reporter
+# (`reporter = "flutter-machine"`, `match = "source"`): the JSON carries each
+# test's real `suite.path` and line, so a result binds to the test that
+# produced it. `credit_coverage = "verified"` credits the lcov_tested dimension
+# from covered // Implements: lines, and a red target marks that credit
+# failing.
 #
-# Postgres-backed packages (event_sourcing, example_action_permissions) share a
-# single DB across multiple test files; `flutter test` runs files in parallel by
-# default, so they race on schema setup. Force `--concurrency=1` for them.
+# flutter-machine is a stdout channel: under `--run-tests` elspais parses the
+# command's captured stdout, not the `results` files. Each command therefore
+# prints the machine JSON on stdout and also persists it under the target's
+# `results` glob, which every command that does not run the tests (a plain
+# `elspais checks`, `trace`, `viewer`, and CI's gate job over the downloaded
+# artifacts) reads instead. Every target writes its results and coverage to
+# paths no other target writes, so any set of targets can run at once. The
+# daemon does not watch these files: after producing results, run a check with
+# `elspais --spec-dir spec checks` (a local build) or restart the daemon.
+#
+# Commands run with --no-pub (resolve dependencies first: `make` and CI do),
+# and in each package at most one target builds the test assets (the widget
+# tests of the example packages load the framework's shaders from them); the
+# others pass --no-test-assets. So targets sharing a package can run at once
+# without resolving or rebuilding its files under each other. The unit targets remove PG_TEST_URL and friends from
+# their environment, so their Postgres-gated files skip even where a server is
+# configured; the postgres and throughput targets run those files.
+#
+# Targets that shard, split into pieces or may skip call a tools/run-checks.sh
+# `target` subcommand (see `tools/run-checks.sh help`): it runs the files in
+# parallel pieces, writes one machine-JSON file per piece under the target's
+# `results` glob, merges the pieces' lcov into the target's `coverage` file,
+# and prints the pieces' JSON on stdout, one after another, at the end. The
+# Postgres targets take their servers from PG_TEST_URLS (space-separated, one
+# shard each) or PG_TEST_URL, the second server one file compares against from
+# PG_TEST_URL_OTHER_SERVER, and a slice of the shard plan from PG_PART=<i>/<n>
+# (CI's matrix); with no server given they start throwaway Postgres containers
+# (SHARDS of them) and remove them when done.
+#
+# Groups name what a run is about. A bare `elspais checks --run-tests` runs
+# the `default` group: every target, the full verification.
+
+[scanning.test.groups]
+unit = "Every package's tests on the Dart VM, without Postgres (its gated files skip)"
+web = "event_sourcing's browser-only suite (test/web/) in Chrome"
+desktop = "event_sourcing/example's integration test on a Linux desktop build under a virtual display"
+postgres = "Every Postgres-gated test file, run against Postgres servers (the throughput guard excluded)"
+demos = "The example packages: their unit tests, the example_action_permissions Postgres files and the desktop integration test"
+throughput = "The throughput guard: the current tree's Postgres append and ingest throughput against the baseline build's"
 
 [[scanning.test.targets]]
 name = "provenance"
+groups = ["default", "unit"]
 cwd = "provenance"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
-reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
-match = "source"
-credit_coverage = "verified"
-
-[[scanning.test.targets]]
-name = "reaction"
-cwd = "reaction"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
-reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
-match = "source"
-credit_coverage = "verified"
-
-[[scanning.test.targets]]
-name = "reaction_widgets_testing"
-cwd = "reaction_widgets_testing"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
-reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
-match = "source"
-credit_coverage = "verified"
-
-[[scanning.test.targets]]
-name = "reaction_widgets"
-cwd = "reaction_widgets"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
 results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
@@ -201,28 +195,77 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "canonical_json_jcs"
+groups = ["default", "unit"]
 cwd = "canonical_json_jcs"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
 results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "reaction"
+groups = ["default", "unit"]
+cwd = "reaction"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
+coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "reaction/example"
+groups = ["default", "unit", "demos"]
+cwd = "reaction/example"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
+coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "reaction_widgets"
+groups = ["default", "unit"]
+cwd = "reaction_widgets"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
+coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "reaction_widgets_testing"
+groups = ["default", "unit"]
+cwd = "reaction_widgets_testing"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
+coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+# One file at a time (--concurrency=1), its files split into UNIT_PIECES
+# pieces run side by side; test/web/ is left to the browser target.
+[[scanning.test.targets]]
+name = "event_sourcing"
+groups = ["default", "unit"]
+cwd = "event_sourcing"
+command = "../tools/run-checks.sh target unit"
+reporter = "flutter-machine"
+results = "coverage/unit/*.jsonl"
+coverage = "coverage/unit/lcov.info"
 match = "source"
 credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing/example"
+groups = ["default", "unit", "demos"]
 cwd = "event_sourcing/example"
-command = "flutter test --machine --coverage --file-reporter=json:coverage/machine.jsonl"
-reporter = "flutter-machine"
-results = "coverage/machine.jsonl"
-coverage = "coverage/lcov.info"
-match = "source"
-credit_coverage = "verified"
-
-[[scanning.test.targets]]
-name = "event_sourcing"
-cwd = "event_sourcing"
-command = "flutter test --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
 results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
@@ -231,13 +274,86 @@ credit_coverage = "verified"
 
 [[scanning.test.targets]]
 name = "event_sourcing/example_action_permissions"
+groups = ["default", "unit", "demos"]
 cwd = "event_sourcing/example_action_permissions"
-command = "flutter test --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --concurrency=1 --file-reporter=json:coverage/machine.jsonl"
 reporter = "flutter-machine"
 results = "coverage/machine.jsonl"
 coverage = "coverage/lcov.info"
 match = "source"
 credit_coverage = "verified"
+
+[[scanning.test.targets]]
+name = "event_sourcing/example_clinical_scopes"
+groups = ["default", "unit", "demos"]
+cwd = "event_sourcing/example_clinical_scopes"
+command = "env -u PG_TEST_URL -u PG_TEST_URLS -u PG_TEST_URL_OTHER_SERVER -u EVS_THROUGHPUT_TEST flutter test --no-pub --machine --coverage --file-reporter=json:coverage/machine.jsonl"
+reporter = "flutter-machine"
+results = "coverage/machine.jsonl"
+coverage = "coverage/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+# The browser suite: @TestOn('browser') files on sembast_web over IndexedDB.
+# No coverage: the Chrome platform collects none.
+[[scanning.test.targets]]
+name = "event_sourcing/web"
+groups = ["default", "web"]
+cwd = "event_sourcing"
+command = "flutter test --no-pub --no-test-assets --machine --platform chrome --file-reporter=json:coverage/web/machine.jsonl test/web/"
+reporter = "flutter-machine"
+results = "coverage/web/machine.jsonl"
+match = "source"
+
+# The dual-pane integration test on a Linux desktop build under xvfb-run.
+# Elsewhere (macOS, or without xvfb-run) it prints why on stderr and runs
+# nothing.
+[[scanning.test.targets]]
+name = "event_sourcing/example/desktop"
+groups = ["default", "desktop", "demos"]
+cwd = "event_sourcing/example"
+command = "../../tools/run-checks.sh target desktop"
+reporter = "flutter-machine"
+results = "coverage/desktop/*.jsonl"
+match = "source"
+
+# Every Postgres-gated file of event_sourcing (PG_TEST_URL, testPostgresUrl(
+# or test_postgres_url.dart in a _test.dart file), the throughput guard
+# excluded, sharded across the Postgres servers.
+[[scanning.test.targets]]
+name = "event_sourcing/postgres"
+groups = ["default", "postgres"]
+cwd = "event_sourcing"
+command = "../tools/run-checks.sh target postgres"
+reporter = "flutter-machine"
+results = "coverage/postgres/*.jsonl"
+coverage = "coverage/postgres/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+# Every Postgres-gated file of example_action_permissions.
+[[scanning.test.targets]]
+name = "event_sourcing/example_action_permissions/postgres"
+groups = ["default", "postgres", "demos"]
+cwd = "event_sourcing/example_action_permissions"
+command = "../../tools/run-checks.sh target postgres"
+reporter = "flutter-machine"
+results = "coverage/postgres/*.jsonl"
+coverage = "coverage/postgres/lcov.info"
+match = "source"
+credit_coverage = "verified"
+
+# The throughput guard (EVS_THROUGHPUT_TEST=1): builds the baseline commit in
+# a temporary worktree, so it needs the full git history. It measures, so it
+# collects no coverage.
+[[scanning.test.targets]]
+name = "event_sourcing/throughput"
+groups = ["default", "throughput"]
+cwd = "event_sourcing"
+command = "../tools/run-checks.sh target throughput"
+reporter = "flutter-machine"
+results = "coverage/throughput/*.jsonl"
+match = "source"
 
 [scanning.docs]
 directories = ["docs"]

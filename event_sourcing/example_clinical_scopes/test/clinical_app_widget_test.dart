@@ -1,8 +1,8 @@
 // example_clinical_scopes/test/clinical_app_widget_test.dart
 //
 // Pure widget test using the shipped reaction_widgets_testing doubles
-// (FakeReaction + pumpReactionWidget), per
-// EVS-PRD-reaction-widget-contract-H. No real server — the fake drives
+// (FakeReaction + pumpReactionWidget), the widget-test doubles the reaction
+// widget contract requires. No real server — the fake drives
 // every observable transition deterministically.
 //
 // This test verifies the UI REACTS to the scoped view rows it is given:
