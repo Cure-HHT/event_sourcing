@@ -12,6 +12,30 @@ import 'package:event_sourcing/event_sourcing.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
 
+/// Wraps [inner] so that a request refused because a view it reads is
+/// still converging after an open (a [ViewConvergingRefusal] from the
+/// authorization policy or a view read) is answered 503 with the body
+/// `{"error": "view_converging", "view": <name>}` and `Retry-After: 1`,
+/// the shape the reaction server answers with, rather than as a server
+/// error. Any other failure passes through unchanged.
+Handler answerConvergingViewsAs503(Handler inner) => (Request req) async {
+  try {
+    return await inner(req);
+  } on ViewConvergingRefusal catch (e) {
+    return Response(
+      503,
+      body: jsonEncode(<String, Object?>{
+        'error': 'view_converging',
+        'view': e.viewName,
+      }),
+      headers: const <String, String>{
+        'content-type': 'application/json',
+        'retry-after': '1',
+      },
+    );
+  }
+};
+
 class DemoRoutes {
   DemoRoutes({
     required this.components,
@@ -45,7 +69,7 @@ class DemoRoutes {
       ..post('/demo/delivery/refuse-next', _deliveryRefuseNext)
       ..get('/_demo/inspect', _inspect)
       ..post('/_demo/reset', _reset);
-    return router.call;
+    return answerConvergingViewsAs503(router.call);
   }
 
   DispatchTrace? lastTrace() => _lastTrace;

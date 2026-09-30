@@ -11,7 +11,7 @@ import 'package:action_permissions_demo/server/demo_state_projection.dart';
 import 'package:action_permissions_demo/shared/wire_types.dart';
 import 'package:event_sourcing/event_sourcing.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sembast/sembast_memory.dart';
+import 'package:sembast/sembast_memory.dart' hide Transaction;
 import 'package:shelf/shelf.dart';
 
 import 'support/demo_bootstrap.dart';
@@ -38,6 +38,90 @@ Future<Response> _get(DemoRoutes routes, String path) async {
 Future<Map<String, Object?>> _readJson(Response r) async {
   final text = await r.readAsString();
   return jsonDecode(text) as Map<String, Object?>;
+}
+
+/// A policy whose views are still converging after an open.
+class _ConvergingPolicy extends AuthorizationPolicy {
+  const _ConvergingPolicy();
+
+  @override
+  Future<AuthorizationDecision> isPermitted(
+    Principal principal,
+    Permission permission,
+    ScopeValue? scopeValue, {
+    Transaction? txn,
+  }) => throw const ViewConvergingRefusal('role_permissions');
+
+  @override
+  Future<EffectiveAuthorization> effectivePermissionsFor(
+    Principal principal, {
+    Transaction? txn,
+  }) => throw const ViewConvergingRefusal('role_permissions');
+}
+
+void _convergingRefusalTests() {
+  group('answerConvergingViewsAs503', () {
+    test('a view_converging refusal is answered 503 naming the view', () async {
+      final handler = answerConvergingViewsAs503(
+        (Request _) => throw const ViewConvergingRefusal('role_permissions'),
+      );
+      final r = await handler(
+        Request('POST', Uri.parse('http://localhost/dispatch')),
+      );
+      expect(r.statusCode, 503);
+      expect(r.headers['retry-after'], '1');
+      expect(await _readJson(r), <String, Object?>{
+        'error': 'view_converging',
+        'view': 'role_permissions',
+      });
+    });
+
+    test(
+      'DemoRoutes answers a request whose policy view is converging 503',
+      () async {
+        final backends = await _sembastFactory();
+        final real = await bootstrapDemoServer(
+          storage: backends.storage,
+          idempotencyStore: backends.idempotencyStore,
+          permissionsYaml: validPermissionsYaml,
+          usersYaml: validUsersYaml,
+          installIdentifier: '00000000-0000-4000-8000-0000000000c1',
+        );
+        final components = DemoServerComponents(
+          dispatcher: real.dispatcher,
+          eventStore: real.eventStore,
+          destinations: real.destinations,
+          deliveryDestination: real.deliveryDestination,
+          directory: real.directory,
+          policy: const _ConvergingPolicy(),
+          idempotencyStore: real.idempotencyStore,
+          policyErrors: real.policyErrors,
+        );
+        final routes = DemoRoutes(
+          components: components,
+          projection: PollingDemoStateProjection(components: components),
+        );
+        final r = await _post(routes, '/session/start', <String, Object?>{
+          'userId': 'green-user-1',
+        });
+        expect(r.statusCode, 503);
+        expect(await _readJson(r), <String, Object?>{
+          'error': 'view_converging',
+          'view': 'role_permissions',
+        });
+      },
+    );
+
+    test('any other failure passes through unchanged', () async {
+      final handler = answerConvergingViewsAs503(
+        (Request _) => throw StateError('closed'),
+      );
+      await expectLater(
+        handler(Request('GET', Uri.parse('http://localhost/healthz'))),
+        throwsStateError,
+      );
+    });
+  });
 }
 
 /// Run the routes test suite against the [factory]-supplied backend
@@ -191,4 +275,5 @@ Future<DemoBackends> _sembastFactory() async {
 
 void main() {
   runDemoRoutesTests(_sembastFactory, label: 'sembast (memory)');
+  _convergingRefusalTests();
 }
