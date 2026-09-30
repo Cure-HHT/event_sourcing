@@ -43,6 +43,8 @@ DURATIONS_FILE="$ROOT/.check-durations"
 # event_sourcing's throughput guard: gated on Postgres like the other files,
 # run by its own target (the postgres targets leave it out).
 THROUGHPUT_FILE="test/storage/postgres/postgres_throughput_guard_test.dart"
+# A Postgres file estimated shorter than this is never cut into pieces.
+MIN_SPLIT_SECS=60
 # The file that compares a lock session against a second server.
 OTHER_SERVER_FILE="test/storage/postgres/postgres_generation_guard_test.dart"
 
@@ -624,7 +626,8 @@ file_weight() {
 
 # Splits the files listed in $1 across $2 buckets; writes $3/<n>.list
 # ("<path>\t<pieces>\t<piece index>" lines). A file estimated at more than
-# half a bucket's share is cut into pieces of whole tests (the test runner's
+# half a bucket's share, and at MIN_SPLIT_SECS or more (each piece compiles
+# the file again), is cut into pieces of whole tests (the test runner's
 # --total-shards and --shard-index), at most one per test and one per bucket.
 # The pieces then go, longest first, onto the least loaded bucket.
 plan_buckets() {
@@ -643,7 +646,7 @@ plan_buckets() {
   : >"$dir/units"
   while IFS="$tab" read -r w path; do
     k=1
-    if [ "$want" -gt 1 ] && [ $((2 * w)) -gt "$target" ]; then
+    if [ "$want" -gt 1 ] && [ $((2 * w)) -gt "$target" ] && [ "$w" -ge "$MIN_SPLIT_SECS" ]; then
       tests="$(grep -cE '^[[:space:]]*test\(' "$path")" || tests=1
       k=$(((2 * w + target - 1) / target))
       if [ "$k" -gt "$tests" ]; then k="$tests"; fi
@@ -1147,12 +1150,14 @@ results_ingested() {
     return 2
   fi
   json="$(mktemp "${TMPDIR:-/tmp}/evs-checks.XXXXXX")"
-  (cd "$ROOT" && "$bin" --spec-dir spec checks --lenient --format json -o "$json") >/dev/null || rc=$?
+  (cd "$ROOT" && "$bin" --spec-dir spec checks --lenient --format json -o "$json") >/dev/null 2>"$json.err" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    rm -f "$json"
+    cat "$json.err" >&2
+    rm -f "$json" "$json.err"
     echo "elspais checks failed (exit $rc) before the ingestion could be read" >&2
     return "$rc"
   fi
+  rm -f "$json.err"
   rc=0
   python3 - "$json" <<'PY2' || rc=$?
 import json, sys
